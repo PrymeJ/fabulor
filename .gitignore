@@ -149,6 +149,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+fabulorenv/
 
 # Spyder project settings
 .spyderproject
