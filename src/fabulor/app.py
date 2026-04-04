@@ -1,10 +1,14 @@
+import locale
 import sys
+import os
+os.environ["MPV_HOME"] = ""
 from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QFileDialog
 from PySide6.QtCore import Qt
 try:
     from mpv import MPV
 except OSError as e:
-    if "Cannot find libmpv" in str(e):
+    msg = str(e)
+    if "libmpv" in msg or "libcaca" in msg or "libtinfo" in msg or "_nc_curscr" in msg:
         raise SystemExit(
             "❌ libmpv not found.\n\n"
             "Install it with:\n"
@@ -51,8 +55,17 @@ class MainWindow(QMainWindow):
     def toggle_play_pause(self):
         if self.mpv_player is None:
             # Initialize player on first interaction
-            sample_file = "/test.m4b" 
-            self.mpv_player = MPV(ytdl=False) # ytdl=False speeds up local file loading
+            import locale
+            locale.setlocale(locale.LC_NUMERIC, "C")  # force it right before MPV init
+            sample_file = "/home/pryme/test.m4b"
+            self.mpv_player = MPV(
+                vo='null',
+                ao='pulse',
+                vid='no',
+                ytdl=False,
+                loglevel='debug'
+            )
+            
             self.mpv_player.play(sample_file)
             self.play_pause_button.setText("Pause")
             return
@@ -67,8 +80,11 @@ class MainWindow(QMainWindow):
             self.mpv_player.terminate()
         event.accept()
 
-if __name__ == "__main__":
+def run():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    run()
