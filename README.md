@@ -70,6 +70,15 @@ UI and library system will follow.
 
 ---
 
+## System Dependencies
+This project requires `libmpv` to be installed on your system:
+
+- **openSUSE Leap**: `sudo zypper install libmpv1 python3-python-mpv`
+- **openSUSE Tumbleweed**: `sudo zypper install libmpv2 python3-python-mpv`
+- **Ubuntu/Debian**: `sudo apt install libmpv1 python3-mpv`
+- **Fedora/RHEL**: `sudo dnf install mpv-libs python3-mpv`
+- **Arch**: `sudo pacman -S mpv python-mpv`
+
 ## License
 
 MIT
