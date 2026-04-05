@@ -6,7 +6,8 @@ from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QPixmap, QGuiApplication
 
 from .player import Player
-from .settings import Settings
+from .config import Config
+from .themes import get_stylesheet
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList
 
@@ -22,23 +23,12 @@ class TitleBar(QWidget):
         layout.setSpacing(0)
 
         self.title_label = QLabel("Fabulor")
-        self.title_label.setStyleSheet("color: #F0F0F0; font-weight: bold;")
         layout.addWidget(self.title_label)
         layout.addStretch()
 
         for symbol, slot in [("─", self._minimize), ("□", self._maximize), ("✕", self._close)]:
             btn = QPushButton(symbol)
             btn.setFixedSize(32, 32)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #F0F0F0;
-                    border: none;
-                    font-size: 14px;
-                    padding: 0;
-                }
-                QPushButton:hover { background: #7B2CBF; }
-            """)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
 
@@ -62,7 +52,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.current_cover_pixmap = QPixmap()
         self.is_slider_dragging = False
-        self.settings = Settings()
+        self.config = Config()
         self.player = Player()
 
         self._setup_ui()
@@ -83,23 +73,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setMinimumWidth(300)
         self.resize(300, 600)
 
-        self.setStyleSheet("""
-            QWidget#mainwindow {
-                background-color: #1A002E;
-                border-radius: 8px;
-            }
-            QLabel { color: #F0F0F0; }
-            QPushButton {
-                background-color: #7B2CBF;
-                color: white;
-                border-radius: 4px;
-                padding: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #9D4EDD; }
-            QPushButton:pressed { background-color: #5A189A; }
-        """)
         self.setObjectName("mainwindow")
+        self.setStyleSheet(get_stylesheet(self.config.get_theme()))
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -107,7 +82,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Custom title bar
         self.title_bar = TitleBar(self)
-        self.title_bar.setStyleSheet("background-color: #0D001A;")
         root_layout.addWidget(self.title_bar)
 
         # Progress slider
@@ -116,23 +90,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.setFixedHeight(24)
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
         self.progress_slider.sliderReleased.connect(self._on_slider_released)
-        self.progress_slider.setStyleSheet("""
-            QSlider { background: #4B0082; }
-            QSlider::groove:horizontal {
-                border: none; background: #4B0082; height: 24px;
-            }
-            QSlider::sub-page:horizontal { background: #C8A2C8; height: 24px; }
-            QSlider::handle:horizontal {
-                background: #C8A2C8; width: 2px; margin: 0px;
-            }
-        """)
         root_layout.addWidget(self.progress_slider)
 
         self.progress_percentage_label = QLabel(self.progress_slider)
+        self.progress_percentage_label.setObjectName("percentage_label")
         self.progress_percentage_label.setAlignment(Qt.AlignCenter)
-        self.progress_percentage_label.setStyleSheet(
-            "color: rgba(255,255,255,0.85); font-weight: bold; font-size: 16px; background: transparent;"
-        )
         self.progress_percentage_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         # Content
@@ -345,10 +307,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_rewind(self):
         if self.player:
-            self.player.time_pos = max(0, (self.player.time_pos or 0) - 10)
+            skip = self.config.get_skip_duration()
+            self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
     def handle_forward(self):
         if self.player:
-            self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + 10)
+            skip = self.config.get_skip_duration()
+            self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
     def handle_prev(self):
         if self.player: self.player.previous_chapter()
     def handle_next(self):
@@ -357,4 +321,3 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def closeEvent(self, event):
         if self.player: self.player.terminate()
         event.accept()
-
