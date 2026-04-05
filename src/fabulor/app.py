@@ -1,130 +1,39 @@
-import locale
 import sys
-import os
-os.environ["MPV_HOME"] = ""
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QLabel, QPushButton, QHBoxLayout, QSlider,
+    QMainWindow, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QWidget, QFileDialog, QListWidget, QListWidgetItem, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
-try:
-    from mpv import MPV
-except OSError as e:
-    msg = str(e)
-    if "libmpv" in msg or "libcaca" in msg or "libtinfo" in msg or "_nc_curscr" in msg:
-        raise SystemExit(
-            "❌ libmpv not found.\n\n"
-            "Install it with:\n"
-            "  • openSUSE: sudo zypper install libmpv\n"
-            "  • Ubuntu: sudo apt install libmpv\n"
-            "  • macOS: brew install mpv\n"
-            "  • Windows: choco install mpv\n"
-            "Then try again."
-        )
-    raise
 
-try:
-    import mutagen
-except ImportError:
-    mutagen = None
-
-class ClickSlider(QSlider):
-    """A slider that jumps to the position where it is clicked."""
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            val = self.minimum() + ((self.maximum() - self.minimum()) * event.position().x()) / self.width()
-            self.setValue(int(val))
-            self.sliderReleased.emit() # Trigger seek/update immediately
-        super().mousePressEvent(event)
-
-class ChapterList(QListWidget):
-    """Widget to display and navigate audiobook chapters."""
-    chapter_changed = Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.player = None
-        self.itemClicked.connect(self._on_item_clicked)
-
-    def set_player(self, player):
-        """Link the mpv player instance to this widget."""
-        self.player = player
-
-    def populate(self, total_duration=0):
-        """Fetch chapters from the player and update the UI."""
-        if not self.player:
-            return
-        self.clear()
-        chapters = self.player.chapter_list or []
-        for i, chap in enumerate(chapters):
-            title = chap.get('title') or f"Chapter {i+1}"
-            start = chap.get('time', 0)
-            # Get duration by checking the start of the next chapter or the total book duration
-            end = chapters[i+1].get('time', total_duration) if i+1 < len(chapters) else total_duration
-            duration_str = self._format_seconds(end - start)
-
-            item = QListWidgetItem(self)
-            item.setData(Qt.UserRole, i)
-            
-            # Create a widget for the list item to allow right-aligned duration
-            widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(5, 2, 5, 2)
-            
-            name_label = QLabel(title)
-            time_label = QLabel(duration_str)
-            time_label.setStyleSheet("color: gray;") # subtle color for the duration
-            
-            layout.addWidget(name_label)
-            layout.addStretch()
-            layout.addWidget(time_label)
-            
-            item.setSizeHint(widget.sizeHint())
-            self.addItem(item)
-            self.setItemWidget(item, widget)
-
-        # Update the UI with the current chapter name if available
-        if chapters:
-            # On initial population, always default to the first chapter for the label
-            initial_title = chapters[0].get('title') or "Chapter 1"
-            self.chapter_changed.emit(initial_title)
-
-    def _format_seconds(self, seconds):
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        return f"{h:02}:{m:02}:{s:02}"
-
-    def _on_item_clicked(self, item):
-        """Seek to the selected chapter."""
-        if self.player:
-            idx = item.data(Qt.UserRole)
-            self.player.chapter = idx
-            # Find the title from the custom widget labels
-            widget = self.itemWidget(item)
-            if widget:
-                title = widget.findChild(QLabel).text()
-                self.chapter_changed.emit(title)
+from .player import Player
+from .settings import Settings
+from .ui.controls import ClickSlider
+from .ui.chapter_list import ChapterList
 
 class MainWindow(QMainWindow):
-    # Signal to bridge mpv observer threads to the Qt UI thread
-    chapter_index_changed = Signal(int)
-
     def __init__(self):
         super().__init__()
 
-        self._setup_ui()
         self.current_cover_pixmap = QPixmap()
         self.is_slider_dragging = False
+        self.settings = Settings()
+        self.player = Player()
         
-        # Timer to keep UI elements (like buttons) in sync with mpv state
+        self._setup_ui()
+
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self._update_ui_sync)
-        self.chapter_index_changed.connect(self._update_chapter_label_from_index)
-
-        self.mpv_player = None
-        self.initialize_player()
+        self.player.chapter_changed.connect(self._update_chapter_label_from_index)
+        
+        # Load initial file
+        sample_file = "/home/pryme/test.m4b"
+        self.player.load_book(sample_file)
+        self.chapter_list_widget.set_player(self.player)
+        
+        self._load_cover_art(sample_file)
+        self.ui_timer.start(200)
+        QTimer.singleShot(1000, lambda: self.chapter_list_widget.populate(self.player.duration or 0))
 
     def _setup_ui(self):
         """Initialize the user interface components."""
@@ -278,26 +187,23 @@ class MainWindow(QMainWindow):
 
     def _update_ui_sync(self):
         """Update UI button text and labels based on the current player state."""
-        if not self.mpv_player:
+        if not self.player:
             return
 
-        # Handle initial chapter name discovery if ChapterList is now populated
-        if self.current_chapter_label.text().strip() == "" and getattr(self.mpv_player, 'chapter_list', None):
-             self.chapter_list_widget.populate(self.mpv_player.duration or 0)
+        if self.current_chapter_label.text().strip() == "" and self.player.chapter_list:
+             self.chapter_list_widget.populate(self.player.duration or 0)
 
-        # Sync Progress Slider and Time Label
         if not self.is_slider_dragging:
-            pos = self.mpv_player.time_pos or 0
-            dur = self.mpv_player.duration or 0
+            pos = self.player.time_pos or 0
+            dur = self.player.duration or 0
             if dur > 0:
                 percent = (pos / dur) * 100
                 self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.time_label.setText(f"{self._format_time(pos)} / {self._format_time(dur)}")
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
-            # Sync Chapter Timers
-            curr_chap = self.mpv_player.chapter or 0
-            chap_list = self.mpv_player.chapter_list or []
+            curr_chap = self.player.chapter or 0
+            chap_list = self.player.chapter_list or []
             if chap_list and curr_chap < len(chap_list):
                 start = chap_list[curr_chap].get('time', 0)
                 # End is the start of next chapter, or total duration if last
@@ -307,13 +213,12 @@ class MainWindow(QMainWindow):
                 self.chap_elapsed_label.setText(self._format_time(c_elapsed))
                 self.chap_duration_label.setText(self._format_time(end - start))
 
-        is_eof = getattr(self.mpv_player, 'eof_reached', False)
+        is_eof = self.player.eof_reached
         
         if is_eof:
-            if self.play_pause_button.text() == "Pause":
-                self.play_pause_button.setText("Play")
+            self.play_pause_button.setText("Restart")
         else:
-            self.play_pause_button.setText("Play" if self.mpv_player.pause else "Pause")
+            self.play_pause_button.setText("Play" if self.player.pause else "Pause")
 
     def _format_time(self, seconds):
         """Converts seconds to HH:MM:SS format."""
@@ -326,40 +231,35 @@ class MainWindow(QMainWindow):
         self.is_slider_dragging = True
 
     def _on_slider_released(self):
-        if self.mpv_player and self.mpv_player.duration:
-            new_pos = (self.progress_slider.value() / 1000) * self.mpv_player.duration
-            self.mpv_player.time_pos = new_pos
+        if self.player and self.player.duration:
+            new_pos = (self.progress_slider.value() / 1000) * self.player.duration
+            self.player.time_pos = new_pos
         self.is_slider_dragging = False
 
     def _on_volume_changed(self, value):
-        if self.mpv_player:
-            self.mpv_player.volume = value
+        if self.player:
+            self.player.volume = value
 
     def _on_speed_clicked(self):
         """Cycles through speeds: 1.0, 2.0, 3.0, 4.0."""
-        if not self.mpv_player:
+        if not self.player:
             return
         speeds = [1.0, 2.0, 3.0, 4.0]
-        current = getattr(self.mpv_player, 'speed', 1.0)
+        current = self.player.speed or 1.0
         next_speed = next((s for s in speeds if s > current + 0.01), speeds[0])
-        self.mpv_player.speed = next_speed
+        self.player.speed = next_speed
         self.speed_button.setText(f"{next_speed:.2f}x")
-
-    def _on_mpv_chapter_change(self, name, value):
-        """Callback from mpv thread when chapter changes."""
-        if value is not None:
-            self.chapter_index_changed.emit(int(value))
 
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
-        if not self.mpv_player:
+        if not self.player:
             return
         
         # If the list is empty, trigger population now that we know we have data
-        if not self.chapter_list_widget.count() and self.mpv_player:
-            self.chapter_list_widget.populate(self.mpv_player.duration or 0)
+        if not self.chapter_list_widget.count():
+            self.chapter_list_widget.populate(self.player.duration or 0)
 
-        chaps = self.mpv_player.chapter_list or []
+        chaps = self.player.chapter_list or []
         # Ensure index is non-negative to avoid Python's negative indexing (which picks the last chapter)
         if 0 <= index < len(chaps):
             title = chaps[index].get('title') or f"Chapter {index + 1}"
@@ -367,48 +267,9 @@ class MainWindow(QMainWindow):
             # Also sync the list selection visually
             self.chapter_list_widget.setCurrentRow(index)
 
-    def initialize_player(self):
-        """Set up the mpv instance and load the book metadata immediately."""
-        locale.setlocale(locale.LC_NUMERIC, "C")
-        sample_file = "/home/pryme/test.m4b"
-        self.mpv_player = MPV(
-            vo='null',
-            ao='pulse',
-            vid=False,
-            ytdl=False,
-            loglevel='debug',
-            keep_open=True
-        )
-        
-        self.mpv_player.pause = True
-        self.mpv_player.play(sample_file)
-        self.chapter_list_widget.set_player(self.mpv_player)
-        self.mpv_player.observe_property('chapter', self._on_mpv_chapter_change)
-        
-        self._load_cover_art(sample_file)
-
-        self.ui_timer.start(200)
-        QTimer.singleShot(1000, lambda: self.chapter_list_widget.populate(self.mpv_player.duration or 0))
-
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""
-        if not mutagen:
-            return
-
-        pixmap = QPixmap()
-        try:
-            audio = mutagen.File(file_path)
-            if audio and audio.tags:
-                # Handle M4B (MP4 container)
-                if 'covr' in audio.tags:
-                    data = audio.tags['covr'][0]
-                    pixmap.loadFromData(data)
-                # Handle MP3 (ID3 tags)
-                elif 'APIC:' in audio.tags:
-                    data = audio.tags['APIC:'].data
-                    pixmap.loadFromData(data)
-        except Exception as e:
-            print(f"Could not extract cover art: {e}")
+        pixmap = self.player.extract_cover(file_path)
 
         if not pixmap.isNull():
             self.current_cover_pixmap = pixmap
@@ -452,82 +313,24 @@ class MainWindow(QMainWindow):
             self.progress_percentage_label.resize(self.progress_slider.size())
 
     def toggle_play_pause(self):
-        if not self.mpv_player:
+        if not self.player:
             return
-
-        # Check for Restart logic at the end of the file
-        is_eof = getattr(self.mpv_player, 'eof_reached', False)
-        if is_eof or self.play_pause_button.text() == "Restart":
-            if self.play_pause_button.text() == "Play":
-                self.play_pause_button.setText("Restart")
-            else:
-                self.mpv_player.time_pos = 0
-                self.mpv_player.pause = False 
-                self.play_pause_button.setText("Pause")
+        if self.play_pause_button.text() == "Restart":
+            self.player.time_pos = 0
+            self.player.pause = False
             return
-
-        # Toggle the pause property
-        self.mpv_player.pause = not self.mpv_player.pause
+        self.player.pause = not self.player.pause
 
     def handle_rewind(self):
-        """Rewind fixed 10 seconds."""
-        if self.mpv_player:
-            self.mpv_player.time_pos = max(0, (self.mpv_player.time_pos or 0) - 10)
-
+        if self.player:
+            self.player.time_pos = max(0, (self.player.time_pos or 0) - 10)
     def handle_forward(self):
-        """Forward fixed 10 seconds."""
-        if self.mpv_player:
-            self.mpv_player.time_pos = min(self.mpv_player.duration or 0, (self.mpv_player.time_pos or 0) + 10)
-
+        if self.player:
+            self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + 10)
     def handle_prev(self):
-        """Logic for jumping to the start of a chapter or the previous chapter."""
-        if not self.mpv_player:
-            return
-
-        curr_time = self.mpv_player.time_pos or 0
-        if curr_time < 0.5:  # Very beginning of file
-            return
-
-        curr_chap = self.mpv_player.chapter or 0
-        chap_list = self.mpv_player.chapter_list or []
-        # Safely get chapter start time
-        chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
-
-        # If within the first 2 seconds of the chapter, go to previous chapter
-        if curr_time < chap_start + 2.0:
-            if curr_chap > 0:
-                self.mpv_player.chapter = curr_chap - 1
-        else:
-            # Chapter is underway (> 2s elapsed), go to start of chapter
-            self.mpv_player.time_pos = chap_start
-
+        if self.player: self.player.previous_chapter()
     def handle_next(self):
-        """Logic for jumping to the next chapter or the end of the book."""
-        if not self.mpv_player:
-            return
-
-        curr_chap = self.mpv_player.chapter or 0
-        total_chaps = self.mpv_player.chapters or 0
-
-        if curr_chap < total_chaps - 1:
-            self.mpv_player.chapter = curr_chap + 1
-        else:
-            # Last chapter logic: seek to end of file
-            duration = self.mpv_player.duration
-            if duration:
-                self.mpv_player.time_pos = duration
-
+        if self.player: self.player.next_chapter()
     def closeEvent(self, event):
-        """Clean up resources when the window is closed."""
-        if self.mpv_player:
-            self.mpv_player.terminate()
+        if self.player: self.player.terminate()
         event.accept()
-
-def run():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-
-if __name__ == "__main__":
-    run()
