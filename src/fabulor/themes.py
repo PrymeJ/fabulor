@@ -357,6 +357,7 @@ def get_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 3px 5px;
+            padding-right: 0px; /* Prevent scrollbar sliver on closed combo box */
             font-size: 10px; /* Smaller font for dropdown text */
             min-height: 20px;
         }}
@@ -377,7 +378,11 @@ def get_stylesheet(theme_name="default"):
             selection-background-color: {t['accent']};
             border: 1px solid {t['accent']};
             outline: none;
+            padding: 0px; /* Remove any default padding that might affect scrollbar */
             font-size: 10px; /* Smaller font for dropdown list items */
+        }}
+        QComboBox QAbstractItemView::item {{
+            min-height: 20px; /* Ensure each item has a minimum height */
         }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,
@@ -385,6 +390,11 @@ def get_stylesheet(theme_name="default"):
             width: 8px;
             background: {t['bg_deep']};
             border: none;
+            margin: 0px;
+        }}
+        QComboBox QAbstractItemView QScrollBar::groove:vertical {{
+            border: none;
+            background: transparent;
             margin: 0px;
         }}
         QComboBox QAbstractItemView QScrollBar::handle:vertical,

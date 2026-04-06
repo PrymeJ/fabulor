@@ -2,7 +2,9 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
     QSizePolicy, QApplication, QComboBox, QListView
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import (
+    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, Signal, QModelIndex
+)
 from PySide6.QtGui import QPixmap, QGuiApplication
 
 from .player import Player
@@ -11,6 +13,22 @@ from .themes import get_stylesheet, THEMES
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList
 from mpv import ShutdownError
+
+class ThemeComboBox(QComboBox):
+    """Custom QComboBox that provides signals for popup visibility events."""
+    aboutToShowPopup = Signal()
+    aboutToHidePopup = Signal()
+
+    def showPopup(self):
+        # Ensure mouse tracking is enabled for the popup view to trigger highlighted signals
+        self.view().setMouseTracking(True)
+        self.view().viewport().setMouseTracking(True)
+        self.aboutToShowPopup.emit()
+        super().showPopup()
+
+    def hidePopup(self):
+        super().hidePopup()
+        self.aboutToHidePopup.emit()
 
 class TitleBar(QWidget):
     def __init__(self, parent=None):
@@ -54,6 +72,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.sidebar_expanded = False
+        self._theme_selection_made = False # Flag for theme dropdown preview
         self.current_file = ""
         self.config = Config()
         self.player = Player()
@@ -228,13 +247,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         theme_row = QHBoxLayout()
         theme_row.addWidget(QLabel("Theme:"))
-        self.theme_dropdown = QComboBox()
+        self.theme_dropdown = ThemeComboBox()
         self.theme_dropdown.setView(QListView()) # Required for QSS popup background styling
         self.theme_dropdown.setMaxVisibleItems(4) # Limit visible items to 4
         self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.theme_dropdown.addItems(list(THEMES.keys()))
+        self.theme_dropdown.addItems(sorted(list(THEMES.keys()))) # Sort themes alphabetically
         self.theme_dropdown.setCurrentText(self.config.get_theme())
-        self.theme_dropdown.currentTextChanged.connect(self._on_theme_changed)
+        self.theme_dropdown.aboutToShowPopup.connect(self._on_theme_dropdown_about_to_show)
+        self.theme_dropdown.aboutToHidePopup.connect(self._on_theme_dropdown_about_to_hide)
+        # Use view's 'entered' for reliable mouse-over, and 'highlighted' for keyboard navigation
+        self.theme_dropdown.view().entered.connect(lambda idx: self._on_theme_hovered(idx.row()))
+        self.theme_dropdown.highlighted[int].connect(self._on_theme_hovered)
+        self.theme_dropdown.activated[int].connect(self._on_theme_selected_from_dropdown)
         theme_row.addWidget(self.theme_dropdown)
         self.settings_panel_layout.addLayout(theme_row)
 
@@ -268,6 +292,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Update the configuration and apply the new stylesheet."""
         self.config.set_theme(theme_name)
         self.setStyleSheet(get_stylesheet(theme_name))
+
+    def _on_theme_dropdown_about_to_show(self):
+        self._previous_theme = self.config.get_theme() # Save current theme for potential revert
+        self._theme_selection_made = False # Reset flag
+
+    def _on_theme_dropdown_about_to_hide(self):
+        if not self._theme_selection_made:
+            # Revert to previous theme if no selection was made (e.g., clicked outside)
+            self.setStyleSheet(get_stylesheet(self._previous_theme))
+            self.theme_dropdown.setCurrentText(self._previous_theme) # Also revert dropdown text
+
+    def _on_theme_hovered(self, index):
+        """Preview the theme visually without saving to config."""
+        theme_name = self.theme_dropdown.itemText(index)
+        self.setStyleSheet(get_stylesheet(theme_name))
+
+    def _on_theme_selected_from_dropdown(self, index):
+        """Permanent selection made by user."""
+        self._theme_selection_made = True
+        theme_name = self.theme_dropdown.itemText(index)
+        self._on_theme_changed(theme_name)
 
     def _hide_popups(self):
         """Closes any open floating menus."""
