@@ -43,6 +43,11 @@ def get_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
+        QWidget#settings_panel {{
+            background-color: {t['bg_main']};
+            border-right: 2px solid {t['accent']};
+            border-radius: 0px;
+        }}
         QWidget#sidebar {{
             background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});
             border-right: 1px solid {t['slider_overall_bg']};
@@ -55,11 +60,17 @@ def get_stylesheet(theme_name="default"):
             color: {t['text']};
             font-weight: bold;
         }}
-        QWidget#sidebar QLabel {{
+        /* Sidebar items opacity sync */
+        #sidebar QLabel, #sidebar QPushButton {{
             font-size: 12px;
             color: rgba({text_rgb}, {t['sidebar_opacity']});
+            background: transparent;
+            border: none;
+            text-align: left;
+            font-weight: bold;
+            padding: 0;
         }}
-        QWidget#sidebar:hover QLabel {{
+        #sidebar:hover QLabel, #sidebar:hover QPushButton {{
             color: rgba({text_rgb}, {t['sidebar_opacity_hover']});
         }}
         QLabel#sidebar_title {{

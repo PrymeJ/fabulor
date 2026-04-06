@@ -201,9 +201,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
         
-        sidebar_title = QLabel("Settings")
-        sidebar_title.setObjectName("sidebar_title")
-        self.sidebar_layout.addWidget(sidebar_title)
+        self.settings_trigger_btn = QPushButton("Settings")
+        self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
+        self.settings_trigger_btn.clicked.connect(self._open_settings_flow)
+        self.sidebar_layout.addWidget(self.settings_trigger_btn)
         self.sidebar_layout.addStretch()
         
         # Start flush under progress bar: title (32) + progress (24) = 56
@@ -212,6 +213,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
         self.sidebar_animation.setDuration(300)
         self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        # Initialize Settings Panel (90% width)
+        self.settings_panel = QWidget(self)
+        self.settings_panel.setObjectName("settings_panel")
+        self.settings_panel_layout = QVBoxLayout(self.settings_panel)
+        self.settings_panel_layout.setContentsMargins(10, 10, 10, 10)
+        self.back_btn = QPushButton("<<")
+        self.back_btn.setFixedWidth(40)
+        self.back_btn.clicked.connect(self._close_settings_flow)
+        self.settings_panel_layout.addWidget(self.back_btn)
+        self.settings_panel_layout.addStretch()
+        self.settings_panel.hide()
+        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
+        self.settings_panel_animation.setDuration(300)
+        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _update_chapter_title_text(self, text):
         """Update the button text with elision."""
@@ -226,6 +242,53 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.chapter_list_widget.hide()
         if self.sidebar_expanded:
             self._toggle_sidebar()
+        if self.settings_panel.isVisible():
+            self._close_settings_flow()
+
+    def _open_settings_flow(self):
+        """Hides sidebar first, then shows settings panel."""
+        if self.sidebar_expanded:
+            self.sidebar_animation.finished.connect(self._start_settings_entry)
+            self._toggle_sidebar()
+        else:
+            self._start_settings_entry()
+
+    def _start_settings_entry(self):
+        """Starts the settings panel slide-in animation."""
+        try:
+            self.sidebar_animation.finished.disconnect(self._start_settings_entry)
+        except:
+            pass
+        
+        panel_w = int(self.width() * 0.9)
+        sidebar_y = 56
+        self.settings_panel.setFixedWidth(panel_w)
+        self.settings_panel.setFixedHeight(self.sidebar.height())
+        self.settings_panel.move(-panel_w, sidebar_y)
+        self.settings_panel.show()
+        self.settings_panel.raise_()
+        
+        self.settings_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
+        self.settings_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.settings_panel_animation.start()
+
+    def _close_settings_flow(self):
+        """Slides the settings panel back out."""
+        if self.settings_panel_animation.state() == QPropertyAnimation.Running:
+            return
+        panel_w = self.settings_panel.width()
+        sidebar_y = 56
+        self.settings_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.settings_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        self.settings_panel_animation.finished.connect(self._on_settings_hidden)
+        self.settings_panel_animation.start()
+
+    def _on_settings_hidden(self):
+        try:
+            self.settings_panel_animation.finished.disconnect(self._on_settings_hidden)
+        except:
+            pass
+        self.settings_panel.hide()
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -439,12 +502,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         raw_y = self.play_pause_button.mapTo(self, QPoint(0, 0)).y()
         controls_y = raw_y if raw_y > sidebar_y else (self.height() * 0.6)
         self.sidebar.setFixedHeight(max(0, int(controls_y - sidebar_y - 5)))
+        self.settings_panel.setFixedHeight(self.sidebar.height())
+        self.settings_panel.setFixedWidth(int(self.width() * 0.9))
 
         # Ensure sidebar position is maintained during resize
         if not self.sidebar_expanded:
             self.sidebar.move(-self.sidebar.width(), sidebar_y)
         else:
             self.sidebar.move(0, sidebar_y)
+            
+        if self.settings_panel.isVisible():
+            self.settings_panel.move(0, sidebar_y)
+        else:
+            self.settings_panel.move(-self.settings_panel.width(), sidebar_y)
 
         self._update_cover_art_scaling()
         # Reposition percentage label
