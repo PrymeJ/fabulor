@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect
+    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect, QGraphicsBlurEffect
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, Signal, QModelIndex
@@ -127,30 +127,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_percentage_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         # Content
-        content_container = QWidget()
-        self.content_layout = QVBoxLayout(content_container)
+        self.content_container = QWidget()
+        self.content_layout = QVBoxLayout(self.content_container)
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.content_layout.setSpacing(10)
-        root_layout.addWidget(content_container)
+        root_layout.addWidget(self.content_container)
+
+        # Visual Area for blurring (Cover Art and Metadata)
+        self.visual_area = QWidget()
+        visual_layout = QVBoxLayout(self.visual_area)
+        visual_layout.setContentsMargins(0, 0, 0, 0)
+        visual_layout.setSpacing(10)
+        self.content_layout.addWidget(self.visual_area)
 
         self.cover_art_label = QLabel()
         self.cover_art_label.setAlignment(Qt.AlignCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cover_art_label.setMinimumSize(280, 280)
         self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
-        self.content_layout.addWidget(self.cover_art_label)
+        visual_layout.addWidget(self.cover_art_label)
 
         self.metadata_label = QLabel("Author - Title")
         self.metadata_label.setAlignment(Qt.AlignCenter)
         self.metadata_label.mousePressEvent = self._on_drag_area_pressed
-        self.content_layout.addWidget(self.metadata_label)
+        visual_layout.addWidget(self.metadata_label)
 
         self.time_label = QLabel("00:00:00 / 00:00:00")
         self.time_label.setAlignment(Qt.AlignCenter)
         font = self.time_label.font()
         font.setPointSize(9)
         self.time_label.setFont(font)
-        self.content_layout.addWidget(self.time_label)
+        visual_layout.addWidget(self.time_label)
 
         controls_layout = QHBoxLayout()
         self.prev_button = QPushButton("|<<")
@@ -284,6 +291,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         fade_row.addWidget(self.fade_dropdown)
         self.settings_panel_layout.addLayout(fade_row)
 
+        blur_row = QHBoxLayout()
+        blur_row.addWidget(QLabel("Blur:"))
+        blur_row.addStretch()
+        self.blur_dropdown = ThemeComboBox()
+        self.blur_dropdown.setFixedWidth(60)
+        self.blur_dropdown.setView(QListView())
+        self.blur_dropdown.addItems(["On", "Off"])
+        self.blur_dropdown.setCurrentText("On" if self.config.get_blur_enabled() else "Off")
+        self.blur_dropdown.setToolTip("Hide the blur effect when entering the Settings page.")
+        self.blur_dropdown.currentTextChanged.connect(lambda v: self.config.set_blur_enabled(v == "On"))
+        blur_row.addWidget(self.blur_dropdown)
+        self.settings_panel_layout.addLayout(blur_row)
+
         # Controls Section
         controls_header = QLabel("Controls")
         controls_header.setObjectName("settings_header")
@@ -295,6 +315,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
         self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        # Initialize Blur Effect for background depth
+        self.blur_effect = QGraphicsBlurEffect(self.visual_area)
+        self.blur_effect.setBlurHints(QGraphicsBlurEffect.AnimationHint)
+        self.blur_effect.setBlurRadius(0)
+        self.visual_area.setGraphicsEffect(self.blur_effect)
+
+        self.blur_animation = QPropertyAnimation(self.blur_effect, b"blurRadius")
+        self.blur_animation.setDuration(500)
+        self.blur_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _update_chapter_title_text(self, text):
         """Update the button text with elision."""
@@ -413,6 +443,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.settings_panel_animation.start()
+        
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(0)
+            self.blur_animation.setEndValue(10)
+            self.blur_animation.start()
+        else:
+            self.blur_effect.setBlurRadius(0)
 
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
@@ -424,6 +461,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.finished.connect(self._on_settings_hidden)
         self.settings_panel_animation.start()
+
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setEndValue(0)
+            self.blur_animation.start()
+        else:
+            self.blur_effect.setBlurRadius(0)
 
     def _on_settings_hidden(self):
         try:

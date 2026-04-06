@@ -11,6 +11,12 @@ class Config:
     def set_theme(self, name):
         self.settings.setValue("theme", name)
 
+    def get_blur_enabled(self):
+        return self.settings.value("blur_enabled", "false") == "true"
+
+    def set_blur_enabled(self, enabled):
+        self.settings.setValue("blur_enabled", str(enabled).lower())
+
     def get_theme_fade_duration(self):
         return int(self.settings.value("theme_fade_duration", 750))
 

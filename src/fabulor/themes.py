@@ -239,7 +239,6 @@ def get_stylesheet(theme_name="default"):
             color: {t['text']};
             border: 1px solid {t['accent']};
             font-size: 10px;
-            padding: 3px;
         }}
         TitleBar {{
             background-color: {t['bg_deep']};
