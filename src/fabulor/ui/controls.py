@@ -12,7 +12,7 @@ class ClickSlider(QWidget):
         self._minimum = 0
         self._maximum = 1000
         self._dragging = False
-        self.setFixedHeight(24)
+        #self.setFixedHeight(height)
 
     def minimum(self): return self._minimum
     def maximum(self): return self._maximum
