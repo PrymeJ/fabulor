@@ -53,11 +53,6 @@ class ChapterList(QListWidget):
             item.setSizeHint(widget.sizeHint())
             self.addItem(item)
             self.setItemWidget(item, widget)
-
-        # Update the UI with the current chapter name if available
-        if chapters:
-            initial_title = chapters[0].get('title') or "Chapter 1"
-            self.chapter_changed.emit(initial_title)
             
         # Cap height based on content
         list_height = min(400, self.count() * 30 + 10)

@@ -297,7 +297,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         panel_w = int(self.width() * 0.9)
         sidebar_y = 56
         self.settings_panel.setFixedWidth(panel_w)
-        self.settings_panel.setFixedHeight(self.sidebar.height())
         self.settings_panel.move(-panel_w, sidebar_y)
         self.settings_panel.show()
         self.settings_panel.raise_()
@@ -372,8 +371,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except ShutdownError:
             return
 
-        if self.current_chapter_label.text().strip() == "" and self.player.chapter_list:
+        if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
              self.chapter_list_widget.populate(self.player.duration or 0)
+             self._update_chapter_label_from_index(self.player.chapter or 0)
 
         pos = self.player.time_pos or 0
         dur = self.player.duration or 0

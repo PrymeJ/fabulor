@@ -74,7 +74,7 @@ THEMES = {
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "text":                "#F8F9FA", # Light text for general labels
-        "text_on_light_bg":    "#111111", # Darker near-black for Winterfell
+        "text_on_light_bg":    "#111111", 
     },
     "Rivendell": { # Lord of the Rings - Elven, light, natural
         "bg_deep":      "#E0E7E9",
@@ -207,7 +207,7 @@ def get_stylesheet(theme_name="default"):
         }}
         QWidget#settings_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border-right: 2px solid {t['accent']};
+            border-right: 1px solid {t['accent']};
             border-radius: 0px;
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
@@ -282,7 +282,7 @@ def get_stylesheet(theme_name="default"):
             border: none;
             padding: 2px;
             font-size: 13px;
-            color: {t.get('text_on_light_bg', t['text'])};
+            color: {t['text']};
         }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
@@ -335,20 +335,20 @@ def get_stylesheet(theme_name="default"):
             font-size: 10px; /* Smaller font for dropdown list items */
         }}
         /* Custom Scrollbar for QComboBox dropdown list */
-        QComboBox QListView QScrollBar:vertical,
+        QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#chapter_dropdown QScrollBar:vertical {{
-            width: 10px;
+            width: 8px;
             background: {t['bg_deep']};
             margin: 0px;
         }}
-        QComboBox QListView QScrollBar::handle:vertical,
+        QComboBox QAbstractItemView QScrollBar::handle:vertical,
         QListWidget#chapter_dropdown QScrollBar::handle:vertical {{
             background: {t['accent']};
             min-height: 20px;
-            border-radius: 2px;
+            border-radius: 4px;
         }}
-        QComboBox QListView QScrollBar::add-line:vertical,
-        QComboBox QListView QScrollBar::sub-line:vertical,
+        QComboBox QAbstractItemView QScrollBar::add-line:vertical,
+        QComboBox QAbstractItemView QScrollBar::sub-line:vertical,
         QListWidget#chapter_dropdown QScrollBar::add-line:vertical,
         QListWidget#chapter_dropdown QScrollBar::sub-line:vertical {{
             height: 0px;
