@@ -11,6 +11,12 @@ class Config:
     def set_theme(self, name):
         self.settings.setValue("theme", name)
 
+    def get_theme_fade_duration(self):
+        return int(self.settings.value("theme_fade_duration", 750))
+
+    def set_theme_fade_duration(self, ms):
+        self.settings.setValue("theme_fade_duration", ms)
+
     def get_volume(self):
         return int(self.settings.value("volume", 100))
 

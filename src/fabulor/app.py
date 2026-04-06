@@ -248,7 +248,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         theme_row = QHBoxLayout()
         theme_row.addWidget(QLabel("Theme:"))
+        theme_row.addStretch()
         self.theme_dropdown = ThemeComboBox()
+        self.theme_dropdown.setFixedWidth(160)
         self.theme_dropdown.setView(QListView()) # Required for QSS popup background styling
         self.theme_dropdown.setMaxVisibleItems(4) # Limit visible items to 4
         self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -262,6 +264,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_dropdown.activated[int].connect(self._on_theme_selected_from_dropdown)
         theme_row.addWidget(self.theme_dropdown)
         self.settings_panel_layout.addLayout(theme_row)
+
+        fade_row = QHBoxLayout()
+        fade_label = QLabel("Hover fade (ms):")
+        fade_row.addWidget(fade_label)
+        fade_row.addStretch()
+        self.fade_dropdown = ThemeComboBox()
+        self.fade_dropdown.setFixedWidth(60) # Match theme dropdown width for alignment
+        tooltip_text = "Adjust the duration of the cross-fade effect when\n" \
+        "previewing or selecting themes. Set to 0 to disable."
+        fade_label.setToolTip(tooltip_text)
+        self.fade_dropdown.setToolTip(tooltip_text)
+        self.fade_dropdown.setView(QListView())
+        self.fade_dropdown.setMaxVisibleItems(4)
+        self.fade_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.fade_dropdown.addItems(["0", "500", "750", "1000", "1500"])
+        self.fade_dropdown.setCurrentText(str(self.config.get_theme_fade_duration()))
+        self.fade_dropdown.currentTextChanged.connect(lambda v: self.config.set_theme_fade_duration(int(v)))
+        fade_row.addWidget(self.fade_dropdown)
+        self.settings_panel_layout.addLayout(fade_row)
 
         # Controls Section
         controls_header = QLabel("Controls")
@@ -342,13 +363,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _check_revert_theme(self):
         if not self._theme_selection_made and hasattr(self, "_previous_theme"):
             # Only revert if no selection was made (clicked outside)
-            self._on_theme_changed(self._previous_theme, save=False, fade_ms=200)
+            fade = int(self.config.get_theme_fade_duration() * 0.66)
+            self._on_theme_changed(self._previous_theme, save=False, fade_ms=fade)
             self.theme_dropdown.setCurrentText(self._previous_theme)
 
     def _on_theme_hovered(self, index):
         """Preview the theme visually without saving to config."""
         theme_name = self.theme_dropdown.itemText(index)
-        self._on_theme_changed(theme_name, save=False, fade_ms=150)
+        fade = int(self.config.get_theme_fade_duration() * 0.5)
+        self._on_theme_changed(theme_name, save=False, fade_ms=fade)
 
     def _on_theme_selected_from_dropdown(self, index):
         """Permanent selection made by user."""
