@@ -46,8 +46,6 @@ class TitleBar(QWidget):
             self.window().windowHandle().startSystemMove()
 
 
-
-
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     def __init__(self, parent=None):
         super().__init__()
@@ -152,6 +150,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
         self.volume_slider.setFixedWidth(100)
+        self.volume_slider.setFixedHeight(9)
         self.volume_slider.sliderPressed.connect(self._hide_popups)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.speed_button.clicked.connect(self._on_speed_clicked)
