@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect, QGraphicsBlurEffect, QGridLayout
+    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, Signal, QModelIndex
+    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor
 
@@ -12,23 +12,8 @@ from .config import Config
 from .themes import get_stylesheet, THEMES
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList
+from .ui.theme_manager import ThemeManager, ThemeComboBox
 from mpv import ShutdownError
-
-class ThemeComboBox(QComboBox):
-    """Custom QComboBox that provides signals for popup visibility events."""
-    aboutToShowPopup = Signal()
-    aboutToHidePopup = Signal()
-
-    def showPopup(self):
-        # Ensure mouse tracking is enabled for the popup view to trigger highlighted signals
-        self.view().setMouseTracking(True)
-        self.view().viewport().setMouseTracking(True)
-        self.aboutToShowPopup.emit()
-        super().showPopup()
-
-    def hidePopup(self):
-        super().hidePopup()
-        self.aboutToHidePopup.emit()
 
 class TitleBar(QWidget):
     def __init__(self, parent=None):
@@ -72,11 +57,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.sidebar_expanded = False
-        self._theme_selection_made = False # Flag for theme dropdown preview
         self.current_file = ""
         self.config = Config()
         self.player = Player()
-        self._current_theme_name = self.config.get_theme()
+        self.theme_manager = ThemeManager(self)
 
         self._setup_ui()
 
@@ -272,12 +256,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.theme_dropdown.addItems(sorted(list(THEMES.keys()))) # Sort themes alphabetically
         self.theme_dropdown.setCurrentText(self.config.get_theme())
-        self.theme_dropdown.aboutToShowPopup.connect(self._on_theme_dropdown_about_to_show)
-        self.theme_dropdown.aboutToHidePopup.connect(self._on_theme_dropdown_about_to_hide)
+        self.theme_dropdown.aboutToShowPopup.connect(self.theme_manager._on_theme_dropdown_about_to_show)
+        self.theme_dropdown.aboutToHidePopup.connect(self.theme_manager._on_theme_dropdown_about_to_hide)
         # Use view's 'entered' for reliable mouse-over, and 'highlighted' for keyboard navigation
-        self.theme_dropdown.view().entered.connect(lambda idx: self._on_theme_hovered(idx.row()))
-        self.theme_dropdown.highlighted[int].connect(self._on_theme_hovered)
-        self.theme_dropdown.activated[int].connect(self._on_theme_selected_from_dropdown)
+        self.theme_dropdown.view().entered.connect(lambda idx: self.theme_manager._on_theme_hovered(idx.row()))
+        self.theme_dropdown.highlighted[int].connect(self.theme_manager._on_theme_hovered)
+        self.theme_dropdown.activated[int].connect(self.theme_manager._on_theme_selected_from_dropdown)
         theme_row.addWidget(self.theme_dropdown)
         self.settings_panel_layout.addLayout(theme_row)
 
@@ -411,76 +395,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
-
-    def _on_theme_changed(self, theme_name, save=True, fade_ms=300):
-        """Update the appearance with a subtle fade transition."""
-        # If the requested theme is already what's shown, just save and exit
-        if getattr(self, "_current_theme_name", None) == theme_name:
-            if save: self.config.set_theme(theme_name)
-            return
-
-        # Clear existing overlays to ensure we grab the "clean" state
-        # We don't deleteLater here because we need them gone BEFORE the grab()
-        for old_overlay in self.findChildren(QLabel, "theme_fade_overlay"):
-            old_overlay.setObjectName("deleting_overlay")
-            old_overlay.hide() 
-
-        self._current_theme_name = theme_name
-
-        if fade_ms > 0:
-            # 2. Take a clean snapshot of the current state
-            pix = self.grab()
-            overlay = QLabel(self)
-            overlay.setObjectName("theme_fade_overlay")
-            overlay.setPixmap(pix)
-            overlay.setGeometry(self.rect())
-            overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
-            overlay.show()
-            overlay.raise_()
-            
-            eff = QGraphicsOpacityEffect(overlay)
-            overlay.setGraphicsEffect(eff)
-            
-            # Parent the animation to the overlay so it survives reassignment
-            anim = QPropertyAnimation(eff, b"opacity", overlay)
-            anim.setDuration(fade_ms)
-            anim.setStartValue(1.0)
-            anim.setEndValue(0.0)
-            anim.finished.connect(overlay.deleteLater)
-            anim.start()
-            self._theme_fade_anim = anim
-
-        if save:
-            self.config.set_theme(theme_name)
-        self.setStyleSheet(get_stylesheet(theme_name))
-        self._update_speed_grid_styling() # Re-apply speed grid styling with new theme
-
-    def _on_theme_dropdown_about_to_show(self):
-        self._previous_theme = self.config.get_theme() # Save current theme for potential revert
-        self._theme_selection_made = False # Reset flag
-
-    def _on_theme_dropdown_about_to_hide(self):
-        # Delay the revert check to allow 'activated' signal to set the selection flag first
-        QTimer.singleShot(10, self._check_revert_theme)
-
-    def _check_revert_theme(self):
-        if not self._theme_selection_made and hasattr(self, "_previous_theme"):
-            # Only revert if no selection was made (clicked outside)
-            fade = int(self.config.get_theme_fade_duration() * 0.66)
-            self._on_theme_changed(self._previous_theme, save=False, fade_ms=fade)
-            self.theme_dropdown.setCurrentText(self._previous_theme)
-
-    def _on_theme_hovered(self, index):
-        """Preview the theme visually without saving to config."""
-        theme_name = self.theme_dropdown.itemText(index)
-        fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(theme_name, save=False, fade_ms=fade)
-
-    def _on_theme_selected_from_dropdown(self, index):
-        """Permanent selection made by user."""
-        self._theme_selection_made = True
-        theme_name = self.theme_dropdown.itemText(index)
-        self._on_theme_changed(theme_name)
 
     def _hide_popups(self):
         """Closes any open floating menus."""
@@ -757,7 +671,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_speed_grid_styling(self):
         """Applies the current theme's gradient styling to the speed grid buttons."""
-        t = THEMES.get(self._current_theme_name, THEMES["The Color Purple"])
+        t = THEMES.get(self.theme_manager._current_theme_name, THEMES["The Color Purple"])
         accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 
