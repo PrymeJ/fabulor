@@ -11,6 +11,12 @@ class Config:
     def set_theme(self, name):
         self.settings.setValue("theme", name)
 
+    def get_volume(self):
+        return int(self.settings.value("volume", 100))
+
+    def set_volume(self, value):
+        self.settings.setValue("volume", value)
+
     def get_skip_duration(self):
         return int(self.settings.value("skip_duration", 10))
 

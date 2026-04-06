@@ -149,7 +149,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider = ClickSlider(Qt.Horizontal)
         self.volume_slider.setObjectName("volume_slider")
         self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(100)
+        self.volume_slider.setValue(self.config.get_volume())
         self.volume_slider.setFixedWidth(100)
         self.volume_slider.setFixedHeight(9)
         self.volume_slider.sliderPressed.connect(self._hide_popups)
@@ -262,6 +262,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         last_pos = self.config.get_last_position(self.current_file)
         if last_pos > 0:
             self.player.time_pos = last_pos
+        self.player.volume = self.volume_slider.value()
 
     def _on_theme_changed(self, theme_name):
         """Update the configuration and apply the new stylesheet."""
@@ -607,6 +608,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def closeEvent(self, event):
         if self.player:
+            self.config.set_volume(self.volume_slider.value())
             self.config.set_last_position(self.current_file, self.player.time_pos)
             self.player.terminate()
         event.accept()
