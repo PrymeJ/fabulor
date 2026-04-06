@@ -39,7 +39,7 @@ THEMES = {
         "panel_opacity_hover": 0.95,
         "text":                "#E0E0E0",
     },
-    "Chatsubo": { # Cyberpunk 2077 - Dark, vibrant neons
+    "Chatsubo": { # Neuromancer - Dark, vibrant neons
         "bg_deep":      "#0D001A",
         "bg_main":      "#1A002E", # Deep purple background
         "slider_overall_bg":   "#333333",
@@ -58,6 +58,27 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "text":                "#E0E0E0",
         "dropdown_text":       "#FFFF00", # Yellow font
+    },
+    "Gravity's Rainbow": { # Psychedelic rainbow theme
+        "bg_deep":      "#1a0033",
+        "bg_main":      "#2b0052",
+        "slider_overall_bg":   "#4B0082",
+        "slider_overall_fill": "#FF0000", # Red
+        "slider_chapter_bg":   "#330066",
+        "slider_chapter_fill": "#FF7F00", # Orange
+        "slider_vol_bg":       "#1a0033",
+        "slider_vol_fill":     "#FFFF00", # Yellow
+        "accent":              "#00FF00", # Green
+        "accent_light":        "#00FFFF", # Cyan
+        "accent_dark":         "#0000FF", # Blue
+        "bg_sidebar":          "#1a0033",
+        "bg_dropdown":         "#2b0052",
+        "curr_chap_highlight": "#8B00FF", # Violet
+        "sidebar_opacity":     0.7,
+        "panel_opacity_hover": 0.9,
+        "text":                "#00FFFF", # Cyan text
+        "progress_text":       "#FF00FF", # Magenta progress
+        "button_text":         "#2b0052", # Deep purple button text
     },
     "Hear Me Roar": {
         "bg_deep":      "#230903",
@@ -115,6 +136,27 @@ THEMES = {
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "text":                "#ECF0F1", # Light text
+    },
+    "Red Rising": { # Tones of red, Martian aesthetic
+        "bg_deep":      "#2b0000",
+        "bg_main":      "#4a0000",
+        "slider_overall_bg":   "#1a0000",
+        "slider_overall_fill": "#ff0000",
+        "slider_chapter_bg":   "#2b0000",
+        "slider_chapter_fill": "#a30000",
+        "slider_vol_bg":       "#1a0000",
+        "slider_vol_fill":     "#ff4d4d",
+        "accent":              "#ff0000",
+        "accent_light":        "#ff6666",
+        "accent_dark":         "#800000",
+        "bg_sidebar":          "#2b0000",
+        "bg_dropdown":         "#4a0000",
+        "curr_chap_highlight": "#ff0000",
+        "sidebar_opacity":     0.7,
+        "panel_opacity_hover": 0.9,
+        "text":                "#ffcccc",
+        "button_text":         "#000000",
+        "progress_text":       "#f88a8a", # Contrast against bright red fill
     },
     "Rivendell": { # Lord of the Rings - Elven, light, natural
         "bg_deep":      "#E0E7E9",
@@ -192,6 +234,27 @@ THEMES = {
         "sidebar_opacity": 0.6,
         "panel_opacity_hover": 0.9,
         "text":         "#F0F0F0",  # all labels and button text
+    },
+    "The Picture of Dorian Grey": { # Dark grey, orange, and brown
+        "bg_deep":      "#121212",
+        "bg_main":      "#1E1E1E",
+        "slider_overall_bg":   "#333333",
+        "slider_overall_fill": "#E67E22", # Orange
+        "slider_chapter_bg":   "#252525",
+        "slider_chapter_fill": "#8B4513", # Saddle Brown
+        "slider_vol_bg":       "#121212",
+        "slider_vol_fill":     "#D35400", # Pumpkin
+        "accent":              "#E67E22",
+        "accent_light":        "#F39C12",
+        "accent_dark":         "#A04000",
+        "bg_sidebar":          "#121212",
+        "bg_dropdown":         "#1E1E1E",
+        "curr_chap_highlight": "#8B4513",
+        "sidebar_opacity":     0.8,
+        "panel_opacity_hover": 0.9,
+        "text":                "#E8BC6C", # Dark Grey/Silver (non-white)
+        "button_text":         "#000000",
+        "progress_text":       "#FCD586", # Match bg_deep for visibility on orange fill
     },
     "Winterfell": {
         "bg_deep":      "#212529",
