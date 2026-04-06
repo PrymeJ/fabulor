@@ -38,6 +38,22 @@ class Config:
     def get_speed_increment(self):
         return float(self.settings.value("speed_increment", 0.1))
 
+    def set_speed_increment(self, value):
+        self.settings.setValue("speed_increment", float(value))
+
+    def get_default_speed(self):
+        return float(self.settings.value("default_speed", 1.0))
+
+    def set_default_speed(self, value):
+        self.settings.setValue("default_speed", float(value))
+
+    def get_book_speed(self, file_path):
+        val = self.settings.value(f"speed_{file_path}")
+        return float(val) if val is not None else None
+
+    def set_book_speed(self, file_path, speed):
+        self.settings.setValue(f"speed_{file_path}", speed)
+
     def get_day_start_hour(self):
         return int(self.settings.value("day_start_hour", 0))
 

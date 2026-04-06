@@ -1,11 +1,11 @@
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect, QGraphicsBlurEffect
+    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect, QGraphicsBlurEffect, QGridLayout
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, Signal, QModelIndex
 )
-from PySide6.QtGui import QPixmap, QGuiApplication
+from PySide6.QtGui import QPixmap, QGuiApplication, QColor
 
 from .player import Player
 from .config import Config
@@ -84,6 +84,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.timeout.connect(self._update_ui_sync)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
 
+        self._pending_panel_open = None # Used to manage panel opening after sidebar animation
         # Install event filter on the application to catch clicks outside popups
         QApplication.instance().installEventFilter(self)
 
@@ -181,7 +182,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider.setFixedHeight(9)
         self.volume_slider.sliderPressed.connect(self._hide_popups)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        self.speed_button.clicked.connect(self._on_speed_clicked)
+        self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
+        self.speed_button.clicked.connect(self._on_speed_button_clicked)
         secondary_layout.addWidget(QLabel("Vol:"))
         secondary_layout.addWidget(self.volume_slider)
         secondary_layout.addStretch()
@@ -233,6 +236,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
         self.settings_trigger_btn.clicked.connect(self._open_settings_flow)
         self.sidebar_layout.addWidget(self.settings_trigger_btn)
+
+        self.speed_trigger_btn = QPushButton("Playback")
+        self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
+        self.speed_trigger_btn.clicked.connect(self._open_speed_flow)
+        self.sidebar_layout.addWidget(self.speed_trigger_btn)
+
         self.sidebar_layout.addStretch()
         
         # Start flush under progress bar: title (32) + progress (24) = 56
@@ -308,13 +317,72 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         controls_header = QLabel("Controls")
         controls_header.setObjectName("settings_header")
         self.settings_panel_layout.addWidget(controls_header)
-        self.settings_panel_layout.addWidget(QLabel("Skip Interval: 10s (stub)"))
-
+        self.settings_panel_layout.addWidget(QLabel("Skip interval"))
         self.settings_panel_layout.addStretch()
         self.settings_panel.hide()
+
+        # Initialize Speed Panel
+        self.speed_panel = QWidget(self)
+        self.speed_panel.setObjectName("speed_panel")
+        self.speed_panel_layout = QVBoxLayout(self.speed_panel)
+        
+        speed_header = QLabel("Playback Speed")
+        speed_header.setObjectName("settings_header") # Use same style as settings header
+        speed_header.setObjectName("settings_header")
+        self.speed_panel_layout.addWidget(speed_header)
+
+        # Speed Grid
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        presets = [
+            0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
+            3.25, 3.50, 3.75, 4.00, 5.00, 6.00, 7.00, 8.00
+        ]
+        self._speed_presets = presets # Store presets for dynamic styling
+        self._speed_grid_buttons = [] # Store buttons for dynamic styling
+
+        for i, val in enumerate(self._speed_presets):
+            btn = QPushButton(f"{val:.2f}x")
+            btn.setFixedSize(55, 30)
+            btn.clicked.connect(lambda _, v=val: (self._set_speed(v), self._close_speed_flow()))
+            grid.addWidget(btn, i // 4, i % 4)
+            self._speed_grid_buttons.append(btn)
+        self.speed_panel_layout.addLayout(grid)
+
+        # Speed Settings
+        def_speed_row = QHBoxLayout()
+        def_speed_row.addWidget(QLabel("Default Speed:"))
+        def_speed_row.addStretch()
+        self.def_speed_dropdown = ThemeComboBox()
+        self.def_speed_dropdown.setFixedWidth(60)
+        self.def_speed_dropdown.addItems(["1.0", "1.5", "1.75", "2.0", "2.25", "2.5"])
+        self.def_speed_dropdown.setCurrentText(str(self.config.get_default_speed()))
+        self.def_speed_dropdown.currentTextChanged.connect(lambda v: self.config.set_default_speed(float(v)))
+        def_speed_row.addWidget(self.def_speed_dropdown)
+        self.speed_panel_layout.addLayout(def_speed_row)
+        step_row = QHBoxLayout()
+        step_row.addWidget(QLabel("Step:"))
+        step_row.addStretch()
+        self.step_dropdown = ThemeComboBox()
+        self.step_dropdown.setFixedWidth(60)
+        self.step_dropdown.addItems(["0.05", "0.1", "0.25", "0.5"])
+        self.step_dropdown.setCurrentText(str(self.config.get_speed_increment()))
+        self.step_dropdown.currentTextChanged.connect(lambda v: self.config.set_speed_increment(float(v)))
+        step_row.addWidget(self.step_dropdown)
+        self.speed_panel_layout.addLayout(step_row)
+
+        self.speed_panel_layout.addStretch()
+        self.speed_panel.hide()
+
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
         self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")
+        self.speed_panel_animation.setDuration(300)
+        self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._update_speed_grid_styling() # Apply initial styling
 
         # Initialize Blur Effect for background depth
         self.blur_effect = QGraphicsBlurEffect(self.visual_area)
@@ -339,19 +407,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if last_pos > 0:
             self.player.time_pos = last_pos
         self.player.volume = self.volume_slider.value()
+        
+        saved_speed = self.config.get_book_speed(self.current_file)
+        speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
+        self._set_speed(speed, save=False)
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=300):
         """Update the appearance with a subtle fade transition."""
+        # If the requested theme is already what's shown, just save and exit
+        if getattr(self, "_current_theme_name", None) == theme_name:
+            if save: self.config.set_theme(theme_name)
+            return
+
         # Clear existing overlays to ensure we grab the "clean" state
         # We don't deleteLater here because we need them gone BEFORE the grab()
         for old_overlay in self.findChildren(QLabel, "theme_fade_overlay"):
             old_overlay.setObjectName("deleting_overlay")
             old_overlay.hide() 
-
-        # If the requested theme is already what's shown, just save and exit
-        if getattr(self, "_current_theme_name", None) == theme_name:
-            if save: self.config.set_theme(theme_name)
-            return
 
         self._current_theme_name = theme_name
 
@@ -381,6 +453,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if save:
             self.config.set_theme(theme_name)
         self.setStyleSheet(get_stylesheet(theme_name))
+        self._update_speed_grid_styling() # Re-apply speed grid styling with new theme
 
     def _on_theme_dropdown_about_to_show(self):
         self._previous_theme = self.config.get_theme() # Save current theme for potential revert
@@ -417,22 +490,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._toggle_sidebar()
         if self.settings_panel.isVisible():
             self._close_settings_flow()
+        if self.speed_panel.isVisible():
+            self._close_speed_flow()
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""
         if self.sidebar_expanded:
-            self.sidebar_animation.finished.connect(self._start_settings_entry)
+            self._pending_panel_open = "settings"
+            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
             self._toggle_sidebar()
         else:
             self._start_settings_entry()
 
     def _start_settings_entry(self):
-        """Starts the settings panel slide-in animation."""
-        try:
-            self.sidebar_animation.finished.disconnect(self._start_settings_entry)
-        except:
-            pass
-        
+        """Starts the settings panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
         panel_w = int(self.width() * 0.9)
         sidebar_y = 56
         self.settings_panel.setFixedWidth(panel_w)
@@ -450,6 +521,63 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.blur_animation.start()
         else:
             self.blur_effect.setBlurRadius(0)
+
+    def _open_speed_flow(self):
+        if self.sidebar_expanded:
+            self._pending_panel_open = "speed"
+            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            self._toggle_sidebar()
+        else:
+            self._start_speed_entry()
+
+    def _start_speed_entry(self):
+        """Starts the speed panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        panel_w = int(self.width() * 0.9)
+        sidebar_y = 56
+        self.speed_panel.setFixedWidth(panel_w)
+        self.speed_panel.move(-panel_w, sidebar_y)
+        self.speed_panel.show()
+        self.speed_panel.raise_()
+        
+        self.speed_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
+        self.speed_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.speed_panel_animation.start()
+        
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(0)
+            self.blur_animation.setEndValue(10)
+            self.blur_animation.start()
+
+    def _on_sidebar_closed_for_panel(self):
+        """Handler for sidebar animation finishing when a panel needs to open."""
+        try:
+            self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
+        except RuntimeError:
+            pass # Already disconnected or not connected, fine.
+
+        if self._pending_panel_open == "settings": self._start_settings_entry()
+        elif self._pending_panel_open == "speed": self._start_speed_entry()
+        self._pending_panel_open = None
+
+    def _close_speed_flow(self):
+        if self.speed_panel_animation.state() == QPropertyAnimation.Running:
+            return
+        panel_w = self.speed_panel.width()
+        sidebar_y = 56
+        self.speed_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.speed_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        self.speed_panel_animation.finished.connect(self._on_speed_hidden)
+        self.speed_panel_animation.start()
+
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setEndValue(0)
+            self.blur_animation.start()
+
+    def _on_speed_hidden(self):
+        try: self.speed_panel_animation.finished.disconnect(self._on_speed_hidden)
+        except: pass
+        self.speed_panel.hide()
 
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
@@ -496,6 +624,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.sidebar_expanded = False
             
         self.sidebar_animation.start()
+
+    def _on_speed_button_clicked(self):
+        """Left click toggles the speed panel."""
+        if self.speed_panel.isVisible():
+            self._close_speed_flow()
+        else:
+            self._hide_popups()
+            self._start_speed_entry()
 
     def _show_chapter_dropdown(self):
         """Positions and shows the floating chapter list."""
@@ -595,16 +731,51 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             self.player.volume = value
 
-    def _on_speed_clicked(self):
-        """Cycles through speeds: 1.0, 2.0, 3.0, 4.0."""
+    def _set_speed(self, value, save=True):
+        """Applies a specific speed value."""
+        if self.player:
+            self.player.speed = value
+            self.speed_button.setText(f"{value:.2f}x")
+            if save and self.current_file:
+                self.config.set_book_speed(self.current_file, value)
+
+    def _on_speed_right_clicked(self, pos):
+        """Right click increments, Shift+Right click decrements."""
         self._hide_popups()
-        if not self.player:
-            return
-        speeds = [1.0, 2.0, 3.0, 4.0]
-        current = self.player.speed or 1.0
-        next_speed = next((s for s in speeds if s > current + 0.01), speeds[0])
-        self.player.speed = next_speed
-        self.speed_button.setText(f"{next_speed:.2f}x")
+        if not self.player: return
+        
+        step = self.config.get_speed_increment()
+        modifiers = QGuiApplication.keyboardModifiers()
+        current = self.player.speed or self.config.get_default_speed()
+        
+        if modifiers & Qt.ShiftModifier:
+            new_speed = max(0.25, current - step)
+        else:
+            new_speed = min(8.0, current + step)
+            
+        self._set_speed(new_speed)
+
+    def _update_speed_grid_styling(self):
+        """Applies the current theme's gradient styling to the speed grid buttons."""
+        t = THEMES.get(self._current_theme_name, THEMES["The Color Purple"])
+        accent = QColor(t['accent'])
+        btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
+
+        for i, btn in enumerate(self._speed_grid_buttons):
+            # Gradient logic: Opacity increases from 30% to 100% as speed increases
+            alpha = int(75 + (180 * (i / (len(self._speed_presets) - 1))))
+            c = QColor(accent)
+            c.setAlpha(alpha)
+            btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
+
+
+    def mousePressEvent(self, event):
+        # Do not hide popups if clicking inside the panels
+        for panel in [self.settings_panel, self.speed_panel]:
+            if panel.isVisible() and panel.geometry().contains(event.pos()):
+                return
+        self._hide_popups()
+        super().mousePressEvent(event)
 
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
@@ -684,6 +855,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Hardcoded heights as requested
         self.sidebar.setFixedHeight(200)
         self.settings_panel.setFixedHeight(370)
+        self.speed_panel.setFixedHeight(320)
+
+        if self.speed_panel.isVisible():
+            self.speed_panel.move(0, sidebar_y)
+        else:
+            self.speed_panel.move(-self.speed_panel.width(), sidebar_y)
 
         self.settings_panel.setFixedWidth(int(self.width() * 0.9))
 
@@ -711,6 +888,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # If settings or chapter list is open, dismiss them
             if self.settings_panel.isVisible():
                 self._close_settings_flow()
+            elif self.speed_panel.isVisible():
+                self._close_speed_flow()
             elif hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
                 self.chapter_list_widget.hide()
             else:
@@ -755,11 +934,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if not self.chapter_list_widget.geometry().contains(gp):
                     self._hide_popups()
         return super().eventFilter(obj, event)
-
-    def mousePressEvent(self, event):
-        self._hide_popups()
-        super().mousePressEvent(event)
-
     def closeEvent(self, event):
         if self.player:
             self.config.set_volume(self.volume_slider.value())

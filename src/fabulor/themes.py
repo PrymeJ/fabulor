@@ -308,7 +308,7 @@ def get_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
-        QWidget#settings_panel {{
+        QWidget#settings_panel, QWidget#speed_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
