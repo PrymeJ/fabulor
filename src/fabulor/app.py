@@ -198,16 +198,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Initialize Sidebar (hidden off-screen to the left)
         self.sidebar = QWidget(self)
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(70)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(10, 40, 10, 10)
+        self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
         
         sidebar_title = QLabel("Settings")
-        sidebar_title.setStyleSheet("font-size: 18px; font-weight: bold; margin-bottom: 20px;")
+        sidebar_title.setObjectName("sidebar_title")
         self.sidebar_layout.addWidget(sidebar_title)
         self.sidebar_layout.addStretch()
         
-        self.sidebar.move(-220, 0)
+        # Start flush under progress bar: title (32) + progress (24) = 56
+        self.sidebar.move(-50, 56)
+        self.sidebar.show()
         self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
         self.sidebar_animation.setDuration(300)
         self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -231,14 +233,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.sidebar_animation.state() == QPropertyAnimation.Running:
             return
             
+        # Use explicit heights to avoid layout race conditions
+        sidebar_y = 32 + 24 
+        width = self.sidebar.width()
+
         if not self.sidebar_expanded:
             self.sidebar.raise_()
-            self.sidebar_animation.setStartValue(QPoint(-220, 0))
-            self.sidebar_animation.setEndValue(QPoint(0, 0))
+            self.sidebar_animation.setStartValue(QPoint(-width, sidebar_y))
+            self.sidebar_animation.setEndValue(QPoint(0, sidebar_y))
             self.sidebar_expanded = True
         else:
-            self.sidebar_animation.setStartValue(QPoint(0, 0))
-            self.sidebar_animation.setEndValue(QPoint(-220, 0))
+            self.sidebar_animation.setStartValue(QPoint(0, sidebar_y))
+            self.sidebar_animation.setEndValue(QPoint(-width, sidebar_y))
             self.sidebar_expanded = False
             
         self.sidebar_animation.start()
@@ -423,7 +429,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def resizeEvent(self, event):
         """Handle window resize to update cover art scaling."""
         super().resizeEvent(event)
-        self.sidebar.setFixedHeight(self.height())
+        
+        # Calculate height: stop before the transport controls
+        # Start Y is exactly 56 (32 title + 24 progress)
+        sidebar_y = 56
+        
+        # Get the button position relative to the window.
+        # If layout hasn't run yet, the button might be at the top of the content (56px),
+        # so we trigger the fallback if it's not yet below the sidebar start.
+        raw_y = self.play_pause_button.mapTo(self, QPoint(0, 0)).y()
+        controls_y = raw_y if raw_y > sidebar_y else (self.height() * 0.6)
+        self.sidebar.setFixedHeight(max(0, int(controls_y - sidebar_y - 5)))
+
+        # Ensure sidebar position is maintained during resize
+        if not self.sidebar_expanded:
+            self.sidebar.move(-self.sidebar.width(), sidebar_y)
+        else:
+            self.sidebar.move(0, sidebar_y)
+
         self._update_cover_art_scaling()
         # Reposition percentage label
         if hasattr(self, 'progress_percentage_label'):

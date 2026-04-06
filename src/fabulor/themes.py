@@ -12,12 +12,21 @@ THEMES = {
         "accent_light": "#9D4EDD",  # button hover
         "accent_dark":  "#5A189A",  # button pressed
         "bg_sidebar":   "#120024",  # drawer background
+        "sidebar_opacity": 0.6,
+        "sidebar_opacity_hover": 0.8,
         "text":         "#F0F0F0",  # all labels and button text
     }
 }
 
+def _hex_to_rgb(hex_str):
+    h = hex_str.lstrip('#')
+    return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
+
 def get_stylesheet(theme_name="default"):
     t = THEMES.get(theme_name, THEMES["default"])
+    sidebar_rgb = _hex_to_rgb(t['bg_sidebar'])
+    text_rgb = _hex_to_rgb(t['text'])
+
     return f"""
         QWidget#mainwindow {{
             background-color: {t['bg_main']};
@@ -35,13 +44,27 @@ def get_stylesheet(theme_name="default"):
             border-top-right-radius: 8px;
         }}
         QWidget#sidebar {{
-            background-color: {t['bg_sidebar']};
+            background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});
             border-right: 1px solid {t['slider_overall_bg']};
             border-radius: 0px;
+        }}
+        QWidget#sidebar:hover {{
+            background-color: rgba({sidebar_rgb}, {t['sidebar_opacity_hover']});
         }}
         TitleBar QLabel {{
             color: {t['text']};
             font-weight: bold;
+        }}
+        QWidget#sidebar QLabel {{
+            font-size: 12px;
+            color: rgba({text_rgb}, {t['sidebar_opacity']});
+        }}
+        QWidget#sidebar:hover QLabel {{
+            color: rgba({text_rgb}, {t['sidebar_opacity_hover']});
+        }}
+        QLabel#sidebar_title {{
+            font-weight: bold;
+            margin-bottom: 10px;
         }}
         TitleBar QPushButton {{
             background: transparent;
