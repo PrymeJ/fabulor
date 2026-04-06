@@ -11,6 +11,7 @@ THEMES = {
         "accent":              "#7B2CBF",  # primary buttons, hover states
         "accent_light": "#9D4EDD",  # button hover
         "accent_dark":  "#5A189A",  # button pressed
+        "bg_sidebar":   "#120024",  # drawer background
         "text":         "#F0F0F0",  # all labels and button text
     }
 }
@@ -32,6 +33,11 @@ def get_stylesheet(theme_name="default"):
             background-color: {t['bg_deep']};
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
+        }}
+        QWidget#sidebar {{
+            background-color: {t['bg_sidebar']};
+            border-right: 1px solid {t['slider_overall_bg']};
+            border-radius: 0px;
         }}
         TitleBar QLabel {{
             color: {t['text']};

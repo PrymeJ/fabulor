@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QSizePolicy, QApplication
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QEvent
+from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QGuiApplication
 
 from .player import Player
@@ -56,6 +56,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = QPixmap()
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
+        self.sidebar_expanded = False
         self.config = Config()
         self.player = Player()
 
@@ -194,6 +195,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # The _update_chapter_title_text already handles setting the text with elision
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
 
+        # Initialize Sidebar (hidden off-screen to the left)
+        self.sidebar = QWidget(self)
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(220)
+        self.sidebar_layout = QVBoxLayout(self.sidebar)
+        self.sidebar_layout.setContentsMargins(10, 40, 10, 10)
+        
+        sidebar_title = QLabel("Settings")
+        sidebar_title.setStyleSheet("font-size: 18px; font-weight: bold; margin-bottom: 20px;")
+        self.sidebar_layout.addWidget(sidebar_title)
+        self.sidebar_layout.addStretch()
+        
+        self.sidebar.move(-220, 0)
+        self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
+        self.sidebar_animation.setDuration(300)
+        self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
+
     def _update_chapter_title_text(self, text):
         """Update the button text with elision."""
         metrics = self.current_chapter_label.fontMetrics()
@@ -205,6 +223,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Closes any open floating menus."""
         if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
             self.chapter_list_widget.hide()
+        if self.sidebar_expanded:
+            self._toggle_sidebar()
+
+    def _toggle_sidebar(self):
+        """Slides the sidebar in or out."""
+        if self.sidebar_animation.state() == QPropertyAnimation.Running:
+            return
+            
+        if not self.sidebar_expanded:
+            self.sidebar.raise_()
+            self.sidebar_animation.setStartValue(QPoint(-220, 0))
+            self.sidebar_animation.setEndValue(QPoint(0, 0))
+            self.sidebar_expanded = True
+        else:
+            self.sidebar_animation.setStartValue(QPoint(0, 0))
+            self.sidebar_animation.setEndValue(QPoint(-220, 0))
+            self.sidebar_expanded = False
+            
+        self.sidebar_animation.start()
 
     def _show_chapter_dropdown(self):
         """Positions and shows the floating chapter list."""
@@ -386,6 +423,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def resizeEvent(self, event):
         """Handle window resize to update cover art scaling."""
         super().resizeEvent(event)
+        self.sidebar.setFixedHeight(self.height())
         self._update_cover_art_scaling()
         # Reposition percentage label
         if hasattr(self, 'progress_percentage_label'):
@@ -395,6 +433,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if event.button() == Qt.LeftButton:
             self._hide_popups()
             self.windowHandle().startSystemMove()
+        elif event.button() == Qt.RightButton:
+            self._toggle_sidebar()
 
     def toggle_play_pause(self):
         self._hide_popups()
