@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QSizePolicy, QApplication
 )
-from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtCore import Qt, QTimer, QPoint, QEvent
 from PySide6.QtGui import QPixmap, QGuiApplication
 
 from .player import Player
@@ -10,6 +10,7 @@ from .config import Config
 from .themes import get_stylesheet
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList
+from mpv import ShutdownError
 
 
 class TitleBar(QWidget):
@@ -40,18 +41,21 @@ class TitleBar(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # This widget is part of the main window, so its parent window handles popups
+            self.window()._hide_popups()
             self.window().windowHandle().startSystemMove()
 
 
 
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
-    def __init__(self):
+    def __init__(self, parent=None):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
 
         self.current_cover_pixmap = QPixmap()
         self.is_slider_dragging = False
+        self.is_chapter_slider_dragging = False
         self.config = Config()
         self.player = Player()
 
@@ -60,6 +64,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self._update_ui_sync)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
+
+        # Install event filter on the application to catch clicks outside popups
+        QApplication.instance().installEventFilter(self)
 
         sample_file = "/home/pryme/test.m4b"
         self.player.load_book(sample_file)
@@ -86,6 +93,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Progress slider
         self.progress_slider = ClickSlider(Qt.Horizontal)
+        self.progress_slider.setObjectName("overall_progress")
+        self.progress_slider.sliderPressed.connect(self._hide_popups)
         self.progress_slider.setRange(0, 1000)
         self.progress_slider.setFixedHeight(24)
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
@@ -108,12 +117,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cover_art_label.setAlignment(Qt.AlignCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cover_art_label.setMinimumSize(280, 280)
-        self.cover_art_label.mousePressEvent = lambda e: (self.windowHandle().startSystemMove() if e.button() == Qt.LeftButton else None)
+        self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
         self.content_layout.addWidget(self.cover_art_label)
 
         self.metadata_label = QLabel("Author - Title")
         self.metadata_label.setAlignment(Qt.AlignCenter)
-        self.metadata_label.mousePressEvent = lambda e: (self.windowHandle().startSystemMove() if e.button() == Qt.LeftButton else None)
+        self.metadata_label.mousePressEvent = self._on_drag_area_pressed
         self.content_layout.addWidget(self.metadata_label)
 
         self.time_label = QLabel("00:00:00 / 00:00:00")
@@ -138,9 +147,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_button = QPushButton("1.00x")
         self.speed_button.setFixedWidth(60)
         self.volume_slider = ClickSlider(Qt.Horizontal)
+        self.volume_slider.setObjectName("volume_slider")
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(100)
         self.volume_slider.setFixedWidth(100)
+        self.volume_slider.sliderPressed.connect(self._hide_popups)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.speed_button.clicked.connect(self._on_speed_clicked)
         secondary_layout.addWidget(QLabel("Vol:"))
@@ -155,47 +166,99 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.forward_button.clicked.connect(self.handle_forward)
         self.next_button.clicked.connect(self.handle_next)
 
+        # Chapter Progress Bar (under secondary layout, over chapter labels)
+        self.chapter_progress_slider = ClickSlider(Qt.Horizontal)
+        self.chapter_progress_slider.setObjectName("chapter_progress")
+        self.chapter_progress_slider.setRange(0, 1000)
+        self.chapter_progress_slider.setFixedHeight(12)
+        self.chapter_progress_slider.sliderPressed.connect(self._hide_popups)
+        self.chapter_progress_slider.sliderPressed.connect(self._on_chap_slider_pressed)
+        self.chapter_progress_slider.sliderReleased.connect(self._on_chap_slider_released)
+        self.content_layout.addWidget(self.chapter_progress_slider)
+
         chapter_container = QHBoxLayout()
         self.chap_elapsed_label = QLabel("00:00:00")
         self.chap_duration_label = QLabel("00:00:00")
-        self.current_chapter_label = QLabel(" ")
-        self.current_chapter_label.setAlignment(Qt.AlignCenter)
+        
+        # The "Trigger" for the dropdown
+        self.current_chapter_label = QPushButton("Select Chapter")
+        self.current_chapter_label.setObjectName("chapter_selector")
+        self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
+
         chapter_container.addWidget(self.chap_elapsed_label)
         chapter_container.addWidget(self.current_chapter_label, 1)
         chapter_container.addWidget(self.chap_duration_label)
         self.content_layout.addLayout(chapter_container)
 
-        self.chapter_list_widget = ChapterList()
-        self.content_layout.addWidget(self.chapter_list_widget)
-        self.chapter_list_widget.chapter_changed.connect(self.current_chapter_label.setText)
+        self.chapter_list_widget = ChapterList(self)
+        # The _update_chapter_title_text already handles setting the text with elision
+        self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
+
+    def _update_chapter_title_text(self, text):
+        """Update the button text with elision."""
+        metrics = self.current_chapter_label.fontMetrics()
+        # 160 is a safe width for the central area in a 300px window
+        elided = metrics.elidedText(text, Qt.ElideRight, 160)
+        self.current_chapter_label.setText(elided)
+
+    def _hide_popups(self):
+        """Closes any open floating menus."""
+        if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
+            self.chapter_list_widget.hide()
+
+    def _show_chapter_dropdown(self):
+        """Positions and shows the floating chapter list."""
+        if self.chapter_list_widget.isVisible():
+            self.chapter_list_widget.hide()
+            return
+
+        if not self.chapter_list_widget.count():
+            self.chapter_list_widget.populate(self.player.duration or 0) # Populate if empty
+            
+        # Recalculate height and position the menu centered above the label
+        # Ensure height is correct before positioning, re-populate if needed
+        if self.chapter_list_widget.count() == 0: # Re-check in case populate failed
+             self.chapter_list_widget.populate(self.player.duration or 0)
+        label_pos = self.current_chapter_label.mapToGlobal(QPoint(0, 0))
+        x = label_pos.x() + (self.current_chapter_label.width() // 2) - (self.chapter_list_widget.width() // 2)
+        y = label_pos.y() - self.chapter_list_widget.height() - 5
+        
+        self.chapter_list_widget.move(x, y)
+        self.chapter_list_widget.show()
+        self.chapter_list_widget.setFocus()
 
     def _update_ui_sync(self):
-        """Update UI button text and labels based on the current player state."""
-        if not self.player:
+        try:
+            pos = self.player.time_pos or 0
+        except ShutdownError:
             return
 
         if self.current_chapter_label.text().strip() == "" and self.player.chapter_list:
              self.chapter_list_widget.populate(self.player.duration or 0)
 
-        if not self.is_slider_dragging:
-            pos = self.player.time_pos or 0
-            dur = self.player.duration or 0
-            if dur > 0:
+        pos = self.player.time_pos or 0
+        dur = self.player.duration or 0
+
+        if dur > 0:
+            if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
                 self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.time_label.setText(f"{self._format_time(pos)} / {self._format_time(dur)}")
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
-            curr_chap = self.player.chapter or 0
-            chap_list = self.player.chapter_list or []
-            if chap_list and curr_chap < len(chap_list):
-                start = chap_list[curr_chap].get('time', 0)
-                # End is the start of next chapter, or total duration if last
-                end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
-                
+        curr_chap = self.player.chapter or 0
+        chap_list = self.player.chapter_list or []
+        if chap_list and curr_chap < len(chap_list):
+            start = chap_list[curr_chap].get('time', 0)
+            end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
+            chap_dur = end - start
+            
+            if not self.is_chapter_slider_dragging:
                 c_elapsed = max(0, pos - start)
                 self.chap_elapsed_label.setText(self._format_time(c_elapsed))
                 self.chap_duration_label.setText(self._format_time(end - start))
+                if chap_dur > 0:
+                    self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
         is_eof = self.player.eof_reached
         
@@ -220,12 +283,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.time_pos = new_pos
         self.is_slider_dragging = False
 
+    def _on_chap_slider_pressed(self):
+        self.is_chapter_slider_dragging = True
+
+    def _on_chap_slider_released(self):
+        if self.player and self.player.duration:
+            curr_chap = self.player.chapter or 0
+            chap_list = self.player.chapter_list or []
+            if chap_list and curr_chap < len(chap_list):
+                dur = self.player.duration
+                start = chap_list[curr_chap].get('time', 0)
+                end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
+                chap_dur = end - start
+                if chap_dur > 0:
+                    new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
+                    self.player.time_pos = start + new_chap_pos
+        self.is_chapter_slider_dragging = False
+
     def _on_volume_changed(self, value):
+        self._hide_popups()
         if self.player:
             self.player.volume = value
 
     def _on_speed_clicked(self):
         """Cycles through speeds: 1.0, 2.0, 3.0, 4.0."""
+        self._hide_popups()
         if not self.player:
             return
         speeds = [1.0, 2.0, 3.0, 4.0]
@@ -247,9 +329,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Ensure index is non-negative to avoid Python's negative indexing (which picks the last chapter)
         if 0 <= index < len(chaps):
             title = chaps[index].get('title') or f"Chapter {index + 1}"
-            self.current_chapter_label.setText(title)
+            self._update_chapter_title_text(title)
             # Also sync the list selection visually
             self.chapter_list_widget.setCurrentRow(index)
+
+            # Update tooltips for navigation buttons
+            if index > 0:
+                prev_title = chaps[index - 1].get('title') or f"Chapter {index}"
+                self.prev_button.setToolTip(prev_title)
+            else:
+                self.prev_button.setToolTip("")
+
+            if index < len(chaps) - 1:
+                next_title = chaps[index + 1].get('title') or f"Chapter {index + 2}"
+                self.next_button.setToolTip(next_title)
+            else:
+                self.next_button.setToolTip("")
 
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""
@@ -296,7 +391,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if hasattr(self, 'progress_percentage_label'):
             self.progress_percentage_label.resize(self.progress_slider.size())
 
+    def _on_drag_area_pressed(self, event):
+        if event.button() == Qt.LeftButton:
+            self._hide_popups()
+            self.windowHandle().startSystemMove()
+
     def toggle_play_pause(self):
+        self._hide_popups()
         if not self.player:
             return
         if self.play_pause_button.text() == "Restart":
@@ -306,17 +407,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.pause = not self.player.pause
 
     def handle_rewind(self):
+        self._hide_popups()
         if self.player:
             skip = self.config.get_skip_duration()
             self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
     def handle_forward(self):
+        self._hide_popups()
         if self.player:
             skip = self.config.get_skip_duration()
             self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
     def handle_prev(self):
-        if self.player: self.player.previous_chapter()
+        self._hide_popups()
+        if self.player:
+            self.player.previous_chapter()
     def handle_next(self):
-        if self.player: self.player.next_chapter()
+        self._hide_popups()
+        if self.player:
+            self.player.next_chapter()
+
+    def eventFilter(self, obj, event):
+        """Global event filter to handle dismissing popups on clicks outside."""
+        if event.type() == QEvent.MouseButtonPress:
+            if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
+                # Convert global position to check if it's inside the dropdown
+                gp = event.globalPosition().toPoint()
+                if not self.chapter_list_widget.geometry().contains(gp):
+                    self._hide_popups()
+        return super().eventFilter(obj, event)
+
+    def mousePressEvent(self, event):
+        self._hide_popups()
+        super().mousePressEvent(event)
 
     def closeEvent(self, event):
         if self.player: self.player.terminate()

@@ -8,6 +8,13 @@ class ChapterList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.player = None
+        # Make it a floating popup
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        self.setVerticalScrollMode(QListWidget.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFixedWidth(280)
+        self.setObjectName("chapter_dropdown")
+        
         self.itemClicked.connect(self._on_item_clicked)
 
     def set_player(self, player):
@@ -35,7 +42,7 @@ class ChapterList(QListWidget):
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(5, 2, 5, 2)
             
-            name_label = QLabel(title)
+            name_label = QLabel(self._elide_text(title, 180))
             time_label = QLabel(duration_str)
             time_label.setStyleSheet("color: gray;") # subtle color for the duration
             
@@ -51,6 +58,15 @@ class ChapterList(QListWidget):
         if chapters:
             initial_title = chapters[0].get('title') or "Chapter 1"
             self.chapter_changed.emit(initial_title)
+            
+        # Cap height based on content
+        list_height = min(400, self.count() * 30 + 10)
+        self.setFixedHeight(list_height)
+
+    def _elide_text(self, text, width):
+        """Helper to elide text for the list items."""
+        metrics = self.fontMetrics()
+        return metrics.elidedText(text, Qt.ElideRight, width)
 
     def _format_seconds(self, seconds):
         h = int(seconds // 3600)
@@ -63,8 +79,11 @@ class ChapterList(QListWidget):
         if self.player:
             idx = item.data(Qt.UserRole)
             self.player.chapter = idx
-            # Find the title from the custom widget labels
+            self.hide() # Close dropdown after selection
+            
             widget = self.itemWidget(item)
             if widget:
-                title = widget.findChild(QLabel).text()
-                self.chapter_changed.emit(title)
+                # Emit the actual title, not the elided one if possible
+                chapters = self.player.chapter_list or []
+                actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
+                self.chapter_changed.emit(actual_title)
