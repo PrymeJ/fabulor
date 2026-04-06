@@ -23,5 +23,13 @@ class Config:
     def get_day_start_hour(self):
         return int(self.settings.value("day_start_hour", 0))
 
+    def get_last_position(self, file_path):
+        """Returns the saved timestamp for a specific file."""
+        return float(self.settings.value(f"pos_{file_path}", 0))
+
+    def set_last_position(self, file_path, pos):
+        """Saves the current timestamp for a specific file."""
+        self.settings.setValue(f"pos_{file_path}", pos)
+
     def sync(self):
         self.settings.sync()

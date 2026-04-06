@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QHBoxLayout,
-    QVBoxLayout, QSizePolicy, QApplication
+    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
+    QSizePolicy, QApplication, QComboBox, QListView
 )
 from PySide6.QtCore import Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QGuiApplication
@@ -55,6 +55,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.sidebar_expanded = False
+        self.current_file = ""
         self.config = Config()
         self.player = Player()
 
@@ -67,20 +68,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Install event filter on the application to catch clicks outside popups
         QApplication.instance().installEventFilter(self)
 
-        sample_file = "/home/pryme/test.m4b"
-        self.player.load_book(sample_file)
+        self.current_file = "/home/pryme/test.m4b"
+        self.player.load_book(self.current_file)
         self.chapter_list_widget.set_player(self.player)
 
-        self._load_cover_art(sample_file)
+        self._load_cover_art(self.current_file)
         self.ui_timer.start(200)
         QTimer.singleShot(1000, lambda: self.chapter_list_widget.populate(self.player.duration or 0))
+        QTimer.singleShot(500, self._restore_position)
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
         self.resize(300, 600)
 
         self.setObjectName("mainwindow")
-        self.setStyleSheet(get_stylesheet(self.config.get_theme()))
+        self.setStyleSheet(get_stylesheet(self.config.get_theme() or "Color Purple"))
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -219,10 +221,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel.setObjectName("settings_panel")
         self.settings_panel_layout = QVBoxLayout(self.settings_panel)
         self.settings_panel_layout.setContentsMargins(10, 10, 10, 10)
-        self.back_btn = QPushButton("<<")
-        self.back_btn.setFixedWidth(40)
-        self.back_btn.clicked.connect(self._close_settings_flow)
-        self.settings_panel_layout.addWidget(self.back_btn)
+        
+        # Appearance Section
+        appearance_header = QLabel("Appearance")
+        appearance_header.setObjectName("settings_header")
+        self.settings_panel_layout.addWidget(appearance_header)
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("Theme:"))
+        self.theme_dropdown = QComboBox()
+        self.theme_dropdown.setView(QListView()) # Required for QSS popup background styling
+        self.theme_dropdown.setMaxVisibleItems(5) # Limit visible items to 5
+        from .themes import THEMES
+        self.theme_dropdown.addItems(list(THEMES.keys()))
+        self.theme_dropdown.setCurrentText(self.config.get_theme())
+        self.theme_dropdown.currentTextChanged.connect(self._on_theme_changed)
+        theme_row.addWidget(self.theme_dropdown)
+        self.settings_panel_layout.addLayout(theme_row)
+
+        # Controls Section
+        controls_header = QLabel("Controls")
+        controls_header.setObjectName("settings_header")
+        self.settings_panel_layout.addWidget(controls_header)
+        self.settings_panel_layout.addWidget(QLabel("Skip Interval: 10s (stub)"))
+
         self.settings_panel_layout.addStretch()
         self.settings_panel.hide()
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
@@ -235,6 +257,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 160 is a safe width for the central area in a 300px window
         elided = metrics.elidedText(text, Qt.ElideRight, 160)
         self.current_chapter_label.setText(elided)
+
+    def _restore_position(self):
+        """Seeks to the saved position from config."""
+        last_pos = self.config.get_last_position(self.current_file)
+        if last_pos > 0:
+            self.player.time_pos = last_pos
+
+    def _on_theme_changed(self, theme_name):
+        """Update the configuration and apply the new stylesheet."""
+        self.config.set_theme(theme_name)
+        from .themes import get_stylesheet
+        self.setStyleSheet(get_stylesheet(theme_name))
 
     def _hide_popups(self):
         """Closes any open floating menus."""
@@ -496,13 +530,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Start Y is exactly 56 (32 title + 24 progress)
         sidebar_y = 56
         
-        # Get the button position relative to the window.
-        # If layout hasn't run yet, the button might be at the top of the content (56px),
-        # so we trigger the fallback if it's not yet below the sidebar start.
-        raw_y = self.play_pause_button.mapTo(self, QPoint(0, 0)).y()
-        controls_y = raw_y if raw_y > sidebar_y else (self.height() * 0.6)
-        self.sidebar.setFixedHeight(max(0, int(controls_y - sidebar_y - 5)))
-        self.settings_panel.setFixedHeight(self.sidebar.height())
+        # Hardcoded heights as requested
+        self.sidebar.setFixedHeight(200)
+        self.settings_panel.setFixedHeight(370)
+
         self.settings_panel.setFixedWidth(int(self.width() * 0.9))
 
         # Ensure sidebar position is maintained during resize
@@ -526,7 +557,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._hide_popups()
             self.windowHandle().startSystemMove()
         elif event.button() == Qt.RightButton:
-            self._toggle_sidebar()
+            # If settings or chapter list is open, dismiss them
+            if self.settings_panel.isVisible():
+                self._close_settings_flow()
+            elif hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
+                self.chapter_list_widget.hide()
+            else:
+                # Otherwise, toggle the sidebar as usual
+                self._toggle_sidebar()
 
     def toggle_play_pause(self):
         self._hide_popups()
@@ -572,5 +610,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         super().mousePressEvent(event)
 
     def closeEvent(self, event):
-        if self.player: self.player.terminate()
+        if self.player:
+            self.config.set_last_position(self.current_file, self.player.time_pos)
+            self.player.terminate()
         event.accept()

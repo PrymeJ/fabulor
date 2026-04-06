@@ -1,5 +1,5 @@
 THEMES = {
-    "default": {
+    "Color Purple": {
         "bg_deep":      "#0D001A",  # title bar, darkest
         "bg_main":      "#1A002E",  # main window background
         "slider_overall_bg":   "#4B0082",
@@ -12,10 +12,167 @@ THEMES = {
         "accent_light": "#9D4EDD",  # button hover
         "accent_dark":  "#5A189A",  # button pressed
         "bg_sidebar":   "#120024",  # drawer background
+        "bg_dropdown":  "#120024",  # combobox popup
+        "curr_chap_highlight": "#C8A2C8", # chapter dropdown selection
         "sidebar_opacity": 0.6,
-        "sidebar_opacity_hover": 0.8,
+        "panel_opacity_hover": 0.9,
         "text":         "#F0F0F0",  # all labels and button text
-    }
+    },
+    "Blue Moranth": {
+        "bg_deep":      "#001219",
+        "bg_main":      "#001B24",
+        "slider_overall_bg":   "#003547",
+        "slider_overall_fill": "#94D2BD",
+        "slider_chapter_bg":   "#002A38",
+        "slider_chapter_fill": "#83C5BE",
+        "slider_vol_bg":       "#001219",
+        "slider_vol_fill":     "#0A9396",
+        "accent":              "#0A9396",
+        "accent_light":        "#94D2BD",
+        "accent_dark":         "#005F73",
+        "bg_sidebar":          "#001219",
+        "bg_dropdown":         "#001B24",
+        "curr_chap_highlight": "#94D2BD",
+        "sidebar_opacity":     0.6,
+        "panel_opacity_hover": 0.9,
+        "text":                "#E9D8A6",
+    },
+    "Spice Must Flow": {
+        "bg_deep":      "#230903",
+        "bg_main":      "#451208",
+        "slider_overall_bg":   "#741A06",
+        "slider_overall_fill": "#E3B23C",
+        "slider_chapter_bg":   "#451208",
+        "slider_chapter_fill": "#8E2811",
+        "slider_vol_bg":       "#230903",
+        "slider_vol_fill":     "#E3B23C",
+        "accent":              "#E3B23C",
+        "accent_light":        "#F0CC70",
+        "accent_dark":         "#A37B14",
+        "bg_sidebar":          "#230903",
+        "bg_dropdown":         "#451208",
+        "curr_chap_highlight": "#E3B23C", # chapter dropdown selection
+        "sidebar_opacity":     0.6,
+        "panel_opacity_hover": 0.9,
+        "text":                "#F9F7F3",
+    },
+    "Winterfell": {
+        "bg_deep":      "#212529",
+        "bg_main":      "#343A40",
+        "slider_overall_bg":   "#495057",
+        "slider_overall_fill": "#E9ECEF",
+        "slider_chapter_bg":   "#343A40",
+        "slider_chapter_fill": "#CED4DA",
+        "slider_vol_bg":       "#212529",
+        "slider_vol_fill":     "#ADB5BD",
+        "accent":              "#6C757D",
+        "accent_light":        "#DEE2E6",
+        "accent_dark":         "#343A40",
+        "bg_sidebar":          "#212529",
+        "bg_dropdown":         "#343A40",
+        "curr_chap_highlight": "#DEE2E6", # chapter dropdown selection
+        "sidebar_opacity":     0.6,
+        "panel_opacity_hover": 0.9,
+        "text":                "#F8F9FA", # Light text for general labels
+        "text_on_light_bg":    "#111111", # Darker near-black for Winterfell
+    },
+    "Rivendell": { # Lord of the Rings - Elven, light, natural
+        "bg_deep":      "#E0E7E9",
+        "bg_main":      "#F0F4F5",
+        "slider_overall_bg":   "#B0BEC5",
+        "slider_overall_fill": "#4CAF50", # Green accent
+        "slider_chapter_bg":   "#CFD8DC",
+        "slider_chapter_fill": "#81C784",
+        "slider_vol_bg":       "#E0E7E9",
+        "slider_vol_fill":     "#66BB6A",
+        "accent":              "#66BB6A",
+        "accent_light":        "#81C784",
+        "accent_dark":         "#388E3C",
+        "bg_sidebar":          "#E0E7E9",
+        "bg_dropdown":         "#CFD8DC",
+        "curr_chap_highlight": "#81C784",
+        "sidebar_opacity":     0.9,
+        "panel_opacity_hover": 0.95,
+        "text":                "#263238", # Dark text
+        "text_on_light_bg":    "#263238",
+    },
+    "Chatsubo": { # Cyberpunk 2077 - Dark, vibrant neons
+        "bg_deep":      "#0A0A0A",
+        "bg_main":      "#1A1A1A",
+        "slider_overall_bg":   "#333333",
+        "slider_overall_fill": "#00FFFF", # Cyan neon
+        "slider_chapter_bg":   "#2A2A2A",
+        "slider_chapter_fill": "#FF00FF", # Magenta neon
+        "slider_vol_bg":       "#0A0A0A",
+        "slider_vol_fill":     "#00FF00", # Green neon
+        "accent":              "#FF00FF",
+        "accent_light":        "#FF33FF",
+        "accent_dark":         "#CC00CC",
+        "bg_sidebar":          "#0A0A0A",
+        "bg_dropdown":         "#1A1A1A",
+        "curr_chap_highlight": "#00FFFF",
+        "sidebar_opacity":     0.7,
+        "panel_opacity_hover": 0.9,
+        "text":                "#E0E0E0",
+    },
+    "Gondor": { # Lord of the Rings - White City, regal, stone
+        "bg_deep":      "#E0E0E0",
+        "bg_main":      "#F0F0F0",
+        "slider_overall_bg":   "#B0B0B0",
+        "slider_overall_fill": "#4A90E2", # Blue accent
+        "slider_chapter_bg":   "#D0D0D0",
+        "slider_chapter_fill": "#7AAFE2",
+        "slider_vol_bg":       "#E0E0E0",
+        "slider_vol_fill":     "#4A90E2",
+        "accent":              "#4A90E2",
+        "accent_light":        "#7AAFE2",
+        "accent_dark":         "#3A7AD2",
+        "bg_sidebar":          "#E0E0E0",
+        "bg_dropdown":         "#D0D0D0",
+        "curr_chap_highlight": "#7AAFE2",
+        "sidebar_opacity":     0.9,
+        "panel_opacity_hover": 0.95,
+        "text":                "#333333", # Dark text
+        "text_on_light_bg":    "#333333",
+    },
+    "Arrakis": { # Dune - Desert, sand, spice
+        "bg_deep":      "#4A3B2D",
+        "bg_main":      "#6B5A49",
+        "slider_overall_bg":   "#8C7B6A",
+        "slider_overall_fill": "#D4A85C", # Spice gold
+        "slider_chapter_bg":   "#6B5A49",
+        "slider_chapter_fill": "#B48B4C",
+        "slider_vol_bg":       "#4A3B2D",
+        "slider_vol_fill":     "#D4A85C",
+        "accent":              "#D4A85C",
+        "accent_light":        "#E4B86C",
+        "accent_dark":         "#A47B3C",
+        "bg_sidebar":          "#4A3B2D",
+        "bg_dropdown":         "#6B5A49",
+        "curr_chap_highlight": "#D4A85C",
+        "sidebar_opacity":     0.8,
+        "panel_opacity_hover": 0.9,
+        "text":                "#F5F5DC", # Cream text
+    },
+    "Valhalla": { # Norse mythology - Dark, metallic, strong
+        "bg_deep":      "#2C3E50",
+        "bg_main":      "#34495E",
+        "slider_overall_bg":   "#4A627A",
+        "slider_overall_fill": "#E74C3C", # Red accent
+        "slider_chapter_bg":   "#34495E",
+        "slider_chapter_fill": "#C0392B",
+        "slider_vol_bg":       "#2C3E50",
+        "slider_vol_fill":     "#E74C3C",
+        "accent":              "#E74C3C",
+        "accent_light":        "#F05948",
+        "accent_dark":         "#B02A1B",
+        "bg_sidebar":          "#2C3E50",
+        "bg_dropdown":         "#34495E",
+        "curr_chap_highlight": "#E74C3C",
+        "sidebar_opacity":     0.7,
+        "panel_opacity_hover": 0.9,
+        "text":                "#ECF0F1", # Light text
+    },
 }
 
 def _hex_to_rgb(hex_str):
@@ -23,7 +180,12 @@ def _hex_to_rgb(hex_str):
     return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
 
 def get_stylesheet(theme_name="default"):
-    t = THEMES.get(theme_name, THEMES["default"])
+    # Fallback logic for stubs
+    base = THEMES["Color Purple"].copy()
+    custom = THEMES.get(theme_name, {})
+    base.update(custom)
+    t = base
+
     sidebar_rgb = _hex_to_rgb(t['bg_sidebar'])
     text_rgb = _hex_to_rgb(t['text'])
 
@@ -44,17 +206,17 @@ def get_stylesheet(theme_name="default"):
             border-top-right-radius: 8px;
         }}
         QWidget#settings_panel {{
-            background-color: {t['bg_main']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 2px solid {t['accent']};
             border-radius: 0px;
         }}
-        QWidget#sidebar {{
+        QWidget#sidebar {{ /* Sidebar background opacity */
             background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});
             border-right: 1px solid {t['slider_overall_bg']};
             border-radius: 0px;
         }}
         QWidget#sidebar:hover {{
-            background-color: rgba({sidebar_rgb}, {t['sidebar_opacity_hover']});
+            background-color: rgba({sidebar_rgb}, {t['panel_opacity_hover']}); /* Sidebar hover opacity */
         }}
         TitleBar QLabel {{
             color: {t['text']};
@@ -63,7 +225,7 @@ def get_stylesheet(theme_name="default"):
         /* Sidebar items opacity sync */
         #sidebar QLabel, #sidebar QPushButton {{
             font-size: 12px;
-            color: rgba({text_rgb}, {t['sidebar_opacity']});
+            color: rgba({text_rgb}, {t['panel_opacity_hover']});
             background: transparent;
             border: none;
             text-align: left;
@@ -71,11 +233,17 @@ def get_stylesheet(theme_name="default"):
             padding: 0;
         }}
         #sidebar:hover QLabel, #sidebar:hover QPushButton {{
-            color: rgba({text_rgb}, {t['sidebar_opacity_hover']});
+            color: rgba({text_rgb}, {t['panel_opacity_hover']}) !important;
         }}
         QLabel#sidebar_title {{
             font-weight: bold;
             margin-bottom: 10px;
+        }}
+        QLabel#settings_header {{
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
+            color: {t['accent_light']};
         }}
         TitleBar QPushButton {{
             background: transparent;
@@ -91,14 +259,14 @@ def get_stylesheet(theme_name="default"):
             color: {t['text']};
         }}
         QLabel#percentage_label {{
-            color: rgba(255, 255, 255, 0.85);
+            color: rgba({_hex_to_rgb(t.get('text_on_light_bg', t['text']))}, 0.85);
             font-weight: bold;
             font-size: 16px;
             background: transparent;
         }}
         QPushButton {{
             background-color: {t['accent']};
-            color: {t['text']};
+            color: {t.get('text_on_light_bg', t['text'])};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
@@ -114,6 +282,7 @@ def get_stylesheet(theme_name="default"):
             border: none;
             padding: 2px;
             font-size: 13px;
+            color: {t.get('text_on_light_bg', t['text'])};
         }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
@@ -121,49 +290,73 @@ def get_stylesheet(theme_name="default"):
             outline: none;
         }}
         QListWidget#chapter_dropdown::item:selected {{
-            background-color: {t['accent']};
+            background-color: {t['curr_chap_highlight']}; /* Chapter dropdown selection highlight */
             color: {t['text']};
         }}
-        /* Overall Progress Slider */
-        QSlider#overall_progress::groove:horizontal {{
-            background: {t['slider_overall_bg']};
-            height: 24px;
+        /* Custom ClickSlider Theme Integration */
+        #overall_progress {{
+            qproperty-bg_color: "{t['slider_overall_bg']}";
+            qproperty-fill_color: "{t['slider_overall_fill']}";
         }}
-        QSlider#overall_progress::sub-page:horizontal {{
-            background: {t['slider_overall_fill']};
-            height: 24px;
+        #chapter_progress {{
+            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
-        QSlider#overall_progress::handle:horizontal {{
-            background: {t['slider_overall_fill']};
-            width: 2px;
-        }}
-
-        /* Chapter Progress Slider */
-        QSlider#chapter_progress::groove:horizontal {{
-            background: {t['slider_chapter_bg']};
-            height: 12px;
-        }}
-        QSlider#chapter_progress::sub-page:horizontal {{
-            background: {t['slider_chapter_fill']};
-            height: 12px;
-        }}
-        QSlider#chapter_progress::handle:horizontal {{
-            background: {t['slider_chapter_fill']};
-            width: 2px;
+        #volume_slider {{
+            qproperty-bg_color: "{t['slider_vol_bg']}";
+            qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
 
-        /* Volume Slider */
-        QSlider#volume_slider::groove:horizontal {{
-            background: {t['slider_vol_bg']};
-            height: 8px;
+        QComboBox {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 3px 5px;
+            font-size: 10px; /* Smaller font for dropdown text */
+            min-height: 20px;
         }}
-        QSlider#volume_slider::sub-page:horizontal {{
-            background: {t['slider_vol_fill']};
-            height: 8px;
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
         }}
-        QSlider#volume_slider::handle:horizontal {{
-            background: {t['slider_vol_fill']};
-            width: 8px;
-            margin: -2px 0;
+        QComboBox::down-arrow {{
+            image: none; /* Hide default arrow */
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 5px solid {t['accent']};
+            margin-top: 2px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+            outline: none;
+            font-size: 10px; /* Smaller font for dropdown list items */
+        }}
+        /* Custom Scrollbar for QComboBox dropdown list */
+        QComboBox QListView QScrollBar:vertical,
+        QListWidget#chapter_dropdown QScrollBar:vertical {{
+            width: 10px;
+            background: {t['bg_deep']};
+            margin: 0px;
+        }}
+        QComboBox QListView QScrollBar::handle:vertical,
+        QListWidget#chapter_dropdown QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 2px;
+        }}
+        QComboBox QListView QScrollBar::add-line:vertical,
+        QComboBox QListView QScrollBar::sub-line:vertical,
+        QListWidget#chapter_dropdown QScrollBar::add-line:vertical,
+        QListWidget#chapter_dropdown QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QComboBox QAbstractItemView QScrollBar::add-page:vertical,
+        QComboBox QAbstractItemView QScrollBar::sub-page:vertical,
+        QListWidget#chapter_dropdown QScrollBar::add-page:vertical,
+        QListWidget#chapter_dropdown QScrollBar::sub-page:vertical {{
+            background: none;
         }}
     """
