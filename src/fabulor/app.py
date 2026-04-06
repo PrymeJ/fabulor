@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QComboBox, QListView
+    QSizePolicy, QApplication, QComboBox, QListView, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, Signal, QModelIndex
@@ -76,6 +76,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_file = ""
         self.config = Config()
         self.player = Player()
+        self._current_theme_name = self.config.get_theme()
 
         self._setup_ui()
 
@@ -288,9 +289,46 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.time_pos = last_pos
         self.player.volume = self.volume_slider.value()
 
-    def _on_theme_changed(self, theme_name):
-        """Update the configuration and apply the new stylesheet."""
-        self.config.set_theme(theme_name)
+    def _on_theme_changed(self, theme_name, save=True, fade_ms=300):
+        """Update the appearance with a subtle fade transition."""
+        # Clear existing overlays to ensure we grab the "clean" state
+        # We don't deleteLater here because we need them gone BEFORE the grab()
+        for old_overlay in self.findChildren(QLabel, "theme_fade_overlay"):
+            old_overlay.setObjectName("deleting_overlay")
+            old_overlay.hide() 
+
+        # If the requested theme is already what's shown, just save and exit
+        if getattr(self, "_current_theme_name", None) == theme_name:
+            if save: self.config.set_theme(theme_name)
+            return
+
+        self._current_theme_name = theme_name
+
+        if fade_ms > 0:
+            # 2. Take a clean snapshot of the current state
+            pix = self.grab()
+            overlay = QLabel(self)
+            overlay.setObjectName("theme_fade_overlay")
+            overlay.setPixmap(pix)
+            overlay.setGeometry(self.rect())
+            overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+            overlay.show()
+            overlay.raise_()
+            
+            eff = QGraphicsOpacityEffect(overlay)
+            overlay.setGraphicsEffect(eff)
+            
+            # Parent the animation to the overlay so it survives reassignment
+            anim = QPropertyAnimation(eff, b"opacity", overlay)
+            anim.setDuration(fade_ms)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+            anim.finished.connect(overlay.deleteLater)
+            anim.start()
+            self._theme_fade_anim = anim
+
+        if save:
+            self.config.set_theme(theme_name)
         self.setStyleSheet(get_stylesheet(theme_name))
 
     def _on_theme_dropdown_about_to_show(self):
@@ -298,15 +336,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._theme_selection_made = False # Reset flag
 
     def _on_theme_dropdown_about_to_hide(self):
-        if not self._theme_selection_made:
-            # Revert to previous theme if no selection was made (e.g., clicked outside)
-            self.setStyleSheet(get_stylesheet(self._previous_theme))
-            self.theme_dropdown.setCurrentText(self._previous_theme) # Also revert dropdown text
+        # Delay the revert check to allow 'activated' signal to set the selection flag first
+        QTimer.singleShot(10, self._check_revert_theme)
+
+    def _check_revert_theme(self):
+        if not self._theme_selection_made and hasattr(self, "_previous_theme"):
+            # Only revert if no selection was made (clicked outside)
+            self._on_theme_changed(self._previous_theme, save=False, fade_ms=200)
+            self.theme_dropdown.setCurrentText(self._previous_theme)
 
     def _on_theme_hovered(self, index):
         """Preview the theme visually without saving to config."""
         theme_name = self.theme_dropdown.itemText(index)
-        self.setStyleSheet(get_stylesheet(theme_name))
+        self._on_theme_changed(theme_name, save=False, fade_ms=150)
 
     def _on_theme_selected_from_dropdown(self, index):
         """Permanent selection made by user."""
