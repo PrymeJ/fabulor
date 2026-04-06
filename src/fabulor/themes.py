@@ -331,6 +331,7 @@ def get_stylesheet(theme_name="default"):
             background-color: {t['bg_dropdown']};
             color: {t['text']};
             selection-background-color: {t['accent']};
+            border: 1px solid {t['accent']};
             outline: none;
             font-size: 10px; /* Smaller font for dropdown list items */
         }}
@@ -339,6 +340,7 @@ def get_stylesheet(theme_name="default"):
         QListWidget#chapter_dropdown QScrollBar:vertical {{
             width: 8px;
             background: {t['bg_deep']};
+            border: none;
             margin: 0px;
         }}
         QComboBox QAbstractItemView QScrollBar::handle:vertical,

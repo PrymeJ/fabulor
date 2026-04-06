@@ -7,11 +7,10 @@ from PySide6.QtGui import QPixmap, QGuiApplication
 
 from .player import Player
 from .config import Config
-from .themes import get_stylesheet
+from .themes import get_stylesheet, THEMES
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList
 from mpv import ShutdownError
-
 
 class TitleBar(QWidget):
     def __init__(self, parent=None):
@@ -82,7 +81,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.resize(300, 600)
 
         self.setObjectName("mainwindow")
-        self.setStyleSheet(get_stylesheet(self.config.get_theme() or "Color Purple"))
+        self.setStyleSheet(get_stylesheet(self.config.get_theme()))
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -231,8 +230,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         theme_row.addWidget(QLabel("Theme:"))
         self.theme_dropdown = QComboBox()
         self.theme_dropdown.setView(QListView()) # Required for QSS popup background styling
-        self.theme_dropdown.setMaxVisibleItems(5) # Limit visible items to 5
-        from .themes import THEMES
+        self.theme_dropdown.setMaxVisibleItems(4) # Limit visible items to 4
+        self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.theme_dropdown.addItems(list(THEMES.keys()))
         self.theme_dropdown.setCurrentText(self.config.get_theme())
         self.theme_dropdown.currentTextChanged.connect(self._on_theme_changed)
@@ -267,7 +266,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_theme_changed(self, theme_name):
         """Update the configuration and apply the new stylesheet."""
         self.config.set_theme(theme_name)
-        from .themes import get_stylesheet
         self.setStyleSheet(get_stylesheet(theme_name))
 
     def _hide_popups(self):
@@ -368,15 +366,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_ui_sync(self):
         try:
             pos = self.player.time_pos or 0
+            dur = self.player.duration or 0
         except ShutdownError:
             return
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
-             self.chapter_list_widget.populate(self.player.duration or 0)
+             self.chapter_list_widget.populate(dur)
              self._update_chapter_label_from_index(self.player.chapter or 0)
-
-        pos = self.player.time_pos or 0
-        dur = self.player.duration or 0
 
         if dur > 0:
             if not self.is_slider_dragging:
