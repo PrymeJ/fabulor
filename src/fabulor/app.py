@@ -62,6 +62,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player = Player()
         self.theme_manager = ThemeManager(self)
         self._paused_time = None
+        self._is_seeking = False
         self.panel_manager = None # Will be initialized after widgets are created
 
         self._setup_ui()
@@ -391,6 +392,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         last_pos = self.config.get_last_position(self.current_file)
         if last_pos > 0:
             self.player.time_pos = last_pos
+            self._is_seeking = True
         self.player.volume = self.volume_slider.value()
         
         saved_speed = self.config.get_book_speed(self.current_file)
@@ -442,11 +444,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         if is_paused:
-            # When paused, mpv's reported time_pos can jitter slightly during speed 
-            # changes due to resampler re-initialization. We use a deadzone to 
-            # ignore small fluctuations while still allowing manual seeks to update the UI.
-            if self._paused_time is None or abs(mpv_pos - self._paused_time) > 0.5:
+            # Only update the displayed position while paused if we explicitly 
+            # triggered a seek or if the drift is massive (emergency resync).
+            # This prevents cumulative 'speed drift' from jumping the UI.
+            if self._paused_time is None or self._is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
                 self._paused_time = mpv_pos
+                self._is_seeking = False
             pos = self._paused_time
         else:
             self._paused_time = None
@@ -498,6 +501,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player and self.player.duration:
             new_pos = (self.progress_slider.value() / 1000) * self.player.duration
             self.player.time_pos = new_pos
+            self._is_seeking = True
         self.is_slider_dragging = False
 
     def _on_chap_slider_pressed(self):
@@ -515,6 +519,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0:
                     new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
                     self.player.time_pos = start + new_chap_pos
+                    self._is_seeking = True
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
@@ -660,6 +665,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         if self.play_pause_button.text() == "Restart":
             self.player.time_pos = 0
+            self._is_seeking = True
             self.player.pause = False
             return
         self.player.pause = not self.player.pause
@@ -669,19 +675,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             skip = self.config.get_skip_duration()
             self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
+            self._is_seeking = True
+
     def handle_forward(self):
         self.panel_manager.hide_all_panels()
         if self.player:
             skip = self.config.get_skip_duration()
             self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
+            self._is_seeking = True
+
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
         if self.player:
             self.player.previous_chapter()
+            self._is_seeking = True
+
     def handle_next(self):
         self.panel_manager.hide_all_panels()
         if self.player:
             self.player.next_chapter()
+            self._is_seeking = True
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
