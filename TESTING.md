@@ -41,7 +41,7 @@
 - [x] Chapter names in drop-up responsive || scrollbar check when library is implemented
 - [x] Chapter names in drop-up geometry || newlines after the last chapter, width, test slide up
 - [x] Right click on chapter names selects them || for what reason? questionable behavior
-- [x] Toolbar buttons displayed and responsive || full-screen button to be removed
+- [x] Toolbar buttons displayed and responsive
 - [x] Art displayed when present
 - [x] Size locked
 
@@ -55,23 +55,22 @@
 - [x] All clicks on buttons dismisses and performs
 - [x] Settings clickable
 - [x] Playback clickable
-- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Clicking on chapter name does not dismiss
 
-## Settings panel || scrollbar issues, remove :, remove vertical line and darken, font size +1
+## Settings panel || scrollbar issues, remove vertical line and darken, font size +1
 
 - [x] Speed button switcheroo when settings on
 - [x] All clicks on buttons dismisses and performs
-- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Clicking on chapter name does not dismiss
 - [x] Blur works || either needs improvement or removal
 
-## Speed panel || Playback or Speed?, remove :, remove vertical line and darken
+## Speed panel || Playback or Speed?, remove vertical line and darken
 
 - [x] Choosing speed dismisses panel
 - [x] Choosing default speed does not dismiss panel
 - [x] Choosing step does not dismiss panel
 - [x] Left clicking on the panel does not dismiss the panel
-- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
-- [x] Default Speed || orthographical fix: Default speed
+- [x] Clicking on chapter name does not dismiss
 
 ## Saving states
 
@@ -88,7 +87,7 @@
 - [x] Hover works || needs improvement
 - [x] Hover preview reverts on dismiss
 - [x] All clicks on buttons dismisses and performs
-- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Clicking on chapter name does not dismiss
 
 ## Each theme here || name default needs fix, feat random
 
