@@ -3,7 +3,7 @@
 - [x] Play/pause toggles correctly
 - [x] Rwd/fwd works
 - [x] Prev/next works
-- [x] Previos chapter grace period || Too short on higher speeds, calculate and adjust
+- [x] Previos chapter grace period
 - [x] Prev/next works
 - [x] Beginning of the file logic correct
 - [x] End of the file Play button turns into Restart

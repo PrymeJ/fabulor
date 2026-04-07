@@ -31,16 +31,13 @@ class TitleBar(QWidget):
         layout.addWidget(self.title_label)
         layout.addStretch()
 
-        for symbol, slot in [("─", self._minimize), ("□", self._maximize), ("✕", self._close)]:
+        for symbol, slot in [("─", self._minimize), ("✕", self._close)]:
             btn = QPushButton(symbol)
             btn.setFixedSize(32, 32)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
 
     def _minimize(self): self.window().showMinimized()
-    def _maximize(self):
-        w = self.window()
-        w.showNormal() if w.isMaximized() else w.showMaximized()
     def _close(self): self.window().close()
 
     def mousePressEvent(self, event):
@@ -417,6 +414,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.chapter_list_widget.isVisible():
             self.chapter_list_widget.hide()
             return
+
+        self.panel_manager.hide_all_panels()
 
         if not self.chapter_list_widget.count():
             self.chapter_list_widget.populate(self.player.duration or 0) # Populate if empty

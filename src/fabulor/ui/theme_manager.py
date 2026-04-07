@@ -79,7 +79,10 @@ class ThemeManager:
         QTimer.singleShot(10, self._check_revert_theme)
 
     def _check_revert_theme(self):
-        if not self._theme_selection_made and hasattr(self, "_previous_theme"):
+        # Only revert if no selection was made AND the currently displayed theme (potential preview)
+        # is different from the theme that was active when the dropdown was opened.
+        if not self._theme_selection_made and self._previous_theme is not None and \
+           self._current_theme_name != self._previous_theme:
             fade = int(self.config.get_theme_fade_duration() * 0.66)
             self._on_theme_changed(self._previous_theme, save=False, fade_ms=fade)
             self.main_window.theme_dropdown.setCurrentText(self._previous_theme)
