@@ -71,6 +71,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self._update_ui_sync)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
+        self.player.file_loaded.connect(self._on_file_ready)
 
         QApplication.instance().installEventFilter(self)
 
@@ -80,8 +81,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._load_cover_art(self.current_file)
         self.ui_timer.start(200)
-        QTimer.singleShot(1000, lambda: self.chapter_list_widget.populate(self.player.duration or 0))
-        QTimer.singleShot(500, self._restore_position)
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
@@ -375,6 +374,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 160 is a safe width for the central area in a 300px window
         elided = metrics.elidedText(text, Qt.ElideRight, 160)
         self.current_chapter_label.setText(elided)
+
+    def _on_file_ready(self):
+        """Called when mpv confirms the file is loaded and ready."""
+        self._restore_position()
+        if self.player.duration:
+            self.chapter_list_widget.populate(self.player.duration)
+        # Force a sync immediately so labels don't wait for the next timer tick
+        self._update_ui_sync()
 
     def _restore_position(self):
         """Seeks to the saved position from config."""

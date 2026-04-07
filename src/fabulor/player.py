@@ -28,6 +28,7 @@ except ImportError:
 
 class Player(QObject):
     chapter_changed = Signal(int)
+    file_loaded = Signal()
 
     def __init__(self):
         super().__init__()
@@ -44,6 +45,7 @@ class Player(QObject):
                 keep_open=True
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
+            self.instance.event_callback('file-loaded')(self._on_file_loaded)
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()
@@ -55,6 +57,9 @@ class Player(QObject):
     def _on_chapter_change(self, name, value):
         if value is not None:
             self.chapter_changed.emit(int(value))
+
+    def _on_file_loaded(self, event):
+        self.file_loaded.emit()
 
     def extract_cover(self, file_path):
         """Extracts cover art from file tags."""
@@ -121,7 +126,9 @@ class Player(QObject):
         chap_list = self.chapter_list or []
         chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
 
-        if curr_time < chap_start + 2.0:
+        # Dynamic threshold: scale the 2s grace period by playback speed
+        threshold = 2.0 * (self.speed or 1.0)
+        if curr_time < chap_start + threshold:
             if curr_chap > 0:
                 self.chapter = curr_chap - 1
         else:
