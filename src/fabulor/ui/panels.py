@@ -258,7 +258,7 @@ class PanelManager:
         self.sidebar.setFixedHeight(200)
         self.settings_panel.setFixedHeight(370)
         self.speed_panel.setFixedHeight(320)
-        self.sleep_panel.setFixedHeight(320) # Same height as speed panel for now
+        self.sleep_panel.setFixedHeight(400)
 
         if self.speed_panel.isVisible():
             self.speed_panel.move(0, sidebar_y)

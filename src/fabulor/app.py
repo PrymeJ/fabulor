@@ -2,10 +2,10 @@ import math
 from PySide6.QtWidgets import (
     QLineEdit,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox
+    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex, QRegularExpression
+    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex, QRegularExpression, Signal
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator
 
@@ -42,11 +42,14 @@ class TitleBar(QWidget):
     def _minimize(self): self.window().showMinimized()
     def _close(self): self.window().close()
 
+class RightClickButton(QPushButton):
+    rightClicked = Signal()
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            # This widget is part of the main window, so its parent window handles popups
-            self.window()._hide_popups()
-            self.window().windowHandle().startSystemMove()
+        if event.button() == Qt.RightButton:
+            self.rightClicked.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
@@ -65,6 +68,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._is_seeking = False
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
+        self._current_sleep_fade = self.config.get_sleep_fade_duration()
         self.panel_manager = None # Will be initialized after widgets are created
 
         self._setup_ui()
@@ -123,6 +127,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_settings_panel()
         self._build_sleep_panel()
         self._build_speed_panel()
+
+        # Pulse Animation for active sleep timer
+        self.sleep_opacity_effect = QGraphicsOpacityEffect(self.sleep_trigger_btn)
+        self.sleep_opacity_effect.setOpacity(1.0) # Fix dimmed start
+        self.sleep_trigger_btn.setGraphicsEffect(self.sleep_opacity_effect)
+        self.sleep_pulse_anim = QPropertyAnimation(self.sleep_opacity_effect, b"opacity")
+        self.sleep_pulse_anim.setDuration(4000) # Slower pulse
+        self.sleep_pulse_anim.setStartValue(1.0)     # Bright
+        self.sleep_pulse_anim.setKeyValueAt(0.5, 0.4) # Dim (Yoyo)
+        self.sleep_pulse_anim.setEndValue(1.0)       # Bright
+        self.sleep_pulse_anim.setLoopCount(-1)
+        self.sleep_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
 
         self._update_speed_grid_styling()
 
@@ -259,17 +275,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
         self.sidebar_layout.addWidget(self.speed_trigger_btn)
 
-        sleep_container = QHBoxLayout()
-        sleep_container.setSpacing(2)
+        self.sidebar_sleep_widget = QWidget()
+        self.sidebar_sleep_widget.setObjectName("sidebar_sleep_container")
+        self.sidebar_sleep_widget.setStyleSheet("background: transparent; border: none; margin: 0; padding: 0;")
+        sleep_container = QHBoxLayout(self.sidebar_sleep_widget)
+        sleep_container.setContentsMargins(0, 0, 0, 0)
+        sleep_container.setSpacing(0)
         self.sleep_trigger_btn = QPushButton("Sleep")
         self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
         self.sleep_cancel_btn = QPushButton("✕")
-        self.sleep_cancel_btn.setFixedSize(20, 24)
+        self.sleep_cancel_btn.setFixedSize(14, 24)
         self.sleep_cancel_btn.clicked.connect(self._disable_sleep_timer)
         self.sleep_cancel_btn.hide()
         sleep_container.addWidget(self.sleep_trigger_btn, 1)
         sleep_container.addWidget(self.sleep_cancel_btn)
-        self.sidebar_layout.addLayout(sleep_container)
+        self.sidebar_layout.addWidget(self.sidebar_sleep_widget)
 
         self.sidebar_layout.addStretch()
         self.sidebar.move(-50, 56)
@@ -439,6 +459,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         custom_time_layout.addStretch()
         self.sleep_panel_layout.addLayout(custom_time_layout)
 
+        # Fade out options
+        fade_header = QLabel("Fade-out")
+        fade_header.setObjectName("settings_header")
+        self.sleep_panel_layout.addWidget(fade_header)
+
+        fade_layout = QHBoxLayout()
+        fade_layout.setSpacing(5)
+        self._sleep_fade_btns = {}
+        fade_options = [("Off", 0), ("30s", 30), ("1m", 60), ("2m", 120), ("5m", 300)]
+        for text, seconds in fade_options:
+            btn = RightClickButton(text)
+            btn.setFixedSize(45, 28)
+            btn.setToolTip("Right-click to set as default")
+            btn.clicked.connect(lambda _, s=seconds: self._set_sleep_fade(s, save=False))
+            btn.rightClicked.connect(lambda s=seconds: self._set_sleep_fade(s, save=True))
+            fade_layout.addWidget(btn)
+            self._sleep_fade_btns[seconds] = btn
+        
+        self.sleep_panel_layout.addLayout(fade_layout)
+
         # Disable Button
         self.disable_sleep_btn = QPushButton("Disable")
         self.disable_sleep_btn.setObjectName("disable_sleep_btn")
@@ -451,7 +491,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
         self.sleep_panel_animation.setDuration(300)
         self.sleep_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self._update_sleep_grid_styling()
+        self._update_sleep_panel_styling() # Corrected method name
 
     def _on_custom_sleep_time_set(self):
         try:
@@ -574,6 +614,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.pause = True
             else:
                 sleep_display_text = f"[{self._format_time(remaining_seconds)}]"
+                # Volume Fade Logic
+                if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
+                    ratio = remaining_seconds / self._current_sleep_fade
+                    vol_val = self.volume_slider.value()
+                    if vol_val > 0:
+                        # Scale current MPV volume based on the fade ratio
+                        base_vol = 100 * (math.log10(vol_val) / 2.0)
+                        self.player.volume = base_vol * ratio
+
         elif self._sleep_mode == 'end_of_chapter':
             sleep_display_text = "[chapter]"
             if not is_paused and self.player.chapter_list and self.player.chapter is not None:
@@ -707,14 +756,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.config.set_sleep_duration(duration_minutes)
             self.config.set_sleep_mode('timed')
             self.disable_sleep_btn.show()
-            self.sleep_trigger_btn.setText("[Sleep]")
+            self.sleep_trigger_btn.setText("Sleep") # No brackets
             self.sleep_cancel_btn.show()
+            self.sleep_pulse_anim.start()
         elif mode in ['end_of_chapter', 'end_of_book']:
             self._sleep_mode = mode
             self.config.set_sleep_mode(mode)
             self.disable_sleep_btn.show()
-            self.sleep_trigger_btn.setText("[Sleep]")
+            self.sleep_trigger_btn.setText("Sleep") # No brackets
             self.sleep_cancel_btn.show()
+            self.sleep_pulse_anim.start()
 
         self.panel_manager._close_sleep_flow()
         self._update_ui_sync() # Force UI update
@@ -726,7 +777,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.disable_sleep_btn.hide()
         self.sleep_trigger_btn.setText("Sleep")
         self.sleep_cancel_btn.hide()
+        self.sleep_pulse_anim.stop()
+        self.sleep_opacity_effect.setOpacity(1.0)
+        
+        # Restore original volume level
+        self._on_volume_changed(self.volume_slider.value())
+        
         self._update_ui_sync() # Force UI update
+
+    def _set_sleep_fade(self, seconds, save=False):
+        self._current_sleep_fade = seconds
+        if save:
+            self.config.set_sleep_fade_duration(seconds)
+        self._update_sleep_panel_styling()
 
     def _update_speed_grid_styling(self):
         """Applies the current theme's gradient styling to the speed grid buttons."""
@@ -740,12 +803,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             c = QColor(accent)
             c.setAlpha(alpha)
             btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
+        self._update_sleep_panel_styling()
 
-    def _update_sleep_grid_styling(self):
+    def _update_sleep_panel_styling(self):
         """Applies the current theme's gradient styling to the sleep timer grid buttons."""
         t = THEMES.get(self.theme_manager._current_theme_name, THEMES["The Color Purple"])
         accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
+        default_fade = self.config.get_sleep_fade_duration()
 
         # Using same presets count logic for consistent gradient look
         for i, btn in enumerate(self._sleep_presets_buttons):
@@ -754,10 +819,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             c.setAlpha(alpha)
             btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
 
+        # Fade buttons styling with gradient and default indicator (2px border)
+        for i, (seconds, btn) in enumerate(self._sleep_fade_btns.items()):
+            alpha = int(75 + (180 * (i / (len(self._sleep_fade_btns) - 1))))
+            c = QColor(accent)
+            c.setAlpha(alpha)
+            
+            is_active = (seconds == self._current_sleep_fade)
+            is_default = (seconds == default_fade)
+            
+            # 2px border for default, 1px for others
+            border = f"2px solid {t['accent_light']}" if is_default else f"1px solid {t['accent']}"
+            
+            # Active button uses theme accent background, inactive uses dropdown bg
+            bg = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})" if is_active else t['bg_dropdown']
+            fg = btn_text if is_active else t['text']
+            
+            btn.setStyleSheet(f"background-color: {bg}; color: {fg}; border: {border};")
+
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
-        for panel in [self.settings_panel, self.speed_panel]:
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return
         self._hide_popups()

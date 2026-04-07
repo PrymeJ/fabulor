@@ -81,3 +81,9 @@ class Config:
 
     def set_sleep_mode(self, mode):
         self.settings.setValue("sleep_mode", mode)
+
+    def get_sleep_fade_duration(self):
+        return int(self.settings.value("sleep_fade_duration", 0))
+
+    def set_sleep_fade_duration(self, seconds):
+        self.settings.setValue("sleep_fade_duration", seconds)
