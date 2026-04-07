@@ -1,3 +1,4 @@
+import math
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
     QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox
@@ -89,15 +90,59 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setObjectName("mainwindow")
         self.setStyleSheet(get_stylesheet(self.config.get_theme()))
 
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
+        self.root_layout = QVBoxLayout(self)
+        self.root_layout.setContentsMargins(0, 0, 0, 0)
+        self.root_layout.setSpacing(0)
 
-        # Custom title bar
+        self._build_title_bar()
+        self._build_progress_bar()
+
+        # Content container
+        self.content_container = QWidget()
+        self.content_layout = QVBoxLayout(self.content_container)
+        self.content_layout.setContentsMargins(10, 10, 10, 10)
+        self.content_layout.setSpacing(10)
+        self.root_layout.addWidget(self.content_container)
+
+        # Visual Area for blurring (Cover Art and Metadata)
+        self.visual_area = QWidget()
+        self.visual_layout = QVBoxLayout(self.visual_area)
+        self.visual_layout.setContentsMargins(0, 0, 0, 0)
+        self.visual_layout.setSpacing(10)
+        self.content_layout.addWidget(self.visual_area)
+
+        self._build_cover_art()
+        self._build_metadata()
+        self._build_controls()
+        self._build_secondary_controls()
+
+        self.chapter_list_widget = ChapterList(self)
+        self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
+        
+        self._build_sidebar()
+        self._build_settings_panel()
+        self._build_speed_panel()
+
+        self._update_speed_grid_styling()
+
+        # Initialize Blur Effect for background depth
+        self.blur_effect = QGraphicsBlurEffect(self.visual_area)
+        self.blur_effect.setBlurHints(QGraphicsBlurEffect.AnimationHint)
+        self.blur_effect.setBlurRadius(0)
+        self.visual_area.setGraphicsEffect(self.blur_effect)
+
+        self.blur_animation = QPropertyAnimation(self.blur_effect, b"blurRadius")
+        self.blur_animation.setDuration(500)
+        self.blur_animation.setEasingCurve(QEasingCurve.OutCubic)
+        
+        # Initialize PanelManager after all relevant widgets are created
+        self.panel_manager = PanelManager(self)
+
+    def _build_title_bar(self):
         self.title_bar = TitleBar(self)
-        root_layout.addWidget(self.title_bar)
+        self.root_layout.addWidget(self.title_bar)
 
-        # Progress slider
+    def _build_progress_bar(self):
         self.progress_slider = ClickSlider(Qt.Horizontal)
         self.progress_slider.setObjectName("overall_progress")
         self.progress_slider.sliderPressed.connect(self._hide_popups)
@@ -105,46 +150,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.setFixedHeight(24)
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
         self.progress_slider.sliderReleased.connect(self._on_slider_released)
-        root_layout.addWidget(self.progress_slider)
+        self.root_layout.addWidget(self.progress_slider)
 
         self.progress_percentage_label = QLabel(self.progress_slider)
         self.progress_percentage_label.setObjectName("percentage_label")
         self.progress_percentage_label.setAlignment(Qt.AlignCenter)
         self.progress_percentage_label.setAttribute(Qt.WA_TransparentForMouseEvents)
 
-        # Content
-        self.content_container = QWidget()
-        self.content_layout = QVBoxLayout(self.content_container)
-        self.content_layout.setContentsMargins(10, 10, 10, 10)
-        self.content_layout.setSpacing(10)
-        root_layout.addWidget(self.content_container)
-
-        # Visual Area for blurring (Cover Art and Metadata)
-        self.visual_area = QWidget()
-        visual_layout = QVBoxLayout(self.visual_area)
-        visual_layout.setContentsMargins(0, 0, 0, 0)
-        visual_layout.setSpacing(10)
-        self.content_layout.addWidget(self.visual_area)
-
+    def _build_cover_art(self):
         self.cover_art_label = QLabel()
         self.cover_art_label.setAlignment(Qt.AlignCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cover_art_label.setMinimumSize(280, 280)
         self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
-        visual_layout.addWidget(self.cover_art_label)
+        self.visual_layout.addWidget(self.cover_art_label)
 
+    def _build_metadata(self):
         self.metadata_label = QLabel("Author - Title")
         self.metadata_label.setAlignment(Qt.AlignCenter)
         self.metadata_label.mousePressEvent = self._on_drag_area_pressed
-        visual_layout.addWidget(self.metadata_label)
+        self.visual_layout.addWidget(self.metadata_label)
 
         self.time_label = QLabel("00:00:00 / 00:00:00")
         self.time_label.setAlignment(Qt.AlignCenter)
         font = self.time_label.font()
         font.setPointSize(9)
         self.time_label.setFont(font)
-        visual_layout.addWidget(self.time_label)
+        self.visual_layout.addWidget(self.time_label)
 
+    def _build_controls(self):
         controls_layout = QHBoxLayout()
         self.prev_button = QPushButton("|<<")
         self.rewind_button = QPushButton("<")
@@ -156,6 +190,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
+        self.play_pause_button.clicked.connect(self.toggle_play_pause)
+        self.prev_button.clicked.connect(self.handle_prev)
+        self.rewind_button.clicked.connect(self.handle_rewind)
+        self.forward_button.clicked.connect(self.handle_forward)
+        self.next_button.clicked.connect(self.handle_next)
+
+    def _build_secondary_controls(self):
         secondary_layout = QHBoxLayout()
         self.speed_button = QPushButton("1.00x")
         self.speed_button.setFixedWidth(60)
@@ -176,13 +217,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         secondary_layout.addWidget(self.speed_button)
         self.content_layout.addLayout(secondary_layout)
 
-        self.play_pause_button.clicked.connect(self.toggle_play_pause)
-        self.prev_button.clicked.connect(self.handle_prev)
-        self.rewind_button.clicked.connect(self.handle_rewind)
-        self.forward_button.clicked.connect(self.handle_forward)
-        self.next_button.clicked.connect(self.handle_next)
-
-        # Chapter Progress Bar (under secondary layout, over chapter labels)
         self.chapter_progress_slider = ClickSlider(Qt.Horizontal)
         self.chapter_progress_slider.setObjectName("chapter_progress")
         self.chapter_progress_slider.setRange(0, 1000)
@@ -195,81 +229,64 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chapter_container = QHBoxLayout()
         self.chap_elapsed_label = QLabel("00:00:00")
         self.chap_duration_label = QLabel("00:00:00")
-        
-        # The "Trigger" for the dropdown
         self.current_chapter_label = QPushButton("Select Chapter")
         self.current_chapter_label.setObjectName("chapter_selector")
         self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
-
         chapter_container.addWidget(self.chap_elapsed_label)
         chapter_container.addWidget(self.current_chapter_label, 1)
         chapter_container.addWidget(self.chap_duration_label)
         self.content_layout.addLayout(chapter_container)
 
-        self.chapter_list_widget = ChapterList(self)
-        # The _update_chapter_title_text already handles setting the text with elision
-        self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
-        
-        # Initialize Sidebar (hidden off-screen to the left)
+    def _build_sidebar(self):
         self.sidebar = QWidget(self)
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(70)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        
-        self.settings_trigger_btn = QPushButton("Settings") # Keep reference for PanelManager
-        self.settings_trigger_btn.setObjectName("sidebar_settings_btn") 
-        self.sidebar_layout.addWidget(self.settings_trigger_btn) # PanelManager will connect its clicked signal
-
-        self.speed_trigger_btn = QPushButton("Playback") # Keep reference for PanelManager
-        self.speed_trigger_btn.setObjectName("sidebar_speed_btn") 
-        self.sidebar_layout.addWidget(self.speed_trigger_btn) # PanelManager will connect its clicked signal
-
+        self.settings_trigger_btn = QPushButton("Settings")
+        self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
+        self.sidebar_layout.addWidget(self.settings_trigger_btn)
+        self.speed_trigger_btn = QPushButton("Playback")
+        self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
+        self.sidebar_layout.addWidget(self.speed_trigger_btn)
         self.sidebar_layout.addStretch()
-        
-        # Start flush under progress bar: title (32) + progress (24) = 56
         self.sidebar.move(-50, 56)
         self.sidebar.show()
         self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
-        self.sidebar_animation.setDuration(300) # Keep animation here, PanelManager references it
-        self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic) # Keep animation here
+        self.sidebar_animation.setDuration(300)
+        self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
 
-        # Initialize Settings Panel (90% width)
+    def _build_settings_panel(self):
         self.settings_panel = QWidget(self)
         self.settings_panel.setObjectName("settings_panel")
         self.settings_panel_layout = QVBoxLayout(self.settings_panel)
         self.settings_panel_layout.setContentsMargins(10, 10, 10, 10)
-        
-        # Appearance Section
         appearance_header = QLabel("Appearance")
         appearance_header.setObjectName("settings_header")
         self.settings_panel_layout.addWidget(appearance_header)
-
         theme_row = QHBoxLayout()
         theme_row.addWidget(QLabel("Theme:"))
         theme_row.addStretch()
         self.theme_dropdown = ThemeComboBox()
         self.theme_dropdown.setFixedWidth(160)
-        self.theme_dropdown.setView(QListView()) # Required for QSS popup background styling
-        self.theme_dropdown.setMaxVisibleItems(4) # Limit visible items to 4
+        self.theme_dropdown.setView(QListView())
+        self.theme_dropdown.setMaxVisibleItems(4)
         self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.theme_dropdown.addItems(sorted(list(THEMES.keys()))) # Sort themes alphabetically
+        self.theme_dropdown.addItems(sorted(list(THEMES.keys())))
         self.theme_dropdown.setCurrentText(self.config.get_theme())
-        self.theme_dropdown.aboutToShowPopup.connect(self.theme_manager._on_theme_dropdown_about_to_show) # Delegated
-        self.theme_dropdown.aboutToHidePopup.connect(self.theme_manager._on_theme_dropdown_about_to_hide) # Delegated
-        # Use view's 'entered' for reliable mouse-over, and 'highlighted' for keyboard navigation
+        self.theme_dropdown.aboutToShowPopup.connect(self.theme_manager._on_theme_dropdown_about_to_show)
+        self.theme_dropdown.aboutToHidePopup.connect(self.theme_manager._on_theme_dropdown_about_to_hide)
         self.theme_dropdown.view().entered.connect(lambda idx: self.theme_manager._on_theme_hovered(idx.row()))
         self.theme_dropdown.highlighted[int].connect(self.theme_manager._on_theme_hovered)
         self.theme_dropdown.activated[int].connect(self.theme_manager._on_theme_selected_from_dropdown)
         theme_row.addWidget(self.theme_dropdown)
         self.settings_panel_layout.addLayout(theme_row)
-
         fade_row = QHBoxLayout()
         fade_label = QLabel("Hover fade (ms):")
         fade_row.addWidget(fade_label)
         fade_row.addStretch()
         self.fade_dropdown = ThemeComboBox()
-        self.fade_dropdown.setFixedWidth(60) # Match theme dropdown width for alignment
+        self.fade_dropdown.setFixedWidth(60)
         tooltip_text = "Adjust the duration of the cross-fade effect when\n" \
         "previewing or selecting themes. Set to 0 to disable."
         fade_label.setToolTip(tooltip_text)
@@ -282,7 +299,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.fade_dropdown.currentTextChanged.connect(lambda v: self.config.set_theme_fade_duration(int(v)))
         fade_row.addWidget(self.fade_dropdown)
         self.settings_panel_layout.addLayout(fade_row)
-
         blur_row = QHBoxLayout()
         blur_row.addWidget(QLabel("Blur:"))
         blur_row.addStretch()
@@ -295,35 +311,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.blur_dropdown.currentTextChanged.connect(lambda v: self.config.set_blur_enabled(v == "On"))
         blur_row.addWidget(self.blur_dropdown)
         self.settings_panel_layout.addLayout(blur_row)
-
-        # Controls Section
         controls_header = QLabel("Controls")
         controls_header.setObjectName("settings_header")
         self.settings_panel_layout.addWidget(controls_header)
         self.settings_panel_layout.addWidget(QLabel("Skip interval"))
         self.settings_panel_layout.addStretch()
         self.settings_panel.hide()
+        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
+        self.settings_panel_animation.setDuration(300)
+        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
-        # Initialize Speed Panel
+    def _build_speed_panel(self):
         self.speed_panel = QWidget(self)
         self.speed_panel.setObjectName("speed_panel")
         self.speed_panel_layout = QVBoxLayout(self.speed_panel)
-        
         speed_header = QLabel("Playback Speed")
-        speed_header.setObjectName("settings_header") # Use same style as settings header
         speed_header.setObjectName("settings_header")
         self.speed_panel_layout.addWidget(speed_header)
-
-        # Speed Grid
         grid = QGridLayout()
         grid.setSpacing(4)
         presets = [
             0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
             3.25, 3.50, 3.75, 4.00, 5.00, 6.00, 7.00, 8.00
         ]
-        self._speed_presets = presets # Store presets for dynamic styling
-        self._speed_grid_buttons = [] # Store buttons for dynamic styling
-
+        self._speed_presets = presets
+        self._speed_grid_buttons = []
         for i, val in enumerate(self._speed_presets):
             btn = QPushButton(f"{val:.2f}x")
             btn.setFixedSize(55, 30)
@@ -331,8 +343,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             grid.addWidget(btn, i // 4, i % 4)
             self._speed_grid_buttons.append(btn)
         self.speed_panel_layout.addLayout(grid)
-
-        # Speed Settings
         def_speed_row = QHBoxLayout()
         def_speed_row.addWidget(QLabel("Default Speed:"))
         def_speed_row.addStretch()
@@ -353,32 +363,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.step_dropdown.currentTextChanged.connect(lambda v: self.config.set_speed_increment(float(v)))
         step_row.addWidget(self.step_dropdown)
         self.speed_panel_layout.addLayout(step_row)
-
         self.speed_panel_layout.addStretch()
         self.speed_panel.hide()
-
-        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos") # Keep animation here, PanelManager references it
-        self.settings_panel_animation.setDuration(300) # Keep animation here
-        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic) # Keep animation here
-
-        self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos") # Keep animation here, PanelManager references it
-        self.speed_panel_animation.setDuration(300) # Keep animation here
-        self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic) # Keep animation here
-
-        self._update_speed_grid_styling() # Apply initial styling (called by theme_manager after theme change)
-
-        # Initialize Blur Effect for background depth
-        self.blur_effect = QGraphicsBlurEffect(self.visual_area)
-        self.blur_effect.setBlurHints(QGraphicsBlurEffect.AnimationHint)
-        self.blur_effect.setBlurRadius(0)
-        self.visual_area.setGraphicsEffect(self.blur_effect)
-
-        self.blur_animation = QPropertyAnimation(self.blur_effect, b"blurRadius")
-        self.blur_animation.setDuration(500)
-        self.blur_animation.setEasingCurve(QEasingCurve.OutCubic)
-        
-        # Initialize PanelManager after all relevant widgets are created
-        self.panel_manager = PanelManager(self)
+        self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")
+        self.speed_panel_animation.setDuration(300)
+        self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _update_chapter_title_text(self, text):
         """Update the button text with elision."""
@@ -393,7 +382,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if last_pos > 0:
             self.player.time_pos = last_pos
             self._is_seeking = True
-        self.player.volume = self.volume_slider.value()
+        
+        vol_val = self.volume_slider.value()
+        if vol_val == 0:
+            self.player.volume = 0
+        else:
+            self.player.volume = 100 * (math.log10(vol_val) / 2.0)
         
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
@@ -523,9 +517,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
-        self._hide_popups()
+        self.panel_manager.hide_all_panels()
         if self.player:
-            self.player.volume = value
+            if value == 0:
+                self.player.volume = 0
+            else:
+                # Logarithmic scale: makes the lower end of the slider more granular
+                self.player.volume = 100 * (math.log10(value) / 2.0)
 
     def _set_speed(self, value, save=True):
         """Applies a specific speed value."""
