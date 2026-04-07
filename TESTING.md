@@ -1,94 +1,94 @@
 ## Playback
 
-- [ ] Play/pause toggles correctly
-- [ ] Rwd/fwd works
-- [ ] Prev/next works
-- [ ] Previos chapter grace period || Too short on higher speeds, calculate and adjust
-- [ ] Prev/next works
-- [ ] Beginning of the file logic correct
-- [ ] End of the file Play button turns into Restart
-- [ ] End of the file logic correct
-- [ ] Restart restarts directly
-- [ ] EOF restarts on next play
-- [ ] Speed button left click opens menu || wheel control, hold left click ?
-- [ ] Speed button right click increases speed | hold right click ?
-- [ ] Speed button shift+right click descreases speed
+- [x] Play/pause toggles correctly
+- [x] Rwd/fwd works
+- [x] Prev/next works
+- [x] Previos chapter grace period || Too short on higher speeds, calculate and adjust
+- [x] Prev/next works
+- [x] Beginning of the file logic correct
+- [x] End of the file Play button turns into Restart
+- [x] End of the file logic correct
+- [x] Restart restarts directly
+- [x] EOF restarts on next play
+- [x] Speed button left click opens menu || wheel control, hold left click ?
+- [x] Speed button right click increases speed | hold right click ?
+- [x] Speed button shift+right click descreases speed
 
 ## Sliders
 
-- [ ] Book progress bar functional
-- [ ] Book progress bar draggable
-- [ ] Book progress bar updates the percentage
-- [ ] Book progress bar updates the current chapter name
-- [ ] Book progress bar updates the chapter progress bar
-- [ ] Chapter progress bar functional
-- [ ] Chapter progress bar draggable
-- [ ] Chapter progress bar updates the percentage
-- [ ] Chapter progress bar updates book progress bar
-- [ ] Volume slider functional || wheel control, needs fix: first 20% too low
-- [ ] Volume slider draggable
-- [ ] Volume slider draggable
+- [x] Book progress bar functional
+- [x] Book progress bar draggable
+- [x] Book progress bar updates the percentage
+- [x] Book progress bar updates the current chapter name
+- [x] Book progress bar updates the chapter progress bar
+- [x] Chapter progress bar functional
+- [x] Chapter progress bar draggable
+- [x] Chapter progress bar updates the percentage
+- [x] Chapter progress bar updates book progress bar
+- [x] Volume slider functional || wheel control, needs fix: first 20% too low
+- [x] Volume slider draggable
+- [x] Volume slider draggable
 
 ## UI
 
-- [ ] Window draggable
-- [ ] Current chapter corresponds to progress bar position
-- [ ] Time elapsed displayed correctly | font, position
-- [ ] Total duration displayed correctly | font, position
-- [ ] Chapter time elapsed displayed correctly || font, position
-- [ ] Total chapter duration displayed correctly || font, position
-- [ ] Chapter name opens drop-up
-- [ ] Chapter names in drop-up responsive || scrollbar check when library is implemented
-- [ ] Chapter names in drop-up geometry || newlines after the last chapter, width, test slide up
-- [ ] Right click on chapter names selects them || for what reason? questionable behavior
-- [ ] Toolbar buttons displayed and responsive || full-screen button to be removed
-- [ ] Art displayed when present || modes
-- [ ] Size locked
+- [x] Window draggable
+- [x] Current chapter corresponds to progress bar position
+- [x] Time elapsed displayed correctly | font, position
+- [x] Total duration displayed correctly | font, position
+- [x] Chapter time elapsed displayed correctly || font, position
+- [x] Total chapter duration displayed correctly || font, position
+- [x] Chapter name opens drop-up
+- [x] Chapter names in drop-up responsive || scrollbar check when library is implemented
+- [x] Chapter names in drop-up geometry || newlines after the last chapter, width, test slide up
+- [x] Right click on chapter names selects them || for what reason? questionable behavior
+- [x] Toolbar buttons displayed and responsive || full-screen button to be removed
+- [x] Art displayed when present
+- [x] Size locked
 
 ## Sidebar
 
-- [ ] Slides on right click on cover art field
-- [ ] Opacity on on hover
-- [ ] Clicking on it dismisses || tbd
-- [ ] Hides on menu open
-- [ ] Hides on Speed button click || too fast?
-- [ ] All clicks on buttons dismisses and performs
-- [ ] Settings clickable
-- [ ] Playback clickable
-- [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Slides on right click on cover art field
+- [x] Opacity on on hover
+- [x] Clicking on it dismisses || tbd
+- [x] Hides on menu open
+- [x] Hides on Speed button click || too fast?
+- [x] All clicks on buttons dismisses and performs
+- [x] Settings clickable
+- [x] Playback clickable
+- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
 
 ## Settings panel || scrollbar issues, remove :, remove vertical line and darken, font size +1
 
-- [ ] Speed button switcheroo when settings on
-- [ ] All clicks on buttons dismisses and performs
-- [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
-- [ ] Blur works || either needs improvement or removal
+- [x] Speed button switcheroo when settings on
+- [x] All clicks on buttons dismisses and performs
+- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Blur works || either needs improvement or removal
 
 ## Speed panel || Playback or Speed?, remove :, remove vertical line and darken
 
-- [ ] Choosing speed dismisses panel
-- [ ] Choosing default speed does not dismiss panel
-- [ ] Choosing step does not dismiss panel
-- [ ] Left clicking on the panel does not dismiss the panel
-- [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
-- [ ] Default Speed || orthographical fix [Default speed]
+- [x] Choosing speed dismisses panel
+- [x] Choosing default speed does not dismiss panel
+- [x] Choosing step does not dismiss panel
+- [x] Left clicking on the panel does not dismiss the panel
+- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Default Speed || orthographical fix: Default speed
 
 ## Saving states
 
-- [ ] Book progress restored || grabs after ui init
-- [ ] Chapter name restored || grabs after ui init
-- [ ] Theme restored
-- [ ] Speed setting restored || grabs after ui init
-- [ ] Default speed setting 
-- [ ] Step restored || name
+- [x] Book progress restored || grabs after ui init
+- [x] Chapter name restored || grabs after ui init
+- [x] Theme restored
+- [x] Speed setting restored || grabs after ui init
+- [x] Default speed setting 
+- [x] Step restored || name
 
 ## Theme engine || reorder
 
-- [ ] Theme changes apply immediately
-- [ ] Hover works || needs improvement
-- [ ] Hover preview reverts on dismiss
-- [ ] All clicks on buttons dismisses and performs
-- [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
+- [x] Theme changes apply immediately
+- [x] Hover works || needs improvement
+- [x] Hover preview reverts on dismiss
+- [x] All clicks on buttons dismisses and performs
+- [x] Clicking on chapter name does not dismiss || overlooked, needs fix
 
 ## Each theme here || name default needs fix, feat random
 
