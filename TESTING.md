@@ -11,7 +11,7 @@
 - [x] Restart restarts directly
 - [x] EOF restarts on next play
 - [x] Speed button left click opens menu || wheel control, hold left click ?
-- [x] Speed button right click increases speed | hold right click ?
+- [x] Speed button right click increases speed || hold right click ?
 - [x] Speed button shift+right click descreases speed
 
 ## Sliders
@@ -25,7 +25,7 @@
 - [x] Chapter progress bar draggable
 - [x] Chapter progress bar updates the percentage
 - [x] Chapter progress bar updates book progress bar
-- [x] Volume slider functional || wheel control, needs fix: first 20% too low
+- [x] Volume slider functional || wheel control
 - [x] Volume slider draggable
 - [x] Volume slider draggable
 
@@ -33,8 +33,8 @@
 
 - [x] Window draggable
 - [x] Current chapter corresponds to progress bar position
-- [x] Time elapsed displayed correctly | font, position
-- [x] Total duration displayed correctly | font, position
+- [x] Time elapsed displayed correctly || font, position
+- [x] Total duration displayed correctly || font, position
 - [x] Chapter time elapsed displayed correctly || font, position
 - [x] Total chapter duration displayed correctly || font, position
 - [x] Chapter name opens drop-up
@@ -75,10 +75,10 @@
 
 ## Saving states
 
-- [x] Book progress restored || grabs after ui init
-- [x] Chapter name restored || grabs after ui init
+- [x] Book progress restored
+- [x] Chapter name restored
 - [x] Theme restored
-- [x] Speed setting restored || grabs after ui init
+- [x] Speed setting restored
 - [x] Default speed setting 
 - [x] Step restored || name
 
