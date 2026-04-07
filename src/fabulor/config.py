@@ -3,7 +3,7 @@ from PySide6.QtCore import QSettings
 class Config:
     """Handles persistent application configuration and user preferences."""
     def __init__(self):
-        self.settings = QSettings("Fabulor", "Fabulor")
+        self.settings = QSettings("Fabulor", "Fabulor") # Org, App
 
     def get_theme(self):
         return self.settings.value("theme", "default")
@@ -67,3 +67,17 @@ class Config:
 
     def sync(self):
         self.settings.sync()
+
+    def get_sleep_duration(self):
+        """Returns the last set sleep duration in minutes."""
+        return int(self.settings.value("sleep_duration", 30)) # Default to 30 minutes
+
+    def set_sleep_duration(self, minutes):
+        self.settings.setValue("sleep_duration", minutes)
+
+    def get_sleep_mode(self):
+        """Returns the last set sleep mode ('timed', 'end_of_chapter', 'end_of_book')."""
+        return self.settings.value("sleep_mode", "timed")
+
+    def set_sleep_mode(self, mode):
+        self.settings.setValue("sleep_mode", mode)

@@ -308,7 +308,7 @@ def get_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
-        QWidget#settings_panel, QWidget#speed_panel {{
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
@@ -387,6 +387,12 @@ def get_stylesheet(theme_name="default"):
             font-size: 13px;
             color: {t['text']};
         }}
+        QPushButton#sleep_timer_display {{
+            background: transparent;
+            border: none;
+            padding: 0px;
+            color: {t['text']};
+        }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
             border: 1px solid {t['accent']};
@@ -446,6 +452,13 @@ def get_stylesheet(theme_name="default"):
         }}
         QComboBox QAbstractItemView::item {{
             min-height: 20px; /* Ensure each item has a minimum height */
+        }}
+        QLineEdit {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 2px;
         }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,

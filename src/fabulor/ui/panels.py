@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication
+from PySide6.QtWidgets import QLineEdit
 from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QGuiApplication
 
@@ -20,6 +21,7 @@ class PanelManager:
         self.sidebar = main_window.sidebar
         self.settings_panel = main_window.settings_panel
         self.speed_panel = main_window.speed_panel
+        self.sleep_panel = main_window.sleep_panel
         self.blur_effect = main_window.blur_effect # Reference to the blur effect
         self.blur_animation = main_window.blur_animation # Reference to the blur animation
 
@@ -27,10 +29,12 @@ class PanelManager:
         self.sidebar_animation = main_window.sidebar_animation
         self.settings_panel_animation = main_window.settings_panel_animation
         self.speed_panel_animation = main_window.speed_panel_animation
+        self.sleep_panel_animation = main_window.sleep_panel_animation
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.settings_trigger_btn.clicked.connect(self._open_settings_flow)
         self.main_window.speed_trigger_btn.clicked.connect(self._open_speed_flow)
+        self.main_window.sleep_trigger_btn.clicked.connect(self._open_sleep_flow)
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -116,9 +120,11 @@ class PanelManager:
 
         if self._pending_panel_open == "settings": self._start_settings_entry()
         elif self._pending_panel_open == "speed": self._start_speed_entry()
+        elif self._pending_panel_open == "sleep": self._start_sleep_entry()
         self._pending_panel_open = None
 
     def _close_speed_flow(self):
+        """Slides the speed panel back out."""
         if self.speed_panel_animation.state() == QPropertyAnimation.Running:
             return
         panel_w = self.speed_panel.width()
@@ -138,6 +144,54 @@ class PanelManager:
         except: pass
         self.speed_panel.hide()
 
+    def _open_sleep_flow(self):
+        """Hides sidebar first, then shows sleep panel."""
+        if self.sidebar_expanded:
+            self._pending_panel_open = "sleep"
+            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            self._toggle_sidebar()
+        else:
+            self._start_sleep_entry()
+
+    def _start_sleep_entry(self):
+        """Starts the sleep panel slide-in animation."""
+        panel_w = int(self.main_window.width() * 0.9)
+        sidebar_y = 56
+        self.sleep_panel.setFixedWidth(panel_w)
+        self.sleep_panel.move(-panel_w, sidebar_y)
+        self.sleep_panel.show()
+        self.sleep_panel.raise_()
+        
+        self.sleep_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
+        self.sleep_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.sleep_panel_animation.start()
+        
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(0)
+            self.blur_animation.setEndValue(10)
+            self.blur_animation.start()
+
+    def _close_sleep_flow(self):
+        """Slides the sleep panel back out."""
+        if self.sleep_panel_animation.state() == QPropertyAnimation.Running:
+            return
+        panel_w = self.sleep_panel.width()
+        sidebar_y = 56
+        self.sleep_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.sleep_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        self.sleep_panel_animation.finished.connect(self._on_sleep_hidden)
+        self.sleep_panel_animation.start()
+
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setEndValue(0)
+            self.blur_animation.start()
+
+    def _on_sleep_hidden(self):
+        try: self.sleep_panel_animation.finished.disconnect(self._on_sleep_hidden)
+        except: pass
+        self.sleep_panel.hide()
+        
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
         if self.settings_panel_animation.state() == QPropertyAnimation.Running:
@@ -173,10 +227,12 @@ class PanelManager:
             self._close_settings_flow()
         if self.speed_panel.isVisible():
             self._close_speed_flow()
+        if self.sleep_panel.isVisible():
+            self._close_sleep_flow()
 
     def handle_mouse_press(self, event):
         """Handles mouse press events to prevent panel dismissal when clicking inside."""
-        for panel in [self.settings_panel, self.speed_panel]:
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return True # Event handled, do not propagate
         return False # Event not handled, propagate
@@ -187,6 +243,8 @@ class PanelManager:
             self._close_settings_flow()
         elif self.speed_panel.isVisible():
             self._close_speed_flow()
+        elif self.sleep_panel.isVisible():
+            self._close_sleep_flow()
         elif self.main_window.chapter_list_widget.isVisible():
             self.main_window.chapter_list_widget.hide()
         else:
@@ -200,6 +258,7 @@ class PanelManager:
         self.sidebar.setFixedHeight(200)
         self.settings_panel.setFixedHeight(370)
         self.speed_panel.setFixedHeight(320)
+        self.sleep_panel.setFixedHeight(320) # Same height as speed panel for now
 
         if self.speed_panel.isVisible():
             self.speed_panel.move(0, sidebar_y)
@@ -218,3 +277,8 @@ class PanelManager:
             self.settings_panel.move(0, sidebar_y)
         else:
             self.settings_panel.move(-self.settings_panel.width(), sidebar_y)
+
+        if self.sleep_panel.isVisible():
+            self.sleep_panel.move(0, sidebar_y)
+        else:
+            self.sleep_panel.move(-self.sleep_panel.width(), sidebar_y)

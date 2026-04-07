@@ -72,6 +72,16 @@
 - [x] Left clicking on the panel does not dismiss the panel
 - [x] Clicking on chapter name does not dismiss
 
+## Sleep panel
+- [ ] Sleep button in sidebar opens panel
+- [ ] Time presets (2, 5, ..., 120 min) set timer correctly
+- [ ] "End of Chapter" mode works
+- [ ] "End of Book" mode works
+- [ ] Custom time input works with positive integers
+- [ ] Custom time input rejects non-positive/invalid input
+- [ ] "Disable Sleep Timer" button works
+- [ ] Sleep timer display in time label updates correctly
+
 ## Saving states
 
 - [x] Book progress restored
