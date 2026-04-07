@@ -1,4 +1,5 @@
 ## Playback
+
 - [ ] Play/pause toggles correctly
 - [ ] Rwd/fwd works
 - [ ] Prev/next works
@@ -14,6 +15,7 @@
 - [ ] Speed button shift+right click descreases speed
 
 ## Sliders
+
 - [ ] Book progress bar functional
 - [ ] Book progress bar draggable
 - [ ] Book progress bar updates the percentage
@@ -28,6 +30,7 @@
 - [ ] Volume slider draggable
 
 ## UI
+
 - [ ] Window draggable
 - [ ] Current chapter corresponds to progress bar position
 - [ ] Time elapsed displayed correctly | font, position
@@ -43,6 +46,7 @@
 - [ ] Size locked
 
 ## Sidebar
+
 - [ ] Slides on right click on cover art field
 - [ ] Opacity on on hover
 - [ ] Clicking on it dismisses || tbd
@@ -54,12 +58,14 @@
 - [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
 
 ## Settings panel || scrollbar issues, remove :, remove vertical line and darken, font size +1
+
 - [ ] Speed button switcheroo when settings on
 - [ ] All clicks on buttons dismisses and performs
 - [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
 - [ ] Blur works || either needs improvement or removal
 
 ## Speed panel || Playback or Speed?, remove :, remove vertical line and darken
+
 - [ ] Choosing speed dismisses panel
 - [ ] Choosing default speed does not dismiss panel
 - [ ] Choosing step does not dismiss panel
@@ -68,6 +74,7 @@
 - [ ] Default Speed || orthographical fix [Default speed]
 
 ## Saving states
+
 - [ ] Book progress restored || grabs after ui init
 - [ ] Chapter name restored || grabs after ui init
 - [ ] Theme restored
@@ -76,6 +83,7 @@
 - [ ] Step restored || name
 
 ## Theme engine || reorder
+
 - [ ] Theme changes apply immediately
 - [ ] Hover works || needs improvement
 - [ ] Hover preview reverts on dismiss
@@ -83,6 +91,7 @@
 - [ ] Clicking on chapter name does not dismiss || overlooked, needs fix
 
 ## Each theme here || name default needs fix, feat random
+
 - [ ] Anomander
 - [ ] Blue Moranth
 - [ ] Chatsubo
