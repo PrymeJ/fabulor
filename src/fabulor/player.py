@@ -67,15 +67,25 @@ class Player(QObject):
             return QPixmap()
 
         pixmap = QPixmap()
+        # Handle the "Folder = Book" logic
+        target_file = file_path
+        if os.path.isdir(file_path):
+            audio_exts = {'.m4b', '.mp3', '.flac', '.m4a'}
+            files = sorted([f for f in os.listdir(file_path) if os.path.splitext(f)[1].lower() in audio_exts])
+            if not files: return pixmap
+            target_file = os.path.join(file_path, files[0])
+
         try:
-            audio = mutagen.File(file_path)
+            audio = mutagen.File(target_file)
             if audio and audio.tags:
                 if 'covr' in audio.tags:
                     data = audio.tags['covr'][0]
                     pixmap.loadFromData(data)
-                elif 'APIC:' in audio.tags:
-                    data = audio.tags['APIC:'].data
-                    pixmap.loadFromData(data)
+                else:
+                    for key in audio.tags.keys():
+                        if key.startswith('APIC'):
+                            pixmap.loadFromData(audio.tags[key].data)
+                            break
         except Exception as e:
             print(f"Metadata extraction error: {e}")
         return pixmap

@@ -76,6 +76,11 @@ class LibraryDB:
         """Removes a directory from the scan list."""
         with self._get_conn() as conn:
             with conn:
+                # Remove books from this folder first
+                conn.execute(
+                    "DELETE FROM books WHERE path LIKE ?", 
+                    (str(path) + "%",)
+                )
                 conn.execute("DELETE FROM scan_locations WHERE path = ?", (str(path),))
 
     # --- Books CRUD ---

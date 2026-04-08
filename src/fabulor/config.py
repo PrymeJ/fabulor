@@ -65,6 +65,12 @@ class Config:
         """Saves the current timestamp for a specific file."""
         self.settings.setValue(f"pos_{file_path}", pos)
 
+    def get_last_book(self):
+        return self.settings.value("last_book", "")
+
+    def set_last_book(self, file_path):
+        self.settings.setValue("last_book", file_path)
+
     def sync(self):
         self.settings.sync()
 

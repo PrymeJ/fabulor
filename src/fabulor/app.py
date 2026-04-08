@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex, QRegularExpression, Signal
+    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
+    QRegularExpression, Signal, QObject
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator
 
@@ -18,6 +19,8 @@ from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.theme_manager import ThemeManager, ThemeComboBox # ThemeComboBox is used in _setup_ui
 import time # For sleep timer
+from .ui.cover_loader import CoverLoaderWorker # For async cover loading
+from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
@@ -103,11 +106,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         QApplication.instance().installEventFilter(self)
 
-        # self.current_file = "/home/pryme/test.m4b"
-        # self.player.load_book(self.current_file)
+        # Restore last played book if it exists
+        last_book = self.config.get_last_book()
+        if last_book and os.path.exists(last_book):
+            self.current_file = last_book
+            self.player.load_book(self.current_file)
         self.chapter_list_widget.set_player(self.player)
 
         self._load_cover_art(self.current_file)
+        
+        # Handle selection from library
+        self.library_panel.book_selected.connect(self._on_book_selected_from_library)
+        
         self._check_library_status()
         self.ui_timer.start(200)
 
@@ -138,6 +148,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_layout.setContentsMargins(0, 0, 0, 0)
         self.visual_layout.setSpacing(10)
         self.visual_area.setFixedHeight(350) # Lock size so buttons stay fixed
+        self.visual_area.mousePressEvent = self._on_drag_area_pressed
         self.content_layout.addWidget(self.visual_area)
 
         self._build_cover_art()
@@ -149,6 +160,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
         
         self._build_sidebar()
+        self._build_library_panel()
         self._build_settings_panel()
         self._build_sleep_panel()
         self._build_speed_panel()
@@ -232,8 +244,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _build_metadata(self):
         # Status Prompt (Top)
-        # Push the entire top block down by 40px
-        self.visual_layout.addSpacing(40)
+        # Push the entire top block down by 120px to center it more vertically
+        self.visual_layout.addSpacing(120)
 
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
@@ -244,7 +256,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_now_btn.setFixedWidth(120)
         self.scan_now_btn.clicked.connect(self._on_scan_now_clicked)
         self.visual_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
-
         self.scan_info_label = QLabel(
             "Loading all your books may take a while. If you wish, you can instead "
             "first load fewer books, then choose your whole library later."
@@ -260,6 +271,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.metadata_label.setWordWrap(True)
         self.metadata_label.mousePressEvent = self._on_drag_area_pressed
         self.visual_layout.addWidget(self.metadata_label)
+
+        # Library button now appears AFTER the metadata label
+        self.go_to_library_btn = QPushButton("Go to Library")
+        self.go_to_library_btn.setObjectName("go_to_library_btn")
+        self.go_to_library_btn.setFixedWidth(120)
+        self.go_to_library_btn.hide() # Hide by default
+        self.visual_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
 
         self.visual_layout.addStretch()
 
@@ -351,6 +369,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar.setFixedWidth(70)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.library_trigger_btn = QPushButton("Library")
+        self.library_trigger_btn.setObjectName("sidebar_library_btn")
+        self.sidebar_layout.addWidget(self.library_trigger_btn)
+        
+        self.sidebar_layout.addSpacing(10) # Separation
+
         self.settings_trigger_btn = QPushButton("Settings")
         self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
         self.sidebar_layout.addWidget(self.settings_trigger_btn)
@@ -375,6 +400,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
         self.sidebar_animation.setDuration(300)
         self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _build_library_panel(self):
+        self.library_panel = LibraryPanel(self.db, player_instance=self.player, parent=self)
+        self.library_panel.hide()
+        self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
+        self.library_panel_animation.setDuration(300)
+        self.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _build_settings_panel(self):
         self.settings_panel = QWidget(self)
@@ -632,6 +664,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.db.remove_scan_location(path)
             self._refresh_folder_list()
             self._check_library_status(manual=True)
+            self.library_panel.refresh(force=True)
 
     def _check_library_status(self, manual=False, force_refresh=False):
         """Lazy scan on startup. Checks if locations exist but books are missing."""
@@ -649,6 +682,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.scan_now_btn.show()
             self.scan_info_label.show()
             self.metadata_label.hide()
+            self.go_to_library_btn.hide() # Hide this button in empty state
         else:
             # We have at least one book! Switch to "Ready" state
             self.library_prompt_label.hide()
@@ -658,8 +692,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.quote_timer.stop()
             
             if not has_book:
-                self.metadata_label.setText("No book selected")
+                self.metadata_label.setText("No book selected.") # Added period
                 self.metadata_label.show()
+                self.go_to_library_btn.show() # Show this button if books exist but none selected
+            else:
+                self.go_to_library_btn.hide() # Hide if a book is selected
 
         if has_locations:
             if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
@@ -738,13 +775,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if current == 1:
             self._check_library_status()
 
+    def _on_book_selected_from_library(self, path):
+        """Loads a book and closes the library panel."""
+        self.current_file = path
+        self.player.load_book(path)
+        self._load_cover_art(path)
+        self._check_library_status()
+        self.panel_manager.hide_all_panels()
+        self._update_ui_sync() # Force UI update
+
     def _on_scan_finished(self, total):
         if self.status_banner.isVisible():
             self.status_label.setText(f"Library updated: {total} books.")
             self.cancel_scan_btn.hide()
             QTimer.singleShot(3000, self.status_banner.hide)
         
-        self._check_library_status()
+        self.library_panel.refresh(force=True)
         self._refresh_folder_list()
 
     def _on_file_ready(self):
@@ -1119,11 +1165,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""
+        # Get book metadata for fallback display
+        book = self.db.get_book(file_path) if file_path else None
+        
         if not file_path:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
             self.metadata_label.show()
-            # Note: Text is handled by _check_library_status for initial run
+            self.metadata_label.setText("No book selected")
             return
 
         pixmap = self.player.extract_cover(file_path)
@@ -1137,6 +1186,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
             self.metadata_label.show()
+            if book:
+                self.metadata_label.setText(f"{book['author']} - {book['title']}")
+            else:
+                self.metadata_label.setText("Unknown Book")
 
     def _update_cover_art_scaling(self):
         """Scales the current cover pixmap to FIT the available space."""
@@ -1229,17 +1282,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        if event.type() == QEvent.MouseButtonPress:
-            if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
-                # Convert global position to check if it's inside the dropdown
-                gp = event.globalPosition().toPoint()
-                if not self.chapter_list_widget.geometry().contains(gp):
-                    self.panel_manager.hide_all_panels()
+        try:
+            if event.type() == QEvent.MouseButtonPress:
+                if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
+                    gp = event.globalPosition().toPoint()
+                    if not self.chapter_list_widget.geometry().contains(gp):
+                        self.panel_manager.hide_all_panels()
+        except Exception:
+            pass
+            
+        # Ensure obj is a valid QObject before calling super().eventFilter
+        # Some internal Qt objects like QWidgetItem are not QObjects.
+        if not isinstance(obj, QObject) or obj is None:
+            return False
         return super().eventFilter(obj, event)
     def closeEvent(self, event):
         if self.player:
             self.config.set_volume(self.volume_slider.value())
-            if self.current_file and self.player.instance:
-                self.config.set_last_position(self.current_file, self.player.time_pos)
+            if self.current_file:
+                self.config.set_last_book(self.current_file)
+                if self.player.instance:
+                    self.config.set_last_position(self.current_file, self.player.time_pos)
             self.player.terminate()
+        
+        if self.scanner:
+            self.scanner.stop()
+            if self.scanner._worker_thread and self.scanner._worker_thread.isRunning():
+                self.scanner._worker_thread.quit()
+                self.scanner._worker_thread.wait()
+                
         event.accept()

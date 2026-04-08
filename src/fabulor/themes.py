@@ -308,7 +308,7 @@ def get_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
-        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#status_banner {{
+        QWidget#library_panel, QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#status_banner {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
@@ -411,6 +411,43 @@ def get_stylesheet(theme_name="default"):
             background-color: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
+        QProgressBar#scan_progress {{
+            background-color: {t['slider_overall_bg']};
+            border: none;
+            border-radius: 3px;
+        }}
+        QProgressBar#scan_progress::chunk {{
+            background-color: {t['accent']};
+            border-radius: 3px;
+        }}
+        /* Library Panel Styling */
+        #book_item {{
+            background: transparent;
+            border-radius: 4px;
+        }}
+        #book_item:hover {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+        }}
+        #book_cover {{
+            background-color: {t['bg_dropdown']};
+            border: 1px solid {t['accent_dark']};
+            border-radius: 2px;
+        }}
+        #book_cover[placeholder="true"] {{
+            font-size: 32px;
+            font-weight: bold;
+            color: {t['accent_light']};
+            background-color: {t['bg_deep']};
+        }}
+        #book_item_title {{
+            font-size: 10px;
+            font-weight: bold;
+            color: {t['text']};
+        }}
+        #book_item_author {{
+            font-size: 9px;
+            color: {t['accent_light']};
+        }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
             border: 1px solid {t['accent']};
@@ -481,7 +518,8 @@ def get_stylesheet(theme_name="default"):
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#chapter_dropdown QScrollBar:vertical,
-        QListWidget#settings_folder_list QScrollBar:vertical {{
+        QListWidget#settings_folder_list QScrollBar:vertical,
+        #library_panel QScrollBar:vertical {{
             width: 8px;
             background: {t['bg_deep']};
             border: none;
@@ -494,7 +532,8 @@ def get_stylesheet(theme_name="default"):
         }}
         QComboBox QAbstractItemView QScrollBar::handle:vertical,
         QListWidget#chapter_dropdown QScrollBar::handle:vertical,
-        QListWidget#settings_folder_list QScrollBar::handle:vertical {{
+        QListWidget#settings_folder_list QScrollBar::handle:vertical,
+        #library_panel QScrollBar::handle:vertical {{
             background: {t['accent']};
             min-height: 20px;
             border-radius: 4px;
