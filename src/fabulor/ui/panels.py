@@ -253,32 +253,32 @@ class PanelManager:
     def resize_panels(self):
         """Adjusts panel positions and sizes on window resize."""
         sidebar_y = 56 # 32 title + 24 progress
+        panel_w = int(self.main_window.width() * 0.9)
         
         # Hardcoded heights as requested
         self.sidebar.setFixedHeight(200)
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel]:
+            panel.setFixedWidth(panel_w)
+
         self.settings_panel.setFixedHeight(370)
         self.speed_panel.setFixedHeight(320)
         self.sleep_panel.setFixedHeight(400)
 
-        if self.speed_panel.isVisible():
-            self.speed_panel.move(0, sidebar_y)
-        else:
-            self.speed_panel.move(-self.speed_panel.width(), sidebar_y)
-
-        self.settings_panel.setFixedWidth(int(self.main_window.width() * 0.9))
+        # Update Speed Panel position if not animating
+        if self.speed_panel_animation.state() != QPropertyAnimation.Running:
+            x = 0 if self.speed_panel.isVisible() else -panel_w
+            self.speed_panel.move(x, sidebar_y)
 
         # Ensure sidebar position is maintained during resize
-        if not self.sidebar_expanded:
-            self.sidebar.move(-self.sidebar.width(), sidebar_y)
-        else:
-            self.sidebar.move(0, sidebar_y)
+        sidebar_x = 0 if self.sidebar_expanded else -self.sidebar.width()
+        self.sidebar.move(sidebar_x, sidebar_y)
             
-        if self.settings_panel.isVisible():
-            self.settings_panel.move(0, sidebar_y)
-        else:
-            self.settings_panel.move(-self.settings_panel.width(), sidebar_y)
+        # Update Settings Panel position if not animating
+        if self.settings_panel_animation.state() != QPropertyAnimation.Running:
+            x = 0 if self.settings_panel.isVisible() else -panel_w
+            self.settings_panel.move(x, sidebar_y)
 
-        if self.sleep_panel.isVisible():
-            self.sleep_panel.move(0, sidebar_y)
-        else:
-            self.sleep_panel.move(-self.sleep_panel.width(), sidebar_y)
+        # Update Sleep Panel position if not animating
+        if self.sleep_panel_animation.state() != QPropertyAnimation.Running:
+            x = 0 if self.sleep_panel.isVisible() else -panel_w
+            self.sleep_panel.move(x, sidebar_y)

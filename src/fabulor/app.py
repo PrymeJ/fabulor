@@ -130,7 +130,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Pulse Animation for active sleep timer
         self.sleep_opacity_effect = QGraphicsOpacityEffect(self.sleep_trigger_btn)
-        self.sleep_opacity_effect.setOpacity(1.0) # Fix dimmed start
+        self.sleep_opacity_effect.setOpacity(1.0)
         self.sleep_trigger_btn.setGraphicsEffect(self.sleep_opacity_effect)
         self.sleep_pulse_anim = QPropertyAnimation(self.sleep_opacity_effect, b"opacity")
         self.sleep_pulse_anim.setDuration(4000) # Slower pulse
@@ -275,21 +275,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
         self.sidebar_layout.addWidget(self.speed_trigger_btn)
 
-        self.sidebar_sleep_widget = QWidget()
-        self.sidebar_sleep_widget.setObjectName("sidebar_sleep_container")
-        self.sidebar_sleep_widget.setStyleSheet("background: transparent; border: none; margin: 0; padding: 0;")
-        sleep_container = QHBoxLayout(self.sidebar_sleep_widget)
-        sleep_container.setContentsMargins(0, 0, 0, 0)
-        sleep_container.setSpacing(0)
         self.sleep_trigger_btn = QPushButton("Sleep")
         self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
-        self.sleep_cancel_btn = QPushButton("✕")
-        self.sleep_cancel_btn.setFixedSize(14, 24)
+        self.sidebar_layout.addWidget(self.sleep_trigger_btn)
+
+        self.sleep_cancel_btn = QPushButton("✕", self.sleep_trigger_btn)
+        self.sleep_cancel_btn.setFixedSize(16, 16)
+        self.sleep_cancel_btn.move(34, 1)
+        self.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
         self.sleep_cancel_btn.clicked.connect(self._disable_sleep_timer)
         self.sleep_cancel_btn.hide()
-        sleep_container.addWidget(self.sleep_trigger_btn, 1)
-        sleep_container.addWidget(self.sleep_cancel_btn)
-        self.sidebar_layout.addWidget(self.sidebar_sleep_widget)
 
         self.sidebar_layout.addStretch()
         self.sidebar.move(-50, 56)
@@ -480,7 +475,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel_layout.addLayout(fade_layout)
 
         # Disable Button
-        self.disable_sleep_btn = QPushButton("Disable")
+        self.sleep_panel_layout.addSpacing(20)
+        self.disable_sleep_btn = QPushButton("Disable the sleep timer")
         self.disable_sleep_btn.setObjectName("disable_sleep_btn")
         self.disable_sleep_btn.clicked.connect(self._disable_sleep_timer)
         self.disable_sleep_btn.hide() # Hide initially if no timer is active
@@ -545,7 +541,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.speed_panel.isVisible():
             self.panel_manager._close_speed_flow()
         else:
-            self._hide_popups()
             self.panel_manager._start_speed_entry()
 
     def _on_sleep_button_clicked(self):
@@ -553,7 +548,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.sleep_panel.isVisible():
             self.panel_manager._close_sleep_flow()
         else:
-            self._hide_popups()
             self.panel_manager._start_sleep_entry()
 
     def _show_chapter_dropdown(self):
@@ -755,14 +749,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._sleep_mode = 'timed'
             self.config.set_sleep_duration(duration_minutes)
             self.config.set_sleep_mode('timed')
-            self.disable_sleep_btn.show()
+            QTimer.singleShot(500, self.disable_sleep_btn.show)
             self.sleep_trigger_btn.setText("Sleep") # No brackets
             self.sleep_cancel_btn.show()
             self.sleep_pulse_anim.start()
         elif mode in ['end_of_chapter', 'end_of_book']:
             self._sleep_mode = mode
             self.config.set_sleep_mode(mode)
-            self.disable_sleep_btn.show()
+            QTimer.singleShot(500, self.disable_sleep_btn.show)
             self.sleep_trigger_btn.setText("Sleep") # No brackets
             self.sleep_cancel_btn.show()
             self.sleep_pulse_anim.start()
