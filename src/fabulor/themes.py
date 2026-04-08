@@ -387,11 +387,29 @@ def get_stylesheet(theme_name="default"):
             font-size: 13px;
             color: {t['text']};
         }}
+        QLabel#quote_label {{
+            background-color: rgba(0, 0, 0, 128);
+            color: white;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 10px;
+        }}
         QPushButton#sleep_timer_display {{
             background: transparent;
             border: none;
             padding: 0px;
             color: {t['text']};
+        }}
+        QListWidget#settings_folder_list {{
+            background-color: {t['bg_dropdown']};
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            color: {t['text']};
+            font-size: 12px;
+        }}
+        QListWidget#settings_folder_list::item:selected {{
+            background-color: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
@@ -462,7 +480,8 @@ def get_stylesheet(theme_name="default"):
         }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,
-        QListWidget#chapter_dropdown QScrollBar:vertical {{
+        QListWidget#chapter_dropdown QScrollBar:vertical,
+        QListWidget#settings_folder_list QScrollBar:vertical {{
             width: 8px;
             background: {t['bg_deep']};
             border: none;
@@ -474,7 +493,8 @@ def get_stylesheet(theme_name="default"):
             margin: 0px;
         }}
         QComboBox QAbstractItemView QScrollBar::handle:vertical,
-        QListWidget#chapter_dropdown QScrollBar::handle:vertical {{
+        QListWidget#chapter_dropdown QScrollBar::handle:vertical,
+        QListWidget#settings_folder_list QScrollBar::handle:vertical {{
             background: {t['accent']};
             min-height: 20px;
             border-radius: 4px;

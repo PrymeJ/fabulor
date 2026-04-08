@@ -41,10 +41,19 @@ class ScannerWorker(QObject):
         total = len(book_dirs)
         processed = 0
         
+        # Optimization: Get all known paths first to avoid re-extracting tags
+        known_paths = {b['path'] for b in db.get_all_books()}
+
         # Phase 2: Metadata Extraction
         for book_dir in book_dirs:
             if not self._is_running: break
             
+            book_path = str(book_dir)
+            if book_path in known_paths:
+                processed += 1
+                self.progress.emit(processed, total)
+                continue
+
             try:
                 metadata = self._extract_metadata(book_dir, audio_exts)
                 db.upsert_book(metadata)
@@ -123,6 +132,11 @@ class LibraryScanner(QObject):
         super().__init__()
         self.db_path = db_path
         self._worker_thread = None
+        self.worker = None
+
+    def stop(self):
+        if self.worker:
+            self.worker.stop()
 
     def start(self):
         self._worker_thread = QThread()

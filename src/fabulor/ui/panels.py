@@ -260,7 +260,7 @@ class PanelManager:
         for panel in [self.settings_panel, self.speed_panel, self.sleep_panel]:
             panel.setFixedWidth(panel_w)
 
-        self.settings_panel.setFixedHeight(370)
+        self.settings_panel.setFixedHeight(480)
         self.speed_panel.setFixedHeight(320)
         self.sleep_panel.setFixedHeight(400)
 
