@@ -308,11 +308,18 @@ def get_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
-        QWidget#library_panel, QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#status_banner {{
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#status_banner {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
-            border:none;
+                         
+        }}
+        QWidget#library_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border-right: 1px solid {t['accent']};
+            border-radius: 0px;
+            border: none
+                         
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
             background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});
