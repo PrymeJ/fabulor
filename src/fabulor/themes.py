@@ -312,6 +312,7 @@ def get_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
+            border:none;
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
             background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});

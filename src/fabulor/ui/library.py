@@ -1,6 +1,6 @@
 import os
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit
 )
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
 from PySide6.QtCore import Qt, Signal, QCoreApplication
@@ -16,7 +16,7 @@ class BookItem(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setContentsMargins(5, 20, 5, 5)
         layout.setSpacing(4)
 
         # Cover Area (Vertical Rectangle Aspect Ratio)
@@ -55,25 +55,59 @@ class BookItem(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.book_data["path"])
 
-class LibraryPanel(QWidget):
+class LibraryPanel(QFrame):
     book_selected = Signal(str)
+    back_requested = Signal() # Signal to request closing the panel
 
     def __init__(self, db, player_instance=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.player_instance = player_instance
         self._grid_items = {}
-        self._active_workers = set()
+        self._active_workers = set() # Keep track of active cover loader workers
         self._initialized = False
         self.setObjectName("library_panel")
         
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 10, 0, 0)
+        self.main_layout = QVBoxLayout(self) # Main layout for the panel
+        self.main_layout.setContentsMargins(0, 0, 0, 0) # Remove top margin to cover the progress bar
 
-        header = QLabel("Your Library")
-        header.setObjectName("settings_header")
-        header.setContentsMargins(15, 0, 0, 5)
-        self.main_layout.addWidget(header)
+        # Top bar for controls (Back button, Sort, Styles, Search)
+        self.top_bar_widget = QFrame()
+        self.top_bar_widget.setObjectName("library_top_bar") # For specific styling if needed
+        self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
+        self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
+        self.top_bar_layout.setSpacing(5)
+
+        self.sort_dropdown = QComboBox()
+        self.sort_dropdown.addItems(["Title", "Author", "Last played", "Progress", "Duration"]) 
+        self.sort_dropdown.setFixedWidth(80)
+        self.top_bar_layout.setSpacing(3)
+        self.top_bar_layout.addWidget(self.sort_dropdown)
+
+        self.styles_dropdown = QComboBox()
+        self.styles_dropdown.addItems(["Grid", "List"]) # Example options
+        self.styles_dropdown.setFixedWidth(80)
+        self.top_bar_layout.setSpacing(3)
+        self.top_bar_layout.addWidget(self.styles_dropdown)
+
+        #self.top_bar_layout.addStretch() # Pushes subsequent widgets to the right
+
+        self.search_field = QLineEdit()
+        self.search_field.setPlaceholderText("search")
+        self.search_field.setAlignment(Qt.AlignCenter) 
+        self.search_field.setFixedWidth(70)
+        self.search_field.setFixedHeight(28)
+        self.search_field.setStyleSheet("QLineEdit { font-size: 11px; }")
+        self.top_bar_layout.setSpacing(3)
+        self.top_bar_layout.addWidget(self.search_field)
+
+        self.back_button = QPushButton("Back")
+        self.back_button.setFixedHeight(28)
+        self.top_bar_layout.setSpacing(3)
+        self.back_button.clicked.connect(self.back_requested.emit)
+        self.top_bar_layout.addWidget(self.back_button)
+
+        self.main_layout.addWidget(self.top_bar_widget) # Add the top bar to the main layout
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -83,7 +117,7 @@ class LibraryPanel(QWidget):
         self.container = QWidget()
         self.grid = QGridLayout(self.container)
         self.grid.setSpacing(5)
-        self.grid.setContentsMargins(10, 10, 10, 10)
+        self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
         self.scroll.setWidget(self.container)

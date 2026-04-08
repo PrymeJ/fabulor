@@ -69,9 +69,10 @@ class PanelManager:
             self._start_library_entry()
 
     def _start_library_entry(self):
-        panel_w = int(self.main_window.width() * 0.9)
-        sidebar_y = 56
+        panel_w = self.main_window.width()
+        sidebar_y = 32 # Start right under the TitleBar, covering the progress bar
         self.library_panel.setFixedWidth(panel_w)
+        self.library_panel.setFixedHeight(self.main_window.height() - sidebar_y)
         self.library_panel.move(-panel_w, sidebar_y)
         self.library_panel.show()
         self.library_panel.raise_()
@@ -160,7 +161,7 @@ class PanelManager:
         if self.library_panel_animation.state() == QPropertyAnimation.Running:
             return
         panel_w = self.library_panel.width()
-        sidebar_y = 56
+        sidebar_y = 32
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.finished.connect(self._on_library_hidden)
@@ -309,15 +310,19 @@ class PanelManager:
 
     def resize_panels(self):
         """Adjusts panel positions and sizes on window resize."""
-        sidebar_y = 56 # 32 title + 24 progress
+        sidebar_y = 56 # 32 title + 24 progress for most panels
+        library_y = 32 # 32 title for Library panel
+        window_w = self.main_window.width()
         panel_w = int(self.main_window.width() * 0.9)
         
         # Hardcoded heights as requested
         self.sidebar.setFixedHeight(200)
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel]:
+        self.library_panel.setFixedWidth(window_w)
+        self.library_panel.setFixedHeight(self.main_window.height() - library_y)
+
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel]:
             panel.setFixedWidth(panel_w)
 
-        self.library_panel.setFixedHeight(480)
         self.settings_panel.setFixedHeight(480)
         self.speed_panel.setFixedHeight(320)
         self.sleep_panel.setFixedHeight(400)
@@ -333,8 +338,8 @@ class PanelManager:
             
         # Update Library Panel position if not animating
         if self.library_panel_animation.state() != QPropertyAnimation.Running:
-            x = 0 if self.library_panel.isVisible() else -panel_w
-            self.library_panel.move(x, sidebar_y)
+            x = 0 if self.library_panel.isVisible() else -window_w
+            self.library_panel.move(x, library_y)
             
         # Update Settings Panel position if not animating
         if self.settings_panel_animation.state() != QPropertyAnimation.Running:

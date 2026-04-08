@@ -195,6 +195,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
+        self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
     def _build_status_banner(self):
         self.status_banner = QWidget(self)
