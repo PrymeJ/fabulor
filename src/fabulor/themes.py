@@ -439,7 +439,7 @@ def get_stylesheet(theme_name="default"):
         #book_cover {{
             background-color: {t['bg_dropdown']};
             border: 1px solid {t['accent_dark']};
-            border-radius: 2px;
+            border-radius: 0px;
         }}
         #book_cover[placeholder="true"] {{
             font-size: 32px;
