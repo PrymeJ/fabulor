@@ -79,11 +79,19 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(5)
 
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Title", "Author"]) 
+        self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
         self.sort_combo.setFixedWidth(80)
+        self._sort_ascending = True
         self.top_bar_layout.setSpacing(3)
-        self.sort_combo.currentIndexChanged.connect(self._sort_items_in_place)
+        self.sort_combo.currentIndexChanged.connect(lambda: self._sort_items_in_place(ascending=getattr(self, '_sort_ascending', True)))
         self.top_bar_layout.addWidget(self.sort_combo)
+
+        self.sort_dir_btn = QPushButton("↑")
+        self.sort_dir_btn.setFixedWidth(16)
+        self.sort_dir_btn.setFixedHeight(26)
+        self.sort_dir_btn.setCheckable(True)
+        self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
+        self.top_bar_layout.insertWidget(1, self.sort_dir_btn)
 
         self.style_combo = QComboBox()
         self.style_combo.addItems(["Grid", "List"])
@@ -180,14 +188,41 @@ class LibraryPanel(QFrame):
 
         self._initialized = True
 
-    def _sort_items_in_place(self):
-        sort_key = self.sort_combo.currentText().lower()
+    def _toggle_sort_direction(self):
+        self._sort_ascending = not getattr(self, '_sort_ascending', True)
+        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
+        self._sort_items_in_place(ascending=self._sort_ascending)
+
+    def _sort_items_in_place(self, ascending=None):
+        # Toggle direction if called from button, otherwise keep current
+        if ascending is None:
+            ascending = getattr(self, '_sort_ascending', True)
+        else:
+            self._sort_ascending = ascending
+
+        sort_key = self.sort_combo.currentText().lower().replace(" ", "_")
         list_mode = self.style_combo.currentText() == "List"
         cols = 1 if list_mode else (3 if self.width() > 280 else 2)
 
+        # Numeric fields sort as float, datetime as string (ISO format sorts correctly), text as lower
+        numeric_keys = {"progress", "duration"}
+        datetime_keys = {"last_played", "date_added"}
+
+        def sort_value(item):
+            val = item.book_data.get(sort_key)
+            if val is None:
+                # None values always go last regardless of direction
+                return (1, 0) if sort_key in numeric_keys else (1, "")
+            if sort_key in numeric_keys:
+                return (0, float(val))
+            if sort_key in datetime_keys:
+                return (0, str(val))
+            return (0, str(val).lower())
+
         items = sorted(
             self._grid_items.values(),
-            key=lambda item: item.book_data.get(sort_key, "").lower()
+            key=sort_value,
+            reverse=not ascending
         )
 
         self.container.setUpdatesEnabled(False)
