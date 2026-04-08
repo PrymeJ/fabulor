@@ -82,42 +82,48 @@ class Player(QObject):
 
     # Playback Control Proxies
     @property
-    def pause(self): return self.instance.pause
+    def pause(self): return self.instance.pause if self.instance else True
     @pause.setter
-    def pause(self, value): self.instance.pause = value
+    def pause(self, value): 
+        if self.instance: self.instance.pause = value
 
     @property
-    def time_pos(self): return self.instance.time_pos
+    def time_pos(self): return self.instance.time_pos if self.instance else None
     @time_pos.setter
-    def time_pos(self, value): self.instance.time_pos = value
+    def time_pos(self, value): 
+        if self.instance: self.instance.time_pos = value
 
     @property
-    def duration(self): return self.instance.duration
+    def duration(self): return self.instance.duration if self.instance else None
     @property
-    def chapter(self): return self.instance.chapter
+    def chapter(self): return self.instance.chapter if self.instance else None
     @chapter.setter
-    def chapter(self, value): self.instance.chapter = value
+    def chapter(self, value): 
+        if self.instance: self.instance.chapter = value
 
     @property
-    def chapters(self): return self.instance.chapters
+    def chapters(self): return self.instance.chapters if self.instance else 0
     @property
-    def chapter_list(self): return self.instance.chapter_list
+    def chapter_list(self): return self.instance.chapter_list if self.instance else []
     
     @property
-    def speed(self): return self.instance.speed
+    def speed(self): return self.instance.speed if self.instance else 1.0
     @speed.setter
-    def speed(self, value): self.instance.speed = value
+    def speed(self, value): 
+        if self.instance: self.instance.speed = value
 
     @property
-    def volume(self): return self.instance.volume
+    def volume(self): return self.instance.volume if self.instance else 100
     @volume.setter
-    def volume(self, value): self.instance.volume = value
+    def volume(self, value): 
+        if self.instance: self.instance.volume = value
 
     @property
     def eof_reached(self): return getattr(self.instance, 'eof_reached', False)
 
     def terminate(self):
-        self.instance.terminate()
+        if self.instance:
+            self.instance.terminate()
 
     # Logical Seek helpers
     def previous_chapter(self):

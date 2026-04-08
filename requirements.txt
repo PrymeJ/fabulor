@@ -1,5 +1,6 @@
 -e git+ssh://git@github.com/PrymeJ/fabulor.git@954a3fe66bfed106e758d54fc579ba4f4482314b#egg=fabulor
 mutagen==1.47.0
+platformdirs
 PySide6==6.11.0
 PySide6_Addons==6.11.0
 PySide6_Essentials==6.11.0

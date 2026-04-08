@@ -1,3 +1,4 @@
+import os
 import math
 from PySide6.QtWidgets import (
     QLineEdit,
@@ -17,6 +18,8 @@ from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direc
 from .ui.theme_manager import ThemeManager, ThemeComboBox # ThemeComboBox is used in _setup_ui
 import time # For sleep timer
 from .ui.panels import PanelManager # New import for PanelManager
+from .db import LibraryDB
+from .library.scanner import LibraryScanner
 from mpv import ShutdownError
 
 class TitleBar(QWidget):
@@ -66,6 +69,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager = ThemeManager(self)
         self._paused_time = None
         self._is_seeking = False
+        self.db = LibraryDB()
+        self.scanner = LibraryScanner(self.db.db_path)
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
@@ -75,16 +80,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.ui_timer = QTimer()
         self.ui_timer.timeout.connect(self._update_ui_sync)
+        self.scanner.progress.connect(self._on_scan_progress)
+        self.scanner.finished.connect(self._on_scan_finished)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
         self.player.file_loaded.connect(self._on_file_ready)
 
         QApplication.instance().installEventFilter(self)
 
-        self.current_file = "/home/pryme/test.m4b"
-        self.player.load_book(self.current_file)
+        # self.current_file = "/home/pryme/test.m4b"
+        # self.player.load_book(self.current_file)
         self.chapter_list_widget.set_player(self.player)
 
         self._load_cover_art(self.current_file)
+        self._check_library_status()
         self.ui_timer.start(200)
 
     def _setup_ui(self):
@@ -127,6 +135,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_settings_panel()
         self._build_sleep_panel()
         self._build_speed_panel()
+        self._build_status_banner()
 
         # Pulse Animation for active sleep timer
         self.sleep_opacity_effect = QGraphicsOpacityEffect(self.sleep_trigger_btn)
@@ -154,6 +163,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
+
+    def _build_status_banner(self):
+        self.status_banner = QLabel("")
+        self.status_banner.setObjectName("status_banner")
+        self.status_banner.setAlignment(Qt.AlignCenter)
+        self.status_banner.hide()
+        self.root_layout.addWidget(self.status_banner)
 
     def _build_title_bar(self):
         self.title_bar = TitleBar(self)
@@ -506,8 +522,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         elided = metrics.elidedText(text, Qt.ElideRight, 160)
         self.current_chapter_label.setText(elided)
 
+    def _check_library_status(self):
+        """Lazy scan on startup. Checks if locations exist but books are missing."""
+        locs = self.db.get_scan_locations()
+        count = self.db.get_book_count()
+        
+        if locs:
+            self.status_banner.setText("Library scanning...")
+            self.status_banner.show()
+            self.scanner.start()
+        elif count == 0:
+            # First launch without folders
+            self.status_banner.setText("No library folders. Add a folder in Settings.")
+            self.status_banner.show()
+
+    def _on_scan_progress(self, current, total):
+        self.status_banner.setText(f"Loading Library... ({current}/{total})")
+        if not self.status_banner.isVisible():
+            self.status_banner.show()
+
+    def _on_scan_finished(self, total):
+        self.status_banner.setText(f"Library updated: {total} books.")
+        QTimer.singleShot(3000, self.status_banner.hide)
+
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
+        if not os.path.exists(self.current_file):
+             self.status_banner.setText("Error: File missing!")
+             self.status_banner.show()
+             return
         self._restore_position()
         if self.player.duration:
             self.chapter_list_widget.populate(self.player.duration)
@@ -575,14 +618,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_ui_sync(self):
         try:
-            mpv_pos = self.player.time_pos
-            dur = self.player.duration
-            is_paused = self.player.pause
+            # Guard against accessing player before a file is loaded
+            mpv_pos = self.player.time_pos if self.current_file else None
+            dur = self.player.duration if self.current_file else None
+            is_paused = self.player.pause if self.current_file else True
             current_time = time.time()
         except ShutdownError:
             return
 
-        if mpv_pos is None or dur is None:
+        if not self.current_file or mpv_pos is None or dur is None:
+            self.play_pause_button.setText("Play")
             return
 
         if is_paused:
@@ -665,7 +710,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
-        if is_eof:
+        if is_eof and self.current_file:
             self.play_pause_button.setText("Restart") # This will be handled by _update_ui_sync
         else:
             self.play_pause_button.setText("Play" if self.player.pause else "Pause")
@@ -872,6 +917,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""
+        if not file_path:
+            self.current_cover_pixmap = QPixmap()
+            self.cover_art_label.hide()
+            self.metadata_label.show()
+            self.metadata_label.setText("No book loaded")
+            return
+
         pixmap = self.player.extract_cover(file_path)
 
         if not pixmap.isNull():
@@ -975,6 +1027,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def closeEvent(self, event):
         if self.player:
             self.config.set_volume(self.volume_slider.value())
-            self.config.set_last_position(self.current_file, self.player.time_pos)
+            if self.current_file and self.player.instance:
+                self.config.set_last_position(self.current_file, self.player.time_pos)
             self.player.terminate()
         event.accept()
