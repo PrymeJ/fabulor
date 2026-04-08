@@ -8,10 +8,11 @@ class ScannerWorker(QObject):
     progress = Signal(int, int) # processed, total
     finished = Signal(int)      # total_processed
     
-    def __init__(self, db_path):
+    def __init__(self, db_path, force_refresh=False):
         super().__init__()
         self.db_path = db_path
         self._is_running = True
+        self.force_refresh = force_refresh
 
     def stop(self):
         self._is_running = False
@@ -49,7 +50,7 @@ class ScannerWorker(QObject):
             if not self._is_running: break
             
             book_path = str(book_dir)
-            if book_path in known_paths:
+            if not self.force_refresh and book_path in known_paths:
                 processed += 1
                 self.progress.emit(processed, total)
                 continue
@@ -138,9 +139,9 @@ class LibraryScanner(QObject):
         if self.worker:
             self.worker.stop()
 
-    def start(self):
+    def start(self, force_refresh=False):
         self._worker_thread = QThread()
-        self.worker = ScannerWorker(self.db_path)
+        self.worker = ScannerWorker(self.db_path, force_refresh=force_refresh)
         self.worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self.worker.run_scan)
         self.worker.progress.connect(self.progress.emit)

@@ -450,14 +450,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_layout.addWidget(self.folder_list_widget)
 
         folder_btns_layout = QHBoxLayout()
-        self.add_folder_btn = QPushButton("Add Folder")
-        self.remove_folder_btn = QPushButton("Remove Selected")
+        self.add_folder_btn = QPushButton("Add")
+        self.remove_folder_btn = QPushButton("Remove selected")
+        self.refresh_library_btn = QPushButton("Rescan library")
         folder_btns_layout.addWidget(self.add_folder_btn)
         folder_btns_layout.addWidget(self.remove_folder_btn)
+        folder_btns_layout.addWidget(self.refresh_library_btn)
         self.settings_panel_layout.addLayout(folder_btns_layout)
 
         self.add_folder_btn.clicked.connect(self._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self._on_remove_folder_clicked)
+        self.refresh_library_btn.clicked.connect(lambda: self._check_library_status(manual=True, force_refresh=True))
 
         self._refresh_folder_list()
         self.settings_panel_layout.addStretch()
@@ -628,9 +631,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             path = current_item.text()
             self.db.remove_scan_location(path)
             self._refresh_folder_list()
-            self._check_library_status()
+            self._check_library_status(manual=True)
 
-    def _check_library_status(self):
+    def _check_library_status(self, manual=False, force_refresh=False):
         """Lazy scan on startup. Checks if locations exist but books are missing."""
         locs = self.db.get_scan_locations()
         has_locations = len(locs) > 0
@@ -660,13 +663,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if has_locations:
             if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
-                if not has_indexed_books:
-                    self.status_label.setText("Library scanning...")
-                else:
-                    self.status_label.setText("Checking for library updates...")
-                self.cancel_scan_btn.show()
-                self.status_banner.show()
-                self.scanner.start()
+                # Only show the banner if it's the first run (no indexed books)
+                # OR if the user manually triggered a scan (added/removed a folder)
+                if manual or force_refresh or not has_indexed_books:
+                    self.status_label.setText("Forcing deep scan..." if force_refresh else "Library scanning...")
+                    self.cancel_scan_btn.show()
+                    self.status_banner.show()
+                
+                self.scanner.start(force_refresh=force_refresh)
 
     def _on_cancel_scan_clicked(self):
         self.scanner.stop()
@@ -696,7 +700,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not is_redundant:
                 self.scanner.stop() # Stop any current silent scan to prioritize the new folder
                 self.db.add_scan_location(new_path)
-                self._check_library_status()
+                self._check_library_status(manual=True)
                 self._refresh_folder_list()
 
     def _rotate_quote(self):
