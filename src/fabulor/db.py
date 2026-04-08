@@ -101,9 +101,13 @@ class LibraryDB:
                 duration=excluded.duration,
                 cover_path=excluded.cover_path
         """
+        cleaned = {
+            k: v.strip() if isinstance(v, str) else v 
+            for k, v in book_data.items()
+        }
         with self._get_conn() as conn:
             with conn:
-                conn.execute(query, book_data)
+                conn.execute(query, cleaned)
 
     def get_book(self, path):
         """Retrieves a single book's metadata by its path."""
