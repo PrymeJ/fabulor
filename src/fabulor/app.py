@@ -184,6 +184,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_status_banner(self):
         self.status_banner = QWidget(self)
         self.status_banner.setObjectName("status_banner")
+        self.status_banner.setFixedHeight(30)
         self.status_banner.hide()
         
         layout = QHBoxLayout(self.status_banner)
@@ -201,8 +202,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         layout.addWidget(self.status_label)
         layout.addStretch()
         layout.addWidget(self.cancel_scan_btn)
-        
-        self.root_layout.addWidget(self.status_banner)
 
     def _build_title_bar(self):
         self.title_bar = TitleBar(self)
@@ -729,6 +728,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Only update banner if it's already visible (prevents silent scans from popping up)
         if self.status_banner.isVisible():
             self.status_label.setText(f"Loading Library... ({current}/{total})")
+            self.status_banner.raise_()
         
         # As soon as the very first book is indexed, enable UI access
         if current == 1:
@@ -1163,6 +1163,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         if self.panel_manager:
             self.panel_manager.resize_panels()
+
+        # Position the status banner at the bottom as an overlay
+        if hasattr(self, 'status_banner'):
+            self.status_banner.setGeometry(0, self.height() - 30, self.width(), 30)
+            if self.status_banner.isVisible():
+                self.status_banner.raise_()
 
         self._update_cover_art_scaling()
         # Reposition percentage label
