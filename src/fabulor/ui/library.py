@@ -78,18 +78,19 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
         self.top_bar_layout.setSpacing(5)
 
-        self.sort_dropdown = QComboBox()
-        self.sort_dropdown.addItems(["Title", "Author", "Last played", "Progress", "Duration"]) 
-        self.sort_dropdown.setFixedWidth(80)
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Title", "Author"]) 
+        self.sort_combo.setFixedWidth(80)
         self.top_bar_layout.setSpacing(3)
-        self.sort_dropdown.currentTextChanged.connect(lambda: self.refresh(force=True))
-        self.top_bar_layout.addWidget(self.sort_dropdown)
+        self.sort_combo.currentIndexChanged.connect(self._sort_items_in_place)
+        self.top_bar_layout.addWidget(self.sort_combo)
 
-        self.styles_dropdown = QComboBox()
-        self.styles_dropdown.addItems(["Grid", "List"]) # Example options
-        self.styles_dropdown.setFixedWidth(80)
+        self.style_combo = QComboBox()
+        self.style_combo.addItems(["Grid", "List"])
+        self.style_combo.setFixedWidth(80)
         self.top_bar_layout.setSpacing(3)
-        self.top_bar_layout.addWidget(self.styles_dropdown)
+        self.style_combo.currentTextChanged.connect(lambda: self.refresh(force=True))
+        self.top_bar_layout.addWidget(self.style_combo)
 
         #self.top_bar_layout.addStretch() # Pushes subsequent widgets to the right
 
@@ -137,7 +138,7 @@ class LibraryPanel(QFrame):
             "Duration": "duration DESC"
         }
         
-        sort_text = self.sort_dropdown.currentText()
+        sort_text = self.sort_combo.currentText()
         order_clause = sort_map.get(sort_text, "title COLLATE NOCASE ASC")
 
         books = self.db.get_all_books(sort_by=order_clause)
@@ -178,6 +179,23 @@ class LibraryPanel(QFrame):
                 QCoreApplication.processEvents()
 
         self._initialized = True
+
+    def _sort_items_in_place(self):
+        sort_key = self.sort_combo.currentText().lower()
+        list_mode = self.style_combo.currentText() == "List"
+        cols = 1 if list_mode else (3 if self.width() > 280 else 2)
+
+        items = sorted(
+            self._grid_items.values(),
+            key=lambda item: item.book_data.get(sort_key, "").lower()
+        )
+
+        self.container.setUpdatesEnabled(False)
+        while self.grid.count():
+            self.grid.takeAt(self.grid.count() - 1)
+        for i, item in enumerate(items):
+            self.grid.addWidget(item, i // cols, i % cols)
+        self.container.setUpdatesEnabled(True)
 
     def _on_cover_loaded(self, book_path, pixmap, book_item):
         if not pixmap.isNull():
