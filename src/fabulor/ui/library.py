@@ -16,7 +16,7 @@ class BookItem(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 20, 5, 5)
+        layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(4)
 
         # Cover Area (Vertical Rectangle Aspect Ratio)
@@ -82,6 +82,7 @@ class LibraryPanel(QFrame):
         self.sort_dropdown.addItems(["Title", "Author", "Last played", "Progress", "Duration"]) 
         self.sort_dropdown.setFixedWidth(80)
         self.top_bar_layout.setSpacing(3)
+        self.sort_dropdown.currentTextChanged.connect(lambda: self.refresh(force=True))
         self.top_bar_layout.addWidget(self.sort_dropdown)
 
         self.styles_dropdown = QComboBox()
@@ -127,7 +128,19 @@ class LibraryPanel(QFrame):
         if self._initialized and not force:
             return
     
-        books = self.db.get_all_books()
+        # Map display names to SQL ORDER BY fragments
+        sort_map = {
+            "Title": "title COLLATE NOCASE ASC",
+            "Author": "author COLLATE NOCASE ASC",
+            "Last played": "last_played DESC",
+            "Progress": "(CAST(progress AS FLOAT) / CASE WHEN duration = 0 THEN 1 ELSE duration END) DESC",
+            "Duration": "duration DESC"
+        }
+        
+        sort_text = self.sort_dropdown.currentText()
+        order_clause = sort_map.get(sort_text, "title COLLATE NOCASE ASC")
+
+        books = self.db.get_all_books(sort_by=order_clause)
         existing_paths = {self._grid_items[p].book_data["path"] 
                          for p in self._grid_items}
         new_paths = {b["path"] for b in books}

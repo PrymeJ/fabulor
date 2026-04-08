@@ -48,11 +48,17 @@ class LibraryDB:
                     author TEXT,
                     narrator TEXT,
                     duration REAL,
+                    progress REAL DEFAULT 0,
                     cover_path TEXT,
                     date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_played DATETIME
                 )
             """)
+            # Ensure progress column exists for older databases
+            try:
+                conn.execute("ALTER TABLE books ADD COLUMN progress REAL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass 
 
     # --- Scan Locations CRUD ---
 
@@ -89,21 +95,21 @@ class LibraryDB:
         """
         Adds a book or updates its metadata if it already exists.
         book_data should be a dictionary containing:
-        path, title, author, narrator, duration, cover_path
+        path, title, author, narrator, duration, progress, cover_path
         """
         query = """
-            INSERT INTO books (path, title, author, narrator, duration, cover_path)
-            VALUES (:path, :title, :author, :narrator, :duration, :cover_path)
+            INSERT INTO books (path, title, author, narrator, duration, progress, cover_path)
+            VALUES (:path, :title, :author, :narrator, :duration, :progress, :cover_path)
             ON CONFLICT(path) DO UPDATE SET
                 title=excluded.title,
                 author=excluded.author,
                 narrator=excluded.narrator,
                 duration=excluded.duration,
+                progress=COALESCE(excluded.progress, books.progress),
                 cover_path=excluded.cover_path
         """
         cleaned = {
-            k: v.strip() if isinstance(v, str) else v 
-            for k, v in book_data.items()
+            k: (v.strip() if isinstance(v, str) else v) for k, v in book_data.items()
         }
         with self._get_conn() as conn:
             with conn:
@@ -119,7 +125,7 @@ class LibraryDB:
     def get_all_books(self, sort_by="title"):
         """Returns all books in the library."""
         with self._get_conn() as conn:
-            cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by} COLLATE NOCASE")
+            cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}")
             return [dict(row) for row in cursor.fetchall()]
 
     def get_book_count(self):
@@ -134,4 +140,13 @@ class LibraryDB:
                 conn.execute(
                     "UPDATE books SET last_played = ? WHERE path = ?",
                     (datetime.now().isoformat(), str(path))
+                )
+
+    def update_progress(self, path, progress):
+        """Updates the saved playback position (in seconds)."""
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute(
+                    "UPDATE books SET progress = ? WHERE path = ?",
+                    (float(progress), str(path))
                 )
