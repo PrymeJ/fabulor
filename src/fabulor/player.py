@@ -134,6 +134,7 @@ class Player(QObject):
     def terminate(self):
         if self.instance:
             self.instance.terminate()
+            self.instance = None
 
     # Logical Seek helpers
     def previous_chapter(self):

@@ -108,7 +108,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Restore last played book if it exists
         last_book = self.config.get_last_book()
-        if last_book and os.path.exists(last_book):
+        # Verify the book still belongs to an active library location
+        locations = self.db.get_scan_locations()
+        is_valid = any(last_book.startswith(loc if loc.endswith(os.sep) else loc + os.sep) for loc in locations)
+        if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
             self.player.load_book(self.current_file)
         self.chapter_list_widget.set_player(self.player)
@@ -662,6 +665,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if current_item:
             path = current_item.text()
             self.db.remove_scan_location(path)
+            
+            # Unload the book if it was inside the removed library folder
+            path_p = path if path.endswith(os.sep) else path + os.sep
+            if self.current_file and self.current_file.startswith(path_p):
+                self.current_file = ""
+                self.player.terminate()
+                self._load_cover_art("")
+                self.config.set_last_book("")
+
             self._refresh_folder_list()
             self._check_library_status(manual=True)
             self.library_panel.refresh(force=True)
