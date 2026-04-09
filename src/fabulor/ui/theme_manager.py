@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QComboBox, QListView
+import random
+from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
 from ..themes import get_stylesheet, THEMES
 
@@ -19,31 +20,48 @@ class ThemeComboBox(QComboBox):
         self.aboutToHidePopup.emit()
 
 class ThemeManager:
-    """Manages theme application, previews, and transitions."""
+    """Manages theme application, previews, and multi-selection pool."""
     def __init__(self, main_window):
         self.main_window = main_window
         self.config = main_window.config
-        self._theme_selection_made = False
-        self._current_theme_name = self.config.get_theme()
-        self._previous_theme = None
+        
+        # Load selection pool from config
+        saved = self.config.get_theme()
+        if "," in saved:
+            self.selected_themes = [t.strip() for t in saved.split(",") if t.strip()]
+        else:
+            self.selected_themes = [saved] if saved else ["The Color Purple"]
+            
+        # Filter invalid themes and ensure fallback
+        self.selected_themes = [t for t in self.selected_themes if t in THEMES]
+        if not self.selected_themes:
+            self.selected_themes = ["The Color Purple"]
+
+        # Initial selection for this session: pick a random one from the pool
+        if len(self.selected_themes) > 1:
+            self._current_theme_name = random.choice(self.selected_themes)
+        else:
+            self._current_theme_name = self.selected_themes[0]
+
         self._theme_fade_anim = None
+        self.theme_widgets = {} # theme_name -> QPushButton
+        self._active_display_theme = self._current_theme_name
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None):
         """Update the appearance with a subtle fade transition."""
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
 
-        # If the requested theme is already what's shown, just save and exit
-        if getattr(self, "_current_theme_name", None) == theme_name:
-            if save: self.config.set_theme(theme_name)
+        # Guard against redundant style updates
+        if getattr(self, "_active_display_theme", None) == theme_name:
             return
 
-        # Clear existing overlays to ensure we grab the "clean" state
+        self._active_display_theme = theme_name
+
+        # Clear existing overlays
         for old_overlay in self.main_window.findChildren(QLabel, "theme_fade_overlay"):
             old_overlay.setObjectName("deleting_overlay")
             old_overlay.hide() 
-
-        self._current_theme_name = theme_name
 
         if fade_ms > 0:
             pix = self.main_window.grab()
@@ -66,36 +84,43 @@ class ThemeManager:
             anim.start()
             self._theme_fade_anim = anim
 
-        if save:
-            self.config.set_theme(theme_name)
         self.main_window.setStyleSheet(get_stylesheet(theme_name))
         self.main_window._update_speed_grid_styling()
 
-    def _on_theme_dropdown_about_to_show(self):
-        self._previous_theme = self.config.get_theme()
-        self._theme_selection_made = False
+    def toggle_theme_selection(self, theme_name):
+        """Toggle a theme's presence in the rotation pool."""
+        if theme_name in self.selected_themes:
+            if len(self.selected_themes) > 1:
+                self.selected_themes.remove(theme_name)
+                # If we removed the currently active session theme, switch to another
+                if self._current_theme_name == theme_name:
+                    self._current_theme_name = self.selected_themes[0]
+                    self._on_theme_changed(self._current_theme_name, save=False)
+        else:
+            self.selected_themes.append(theme_name)
+            # Make the newly selected theme the active one immediately
+            self._current_theme_name = theme_name
+            self._on_theme_changed(self._current_theme_name, save=False)
 
-    def _on_theme_dropdown_about_to_hide(self):
-        QTimer.singleShot(10, self._check_revert_theme)
+        # Save the pool as a comma-separated string
+        self.config.set_theme(",".join(self.selected_themes))
+        self.update_theme_list_visuals()
 
-    def _check_revert_theme(self):
-        # Only revert if no selection was made AND the currently displayed theme (potential preview) is
-        # different from the theme that was active when the dropdown was opened.
-        # This prevents redundant style sheet applications and dropdown text resets.
-        if not self._theme_selection_made and self._previous_theme is not None and \
-           self._current_theme_name != self._previous_theme: # Added check for actual change
-            fade = int(self.config.get_theme_fade_duration() * 0.66)
-            self._on_theme_changed(self._previous_theme, save=False, fade_ms=fade)
-            self.main_window.theme_dropdown.setCurrentText(self._previous_theme)
-
-    def _on_theme_hovered(self, index):
-        """Preview the theme visually without saving to config."""
-        theme_name = self.main_window.theme_dropdown.itemText(index)
+    def _on_theme_hovered(self, theme_name):
+        """Preview the theme visually."""
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(theme_name, save=False, fade_ms=fade)
 
-    def _on_theme_selected_from_dropdown(self, index):
-        """Permanent selection made by user."""
-        self._theme_selection_made = True
-        theme_name = self.main_window.theme_dropdown.itemText(index)
-        self._on_theme_changed(theme_name)
+    def _on_theme_unhovered(self):
+        """Revert preview back to the active session theme."""
+        fade = int(self.config.get_theme_fade_duration() * 0.5)
+        self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade)
+
+    def update_theme_list_visuals(self):
+        """Dim unselected themes and highlight selected ones."""
+        for name, btn in self.theme_widgets.items():
+            is_selected = name in self.selected_themes
+            btn.setProperty("selected", is_selected)
+            # Trigger style refresh for property change
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)

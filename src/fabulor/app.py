@@ -4,7 +4,8 @@ import random
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect
+    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect,
+    QScrollArea, QFrame, QTabWidget
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
@@ -17,7 +18,7 @@ from .config import Config
 from .themes import get_stylesheet, THEMES
 from .ui.controls import ClickSlider
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
-from .ui.theme_manager import ThemeManager, ThemeComboBox # ThemeComboBox is used in _setup_ui
+from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
@@ -57,6 +58,19 @@ class RightClickButton(QPushButton):
             event.accept()
         else:
             super().mousePressEvent(event)
+
+class ThemeItem(QPushButton):
+    hovered = Signal(str)
+    def __init__(self, name, parent=None):
+        super().__init__(name, parent)
+        self.theme_name = name
+        self.setObjectName("theme_item")
+        self.setMouseTracking(True)
+        self.setFlat(True)
+        
+    def enterEvent(self, event):
+        self.hovered.emit(self.theme_name)
+        super().enterEvent(event)
 
 BOOK_QUOTES = [
     ("A room without books is like a body without a soul.", "Cicero"),
@@ -129,7 +143,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.resize(300, 600)
 
         self.setObjectName("mainwindow")
-        self.setStyleSheet(get_stylesheet(self.config.get_theme()))
+        self.setStyleSheet(get_stylesheet(self.theme_manager._current_theme_name))
 
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(0, 0, 0, 0)
@@ -415,67 +429,105 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_settings_panel(self):
         self.settings_panel = QWidget(self)
         self.settings_panel.setObjectName("settings_panel")
-        self.settings_panel_layout = QVBoxLayout(self.settings_panel)
-        self.settings_panel_layout.setContentsMargins(10, 10, 10, 10)
-        appearance_header = QLabel("Appearance")
-        appearance_header.setObjectName("settings_header")
-        self.settings_panel_layout.addWidget(appearance_header)
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(QLabel("Theme"))
-        theme_row.addStretch()
-        self.theme_dropdown = ThemeComboBox()
-        self.theme_dropdown.setFixedWidth(160)
-        self.theme_dropdown.setView(QListView())
-        self.theme_dropdown.setMaxVisibleItems(4)
-        self.theme_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.theme_dropdown.addItems(sorted(list(THEMES.keys())))
-        self.theme_dropdown.setCurrentText(self.config.get_theme())
-        self.theme_dropdown.aboutToShowPopup.connect(self.theme_manager._on_theme_dropdown_about_to_show)
-        self.theme_dropdown.aboutToHidePopup.connect(self.theme_manager._on_theme_dropdown_about_to_hide)
-        self.theme_dropdown.view().entered.connect(lambda idx: self.theme_manager._on_theme_hovered(idx.row()))
-        self.theme_dropdown.highlighted[int].connect(self.theme_manager._on_theme_hovered)
-        self.theme_dropdown.activated[int].connect(self.theme_manager._on_theme_selected_from_dropdown)
-        theme_row.addWidget(self.theme_dropdown)
-        self.settings_panel_layout.addLayout(theme_row)
+        layout = QVBoxLayout(self.settings_panel)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("settings_tabs")
+
+        # --- TAB 1: THEMES ---
+        themes_tab = QWidget()
+        themes_layout = QVBoxLayout(themes_tab)
+        themes_layout.setContentsMargins(10, 10, 10, 10)
+        
+        theme_hint = QLabel("Select multiple to rotate randomly")
+        theme_hint.setObjectName("theme_hint")
+        theme_hint.setStyleSheet("margin-bottom: 5px;")
+        themes_layout.addWidget(theme_hint)
+
+        metrics = self.fontMetrics()
+        limit = 300 #Adjusted for tab width
+        
+        # Clear widget tracker
+        self.theme_manager.theme_widgets = {}
+        
+        themes_to_pack = []
+        for name in THEMES.keys():
+            w = metrics.horizontalAdvance(name) + 10 
+            themes_to_pack.append({'name': name, 'width': w})
+        
+        # Sort by width descending to handle "large" items first
+        themes_to_pack.sort(key=lambda x: x['width'], reverse=True)
+
+        while themes_to_pack:
+            row_layout = QHBoxLayout()
+            row_layout.setSpacing(6)
+            row_layout.setAlignment(Qt.AlignLeft)
+            current_w = 0
+            
+            idx = 0
+            while idx < len(themes_to_pack):
+                item = themes_to_pack[idx]
+                needed = item['width'] + (6 if current_w > 0 else 0)
+                
+                if current_w + needed <= limit:
+                    btn = ThemeItem(item['name'])
+                    btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
+                    btn.hovered.connect(self.theme_manager._on_theme_hovered)
+                    self.theme_manager.theme_widgets[item['name']] = btn
+                    
+                    row_layout.addWidget(btn)
+                    current_w += needed
+                    themes_to_pack.pop(idx)
+                else:
+                    idx += 1
+            
+            row_layout.addStretch()
+            themes_layout.addLayout(row_layout)
+            
+        themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
+        themes_layout.addStretch()
+        self.tabs.addTab(themes_tab, "Themes")
+        self.theme_manager.update_theme_list_visuals()
+
+        # --- TAB 2: APPEARANCE ---
+        appearance_tab = QWidget()
+        app_layout = QVBoxLayout(appearance_tab)
+        
         fade_row = QHBoxLayout()
-        fade_label = QLabel("Hover fade (ms)")
-        fade_row.addWidget(fade_label)
-        fade_row.addStretch()
+        fade_row.addWidget(QLabel("Hover fade (ms)"))
         self.fade_dropdown = ThemeComboBox()
         self.fade_dropdown.setFixedWidth(60)
-        tooltip_text = "Adjust the duration of the cross-fade effect when\n" \
-        "previewing or selecting themes. Set to 0 to disable."
-        fade_label.setToolTip(tooltip_text)
-        self.fade_dropdown.setToolTip(tooltip_text)
-        self.fade_dropdown.setView(QListView())
-        self.fade_dropdown.setMaxVisibleItems(4)
-        self.fade_dropdown.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.fade_dropdown.addItems(["0", "500", "750", "1000", "1500"])
         self.fade_dropdown.setCurrentText(str(self.config.get_theme_fade_duration()))
         self.fade_dropdown.currentTextChanged.connect(lambda v: self.config.set_theme_fade_duration(int(v)))
         fade_row.addWidget(self.fade_dropdown)
-        self.settings_panel_layout.addLayout(fade_row)
+        app_layout.addLayout(fade_row)
+
         blur_row = QHBoxLayout()
         blur_row.addWidget(QLabel("Blur"))
-        blur_row.addStretch()
         self.blur_dropdown = ThemeComboBox()
         self.blur_dropdown.setFixedWidth(60)
-        self.blur_dropdown.setView(QListView())
         self.blur_dropdown.addItems(["On", "Off"])
         self.blur_dropdown.setCurrentText("On" if self.config.get_blur_enabled() else "Off")
-        self.blur_dropdown.setToolTip("Hide the blur effect when entering the Settings page.")
         self.blur_dropdown.currentTextChanged.connect(lambda v: self.config.set_blur_enabled(v == "On"))
         blur_row.addWidget(self.blur_dropdown)
-        self.settings_panel_layout.addLayout(blur_row)
-        controls_header = QLabel("Controls")
-        controls_header.setObjectName("settings_header")
-        self.settings_panel_layout.addWidget(controls_header)
-        self.settings_panel_layout.addWidget(QLabel("Skip interval"))
+        app_layout.addLayout(blur_row)
+        app_layout.addStretch()
+        self.tabs.addTab(appearance_tab, "Appearance")
 
-        # Manage Folders Section
+        # --- TAB 3: LIBRARY ---
+        library_tab = QWidget()
+        lib_layout = QVBoxLayout(library_tab)
+        
         folders_header = QLabel("Manage folders")
         folders_header.setObjectName("settings_header")
-        self.settings_panel_layout.addWidget(folders_header)
+        lib_layout.addWidget(folders_header)
+
+        # Add a hint about behavior
+        lib_hint = QLabel("Folders are parsed as 'Author - Title'")
+        lib_hint.setStyleSheet("font-size: 10px; color: #888;")
+        lib_layout.addWidget(lib_hint)
 
         self.folder_list_widget = QListWidget()
         self.folder_list_widget.setObjectName("settings_folder_list")
@@ -483,23 +535,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.folder_list_widget.setMinimumHeight(45)
         self.folder_list_widget.setMaximumHeight(120)
         self.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.settings_panel_layout.addWidget(self.folder_list_widget)
+        lib_layout.addWidget(self.folder_list_widget)
 
         folder_btns_layout = QHBoxLayout()
         self.add_folder_btn = QPushButton("Add")
-        self.remove_folder_btn = QPushButton("Remove selected")
-        self.refresh_library_btn = QPushButton("Rescan library")
+        self.remove_folder_btn = QPushButton("Remove")
+        self.refresh_library_btn = QPushButton("Rescan")
         folder_btns_layout.addWidget(self.add_folder_btn)
         folder_btns_layout.addWidget(self.remove_folder_btn)
         folder_btns_layout.addWidget(self.refresh_library_btn)
-        self.settings_panel_layout.addLayout(folder_btns_layout)
+        lib_layout.addLayout(folder_btns_layout)
 
         self.add_folder_btn.clicked.connect(self._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self._on_remove_folder_clicked)
         self.refresh_library_btn.clicked.connect(lambda: self._check_library_status(manual=True, force_refresh=True))
+        lib_layout.addStretch()
+        self.tabs.addTab(library_tab, "Library")
 
+        # --- TAB 4: SHORTCUTS ---
+        shortcuts_tab = QWidget()
+        short_layout = QVBoxLayout(shortcuts_tab)
+        short_layout.addWidget(QLabel("Shortcuts configuration coming soon..."))
+        short_layout.addStretch()
+        self.tabs.addTab(shortcuts_tab, "Shortcuts")
+
+        layout.addWidget(self.tabs)
         self._refresh_folder_list()
-        self.settings_panel_layout.addStretch()
         self.settings_panel.hide()
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
@@ -527,6 +588,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             grid.addWidget(btn, i // 4, i % 4)
             self._speed_grid_buttons.append(btn)
         self.speed_panel_layout.addLayout(grid)
+        
         def_speed_row = QHBoxLayout()
         def_speed_row.addWidget(QLabel("Default speed"))
         def_speed_row.addStretch()
@@ -537,9 +599,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.def_speed_dropdown.currentTextChanged.connect(lambda v: self.config.set_default_speed(float(v)))
         def_speed_row.addWidget(self.def_speed_dropdown)
         self.speed_panel_layout.addLayout(def_speed_row)
+        
         step_row = QHBoxLayout()
         step_row.addWidget(QLabel("Step"))
-        step_row.addStretch()
         self.step_dropdown = ThemeComboBox()
         self.step_dropdown.setFixedWidth(60)
         self.step_dropdown.addItems(["0.05", "0.1", "0.25", "0.5"])
@@ -547,6 +609,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.step_dropdown.currentTextChanged.connect(lambda v: self.config.set_speed_increment(float(v)))
         step_row.addWidget(self.step_dropdown)
         self.speed_panel_layout.addLayout(step_row)
+
+        skip_row = QHBoxLayout()
+        skip_row.addWidget(QLabel("Skip interval"))
+        self.skip_dropdown = ThemeComboBox()
+        self.skip_dropdown.setFixedWidth(60)
+        self.skip_dropdown.addItems(["5", "10", "15", "30", "45", "60"])
+        self.skip_dropdown.setCurrentText(str(self.config.get_skip_duration()))
+        self.skip_dropdown.currentTextChanged.connect(lambda v: self.config.set_skip_duration(int(v)))
+        skip_row.addWidget(self.skip_dropdown)
+        self.speed_panel_layout.addLayout(skip_row)
+
         self.speed_panel_layout.addStretch()
         self.speed_panel.hide()
         self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")

@@ -941,6 +941,59 @@ def get_stylesheet(theme_name="default"):
             border-radius: 4px;
             padding: 2px;
         }}
+        /* TabWidget Styling */
+        QTabWidget::pane {{
+            border-top: 1px solid {t['accent_dark']};
+            background: transparent;
+        }}
+        QTabBar::tab {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.5);
+            padding: 3px 12px;
+            font-size: 11px;
+            font-weight: bold;
+            border-top-left-radius: 2px; 
+            border-top-right-radius: 2px;
+            margin-right: 2px;
+        }}
+        QTabBar::tab:selected {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.2);
+            color: {t['text']};
+        }}
+        QTabWidget QWidget {{
+            background: transparent;
+        }}
+        QLabel#theme_hint {{
+            font-size: 12px;
+            color: {t['accent']};
+        }}
+        QScrollArea, QWidget#theme_selector_container {{
+            background: transparent;
+            border: none;
+        }}
+        QScrollArea QWidget#qt_scrollarea_viewport {{
+            background: transparent;
+        }}
+        QPushButton#theme_item {{
+            background: transparent;
+            color: {t['accent_dark']};
+            border: none;
+            font-size: 12px;
+            padding: 2px 0px;
+            font-weight: normal;
+        }}
+        QPushButton#theme_item[selected="true"] {{
+            color: {t['accent']};
+            font-weight: bold;
+        }}
+        QPushButton#theme_item:hover {{
+            color: {t['accent_light']};
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+        }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#chapter_dropdown QScrollBar:vertical,
