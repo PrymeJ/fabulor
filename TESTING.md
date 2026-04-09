@@ -63,6 +63,9 @@
 - [x] All clicks on buttons dismisses and performs
 - [x] Clicking on chapter name does not dismiss
 - [x] Blur works || either needs improvement or removal
+- [x] Library add works
+- [x] Remove selected works
+- [x] Rescan library works
 
 ## Speed panel || Playback or Speed?, remove vertical line and darken
 
@@ -73,6 +76,7 @@
 - [x] Clicking on chapter name does not dismiss
 
 ## Sleep panel
+
 - [ ] Sleep button in sidebar opens panel
 - [ ] Time presets (2, 5, ..., 120 min) set timer correctly
 - [ ] "End of Chapter" mode works
@@ -82,6 +86,20 @@
 - [ ] "Disable Sleep Timer" button works
 - [ ] Sleep timer display in time label updates correctly
 
+## Library loading
+
+- [ ] No library message displayed
+- [ ] Load library dialog works
+- [ ] No book selected message displayed
+- [ ] Go to Library button works
+
+## Library panel
+
+- Books do not flicker when shuffled
+- Views work correctly
+- Seach works correctly
+- Back button dismisses
+
 ## Saving states
 
 - [x] Book progress restored
@@ -90,6 +108,8 @@
 - [x] Speed setting restored
 - [x] Default speed setting 
 - [x] Step restored || name
+- [x] Sort by view restored
+- [x] Grid/list view restored
 
 ## Theme engine || reorder
 
@@ -116,25 +136,25 @@
 - [ ] The Picture of Dorian Grey
 - [ ] Winterfell
 - [ ] Sapphire of the Singularity
-Melnibonéan
-Alzabo Blue
-Gormenghast
-Manderley
-The Slow Regard
-Eyes of Ibad
-Effluent Green
-The Drowning City
-The Bone Clocks
-Cibola Burn
-The Chrysalids
-Tlön
-The Salt Roads
-Earthsea
-Green Gables
-House of Leaves
-Brave New World
-The Secret Garden
-The Waste Lands
-Wintermute
-Blood Meridian
-Ithaca
+- [ ] Melnibonéan
+- [ ] Alzabo Blue
+- [ ] Gormenghast
+- [ ] Manderley
+- [ ] The Slow Regard
+- [ ] Eyes of Ibad
+- [ ] Effluent Green
+- [ ] The Drowning City
+- [ ] The Bone Clocks
+- [ ] Cibola Burn
+- [ ] The Chrysalids
+- [ ] Tlön
+- [ ] The Salt Roads
+- [ ] Earthsea
+- [ ] Green Gables
+- [ ] House of Leaves
+- [ ] Brave New World
+- [ ] The Secret Garden
+- [ ] The Waste Lands
+- [ ] Wintermute
+- [ ] Blood Meridian
+- [ ] Ithaca
