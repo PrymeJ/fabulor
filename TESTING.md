@@ -110,9 +110,31 @@
 - [ ] Oranges Are Not the Only Fruit || Clockwork Orange?
 - [ ] Red Rising
 - [ ] Rivendell
-- [ ] Spice Must Flow || Shai-Hulud?
+- [ ] Shai-Hulud
 - [ ] Temporary Blue ||
 - [ ] The Color Purple
 - [ ] The Picture of Dorian Grey
 - [ ] Winterfell
-
+- [ ] Sapphire of the Singularity
+Melnibonéan
+Alzabo Blue
+Gormenghast
+Manderley
+The Slow Regard
+Eyes of Ibad
+Effluent Green
+The Drowning City
+The Bone Clocks
+Cibola Burn
+The Chrysalids
+Tlön
+The Salt Roads
+Earthsea
+Green Gables
+House of Leaves
+Brave New World
+The Secret Garden
+The Waste Lands
+Wintermute
+Blood Meridian
+Ithaca
