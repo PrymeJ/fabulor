@@ -45,7 +45,19 @@ class ThemeManager:
 
         self._theme_fade_anim = None
         self.theme_widgets = {} # theme_name -> QPushButton
+        self.interval_widgets = {} # minutes -> QPushButton
         self._active_display_theme = self._current_theme_name
+
+        # Rotation Timer
+        self.rotation_timer = QTimer()
+        self.rotation_timer.timeout.connect(self._rotate_theme)
+        self.set_rotation_interval(self.config.get_theme_rotation_interval())
+
+    def _rotate_theme(self):
+        if len(self.selected_themes) > 1:
+            pool = [t for t in self.selected_themes if t != self._current_theme_name]
+            self._current_theme_name = random.choice(pool)
+            self._on_theme_changed(self._current_theme_name, save=False)
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None):
         """Update the appearance with a subtle fade transition."""
@@ -105,6 +117,35 @@ class ThemeManager:
         # Save the pool as a comma-separated string
         self.config.set_theme(",".join(self.selected_themes))
         self.update_theme_list_visuals()
+
+    def select_all_themes(self):
+        self.selected_themes = list(THEMES.keys())
+        self.config.set_theme(",".join(self.selected_themes))
+        self.update_theme_list_visuals()
+
+    def deselect_all_themes(self):
+        # Fallback to the current theme or a default so the list is never empty
+        self.selected_themes = [self._current_theme_name]
+        self.config.set_theme(",".join(self.selected_themes))
+        self.update_theme_list_visuals()
+
+    def set_rotation_interval(self, minutes):
+        """Update the rotation interval and restart the timer if necessary."""
+        self.config.set_theme_rotation_interval(minutes)
+        self.rotation_timer.stop()
+        
+        if minutes > 0:
+            # Convert minutes to milliseconds
+            self.rotation_timer.start(minutes * 60 * 1000)
+        
+        self.update_interval_visuals()
+
+    def update_interval_visuals(self):
+        current_interval = self.config.get_theme_rotation_interval()
+        for mins, btn in self.interval_widgets.items():
+            btn.setProperty("selected", mins == current_interval)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _on_theme_hovered(self, theme_name):
         """Preview the theme visually."""

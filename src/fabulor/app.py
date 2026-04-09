@@ -486,9 +486,53 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             themes_layout.addLayout(row_layout)
             
         themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
+        
+        # Add/Remove All Buttons
+        bulk_layout = QHBoxLayout()
+        bulk_layout.setSpacing(10)
+        self.add_all_btn = QPushButton("Add all")
+        self.add_all_btn.setObjectName("secondary_button")
+        self.add_all_btn.setFixedWidth(80)
+        self.remove_all_btn = QPushButton("Remove all")
+        self.remove_all_btn.setObjectName("secondary_button")
+        self.remove_all_btn.setFixedWidth(80)
+        self.change_now_btn = QPushButton("Change now")
+        self.change_now_btn.setObjectName("secondary_button")
+        self.change_now_btn.setFixedWidth(80)
+        
+        self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
+        self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
+        self.change_now_btn.clicked.connect(self.theme_manager._rotate_theme)
+        
+        bulk_layout.addWidget(self.add_all_btn)
+        bulk_layout.addWidget(self.remove_all_btn)
+        bulk_layout.addWidget(self.change_now_btn)
+        bulk_layout.addStretch()
+        themes_layout.addLayout(bulk_layout)
+
+        # Interval Selection
+        interval_row = QHBoxLayout()
+        interval_row.setSpacing(10)
+        interval_row.setContentsMargins(0, 10, 0, 0)
+        
+        interval_label = QLabel("Interval (min)")
+        interval_label.setObjectName("theme_hint")
+        interval_row.addWidget(interval_label)
+
+        intervals = [(2, "2"), (5, "5"), (10, "10"), (15, "15"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
+        for mins, label in intervals:
+            btn = QPushButton(label)
+            btn.setObjectName("theme_item") # Re-use the theme item bare style
+            btn.clicked.connect(lambda _, m=mins: self.theme_manager.set_rotation_interval(m))
+            self.theme_manager.interval_widgets[mins] = btn
+            interval_row.addWidget(btn)
+        interval_row.addStretch()
+        themes_layout.addLayout(interval_row)
+
         themes_layout.addStretch()
         self.tabs.addTab(themes_tab, "Themes")
         self.theme_manager.update_theme_list_visuals()
+        self.theme_manager.update_interval_visuals()
 
         # --- TAB 2: APPEARANCE ---
         appearance_tab = QWidget()

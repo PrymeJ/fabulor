@@ -994,6 +994,17 @@ def get_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
         }}
+        QPushButton#secondary_button {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            font-size: 11px;
+            padding: 4px;
+        }}
+        QPushButton#secondary_button:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#chapter_dropdown QScrollBar:vertical,

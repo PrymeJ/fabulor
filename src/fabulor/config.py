@@ -93,3 +93,9 @@ class Config:
 
     def set_sleep_fade_duration(self, seconds):
         self.settings.setValue("sleep_fade_duration", seconds)
+
+    def get_theme_rotation_interval(self):
+        return int(self.settings.value("theme_rotation_interval", 0)) # 0 means Off
+
+    def set_theme_rotation_interval(self, minutes):
+        self.settings.setValue("theme_rotation_interval", minutes)
