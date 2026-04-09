@@ -150,7 +150,6 @@
 - [ ] Tlön
 - [ ] The Salt Roads
 - [ ] Earthsea
-- [ ] Green Gables
 - [ ] House of Leaves
 - [ ] Brave New World
 - [ ] The Secret Garden

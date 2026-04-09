@@ -542,25 +542,6 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "text": "#E8F4F8", # Cool light text
     },
-    "Green Gables": {
-        "bg_deep": "#2D4A2D", # Deep moss forest
-        "bg_main": "#4A7C4A", # Lush meadow green
-        "slider_overall_bg": "#5A8C5A",
-        "slider_overall_fill": "#7ABF7A",
-        "slider_chapter_bg": "#4A7C4A",
-        "slider_chapter_fill": "#68A668",
-        "slider_vol_bg": "#2D4A2D",
-        "slider_vol_fill": "#7ABF7A",
-        "accent": "#7ABF7A", # Vibrant green accent
-        "accent_light": "#9CD99C",
-        "accent_dark": "#527C52",
-        "bg_sidebar": "#2D4A2D",
-        "bg_dropdown": "#4A7C4A",
-        "curr_chap_highlight": "#7ABF7A",
-        "sidebar_opacity": 0.75,
-        "panel_opacity_hover": 0.92,
-        "text": "#F0F8F0", # Off-white cream text
-    },
     "House of Leaves": {
         "bg_deep": "#0F1419", # Void black
         "bg_main": "#1A1F24", # Shadowed navy
