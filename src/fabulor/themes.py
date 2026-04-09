@@ -983,7 +983,7 @@ def get_stylesheet(theme_name="default"):
             color: {t['accent_dark']};
             border: none;
             font-size: 12px;
-            padding: 2px 0px;
+            padding: 1px 0px;
             font-weight: normal;
         }}
         QPushButton#theme_item[selected="true"] {{

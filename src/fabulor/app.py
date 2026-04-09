@@ -446,7 +446,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         themes_layout.addWidget(theme_hint)
 
         metrics = self.fontMetrics()
-        limit = 300 #Adjusted for tab width
+        limit = 295 #Adjusted for tab width
         
         # Clear widget tracker
         self.theme_manager.theme_widgets = {}
