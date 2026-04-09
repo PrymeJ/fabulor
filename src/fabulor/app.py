@@ -59,7 +59,7 @@ class RightClickButton(QPushButton):
         else:
             super().mousePressEvent(event)
 
-class ThemeItem(QPushButton):
+class ThemeItem(RightClickButton):
     hovered = Signal(str)
     def __init__(self, name, parent=None):
         super().__init__(name, parent)
@@ -67,7 +67,6 @@ class ThemeItem(QPushButton):
         self.setObjectName("theme_item")
         self.setMouseTracking(True)
         self.setFlat(True)
-        
     def enterEvent(self, event):
         self.hovered.emit(self.theme_name)
         super().enterEvent(event)
@@ -473,6 +472,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if current_w + needed <= limit:
                     btn = ThemeItem(item['name'])
                     btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
+                    btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
                     btn.hovered.connect(self.theme_manager._on_theme_hovered)
                     self.theme_manager.theme_widgets[item['name']] = btn
                     

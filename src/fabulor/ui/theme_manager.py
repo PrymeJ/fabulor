@@ -98,21 +98,21 @@ class ThemeManager:
 
         self.main_window.setStyleSheet(get_stylesheet(theme_name))
         self.main_window._update_speed_grid_styling()
+        self.update_theme_list_visuals()
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""
         if theme_name in self.selected_themes:
-            if len(self.selected_themes) > 1:
+            if len(self.selected_themes) > 1: # Ensure we don't make the list empty
                 self.selected_themes.remove(theme_name)
-                # If we removed the currently active session theme, switch to another
+                # If we removed the session theme, pick a new one from the remaining pool
                 if self._current_theme_name == theme_name:
-                    self._current_theme_name = self.selected_themes[0]
+                    self._current_theme_name = random.choice(self.selected_themes)
                     self._on_theme_changed(self._current_theme_name, save=False)
+            # If it's the last selected theme, we don't remove it (pool cannot be empty)
         else:
-            self.selected_themes.append(theme_name)
-            # Make the newly selected theme the active one immediately
-            self._current_theme_name = theme_name
-            self._on_theme_changed(self._current_theme_name, save=False)
+            # Add to pool, but do NOT change the session active theme on left-click
+            self.selected_themes.append(theme_name) 
 
         # Save the pool as a comma-separated string
         self.config.set_theme(",".join(self.selected_themes))
@@ -139,6 +139,20 @@ class ThemeManager:
             self.rotation_timer.start(minutes * 60 * 1000)
         
         self.update_interval_visuals()
+    def _on_theme_right_clicked(self, theme_name):
+        """Selects a theme and immediately activates it."""
+        # 1. Ensure it's in the selected pool
+        if theme_name not in self.selected_themes:
+            self.selected_themes.append(theme_name)
+            self.config.set_theme(",".join(self.selected_themes)) # Save updated pool
+        
+        # 2. Make it the currently active theme for display and session
+        self._current_theme_name = theme_name
+        
+        # 3. Apply the theme visually (this also sets _active_display_theme)
+        self._on_theme_changed(theme_name, save=False)
+        self.update_theme_list_visuals()
+        self.update_interval_visuals() 
 
     def update_interval_visuals(self):
         current_interval = self.config.get_theme_rotation_interval()
@@ -161,7 +175,10 @@ class ThemeManager:
         """Dim unselected themes and highlight selected ones."""
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
-            btn.setProperty("selected", is_selected)
+            is_active_display = (name == self._active_display_theme)
+            
+            btn.setProperty("selected", is_selected) # For selected in pool
+            btn.setProperty("active_display", is_active_display) # For currently displayed
             # Trigger style refresh for property change
             btn.style().unpolish(btn)
             btn.style().polish(btn)

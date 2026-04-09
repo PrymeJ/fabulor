@@ -994,6 +994,9 @@ def get_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
         }}
+        QPushButton#theme_item[active_display="true"] {{
+            text-decoration: underline;
+        }}
         QPushButton#secondary_button {{
             background: transparent;
             color: {t['text']};
