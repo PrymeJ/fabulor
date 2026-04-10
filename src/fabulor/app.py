@@ -160,14 +160,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Content container
         self.content_container = QWidget()
         self.content_layout = QVBoxLayout(self.content_container)
-        self.content_layout.setContentsMargins(10, 10, 10, 10)
+        self.content_layout.setContentsMargins(10, 10, 10, 10) #the whole container
         self.content_layout.setSpacing(10)
         self.root_layout.addWidget(self.content_container)
 
         # Visual Area for blurring (Cover Art and Metadata)
         self.visual_area = QWidget()
+        self.visual_area.setObjectName("visual_area")
         self.visual_layout = QVBoxLayout(self.visual_area)
-        self.visual_layout.setContentsMargins(0, 0, 0, 0)
+        self.visual_layout.setContentsMargins(10, 0, 10, 10) # cover art area
         self.visual_layout.setSpacing(10)
         self.visual_area.setFixedHeight(350) # Lock size so buttons stay fixed
         self.visual_area.mousePressEvent = self._on_drag_area_pressed

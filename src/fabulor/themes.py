@@ -102,6 +102,26 @@ THEMES = {
         "panel_theme_names_dimmed": "#839CA2",
         "text": "#F1E7C2", # Pale lemon text
     },
+        "Camorr": {
+        "bg_deep": "#0F1419",
+        "bg_main": "#1A1F24", 
+        "slider_overall_bg": "#2A2F34",
+        "slider_overall_fill": "#00A98B",
+        "slider_chapter_bg": "#1A1F24",
+        "slider_chapter_fill": "#008B6F",
+        "slider_vol_bg": "#0F1419",
+        "slider_vol_fill": "#00A98B",
+        "accent": "#00A98B",
+        "accent_light": "#00D4B3",
+        "accent_dark": "#006F5A",
+        "bg_sidebar": "#0F1419",
+        "bg_dropdown": "#1A1F24",
+        "curr_chap_highlight": "#00A98B",
+        "sidebar_opacity": 0.65,
+        "panel_opacity_hover": 0.88,
+        "panel_theme_names_dimmed": "#C0D8CA",
+        "text": "#E0E6ED",
+    },
     "Chatsubo": { # Neuromancer - Dark, vibrant neons
         "bg_deep":      "#0D001A",
         "bg_main":      "#1A002E", # Deep purple background
@@ -272,13 +292,13 @@ THEMES = {
         "bg_deep":      "#230903",
         "bg_main":      "#451208",
         "slider_overall_bg":   "#741A06",
-        "slider_overall_fill": "#E3B23C",
-        "slider_chapter_bg":   "#451208",
-        "slider_chapter_fill": "#8E2811",
+        "slider_overall_fill": "#FDA605",
+        "slider_chapter_bg":   "#741A06",
+        "slider_chapter_fill": "#D60808",
         "slider_vol_bg":       "#230903",
         "slider_vol_fill":     "#E3B23C",
-        "accent":              "#E3B23C",
-        "accent_light":        "#F0CC70",
+        "accent":              "#FDA605",
+        "accent_light":        "#D60808",
         "accent_dark":         "#A37B14",
         "bg_sidebar":          "#230903",
         "bg_dropdown":         "#451208",
@@ -307,26 +327,6 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#FEC074",
         "text": "#F1E7C2", # Pale lemon text
-    },
-    "House of Leaves": {
-        "bg_deep": "#0F1419",
-        "bg_main": "#1A1F24", 
-        "slider_overall_bg": "#2A2F34",
-        "slider_overall_fill": "#00A98B",
-        "slider_chapter_bg": "#1A1F24",
-        "slider_chapter_fill": "#008B6F",
-        "slider_vol_bg": "#0F1419",
-        "slider_vol_fill": "#00A98B",
-        "accent": "#00A98B",
-        "accent_light": "#00D4B3",
-        "accent_dark": "#006F5A",
-        "bg_sidebar": "#0F1419",
-        "bg_dropdown": "#1A1F24",
-        "curr_chap_highlight": "#00A98B",
-        "sidebar_opacity": 0.65,
-        "panel_opacity_hover": 0.88,
-        "panel_theme_names_dimmed": "#C0D8CA",
-        "text": "#E0E6ED",
     },
     "Ithaca": {
         "bg_deep": "#1A2F44", # Stormy Aegean depths
@@ -641,6 +641,27 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "text":         "#EF94E9",  # all labels and button text
     },
+    "The Overlook": {
+        "bg_deep":                "#2E1E14",
+        "bg_main":                "#341A25",
+        "slider_overall_bg":      "#B41E37",
+        "slider_overall_fill":    "#F05632",
+        "slider_chapter_bg":      "#B41E37",
+        "slider_chapter_fill":    "#F05632",
+        "slider_vol_bg":          "#4A2E1E",
+        "slider_vol_fill":        "#B41E37",
+        "accent":                 "#F05632",
+        "accent_light":           "#BB0606",
+        "accent_dark":            "#8A5428",
+        "bg_sidebar":             "#2E1E14",
+        "bg_dropdown":            "#6B4530",
+        "curr_chap_highlight":    "#BB0606",
+        "sidebar_opacity":        0.86,
+        "panel_opacity_hover":    0.93,
+        "panel_theme_names_dimmed": "#F05632",
+        "text":                   "#F8ECD8",
+        "bg_image":               "img/overlook.png"
+    },
     "The Waste Lands": {
         "bg_deep": "#1A1A1A", # Charred black
         "bg_main": "#2F2F2F", # Dusty ash grey
@@ -760,6 +781,91 @@ THEMES = {
         "text":                "#F8F9FA", # Light text for general labels
         "text_on_light_bg":    "#111111", 
     },
+    "Shade of the Evening": {
+        "bg_deep":                "#0A0A1A",
+        "bg_main":                "#11162B",
+        "slider_overall_bg":      "#1A2140",
+        "slider_overall_fill":    "#4A6FA5",
+        "slider_chapter_bg":      "#1A2140",
+        "slider_chapter_fill":    "#5B80B8",
+        "slider_vol_bg":          "#11162B",
+        "slider_vol_fill":        "#4A6FA5",
+        "accent":                 "#3A5A8A",
+        "accent_light":           "#5B80B8",
+        "accent_dark":            "#1E3A5A",
+        "bg_sidebar":             "#0A0A1A",
+        "bg_dropdown":            "#1A2140",
+        "curr_chap_highlight":    "#5B80B8",
+        "sidebar_opacity":        0.85,
+        "panel_opacity_hover":    0.92,
+        "text":                   "#E8EAF6",
+        "gradient_bg_angle":      135,
+        "gradient_bg_start":      "#0A0A1A",
+        "gradient_bg_end":        "#1A2860",
+        "gradient_accent_angle":  90,
+        "gradient_accent_start":  "#4A6FA5",
+        "gradient_accent_end":    "#2A4A7A",
+        "gradient_slider_fill_angle": 0,
+        "gradient_slider_fill_start": "#4A6FA5",
+        "gradient_slider_fill_end":   "#6A8FBD"
+    },
+    "Unknown Kadath": {
+        "bg_deep":                "#1A1824",
+        "bg_main":                "#2A2538",
+        "slider_overall_bg":      "#3D3650",
+        "slider_overall_fill":    "#B8B0D0",
+        "slider_chapter_bg":      "#3D3650",
+        "slider_chapter_fill":    "#D0C8E4",
+        "slider_vol_bg":          "#2A2538",
+        "slider_vol_fill":        "#B8B0D0",
+        "accent":                 "#9A8CB8",
+        "accent_light":           "#B8B0D0",
+        "accent_dark":            "#5E507A",
+        "bg_sidebar":             "#1A1824",
+        "bg_dropdown":            "#3D3650",
+        "curr_chap_highlight":    "#D0C8E4",
+        "sidebar_opacity":        0.84,
+        "panel_opacity_hover":    0.91,
+        "text":                   "#F2EFF8"
+    },
+    "Sitting in the Wing Chair": {
+        "bg_deep":                "#1E1814",
+        "bg_main":                "#2E241E",
+        "slider_overall_bg":      "#4A3A2E",
+        "slider_overall_fill":    "#B85C44",
+        "slider_chapter_bg":      "#4A3A2E",
+        "slider_chapter_fill":    "#CC6C54",
+        "slider_vol_bg":          "#2E241E",
+        "slider_vol_fill":        "#B85C44",
+        "accent":                 "#A84C34",
+        "accent_light":           "#CC6C54",
+        "accent_dark":            "#7A3420",
+        "bg_sidebar":             "#1E1814",
+        "bg_dropdown":            "#4A3A2E",
+        "curr_chap_highlight":    "#CC6C54",
+        "sidebar_opacity":        0.82,
+        "panel_opacity_hover":    0.9,
+        "text":                   "#F2E4D8"
+    },
+    "The City of Stairs": {
+        "bg_deep":                "#0E1E24",
+        "bg_main":                "#183238",
+        "slider_overall_bg":      "#244A52",
+        "slider_overall_fill":    "#5A9A8C",
+        "slider_chapter_bg":      "#244A52",
+        "slider_chapter_fill":    "#6AAAA0",
+        "slider_vol_bg":          "#183238",
+        "slider_vol_fill":        "#5A9A8C",
+        "accent":                 "#4A7A6E",
+        "accent_light":           "#6AAAA0",
+        "accent_dark":            "#2A5248",
+        "bg_sidebar":             "#0E1E24",
+        "bg_dropdown":            "#244A52",
+        "curr_chap_highlight":    "#6AAAA0",
+        "sidebar_opacity":        0.83,
+        "panel_opacity_hover":    0.91,
+        "text":                   "#EAF2EA"
+    },
 }
 
 def _hex_to_rgb(hex_str):
@@ -809,6 +915,10 @@ def get_stylesheet(theme_name="default"):
     # Determine the color for unselected theme names in the panel
     # Use custom override if available, otherwise fall back to accent_dark
     panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+
+    visual_area_bg = ""
+    if t.get("bg_image"):
+        visual_area_bg = f"background-image: url({t['bg_image']}); background-position: center; background-repeat: no-repeat;"
 
     return f"""
         QWidget#mainwindow {{
@@ -873,6 +983,10 @@ def get_stylesheet(theme_name="default"):
             font-size: 14px;
             margin-top: 10px;
             color: {t['accent_light']};
+        }}
+        QWidget#visual_area {{
+            background-color: transparent;
+            {visual_area_bg}
         }}
         TitleBar QPushButton {{
             background: transparent;
