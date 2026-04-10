@@ -598,6 +598,7 @@ THEMES = {
         "sidebar_opacity": 0.75,
         "panel_opacity_hover": 0.92,
         "text": "#F0F8F0", # Soft cream text
+        "panel_theme_names_dimmed": "#FFFFFF", # Custom dimmed color for panel names
     },
     "The Waste Lands": {
         "bg_deep": "#1A1A1A", # Charred black
@@ -690,6 +691,10 @@ def get_stylesheet(theme_name="default"):
 
     sidebar_rgb = _hex_to_rgb(t['bg_sidebar'])
     text_rgb = _hex_to_rgb(t['text'])
+
+    # Determine the color for unselected theme names in the panel
+    # Use custom override if available, otherwise fall back to accent_dark
+    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
 
     return f"""
         QWidget#mainwindow {{
@@ -959,10 +964,11 @@ def get_stylesheet(theme_name="default"):
         QScrollArea QWidget#qt_scrollarea_viewport {{
             background: transparent;
         }}
-        QPushButton#theme_item {{
+        QPushButton#theme_item {{ /* Default state for unselected, unhovered */
             background: transparent;
-            color: {t['accent_dark']};
+            color: {panel_dimmed_color};
             border: none;
+            text-align: left;
             font-size: 12px;
             padding: 1px 0px;
             font-weight: normal;
