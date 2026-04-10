@@ -126,6 +126,7 @@
 - [ ] Blood Meridian
 - [ ] Blue Moranth
 - [ ] Brave New World
+- [ ] Camorr
 - [ ] Chatsubo
 - [ ] Cibola Burn
 - [ ] Dorian Grey- [ ] Ithaca
@@ -135,7 +136,6 @@
 - [ ] Gormenghast
 - [ ] Gravity's Rainbow
 - [ ] Hear Me Roar
-- [ ] House of Leaves
 - [ ] Horrorshow
 - [ ] Ithaca
 - [ ] Jade City
