@@ -129,7 +129,7 @@
 - [ ] Camorr
 - [ ] Chatsubo
 - [ ] Cibola Burn
-- [ ] Dorian Grey- [ ] Ithaca
+- [ ] Dorian Grey
 - [ ] Earthsea
 - [ ] Emiko
 - [ ] Eyes of Ibad
@@ -147,14 +147,19 @@
 - [ ] Red Rising
 - [ ] Rivendell
 - [ ] Shai-Hulud
+- [ ] Shade of the Evening
 - [ ] Shrike
+- [ ] Sitting in the Wing Chair
 - [ ] Slow Regard
-- [ ] Smyir
+- [ ] Symir
 - [ ] The Bone Clocks
-- [ ] The Chrysalids
+- [ ] The City of Stairs
 - [ ] The Color Purple
+- [ ] The Overlook
 - [ ] The Waste Lands
 - [ ] Tigana
 - [ ] Tlön
+- [ ] Unknown Kadath
 - [ ] Urras
+- [ ] Waknuk
 - [ ] Winterfell
