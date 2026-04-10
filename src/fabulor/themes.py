@@ -1,3 +1,4 @@
+import math
 THEMES = {
     "Anomander": { # Black & White with Deep Amber Progress Text
         "bg_deep":      "#000000",
@@ -16,9 +17,10 @@ THEMES = {
         "curr_chap_highlight": "#FFFFFF",
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.9,
-        "text":                "#FFFFFF",
+        "panel_theme_names_dimmed": "#FFA807",
         "button_text":         "#000000",
         "progress_text":       "#FFBF00",
+        "text":                "#FFFFFF",
     },
     "Alzabo Blue": {
         "bg_deep":                "#1B2B3B",
@@ -37,7 +39,8 @@ THEMES = {
         "curr_chap_highlight":    "#7A9BB5",
         "sidebar_opacity":        0.88,
         "panel_opacity_hover":    0.94,
-        "text":                   "#E2E8ED"
+        "panel_theme_names_dimmed": "#CDE1E1",
+        "text":                   "#CDDBE7"
     },
     "Blood Meridian": {
         "bg_deep": "#2F1A0F", # Dried blood brown
@@ -48,7 +51,7 @@ THEMES = {
         "slider_chapter_fill": "#7A0000",
         "slider_vol_bg": "#2F1A0F",
         "slider_vol_fill": "#8B0000",
-        "accent": "#8B0000",
+        "accent": "#C10808",
         "accent_light": "#A52A2A",
         "accent_dark": "#5F0000",
         "bg_sidebar": "#2F1A0F",
@@ -56,6 +59,7 @@ THEMES = {
         "curr_chap_highlight": "#8B0000",
         "sidebar_opacity": 0.72,
         "panel_opacity_hover": 0.91,
+        "panel_theme_names_dimmed": "#E47575",
         "text": "#F5E6D3", # Bone cream text
     },
     "Blue Moranth": { # Navy/Green theme
@@ -64,10 +68,10 @@ THEMES = {
         "slider_overall_bg":   "#003547",
         "slider_overall_fill": "#39FF14", # Vibrant green accent
         "slider_chapter_bg":   "#002A38",
-        "slider_chapter_fill": "#83C5BE",
-        "slider_vol_bg":       "#001219",
+        "slider_chapter_fill": "#3CA4E0",
+        "slider_vol_bg":       "#3CA4E0",
         "slider_vol_fill":     "#39FF14",
-        "accent":              "#39FF14",
+        "accent":              "#3CA4E0",
         "accent_light":        "#7CFF8A",
         "accent_dark":         "#00A32A",
         "bg_sidebar":          "#001219",
@@ -75,6 +79,7 @@ THEMES = {
         "curr_chap_highlight": "#39FF14",
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
+        "panel_theme_names_dimmed": "#8DCECF",
         "text":                "#E0E0E0",
     },
     "Brave New World": {
@@ -94,6 +99,7 @@ THEMES = {
         "curr_chap_highlight": "#77B2CC",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#839CA2",
         "text": "#F1E7C2", # Pale lemon text
     },
     "Chatsubo": { # Neuromancer - Dark, vibrant neons
@@ -114,6 +120,7 @@ THEMES = {
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "text":                "#E0E0E0",
+        "panel_theme_names_dimmed": "#00F7FF",
         "dropdown_text":       "#FFFF00", # Yellow font
     },
     "Cibola Burn": {
@@ -152,7 +159,8 @@ THEMES = {
         "curr_chap_highlight": "#4A90A7",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
-        "text": "#E8F4F8", # Cool light text
+        "panel_theme_names_dimmed": "#D2ECF1",
+        "text": "#B9D7E2", # Cool light text
     },
     "Effluent Green": {
         "bg_deep":                "#0A1F0A",
@@ -190,6 +198,7 @@ THEMES = {
         "curr_chap_highlight": "#94D2BD",
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#D3EBEC",
         "text":                "#E9D8A6",
     },
     "Gormenghast": {
@@ -209,13 +218,14 @@ THEMES = {
         "curr_chap_highlight":    "#B88462",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
+        "panel_theme_names_dimmed": "#E4C7B7",
         "text":                   "#F0E6D8"
     },
     "Gravity's Rainbow": { # Psychedelic rainbow theme
         "bg_deep":      "#1a0033",
         "bg_main":      "#2b0052",
         "slider_overall_bg":   "#4B0082",
-        "slider_overall_fill": "#FF0000", # Red
+        "slider_overall_fill": "#ED37B3", # Red
         "slider_chapter_bg":   "#330066",
         "slider_chapter_fill": "#FF7F00", # Orange
         "slider_vol_bg":       "#1a0033",
@@ -228,9 +238,13 @@ THEMES = {
         "curr_chap_highlight": "#8B00FF", # Violet
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
-        "text":                "#00FFFF", # Cyan text
+        "text":                "#CFECEC", # Cyan text
         "progress_text":       "#FF00FF", # Magenta progress
-        "button_text":         "#2b0052", # Deep purple button text
+        "panel_theme_names_dimmed": "#E94F4F",
+        "button_text":         "#2b0052",
+         "gradient_bg_angle":      115,
+    "gradient_bg_start":      "#D328D3",
+    "gradient_bg_end":        "#1900FF",
     },
     "Hear Me Roar": {
         "bg_deep":      "#230903",
@@ -249,6 +263,7 @@ THEMES = {
         "curr_chap_highlight": "#E3B23C", # chapter dropdown selection
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#F47272",
         "text":                "#F9F7F3",
     },
     "House of Leaves": {
@@ -268,6 +283,7 @@ THEMES = {
         "curr_chap_highlight": "#00A98B",
         "sidebar_opacity": 0.65,
         "panel_opacity_hover": 0.88,
+        "panel_theme_names_dimmed": "#C0D8CA",
         "text": "#E0E6ED", # Ghostly light text
     },
     "Ithaca": {
@@ -287,7 +303,8 @@ THEMES = {
         "curr_chap_highlight": "#4682B4",
         "sidebar_opacity": 0.73,
         "panel_opacity_hover": 0.92,
-        "text": "#E8F4F8", # Cool seafoam text
+        "panel_theme_names_dimmed": "#08032B",
+        "text": "#D7E8EE", # Cool seafoam text
     },
     "Jade City": { # New theme, tones of jade
         "bg_deep":      "#002E22",
@@ -306,7 +323,8 @@ THEMES = {
         "curr_chap_highlight": "#00A86B",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
-        "text":                "#E0F2F1",
+        "panel_theme_names_dimmed": "#DCDCC7",
+        "text":                "#CBE4E3",
     },
     "Manderley": {
         "bg_deep":                "#2E2B33",
@@ -325,7 +343,8 @@ THEMES = {
         "curr_chap_highlight":    "#A89AB5",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
-        "text":                   "#F2EDF5"
+        "panel_theme_names_dimmed": "#876B81",
+        "text":                   "#ECBEDF"
     },
     "Melnibonéan": {
         "bg_deep":                "#2A353C",
@@ -363,6 +382,7 @@ THEMES = {
         "curr_chap_highlight": "#E74C3C",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#8CF1F8FF",
         "text":                "#ECF0F1", # Light text
     },
     "Razorgirl": {
@@ -382,7 +402,9 @@ THEMES = {
         "curr_chap_highlight": "#00FFFF",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
-        "text": "#E0F0FF", # Ice blue text
+        "panel_theme_names_dimmed": "#DBECF0",
+        "button_text":         "#2A0A60",
+        "text": "#A5C4E2", # Ice blue text
     },
     "Red Rising": { # Tones of red, Martian aesthetic
         "bg_deep":      "#2b0000",
@@ -401,6 +423,7 @@ THEMES = {
         "curr_chap_highlight": "#ff0000",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#FFFFFFFF",
         "text":                "#ffcccc",
         "button_text":         "#000000",
         "progress_text":       "#f88a8a", # Contrast against bright red fill
@@ -422,8 +445,9 @@ THEMES = {
         "curr_chap_highlight": "#81C784",
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
-        "text":                "#263238", # Dark text
-        "text_on_light_bg":    "#263238",
+        "text":                "#263238",
+        "panel_theme_names_dimmed": "#2C464C", # Dark text
+        "text_on_light_bg":    "#1D3022",
     },
     "Sapphire of the Singularity": {
         "bg_deep":                "#0A1128",
@@ -442,65 +466,41 @@ THEMES = {
         "curr_chap_highlight":    "#5B8AFF",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
-        "text":                   "#E6F0FF"
+        "panel_theme_names_dimmed": "#8FEBE6",
+        "text":                   "#C4D7F2"
     },
-    "Shai-Hulud": { 
-        "bg_deep":      "#4A3B2D",
-        "bg_main":      "#6B5A49",
-        "slider_overall_bg":   "#8C7B6A",
-        "slider_overall_fill": "#D4A85C", # Spice gold
-        "slider_chapter_bg":   "#6B5A49",
-        "slider_chapter_fill": "#B48B4C",
-        "slider_vol_bg":       "#4A3B2D",
-        "slider_vol_fill":     "#D4A85C",
-        "accent":              "#D4A85C",
-        "accent_light":        "#E4B86C",
-        "accent_dark":         "#A47B3C",
-        "bg_sidebar":          "#4A3B2D",
-        "bg_dropdown":         "#6B5A49",
-        "curr_chap_highlight": "#D4A85C",
-        "sidebar_opacity":     0.8,
-        "panel_opacity_hover": 0.9,
-        "text":                "#F5F5DC", # Cream text
-    },
-
-    "Shai-Hulud 2": {
+    "Shai-Hulud": {
     "bg_deep":                "#4A3B2D",
     "bg_main":                "#6B5A49",
     "gradient_bg_angle":      115,
     "gradient_bg_start":      "#4A3B2D",
     "gradient_bg_end":        "#7E6B58",
-    
     "slider_overall_bg":      "#8C7B6A",
     "slider_overall_fill":    "#D4A85C",
     "gradient_slider_fill_angle": 90,
     "gradient_slider_fill_start": "#D4A85C",
     "gradient_slider_fill_end":   "#E8BC6C",
-    
     "slider_chapter_bg":      "#6B5A49",
     "slider_chapter_fill":    "#B48B4C",
     "slider_vol_bg":          "#4A3B2D",
     "slider_vol_fill":        "#D4A85C",
-    
     "accent":                 "#D4A85C",
-    "accent_light":           "#E4B86C",
+    "accent_light":           "#E2CDA7",
     "accent_dark":            "#A47B3C",
     "gradient_accent_angle":  45,
     "gradient_accent_start":  "#D4A85C",
     "gradient_accent_end":    "#C49A4A",
-    
     "bg_sidebar":             "#4A3B2D",
     "gradient_sidebar_angle": 180,
     "gradient_sidebar_start": "#3E3024",
     "gradient_sidebar_end":   "#5A4838",
-    
     "bg_dropdown":            "#6B5A49",
     "curr_chap_highlight":    "#D4A85C",
-    "sidebar_opacity":        0.8,
+    "sidebar_opacity":        0.6,
     "panel_opacity_hover":    0.9,
+    "panel_theme_names_dimmed": "#B1A792",
     "text":                   "#F5F5DC"
     },
-
     "The Bone Clocks": {
         "bg_deep":                "#2A2020",
         "bg_main":                "#3D2E2A",
@@ -518,6 +518,7 @@ THEMES = {
         "curr_chap_highlight":    "#F2E6D8",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
+        "panel_theme_names_dimmed": "#D7B6D2",
         "text":                   "#FFF5EC"
     },
     "The Chrysalids": {
@@ -537,15 +538,16 @@ THEMES = {
         "curr_chap_highlight":    "#A2B2CC",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
-        "text":                   "#E8ECF2"
+        "panel_theme_names_dimmed": "#726A6A",
+        "text":                   "#A4AFC1"
     },
     "The Color Purple": {
         "bg_deep":      "#0D001A",  # title bar, darkest
         "bg_main":      "#1A002E",  # main window background
         "slider_overall_bg":   "#4B0082",
-        "slider_overall_fill": "#C8A2C8",
+        "slider_overall_fill": "#BA7BBA",
         "slider_chapter_bg":   "#330066",
-        "slider_chapter_fill": "#A080A0",
+        "slider_chapter_fill": "#950E95",
         "slider_vol_bg":       "#220044",
         "slider_vol_fill":     "#7B2CBF",
         "accent":              "#7B2CBF",  # primary buttons, hover states
@@ -556,7 +558,7 @@ THEMES = {
         "curr_chap_highlight": "#C8A2C8", # chapter dropdown selection
         "sidebar_opacity": 0.6,
         "panel_opacity_hover": 0.9,
-        "text":         "#F0F0F0",  # all labels and button text
+        "text":         "#EF94E9",  # all labels and button text
     },
     "The Drowning City": {
         "bg_deep":                "#0A1C1A",
@@ -575,6 +577,7 @@ THEMES = {
         "curr_chap_highlight":    "#4CCCB8",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
+        "panel_theme_names_dimmed": "#C5DCE1",
         "text":                   "#D9F0EC"
     },
     "The Picture of Dorian Grey": { # Dark grey, orange, and brown
@@ -594,6 +597,7 @@ THEMES = {
         "curr_chap_highlight": "#8B4513",
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#BCB6BB",
         "text":                "#E8BC6C", # Dark Grey/Silver (non-white)
         "button_text":         "#000000",
         "progress_text":       "#FCD586", # Match bg_deep for visibility on orange fill
@@ -635,7 +639,7 @@ THEMES = {
         "sidebar_opacity": 0.75,
         "panel_opacity_hover": 0.92,
         "text": "#F0F8F0", # Soft cream text
-        "panel_theme_names_dimmed": "#FFFFFF", # Custom dimmed color for panel names
+        "panel_theme_names_dimmed": "#E6E9CD", # Use 6-digit hex to avoid ARGB/RGBA confusion
     },
     "The Slow Regard": {
         "bg_deep":                "#3A2A1E",
@@ -673,6 +677,7 @@ THEMES = {
         "curr_chap_highlight": "#B8860B",
         "sidebar_opacity": 0.68,
         "panel_opacity_hover": 0.87,
+        "panel_theme_names_dimmed": "#839CA2",
         "text": "#DCDCDC", # Ghostly light grey text
     },
     "Tlön": {
@@ -711,6 +716,7 @@ THEMES = {
         "curr_chap_highlight": "#DEE2E6", # chapter dropdown selection
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
+        "panel_theme_names_dimmed": "#000000",
         "text":                "#F8F9FA", # Light text for general labels
         "text_on_light_bg":    "#111111", 
     },
@@ -720,6 +726,31 @@ def _hex_to_rgb(hex_str):
     h = hex_str.lstrip('#')
     return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
 
+def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
+    """Helper to construct qlineargradient or fallback to flat color/rgba."""
+    start = t.get(f"gradient_{prefix}_start")
+    end = t.get(f"gradient_{prefix}_end")
+    angle = t.get(f"gradient_{prefix}_angle", 0)
+
+    if start and end:
+        # Convert angle (0=Top-to-Bottom, 90=Left-to-Right) to Qt coordinates
+        rad = math.radians(angle)
+        x1 = 0.5 - 0.5 * math.sin(rad)
+        y1 = 0.5 - 0.5 * math.cos(rad)
+        x2 = 0.5 + 0.5 * math.sin(rad)
+        y2 = 0.5 + 0.5 * math.cos(rad)
+        
+        if opacity < 1.0:
+            s_rgb = _hex_to_rgb(start)
+            e_rgb = _hex_to_rgb(end)
+            return (f"qlineargradient(spread:pad, x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, "
+                    f"stop:0 rgba({s_rgb}, {opacity}), stop:1 rgba({e_rgb}, {opacity}))")
+        return f"qlineargradient(spread:pad, x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, stop:0 {start}, stop:1 {end})"
+    
+    if opacity < 1.0:
+        return f"rgba({_hex_to_rgb(fallback_color)}, {opacity})"
+    return fallback_color
+
 def get_stylesheet(theme_name="default"):
     # Fallback logic for stubs
     base = THEMES["The Color Purple"].copy()
@@ -727,8 +758,13 @@ def get_stylesheet(theme_name="default"):
     base.update(custom)
     t = base
 
-    sidebar_rgb = _hex_to_rgb(t['bg_sidebar'])
     text_rgb = _hex_to_rgb(t['text'])
+
+    # Prepare dynamic backgrounds
+    main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
+    sidebar_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['sidebar_opacity'])
+    sidebar_hover_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['panel_opacity_hover'])
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
 
     # Determine the color for unselected theme names in the panel
     # Use custom override if available, otherwise fall back to accent_dark
@@ -736,7 +772,7 @@ def get_stylesheet(theme_name="default"):
 
     return f"""
         QWidget#mainwindow {{
-            background-color: {t['bg_main']};
+            background: {main_bg_style};
             border-radius: 8px;
         }}
         QToolTip {{
@@ -764,12 +800,12 @@ def get_stylesheet(theme_name="default"):
                          
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
-            background-color: rgba({sidebar_rgb}, {t['sidebar_opacity']});
+            background: {sidebar_style};
             border-right: 1px solid {t['slider_overall_bg']};
             border-radius: 0px;
         }}
         QWidget#sidebar:hover {{
-            background-color: rgba({sidebar_rgb}, {t['panel_opacity_hover']}); /* Sidebar hover opacity */
+            background: {sidebar_hover_style};
         }}
         TitleBar QLabel {{
             color: {t['text']};
@@ -818,7 +854,7 @@ def get_stylesheet(theme_name="default"):
             background: transparent;
         }}
         QPushButton {{
-            background-color: {t['accent']};
+            background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
             padding: 6px;
