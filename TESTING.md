@@ -121,39 +121,40 @@
 
 ## Each theme here || name default needs fix, feat random
 
+- [ ] Alzabo
 - [ ] Anomander
+- [ ] Blood Meridian
 - [ ] Blue Moranth
+- [ ] Brave New World
 - [ ] Chatsubo
+- [ ] Cibola Burn
+- [ ] Dorian Grey- [ ] Ithaca
+- [ ] Earthsea
+- [ ] Emiko
+- [ ] Eyes of Ibad
+- [ ] Gormenghast
 - [ ] Gravity's Rainbow
 - [ ] Hear Me Roar
+- [ ] House of Leaves
+- [ ] Horrorshow
+- [ ] Ithaca
 - [ ] Jade City
-- [ ] Oranges Are Not the Only Fruit || Clockwork Orange?
+- [ ] Manderley
+- [ ] Melnibonéan
+- [ ] Oranges Are Not the Only Fruit
+- [ ] Razorgirl
+- [ ] Rebma
 - [ ] Red Rising
 - [ ] Rivendell
 - [ ] Shai-Hulud
-- [ ] Temporary Blue ||
-- [ ] The Color Purple
-- [ ] The Picture of Dorian Grey
-- [ ] Winterfell
-- [ ] Sapphire of the Singularity
-- [ ] Melnibonéan
-- [ ] Alzabo Blue
-- [ ] Gormenghast
-- [ ] Manderley
-- [ ] The Slow Regard
-- [ ] Eyes of Ibad
-- [ ] Effluent Green
-- [ ] The Drowning City
+- [ ] Shrike
+- [ ] Slow Regard
+- [ ] Smyir
 - [ ] The Bone Clocks
-- [ ] Cibola Burn
 - [ ] The Chrysalids
-- [ ] Tlön
-- [ ] The Salt Roads
-- [ ] Earthsea
-- [ ] House of Leaves
-- [ ] Brave New World
-- [ ] The Secret Garden
+- [ ] The Color Purple
 - [ ] The Waste Lands
-- [ ] Wintermute
-- [ ] Blood Meridian
-- [ ] Ithaca
+- [ ] Tigana
+- [ ] Tlön
+- [ ] Urras
+- [ ] Winterfell
