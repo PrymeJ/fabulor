@@ -31,7 +31,6 @@ class TitleBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(32)
-        self._drag_pos = None
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 0, 4, 0)
@@ -46,6 +45,13 @@ class TitleBar(QWidget):
             btn.setFixedSize(32, 32)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            win = self.window()
+            if win.panel_manager:
+                win.panel_manager.hide_all_panels()
+            win.windowHandle().startSystemMove()
 
     def _minimize(self): self.window().showMinimized()
     def _close(self): self.window().close()
