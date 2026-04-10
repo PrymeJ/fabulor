@@ -216,5 +216,8 @@ __marimo__/
 # Gemini
 #GEMINI.md
 
-#test files
+# test files
 *.m4b
+
+# img files
+/img/
