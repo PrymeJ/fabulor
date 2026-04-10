@@ -26,67 +26,15 @@ from .ui.panels import PanelManager # New import for PanelManager
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from mpv import ShutdownError
-
-class TitleBar(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(32)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 4, 0)
-        layout.setSpacing(0)
-
-        self.title_label = QLabel("Fabulor")
-        layout.addWidget(self.title_label)
-        layout.addStretch()
-
-        for symbol, slot in [("─", self._minimize), ("✕", self._close)]:
-            btn = QPushButton(symbol)
-            btn.setFixedSize(32, 32)
-            btn.clicked.connect(slot)
-            layout.addWidget(btn)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            win = self.window()
-            if win.panel_manager:
-                win.panel_manager.hide_all_panels()
-            win.windowHandle().startSystemMove()
-
-    def _minimize(self): self.window().showMinimized()
-    def _close(self): self.window().close()
-
-class RightClickButton(QPushButton):
-    rightClicked = Signal()
-    def mousePressEvent(self, event):
-        if event.button() == Qt.RightButton:
-            self.rightClicked.emit()
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-class ThemeItem(RightClickButton):
-    hovered = Signal(str)
-    def __init__(self, name, parent=None):
-        super().__init__(name, parent)
-        self.theme_name = name
-        self.setObjectName("theme_item")
-        self.setMouseTracking(True)
-        self.setFlat(True)
-    def enterEvent(self, event):
-        self.hovered.emit(self.theme_name)
-        super().enterEvent(event)
+from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 
 BOOK_QUOTES = [
-    ("A room without books is like a body without a soul.", "Cicero"),
-    ("I have always imagined that Paradise will be a kind of library.", "Jorge Luis Borges"),
-    ("The only thing that you absolutely have to know, is the location of the library.", "Albert Einstein"),
-    ("There is no friend as loyal as a book.", "Ernest Hemingway"),
-    ("Books are a uniquely portable magic.", "Stephen King"),
-    ("A library outranks any other one thing a community can do to benefit its people.", "Andrew Carnegie"),
-    ("So many books, so little time.", "Frank Zappa"),
-    ("The more that you read, the more things you will know.", "Dr. Seuss"),
-    ("Outside of a dog, a book is a man's best friend. Inside of a dog it's too dark to read.", "Groucho Marx")
+    ("DON'T PANIC", "A Hitchhiker's Guide to the Galaxy"),
+    ("The man in black fled across the desert, and the gunslinger followed.", "The Gunslinger"),
+    ("Joffrey\nMeryn Trant\nIllyn Payne\nThe Hound\nThe Mountain\nTywin Lannister\nWalder Frey", "A Game of Thrones"),
+    ("The sky above the port was the color of television, tuned to a dead channel.", "Neuromancer"),
+    ("A screaming comes across the sky.", "Gravity's Rainbow"),
+    ("Fear is the mind-killer.", "Dune"),
 ]
 
 
