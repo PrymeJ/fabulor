@@ -95,11 +95,6 @@ class Player(QObject):
             print(f"Metadata extraction error: {e}")
         return pixmap
     
-    def _on_end_file(self, event):
-        print(f"end-file fired")
-        if not self._eof:
-            self._eof = True
-
     # Playback Control Proxies
     @property
     def pause(self): return self.instance.pause if self.instance else True
