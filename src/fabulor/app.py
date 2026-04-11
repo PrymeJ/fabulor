@@ -122,7 +122,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_area = QWidget()
         self.visual_area.setObjectName("visual_area")
         self.visual_layout = QVBoxLayout(self.visual_area)
-        self.visual_layout.setContentsMargins(10, 0, 10, 10) # cover art area
+        self.visual_layout.setContentsMargins(0, 0, 0, 0) # cover art area
         self.visual_layout.setSpacing(10)
         self.visual_area.setFixedHeight(350) # Lock size so buttons stay fixed
         self.visual_area.mousePressEvent = self._on_drag_area_pressed
