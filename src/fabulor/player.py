@@ -38,14 +38,14 @@ class Player(QObject):
         if self.instance is None:
             locale.setlocale(locale.LC_NUMERIC, "C")
             self.instance = MPV(
-                vo='null',
-                ao='pulse',
-                vid=False,
-                ytdl=False,
-                keep_open=True
+                vo='null', ao='pulse', vid=False, ytdl=False, keep_open=True
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
+            self.instance.observe_property('pause', self._on_pause_test)  # ADD
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
+
+    def _on_pause_test(self, name, value):  # ADD
+        print(f"PAUSE: {value}, pos={self.instance.time_pos}, dur={self.instance.duration}")
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()
