@@ -70,15 +70,12 @@ class ChapterList(QListWidget):
         return f"{h:02}:{m:02}:{s:02}"
 
     def _on_item_clicked(self, item):
-        """Seek to the selected chapter."""
         if self.player:
             idx = item.data(Qt.UserRole)
+            chapters = self.player.chapter_list or []
+            if idx >= len(chapters):
+                return  # Player state is stale, ignore click
             self.player.chapter = idx
-            self.hide() # Close dropdown after selection
-            
-            widget = self.itemWidget(item)
-            if widget:
-                # Emit the actual title, not the elided one if possible
-                chapters = self.player.chapter_list or []
-                actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
-                self.chapter_changed.emit(actual_title)
+            self.hide()
+            actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
+            self.chapter_changed.emit(actual_title)

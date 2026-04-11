@@ -33,19 +33,24 @@ class Player(QObject):
     def __init__(self):
         super().__init__()
         self.instance = None  # deferred
+        self._eof = False
 
     def _ensure_mpv(self):
         if self.instance is None:
             locale.setlocale(locale.LC_NUMERIC, "C")
             self.instance = MPV(
-                vo='null', ao='pulse', vid=False, ytdl=False, keep_open=True
+                vo='null', ao='pulse', vid=False, ytdl=False, keep_open='always'
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
             self.instance.observe_property('pause', self._on_pause_test)  # ADD
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
 
-    def _on_pause_test(self, name, value):  # ADD
-        print(f"PAUSE: {value}, pos={self.instance.time_pos}, dur={self.instance.duration}")
+    def _on_pause_test(self, name, value):
+        if value:
+            pos = self.instance.time_pos
+            dur = self.instance.duration
+            if pos is not None and dur is not None and pos >= dur - 1.5:
+                self._eof = True
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()
@@ -89,6 +94,11 @@ class Player(QObject):
         except Exception as e:
             print(f"Metadata extraction error: {e}")
         return pixmap
+    
+    def _on_end_file(self, event):
+        print(f"end-file fired")
+        if not self._eof:
+            self._eof = True
 
     # Playback Control Proxies
     @property
@@ -101,7 +111,9 @@ class Player(QObject):
     def time_pos(self): return self.instance.time_pos if self.instance else None
     @time_pos.setter
     def time_pos(self, value): 
-        if self.instance: self.instance.time_pos = value
+        if self.instance:
+            self.instance.time_pos = value
+            self._eof = False
 
     @property
     def duration(self): return self.instance.duration if self.instance else None
@@ -109,7 +121,9 @@ class Player(QObject):
     def chapter(self): return self.instance.chapter if self.instance else None
     @chapter.setter
     def chapter(self, value): 
-        if self.instance: self.instance.chapter = value
+        if self.instance:
+            self.instance.chapter = value
+            self._eof = False
 
     @property
     def chapters(self): return self.instance.chapters if self.instance else 0
@@ -129,7 +143,8 @@ class Player(QObject):
         if self.instance: self.instance.volume = value
 
     @property
-    def eof_reached(self): return getattr(self.instance, 'eof_reached', False)
+    def eof_reached(self):
+        return self._eof
 
     def terminate(self):
         if self.instance:

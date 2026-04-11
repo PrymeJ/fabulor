@@ -94,13 +94,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def __init__(self, parent=None):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
-
         self.current_cover_pixmap = QPixmap()
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.current_file = ""
         self.config = Config()
         self.player = Player()
+        # Manual override for testing
+        #self.current_file = "/mnt/DriveD/Audiobooks/Adrian Selby - Snakewood/Snakewood.m4b"
+        #self.player.load_book(self.current_file)
+        ###
         self.theme_manager = ThemeManager(self)
         self._paused_time = None
         self._is_seeking = False
@@ -1011,14 +1014,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except ShutdownError:
             return
 
-        if not self.current_file or mpv_pos is None or dur is None:
+        if not self.current_file:
+            self.play_pause_button.setText("Play")
+            return
+
+        is_eof = self.player.eof_reached
+        if is_eof:
+            self.play_pause_button.setText("Restart")
+            pos = dur or self.player.duration or 0
+            # update sliders to 100% and return
+            if pos and dur:
+                self.progress_slider.setValue(1000)
+                self.time_label.setText(f"{self._format_time(pos)} / {self._format_time(dur)}")
+            return
+
+        if mpv_pos is None or dur is None:
             self.play_pause_button.setText("Play")
             return
 
         if is_paused:
-            # Only update the displayed position while paused if we explicitly 
-            # triggered a seek or if the drift is massive (emergency resync).
-            # This prevents cumulative 'speed drift' from jumping the UI.
             if self._paused_time is None or self._is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
                 self._paused_time = mpv_pos
                 self._is_seeking = False
@@ -1027,8 +1041,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._paused_time = None
             pos = mpv_pos
         
-        is_eof = self.player.eof_reached
-
+        # is_eof = self.player.eof_reached
+        
         # Sleep Timer Logic
         sleep_display_text = ""
         if self._sleep_timer_end_time is not None:
@@ -1072,7 +1086,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
              self.chapter_list_widget.populate(dur)
              self._update_chapter_label_from_index(self.player.chapter or 0)
 
-        if dur > 0:
+        if dur is not None and dur > 0:
             # Update overall progress
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
@@ -1326,7 +1340,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if book:
                 self.metadata_label.setText(f"{book['author']} - {book['title']}")
             else:
-                self.metadata_label.setText("Unknown Book")
+                self.metadata_label.setText("Unknown book")
 
     def _update_cover_art_scaling(self):
         """Scales the current cover pixmap to FIT the available space."""
