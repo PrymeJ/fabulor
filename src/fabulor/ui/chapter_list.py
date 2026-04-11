@@ -80,6 +80,5 @@ class ChapterList(QListWidget):
             if widget:
                 # Emit the actual title, not the elided one if possible
                 chapters = self.player.chapter_list or []
-                if 0 <= idx < len(chapters):
-                    actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
-                    self.chapter_changed.emit(actual_title)
+                actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
+                self.chapter_changed.emit(actual_title)

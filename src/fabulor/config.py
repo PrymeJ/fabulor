@@ -59,13 +59,7 @@ class Config:
 
     def get_last_position(self, file_path):
         """Returns the saved timestamp for a specific file."""
-        val = self.settings.value(f"pos_{file_path}")
-        if val is None:
-            return 0.0
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return 0.0
+        return float(self.settings.value(f"pos_{file_path}", 0))
 
     def set_last_position(self, file_path, pos):
         """Saves the current timestamp for a specific file."""
