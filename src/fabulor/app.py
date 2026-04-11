@@ -524,15 +524,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
         lib_layout = QVBoxLayout(library_tab)
-        
+
+        pattern_header = QLabel("Naming pattern")
+        pattern_header.setObjectName("settings_header")
+        lib_layout.addWidget(pattern_header)
+
+        pattern_row = QHBoxLayout()
+        self.at_pattern_btn = QPushButton("Author - Title")
+        self.ta_pattern_btn = QPushButton("Title - Author")
+        self.at_pattern_btn.setObjectName("pattern_button")
+        self.ta_pattern_btn.setObjectName("pattern_button")
+
+        self.at_pattern_btn.setToolTip("Folders are named like 'Author - Title' (e.g. 'Stephen King - The Shining')")
+        self.ta_pattern_btn.setToolTip("Folders are named like 'Title - Author' (e.g. 'The Shining - Stephen King')")
+
+        pattern_row.addWidget(self.at_pattern_btn)
+        pattern_row.addWidget(self.ta_pattern_btn)
+        pattern_row.addStretch()
+        lib_layout.addLayout(pattern_row)
+
+        self.at_pattern_btn.clicked.connect(lambda: self._update_naming_pattern("Author - Title"))
+        self.ta_pattern_btn.clicked.connect(lambda: self._update_naming_pattern("Title - Author"))
+
+        lib_layout.addSpacing(10)
+
         folders_header = QLabel("Manage folders")
         folders_header.setObjectName("settings_header")
         lib_layout.addWidget(folders_header)
-
-        # Add a hint about behavior
-        lib_hint = QLabel("Folders are parsed as 'Author - Title'")
-        lib_hint.setStyleSheet("font-size: 10px; color: #888;")
-        lib_layout.addWidget(lib_hint)
 
         self.folder_list_widget = QListWidget()
         self.folder_list_widget.setObjectName("settings_folder_list")
@@ -556,6 +574,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.refresh_library_btn.clicked.connect(lambda: self._check_library_status(manual=True, force_refresh=True))
         lib_layout.addStretch()
         self.tabs.addTab(library_tab, "Library")
+        self._update_pattern_visuals()
 
         # --- TAB 4: SHORTCUTS ---
         shortcuts_tab = QWidget()
@@ -570,6 +589,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
         self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _update_naming_pattern(self, pattern):
+        """Changes the folder parsing pattern and triggers a database re-parse."""
+        self.config.set_naming_pattern(pattern)
+        self.db.reparse_library(pattern)
+        self._update_pattern_visuals()
+        self.library_panel.refresh(force=True)
+        # Refresh the current book metadata on the main screen if a book is loaded
+        if self.current_file:
+            self._load_cover_art(self.current_file)
+
+    def _update_pattern_visuals(self):
+        """Updates the highlight/dim state of naming pattern buttons."""
+        if not hasattr(self, 'at_pattern_btn'): return
+        current = self.config.get_naming_pattern()
+        self.at_pattern_btn.setProperty("selected", current == "Author - Title")
+        self.ta_pattern_btn.setProperty("selected", current == "Title - Author")
+        for btn in [self.at_pattern_btn, self.ta_pattern_btn]:
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _build_speed_panel(self):
         self.speed_panel = QWidget(self)
@@ -1192,6 +1231,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             c = QColor(accent)
             c.setAlpha(alpha)
             btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
+        self._update_pattern_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):

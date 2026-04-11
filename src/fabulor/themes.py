@@ -1219,6 +1219,20 @@ def get_stylesheet(theme_name="default"):
             font-size: 11px;
             padding: 4px;
         }}
+        QPushButton#pattern_button {{
+            background: transparent;
+            color: {panel_dimmed_color};
+            border: 1px solid {t['accent_dark']};
+            font-size: 11px;
+            padding: 4px;
+        }}
+        QPushButton#pattern_button[selected="true"] {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#pattern_button:hover {{
+            border: 1px solid {t['accent']};
+        }}
         QPushButton#secondary_button:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};

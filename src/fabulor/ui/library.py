@@ -55,6 +55,20 @@ class BookItem(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.book_data["path"])
 
+    def update_data(self, book_data):
+        """Updates the item's metadata and UI labels."""
+        self.book_data = book_data
+        title = str(book_data.get("title") or "Unknown Title")
+        author = str(book_data.get("author") or "Unknown Author")
+        
+        self.title_label.setText(title)
+        self.title_label.setToolTip(title)
+        self.author_label.setText(author)
+        
+        # Update the placeholder letter if no cover is loaded
+        if self.cover_label.property("placeholder"):
+            self.cover_label.setText(title[:1])
+
 class LibraryPanel(QFrame):
     book_selected = Signal(str)
     back_requested = Signal() # Signal to request closing the panel
@@ -141,7 +155,7 @@ class LibraryPanel(QFrame):
         sort_map = {
             "Title": "title COLLATE NOCASE ASC",
             "Author": "author COLLATE NOCASE ASC",
-            "Last played": "last_played DESC",
+            "Last Played": "last_played DESC",
             "Progress": "(CAST(progress AS FLOAT) / CASE WHEN duration = 0 THEN 1 ELSE duration END) DESC",
             "Duration": "duration DESC"
         }
@@ -155,14 +169,15 @@ class LibraryPanel(QFrame):
         new_paths = {b["path"] for b in books}
         
         # Remove stale
-        for path in existing_paths - new_paths:
-            self._grid_items[path].deleteLater()
-            del self._grid_items[path]
+        for path in list(self._grid_items.keys()):
+            if path not in new_paths:
+                self._grid_items[path].deleteLater()
+                del self._grid_items[path]
     
         cols = 2 if self.width() < 240 else 3
         pool = QThreadPool.globalInstance()
         
-        # Add new only and update layout
+        # Update existing items or create new ones
         for i, book in enumerate(books):
             path = book["path"]
             if path not in existing_paths:
@@ -178,6 +193,8 @@ class LibraryPanel(QFrame):
                 item.clicked.connect(self.book_selected.emit)
                 self._grid_items[path] = item
                 pool.start(worker)
+            else:
+                self._grid_items[path].update_data(book)
             
             # Always add/re-add to the grid to maintain correct sorting and layout
             self.grid.addWidget(self._grid_items[path], i // cols, i % cols)
@@ -239,6 +256,10 @@ class LibraryPanel(QFrame):
                 Qt.KeepAspectRatioByExpanding, 
                 Qt.SmoothTransformation
             ))
+            book_item.cover_label.setProperty("placeholder", False)
+            book_item.cover_label.setText("") 
+            book_item.cover_label.style().unpolish(book_item.cover_label)
+            book_item.cover_label.style().polish(book_item.cover_label)
         else:
             # If still no pixmap, ensure placeholder is visible
             display_title = book_item.book_data.get("title") or "Unknown"

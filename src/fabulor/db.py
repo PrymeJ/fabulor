@@ -44,6 +44,7 @@ class LibraryDB:
                 CREATE TABLE IF NOT EXISTS books (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     path TEXT UNIQUE NOT NULL,
+                    folder_name_raw TEXT,
                     title TEXT,
                     author TEXT,
                     narrator TEXT,
@@ -54,11 +55,6 @@ class LibraryDB:
                     last_played DATETIME
                 )
             """)
-            # Ensure progress column exists for older databases
-            try:
-                conn.execute("ALTER TABLE books ADD COLUMN progress REAL DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass 
 
     # --- Scan Locations CRUD ---
 
@@ -95,13 +91,14 @@ class LibraryDB:
         """
         Adds a book or updates its metadata if it already exists.
         book_data should be a dictionary containing:
-        path, title, author, narrator, duration, progress, cover_path
+        path, folder_name_raw, title, author, narrator, duration, progress, cover_path
         """
         # Construct parameters dictionary with defaults to prevent binding errors.
         # The scanner typically doesn't provide progress, so we default it to None here
         # and handle the fallback to 0 within the SQL query itself.
         params = {
             "path": book_data.get("path"),
+            "folder_name_raw": book_data.get("folder_name_raw"),
             "title": book_data.get("title"),
             "author": book_data.get("author"),
             "narrator": book_data.get("narrator"),
@@ -117,9 +114,10 @@ class LibraryDB:
         # COALESCE(:progress, 0) ensures new records start at 0 if no progress is supplied.
         # COALESCE(excluded.progress, books.progress) ensures updates don't overwrite saved progress with NULL.
         query = """
-            INSERT INTO books (path, title, author, narrator, duration, progress, cover_path)
-            VALUES (:path, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path)
+            INSERT INTO books (path, folder_name_raw, title, author, narrator, duration, progress, cover_path)
+            VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path)
             ON CONFLICT(path) DO UPDATE SET
+                folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
                 title=excluded.title,
                 author=excluded.author,
                 narrator=excluded.narrator,
@@ -166,3 +164,32 @@ class LibraryDB:
                     "UPDATE books SET progress = ? WHERE path = ?",
                     (float(progress), str(path))
                 )
+
+    def reparse_library(self, pattern):
+        """
+        Updates all books in the database by re-parsing the folder_name_raw
+        based on the provided pattern ("Author - Title" or "Title - Author").
+        If folder_name_raw is missing, falls back to the folder's name from its path.
+        """
+        with self._get_conn() as conn:
+            with conn:
+                rows = conn.execute("SELECT id, path, folder_name_raw FROM books").fetchall()
+                for row in rows:
+                    # Fallback to the directory name from the path if raw string is missing
+                    raw = row["folder_name_raw"] or Path(row["path"]).name
+                    if not raw:
+                        continue
+
+                    if " - " in raw:
+                        parts = raw.split(" - ", 1)
+                        if pattern == "Title - Author":
+                            title, author = parts[0].strip(), parts[1].strip()
+                        else: # Default: "Author - Title"
+                            author, title = parts[0].strip(), parts[1].strip()
+                    else:
+                        title, author = raw.strip(), ""
+
+                    conn.execute(
+                        "UPDATE books SET title = ?, author = ?, folder_name_raw = ? WHERE id = ?",
+                        (title, author, raw, row["id"])
+                    )

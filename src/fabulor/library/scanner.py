@@ -161,7 +161,9 @@ class ScannerWorker(QObject):
             author = tag_author or folder_author
 
         return {
-            "path": str(book_dir), "title": title, "author": author,
+            "path": str(book_dir), 
+            "folder_name_raw": book_dir.name,
+            "title": title, "author": author,
             "narrator": narrator, "duration": duration, "cover_path": cover_path
         }
 

@@ -99,3 +99,9 @@ class Config:
 
     def set_theme_rotation_interval(self, minutes):
         self.settings.setValue("theme_rotation_interval", minutes)
+
+    def get_naming_pattern(self):
+        return self.settings.value("naming_pattern", "Author - Title")
+
+    def set_naming_pattern(self, pattern):
+        self.settings.setValue("naming_pattern", pattern)
