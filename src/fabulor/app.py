@@ -959,23 +959,40 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except ShutdownError:
             return
 
-        if not self.current_file or mpv_pos is None or dur is None:
+        is_eof = self.player.eof_reached
+
+        # Handle the early return carefully: 
+        # If we are at EOF, we want to continue to update the UI even if pos is None.
+        if not self.current_file:
+            return
+
+        if is_eof and dur is None:
+            book = self.db.get_book(self.current_file)
+            dur = book['duration'] if book and book['duration'] else 0.0
+
+        # If we aren't at EOF and don't have a position, we can't update.
+        # If we ARE at EOF, we continue even if mpv_pos is None.
+        if (not is_eof and mpv_pos is None) or (dur is None or dur <= 0):
             self.play_pause_button.setText("Play")
             return
 
-        if is_paused:
-            # Only update the displayed position while paused if we explicitly 
-            # triggered a seek or if the drift is massive (emergency resync).
-            # This prevents cumulative 'speed drift' from jumping the UI.
-            if self._paused_time is None or self._is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
-                self._paused_time = mpv_pos
-                self._is_seeking = False
-            pos = self._paused_time
+        # Logic for synthesized state at EOF vs normal playback
+        if is_eof:
+            pos = dur
+            self.play_pause_button.setText("Restart")
+            self._paused_time = None # Reset drift tracking
         else:
-            self._paused_time = None
-            pos = mpv_pos
-        
-        is_eof = self.player.eof_reached
+            if is_paused:
+                # Safeguard: ensure we don't subtract None during EOF transitions
+                m_pos = mpv_pos if mpv_pos is not None else 0.0
+                if self._paused_time is None or self._is_seeking or abs(m_pos - self._paused_time) > 1.0:
+                    self._paused_time = m_pos
+                    self._is_seeking = False
+                pos = self._paused_time
+            else:
+                self._paused_time = None
+                pos = mpv_pos
+            self.play_pause_button.setText("Play" if is_paused else "Pause")
 
         # Sleep Timer Logic
         sleep_display_text = ""
@@ -1043,11 +1060,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
-        if is_eof and self.current_file:
-            self.play_pause_button.setText("Restart") # This will be handled by _update_ui_sync
-        else:
-            self.play_pause_button.setText("Play" if self.player.pause else "Pause")
-
     def _format_time(self, seconds):
         """Converts seconds to HH:MM:SS format."""
         h = int(seconds // 3600)
@@ -1059,28 +1071,39 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_slider_dragging = True
 
     def _on_slider_released(self):
-        if self.player and self.player.duration:
-            new_pos = (self.progress_slider.value() / 1000) * self.player.duration
-            self.player.time_pos = new_pos
-            self._is_seeking = True
+        if self.player:
+            dur = self.player.duration
+            if (dur is None or dur <= 0) and self.current_file:
+                book = self.db.get_book(self.current_file)
+                dur = book['duration'] if book else None
+            
+            if dur:
+                new_pos = (self.progress_slider.value() / 1000) * dur
+                self.player.time_pos = new_pos
+                self._is_seeking = True
         self.is_slider_dragging = False
 
     def _on_chap_slider_pressed(self):
         self.is_chapter_slider_dragging = True
 
     def _on_chap_slider_released(self):
-        if self.player and self.player.duration:
-            curr_chap = self.player.chapter or 0
-            chap_list = self.player.chapter_list or []
-            if chap_list and curr_chap < len(chap_list):
-                dur = self.player.duration
-                start = chap_list[curr_chap].get('time', 0)
-                end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
-                chap_dur = end - start
-                if chap_dur > 0:
-                    new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
-                    self.player.time_pos = start + new_chap_pos
-                    self._is_seeking = True
+        if self.player:
+            dur = self.player.duration
+            if (dur is None or dur <= 0) and self.current_file:
+                book = self.db.get_book(self.current_file)
+                dur = book['duration'] if book else None
+            
+            if dur:
+                curr_chap = self.player.chapter or 0
+                chap_list = self.player.chapter_list or []
+                if chap_list and curr_chap < len(chap_list):
+                    start = chap_list[curr_chap].get('time', 0)
+                    end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
+                    chap_dur = end - start
+                    if chap_dur > 0:
+                        new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
+                        self.player.time_pos = start + new_chap_pos
+                        self._is_seeking = True
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
@@ -1332,10 +1355,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
         if not self.player:
             return
-        if self.play_pause_button.text() == "Restart":
-            self.player.time_pos = 0
-            self._is_seeking = True
-            self.player.pause = False
+        
+        if self.player.eof_reached or self.play_pause_button.text() == "Restart":
+            # Re-loading the book is the only way to reliably "wake" mpv from EOF idle
+            self.player.load_book(self.current_file, start_paused=False)
             return
         self.player.pause = not self.player.pause
 

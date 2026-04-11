@@ -33,6 +33,7 @@ class Player(QObject):
     def __init__(self):
         super().__init__()
         self.instance = None  # deferred
+        self._eof = False
 
     def _ensure_mpv(self):
         if self.instance is None:
@@ -46,20 +47,30 @@ class Player(QObject):
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
+            self.instance.event_callback('end-file')(self._on_end_file)
 
     def load_book(self, path, start_paused=True):
+        self._eof = False
         self._ensure_mpv()
         self.instance.play(path)
         if start_paused:
             self.instance.pause = True
-        
 
     def _on_chapter_change(self, name, value):
         if value is not None:
             self.chapter_changed.emit(int(value))
 
     def _on_file_loaded(self, event):
+        self._eof = False
         self.file_loaded.emit()
+
+    def _on_end_file(self, event):
+        """Called by mpv when a file finishes playing."""
+        # Simplify: if mpv says the file ended, we are at EOF.
+        # Using a guard to prevent redundant state changes.
+        if not self._eof:
+            print("Player: EOF detected")
+            self._eof = True
 
     def extract_cover(self, file_path):
         """Extracts cover art from file tags."""
@@ -101,7 +112,9 @@ class Player(QObject):
     def time_pos(self): return self.instance.time_pos if self.instance else None
     @time_pos.setter
     def time_pos(self, value): 
-        if self.instance: self.instance.time_pos = value
+        if self.instance:
+            self.instance.time_pos = value
+            self._eof = False
 
     @property
     def duration(self): return self.instance.duration if self.instance else None
@@ -109,7 +122,9 @@ class Player(QObject):
     def chapter(self): return self.instance.chapter if self.instance else None
     @chapter.setter
     def chapter(self, value): 
-        if self.instance: self.instance.chapter = value
+        if self.instance:
+            self.instance.chapter = value
+            self._eof = False
 
     @property
     def chapters(self): return self.instance.chapters if self.instance else 0
@@ -129,7 +144,7 @@ class Player(QObject):
         if self.instance: self.instance.volume = value
 
     @property
-    def eof_reached(self): return getattr(self.instance, 'eof_reached', False)
+    def eof_reached(self): return self._eof
 
     def terminate(self):
         if self.instance:
