@@ -97,9 +97,28 @@ class LibraryDB:
         book_data should be a dictionary containing:
         path, title, author, narrator, duration, progress, cover_path
         """
+        # Construct parameters dictionary with defaults to prevent binding errors.
+        # The scanner typically doesn't provide progress, so we default it to None here
+        # and handle the fallback to 0 within the SQL query itself.
+        params = {
+            "path": book_data.get("path"),
+            "title": book_data.get("title"),
+            "author": book_data.get("author"),
+            "narrator": book_data.get("narrator"),
+            "duration": book_data.get("duration"),
+            "progress": book_data.get("progress"),
+            "cover_path": book_data.get("cover_path")
+        }
+
+        cleaned = {
+            k: (v.strip() if isinstance(v, str) else v) for k, v in params.items()
+        }
+
+        # COALESCE(:progress, 0) ensures new records start at 0 if no progress is supplied.
+        # COALESCE(excluded.progress, books.progress) ensures updates don't overwrite saved progress with NULL.
         query = """
             INSERT INTO books (path, title, author, narrator, duration, progress, cover_path)
-            VALUES (:path, :title, :author, :narrator, :duration, :progress, :cover_path)
+            VALUES (:path, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path)
             ON CONFLICT(path) DO UPDATE SET
                 title=excluded.title,
                 author=excluded.author,
@@ -108,9 +127,6 @@ class LibraryDB:
                 progress=COALESCE(excluded.progress, books.progress),
                 cover_path=excluded.cover_path
         """
-        cleaned = {
-            k: (v.strip() if isinstance(v, str) else v) for k, v in book_data.items()
-        }
         with self._get_conn() as conn:
             with conn:
                 conn.execute(query, cleaned)
