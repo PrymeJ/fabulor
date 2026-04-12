@@ -292,9 +292,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.content_layout.addLayout(speed_row)
 
         # Chapter preview label (dynamic visibility on hover)
+        self.preview_row = QHBoxLayout()
+        self.preview_row.setContentsMargins(0, 0, 0, 0)
         self.chapter_preview_label = QLabel("")
         self.chapter_preview_label.setObjectName("chapter_preview_label")
-        self.content_layout.addWidget(self.chapter_preview_label)
+        self.chapter_preview_label.setFixedHeight(24) # Reserve space to prevent layout jumping
+        self.chapter_preview_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.preview_row.addWidget(self.chapter_preview_label)
+        self.content_layout.addLayout(self.preview_row)
+
+        # Setup fade animation
+        self.preview_opacity = QGraphicsOpacityEffect(self.chapter_preview_label)
+        self.preview_opacity.setOpacity(0.0)
+        self.chapter_preview_label.setGraphicsEffect(self.preview_opacity)
+
+        self.preview_anim = QPropertyAnimation(self.preview_opacity, b"opacity")
+        self.preview_anim.setDuration(600)
+        self.preview_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         controls_layout = QHBoxLayout()
         self.prev_button = HoverButton("|<<")
@@ -1406,16 +1420,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_prev_hover(self):
         if self._prev_chap_title and self.config.get_chapter_hints_enabled():
+            self.preview_anim.stop()
+            self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignLeft)
             self.chapter_preview_label.setAlignment(Qt.AlignLeft)
             self.chapter_preview_label.setText(self._prev_chap_title)
+            self.preview_anim.setStartValue(self.preview_opacity.opacity())
+            self.preview_anim.setEndValue(1.0)
+            self.preview_anim.start()
 
     def _on_next_hover(self):
         if self._next_chap_title and self.config.get_chapter_hints_enabled():
+            self.preview_anim.stop()
+            self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignRight)
             self.chapter_preview_label.setAlignment(Qt.AlignRight)
             self.chapter_preview_label.setText(self._next_chap_title)
+            self.preview_anim.setStartValue(self.preview_opacity.opacity())
+            self.preview_anim.setEndValue(1.0)
+            self.preview_anim.start()
 
     def _clear_preview(self):
-        self.chapter_preview_label.setText("")
+        self.preview_anim.stop()
+        self.preview_anim.setStartValue(self.preview_opacity.opacity())
+        self.preview_anim.setEndValue(0.0)
+        self.preview_anim.start()
 
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""
