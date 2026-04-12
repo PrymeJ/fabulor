@@ -26,20 +26,8 @@ from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
+from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
-
-BOOK_QUOTES = [
-    ("A room without books is like a body without a soul.", "Cicero"),
-    ("I have always imagined that Paradise will be a kind of library.", "Jorge Luis Borges"),
-    ("The only thing that you absolutely have to know, is the location of the library.", "Albert Einstein"),
-    ("There is no friend as loyal as a book.", "Ernest Hemingway"),
-    ("Books are a uniquely portable magic.", "Stephen King"),
-    ("A library outranks any other one thing a community can do to benefit its people.", "Andrew Carnegie"),
-    ("So many books, so little time.", "Frank Zappa"),
-    ("The more that you read, the more things you will know.", "Dr. Seuss"),
-    ("Outside of a dog, a book is a man's best friend. Inside of a dog it's too dark to read.", "Groucho Marx")
-]
-
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     def __init__(self, parent=None):
@@ -188,9 +176,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cancel_scan_btn.setToolTip("Cancel scan")
         self.cancel_scan_btn.clicked.connect(self._on_cancel_scan_clicked)
         
+        # Temporary button for quote testing
+        self.next_quote_btn = QPushButton("Next Quote")
+        self.next_quote_btn.setFixedSize(70, 22)
+        self.next_quote_btn.setStyleSheet("font-size: 9px; padding: 2px;")
+        self.next_quote_btn.clicked.connect(self._rotate_quote)
+        
+        self.temp_settings_btn = QPushButton("S")
+        self.temp_settings_btn.setFixedSize(22, 22)
+        self.temp_settings_btn.setStyleSheet("font-size: 9px; padding: 2px;")
+        # Use lambda to safely reference panel_manager which is initialized later
+        self.temp_settings_btn.clicked.connect(lambda: self.panel_manager._open_settings_flow() if self.panel_manager else None)
+
         layout.addStretch()
         layout.addWidget(self.status_label)
         layout.addStretch()
+        layout.addWidget(self.next_quote_btn)
+        layout.addWidget(self.temp_settings_btn)
         layout.addWidget(self.cancel_scan_btn)
 
     def _build_title_bar(self):
@@ -222,8 +224,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _build_metadata(self):
         # Status Prompt (Top)
-        # Push the entire top block down by 120px to center it more vertically
-        self.visual_layout.addSpacing(120)
+        # Push the prompt blocks higher to provide more space for quotes below
+        self.visual_layout.addSpacing(0)
 
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
@@ -811,6 +813,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_prompt_label.show()
             self.scan_now_btn.show()
             self.scan_info_label.show()
+            self.status_banner.show() # Keep banner visible for quote testing access
             self.metadata_label.hide()
             self.go_to_library_btn.hide() # Hide this button in empty state
         else:
@@ -873,11 +876,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _rotate_quote(self):
         """Update metadata label with a random quote when idle."""
         if not self.db.get_scan_locations():
-            text, author = random.choice(BOOK_QUOTES)
+            text, title, text_size, title_size, color, text_align = random.choice(BOOK_QUOTES)
             # Rich text for right alignment of the author
             styled_quote = (
-                f"<div style='font-size: 14px; color: white;'>\"{text}\"</div>"
-                f"<div style='text-align: right; font-size: 11px; color: #ddd;'><br>— {author}</div>"
+                f"<div style='font-size: {text_size}px; color: {color}; text-align: {text_align}; width: 100%;'>{text}</div>"
+                f"<div style='text-align: right; font-size: {title_size}px; color: #ddd;'><br>{title}</div>"
             )
             self.quote_label.setText(styled_quote)
             self.quote_label.show()

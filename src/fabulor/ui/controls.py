@@ -68,3 +68,4 @@ class ClickSlider(QWidget):
         filled = int(ratio * self.width())
         p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
         p.fillRect(0, 0, filled, self.height(), self._fill_color)
+        p.end()

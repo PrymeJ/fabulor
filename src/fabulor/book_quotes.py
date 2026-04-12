@@ -1,0 +1,23 @@
+BOOK_QUOTES = [
+    ("DON'T PANIC", "A Hitchhiker's Guide to the Galaxy", 36, 14, "red", "center"),
+    ("The man in black fled across the desert, and the gunslinger followed.", "The Gunslinger", 18, 14, "white", "right"),
+    ("Joffrey<br>Meryn Trant<br>Illyn Payne<br>The Hound<br>The Mountain<br>Tywin Lannister<br>Walder Frey", "A Game of Thrones", 12, 13, "white", "center"),
+    ("The sky above the port was the color of television, tuned to a dead channel.", "Neuromancer", 18, 14, "white", "right"),
+    ("A screaming comes across the sky.", "Gravity's Rainbow", 18, 14, "white", "right"),
+    ("Body found floating by the docks...", "The Blade Itself", 18, 14, "white", "right"),
+    ("Never trust a man who carries a handkerchief, I always say. One of many prejudicial rules of thumb.", "Hard-Boiled Wonderland and the End of the World", 16, 13, "white", "right"),
+    ("I must not fear. Fear is the mind-killer. Fear is the little-death that brings total obliteration. I will face my fear. I will permit it to pass over me and through me. And when it has gone past I will turn the inner eye to see its path. Where the fear has gone there will be nothing. Only I will remain.", "Dune", 13, 13, "white", "right"),
+    ("Last night I dreamt I went to Manderley again.", "Rebecca", 18, 14, "white", "right"),
+    ("It was ever thus.", "Memories of Ice", 24, 14, "white", "center"),
+    ("And the sea, my friends,<br>does not dream of you.", "Reaper's Gale", 18, 14, "white", "right"),
+    ("Thunder rolled... It rolled a six.", "Guards! Guards!", 20, 14, "white", "right"),
+    ("Caddy smelled like trees.", "The Sound and the Fury", 18, 14, "white", "right"),
+    ("So that is marriage, Lily thought, a man and a woman looking at a girl throwing a ball.", "To the Lighthouse", 18, 14, "white", "center"),
+    ("I'm rambling. I really like you. You make me want to talk. I don't know what time it is.", "Leaving Las Vegas", 18, 14, "white", "right"),
+    ("There are no wrong turnings. Only paths we had not known we were meant to walk.", "Tigana", 17, 14, "white", "right"),
+    ("Apártense, vacas, que la vida es corta.", "Cien años de soledad", 18, 14, "white", "center"),
+    ("Why am I always looking at life through a window?", "Flowers for Algernon", 18, 14, "white", "right"),
+    ("- Cubitum eamus?<br>- What?<br>- Nothing.", "The Secret History", 18, 14, "white", "right"),
+    ("I often wonder what I'd do if there weren't any books in the world.", "Giovanni's Room", 18, 14, "white", "right"),
+    ("REⱭЯUM", "The Shining", 38, 14, "red", "center")
+]

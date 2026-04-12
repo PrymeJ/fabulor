@@ -1028,7 +1028,7 @@ def get_stylesheet(theme_name="default"):
             color: {t['text']};
         }}
         QLabel#quote_label {{
-            background-color: rgba(0, 0, 0, 128);
+            background-color: rgba(0, 0, 0, 100);
             color: white;
             padding: 15px;
             border-radius: 6px;
