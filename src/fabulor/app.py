@@ -457,11 +457,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         theme_hint = QLabel("Select multiple to rotate randomly")
         theme_hint.setObjectName("theme_hint")
-        theme_hint.setStyleSheet("margin-bottom: 5px;")
+        theme_hint.setStyleSheet("margin-bottom: 4px;")
         themes_layout.addWidget(theme_hint)
 
         metrics = self.fontMetrics()
-        limit = 295 #Adjusted for tab width
+        limit = 290 #Adjusted for tab width
         
         # Clear widget tracker
         self.theme_manager.theme_widgets = {}
