@@ -52,6 +52,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
         self.panel_manager = None # Will be initialized after widgets are created
+        self.show_remaining_time = self.config.get_show_remaining_time()
 
         self._setup_ui()
 
@@ -268,16 +269,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.quote_label.setWordWrap(True)
         self.visual_layout.addWidget(self.quote_label)
 
-        self.time_label = QLabel("00:00:00 / 00:00:00")
-        self.time_label.setAlignment(Qt.AlignCenter)
-        font = self.time_label.font()
-        font.setPointSize(9)
-        self.time_label.setFont(font)
-        self.visual_layout.addWidget(self.time_label)
-
         self.sleep_timer_label = QPushButton("")
         self.sleep_timer_label.setObjectName("sleep_timer_display")
-        font = self.time_label.font()
+        font = self.sleep_timer_label.font()
         font.setPointSize(8)
         self.sleep_timer_label.setFont(font)
         self.sleep_timer_label.clicked.connect(self._disable_sleep_timer)
@@ -305,6 +299,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         secondary_layout = QHBoxLayout()
         self.speed_button = QPushButton("1.00x")
         self.speed_button.setFixedWidth(60)
+
+        self.current_time_label = QLabel("00:00:00")
+        self.total_time_label = QLabel("00:00:00")
+        self.total_time_label.mousePressEvent = self._toggle_remaining_time
+        for lbl in [self.current_time_label, self.total_time_label]:
+            font = lbl.font()
+            font.setPointSize(12)
+            lbl.setFont(font)
+
         self.volume_slider = ClickSlider(Qt.Horizontal)
         self.volume_slider.setObjectName("volume_slider")
         self.volume_slider.setRange(0, 100)
@@ -316,9 +319,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
         self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
         self.speed_button.clicked.connect(self._on_speed_button_clicked)
-        self.vol_label = QLabel("Vol:")
-        secondary_layout.addWidget(self.vol_label)
+        secondary_layout.addWidget(self.current_time_label)
         secondary_layout.addWidget(self.volume_slider)
+        secondary_layout.addWidget(self.total_time_label)
         secondary_layout.addStretch()
         secondary_layout.addWidget(self.speed_button)
         self.content_layout.addLayout(secondary_layout)
@@ -335,6 +338,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chapter_container = QHBoxLayout()
         self.chap_elapsed_label = QLabel("")
         self.chap_duration_label = QLabel("")
+        self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
         self.current_chapter_label = QPushButton("Select Chapter")
         self.current_chapter_label.setObjectName("chapter_selector")
         self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
@@ -888,10 +892,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _set_interface_visible(self, visible):
         """Toggles visibility of book-specific UI elements."""
         self.speed_button.setVisible(visible)
-        self.time_label.setVisible(visible)
+        self.current_time_label.setVisible(visible)
+        self.total_time_label.setVisible(visible)
         self.sleep_timer_label.setVisible(visible)
         self.volume_slider.setVisible(visible)
-        self.vol_label.setVisible(visible)
         self.chapter_progress_slider.setVisible(visible)
         self.current_chapter_label.setVisible(visible)
         self.chap_elapsed_label.setVisible(visible)
@@ -1003,6 +1007,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             mpv_pos = self.player.time_pos if self.current_file else None
             dur = self.player.duration if self.current_file else None
             is_paused = self.player.pause if self.current_file else True
+            speed = self.player.speed or 1.0
             current_time = time.time()
         except ShutdownError:
             return
@@ -1018,7 +1023,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # update sliders to 100% and return
             if pos and dur:
                 self.progress_slider.setValue(1000)
-                self.time_label.setText(f"{self._format_time(pos)} / {self._format_time(dur)}")
+                self.current_time_label.setText(self._format_time(pos / speed))
+                if self.show_remaining_time:
+                    self.total_time_label.setText("-00:00:00")
+                    self.chap_duration_label.setText("-00:00:00")
+                else:
+                    self.total_time_label.setText(self._format_time(dur / speed))
             return
 
         if mpv_pos is None or dur is None:
@@ -1084,7 +1094,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
                 self.progress_slider.setValue(int((pos / dur) * 1000))
-                self.time_label.setText(f"{self._format_time(pos)} / {self._format_time(dur)}")
+                self.current_time_label.setText(self._format_time(pos / speed))
+                if self.show_remaining_time:
+                    remaining = (dur - pos) / speed
+                    self.total_time_label.setText(f"-{self._format_time(remaining)}")
+                else:
+                    self.total_time_label.setText(self._format_time(dur / speed))
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
         curr_chap = self.player.chapter or 0
@@ -1097,8 +1112,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             
             if not self.is_chapter_slider_dragging:
                 c_elapsed = max(0, pos - start)
-                self.chap_elapsed_label.setText(self._format_time(c_elapsed))
-                self.chap_duration_label.setText(self._format_time(end - start))
+                self.chap_elapsed_label.setText(self._format_time(c_elapsed / speed))
+                if self.show_remaining_time:
+                    c_remaining = max(0, end - pos) / speed
+                    self.chap_duration_label.setText(f"-{self._format_time(c_remaining)}")
+                else:
+                    self.chap_duration_label.setText(self._format_time((end - start) / speed))
                 if chap_dur > 0:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
@@ -1158,6 +1177,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.speed_button.setText(f"{value:.2f}x")
             if save and self.current_file:
                 self.config.set_book_speed(self.current_file, value)
+
+    def _toggle_remaining_time(self, event):
+        if event.button() == Qt.LeftButton:
+            self.show_remaining_time = not self.show_remaining_time
+            self.config.set_show_remaining_time(self.show_remaining_time)
+            self._update_ui_sync()
 
     def _on_speed_right_clicked(self, pos):
         """Right click increments, Shift+Right click decrements."""

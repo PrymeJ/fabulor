@@ -105,3 +105,9 @@ class Config:
 
     def set_naming_pattern(self, pattern):
         self.settings.setValue("naming_pattern", pattern)
+
+    def get_show_remaining_time(self):
+        return self.settings.value("show_remaining_time", "true") == "true"
+
+    def set_show_remaining_time(self, enabled):
+        self.settings.setValue("show_remaining_time", str(enabled).lower())
