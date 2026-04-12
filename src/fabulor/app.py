@@ -350,20 +350,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
         
-        self.library_trigger_btn = QPushButton("Library")
+        self.library_trigger_btn = QPushButton("LIBRARY")
         self.library_trigger_btn.setObjectName("sidebar_library_btn")
         self.sidebar_layout.addWidget(self.library_trigger_btn)
         
         self.sidebar_layout.addSpacing(10) # Separation
 
-        self.settings_trigger_btn = QPushButton("Settings")
+        self.settings_trigger_btn = QPushButton("SETTINGS")
         self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
         self.sidebar_layout.addWidget(self.settings_trigger_btn)
-        self.speed_trigger_btn = QPushButton("Playback")
+        self.speed_trigger_btn = QPushButton("PLAYBACK")
         self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
         self.sidebar_layout.addWidget(self.speed_trigger_btn)
 
-        self.sleep_trigger_btn = QPushButton("Sleep")
+        self.sleep_trigger_btn = QPushButton("SLEEP")
         self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
         self.sidebar_layout.addWidget(self.sleep_trigger_btn)
 
