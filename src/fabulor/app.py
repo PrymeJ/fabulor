@@ -1550,12 +1550,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
+        self._clear_preview()
         if self.player:
             self.player.previous_chapter()
             self._is_seeking = True
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
+        self._clear_preview()
         if self.player:
             self.player.next_chapter()
             self._is_seeking = True
