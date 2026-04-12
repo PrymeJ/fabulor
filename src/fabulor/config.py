@@ -117,3 +117,9 @@ class Config:
 
     def set_scroll_mode(self, mode):
         self.settings.setValue("scroll_mode", mode)
+
+    def get_chapter_hints_enabled(self):
+        return self.settings.value("chapter_hints_enabled", "true") == "true"
+
+    def set_chapter_hints_enabled(self, enabled):
+        self.settings.setValue("chapter_hints_enabled", str(enabled).lower())

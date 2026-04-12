@@ -430,8 +430,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_settings_panel(self):
         self.settings_panel = QWidget(self)
         self.settings_panel.setObjectName("settings_panel")
-        layout = QVBoxLayout(self.settings_panel)
-        layout.setContentsMargins(5, 5, 5, 5)
+        settings_layout = QVBoxLayout(self.settings_panel)
+        settings_layout.setContentsMargins(5, 5, 5, 5)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("settings_tabs")
@@ -575,9 +575,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         scroll_row.addStretch()
         app_layout.addLayout(scroll_row)
 
+        hints_header = QLabel("Chapter hints")
+        hints_header.setObjectName("settings_header")
+        app_layout.addWidget(hints_header)
+
+        hints_row = QHBoxLayout()
+        self.hints_buttons = {}
+        for mode in ["On", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self._update_hints_mode(m == "On"))
+            hints_row.addWidget(btn)
+            self.hints_buttons[mode] = btn
+        hints_row.addStretch()
+        app_layout.addLayout(hints_row)
+
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Appearance")
         self._update_scroll_mode_visuals()
+        self._update_hints_visuals()
 
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
@@ -640,25 +656,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         short_layout.addStretch()
         self.tabs.addTab(shortcuts_tab, "Shortcuts")
 
-        layout.addWidget(self.tabs)
-        self._refresh_folder_list()
-        self.settings_panel.hide()
-        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
-        self.settings_panel_animation.setDuration(300)
-        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _update_scroll_mode(self, mode):
-        self.config.set_scroll_mode(mode)
-        self.current_chapter_label.set_scroll_mode(mode)
-        self._update_scroll_mode_visuals()
-
-    def _update_scroll_mode_visuals(self):
-        if not hasattr(self, 'scroll_buttons'): return
-        current = self.config.get_scroll_mode()
-        for mode, btn in self.scroll_buttons.items():
-            btn.setProperty("selected", mode == current)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        settings_layout.addWidget(self.tabs)
         self._refresh_folder_list()
         self.settings_panel.hide()
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
@@ -679,8 +677,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Updates the highlight/dim state of naming pattern buttons."""
         if not hasattr(self, 'at_pattern_btn'): return
         current = self.config.get_naming_pattern()
-        self.at_pattern_btn.setProperty("selected", current == "Author - Title")
-        self.ta_pattern_btn.setProperty("selected", current == "Title - Author")
+        self.at_pattern_btn.setProperty("selected", "true" if current == "Author - Title" else "false")
+        self.ta_pattern_btn.setProperty("selected", "true" if current == "Title - Author" else "false")
         for btn in [self.at_pattern_btn, self.ta_pattern_btn]:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
@@ -1327,6 +1325,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             c.setAlpha(alpha)
             btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
         self._update_pattern_visuals()
+        self._update_scroll_mode_visuals()
+        self._update_hints_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1405,12 +1405,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.next_button.setToolTip("") # Clear old tooltips
 
     def _on_prev_hover(self):
-        if self._prev_chap_title:
+        if self._prev_chap_title and self.config.get_chapter_hints_enabled():
             self.chapter_preview_label.setAlignment(Qt.AlignLeft)
             self.chapter_preview_label.setText(self._prev_chap_title)
 
     def _on_next_hover(self):
-        if self._next_chap_title:
+        if self._next_chap_title and self.config.get_chapter_hints_enabled():
             self.chapter_preview_label.setAlignment(Qt.AlignRight)
             self.chapter_preview_label.setText(self._next_chap_title)
 
@@ -1565,3 +1565,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.scanner._worker_thread.wait()
                 
         event.accept()
+
+    def _update_hints_mode(self, enabled):
+        """Changes the chapter hint visibility setting."""
+        self.config.set_chapter_hints_enabled(enabled)
+        self._update_hints_visuals()
+
+    def _update_hints_visuals(self):
+        """Updates the highlight state of hint toggle buttons."""
+        if not hasattr(self, 'hints_buttons'): return
+        enabled = self.config.get_chapter_hints_enabled()
+        for mode, btn in self.hints_buttons.items():
+            is_selected = (mode == "On" if enabled else mode == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_scroll_mode(self, mode):
+        self.config.set_scroll_mode(mode)
+        self.current_chapter_label.set_scroll_mode(mode)
+        self._update_scroll_mode_visuals()
+
+    def _update_scroll_mode_visuals(self):
+        if not hasattr(self, 'scroll_buttons'): return
+        current = self.config.get_scroll_mode()
+        for mode, btn in self.scroll_buttons.items():
+            btn.setProperty("selected", "true" if mode == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
