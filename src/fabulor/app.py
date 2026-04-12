@@ -1382,7 +1382,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self.db.get_book_count() == 0:
                 return # Do not hide popups if just dragging window in empty state
             self.panel_manager.hide_all_panels() # Use panel manager's hide_all_panels
-            self.windowHandle().startSystemMove()
         elif event.button() == Qt.RightButton:
             # Guard: Only allow sidebar right-click toggle if books are indexed
             if self.db.get_book_count() > 0:
