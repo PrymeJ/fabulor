@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QLabel
+from PySide6.QtWidgets import QWidget, QLabel, QPushButton
 from PySide6.QtCore import Qt, Signal, Property, QTimer
 from PySide6.QtGui import QColor, QPainter
 
@@ -168,3 +168,16 @@ class ScrollingLabel(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
+
+class HoverButton(QPushButton):
+    """A button that emits signals on mouse enter/leave for hover effects."""
+    hovered = Signal()
+    unhovered = Signal()
+
+    def enterEvent(self, event):
+        self.hovered.emit()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.unhovered.emit()
+        super().leaveEvent(event)

@@ -17,7 +17,7 @@ from .player import Player
 from .config import Config
 from .themes import get_stylesheet, THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
-from .ui.controls import ClickSlider, ScrollingLabel
+from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
@@ -41,6 +41,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player = Player()
         # Manual override for testing
         #self.current_file = "/mnt/DriveD/Audiobooks/Adrian Selby - Snakewood/Snakewood.m4b"
+        self._prev_chap_title = ""
+        self._next_chap_title = ""
         #self.player.load_book(self.current_file)
         ###
         self.theme_manager = ThemeManager(self)
@@ -287,15 +289,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
         self.speed_button.clicked.connect(self._on_speed_button_clicked)
         speed_row.addWidget(self.speed_button)
-        speed_row.addStretch()
         self.content_layout.addLayout(speed_row)
 
+        # Chapter preview label (dynamic visibility on hover)
+        self.chapter_preview_label = QLabel("")
+        self.chapter_preview_label.setObjectName("chapter_preview_label")
+        self.content_layout.addWidget(self.chapter_preview_label)
+
         controls_layout = QHBoxLayout()
-        self.prev_button = QPushButton("|<<")
+        self.prev_button = HoverButton("|<<")
         self.rewind_button = QPushButton("<")
         self.play_pause_button = QPushButton("Play")
         self.forward_button = QPushButton(">")
-        self.next_button = QPushButton(">>|")
+        self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
             controls_layout.addWidget(btn)
@@ -306,6 +312,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.rewind_button.clicked.connect(self.handle_rewind)
         self.forward_button.clicked.connect(self.handle_forward)
         self.next_button.clicked.connect(self.handle_next)
+
+        # Hover signals for chapter previews
+        self.prev_button.hovered.connect(self._on_prev_hover)
+        self.prev_button.unhovered.connect(self._clear_preview)
+        self.next_button.hovered.connect(self._on_next_hover)
+        self.next_button.unhovered.connect(self._clear_preview)
 
     def _build_secondary_controls(self):
         # 1. Chapter Info Row (Top of secondary stack)
@@ -955,6 +967,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_elapsed_label.setVisible(visible)
         self.chap_duration_label.setVisible(visible)
         self.progress_percentage_label.setVisible(visible)
+        self.chapter_preview_label.setVisible(visible)
 
     def _on_scan_progress(self, current, total):
         # Only update banner if it's already visible (prevents silent scans from popping up)
@@ -1374,18 +1387,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # Also sync the list selection visually
             self.chapter_list_widget.setCurrentRow(index)
 
-            # Update tooltips for navigation buttons
+            # Update chapter preview labels
+            metrics = self.fontMetrics()
             if index > 0:
                 prev_title = chaps[index - 1].get('title') or f"Chapter {index}"
-                self.prev_button.setToolTip(prev_title)
+                # More space available now, using a wider elision limit
+                self._prev_chap_title = metrics.elidedText(prev_title, Qt.ElideRight, 260)
             else:
-                self.prev_button.setToolTip("")
+                self._prev_chap_title = ""
+            self.prev_button.setToolTip("") # Clear old tooltips
 
             if index < len(chaps) - 1:
                 next_title = chaps[index + 1].get('title') or f"Chapter {index + 2}"
-                self.next_button.setToolTip(next_title)
+                self._next_chap_title = metrics.elidedText(next_title, Qt.ElideRight, 260)
             else:
-                self.next_button.setToolTip("")
+                self._next_chap_title = ""
+            self.next_button.setToolTip("") # Clear old tooltips
+
+    def _on_prev_hover(self):
+        if self._prev_chap_title:
+            self.chapter_preview_label.setAlignment(Qt.AlignLeft)
+            self.chapter_preview_label.setText(self._prev_chap_title)
+
+    def _on_next_hover(self):
+        if self._next_chap_title:
+            self.chapter_preview_label.setAlignment(Qt.AlignRight)
+            self.chapter_preview_label.setText(self._next_chap_title)
+
+    def _clear_preview(self):
+        self.chapter_preview_label.setText("")
 
     def _load_cover_art(self, file_path):
         """Extracts and displays cover art from the file tags."""

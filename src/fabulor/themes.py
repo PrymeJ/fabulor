@@ -1027,6 +1027,10 @@ def get_stylesheet(theme_name="default"):
             font-size: 14px;
             color: {t['text']};
         }}
+        QLabel#chapter_preview_label {{
+            font-size: 13px;
+            color: rgba({text_rgb}, 0.6);
+        }}
         QLabel#quote_label {{
             background-color: rgba(0, 0, 0, 100);
             color: white;
