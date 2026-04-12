@@ -940,13 +940,13 @@ def get_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
-                         
+
         }}
         QWidget#library_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
-            border: none
+            border: none;
                          
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
@@ -1024,7 +1024,7 @@ def get_stylesheet(theme_name="default"):
             background: transparent;
             border: none;
             padding: 2px;
-            font-size: 13px;
+            font-size: 14px;
             color: {t['text']};
         }}
         QLabel#quote_label {{

@@ -111,3 +111,9 @@ class Config:
 
     def set_show_remaining_time(self, enabled):
         self.settings.setValue("show_remaining_time", str(enabled).lower())
+
+    def get_scroll_mode(self):
+        return self.settings.value("scroll_mode", "Slow")
+
+    def set_scroll_mode(self, mode):
+        self.settings.setValue("scroll_mode", mode)

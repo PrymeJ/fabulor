@@ -77,13 +77,22 @@ class ScrollingLabel(QLabel):
     def __init__(self, text="", parent=None):
         super().__init__(text, parent)
         self._scroll_pos = 0
+        self._scroll_mode = "Slow"
         self._direction = -1  # -1 for left, 1 for right
         self._pause_ticks = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_scroll)
-        self._timer.setInterval(50)  # Slower interval for a smoother, less "tiring" feel
+        self._timer.setInterval(120)
         self.setCursor(Qt.PointingHandCursor)
         self.setWordWrap(False)
+
+    def set_scroll_mode(self, mode):
+        self._scroll_mode = mode
+        intervals = {"Slow": 120, "Normal": 60}
+        if mode in intervals:
+            self._timer.setInterval(intervals[mode])
+        self._update_scrolling_state()
+        self.update()
 
     def setText(self, text):
         super().setText(text)
@@ -94,6 +103,12 @@ class ScrollingLabel(QLabel):
         self._update_scrolling_state()
 
     def _update_scrolling_state(self):
+        if self._scroll_mode == "Off":
+            self._timer.stop()
+            self._scroll_pos = 0
+            self.update()
+            return
+
         text_width = self.fontMetrics().horizontalAdvance(self.text())
         if text_width > self.width() and self.width() > 0:
             if not self._timer.isActive():
@@ -129,16 +144,25 @@ class ScrollingLabel(QLabel):
         self.update()
 
     def paintEvent(self, event):
-        if not self._timer.isActive():
-            super().paintEvent(event)
-            return
-
         p = QPainter(self)
         text = self.text()
         metrics = self.fontMetrics()
+        text_width = metrics.horizontalAdvance(text)
         y = (self.height() + metrics.ascent() - metrics.descent()) // 2
         
-        p.drawText(self._scroll_pos, y, text)
+        if self._timer.isActive():
+            p.drawText(self._scroll_pos, y, text)
+        else:
+            # Center the text within the available width
+            if self._scroll_mode == "Off":
+                # Draw elided text when scrolling is disabled
+                elided = metrics.elidedText(text, Qt.ElideRight, self.width())
+                elided_width = metrics.horizontalAdvance(elided)
+                x = max(0, (self.width() - elided_width) // 2)
+                p.drawText(x, y, elided)
+            else:
+                x = max(0, (self.width() - text_width) // 2)
+                p.drawText(x, y, text)
         p.end()
 
     def mousePressEvent(self, event):

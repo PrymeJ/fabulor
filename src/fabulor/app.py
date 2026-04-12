@@ -311,17 +311,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 1. Chapter Info Row (Top of secondary stack)
         chapter_info_layout = QHBoxLayout()
         self.chap_elapsed_label = QLabel("00:00:00")
-        self.chap_elapsed_label.setFixedWidth(80)
+        self.chap_elapsed_label.setFixedWidth(48)
         self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         self.chap_duration_label = QLabel("00:00:00")
-        self.chap_duration_label.setFixedWidth(80)
+        self.chap_duration_label.setFixedWidth(48)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
         
         self.current_chapter_label = ScrollingLabel("")
         self.current_chapter_label.setObjectName("chapter_selector")
         self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
+        self.current_chapter_label.set_scroll_mode(self.config.get_scroll_mode())
         
         chapter_info_layout.addWidget(self.chap_elapsed_label)
         chapter_info_layout.addWidget(self.current_chapter_label, 1)
@@ -546,13 +547,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.blur_dropdown.currentTextChanged.connect(lambda v: self.config.set_blur_enabled(v == "On"))
         blur_row.addWidget(self.blur_dropdown)
         app_layout.addLayout(blur_row)
+
+        scroll_header = QLabel("Chapter scroll")
+        scroll_header.setObjectName("settings_header")
+        app_layout.addWidget(scroll_header)
+
+        scroll_row = QHBoxLayout()
+        self.scroll_buttons = {}
+        for mode in ["Slow", "Normal", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button") # Re-use styling for consistency
+            btn.clicked.connect(lambda _, m=mode: self._update_scroll_mode(m))
+            scroll_row.addWidget(btn)
+            self.scroll_buttons[mode] = btn
+        scroll_row.addStretch()
+        app_layout.addLayout(scroll_row)
+
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Appearance")
+        self._update_scroll_mode_visuals()
 
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
         lib_layout = QVBoxLayout(library_tab)
-
         pattern_header = QLabel("Naming pattern")
         pattern_header.setObjectName("settings_header")
         lib_layout.addWidget(pattern_header)
@@ -612,6 +629,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.tabs.addTab(shortcuts_tab, "Shortcuts")
 
         layout.addWidget(self.tabs)
+        self._refresh_folder_list()
+        self.settings_panel.hide()
+        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
+        self.settings_panel_animation.setDuration(300)
+        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _update_scroll_mode(self, mode):
+        self.config.set_scroll_mode(mode)
+        self.current_chapter_label.set_scroll_mode(mode)
+        self._update_scroll_mode_visuals()
+
+    def _update_scroll_mode_visuals(self):
+        if not hasattr(self, 'scroll_buttons'): return
+        current = self.config.get_scroll_mode()
+        for mode, btn in self.scroll_buttons.items():
+            btn.setProperty("selected", mode == current)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
         self._refresh_folder_list()
         self.settings_panel.hide()
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
