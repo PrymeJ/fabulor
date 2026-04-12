@@ -713,11 +713,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_panel = QWidget(self)
         self.speed_panel.setObjectName("speed_panel")
         self.speed_panel_layout = QVBoxLayout(self.speed_panel)
-        speed_header = QLabel("Playback Speed")
+        speed_header = QLabel("Playback speed")
         speed_header.setObjectName("settings_header")
         self.speed_panel_layout.addWidget(speed_header)
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setSpacing(8)
         presets = [
             0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
             3.25, 3.50, 3.75, 4.00, 5.00, 6.00, 7.00, 8.00
@@ -732,36 +732,52 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._speed_grid_buttons.append(btn)
         self.speed_panel_layout.addLayout(grid)
         
-        def_speed_row = QHBoxLayout()
-        def_speed_row.addWidget(QLabel("Default speed"))
-        def_speed_row.addStretch()
-        self.def_speed_dropdown = ThemeComboBox()
-        self.def_speed_dropdown.setFixedWidth(60)
-        self.def_speed_dropdown.addItems(["1.0", "1.5", "1.75", "2.0", "2.25", "2.5"])
-        self.def_speed_dropdown.setCurrentText(str(self.config.get_default_speed()))
-        self.def_speed_dropdown.currentTextChanged.connect(lambda v: self.config.set_default_speed(float(v)))
-        def_speed_row.addWidget(self.def_speed_dropdown)
-        self.speed_panel_layout.addLayout(def_speed_row)
-        
-        step_row = QHBoxLayout()
-        step_row.addWidget(QLabel("Step"))
-        self.step_dropdown = ThemeComboBox()
-        self.step_dropdown.setFixedWidth(60)
-        self.step_dropdown.addItems(["0.05", "0.1", "0.25", "0.5"])
-        self.step_dropdown.setCurrentText(str(self.config.get_speed_increment()))
-        self.step_dropdown.currentTextChanged.connect(lambda v: self.config.set_speed_increment(float(v)))
-        step_row.addWidget(self.step_dropdown)
-        self.speed_panel_layout.addLayout(step_row)
+        self.speed_panel_layout.addSpacing(10)
 
-        skip_row = QHBoxLayout()
-        skip_row.addWidget(QLabel("Skip interval"))
-        self.skip_dropdown = ThemeComboBox()
-        self.skip_dropdown.setFixedWidth(60)
-        self.skip_dropdown.addItems(["5", "10", "15", "30", "45", "60"])
-        self.skip_dropdown.setCurrentText(str(self.config.get_skip_duration()))
-        self.skip_dropdown.currentTextChanged.connect(lambda v: self.config.set_skip_duration(int(v)))
-        skip_row.addWidget(self.skip_dropdown)
-        self.speed_panel_layout.addLayout(skip_row)
+        # Default Speed Section
+        def_header = QLabel("Default speed")
+        def_header.setObjectName("settings_header")
+        self.speed_panel_layout.addWidget(def_header)
+        def_row = QHBoxLayout()
+        self.def_speed_buttons = {}
+        for val in [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0]:
+            btn = QPushButton(f"{val}x")
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_def_speed_mode(v))
+            def_row.addWidget(btn)
+            self.def_speed_buttons[val] = btn
+        def_row.addStretch()
+        self.speed_panel_layout.addLayout(def_row)
+
+        # Increment Step Section
+        step_header = QLabel("Step")
+        step_header.setObjectName("settings_header")
+        self.speed_panel_layout.addWidget(step_header)
+        step_row_layout = QHBoxLayout()
+        self.step_buttons = {}
+        for val in [0.05, 0.1, 0.25, 0.5]:
+            btn = QPushButton(str(val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_step_mode(v))
+            step_row_layout.addWidget(btn)
+            self.step_buttons[val] = btn
+        step_row_layout.addStretch()
+        self.speed_panel_layout.addLayout(step_row_layout)
+
+        # Skip Interval Section
+        skip_header = QLabel("Skip interval (s)")
+        skip_header.setObjectName("settings_header")
+        self.speed_panel_layout.addWidget(skip_header)
+        skip_row_layout = QHBoxLayout()
+        self.skip_buttons = {}
+        for val in [5, 10, 15, 30, 45, 60]:
+            btn = QPushButton(str(val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_skip_mode(v))
+            skip_row_layout.addWidget(btn)
+            self.skip_buttons[val] = btn
+        skip_row_layout.addStretch()
+        self.speed_panel_layout.addLayout(skip_row_layout)
 
         self.speed_panel_layout.addStretch()
         self.speed_panel.hide()
@@ -1355,6 +1371,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_hints_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
+        self._update_def_speed_visuals()
+        self._update_step_visuals()
+        self._update_skip_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1666,5 +1685,41 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for state, btn in self.blur_buttons.items():
             is_selected = (state == "On" if enabled else state == "Off")
             btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_def_speed_mode(self, val):
+        self.config.set_default_speed(val)
+        self._update_def_speed_visuals()
+
+    def _update_def_speed_visuals(self):
+        if not hasattr(self, 'def_speed_buttons'): return
+        current = self.config.get_default_speed()
+        for val, btn in self.def_speed_buttons.items():
+            btn.setProperty("selected", "true" if float(val) == float(current) else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_step_mode(self, val):
+        self.config.set_speed_increment(val)
+        self._update_step_visuals()
+
+    def _update_step_visuals(self):
+        if not hasattr(self, 'step_buttons'): return
+        current = self.config.get_speed_increment()
+        for val, btn in self.step_buttons.items():
+            btn.setProperty("selected", "true" if float(val) == float(current) else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_skip_mode(self, val):
+        self.config.set_skip_duration(val)
+        self._update_skip_visuals()
+
+    def _update_skip_visuals(self):
+        if not hasattr(self, 'skip_buttons'): return
+        current = self.config.get_skip_duration()
+        for val, btn in self.skip_buttons.items():
+            btn.setProperty("selected", "true" if int(val) == int(current) else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)

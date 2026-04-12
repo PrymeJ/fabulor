@@ -324,7 +324,7 @@ class PanelManager:
             panel.setFixedWidth(panel_w)
 
         self.settings_panel.setFixedHeight(500)
-        self.speed_panel.setFixedHeight(360)
+        self.speed_panel.setFixedHeight(500)
         self.sleep_panel.setFixedHeight(400)
 
         # Update Speed Panel position if not animating
