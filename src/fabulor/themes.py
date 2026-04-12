@@ -1033,7 +1033,7 @@ def get_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.5);
             border: 1px solid {t['accent_dark']};
             border-radius: 3px;
-            padding: 2px 0px 0px 0px;
+            padding: 1px 0px 0px 0px;
         }}
         QLabel#quote_label {{
             background-color: rgba(0, 0, 0, 100);

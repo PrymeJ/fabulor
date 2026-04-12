@@ -289,7 +289,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_row.setContentsMargins(0, 0, 0, 0)
         self.chapter_preview_label = QLabel("")
         self.chapter_preview_label.setObjectName("chapter_preview_label")
-        self.chapter_preview_label.setFixedHeight(24) # Reserve space to prevent layout jumping
+        self.chapter_preview_label.setFixedHeight(21) # Reserve space to prevent layout jumping
         self.chapter_preview_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.preview_row.addWidget(self.chapter_preview_label)
         self.content_layout.addLayout(self.preview_row)
