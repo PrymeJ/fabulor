@@ -90,7 +90,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
-        self.resize(300, 600)
+        self.resize(300, 450)
 
         self.setObjectName("mainwindow")
         self.setStyleSheet(get_stylesheet(self.theme_manager._current_theme_name))
@@ -115,9 +115,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_layout = QVBoxLayout(self.visual_area)
         self.visual_layout.setContentsMargins(0, 0, 0, 0) # cover art area
         self.visual_layout.setSpacing(10)
-        self.visual_area.setFixedHeight(350) # Lock size so buttons stay fixed
         self.visual_area.mousePressEvent = self._on_drag_area_pressed
-        self.content_layout.addWidget(self.visual_area)
+        self.content_layout.addWidget(self.visual_area, 1) # Stretch factor 1 to claim space
 
         self._build_cover_art()
         self._build_metadata()
@@ -219,17 +218,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _build_cover_art(self):
         self.cover_art_label = QLabel()
-        self.cover_art_label.setAlignment(Qt.AlignCenter)
+        self.cover_art_label.setAlignment(Qt.AlignBottom | Qt.AlignHCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cover_art_label.setMinimumSize(280, 280)
         self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
         self.visual_layout.addWidget(self.cover_art_label)
 
     def _build_metadata(self):
-        # Status Prompt (Top)
-        # Push the prompt blocks higher to provide more space for quotes below
-        self.visual_layout.addSpacing(0)
-
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
         self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -261,8 +256,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.go_to_library_btn.setFixedWidth(120)
         self.go_to_library_btn.hide() # Hide by default
         self.visual_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
-
-        self.visual_layout.addStretch()
 
         # Quote (Bottom)
         self.quote_label = QLabel("")
@@ -359,7 +352,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_progress_slider = ClickSlider(Qt.Horizontal)
         self.chapter_progress_slider.setObjectName("chapter_progress")
         self.chapter_progress_slider.setRange(0, 1000)
-        self.chapter_progress_slider.setFixedHeight(12)
+        self.chapter_progress_slider.setFixedHeight(13)
         self.chapter_progress_slider.sliderPressed.connect(self._hide_popups)
         self.chapter_progress_slider.sliderPressed.connect(self._on_chap_slider_pressed)
         self.chapter_progress_slider.sliderReleased.connect(self._on_chap_slider_released)
@@ -381,12 +374,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             font.setPointSize(12)
             lbl.setFont(font)
 
-        book_info_layout.addWidget(self.current_time_label)
-        book_info_layout.addStretch()
-        book_info_layout.addWidget(self.total_time_label)
-        self.content_layout.addLayout(book_info_layout)
-
-        # 4. Volume Slider (Bottom)
         self.volume_slider = ClickSlider(Qt.Horizontal)
         self.volume_slider.setObjectName("volume_slider")
         self.volume_slider.setRange(0, 100)
@@ -394,7 +381,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider.setFixedHeight(9)
         self.volume_slider.sliderPressed.connect(self._hide_popups)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        self.content_layout.addWidget(self.volume_slider)
+
+        book_info_layout.addWidget(self.current_time_label)
+        book_info_layout.addWidget(self.volume_slider, 1)
+        book_info_layout.addWidget(self.total_time_label)
+        self.content_layout.addLayout(book_info_layout)
+
+        # Setup Volume Overlay Animations
+        self.vol_opacity = QGraphicsOpacityEffect(self.volume_slider)
+        self.vol_opacity.setOpacity(0.0)
+        self.volume_slider.setGraphicsEffect(self.vol_opacity)
+        
+        self.vol_fade_anim = QPropertyAnimation(self.vol_opacity, b"opacity")
+        self.vol_fade_anim.setDuration(500) # Slow fade as requested
+        self.vol_fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        
+        self.vol_hide_timer = QTimer(self)
+        self.vol_hide_timer.setSingleShot(True)
+        self.vol_hide_timer.timeout.connect(self._fade_out_volume)
 
     def _build_sidebar(self):
         self.sidebar = QWidget(self)
@@ -1001,7 +1005,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_time_label.setVisible(visible)
         self.total_time_label.setVisible(visible)
         self.sleep_timer_label.setVisible(visible)
-        self.volume_slider.setVisible(visible)
         self.chapter_progress_slider.setVisible(visible)
         self.current_chapter_label.setVisible(visible)
         self.chap_elapsed_label.setVisible(visible)
@@ -1550,7 +1553,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if event.button() == Qt.LeftButton:
             if self.db.get_book_count() == 0:
                 return # Do not hide popups if just dragging window in empty state
-            self.panel_manager.hide_all_panels() # Use panel manager's hide_all_panels
+            if self.current_file:
+                self.toggle_play_pause()
+            else:
+                self.panel_manager.hide_all_panels()
         elif event.button() == Qt.RightButton:
             # Guard: Only allow sidebar right-click toggle if books are indexed
             if self.db.get_book_count() > 0:
@@ -1594,6 +1600,42 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             self.player.next_chapter()
             self._is_seeking = True
+
+    def wheelEvent(self, event):
+        """Handles volume control via mouse wheel on the cover art area."""
+        if self.visual_area.underMouse():
+            delta = event.angleDelta().y()
+            current = self.volume_slider.value()
+            # Adjust volume in steps of 5
+            step = 5
+            if delta > 0:
+                new_vol = min(100, current + step)
+            else:
+                new_vol = max(0, current - step)
+            
+            if new_vol != current:
+                self.volume_slider.setValue(new_vol)
+                self._show_volume_overlay()
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def _show_volume_overlay(self):
+        """Triggers the volume slider fade-in and starts the auto-hide timer."""
+        self.vol_hide_timer.stop()
+        if self.vol_opacity.opacity() < 1.0:
+            self.vol_fade_anim.stop()
+            self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
+            self.vol_fade_anim.setEndValue(1.0)
+            self.vol_fade_anim.start()
+        self.vol_hide_timer.start(2000) # Visible for 2 seconds
+
+    def _fade_out_volume(self):
+        """Starts the volume slider fade-out."""
+        self.vol_fade_anim.stop()
+        self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
+        self.vol_fade_anim.setEndValue(0.0)
+        self.vol_fade_anim.start()
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
