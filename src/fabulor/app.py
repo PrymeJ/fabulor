@@ -553,25 +553,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 2: APPEARANCE ---
         appearance_tab = QWidget()
         app_layout = QVBoxLayout(appearance_tab)
-        
+
+        fade_header = QLabel("Theme hover (ms)")
+        fade_header.setObjectName("settings_header")
+        app_layout.addWidget(fade_header)
+
         fade_row = QHBoxLayout()
-        fade_row.addWidget(QLabel("Hover fade (ms)"))
-        self.fade_dropdown = ThemeComboBox()
-        self.fade_dropdown.setFixedWidth(60)
-        self.fade_dropdown.addItems(["0", "500", "750", "1000", "1500"])
-        self.fade_dropdown.setCurrentText(str(self.config.get_theme_fade_duration()))
-        self.fade_dropdown.currentTextChanged.connect(lambda v: self.config.set_theme_fade_duration(int(v)))
-        fade_row.addWidget(self.fade_dropdown)
+        self.fade_buttons = {}
+        for ms_val in [0, 500, 750, 1000, 1500]:
+            btn = QPushButton(str(ms_val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=ms_val: self._update_fade_mode(v))
+            fade_row.addWidget(btn)
+            self.fade_buttons[ms_val] = btn
+        fade_row.addStretch()
         app_layout.addLayout(fade_row)
 
+        blur_header = QLabel("Blur")
+        blur_header.setObjectName("settings_header")
+        app_layout.addWidget(blur_header)
+
         blur_row = QHBoxLayout()
-        blur_row.addWidget(QLabel("Blur"))
-        self.blur_dropdown = ThemeComboBox()
-        self.blur_dropdown.setFixedWidth(60)
-        self.blur_dropdown.addItems(["On", "Off"])
-        self.blur_dropdown.setCurrentText("On" if self.config.get_blur_enabled() else "Off")
-        self.blur_dropdown.currentTextChanged.connect(lambda v: self.config.set_blur_enabled(v == "On"))
-        blur_row.addWidget(self.blur_dropdown)
+        self.blur_buttons = {}
+        for state in ["On", "Off"]:
+            btn = QPushButton(state)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=state: self._update_blur_mode(s == "On"))
+            blur_row.addWidget(btn)
+            self.blur_buttons[state] = btn
+        blur_row.addStretch()
         app_layout.addLayout(blur_row)
 
         scroll_header = QLabel("Chapter scroll")
@@ -608,6 +618,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.tabs.addTab(appearance_tab, "Appearance")
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
+        self._update_fade_visuals()
+        self._update_blur_visuals()
 
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
@@ -1341,6 +1353,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_pattern_visuals()
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
+        self._update_fade_visuals()
+        self._update_blur_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1620,5 +1634,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         current = self.config.get_scroll_mode()
         for mode, btn in self.scroll_buttons.items():
             btn.setProperty("selected", "true" if mode == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_fade_mode(self, ms):
+        """Changes the theme hover fade duration."""
+        self.config.set_theme_fade_duration(ms)
+        self._update_fade_visuals()
+
+    def _update_fade_visuals(self):
+        """Updates the highlight state of fade buttons."""
+        if not hasattr(self, 'fade_buttons'): return
+        current = self.config.get_theme_fade_duration()
+        for ms, btn in self.fade_buttons.items():
+            btn.setProperty("selected", "true" if ms == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_blur_mode(self, enabled):
+        """Changes the blur setting."""
+        self.config.set_blur_enabled(enabled)
+        # Apply setting immediately if a panel is open
+        if not enabled:
+            self.blur_effect.setBlurRadius(0)
+        self._update_blur_visuals()
+
+    def _update_blur_visuals(self):
+        """Updates the highlight state of blur buttons."""
+        if not hasattr(self, 'blur_buttons'): return
+        enabled = self.config.get_blur_enabled()
+        for state, btn in self.blur_buttons.items():
+            is_selected = (state == "On" if enabled else state == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
