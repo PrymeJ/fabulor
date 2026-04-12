@@ -325,7 +325,7 @@ class PanelManager:
 
         self.settings_panel.setFixedHeight(500)
         self.speed_panel.setFixedHeight(500)
-        self.sleep_panel.setFixedHeight(400)
+        self.sleep_panel.setFixedHeight(500)
 
         # Update Speed Panel position if not animating
         if self.speed_panel_animation.state() != QPropertyAnimation.Running:
