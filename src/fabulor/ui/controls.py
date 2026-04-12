@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, Signal, Property
+from PySide6.QtWidgets import QWidget, QLabel
+from PySide6.QtCore import Qt, Signal, Property, QTimer
 from PySide6.QtGui import QColor, QPainter
 
 class ClickSlider(QWidget):
@@ -69,3 +69,78 @@ class ClickSlider(QWidget):
         p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
         p.fillRect(0, 0, filled, self.height(), self._fill_color)
         p.end()
+
+class ScrollingLabel(QLabel):
+    """A label that scrolls its text horizontally if it's too long to fit."""
+    clicked = Signal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._scroll_pos = 0
+        self._direction = -1  # -1 for left, 1 for right
+        self._pause_ticks = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_scroll)
+        self._timer.setInterval(50)  # Slower interval for a smoother, less "tiring" feel
+        self.setCursor(Qt.PointingHandCursor)
+        self.setWordWrap(False)
+
+    def setText(self, text):
+        super().setText(text)
+        self._update_scrolling_state()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_scrolling_state()
+
+    def _update_scrolling_state(self):
+        text_width = self.fontMetrics().horizontalAdvance(self.text())
+        if text_width > self.width() and self.width() > 0:
+            if not self._timer.isActive():
+                self._scroll_pos = 0
+                self._direction = -1
+                self._pause_ticks = 40  # Initial pause at the start
+                self._timer.start()
+        else:
+            self._timer.stop()
+            self._scroll_pos = 0
+            self.update()
+
+    def _update_scroll(self):
+        if self._pause_ticks > 0:
+            self._pause_ticks -= 1
+            return
+
+        text_width = self.fontMetrics().horizontalAdvance(self.text())
+        max_scroll = text_width - self.width()
+
+        if self._direction == -1:  # Scrolling towards the end
+            self._scroll_pos -= 1
+            if abs(self._scroll_pos) >= max_scroll:
+                self._direction = 1
+                self._pause_ticks = 40  # Pause at the end
+        else:  # Scrolling back to the beginning
+            self._scroll_pos += 1
+            if self._scroll_pos >= 0:
+                self._scroll_pos = 0
+                self._direction = -1
+                self._pause_ticks = 40  # Pause at the beginning
+
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._timer.isActive():
+            super().paintEvent(event)
+            return
+
+        p = QPainter(self)
+        text = self.text()
+        metrics = self.fontMetrics()
+        y = (self.height() + metrics.ascent() - metrics.descent()) // 2
+        
+        p.drawText(self._scroll_pos, y, text)
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()

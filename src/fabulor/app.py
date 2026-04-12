@@ -17,7 +17,7 @@ from .player import Player
 from .config import Config
 from .themes import get_stylesheet, THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
-from .ui.controls import ClickSlider
+from .ui.controls import ClickSlider, ScrollingLabel
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
@@ -278,6 +278,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_layout.addWidget(self.sleep_timer_label)
 
     def _build_controls(self):
+        # Speed button centered above transport controls
+        speed_row = QHBoxLayout()
+        speed_row.addStretch()
+        self.speed_button = QPushButton("1.00x")
+        self.speed_button.setFixedWidth(60)
+        self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
+        self.speed_button.clicked.connect(self._on_speed_button_clicked)
+        speed_row.addWidget(self.speed_button)
+        speed_row.addStretch()
+        self.content_layout.addLayout(speed_row)
+
         controls_layout = QHBoxLayout()
         self.prev_button = QPushButton("|<<")
         self.rewind_button = QPushButton("<")
@@ -296,36 +308,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.next_button.clicked.connect(self.handle_next)
 
     def _build_secondary_controls(self):
-        secondary_layout = QHBoxLayout()
-        self.speed_button = QPushButton("1.00x")
-        self.speed_button.setFixedWidth(60)
+        # 1. Chapter Info Row (Top of secondary stack)
+        chapter_info_layout = QHBoxLayout()
+        self.chap_elapsed_label = QLabel("00:00:00")
+        self.chap_elapsed_label.setFixedWidth(80)
+        self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
+        self.chap_duration_label = QLabel("00:00:00")
+        self.chap_duration_label.setFixedWidth(80)
+        self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
+        
+        self.current_chapter_label = ScrollingLabel("")
+        self.current_chapter_label.setObjectName("chapter_selector")
+        self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
+        
+        chapter_info_layout.addWidget(self.chap_elapsed_label)
+        chapter_info_layout.addWidget(self.current_chapter_label, 1)
+        chapter_info_layout.addWidget(self.chap_duration_label)
+        self.content_layout.addLayout(chapter_info_layout)
 
-        self.current_time_label = QLabel("00:00:00")
-        self.total_time_label = QLabel("00:00:00")
-        self.total_time_label.mousePressEvent = self._toggle_remaining_time
-        for lbl in [self.current_time_label, self.total_time_label]:
-            font = lbl.font()
-            font.setPointSize(12)
-            lbl.setFont(font)
-
-        self.volume_slider = ClickSlider(Qt.Horizontal)
-        self.volume_slider.setObjectName("volume_slider")
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(self.config.get_volume())
-        self.volume_slider.setFixedWidth(100)
-        self.volume_slider.setFixedHeight(9)
-        self.volume_slider.sliderPressed.connect(self._hide_popups)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
-        self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
-        self.speed_button.clicked.connect(self._on_speed_button_clicked)
-        secondary_layout.addWidget(self.current_time_label)
-        secondary_layout.addWidget(self.volume_slider)
-        secondary_layout.addWidget(self.total_time_label)
-        secondary_layout.addStretch()
-        secondary_layout.addWidget(self.speed_button)
-        self.content_layout.addLayout(secondary_layout)
-
+        # 2. Chapter Progress Slider
         self.chapter_progress_slider = ClickSlider(Qt.Horizontal)
         self.chapter_progress_slider.setObjectName("chapter_progress")
         self.chapter_progress_slider.setRange(0, 1000)
@@ -335,17 +338,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_progress_slider.sliderReleased.connect(self._on_chap_slider_released)
         self.content_layout.addWidget(self.chapter_progress_slider)
 
-        chapter_container = QHBoxLayout()
-        self.chap_elapsed_label = QLabel("")
-        self.chap_duration_label = QLabel("")
-        self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
-        self.current_chapter_label = QPushButton("Select Chapter")
-        self.current_chapter_label.setObjectName("chapter_selector")
-        self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
-        chapter_container.addWidget(self.chap_elapsed_label)
-        chapter_container.addWidget(self.current_chapter_label, 1)
-        chapter_container.addWidget(self.chap_duration_label)
-        self.content_layout.addLayout(chapter_container)
+        # 3. Book Info Row (Elapsed - Speed - Total/Remaining)
+        book_info_layout = QHBoxLayout()
+        self.current_time_label = QLabel("00:00:00")
+        self.current_time_label.setFixedWidth(80)
+        self.current_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
+        self.total_time_label = QLabel("00:00:00")
+        self.total_time_label.setFixedWidth(80)
+        self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.total_time_label.mousePressEvent = self._toggle_remaining_time
+        
+        for lbl in [self.current_time_label, self.total_time_label]:
+            font = lbl.font()
+            font.setPointSize(12)
+            lbl.setFont(font)
+
+        book_info_layout.addWidget(self.current_time_label)
+        book_info_layout.addStretch()
+        book_info_layout.addWidget(self.total_time_label)
+        self.content_layout.addLayout(book_info_layout)
+
+        # 4. Volume Slider (Bottom)
+        self.volume_slider = ClickSlider(Qt.Horizontal)
+        self.volume_slider.setObjectName("volume_slider")
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(self.config.get_volume())
+        self.volume_slider.setFixedHeight(9)
+        self.volume_slider.sliderPressed.connect(self._hide_popups)
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        self.content_layout.addWidget(self.volume_slider)
 
     def _build_sidebar(self):
         self.sidebar = QWidget(self)
@@ -770,11 +792,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             print("Sleep timer: Invalid input for custom time.")
 
     def _update_chapter_title_text(self, text):
-        """Update the button text with elision."""
-        metrics = self.current_chapter_label.fontMetrics()
-        # 160 is a safe width for the central area in a 300px window
-        elided = metrics.elidedText(text, Qt.ElideRight, 160)
-        self.current_chapter_label.setText(elided)
+        """Update the scrolling label text."""
+        self.current_chapter_label.setText(text)
 
     def _refresh_folder_list(self):
         """Updates the folder list widget with current scan locations."""

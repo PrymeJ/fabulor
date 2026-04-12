@@ -1020,7 +1020,7 @@ def get_stylesheet(theme_name="default"):
         QPushButton:pressed {{
             background-color: {t['accent_dark']};
         }}
-        QPushButton#chapter_selector {{
+        #chapter_selector {{
             background: transparent;
             border: none;
             padding: 2px;
