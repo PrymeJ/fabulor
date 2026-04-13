@@ -1,7 +1,6 @@
 import os
 import math
 import random
-import warnings
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
@@ -54,6 +53,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scanner = LibraryScanner(self.db.db_path)
         self._undo_pos = None
         self._undo_timer = QTimer(self)
+        self._undo_slide_in_connected = False
+        self._undo_slide_out_connected = False
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
@@ -1726,12 +1727,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         target_x = width - overlay_w
 
         self.undo_anim.stop()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            try:
-                self.undo_anim.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+        if self._undo_slide_out_connected:
+            self.undo_anim.finished.disconnect(self.undo_overlay.hide)
+            self._undo_slide_out_connected = False
+        if self._undo_slide_in_connected:
+            self.undo_anim.finished.disconnect(self._on_undo_slide_in_done)
+            self._undo_slide_in_connected = False
 
         if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
             self._undo_timer.start(4000)
@@ -1744,9 +1745,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_anim.setStartValue(QPoint(width, y_pos))
         self.undo_anim.setEndValue(QPoint(target_x, y_pos))
         self.undo_anim.finished.connect(self._on_undo_slide_in_done)
+        self._undo_slide_in_connected = True
         self.undo_anim.start()
 
     def _on_undo_slide_in_done(self):
+        self._undo_slide_in_connected = False
         self._undo_timer.start(4000)    
 
     def _perform_undo(self):
@@ -1764,16 +1767,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         width = self.width()
 
         self.undo_anim.stop()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            try:
-                self.undo_anim.finished.disconnect()
-            except (RuntimeError, TypeError):
-                pass
+        if self._undo_slide_in_connected:
+            self.undo_anim.finished.disconnect(self._on_undo_slide_in_done)
+            self._undo_slide_in_connected = False
+        if self._undo_slide_out_connected:
+            self.undo_anim.finished.disconnect(self.undo_overlay.hide)
+            self._undo_slide_out_connected = False
 
         self.undo_anim.setStartValue(self.undo_overlay.pos())
         self.undo_anim.setEndValue(QPoint(width, self.undo_overlay.y()))
         self.undo_anim.finished.connect(self.undo_overlay.hide)
+        self._undo_slide_out_connected = True
         self.undo_anim.start()
 
     def wheelEvent(self, event):
