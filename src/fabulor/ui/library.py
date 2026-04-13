@@ -155,9 +155,9 @@ class LibraryPanel(QFrame):
         sort_map = {
             "Title": "title COLLATE NOCASE ASC",
             "Author": "author COLLATE NOCASE ASC",
-            "Last Played": "last_played DESC",
-            "Progress": "(CAST(progress AS FLOAT) / CASE WHEN duration = 0 THEN 1 ELSE duration END) DESC",
-            "Duration": "duration DESC"
+            "Last Played": "last_played IS NULL, last_played DESC",
+            "Progress": "progress IS NULL, progress DESC", 
+            "Duration": "duration IS NULL, duration DESC",
         }
         
         sort_text = self.sort_combo.currentText()
