@@ -1,6 +1,7 @@
 import os
 import math
 import random
+import warnings
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
@@ -73,6 +74,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._undo_timer.setSingleShot(True)
         self._undo_timer.timeout.connect(self._hide_undo_banner)
+
+        # Initialize Undo Overlay
+        self.undo_overlay = QPushButton("Undo", self)
+        self.undo_overlay.setObjectName("undo_overlay")
+        self.undo_overlay.setFixedSize(32, 21)
+        self.undo_overlay.hide()
+        self.undo_overlay.clicked.connect(self._perform_undo)
+        self.undo_anim = QPropertyAnimation(self.undo_overlay, b"pos")
+        self.undo_anim.setDuration(400)
+        self.undo_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         QApplication.instance().installEventFilter(self)
 
@@ -196,16 +207,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Use lambda to safely reference panel_manager which is initialized later
         self.temp_settings_btn.clicked.connect(lambda: self.panel_manager._open_settings_flow() if self.panel_manager else None)
         
-        self.undo_btn = QPushButton("Undo Jump")
-        self.undo_btn.setObjectName("secondary_button")
-        self.undo_btn.setFixedSize(80, 22)
-        self.undo_btn.setStyleSheet("font-size: 10px; font-weight: bold;")
-        self.undo_btn.clicked.connect(self._perform_undo)
-        self.undo_btn.hide()
-
         layout.addStretch()
         layout.addWidget(self.status_label)
-        layout.addWidget(self.undo_btn)
         layout.addStretch()
         layout.addWidget(self.next_quote_btn)
         layout.addWidget(self.temp_settings_btn)
@@ -1714,29 +1717,64 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._is_seeking = True
 
     def _trigger_undo(self, old_pos):
-        """Sets the undo target and shows the temporary button in the banner."""
         self._undo_pos = old_pos
-        self.status_label.setText("Jumped?")
-        self.undo_btn.show()
-        self.cancel_scan_btn.hide()
-        self.status_banner.show()
-        self.status_banner.raise_()
-        self._undo_timer.start(4000) # Hide after 4 seconds
+        self._undo_timer.stop()
+
+        width = self.width()
+        overlay_w = 32
+        y_pos = 56
+        target_x = width - overlay_w
+
+        self.undo_anim.stop()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                self.undo_anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+        if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
+            self._undo_timer.start(4000)
+            return
+
+        self.undo_overlay.move(width, y_pos)
+        self.undo_overlay.show()
+        self.undo_overlay.raise_()
+
+        self.undo_anim.setStartValue(QPoint(width, y_pos))
+        self.undo_anim.setEndValue(QPoint(target_x, y_pos))
+        self.undo_anim.finished.connect(self._on_undo_slide_in_done)
+        self.undo_anim.start()
+
+    def _on_undo_slide_in_done(self):
+        self._undo_timer.start(4000)    
 
     def _perform_undo(self):
-        """Seeks back to the pre-jump position and hides the banner."""
+        """Seeks back and slides the button out."""
         if self.player and self._undo_pos is not None:
             self.player.time_pos = self._undo_pos
             self._is_seeking = True
             self._hide_undo_banner()
 
     def _hide_undo_banner(self):
-        """Hides the undo UI and clears the target."""
+        if not self.undo_overlay.isVisible():
+            return
+
         self._undo_pos = None
-        self.undo_btn.hide()
-        # Only hide the whole banner if a scan isn't running
-        if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
-            self.status_banner.hide()
+        width = self.width()
+
+        self.undo_anim.stop()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                self.undo_anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+        self.undo_anim.setStartValue(self.undo_overlay.pos())
+        self.undo_anim.setEndValue(QPoint(width, self.undo_overlay.y()))
+        self.undo_anim.finished.connect(self.undo_overlay.hide)
+        self.undo_anim.start()
 
     def wheelEvent(self, event):
         """Handles volume control via mouse wheel on the cover art area."""

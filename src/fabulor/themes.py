@@ -1039,6 +1039,19 @@ def get_stylesheet(theme_name="default"):
             border-radius: 3px;
             padding: 1px 0px 0px 0px;
         }}
+        QPushButton#undo_overlay {{
+            font-size: 12px;
+            font-size: 11px;
+            color: {t['text']};
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.5);
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.8);
+            border: 0px solid {t['accent_dark']};
+            border-radius: 0px;
+            padding: 0px 4px;
+        }}
+        QPushButton#undo_overlay:hover {{
+            background-color: {t['accent']};
+        }}
         QLabel#quote_label {{
             background-color: rgba(0, 0, 0, 100);
             color: white;
