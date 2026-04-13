@@ -271,6 +271,17 @@ class PanelManager:
             pass
         self.settings_panel.hide()
 
+    def is_any_panel_visible(self):
+        """Returns True if the sidebar or any configuration panel is currently open."""
+        return (
+            self.sidebar_expanded or
+            self.library_panel.isVisible() or
+            self.settings_panel.isVisible() or
+            self.speed_panel.isVisible() or
+            self.sleep_panel.isVisible() or
+            self.main_window.chapter_list_widget.isVisible()
+        )
+
     def hide_all_panels(self):
         """Closes any open panels."""
         if self.main_window.chapter_list_widget.isVisible():
