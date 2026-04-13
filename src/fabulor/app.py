@@ -1651,6 +1651,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.volume_slider.setValue(new_vol)
                 self._show_volume_overlay()
             event.accept()
+        elif self.speed_button.underMouse():
+            if not self.player: return
+            delta = event.angleDelta().y()
+            step = self.config.get_speed_increment()
+            current = self.player.speed or self.config.get_default_speed()
+            
+            if delta > 0:
+                new_speed = min(8.0, current + step)
+            else:
+                new_speed = max(0.25, current - step)
+                
+            if new_speed != current:
+                self._set_speed(new_speed)
+            event.accept()
         else:
             super().wheelEvent(event)
 
