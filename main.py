@@ -7,6 +7,7 @@ from fabulor.app import MainWindow
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setDesktopFileName("fabulor") 
     locale.setlocale(locale.LC_NUMERIC, "C")  # after Qt, not before
     window = MainWindow()
     window.show()
