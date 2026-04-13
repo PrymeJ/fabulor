@@ -14,6 +14,8 @@
 - [x] Speed-adjusted time calculations (Elapsed/Total change with speed)
 - [x] Speed button right click increases speed || hold right click ?
 - [x] Speed button shift+right click descreases speed
+- [x] Mouse wheel scroll over speed button adjusts speed
+- [ ] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume # (if away_duration >= (wait_min * 60))
 
 ## Sliders
 
@@ -26,7 +28,7 @@
 - [x] Chapter progress bar draggable
 - [x] Chapter progress bar updates the percentage
 - [x] Chapter progress bar updates book progress bar
-- [x] Volume slider functional || wheel control
+- [x] Volume slider functional
 - [x] Volume slider draggable
 - [x] Volume slider draggable
 
@@ -135,7 +137,6 @@
 - [x] Chapter Hints: Background scales to text width (Size Policy Maximum)
 - [x] Settings: Consistency in button groups (Blur, Fade, Hints, Scroll)
 - [x] Theme rotation: Timer based on interval settings
-- [x] Mouse wheel scroll over speed button adjusts speed
 
 ## Theme engine || reorder
 
