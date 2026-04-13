@@ -51,6 +51,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_pause_timestamp = None
         self.db = LibraryDB()
         self.scanner = LibraryScanner(self.db.db_path)
+        self._undo_pos = None
+        self._undo_timer = QTimer(self)
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
@@ -68,6 +70,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scanner.finished.connect(self._on_scan_finished)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
         self.player.file_loaded.connect(self._on_file_ready)
+
+        self._undo_timer.setSingleShot(True)
+        self._undo_timer.timeout.connect(self._hide_undo_banner)
 
         QApplication.instance().installEventFilter(self)
 
@@ -190,9 +195,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.temp_settings_btn.setStyleSheet("font-size: 9px; padding: 2px;")
         # Use lambda to safely reference panel_manager which is initialized later
         self.temp_settings_btn.clicked.connect(lambda: self.panel_manager._open_settings_flow() if self.panel_manager else None)
+        
+        self.undo_btn = QPushButton("Undo Jump")
+        self.undo_btn.setObjectName("secondary_button")
+        self.undo_btn.setFixedSize(80, 22)
+        self.undo_btn.setStyleSheet("font-size: 10px; font-weight: bold;")
+        self.undo_btn.clicked.connect(self._perform_undo)
+        self.undo_btn.hide()
 
         layout.addStretch()
         layout.addWidget(self.status_label)
+        layout.addWidget(self.undo_btn)
         layout.addStretch()
         layout.addWidget(self.next_quote_btn)
         layout.addWidget(self.temp_settings_btn)
@@ -1299,7 +1312,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_slider_released(self):
         if self.player and self.player.duration:
+            old_pos = self.player.time_pos
             new_pos = (self.progress_slider.value() / 1000) * self.player.duration
+            if abs(new_pos - old_pos) > 60:
+                self._trigger_undo(old_pos)
             self.player.time_pos = new_pos
             self._is_seeking = True
         self.is_slider_dragging = False
@@ -1309,6 +1325,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_chap_slider_released(self):
         if self.player and self.player.duration:
+            old_pos = self.player.time_pos
             curr_chap = self.player.chapter or 0
             chap_list = self.player.chapter_list or []
             if chap_list and curr_chap < len(chap_list):
@@ -1318,7 +1335,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 chap_dur = end - start
                 if chap_dur > 0:
                     new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
-                    self.player.time_pos = start + new_chap_pos
+                    new_pos = start + new_chap_pos
+                    if abs(new_pos - old_pos) > 60:
+                        self._trigger_undo(old_pos)
+                    self.player.time_pos = new_pos
                     self._is_seeking = True
         self.is_chapter_slider_dragging = False
 
@@ -1656,23 +1676,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def handle_rewind(self, long_skip=False):
         self.panel_manager.hide_all_panels()
         if self.player:
+            old_pos = self.player.time_pos
             speed = self.player.speed or 1.0
             if long_skip:
                 skip = self.config.get_long_skip_duration() * 60 * speed
             else:
                 skip = self.config.get_skip_duration() * speed
-            self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
+            new_pos = max(0, (old_pos or 0) - skip)
+            self.player.time_pos = new_pos
             self._is_seeking = True
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
         if self.player:
+            old_pos = self.player.time_pos
             speed = self.player.speed or 1.0
             if long_skip:
                 skip = self.config.get_long_skip_duration() * 60 * speed
             else:
                 skip = self.config.get_skip_duration() * speed
-            self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
+            new_pos = min(self.player.duration or 0, (old_pos or 0) + skip)
+            self.player.time_pos = new_pos
             self._is_seeking = True
 
     def handle_prev(self):
@@ -1688,6 +1712,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             self.player.next_chapter()
             self._is_seeking = True
+
+    def _trigger_undo(self, old_pos):
+        """Sets the undo target and shows the temporary button in the banner."""
+        self._undo_pos = old_pos
+        self.status_label.setText("Jumped?")
+        self.undo_btn.show()
+        self.cancel_scan_btn.hide()
+        self.status_banner.show()
+        self.status_banner.raise_()
+        self._undo_timer.start(4000) # Hide after 4 seconds
+
+    def _perform_undo(self):
+        """Seeks back to the pre-jump position and hides the banner."""
+        if self.player and self._undo_pos is not None:
+            self.player.time_pos = self._undo_pos
+            self._is_seeking = True
+            self._hide_undo_banner()
+
+    def _hide_undo_banner(self):
+        """Hides the undo UI and clears the target."""
+        self._undo_pos = None
+        self.undo_btn.hide()
+        # Only hide the whole banner if a scan isn't running
+        if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
+            self.status_banner.hide()
 
     def wheelEvent(self, event):
         """Handles volume control via mouse wheel on the cover art area."""
