@@ -48,6 +48,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager = ThemeManager(self)
         self._paused_time = None
         self._is_seeking = False
+        self._last_pause_timestamp = None
         self.db = LibraryDB()
         self.scanner = LibraryScanner(self.db.db_path)
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
@@ -807,6 +808,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.long_skip_buttons[val] = btn
         self.speed_panel_layout.addLayout(skip_buttons_row)
 
+        # Smart Rewind Section
+        smart_header_row = QHBoxLayout()
+        smart_label = QLabel("Smart rewind")
+        smart_label.setObjectName("settings_header")
+        smart_header_row.addWidget(smart_label)
+        self.speed_panel_layout.addLayout(smart_header_row)
+
+        smart_buttons_row = QHBoxLayout()
+        self.smart_wait_buttons = {}
+        for val, label in [(0, "Off"), (5, "5"), (30, "30"), (60, "60")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_smart_rewind_mode(v))
+            smart_buttons_row.addWidget(btn)
+            self.smart_wait_buttons[val] = btn
+        
+        smart_buttons_row.addStretch()
+        self.smart_dur_buttons = {}
+        for val in [10, 20, 30]:
+            btn = QPushButton(str(val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_smart_rewind_duration(v))
+            smart_buttons_row.addWidget(btn)
+            self.smart_dur_buttons[val] = btn
+        self.speed_panel_layout.addLayout(smart_buttons_row)
+
         self.speed_panel_layout.addStretch()
         self.speed_panel.hide()
         self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")
@@ -1346,14 +1373,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.config.set_sleep_duration(duration_minutes)
             self.config.set_sleep_mode('timed')
             QTimer.singleShot(500, self.disable_sleep_btn.show)
-            self.sleep_trigger_btn.setText("Sleep") # No brackets
+            self.sleep_trigger_btn.setText("SLEEP") # No brackets
             self.sleep_cancel_btn.show()
             self.sleep_pulse_anim.start()
         elif mode in ['end_of_chapter', 'end_of_book']:
             self._sleep_mode = mode
             self.config.set_sleep_mode(mode)
             QTimer.singleShot(500, self.disable_sleep_btn.show)
-            self.sleep_trigger_btn.setText("Sleep") # No brackets
+            self.sleep_trigger_btn.setText("SLEEP") # No brackets
             self.sleep_cancel_btn.show()
             self.sleep_pulse_anim.start()
 
@@ -1365,7 +1392,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._sleep_timer_end_time = None
         self._sleep_mode = None
         self.disable_sleep_btn.hide()
-        self.sleep_trigger_btn.setText("Sleep")
+        self.sleep_trigger_btn.setText("SLEEP")
         self.sleep_cancel_btn.hide()
         self.sleep_pulse_anim.stop()
         self.sleep_opacity_effect.setOpacity(1.0)
@@ -1402,6 +1429,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_step_visuals()
         self._update_skip_visuals()
         self._update_long_skip_visuals()
+        self._update_smart_rewind_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1597,7 +1625,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._is_seeking = True
             self.player.pause = False
             return
-        self.player.pause = not self.player.pause
+        else:
+            was_paused = self.player.pause
+            if was_paused:
+                wait_min = self.config.get_smart_rewind_wait()
+                rewind_sec = self.config.get_smart_rewind_duration()
+                
+                if self._last_pause_timestamp and wait_min > 0 and rewind_sec > 0:
+                    away_duration = time.time() - self._last_pause_timestamp
+                    if away_duration >= (wait_min * 60):
+                        speed = self.player.speed or 1.0
+                        rewind_amt = rewind_sec * speed
+                        
+                        # Restrict to same chapter
+                        start_limit = 0
+                        curr_idx = self.player.chapter
+                        chaps = self.player.chapter_list
+                        if curr_idx is not None and chaps and curr_idx < len(chaps):
+                            start_limit = chaps[curr_idx].get('time', 0)
+                            
+                        self.player.time_pos = max(start_limit, self.player.time_pos - rewind_amt)
+                        self._is_seeking = True
+                
+                self.player.pause = False
+            else:
+                # Pausing: Record when we stopped
+                self._last_pause_timestamp = time.time()
+                self.player.pause = True
 
     def handle_rewind(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -1811,6 +1865,39 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         current = self.config.get_skip_duration()
         for val, btn in self.skip_buttons.items():
             btn.setProperty("selected", "true" if int(val) == int(current) else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_smart_rewind_mode(self, val):
+        self.config.set_smart_rewind_wait(val)
+        if val == 0:
+            self.config.set_smart_rewind_duration(0)
+        self._update_smart_rewind_visuals()
+
+    def _update_smart_rewind_duration(self, val):
+        self.config.set_smart_rewind_duration(val)
+        self._update_smart_rewind_visuals()
+
+    def _validate_smart_rewind_settings(self):
+        wait = self.config.get_smart_rewind_wait()
+        dur = self.config.get_smart_rewind_duration()
+        if (wait > 0 and dur == 0) or (wait == 0 and dur > 0):
+            self.config.set_smart_rewind_wait(0)
+            self.config.set_smart_rewind_duration(0)
+            self._update_smart_rewind_visuals()
+
+    def _update_smart_rewind_visuals(self):
+        if not hasattr(self, 'smart_wait_buttons'): return
+        wait_curr = self.config.get_smart_rewind_wait()
+        dur_curr = self.config.get_smart_rewind_duration()
+        
+        for val, btn in self.smart_wait_buttons.items():
+            btn.setProperty("selected", "true" if val == wait_curr else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            
+        for val, btn in self.smart_dur_buttons.items():
+            btn.setProperty("selected", "true" if val == dur_curr else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 

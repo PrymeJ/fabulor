@@ -186,6 +186,7 @@ class PanelManager:
         self.speed_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.speed_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.speed_panel_animation.finished.connect(self._on_speed_hidden)
+        self.main_window._validate_smart_rewind_settings()
         self.speed_panel_animation.start()
 
         if self.config.get_blur_enabled():

@@ -41,6 +41,18 @@ class Config:
     def set_long_skip_duration(self, minutes):
         self.settings.setValue("long_skip_duration", minutes)
 
+    def get_smart_rewind_wait(self):
+        return int(self.settings.value("smart_rewind_wait", 0))
+
+    def set_smart_rewind_wait(self, minutes):
+        self.settings.setValue("smart_rewind_wait", minutes)
+
+    def get_smart_rewind_duration(self):
+        return int(self.settings.value("smart_rewind_duration", 0))
+
+    def set_smart_rewind_duration(self, seconds):
+        self.settings.setValue("smart_rewind_duration", seconds)
+
     def get_speed_increment(self):
         return float(self.settings.value("speed_increment", 0.1))
 
