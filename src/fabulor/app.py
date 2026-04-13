@@ -305,9 +305,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         controls_layout = QHBoxLayout()
         self.prev_button = HoverButton("|<<")
-        self.rewind_button = QPushButton("<")
+        self.rewind_button = RightClickButton("<")
         self.play_pause_button = QPushButton("Play")
-        self.forward_button = QPushButton(">")
+        self.forward_button = RightClickButton(">")
         self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
@@ -317,7 +317,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.prev_button.clicked.connect(self.handle_prev)
         self.rewind_button.clicked.connect(self.handle_rewind)
+        self.rewind_button.rightClicked.connect(lambda: self.handle_rewind(long_skip=True))
         self.forward_button.clicked.connect(self.handle_forward)
+        self.forward_button.rightClicked.connect(lambda: self.handle_forward(long_skip=True))
         self.next_button.clicked.connect(self.handle_next)
 
         # Hover signals for chapter previews
@@ -768,20 +770,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         step_row_layout.addStretch()
         self.speed_panel_layout.addLayout(step_row_layout)
 
-        # Skip Interval Section
-        skip_header = QLabel("Skip interval (s)")
-        skip_header.setObjectName("settings_header")
-        self.speed_panel_layout.addWidget(skip_header)
-        skip_row_layout = QHBoxLayout()
+        # Skip & Long Skip Section
+        skip_header_row = QHBoxLayout()
+        skip_label = QLabel("Skip")
+        skip_label.setObjectName("settings_header")
+        long_skip_label = QLabel("Long skip")
+        long_skip_label.setObjectName("settings_header")
+        skip_header_row.addWidget(skip_label)
+        skip_header_row.addStretch()
+        skip_header_row.addWidget(long_skip_label)
+        self.speed_panel_layout.addLayout(skip_header_row)
+
+        skip_buttons_row = QHBoxLayout()
         self.skip_buttons = {}
-        for val in [5, 10, 15, 30, 45, 60]:
+        for val in [5, 10, 15, 30]:
             btn = QPushButton(str(val))
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, v=val: self._update_skip_mode(v))
-            skip_row_layout.addWidget(btn)
+            skip_buttons_row.addWidget(btn)
             self.skip_buttons[val] = btn
-        skip_row_layout.addStretch()
-        self.speed_panel_layout.addLayout(skip_row_layout)
+
+        skip_buttons_row.addStretch()
+
+        self.long_skip_buttons = {}
+        for val in [1, 2, 5]:
+            btn = QPushButton(str(val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_long_skip_mode(v))
+            skip_buttons_row.addWidget(btn)
+            self.long_skip_buttons[val] = btn
+        self.speed_panel_layout.addLayout(skip_buttons_row)
 
         self.speed_panel_layout.addStretch()
         self.speed_panel.hide()
@@ -1377,6 +1395,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_def_speed_visuals()
         self._update_step_visuals()
         self._update_skip_visuals()
+        self._update_long_skip_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1574,19 +1593,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.player.pause = not self.player.pause
 
-    def handle_rewind(self):
+    def handle_rewind(self, long_skip=False):
         self.panel_manager.hide_all_panels()
         if self.player:
             speed = self.player.speed or 1.0
-            skip = self.config.get_skip_duration() * speed
+            if long_skip:
+                skip = self.config.get_long_skip_duration() * 60 * speed
+            else:
+                skip = self.config.get_skip_duration() * speed
             self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
             self._is_seeking = True
 
-    def handle_forward(self):
+    def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
         if self.player:
             speed = self.player.speed or 1.0
-            skip = self.config.get_skip_duration() * speed
+            if long_skip:
+                skip = self.config.get_long_skip_duration() * 60 * speed
+            else:
+                skip = self.config.get_skip_duration() * speed
             self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
             self._is_seeking = True
 
@@ -1765,6 +1790,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not hasattr(self, 'skip_buttons'): return
         current = self.config.get_skip_duration()
         for val, btn in self.skip_buttons.items():
+            btn.setProperty("selected", "true" if int(val) == int(current) else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_long_skip_mode(self, val):
+        self.config.set_long_skip_duration(val)
+        self._update_long_skip_visuals()
+
+    def _update_long_skip_visuals(self):
+        if not hasattr(self, 'long_skip_buttons'): return
+        current = self.config.get_long_skip_duration()
+        for val, btn in self.long_skip_buttons.items():
             btn.setProperty("selected", "true" if int(val) == int(current) else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)

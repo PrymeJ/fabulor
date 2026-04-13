@@ -35,6 +35,12 @@ class Config:
     def set_skip_duration(self, seconds):
         self.settings.setValue("skip_duration", seconds)
 
+    def get_long_skip_duration(self):
+        return int(self.settings.value("long_skip_duration", 1))
+
+    def set_long_skip_duration(self, minutes):
+        self.settings.setValue("long_skip_duration", minutes)
+
     def get_speed_increment(self):
         return float(self.settings.value("speed_increment", 0.1))
 
