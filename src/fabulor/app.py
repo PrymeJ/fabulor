@@ -306,8 +306,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         controls_layout = QHBoxLayout()
         self.prev_button = HoverButton("|<<")
         self.rewind_button = RightClickButton("<")
+        self.rewind_button.setAutoRepeat(True)
+        self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
+        self.rewind_button.setAutoRepeatInterval(150) # Skip again every 150ms
         self.play_pause_button = QPushButton("Play")
         self.forward_button = RightClickButton(">")
+        self.forward_button.setAutoRepeat(True)
+        self.forward_button.setAutoRepeatDelay(500)
+        self.forward_button.setAutoRepeatInterval(150)
         self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
