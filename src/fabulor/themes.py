@@ -560,6 +560,7 @@ THEMES = {
         "curr_chap_highlight":    "#5B80B8",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
+        "panel_theme_names_dimmed": "#41BAEA",
         "text":                   "#E8EAF6",
         "gradient_bg_angle":      135,
         "gradient_bg_start":      "#0A0A1A",
@@ -608,7 +609,8 @@ THEMES = {
         "curr_chap_highlight":    "#CC6C54",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
-        "text":                   "#F2E4D8"
+        "panel_theme_names_dimmed": "#ECECAE",
+        "text":                   "#E5E6B3",
     },
     "Slow Regard": {
         "bg_deep":                "#3A2A1E",
@@ -669,7 +671,7 @@ THEMES = {
         "panel_theme_names_dimmed": "#D7B6D2",
         "text":                   "#FFF5EC"
     },
-    "The City of Stairs": {
+        "The City of Stairs": {
         "bg_deep":                "#0E1E24",
         "bg_main":                "#183238",
         "slider_overall_bg":      "#244A52",
@@ -686,6 +688,7 @@ THEMES = {
         "curr_chap_highlight":    "#6AAAA0",
         "sidebar_opacity":        0.83,
         "panel_opacity_hover":    0.91,
+        "panel_theme_names_dimmed": "#A2C1C8",
         "text":                   "#EAF2EA"
     },
     "The Color Purple": {
@@ -803,6 +806,7 @@ THEMES = {
         "curr_chap_highlight":    "#D0C8E4",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
+        "panel_theme_names_dimmed": "#C18EAC",
         "text":                   "#F2EFF8"
     },
     "Urras": {
