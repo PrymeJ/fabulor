@@ -1577,14 +1577,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def handle_rewind(self):
         self.panel_manager.hide_all_panels()
         if self.player:
-            skip = self.config.get_skip_duration()
+            speed = self.player.speed or 1.0
+            skip = self.config.get_skip_duration() * speed
             self.player.time_pos = max(0, (self.player.time_pos or 0) - skip)
             self._is_seeking = True
 
     def handle_forward(self):
         self.panel_manager.hide_all_panels()
         if self.player:
-            skip = self.config.get_skip_duration()
+            speed = self.player.speed or 1.0
+            skip = self.config.get_skip_duration() * speed
             self.player.time_pos = min(self.player.duration or 0, (self.player.time_pos or 0) + skip)
             self._is_seeking = True
 
