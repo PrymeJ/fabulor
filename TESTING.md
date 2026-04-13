@@ -135,6 +135,7 @@
 - [x] Chapter Hints: Background scales to text width (Size Policy Maximum)
 - [x] Settings: Consistency in button groups (Blur, Fade, Hints, Scroll)
 - [x] Theme rotation: Timer based on interval settings
+- [x] Mouse wheel scroll over speed button adjusts speed
 
 ## Theme engine || reorder
 
@@ -144,7 +145,7 @@
 - [x] All clicks on buttons dismisses and performs
 - [x] Clicking on chapter name does not dismiss
 
-## Each theme here || name default needs fix, feat random
+## Each theme here
 
 - [ ] Alzabo
 - [ ] Anomander
