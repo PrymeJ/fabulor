@@ -225,7 +225,6 @@ class LibraryPanel(QFrame):
 
     def _on_sort_changed(self):
         sort_text = self.sort_combo.currentText()
-        # If moving to/from a view that requires filtering (Last Played), force refresh
         if sort_text == "Last Played" or self._last_filter_mode == "Last Played":
             self.refresh(force=True)
         else:
