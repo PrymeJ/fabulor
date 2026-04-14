@@ -151,19 +151,8 @@ class LibraryPanel(QFrame):
         if self._initialized and not force:
             return
     
-        # Map display names to SQL ORDER BY fragments
-        sort_map = {
-            "Title": "title COLLATE NOCASE ASC",
-            "Author": "author COLLATE NOCASE ASC",
-            "Last Played": "last_played IS NULL, last_played DESC",
-            "Progress": "progress IS NULL, progress DESC", 
-            "Duration": "duration IS NULL, duration DESC",
-        }
-        
-        sort_text = self.sort_combo.currentText()
-        order_clause = sort_map.get(sort_text, "title COLLATE NOCASE ASC")
-
-        books = self.db.get_all_books(sort_by=order_clause)
+        # Always fetch from DB with a simple title sort; display sorting is handled in-memory
+        books = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
         existing_paths = {self._grid_items[p].book_data["path"] 
                          for p in self._grid_items}
         new_paths = {b["path"] for b in books}
@@ -199,10 +188,6 @@ class LibraryPanel(QFrame):
             # Always add/re-add to the grid to maintain correct sorting and layout
             self.grid.addWidget(self._grid_items[path], i // cols, i % cols)
 
-            # Process events every few items to keep the UI responsive and allow the 'X' button to work
-            if i % 5 == 0:
-                QCoreApplication.processEvents()
-
         self._initialized = True
 
     def _toggle_sort_direction(self):
@@ -228,18 +213,21 @@ class LibraryPanel(QFrame):
         def sort_value(item):
             val = item.book_data.get(sort_key)
             if val is None:
-                # None values always go last regardless of direction
-                return (1, 0) if sort_key in numeric_keys else (1, "")
+                return (1, 0 if sort_key in numeric_keys else "")
             if sort_key in numeric_keys:
                 return (0, float(val))
             if sort_key in datetime_keys:
                 return (0, str(val))
             return (0, str(val).lower())
 
+        # Sort nulls always last by sorting ascending first, then reversing only non-null values
         items = sorted(
-            self._grid_items.values(),
+            [i for i in self._grid_items.values() if i.book_data.get(sort_key) is not None],
             key=sort_value,
             reverse=not ascending
+        ) + sorted(
+            [i for i in self._grid_items.values() if i.book_data.get(sort_key) is None],
+            key=sort_value
         )
 
         self.container.setUpdatesEnabled(False)
