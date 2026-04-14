@@ -947,7 +947,7 @@ def get_stylesheet(theme_name="default"):
 
         }}
         QWidget#library_panel {{
-            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, .97);
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
             border: none;
@@ -1001,6 +1001,12 @@ def get_stylesheet(theme_name="default"):
         }}
         TitleBar QPushButton:hover {{
             background: {t['accent']};
+        }}
+        TitleBar QPushButton {{
+            border-radius: 0px; /* Makes minimize/close buttons square */
+        }}
+        QWidget#library_top_bar {{
+            background-color: rgba(0, 0, 0, 0.2); /* Gives the header a darker tint */
         }}
         QLabel {{
             color: {t['text']};
