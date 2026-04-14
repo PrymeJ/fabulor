@@ -177,3 +177,33 @@ class Config:
 
     def set_library_view_mode(self, mode):
         self.settings.setValue("library_view_mode", mode)
+
+    def get_voice_boost_enabled(self):
+        return self.settings.value("voice_boost_enabled", "false") == "true"
+
+    def set_voice_boost_enabled(self, enabled):
+        self.settings.setValue("voice_boost_enabled", str(enabled).lower())
+
+    def get_norm_enabled(self):
+        return self.settings.value("norm_enabled", "false") == "true"
+
+    def set_norm_enabled(self, enabled):
+        self.settings.setValue("norm_enabled", str(enabled).lower())
+
+    def get_mono_enabled(self):
+        return self.settings.value("mono_enabled", "false") == "true"
+
+    def set_mono_enabled(self, enabled):
+        self.settings.setValue("mono_enabled", str(enabled).lower())
+
+    def get_channels_swapped(self):
+        return self.settings.value("channels_swapped", "false") == "true"
+
+    def set_channels_swapped(self, enabled):
+        self.settings.setValue("channels_swapped", str(enabled).lower())
+
+    def get_balance(self):
+        return self._safe_float("balance", 0.0)
+
+    def set_balance(self, value):
+        self.settings.setValue("balance", float(value))

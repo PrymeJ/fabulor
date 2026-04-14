@@ -137,6 +137,21 @@ class Player(QObject):
     def volume(self, value): 
         if self.instance: self.instance.volume = value
 
+    def apply_audio_processing(self, norm=False, mono=False, swap=False, balance=0.0, voice_boost=False):
+        if not self.instance: return
+        
+        filters = []
+        if norm: filters.append("dynaudnorm") # Dynamic normalization
+        if voice_boost:
+            # Boost mid-range frequencies (500Hz to 4kHz) for speech clarity
+            filters.append("equalizer=g1=0:g2=0:g3=0:g4=0:g5=2:g6=5:g7=5:g8=2:g9=0:g10=0")
+        if mono: filters.append("pan=1:c0=0.5*c0+0.5*c1") # Downmix to mono
+        if swap: filters.append("pan=2:c0=c1:c1=c0")      # Swap L/R
+        
+        # python-mpv often expects a comma-separated string for 'af'
+        self.instance.af = ",".join(filters)
+        self.instance.balance = balance
+
     @property
     def eof_reached(self):
         return self._eof

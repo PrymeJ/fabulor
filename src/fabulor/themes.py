@@ -1153,6 +1153,10 @@ def get_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
+        #balance_slider {{
+            qproperty-bg_color: "{t['slider_vol_bg']}";
+            qproperty-fill_color: "{t['slider_vol_fill']}";
+        }}
 
         QComboBox {{
             background-color: {t['bg_dropdown']};
@@ -1202,12 +1206,13 @@ def get_stylesheet(theme_name="default"):
         QTabBar::tab {{
             background: {t['bg_deep']};
             color: rgba({text_rgb}, 0.5);
-            padding: 3px 12px;
-            font-size: 11px;
+            padding: 3px 8px 3px 9px;
+            font-size: 12px;
             font-weight: bold;
             border-top-left-radius: 2px; 
             border-top-right-radius: 2px;
-            margin-right: 2px;
+            margin-right: 0px;
+            margin-left: 2px
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
@@ -1275,6 +1280,13 @@ def get_stylesheet(theme_name="default"):
         QPushButton#secondary_button:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        #disable_sleep_btn, #reset_audio_btn {{ /* Shared styling for prominent action buttons */
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-size: 14px;
+            padding: 10px;
+            margin-top: 10px;
         }}
         /* Custom Scrollbar for QComboBox dropdown list */
         QComboBox QAbstractItemView QScrollBar:vertical,

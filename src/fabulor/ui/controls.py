@@ -13,6 +13,8 @@ class ClickSlider(QWidget):
         self._minimum = 0
         self._maximum = 1000
         self._dragging = False
+        self.center_mark = False
+        self.snap_to_center = False
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
         self._fill_color = QColor("#C8A2C8")
@@ -44,6 +46,12 @@ class ClickSlider(QWidget):
             self.update()
 
     def _val_from_x(self, x):
+        if self.snap_to_center:
+            mid_x = self.width() / 2
+            # Snap if within 5 pixels of the physical center
+            if abs(x - mid_x) < 5:
+                return (self._minimum + self._maximum) // 2
+                
         return self._minimum + int((self._maximum - self._minimum) * x / self.width())
 
     def mousePressEvent(self, event):
@@ -68,6 +76,12 @@ class ClickSlider(QWidget):
         filled = int(ratio * self.width())
         p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
         p.fillRect(0, 0, filled, self.height(), self._fill_color)
+
+        if self.center_mark:
+            # Draw a subtle notch in the dead center
+            p.setPen(QColor(255, 255, 255, 60))
+            mid = self.width() // 2
+            p.drawLine(mid, 0, mid, self.height())
         p.end()
 
 class ScrollingLabel(QLabel):
