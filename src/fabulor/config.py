@@ -5,6 +5,18 @@ class Config:
     def __init__(self):
         self.settings = QSettings("Fabulor", "Fabulor") # Org, App
 
+    def _safe_int(self, key, default):
+        val = self.settings.value(key, default)
+        if isinstance(val, (list, tuple)):
+            val = val[0] if val else default
+        return int(val)
+
+    def _safe_float(self, key, default):
+        val = self.settings.value(key, default)
+        if isinstance(val, (list, tuple)):
+            val = val[0] if val else default
+        return float(val)
+
     def get_theme(self):
         return self.settings.value("theme", "default")
 
@@ -18,49 +30,49 @@ class Config:
         self.settings.setValue("blur_enabled", str(enabled).lower())
 
     def get_theme_fade_duration(self):
-        return int(self.settings.value("theme_fade_duration", 750))
+        return self._safe_int("theme_fade_duration", 750)
 
     def set_theme_fade_duration(self, ms):
         self.settings.setValue("theme_fade_duration", ms)
 
     def get_volume(self):
-        return int(self.settings.value("volume", 100))
+        return self._safe_int("volume", 100)
 
     def set_volume(self, value):
         self.settings.setValue("volume", value)
 
     def get_skip_duration(self):
-        return int(self.settings.value("skip_duration", 10))
+        return self._safe_int("skip_duration", 10)
 
     def set_skip_duration(self, seconds):
         self.settings.setValue("skip_duration", seconds)
 
     def get_long_skip_duration(self):
-        return int(self.settings.value("long_skip_duration", 1))
+        return self._safe_int("long_skip_duration", 1)
 
     def set_long_skip_duration(self, minutes):
         self.settings.setValue("long_skip_duration", minutes)
 
     def get_smart_rewind_wait(self):
-        return int(self.settings.value("smart_rewind_wait", 0))
+        return self._safe_int("smart_rewind_wait", 0)
 
     def set_smart_rewind_wait(self, minutes):
         self.settings.setValue("smart_rewind_wait", minutes)
 
     def get_smart_rewind_duration(self):
-        return int(self.settings.value("smart_rewind_duration", 0))
+        return self._safe_int("smart_rewind_duration", 0)
 
     def set_smart_rewind_duration(self, seconds):
         self.settings.setValue("smart_rewind_duration", seconds)
 
     def get_speed_increment(self):
-        return float(self.settings.value("speed_increment", 0.1))
+        return self._safe_float("speed_increment", 0.1)
 
     def set_speed_increment(self, value):
         self.settings.setValue("speed_increment", float(value))
 
     def get_default_speed(self):
-        return float(self.settings.value("default_speed", 1.0))
+        return self._safe_float("default_speed", 1.0)
 
     def set_default_speed(self, value):
         self.settings.setValue("default_speed", float(value))
@@ -94,7 +106,7 @@ class Config:
 
     def get_sleep_duration(self):
         """Returns the last set sleep duration in minutes."""
-        return int(self.settings.value("sleep_duration", 30)) # Default to 30 minutes
+        return self._safe_int("sleep_duration", 30) # Default to 30 minutes
 
     def set_sleep_duration(self, minutes):
         self.settings.setValue("sleep_duration", minutes)
@@ -107,13 +119,13 @@ class Config:
         self.settings.setValue("sleep_mode", mode)
 
     def get_sleep_fade_duration(self):
-        return int(self.settings.value("sleep_fade_duration", 0))
+        return self._safe_int("sleep_fade_duration", 0)
 
     def set_sleep_fade_duration(self, seconds):
         self.settings.setValue("sleep_fade_duration", seconds)
 
     def get_theme_rotation_interval(self):
-        return int(self.settings.value("theme_rotation_interval", 0)) # 0 means Off
+        return self._safe_int("theme_rotation_interval", 0) # 0 means Off
 
     def set_theme_rotation_interval(self, minutes):
         self.settings.setValue("theme_rotation_interval", minutes)
@@ -143,7 +155,7 @@ class Config:
         self.settings.setValue("chapter_hints_enabled", str(enabled).lower())
 
     def get_undo_duration(self):
-        return int(self.settings.value("undo_duration", 3))
+        return self._safe_int("undo_duration", 3)
 
     def set_undo_duration(self, seconds):
         self.settings.setValue("undo_duration", seconds)
@@ -160,12 +172,6 @@ class Config:
     def set_library_sort_ascending(self, val):
         self.settings.setValue("library_sort_ascending", str(val).lower())
 
-    def get_library_view_mode(self):
-        return self.settings.value("library_view_mode", "3 per row")
-
-    def set_library_view_mode(self, mode):
-        self.settings.setValue("library_view_mode", mode)
-    
     def get_library_view_mode(self):
         return self.settings.value("library_view_mode", "3 per row")
 

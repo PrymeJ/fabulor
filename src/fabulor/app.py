@@ -421,7 +421,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider.setGraphicsEffect(self.vol_opacity)
         
         self.vol_fade_anim = QPropertyAnimation(self.vol_opacity, b"opacity")
-        self.vol_fade_anim.setDuration(500) # Slow fade as requested
+        self.vol_fade_anim.setDuration(500) # Slow fade
         self.vol_fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
         
         self.vol_hide_timer = QTimer(self)
@@ -593,7 +593,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         fade_row = QHBoxLayout()
         self.fade_buttons = {}
         for ms_val in [0, 500, 750, 1000, 1500]:
-            btn = QPushButton(str(ms_val))
+            label = "Off" if ms_val == 0 else str(ms_val)
+            btn = QPushButton(label)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, v=ms_val: self._update_fade_mode(v))
             fade_row.addWidget(btn)
