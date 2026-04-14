@@ -120,7 +120,7 @@ class LibraryDB:
                 folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
                 title=excluded.title,
                 author=excluded.author,
-                narrator=excluded.narrator,
+                narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
                 duration=excluded.duration,
                 progress=COALESCE(excluded.progress, books.progress),
                 cover_path=excluded.cover_path
