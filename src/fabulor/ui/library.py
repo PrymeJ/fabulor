@@ -323,11 +323,11 @@ class LibraryPanel(QFrame):
         #self.top_bar_layout.addStretch() # Pushes subsequent widgets to the right
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search")
+        self.search_field.setPlaceholderText("search #tag")
         self.search_field.setAlignment(Qt.AlignCenter) 
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
-        self.search_field.setStyleSheet("QLineEdit { font-size: 11px; }")
+        self.search_field.setStyleSheet("QLineEdit { font-size: 12px; }")
         self.top_bar_layout.setSpacing(3)
         self.top_bar_layout.addWidget(self.search_field)
 
