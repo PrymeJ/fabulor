@@ -53,6 +53,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scanner = LibraryScanner(self.db.db_path)
         self._undo_pos = None
         self._undo_timer = QTimer(self)
+        self._last_undo_click_time = 0
         self._undo_slide_in_connected = False
         self._undo_slide_out_connected = False
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
@@ -650,7 +651,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         undo_row = QHBoxLayout()
         self.undo_buttons = {}
-        for val, label in [(0, "Off"), (3, "3s"), (5, "5s"), (8, "8s")]:
+        for val, label in [(0, "Off"), (3, "3"), (5, "5"), (8, "8")]:
             btn = QPushButton(label)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, v=val: self._update_undo_mode(v))
@@ -1334,7 +1335,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player and self.player.duration:
             old_pos = self.player.time_pos
             new_pos = (self.progress_slider.value() / 1000) * self.player.duration
-            if abs(new_pos - old_pos) > 60:
+            speed = self.player.speed or 1.0
+            if abs(new_pos - old_pos) > 60 * speed:
                 self._trigger_undo(old_pos)
             self.player.time_pos = new_pos
             self._is_seeking = True
@@ -1356,7 +1358,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0:
                     new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
                     new_pos = start + new_chap_pos
-                    if abs(new_pos - old_pos) > 60:
+                    speed = self.player.speed or 1.0
+                    if abs(new_pos - old_pos) > 60 * speed:
                         self._trigger_undo(old_pos)
                     self.player.time_pos = new_pos
                     self._is_seeking = True
@@ -1740,7 +1743,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if duration == 0:
             return
 
-        self._undo_pos = old_pos
+        now = time.time()
+        # Define the window where rapid clicks are treated as a single seek sequence.
+        # We use either 2 seconds or half the button visibility duration, whichever is smaller.
+        #sequence_window = min(2.0, duration / 2.0)
+        sequence_window = duration
+
+        if self._undo_pos is None or (now - self._last_undo_click_time > sequence_window):
+            self._undo_pos = old_pos
+
+        self._last_undo_click_time = now
         self._undo_timer.stop()
 
         width = self.width()
