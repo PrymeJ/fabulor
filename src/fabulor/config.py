@@ -141,3 +141,9 @@ class Config:
 
     def set_chapter_hints_enabled(self, enabled):
         self.settings.setValue("chapter_hints_enabled", str(enabled).lower())
+
+    def get_undo_duration(self):
+        return int(self.settings.value("undo_duration", 3))
+
+    def set_undo_duration(self, seconds):
+        self.settings.setValue("undo_duration", seconds)

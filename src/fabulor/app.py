@@ -644,10 +644,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         hints_row.addStretch()
         app_layout.addLayout(hints_row)
 
+        undo_header = QLabel("Undo seek button")
+        undo_header.setObjectName("settings_header")
+        app_layout.addWidget(undo_header)
+
+        undo_row = QHBoxLayout()
+        self.undo_buttons = {}
+        for val, label in [(0, "Off"), (3, "3s"), (5, "5s"), (8, "8s")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_undo_mode(v))
+            undo_row.addWidget(btn)
+            self.undo_buttons[val] = btn
+        undo_row.addStretch()
+        app_layout.addLayout(undo_row)
+
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Appearance")
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
+        self._update_undo_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
 
@@ -1454,6 +1470,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_skip_visuals()
         self._update_long_skip_visuals()
         self._update_smart_rewind_visuals()
+        self._update_undo_visuals()
         self._update_sleep_panel_styling()
 
     def _update_sleep_panel_styling(self):
@@ -1718,6 +1735,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._is_seeking = True
 
     def _trigger_undo(self, old_pos):
+        """Slides in the floating undo button."""
+        duration = self.config.get_undo_duration()
+        if duration == 0:
+            return
+
         self._undo_pos = old_pos
         self._undo_timer.stop()
 
@@ -1735,7 +1757,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._undo_slide_in_connected = False
 
         if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
-            self._undo_timer.start(4000)
+            self._undo_timer.start(duration * 1000)
             return
 
         self.undo_overlay.move(width, y_pos)
@@ -1750,7 +1772,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_undo_slide_in_done(self):
         self._undo_slide_in_connected = False
-        self._undo_timer.start(4000)    
+        duration = self.config.get_undo_duration()
+        if duration > 0:
+            self._undo_timer.start(duration * 1000)    
 
     def _perform_undo(self):
         """Seeks back and slides the button out."""
@@ -1888,6 +1912,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         current = self.config.get_scroll_mode()
         for mode, btn in self.scroll_buttons.items():
             btn.setProperty("selected", "true" if mode == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _update_undo_mode(self, val):
+        self.config.set_undo_duration(val)
+        self._update_undo_visuals()
+
+    def _update_undo_visuals(self):
+        if not hasattr(self, 'undo_buttons'): return
+        current = self.config.get_undo_duration()
+        for val, btn in self.undo_buttons.items():
+            btn.setProperty("selected", "true" if val == current else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
