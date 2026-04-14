@@ -9,72 +9,264 @@ from PySide6.QtGui import QPixmap
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
 
-    def __init__(self, book_data, player_instance=None, parent=None):
+    def __init__(self, book_data, view_mode="3 per row", player_instance=None, parent=None):
         super().__init__(parent)
         self.book_data = book_data
+        self.view_mode = view_mode
         self.setObjectName("book_item")
         self.setCursor(Qt.PointingHandCursor)
         
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(4)
+        self._build_ui()
+        self.update_data(book_data)
 
-        # Cover Area (Vertical Rectangle Aspect Ratio)
-        self.cover_label = QLabel()
-        self.cover_label.setObjectName("book_cover")
-        # Approx 1:1.4 aspect ratio for 3-column layout
-        self.cover_label.setFixedSize(80, 115) 
-        self.cover_label.setAlignment(Qt.AlignCenter)
+    # ---------------- UI BUILD ----------------
+    def _clear_layout(self):
+        if self.layout():
+            while self.layout().count():
+                item = self.layout().takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self.layout().deleteLater()
+
+    def _make_cover(self, w, h):
+        label = QLabel()
+        label.setFixedSize(w, h)
+        label.setStyleSheet("background:#0D001A;")
+        label.setAlignment(Qt.AlignCenter)
+        label.setContentsMargins(0,0,0,0)
+        return label
+
+    def _make_time_row(self):
+        row = QHBoxLayout()
+        row.setContentsMargins(0,0,0,0)
+        row.setSpacing(0)
+
+        self.elapsed_label = QLabel()
+        self.elapsed_label.setContentsMargins(0,0,0,0)
+        self.total_label = QLabel()
+        self.total_label.setContentsMargins(0,0,0,0)
+
+        row.addWidget(self.elapsed_label)
+        row.addStretch()
+        row.addWidget(self.total_label)
+        return row
+
+    def _make_progress_row(self):
+        self.progress_container = QWidget()
+        self.progress_container.setFixedHeight(16)
+        row = QHBoxLayout(self.progress_container)
+        row.setContentsMargins(0,0,0,0)
+        row.setSpacing(8)
+
+        if self.view_mode == "1 per row":
+            row.addStretch()
+
+        self.progress_outer = QFrame()
+        self.progress_outer.setObjectName("book_progress_outer")
+        self.progress_inner = QFrame(self.progress_outer)
+        self.progress_inner.setObjectName("book_progress_inner")
+        self.progress_inner.setFixedHeight(6)
+
+        self.pct_label = QLabel()
+        self.pct_label.setContentsMargins(0,0,0,0)
+
+        # Styling and Constraints
+        self.progress_outer.setFixedHeight(6)
+        if self.view_mode == "1 per row":
+            self.progress_outer.setFixedWidth(132)
+        else:
+            self.progress_outer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
-        # Initial placeholder
-        display_title = book_data.get("title") or "Unknown"
-        self.cover_label.setText(display_title[:1])
-        self.cover_label.setProperty("placeholder", True)
+        self.pct_label.setFixedWidth(35)
+        self.pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        layout.addWidget(self.cover_label, 0, Qt.AlignCenter)
+        row.addWidget(self.progress_outer)
+        row.addWidget(self.pct_label)
+        return self.progress_container
 
-        # Labels
-        title = str(book_data.get("title") or "Unknown Title")
-        prog = float(book_data.get("progress", 0))
-        dur = float(book_data.get("duration", 0))
-        perc = (prog / dur * 100) if dur > 0 else 0
-        self.title_label = QLabel(f"{title} ({perc:.1f}%)")
-        self.title_label.setObjectName("book_item_title")
-        self.title_label.setWordWrap(True)
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setToolTip(self.title_label.text())
-        layout.addWidget(self.title_label)
+    def _build_ui(self):
+        self._clear_layout()
 
-        self.author_label = QLabel(str(book_data.get("author") or "Unknown Author"))
-        self.author_label.setObjectName("book_item_author")
-        self.author_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.author_label)
+        mode = self.view_mode
 
-        # Optional: Narrator could be added here based on settings
-        
-        self.setFixedHeight(180)
-        self.setFixedWidth(90)
+        # -------- 3 PER ROW --------
+        if mode == "3 per row":
+            self.setFixedSize(92,160)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0,0,0,0)
+            layout.setSpacing(0)
+
+            self.cover_label = self._make_cover(92,129)
+            layout.addWidget(self.cover_label)
+
+            self.time_row = self._make_time_row()
+            layout.addLayout(self.time_row)
+
+            self.progress_row = self._make_progress_row()
+            layout.addWidget(self.progress_row)
+
+        # -------- 2 PER ROW --------
+        elif mode == "2 per row":
+            self.setFixedSize(140,160)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0,0,0,0)
+            layout.setSpacing(2)
+
+            self.cover_label = self._make_cover(63,88)
+            layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
+
+            self.title_label = QLabel()
+            self.author_label = QLabel()
+
+            for lbl in (self.title_label, self.author_label):
+                lbl.setContentsMargins(0,0,0,0)
+
+            layout.addWidget(self.title_label)
+            layout.addWidget(self.author_label)
+
+            self.time_row = self._make_time_row()
+            layout.addLayout(self.time_row)
+
+            self.progress_row = self._make_progress_row()
+            layout.addWidget(self.progress_row)
+
+        # -------- 1 PER ROW --------
+        elif mode == "1 per row":
+            self.setFixedSize(292,150)
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(4,4,4,4)
+            layout.setSpacing(8)
+
+            self.cover_label = self._make_cover(100,140)
+            layout.addWidget(self.cover_label)
+
+            text_layout = QVBoxLayout()
+            text_layout.setSpacing(2)
+
+            self.title_label = QLabel()
+            self.author_label = QLabel()
+            self.narrator_label = QLabel()
+            self.year_label = QLabel()
+
+            for lbl in (self.title_label, self.author_label, self.narrator_label, self.year_label):
+                lbl.setContentsMargins(0,0,0,0)
+
+            text_layout.addWidget(self.title_label)
+            text_layout.addWidget(self.author_label)
+            text_layout.addWidget(self.narrator_label)
+            text_layout.addWidget(self.year_label)
+
+            self.time_row = self._make_time_row()
+            text_layout.addLayout(self.time_row)
+
+            self.progress_row = self._make_progress_row()
+            text_layout.addWidget(self.progress_row)
+
+            layout.addLayout(text_layout)
+
+        # -------- LIST --------
+        else:  # list
+            self.setFixedSize(292,44)
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(4,4,4,4)
+            layout.setSpacing(8)
+
+            self.cover_label = self._make_cover(28,40)
+            layout.addWidget(self.cover_label)
+
+            self.title_label = QLabel()
+            self.title_label.setContentsMargins(0,0,0,0)
+
+            self.author_label = QLabel()
+            self.author_label.setFixedWidth(100)
+            self.author_label.setAlignment(Qt.AlignRight)
+            self.author_label.setContentsMargins(0,0,0,0)
+
+            self.total_label = QLabel()
+            self.total_label.setFixedWidth(60)
+            self.total_label.setAlignment(Qt.AlignRight)
+            self.total_label.setContentsMargins(0,0,0,0)
+
+            layout.addWidget(self.title_label)
+            layout.addStretch()
+            layout.addWidget(self.author_label)
+            layout.addWidget(self.total_label)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Ensure progress inner width is updated when the layout resizes the parent
+        if hasattr(self, "progress_inner") and hasattr(self, "progress_outer"):
+            prog = float(self.book_data.get("progress") or 0)
+            dur = float(self.book_data.get("duration") or 0)
+            pct = (prog / dur) if dur > 0 else 0
+            w = int(self.progress_outer.width() * pct)
+            self.progress_inner.setFixedWidth(w)        
+
+    def update_data(self, book_data):
+        """Updates the item's metadata and UI labels."""
+        self.book_data = book_data
+
+        title = book_data.get("title") or ""
+        author = book_data.get("author") or ""
+        narrator = book_data.get("narrator")
+        year = book_data.get("year")
+
+        prog = float(book_data.get("progress") or 0)
+        dur = float(book_data.get("duration") or 0)
+        pct = (prog / dur) if dur > 0 else 0
+
+        def fmt_time(s):
+            s = int(s or 0)
+            return f"{s//3600}:{(s%3600)//60:02}:{s%60:02}"
+
+        # title/author
+        if hasattr(self, "title_label"):
+            self.title_label.setText(title)
+        if hasattr(self, "author_label"):
+            self.author_label.setText(author)
+
+        # narrator/year visibility
+        if hasattr(self, "narrator_label"):
+            self.narrator_label.setText(narrator or "")
+            self.narrator_label.setVisible(bool(narrator))
+
+        if hasattr(self, "year_label"):
+            self.year_label.setText(str(year) if year else "")
+            self.year_label.setVisible(bool(year))
+
+        # time row
+        if hasattr(self, "elapsed_label"):
+            self.elapsed_label.setText(fmt_time(prog))
+            self.elapsed_label.setVisible(prog > 0)
+
+        if hasattr(self, "total_label"):
+            self.total_label.setText(fmt_time(dur))
+
+        # progress
+        show_progress = prog > 0
+        if hasattr(self, "progress_outer") and hasattr(self, "pct_label"):
+            self.progress_outer.setVisible(show_progress)
+            self.pct_label.setVisible(show_progress)
+            self.pct_label.setText(f"{int(pct*100)}%")
+
+        if hasattr(self, "progress_inner"):
+            w = int(self.progress_outer.width() * pct)
+            self.progress_inner.setFixedWidth(w)
+
+    def set_cover(self, pixmap):
+        if not pixmap or pixmap.isNull():
+            return
+        scaled = pixmap.scaled(
+            self.cover_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        self.cover_label.setPixmap(scaled)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.book_data["path"])
 
-    def update_data(self, book_data):
-        """Updates the item's metadata and UI labels."""
-        self.book_data = book_data
-        title = str(book_data.get("title") or "Unknown Title")
-        author = str(book_data.get("author") or "Unknown Author")
-        prog = float(book_data.get("progress", 0))
-        dur = float(book_data.get("duration", 0))
-        perc = (prog / dur * 100) if dur > 0 else 0
-        
-        self.title_label.setText(f"{title} ({perc:.1f}%)")
-        self.title_label.setToolTip(title)
-        self.author_label.setText(author)
-        
-        # Update the placeholder letter if no cover is loaded
-        if self.cover_label.property("placeholder"):
-            self.cover_label.setText(title[:1])
 
 class LibraryPanel(QFrame):
     book_selected = Signal(str)
@@ -102,7 +294,7 @@ class LibraryPanel(QFrame):
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
-        self.sort_combo.setFixedWidth(80)
+        self.sort_combo.setFixedWidth(85) # Increased to prevent clipping
         self.sort_combo.setCurrentText(self.config.get_library_sort_key())
         self._sort_ascending = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentText()
@@ -121,10 +313,11 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.insertWidget(1, self.sort_dir_btn)
 
         self.style_combo = QComboBox()
-        self.style_combo.addItems(["Grid", "List"])
-        self.style_combo.setFixedWidth(80)
+        self.style_combo.addItems(["3 per row", "2 per row", "1 per row", "List"])
+        self.style_combo.setFixedWidth(75) 
+        self.style_combo.setCurrentText(self.config.get_library_view_mode())
         self.top_bar_layout.setSpacing(3)
-        self.style_combo.currentTextChanged.connect(lambda: self.refresh(force=True))
+        self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
         self.top_bar_layout.addWidget(self.style_combo)
 
         #self.top_bar_layout.addStretch() # Pushes subsequent widgets to the right
@@ -132,8 +325,8 @@ class LibraryPanel(QFrame):
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("search")
         self.search_field.setAlignment(Qt.AlignCenter) 
-        self.search_field.setFixedWidth(70)
-        self.search_field.setFixedHeight(28)
+        self.search_field.setFixedWidth(63)
+        self.search_field.setFixedHeight(30)
         self.search_field.setStyleSheet("QLineEdit { font-size: 11px; }")
         self.top_bar_layout.setSpacing(3)
         self.top_bar_layout.addWidget(self.search_field)
@@ -166,6 +359,12 @@ class LibraryPanel(QFrame):
         self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
 
     def refresh(self, force=False):
+        if force:
+            # Clear all existing items to force rebuild with the new view_mode
+            for item in self._grid_items.values():
+                item.deleteLater()
+            self._grid_items.clear()
+        
         if self._initialized and not force:
             # Even if we don't do a full DB refresh, we MUST sync the 
             # live progress of the current book before returning.
@@ -174,7 +373,7 @@ class LibraryPanel(QFrame):
 
         sort_text = self.sort_combo.currentText()
         # Robustly get the currently playing file from the main window
-        main_win = self.window()
+        main_win = self.parent() if hasattr(self.parent(), 'current_file') else self.window()
         current_file = getattr(main_win, 'current_file', "")
 
         # Always fetch from DB with a simple title sort; display sorting is handled in-memory
@@ -205,7 +404,7 @@ class LibraryPanel(QFrame):
                 book["progress"] = self.config.get_last_position(path)
 
             if path not in existing_paths:
-                item = BookItem(book, player_instance=self.player_instance)
+                item = BookItem(book, view_mode=self.style_combo.currentText(), player_instance=self.player_instance)
                 from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
                 
                 worker = CoverLoaderWorker(book, self.player_instance)
@@ -222,6 +421,10 @@ class LibraryPanel(QFrame):
             
         self._initialized = True
         self._sort_items_in_place()
+    
+    def _on_view_mode_changed(self, mode):
+        self.config.set_library_view_mode(mode)
+        self.refresh(force=True)
 
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
@@ -248,8 +451,13 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(ascending)
 
         sort_key = sort_text.lower().replace(" ", "_")
-        list_mode = self.style_combo.currentText() == "List"
-        cols = 1 if list_mode else (3 if self.width() > 280 else 2)
+        view_mode = self.style_combo.currentText()
+        if view_mode == "3 per row":
+            cols = 3
+        elif view_mode == "2 per row":
+            cols = 2
+        else:
+            cols = 1
 
         # Numeric fields sort as float, datetime as string (ISO format sorts correctly), text as lower
         numeric_keys = {"progress", "duration"}
@@ -290,7 +498,7 @@ class LibraryPanel(QFrame):
         if getattr(self, '_is_animating', False):
             return
             
-        main_win = self.window()
+        main_win = self.parent() if hasattr(self.parent(), 'current_file') else self.window()
         current_file = getattr(main_win, 'current_file', "")
         if current_file and current_file in self._grid_items:
             # Sync the in-memory data from the config cache

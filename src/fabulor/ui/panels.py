@@ -86,9 +86,6 @@ class PanelManager:
         self.library_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.library_panel_animation.start()
         
-        # Refresh after starting animation so the UI doesn't freeze before sliding
-        QTimer.singleShot(100, self.library_panel.refresh)
-        
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
@@ -98,6 +95,7 @@ class PanelManager:
         try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
         except: pass
         self.library_panel._is_animating = False
+        self.library_panel.refresh()
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""

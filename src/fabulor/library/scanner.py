@@ -94,9 +94,16 @@ class ScannerWorker(QObject):
                 # Eagerly grab narrator from tags of the first track
                 if idx == 0 and hasattr(m, 'tags') and m.tags:
                     # Check common narrator tags (m4b/mp3)
-                    for tag in ['TXXX:narrator', 'composer', 'writer', '\xa9nrt']:
+                    # Support ID3 (TCOM, TEXT) and MP4 (\xa9nrt, \xa9wrt)
+                    for tag in ['TXXX:narrator', 'TCOM', 'TEXT', 'composer', 'writer', '\xa9nrt', '\xa9wrt']:
                         if tag in m.tags:
-                            narrator = str(m.tags[tag][0])
+                            val = m.tags[tag]
+                            if isinstance(val, (list, tuple)) and len(val) > 0:
+                                narrator = str(val[0])
+                            elif hasattr(val, 'text') and val.text: # ID3 frames
+                                narrator = str(val.text[0])
+                            else:
+                                narrator = str(val)
                             break
 
                     # If no external cover found, check for embedded tags to use as hint
