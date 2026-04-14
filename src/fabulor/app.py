@@ -290,6 +290,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_button = QPushButton("1.00x")
         self.speed_button.setFixedWidth(60)
         self.speed_button.setFixedHeight(33)
+        self.speed_button.setFixedHeight(30)
         self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
         self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
         self.speed_button.clicked.connect(self._on_speed_button_clicked)
@@ -329,7 +330,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
-            btn.setFixedHeight(34)
+            btn.setFixedHeight(33)
+            btn.setFixedHeight(30)
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
