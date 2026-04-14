@@ -136,6 +136,8 @@
 - [x] Chapter Hints: Click on transport dismisses hint immediately
 - [x] Chapter Hints: Background scales to text width (Size Policy Maximum)
 - [x] Settings: Consistency in button groups (Blur, Fade, Hints, Scroll)
+- [x] Undo button: Sequence logic (anchors to first click during rapid seeking)
+- [x] Undo button: Threshold scales with playback speed (60s * speed)
 - [x] Theme rotation: Timer based on interval settings
 
 ## Theme engine || reorder
