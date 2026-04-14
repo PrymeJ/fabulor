@@ -947,7 +947,7 @@ def get_stylesheet(theme_name="default"):
 
         }}
         QWidget#library_panel {{
-            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, .97);
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
             border: none;
