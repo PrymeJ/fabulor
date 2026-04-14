@@ -140,10 +140,22 @@
 - [x] Undo button: Threshold scales with playback speed (60s * speed)
 - [x] Theme rotation: Timer based on interval settings
 
-## Theme engine || reorder
+## Audio Processing
+
+- [ ] Normalization (Speech Compression) toggles correctly
+- [ ] Voice Boost equalizer applies mid-range lift
+- [ ] Stereo/Mono switch works
+- [ ] Channel swap (L ↔ R) functions correctly
+- [ ] L/R balance slider adjusts volume bias
+- [ ] Balance slider snaps to center (0) when near notch
+- [ ] Balance slider notch is visible at dead center
+- [ ] "Reset to defaults" button hidden when settings are default
+- [ ] "Reset to defaults" restores all audio settings and hides itself
+
+## Theme engine
 
 - [x] Theme changes apply immediately
-- [x] Hover works || needs improvement
+- [x] Hover works
 - [x] Hover preview reverts on dismiss
 - [x] All clicks on buttons dismisses and performs
 - [x] Clicking on chapter name does not dismiss
