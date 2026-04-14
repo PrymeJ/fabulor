@@ -77,6 +77,10 @@ class PanelManager:
         self.library_panel.move(-panel_w, sidebar_y)
         self.library_panel.show()
         self.library_panel.raise_()
+
+        # Set animation guard to prevent layout updates during slide
+        self.library_panel._is_animating = True
+        self.library_panel_animation.finished.connect(self._on_library_shown)
         
         self.library_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(0, sidebar_y))
@@ -89,6 +93,11 @@ class PanelManager:
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
             self.blur_animation.start()
+
+    def _on_library_shown(self):
+        try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
+        except: pass
+        self.library_panel._is_animating = False
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""
@@ -163,6 +172,10 @@ class PanelManager:
             return
         panel_w = self.library_panel.width()
         sidebar_y = 32
+
+        # Set animation guard
+        self.library_panel._is_animating = True
+
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.finished.connect(self._on_library_hidden)
@@ -176,6 +189,7 @@ class PanelManager:
     def _on_library_hidden(self):
         try: self.library_panel_animation.finished.disconnect(self._on_library_hidden)
         except: pass
+        self.library_panel._is_animating = False
         self.library_panel.hide()
 
     def _close_speed_flow(self):

@@ -160,6 +160,11 @@ class LibraryPanel(QFrame):
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
 
+        # Prevent grid expansion by fixing column stretches and adding a spacer column
+        for col in range(3):
+            self.grid.setColumnStretch(col, 0)
+        self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
+
     def refresh(self, force=False):
         if self._initialized and not force:
             # Even if we don't do a full DB refresh, we MUST sync the 
@@ -282,6 +287,9 @@ class LibraryPanel(QFrame):
 
     def update_current_book_progress(self):
         """Live update for the currently playing book's progress and sorting."""
+        if getattr(self, '_is_animating', False):
+            return
+            
         main_win = self.window()
         current_file = getattr(main_win, 'current_file', "")
         if current_file and current_file in self._grid_items:
