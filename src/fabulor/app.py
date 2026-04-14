@@ -289,6 +289,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         speed_row.addStretch()
         self.speed_button = QPushButton("1.00x")
         self.speed_button.setFixedWidth(60)
+        self.speed_button.setFixedHeight(33)
         self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
         self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
         self.speed_button.clicked.connect(self._on_speed_button_clicked)
@@ -328,6 +329,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
+            btn.setFixedHeight(30)
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
@@ -350,15 +352,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chapter_info_layout = QHBoxLayout()
         self.chap_elapsed_label = QLabel("00:00:00")
         self.chap_elapsed_label.setFixedWidth(48)
+        self.chap_elapsed_label.setFixedHeight(24)
         self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         self.chap_duration_label = QLabel("00:00:00")
         self.chap_duration_label.setFixedWidth(48)
+        self.chap_duration_label.setFixedHeight(24)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
         
         self.current_chapter_label = ScrollingLabel("")
         self.current_chapter_label.setObjectName("chapter_selector")
+        self.current_chapter_label.setFixedHeight(24)
         self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
         self.current_chapter_label.set_scroll_mode(self.config.get_scroll_mode())
         
@@ -381,10 +386,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         book_info_layout = QHBoxLayout()
         self.current_time_label = QLabel("00:00:00")
         self.current_time_label.setFixedWidth(80)
+        self.current_time_label.setFixedHeight(24)
         self.current_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         self.total_time_label = QLabel("00:00:00")
         self.total_time_label.setFixedWidth(80)
+        self.total_time_label.setFixedHeight(24)
         self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_time_label.mousePressEvent = self._toggle_remaining_time
         
@@ -408,6 +415,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.vol_stack = QStackedWidget()
         self.vol_stack.setFixedWidth(104) # Sleep timer location
+        self.vol_stack.setFixedHeight(24)
         self.vol_stack.addWidget(self.sleep_timer_label)
 
         self.vol_container = QWidget()
