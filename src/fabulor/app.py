@@ -329,7 +329,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.next_button = HoverButton(">>|")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
-            btn.setFixedHeight(30)
+            btn.setFixedHeight(34)
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
