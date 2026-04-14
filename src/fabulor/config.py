@@ -159,3 +159,15 @@ class Config:
 
     def set_library_sort_ascending(self, val):
         self.settings.setValue("library_sort_ascending", str(val).lower())
+
+    def get_library_view_mode(self):
+        return self.settings.value("library_view_mode", "3 per row")
+
+    def set_library_view_mode(self, mode):
+        self.settings.setValue("library_view_mode", mode)
+    
+    def get_library_view_mode(self):
+        return self.settings.value("library_view_mode", "3 per row")
+
+    def set_library_view_mode(self, mode):
+        self.settings.setValue("library_view_mode", mode)
