@@ -3,7 +3,7 @@ import math
 import random
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
-    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, 
+    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
     QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect,
     QScrollArea, QFrame, QTabWidget
 )
@@ -283,15 +283,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.quote_label.setAlignment(Qt.AlignCenter)
         self.quote_label.setWordWrap(True)
         self.visual_layout.addWidget(self.quote_label)
-
-        self.sleep_timer_label = QPushButton("")
-        self.sleep_timer_label.setObjectName("sleep_timer_display")
-        font = self.sleep_timer_label.font()
-        font.setPointSize(8)
-        self.sleep_timer_label.setFont(font)
-        self.sleep_timer_label.clicked.connect(self._disable_sleep_timer)
-        self.visual_layout.addWidget(self.sleep_timer_label)
-
     def _build_controls(self):
         # Speed button centered above transport controls
         speed_row = QHBoxLayout()
@@ -397,7 +388,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_time_label.mousePressEvent = self._toggle_remaining_time
         
-        for lbl in [self.current_time_label, self.total_time_label]:
+        self.sleep_timer_label = QPushButton("")
+        self.sleep_timer_label.setObjectName("sleep_timer_display")
+        self.sleep_timer_label.setFixedWidth(104)
+        self.sleep_timer_label.clicked.connect(self._disable_sleep_timer)
+        
+        for lbl in [self.current_time_label, self.total_time_label, self.sleep_timer_label]:
             font = lbl.font()
             font.setPointSize(12)
             lbl.setFont(font)
@@ -410,8 +406,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.volume_slider.sliderPressed.connect(self._hide_popups)
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
 
+        self.vol_stack = QStackedWidget()
+        self.vol_stack.setFixedWidth(104) # Sleep timer location
+        self.vol_stack.addWidget(self.sleep_timer_label)
+
+        self.vol_container = QWidget()
+        vol_container_layout = QVBoxLayout(self.vol_container)
+        vol_container_layout.setContentsMargins(0, 6, 0, 0) # Volume bar location
+        vol_container_layout.setSpacing(0)
+        vol_container_layout.addWidget(self.volume_slider)
+        vol_container_layout.addStretch()
+        self.vol_stack.addWidget(self.vol_container)
+
         book_info_layout.addWidget(self.current_time_label)
-        book_info_layout.addWidget(self.volume_slider, 1)
+        book_info_layout.addWidget(self.vol_stack)
+        book_info_layout.addStretch(1)
         book_info_layout.addWidget(self.total_time_label)
         self.content_layout.addLayout(book_info_layout)
 
@@ -423,6 +432,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.vol_fade_anim = QPropertyAnimation(self.vol_opacity, b"opacity")
         self.vol_fade_anim.setDuration(500) # Slow fade
         self.vol_fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.vol_fade_anim.finished.connect(self._on_vol_fade_finished)
         
         self.vol_hide_timer = QTimer(self)
         self.vol_hide_timer.setSingleShot(True)
@@ -1897,6 +1907,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer."""
         self.vol_hide_timer.stop()
+        self.vol_stack.setCurrentIndex(1)
         if self.vol_opacity.opacity() < 1.0:
             self.vol_fade_anim.stop()
             self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
@@ -1910,6 +1921,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
         self.vol_fade_anim.setEndValue(0.0)
         self.vol_fade_anim.start()
+
+    def _on_vol_fade_finished(self):
+        if self.vol_opacity.opacity() == 0:
+            self.vol_stack.setCurrentIndex(0)
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
