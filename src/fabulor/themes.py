@@ -1104,6 +1104,14 @@ def get_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             background-color: {t['bg_deep']};
         }}
+        #book_progress_outer {{
+            background-color: {t['slider_overall_bg']};
+            border-radius: 0px;
+        }}
+        #book_progress_inner {{
+            background-color: {t['slider_overall_fill']};
+            border-radius: 0px;
+        }}
         #book_item_title {{
             font-size: 10px;
             font-weight: bold;
@@ -1147,8 +1155,8 @@ def get_stylesheet(theme_name="default"):
             border-radius: 4px;
             padding: 3px 5px;
             padding-right: 0px; /* Prevent scrollbar sliver on closed combo box */
-            font-size: 10px; /* Smaller font for dropdown text */
-            min-height: 20px;
+            font-size: 12px; /* Increased by 1px */
+            min-height: 22px; /* Increased to accommodate larger font */
         }}
         QComboBox::drop-down {{
             border: none;
@@ -1168,10 +1176,10 @@ def get_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             outline: none;
             padding: 0px; /* Remove any default padding that might affect scrollbar */
-            font-size: 10px; /* Smaller font for dropdown list items */
+            font-size: 12px; /* Smaller font for dropdown list items */
         }}
         QComboBox QAbstractItemView::item {{
-            min-height: 20px; /* Ensure each item has a minimum height */
+            min-height: 22px; /* Ensure each item has a minimum height */
         }}
         QLineEdit {{
             background-color: {t['bg_dropdown']};
