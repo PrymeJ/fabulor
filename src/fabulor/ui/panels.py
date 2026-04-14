@@ -61,6 +61,7 @@ class PanelManager:
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
+        self.main_window._save_current_progress()
         if self.sidebar_expanded:
             self._pending_panel_open = "library"
             self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)

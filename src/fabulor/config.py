@@ -147,3 +147,15 @@ class Config:
 
     def set_undo_duration(self, seconds):
         self.settings.setValue("undo_duration", seconds)
+
+    def get_library_sort_key(self):
+        return self.settings.value("library_sort_key", "Title")
+
+    def set_library_sort_key(self, key):
+        self.settings.setValue("library_sort_key", key)
+
+    def get_library_sort_ascending(self):
+        return self.settings.value("library_sort_ascending", "true") == "true"
+
+    def set_library_sort_ascending(self, val):
+        self.settings.setValue("library_sort_ascending", str(val).lower())

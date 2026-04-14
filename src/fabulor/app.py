@@ -53,6 +53,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scanner = LibraryScanner(self.db.db_path)
         self._undo_pos = None
         self._undo_timer = QTimer(self)
+        self._last_saved_pct = -1
         self._last_undo_click_time = 0
         self._undo_slide_in_connected = False
         self._undo_slide_out_connected = False
@@ -466,7 +467,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _build_library_panel(self):
-        self.library_panel = LibraryPanel(self.db, player_instance=self.player, parent=self)
+        self.library_panel = LibraryPanel(self.db, self.config, player_instance=self.player, parent=self)
         self.library_panel.hide()
         self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
         self.library_panel_animation.setDuration(300)
@@ -1107,9 +1108,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if current == 1:
             self._check_library_status()
 
+    def _save_current_progress(self):
+        """Saves the current playback position to both DB and Config."""
+        if self.current_file and self.player.instance:
+            pos = self.player.time_pos
+            if pos is not None:
+                self.db.update_progress(self.current_file, pos)
+                self.config.set_last_position(self.current_file, pos)
+
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
+        self._save_current_progress() # Save state of the book we are leaving
+        self._last_saved_pct = -1
         self.current_file = path
+        self.db.update_last_played(path)
         self.player.load_book(path)
         self._load_cover_art(path)
         self._check_library_status()
@@ -1139,10 +1151,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _restore_position(self):
         """Seeks to the saved position from config."""
-        last_pos = self.config.get_last_position(self.current_file)
-        if last_pos > 0:
-            self.player.time_pos = last_pos
-            self._is_seeking = True
+        # Crash recovery/Sync: Ensure DB is up to date with the last known config position
+        config_pos = self.config.get_last_position(self.current_file)
+        if config_pos > 0:
+            self.db.update_progress(self.current_file, config_pos)
+
+        book_data = self.db.get_book(self.current_file)
+        if book_data:
+            progress = book_data.get("progress", 0)
+            if progress > 0:
+                self.player.time_pos = progress
+                self._is_seeking = True
         
         vol_val = self.volume_slider.value()
         if vol_val == 0:
@@ -1297,6 +1316,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.total_time_label.setText(self._format_time(dur / speed))
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
+                # Update config every 0.1% (live cache)
+                new_pct = int(percent * 10)
+                if new_pct != self._last_saved_pct:
+                    self._last_saved_pct = new_pct
+                    self.config.set_last_position(self.current_file, pos)
+                    if self.library_panel.isVisible():
+                        self.library_panel.update_current_book_progress()
+
         curr_chap = self.player.chapter or 0
         chap_list = self.player.chapter_list or []
         if chap_list and curr_chap < len(chap_list):
@@ -1340,6 +1367,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._trigger_undo(old_pos)
             self.player.time_pos = new_pos
             self._is_seeking = True
+            # Immediately sync for library reactivity
+            self.config.set_last_position(self.current_file, new_pos)
+            if self.library_panel.isVisible():
+                self.library_panel.update_current_book_progress()
         self.is_slider_dragging = False
 
     def _on_chap_slider_pressed(self):
@@ -1363,6 +1394,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self._trigger_undo(old_pos)
                     self.player.time_pos = new_pos
                     self._is_seeking = True
+                    # Immediately sync for library reactivity
+                    self.config.set_last_position(self.current_file, new_pos)
+                    if self.library_panel.isVisible():
+                        self.library_panel.update_current_book_progress()
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
@@ -1534,6 +1569,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # Also sync the list selection visually
             self.chapter_list_widget.setCurrentRow(index)
 
+            # Save state on chapter change (natural stopping point)
+            self._save_current_progress()
+
             # Update chapter preview labels
             metrics = self.fontMetrics()
             if index > 0:
@@ -1672,6 +1710,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             was_paused = self.player.pause
             if was_paused:
+                if self.current_file:
+                    self.db.update_last_played(self.current_file)
+                
                 wait_min = self.config.get_smart_rewind_wait()
                 rewind_sec = self.config.get_smart_rewind_duration()
                 
@@ -1695,7 +1736,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             else:
                 # Pausing: Record when we stopped
                 self._last_pause_timestamp = time.time()
+                self._save_current_progress()
                 self.player.pause = True
+                if self.library_panel.isVisible():
+                    self.library_panel.update_current_book_progress()
 
     def handle_rewind(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -1887,8 +1931,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.config.set_volume(self.volume_slider.value())
             if self.current_file:
                 self.config.set_last_book(self.current_file)
-                if self.player.instance:
-                    self.config.set_last_position(self.current_file, self.player.time_pos)
+                self._save_current_progress()
             self.player.terminate()
         
         if self.scanner:

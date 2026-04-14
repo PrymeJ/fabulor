@@ -34,7 +34,11 @@ class BookItem(QFrame):
         layout.addWidget(self.cover_label, 0, Qt.AlignCenter)
 
         # Labels
-        self.title_label = QLabel(str(book_data.get("title") or "Unknown Title"))
+        title = str(book_data.get("title") or "Unknown Title")
+        prog = float(book_data.get("progress", 0))
+        dur = float(book_data.get("duration", 0))
+        perc = (prog / dur * 100) if dur > 0 else 0
+        self.title_label = QLabel(f"{title} ({perc:.1f}%)")
         self.title_label.setObjectName("book_item_title")
         self.title_label.setWordWrap(True)
         self.title_label.setAlignment(Qt.AlignCenter)
@@ -60,8 +64,11 @@ class BookItem(QFrame):
         self.book_data = book_data
         title = str(book_data.get("title") or "Unknown Title")
         author = str(book_data.get("author") or "Unknown Author")
+        prog = float(book_data.get("progress", 0))
+        dur = float(book_data.get("duration", 0))
+        perc = (prog / dur * 100) if dur > 0 else 0
         
-        self.title_label.setText(title)
+        self.title_label.setText(f"{title} ({perc:.1f}%)")
         self.title_label.setToolTip(title)
         self.author_label.setText(author)
         
@@ -73,9 +80,10 @@ class LibraryPanel(QFrame):
     book_selected = Signal(str)
     back_requested = Signal() # Signal to request closing the panel
 
-    def __init__(self, db, player_instance=None, parent=None):
+    def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
         self.db = db
+        self.config = config
         self.player_instance = player_instance
         self._grid_items = {}
         self._active_workers = set() # Keep track of active cover loader workers
@@ -95,15 +103,20 @@ class LibraryPanel(QFrame):
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
         self.sort_combo.setFixedWidth(80)
-        self._sort_ascending = True
+        self.sort_combo.setCurrentText(self.config.get_library_sort_key())
+        self._sort_ascending = self.config.get_library_sort_ascending()
+        self._last_filter_mode = self.sort_combo.currentText()
+
         self.top_bar_layout.setSpacing(3)
-        self.sort_combo.currentIndexChanged.connect(lambda: self._sort_items_in_place(ascending=getattr(self, '_sort_ascending', True)))
+        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.top_bar_layout.addWidget(self.sort_combo)
 
         self.sort_dir_btn = QPushButton("↑")
         self.sort_dir_btn.setFixedWidth(16)
         self.sort_dir_btn.setFixedHeight(26)
         self.sort_dir_btn.setCheckable(True)
+        self.sort_dir_btn.setChecked(not self._sort_ascending)
+        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
         self.top_bar_layout.insertWidget(1, self.sort_dir_btn)
 
@@ -149,10 +162,23 @@ class LibraryPanel(QFrame):
 
     def refresh(self, force=False):
         if self._initialized and not force:
+            # Even if we don't do a full DB refresh, we MUST sync the 
+            # live progress of the current book before returning.
+            self.update_current_book_progress()
             return
-    
+
+        sort_text = self.sort_combo.currentText()
+        # Robustly get the currently playing file from the main window
+        main_win = self.window()
+        current_file = getattr(main_win, 'current_file', "")
+
         # Always fetch from DB with a simple title sort; display sorting is handled in-memory
         books = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
+
+        # For last played, it will show only books with non-null last_played
+        if sort_text == "Last Played":
+            books = [b for b in books if b.get("last_played") is not None]
+
         existing_paths = {self._grid_items[p].book_data["path"] 
                          for p in self._grid_items}
         new_paths = {b["path"] for b in books}
@@ -162,13 +188,17 @@ class LibraryPanel(QFrame):
             if path not in new_paths:
                 self._grid_items[path].deleteLater()
                 del self._grid_items[path]
-    
-        cols = 2 if self.width() < 240 else 3
         pool = QThreadPool.globalInstance()
         
         # Update existing items or create new ones
         for i, book in enumerate(books):
             path = book["path"]
+
+            # Inject live progress from Config for the active book to ensure 
+            # accuracy even if DB sync is still pending.
+            if path == current_file:
+                book["progress"] = self.config.get_last_position(path)
+
             if path not in existing_paths:
                 item = BookItem(book, player_instance=self.player_instance)
                 from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
@@ -185,15 +215,22 @@ class LibraryPanel(QFrame):
             else:
                 self._grid_items[path].update_data(book)
             
-            # Always add/re-add to the grid to maintain correct sorting and layout
-            self.grid.addWidget(self._grid_items[path], i // cols, i % cols)
-
         self._initialized = True
+        self._sort_items_in_place()
 
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
         self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
         self._sort_items_in_place(ascending=self._sort_ascending)
+
+    def _on_sort_changed(self):
+        sort_text = self.sort_combo.currentText()
+        # If moving to/from a view that requires filtering (Last Played), force refresh
+        if sort_text == "Last Played" or self._last_filter_mode == "Last Played":
+            self.refresh(force=True)
+        else:
+            self._sort_items_in_place()
+        self._last_filter_mode = sort_text
 
     def _sort_items_in_place(self, ascending=None):
         # Toggle direction if called from button, otherwise keep current
@@ -202,7 +239,11 @@ class LibraryPanel(QFrame):
         else:
             self._sort_ascending = ascending
 
-        sort_key = self.sort_combo.currentText().lower().replace(" ", "_")
+        sort_text = self.sort_combo.currentText()
+        self.config.set_library_sort_key(sort_text)
+        self.config.set_library_sort_ascending(ascending)
+
+        sort_key = sort_text.lower().replace(" ", "_")
         list_mode = self.style_combo.currentText() == "List"
         cols = 1 if list_mode else (3 if self.width() > 280 else 2)
 
@@ -214,13 +255,16 @@ class LibraryPanel(QFrame):
             val = item.book_data.get(sort_key)
             if val is None:
                 return (1, 0 if sort_key in numeric_keys else "")
+            if sort_key == "progress":
+                duration = item.book_data.get("duration") or 1
+                return (0, float(val) / float(duration))
             if sort_key in numeric_keys:
                 return (0, float(val))
             if sort_key in datetime_keys:
                 return (0, str(val))
             return (0, str(val).lower())
 
-        # Sort nulls always last by sorting ascending first, then reversing only non-null values
+        # Split into items with values and items with None to ensure nulls always go last
         items = sorted(
             [i for i in self._grid_items.values() if i.book_data.get(sort_key) is not None],
             key=sort_value,
@@ -236,6 +280,20 @@ class LibraryPanel(QFrame):
         for i, item in enumerate(items):
             self.grid.addWidget(item, i // cols, i % cols)
         self.container.setUpdatesEnabled(True)
+
+    def update_current_book_progress(self):
+        """Live update for the currently playing book's progress and sorting."""
+        main_win = self.window()
+        current_file = getattr(main_win, 'current_file', "")
+        if current_file and current_file in self._grid_items:
+            # Sync the in-memory data from the config cache
+            live_pos = self.config.get_last_position(current_file)
+            item = self._grid_items[current_file]
+            item.book_data["progress"] = live_pos
+            item.update_data(item.book_data)
+            # Only re-sort if currently sorting by progress
+            if self.sort_combo.currentText() == "Progress":
+                self._sort_items_in_place()
 
     def _on_cover_loaded(self, book_path, pixmap, book_item):
         if not pixmap.isNull():
