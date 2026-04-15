@@ -19,6 +19,7 @@ from .themes import get_stylesheet, THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
+from .ui.audio_controls import AudioSettingsTab
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
@@ -53,6 +54,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._undo_slide_out_connected = False
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
+        self.audio_tab = None
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
@@ -737,89 +739,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_pattern_visuals()
 
         # --- TAB 4: AUDIO ---
-        audio_tab = QWidget()
-        audio_layout = QVBoxLayout(audio_tab)
-
-        norm_header = QLabel("Speech compression (Normalization)")
-        norm_header.setObjectName("settings_header")
-        audio_layout.addWidget(norm_header)
-        norm_row = QHBoxLayout()
-        self.norm_buttons = {}
-        for state in ["Off", "On"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self._update_audio_setting("norm", s == "On"))
-            norm_row.addWidget(btn)
-            self.norm_buttons[state] = btn
-        norm_row.addStretch()
-        audio_layout.addLayout(norm_row)
-
-        voice_header = QLabel("Voice boost")
-        voice_header.setObjectName("settings_header")
-        audio_layout.addWidget(voice_header)
-        voice_row = QHBoxLayout()
-        self.voice_buttons = {}
-        for state in ["Off", "On"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self._update_audio_setting("voice", s == "On"))
-            voice_row.addWidget(btn)
-            self.voice_buttons[state] = btn
-        voice_row.addStretch()
-        audio_layout.addLayout(voice_row)
-
-        mono_header = QLabel("Stereo / Mono")
-        mono_header.setObjectName("settings_header")
-        audio_layout.addWidget(mono_header)
-        mono_row = QHBoxLayout()
-        self.mono_buttons = {}
-        for mode in ["Stereo", "Mono"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self._update_audio_setting("mono", m == "Mono"))
-            mono_row.addWidget(btn)
-            self.mono_buttons[mode] = btn
-        mono_row.addStretch()
-        audio_layout.addLayout(mono_row)
-
-        swap_header = QLabel("Channel swap (L ↔ R)")
-        swap_header.setObjectName("settings_header")
-        audio_layout.addWidget(swap_header)
-        swap_row = QHBoxLayout()
-        self.swap_buttons = {}
-        for state in ["Normal", "Swapped"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self._update_audio_setting("swap", s == "Swapped"))
-            swap_row.addWidget(btn)
-            self.swap_buttons[state] = btn
-        swap_row.addStretch()
-        audio_layout.addLayout(swap_row)
-
-        balance_header = QLabel("L/R balance")
-        balance_header.setObjectName("settings_header")
-        audio_layout.addWidget(balance_header)
-        self.balance_slider = ClickSlider(Qt.Horizontal)
-        self.balance_slider.setObjectName("balance_slider")
-        self.balance_slider.center_mark = True
-        self.balance_slider.snap_to_center = True
-        self.balance_slider.setRange(-100, 100)
-        self.balance_slider.setValue(int(self.config.get_balance() * 100))
-        self.balance_slider.setFixedHeight(12)
-        self.balance_slider.setFixedWidth(140)
-        self.balance_slider.valueChanged.connect(self._on_balance_changed)
-        audio_layout.addWidget(self.balance_slider)
-
-        audio_layout.addSpacing(10)
-        self.reset_audio_btn = QPushButton("Reset to defaults")
-        self.reset_audio_btn.setObjectName("reset_audio_btn")
-        self.reset_audio_btn.clicked.connect(self._reset_audio_settings)
-        self.reset_audio_btn.hide()
-        audio_layout.addWidget(self.reset_audio_btn)
-
-        audio_layout.addStretch()
-        self.tabs.addTab(audio_tab, "Audio")
-        self._update_audio_visuals()
+        self.audio_tab = AudioSettingsTab(self.player, self.config, self)
+        self.tabs.addTab(self.audio_tab, "Audio")
 
         # --- TAB 4: SHORTCUTS ---
         shortcuts_tab = QWidget()
@@ -844,67 +765,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Refresh the current book metadata on the main screen if a book is loaded
         if self.current_file:
             self._load_cover_art(self.current_file)
-
-    def _update_audio_setting(self, kind, value):
-        if kind == "norm": self.config.set_norm_enabled(value)
-        elif kind == "voice": self.config.set_voice_boost_enabled(value)
-        elif kind == "mono": self.config.set_mono_enabled(value)
-        elif kind == "swap": self.config.set_channels_swapped(value)
-        self._update_audio_visuals()
-        self._sync_player_audio()
-
-    def _on_balance_changed(self, value):
-        self.config.set_balance(value / 100.0)
-        self._sync_player_audio()
-        self._update_audio_visuals()
-
-    def _reset_audio_settings(self):
-        self.config.set_norm_enabled(False)
-        self.config.set_voice_boost_enabled(False)
-        self.config.set_mono_enabled(False)
-        self.config.set_channels_swapped(False)
-        self.config.set_balance(0.0)
-        self.balance_slider.setValue(0)
-        self._sync_player_audio()
-        self._update_audio_visuals()
-
-    def _sync_player_audio(self):
-        if self.player:
-            self.player.apply_audio_processing(
-                norm=self.config.get_norm_enabled(),
-                voice_boost=self.config.get_voice_boost_enabled(),
-                mono=self.config.get_mono_enabled(),
-                swap=self.config.get_channels_swapped(),
-                balance=self.config.get_balance()
-            )
-
-    def _update_audio_visuals(self):
-        if not hasattr(self, 'norm_buttons'): return
-        
-        norm = self.config.get_norm_enabled()
-        for s, btn in self.norm_buttons.items():
-            btn.setProperty("selected", "true" if (s == "On" if norm else s == "Off") else "false")
-            btn.style().unpolish(btn); btn.style().polish(btn)
-            
-        voice = self.config.get_voice_boost_enabled()
-        for s, btn in self.voice_buttons.items():
-            btn.setProperty("selected", "true" if (s == "On" if voice else s == "Off") else "false")
-            btn.style().unpolish(btn); btn.style().polish(btn)
-            
-        mono = self.config.get_mono_enabled()
-        for m, btn in self.mono_buttons.items():
-            btn.setProperty("selected", "true" if (m == "Mono" if mono else m == "Stereo") else "false")
-            btn.style().unpolish(btn); btn.style().polish(btn)
-            
-        swap = self.config.get_channels_swapped()
-        for s, btn in self.swap_buttons.items():
-            btn.setProperty("selected", "true" if (s == "Swapped" if swap else s == "Normal") else "false")
-            btn.style().unpolish(btn); btn.style().polish(btn)
-            
-        # Show reset button only if settings are non-default
-        balance = self.config.get_balance()
-        is_default = (not norm and not voice and not mono and not swap and math.isclose(balance, 0.0, abs_tol=0.01))
-        self.reset_audio_btn.setVisible(not is_default)
 
     def _update_pattern_visuals(self):
         """Updates the highlight/dim state of naming pattern buttons."""
@@ -1327,7 +1187,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
-        self._sync_player_audio()
+        if self.audio_tab:
+            self.audio_tab.sync_player()
 
     def _hide_popups(self):
         """Closes any open floating menus."""
