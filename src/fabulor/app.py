@@ -19,6 +19,7 @@ from .themes import get_stylesheet, THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
+from .ui.speed_controls import SpeedControlsPanel
 from .ui.audio_controls import AudioSettingsTab
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
@@ -150,7 +151,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_sidebar()
         self._build_library_panel()
         self._build_settings_panel()
-        self._build_speed_panel()
+        
+        self.speed_panel = SpeedControlsPanel(self.player, self.config, self.theme_manager, self)
+        self.speed_panel.hide()
+        self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")
+        self.speed_panel_animation.setDuration(300)
+        self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+        
         self._build_status_banner()
 
         # Pulse Animation for active sleep timer
@@ -185,7 +192,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.timer_stopped.connect(self._on_sleep_timer_stopped)
         self.sleep_panel.display_text_updated.connect(self.sleep_timer_label.setText)
         self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
-        
+        # Delegate speed display update to a dedicated slot to ensure reliability
+        self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
+        self.speed_panel.close_requested.connect(
+            lambda: self.panel_manager._close_speed_flow() if self.panel_manager else None
+        )
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
     def _build_status_banner(self):
@@ -1298,11 +1309,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _set_speed(self, value, save=True):
         """Applies a specific speed value."""
-        if self.player:
-            self.player.speed = value
-            self.speed_button.setText(f"{value:.2f}x")
-            if save and self.current_file:
-                self.config.set_book_speed(self.current_file, value)
+        if self.speed_panel:
+            self.speed_panel.set_speed(value, self.current_file, save)
 
     def _toggle_remaining_time(self, event):
         if event.button() == Qt.LeftButton:
@@ -1375,30 +1383,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_speed_grid_styling(self):
         """Applies the current theme's gradient styling to the speed grid buttons."""
-        t = THEMES.get(self.theme_manager._current_theme_name, THEMES["The Color Purple"])
-        accent = QColor(t['accent'])
-        btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
-
-        for i, btn in enumerate(self._speed_grid_buttons):
-            # Gradient logic: Opacity increases from 30% to 100% as speed increases
-            alpha = int(75 + (180 * (i / (len(self._speed_presets) - 1))))
-            c = QColor(accent)
-            c.setAlpha(alpha)
-            btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
+        if self.speed_panel:
+            self.speed_panel.update_visuals()
+            
         self._update_pattern_visuals()
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
-        self._update_def_speed_visuals()
-        self._update_step_visuals()
-        self._update_skip_visuals()
-        self._update_long_skip_visuals()
-        self._update_smart_rewind_visuals()
         self._update_undo_visuals()
         if self.sleep_panel:
             self.sleep_panel.update_panel_styling()
 
+    def _on_player_speed_changed(self, value):
+        """Slot to sync the main UI speed button text with the player engine."""
+        if hasattr(self, 'speed_button'):
+            self.speed_button.setText(f"{value:.2f}x")
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
@@ -1849,83 +1849,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
-    def _update_def_speed_mode(self, val):
-        self.config.set_default_speed(val)
-        self._update_def_speed_visuals()
-
-    def _update_def_speed_visuals(self):
-        if not hasattr(self, 'def_speed_buttons'): return
-        current = self.config.get_default_speed()
-        for val, btn in self.def_speed_buttons.items():
-            btn.setProperty("selected", "true" if float(val) == float(current) else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_step_mode(self, val):
-        self.config.set_speed_increment(val)
-        self._update_step_visuals()
-
-    def _update_step_visuals(self):
-        if not hasattr(self, 'step_buttons'): return
-        current = self.config.get_speed_increment()
-        for val, btn in self.step_buttons.items():
-            btn.setProperty("selected", "true" if float(val) == float(current) else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_skip_mode(self, val):
-        self.config.set_skip_duration(val)
-        self._update_skip_visuals()
-
-    def _update_skip_visuals(self):
-        if not hasattr(self, 'skip_buttons'): return
-        current = self.config.get_skip_duration()
-        for val, btn in self.skip_buttons.items():
-            btn.setProperty("selected", "true" if int(val) == int(current) else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_smart_rewind_mode(self, val):
-        self.config.set_smart_rewind_wait(val)
-        if val == 0:
-            self.config.set_smart_rewind_duration(0)
-        self._update_smart_rewind_visuals()
-
-    def _update_smart_rewind_duration(self, val):
-        self.config.set_smart_rewind_duration(val)
-        self._update_smart_rewind_visuals()
-
     def _validate_smart_rewind_settings(self):
-        wait = self.config.get_smart_rewind_wait()
-        dur = self.config.get_smart_rewind_duration()
-        if (wait > 0 and dur == 0) or (wait == 0 and dur > 0):
-            self.config.set_smart_rewind_wait(0)
-            self.config.set_smart_rewind_duration(0)
-            self._update_smart_rewind_visuals()
-
-    def _update_smart_rewind_visuals(self):
-        if not hasattr(self, 'smart_wait_buttons'): return
-        wait_curr = self.config.get_smart_rewind_wait()
-        dur_curr = self.config.get_smart_rewind_duration()
-        
-        for val, btn in self.smart_wait_buttons.items():
-            btn.setProperty("selected", "true" if val == wait_curr else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-            
-        for val, btn in self.smart_dur_buttons.items():
-            btn.setProperty("selected", "true" if val == dur_curr else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_long_skip_mode(self, val):
-        self.config.set_long_skip_duration(val)
-        self._update_long_skip_visuals()
-
-    def _update_long_skip_visuals(self):
-        if not hasattr(self, 'long_skip_buttons'): return
-        current = self.config.get_long_skip_duration()
-        for val, btn in self.long_skip_buttons.items():
-            btn.setProperty("selected", "true" if int(val) == int(current) else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        if self.speed_panel:
+            self.speed_panel._validate_smart_rewind_settings()
