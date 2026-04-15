@@ -40,6 +40,8 @@ class Player(QObject):
         self._is_seeking = False # For UI deadzone logic
         self._undo_pos = None # For undo seek logic
         self._last_undo_click_time = 0 # For undo seek logic
+        self._base_volume = 100.0 # User's set volume (log scale)
+        self._fade_ratio = 1.0   # Sleep timer fade (0.0 to 1.0)
 
     @staticmethod
     def format_time(seconds):
@@ -156,25 +158,28 @@ class Player(QObject):
     @property
     def volume(self): return self.instance.volume if self.instance else 100
     @volume.setter
-    def volume(self, value): 
-        if self.instance: self.instance.volume = value
+    def volume(self, value):
+        self._base_volume = value
+        self._update_mpv_volume()
 
     def set_volume_from_slider(self, value: int):
         """Translates linear slider value (0-100) to logarithmic volume."""
         if value <= 0:
-            self.volume = 0
+            self._base_volume = 0
         else:
             # Logarithmic scale: makes the lower end of the slider more granular
-            self.volume = 100 * (math.log10(value) / 2.0)
+            self._base_volume = 100 * (math.log10(value) / 2.0)
+        self._update_mpv_volume()
 
-    def apply_volume_fade(self, linear_base_vol: int, ratio: float):
-        """Calculates and applies a volume fade based on a linear base and a 0.0-1.0 ratio."""
-        if linear_base_vol <= 0:
-            self.volume = 0
-            return
-        
-        base_log_vol = 100 * (math.log10(linear_base_vol) / 2.0)
-        self.volume = base_log_vol * ratio
+    def set_fade_ratio(self, ratio: float):
+        """Applies a multiplier to the current volume (e.g., for sleep fade)."""
+        self._fade_ratio = max(0.0, min(1.0, ratio))
+        self._update_mpv_volume()
+
+    def _update_mpv_volume(self):
+        """Internal sync of actual engine volume."""
+        if self.instance:
+            self.instance.volume = self._base_volume * self._fade_ratio
 
     def apply_audio_processing(self, norm=False, mono=False, swap=False, balance=0.0, voice_boost=False):
         if not self.instance: return

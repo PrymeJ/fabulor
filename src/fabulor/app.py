@@ -915,9 +915,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_cancel_btn.hide()
         self.sleep_pulse_anim.stop()
         self.sleep_opacity_effect.setOpacity(1.0)
-        # Restore original volume level
-        self._on_volume_changed(self.volume_slider.value())
-
+        self.player.set_fade_ratio(1.0)
     def _update_chapter_title_text(self, text):
         """Update the scrolling label text."""
         self.current_chapter_label.setText(text)
@@ -1203,7 +1201,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # is_eof = self.player.eof_reached
         
         # Delegate Sleep Timer Logic
-        self.sleep_panel.update_timer_state(current_time, is_paused, pos, dur, is_eof, self.volume_slider.value())
+        self.sleep_panel.update_timer_state(current_time, is_paused, pos, dur, is_eof)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
              self.chapter_list_widget.populate(dur)

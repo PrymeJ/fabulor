@@ -175,9 +175,12 @@ class SleepTimerPanel(QWidget):
         # Refresh the panel's own style to ensure background is updated
         self.style().unpolish(self); self.style().polish(self)
 
-    def update_timer_state(self, current_time, is_paused, player_pos, player_dur, is_eof, base_vol):
+    def update_timer_state(self, current_time, is_paused, player_pos, player_dur, is_eof):
         display_text = ""
         
+        # Reset fade ratio by default; it will be overwritten below if fading
+        self.player.set_fade_ratio(1.0)
+
         if self._sleep_timer_end_time is not None:
             remaining_seconds = max(0, int(self._sleep_timer_end_time - current_time))
             if remaining_seconds <= 0 or is_eof:
@@ -189,7 +192,7 @@ class SleepTimerPanel(QWidget):
                 # Volume Fade Logic
                 if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
                     ratio = remaining_seconds / self._current_sleep_fade
-                    self.player.apply_volume_fade(base_vol, ratio)
+                    self.player.set_fade_ratio(ratio)
 
         elif self._sleep_mode == 'end_of_chapter':
             display_text = "[chapter]"
