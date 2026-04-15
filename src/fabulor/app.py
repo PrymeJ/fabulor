@@ -20,6 +20,7 @@ from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.audio_controls import AudioSettingsTab
+from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
@@ -52,10 +53,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_undo_click_time = 0
         self._undo_slide_in_connected = False
         self._undo_slide_out_connected = False
-        self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
-        self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
         self.audio_tab = None
-        self._current_sleep_fade = self.config.get_sleep_fade_duration()
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
 
@@ -108,6 +106,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setMinimumWidth(300)
         self.resize(300, 450)
 
+        # Initialize Sleep Timer Panel early to allow connections in build methods
+        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self)
+        self.sleep_panel.hide()
+        self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
+        self.sleep_panel_animation.setDuration(300)
+        self.sleep_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
         self.setObjectName("mainwindow")
         self.setStyleSheet(get_stylesheet(self.theme_manager._current_theme_name))
 
@@ -145,7 +150,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_sidebar()
         self._build_library_panel()
         self._build_settings_panel()
-        self._build_sleep_panel()
         self._build_speed_panel()
         self._build_status_banner()
 
@@ -175,6 +179,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
+        
+        # Connect Sleep Timer signals after panel_manager is initialized
+        self.sleep_panel.timer_started.connect(self._on_sleep_timer_started)
+        self.sleep_panel.timer_stopped.connect(self._on_sleep_timer_stopped)
+        self.sleep_panel.display_text_updated.connect(self.sleep_timer_label.setText)
+        self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
+        
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
     def _build_status_banner(self):
@@ -356,7 +367,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_duration_label.setFixedHeight(24)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
-        
+
         self.current_chapter_label = ScrollingLabel("")
         self.current_chapter_label.setObjectName("chapter_selector")
         self.current_chapter_label.setFixedHeight(24)
@@ -394,7 +405,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_timer_label = QPushButton("")
         self.sleep_timer_label.setObjectName("sleep_timer_display")
         self.sleep_timer_label.setFixedWidth(104)
-        self.sleep_timer_label.clicked.connect(self._disable_sleep_timer)
+        self.sleep_timer_label.clicked.connect(self.sleep_panel.disable_sleep_timer)
         
         for lbl in [self.current_time_label, self.total_time_label, self.sleep_timer_label]:
             font = lbl.font()
@@ -470,7 +481,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_cancel_btn.setFixedSize(16, 16)
         self.sleep_cancel_btn.move(34, 1)
         self.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
-        self.sleep_cancel_btn.clicked.connect(self._disable_sleep_timer)
+        self.sleep_cancel_btn.clicked.connect(self.sleep_panel.disable_sleep_timer)
         self.sleep_cancel_btn.hide()
 
         self.sidebar_layout.addStretch()
@@ -894,98 +905,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_panel_animation.setDuration(300)
         self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
-    def _build_sleep_panel(self):
-        self.sleep_panel = QWidget(self)
-        self.sleep_panel.setObjectName("sleep_panel")
-        self.sleep_panel_layout = QVBoxLayout(self.sleep_panel)
-        
-        sleep_header = QLabel("Sleep Timer")
-        sleep_header.setObjectName("settings_header")
-        self.sleep_panel_layout.addWidget(sleep_header)
+    def _on_sleep_timer_started(self):
+        self.sleep_trigger_btn.setText("SLEEP")
+        self.sleep_cancel_btn.show()
+        self.sleep_pulse_anim.start()
 
-        # Time Presets Grid
-        grid = QGridLayout()
-        grid.setSpacing(4)
-        presets_minutes = [2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 75, 90, 120]
-        self._sleep_presets_buttons = []
-        for i, val in enumerate(presets_minutes):
-            btn = QPushButton(f"{val} min")
-            btn.setFixedSize(55, 30)
-            btn.clicked.connect(lambda _, v=val: self._set_sleep_timer(duration_minutes=v))
-            grid.addWidget(btn, i // 4, i % 4)
-            self._sleep_presets_buttons.append(btn)
-        self.sleep_panel_layout.addLayout(grid)
-
-        # Special Modes
-        special_modes_layout = QHBoxLayout()
-        end_chap_btn = QPushButton("End of chapter")
-        end_chap_btn.clicked.connect(lambda: self._set_sleep_timer(mode='end_of_chapter'))
-        special_modes_layout.addWidget(end_chap_btn)
-
-        end_book_btn = QPushButton("End of book")
-        end_book_btn.clicked.connect(lambda: self._set_sleep_timer(mode='end_of_book'))
-        special_modes_layout.addWidget(end_book_btn)
-        self.sleep_panel_layout.addLayout(special_modes_layout)
-
-        # Custom Time Input
-        custom_time_layout = QHBoxLayout()
-        self.custom_sleep_input = QLineEdit()
-        self.custom_sleep_input.setPlaceholderText("min")
-        self.custom_sleep_input.setFixedWidth(50)
-        # Strictly allow only 1-3 digits, no commas or periods
-        self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
-        custom_time_layout.addWidget(self.custom_sleep_input)
-
-        set_custom_btn = QPushButton("Set")
-        set_custom_btn.clicked.connect(self._on_custom_sleep_time_set)
-        custom_time_layout.addWidget(set_custom_btn)
-        custom_time_layout.addStretch()
-        self.sleep_panel_layout.addLayout(custom_time_layout)
-
-        # Fade out options
-        fade_header = QLabel("Fade-out")
-        fade_header.setObjectName("settings_header")
-        self.sleep_panel_layout.addWidget(fade_header)
-
-        fade_layout = QHBoxLayout()
-        fade_layout.setSpacing(5)
-        self._sleep_fade_btns = {}
-        fade_options = [("Off", 0), ("30s", 30), ("1m", 60), ("2m", 120), ("5m", 300)]
-        for text, seconds in fade_options:
-            btn = RightClickButton(text)
-            btn.setFixedSize(45, 28)
-            btn.setToolTip("Right-click to set as default")
-            btn.clicked.connect(lambda _, s=seconds: self._set_sleep_fade(s, save=False))
-            btn.rightClicked.connect(lambda s=seconds: self._set_sleep_fade(s, save=True))
-            fade_layout.addWidget(btn)
-            self._sleep_fade_btns[seconds] = btn
-        
-        self.sleep_panel_layout.addLayout(fade_layout)
-
-        # Disable Button
-        self.sleep_panel_layout.addSpacing(20)
-        self.disable_sleep_btn = QPushButton("Disable the sleep timer")
-        self.disable_sleep_btn.setObjectName("disable_sleep_btn")
-        self.disable_sleep_btn.clicked.connect(self._disable_sleep_timer)
-        self.disable_sleep_btn.hide() # Hide initially if no timer is active
-        self.sleep_panel_layout.addWidget(self.disable_sleep_btn)
-
-        self.sleep_panel_layout.addStretch()
-        self.sleep_panel.hide()
-        self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
-        self.sleep_panel_animation.setDuration(300)
-        self.sleep_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self._update_sleep_panel_styling() # Corrected method name
-
-    def _on_custom_sleep_time_set(self):
-        try:
-            minutes = int(self.custom_sleep_input.text())
-            if minutes > 0:
-                self._set_sleep_timer(duration_minutes=minutes)
-            else:
-                print("Sleep timer: Please enter a positive number of minutes.")
-        except ValueError:
-            print("Sleep timer: Invalid input for custom time.")
+    def _on_sleep_timer_stopped(self):
+        self.sleep_trigger_btn.setText("SLEEP")
+        self.sleep_cancel_btn.hide()
+        self.sleep_pulse_anim.stop()
+        self.sleep_opacity_effect.setOpacity(1.0)
+        # Restore original volume level
+        self._on_volume_changed(self.volume_slider.value())
 
     def _update_chapter_title_text(self, text):
         """Update the scrolling label text."""
@@ -1271,40 +1202,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # is_eof = self.player.eof_reached
         
-        # Sleep Timer Logic
-        sleep_display_text = ""
-        if self._sleep_timer_end_time is not None:
-            remaining_seconds = max(0, int(self._sleep_timer_end_time - current_time))
-            if remaining_seconds <= 0 or is_eof:
-                self._disable_sleep_timer()
-                self.player.pause = True
-            else:
-                sleep_display_text = f"[{self.player.format_time(remaining_seconds)}]"
-                # Volume Fade Logic
-                if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
-                    ratio = remaining_seconds / self._current_sleep_fade
-                    self.player.apply_volume_fade(self.volume_slider.value(), ratio)
-
-        elif self._sleep_mode == 'end_of_chapter':
-            sleep_display_text = "[chapter]"
-            if not is_paused and self.player.chapter_list and self.player.chapter is not None:
-                curr_chap = self.player.chapter
-                chaps = self.player.chapter_list
-                if curr_chap < len(chaps) - 1: # Not the last chapter
-                    next_chap_start = chaps[curr_chap + 1].get('time', dur)
-                    if pos >= next_chap_start - 0.5 or is_eof: # 0.5s buffer before chapter end
-                        self._disable_sleep_timer()
-                        self.player.pause = True
-                elif curr_chap == len(chaps) - 1 and (pos >= dur - 0.5 or is_eof): # Last chapter, near end of book
-                    self._disable_sleep_timer()
-                    self.player.pause = True
-        elif self._sleep_mode == 'end_of_book':
-            sleep_display_text = "[book]"
-            if not is_paused and (pos >= dur - 0.5 or is_eof): # Near end of book
-                self._disable_sleep_timer()
-                self.player.pause = True
-
-        self.sleep_timer_label.setText(sleep_display_text)
+        # Delegate Sleep Timer Logic
+        self.sleep_panel.update_timer_state(current_time, is_paused, pos, dur, is_eof, self.volume_slider.value())
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
              self.chapter_list_widget.populate(dur)
@@ -1499,39 +1398,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_long_skip_visuals()
         self._update_smart_rewind_visuals()
         self._update_undo_visuals()
-        self._update_sleep_panel_styling()
-
-    def _update_sleep_panel_styling(self):
-        """Applies the current theme's gradient styling to the sleep timer grid buttons."""
-        t = THEMES.get(self.theme_manager._current_theme_name, THEMES["The Color Purple"])
-        accent = QColor(t['accent'])
-        btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
-        default_fade = self.config.get_sleep_fade_duration()
-
-        # Using same presets count logic for consistent gradient look
-        for i, btn in enumerate(self._sleep_presets_buttons):
-            alpha = int(75 + (180 * (i / (len(self._sleep_presets_buttons) - 1))))
-            c = QColor(accent)
-            c.setAlpha(alpha)
-            btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
-
-        # Fade buttons styling with gradient and default indicator (2px border)
-        for i, (seconds, btn) in enumerate(self._sleep_fade_btns.items()):
-            alpha = int(75 + (180 * (i / (len(self._sleep_fade_btns) - 1))))
-            c = QColor(accent)
-            c.setAlpha(alpha)
-            
-            is_active = (seconds == self._current_sleep_fade)
-            is_default = (seconds == default_fade)
-            
-            # 2px border for default, 1px for others
-            border = f"2px solid {t['accent_light']}" if is_default else f"1px solid {t['accent']}"
-            
-            # Active button uses theme accent background, inactive uses dropdown bg
-            bg = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})" if is_active else t['bg_dropdown']
-            fg = btn_text if is_active else t['text']
-            
-            btn.setStyleSheet(f"background-color: {bg}; color: {fg}; border: {border};")
+        if self.sleep_panel:
+            self.sleep_panel.update_panel_styling()
 
 
     def mousePressEvent(self, event):
