@@ -39,15 +39,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_file = ""
         self.config = Config()
         self.player = Player()
-        # Manual override for testing
-        #self.current_file = "/mnt/DriveD/Audiobooks/Adrian Selby - Snakewood/Snakewood.m4b"
         self._prev_chap_title = ""
         self._next_chap_title = ""
-        #self.player.load_book(self.current_file)
-        ###
         self.theme_manager = ThemeManager(self)
-        self._paused_time = None
-        self._is_seeking = False
         self._last_pause_timestamp = None
         self.db = LibraryDB()
         self.scanner = LibraryScanner(self.db.db_path)
@@ -1403,26 +1397,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # update sliders to 100% and return
             if pos and dur:
                 self.progress_slider.setValue(1000)
-                self.current_time_label.setText(self._format_time(pos / speed))
+                self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
                     self.total_time_label.setText("-00:00:00")
                     self.chap_duration_label.setText("-00:00:00")
                 else:
-                    self.total_time_label.setText(self._format_time(dur / speed))
+                    self.total_time_label.setText(self.player.format_time(dur / speed))
             return
 
         if mpv_pos is None or dur is None:
             self.play_pause_button.setText("Play")
             return
 
-        if is_paused:
-            if self._paused_time is None or self._is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
-                self._paused_time = mpv_pos
-                self._is_seeking = False
-            pos = self._paused_time
-        else:
-            self._paused_time = None
-            pos = mpv_pos
+        # Use Player engine to get stabilized UI position
+        pos = self.player.get_stable_position()
         
         # is_eof = self.player.eof_reached
         
@@ -1434,7 +1422,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._disable_sleep_timer()
                 self.player.pause = True
             else:
-                sleep_display_text = f"[{self._format_time(remaining_seconds)}]"
+                sleep_display_text = f"[{self.player.format_time(remaining_seconds)}]"
                 # Volume Fade Logic
                 if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
                     ratio = remaining_seconds / self._current_sleep_fade
@@ -1474,12 +1462,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
                 self.progress_slider.setValue(int((pos / dur) * 1000))
-                self.current_time_label.setText(self._format_time(pos / speed))
+                self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
                     remaining = (dur - pos) / speed
-                    self.total_time_label.setText(f"-{self._format_time(remaining)}")
+                    self.total_time_label.setText(f"-{self.player.format_time(remaining)}")
                 else:
-                    self.total_time_label.setText(self._format_time(dur / speed))
+                    self.total_time_label.setText(self.player.format_time(dur / speed))
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
                 # Update config every 0.1% (live cache)
@@ -1500,12 +1488,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             
             if not self.is_chapter_slider_dragging:
                 c_elapsed = max(0, pos - start)
-                self.chap_elapsed_label.setText(self._format_time(c_elapsed / speed))
+                self.chap_elapsed_label.setText(self.player.format_time(c_elapsed / speed))
                 if self.show_remaining_time:
                     c_remaining = max(0, end - pos) / speed
-                    self.chap_duration_label.setText(f"-{self._format_time(c_remaining)}")
+                    self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
-                    self.chap_duration_label.setText(self._format_time((end - start) / speed))
+                    self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
                 if chap_dur > 0:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
@@ -1513,13 +1501,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.play_pause_button.setText("Restart") # This will be handled by _update_ui_sync
         else:
             self.play_pause_button.setText("Play" if self.player.pause else "Pause")
-
-    def _format_time(self, seconds):
-        """Converts seconds to HH:MM:SS format."""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        return f"{h:02}:{m:02}:{s:02}" # No change here
 
     def _on_slider_pressed(self):
         self.is_slider_dragging = True
@@ -1532,7 +1513,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if abs(new_pos - old_pos) > 60 * speed:
                 self._trigger_undo(old_pos)
             self.player.time_pos = new_pos
-            self._is_seeking = True
+            self.player.is_seeking = True
             # Immediately sync for library reactivity
             self.config.set_last_position(self.current_file, new_pos)
             if self.library_panel.isVisible():
@@ -1545,25 +1526,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_chap_slider_released(self):
         if self.player and self.player.duration:
             old_pos = self.player.time_pos
-            curr_chap = self.player.chapter or 0
-            chap_list = self.player.chapter_list or []
-            if chap_list and curr_chap < len(chap_list):
-                dur = self.player.duration
-                start = chap_list[curr_chap].get('time', 0)
-                end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
-                chap_dur = end - start
-                if chap_dur > 0:
-                    new_chap_pos = (self.chapter_progress_slider.value() / 1000) * chap_dur
-                    new_pos = start + new_chap_pos
-                    speed = self.player.speed or 1.0
-                    if abs(new_pos - old_pos) > 60 * speed:
-                        self._trigger_undo(old_pos)
-                    self.player.time_pos = new_pos
-                    self._is_seeking = True
-                    # Immediately sync for library reactivity
-                    self.config.set_last_position(self.current_file, new_pos)
-                    if self.library_panel.isVisible():
-                        self.library_panel.update_current_book_progress()
+            
+            # Delegate chapter seek math to Player
+            self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
+            
+            # Check for undo trigger after player has updated its position
+            speed = self.player.speed or 1.0
+            if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
+                self._trigger_undo(old_pos)
+            
+            # Immediately sync for library reactivity
+            self.config.set_last_position(self.current_file, self.player.time_pos or 0)
+            if self.library_panel.isVisible():
+                self.library_panel.update_current_book_progress()
         self.is_chapter_slider_dragging = False
 
     def _on_volume_changed(self, value):
@@ -1879,24 +1854,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if self.current_file:
                     self.db.update_last_played(self.current_file)
                 
-                wait_min = self.config.get_smart_rewind_wait()
-                rewind_sec = self.config.get_smart_rewind_duration()
-                
-                if self._last_pause_timestamp and wait_min > 0 and rewind_sec > 0:
-                    away_duration = time.time() - self._last_pause_timestamp
-                    if away_duration >= (wait_min * 60):
-                        speed = self.player.speed or 1.0
-                        rewind_amt = rewind_sec * speed
-                        
-                        # Restrict to same chapter
-                        start_limit = 0
-                        curr_idx = self.player.chapter
-                        chaps = self.player.chapter_list
-                        if curr_idx is not None and chaps and curr_idx < len(chaps):
-                            start_limit = chaps[curr_idx].get('time', 0)
-                            
-                        self.player.time_pos = max(start_limit, self.player.time_pos - rewind_amt)
-                        self._is_seeking = True
+                # Delegate smart rewind logic to Player
+                self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
                 
                 self.player.pause = False
             else:
@@ -1918,7 +1877,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = max(0, (old_pos or 0) - skip)
             self.player.time_pos = new_pos
-            self._is_seeking = True
+            self.player.is_seeking = True
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -1931,38 +1890,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, (old_pos or 0) + skip)
             self.player.time_pos = new_pos
-            self._is_seeking = True
+            self.player.is_seeking = True
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
             self.player.previous_chapter()
-            self._is_seeking = True
+            self.player.is_seeking = True
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
             self.player.next_chapter()
-            self._is_seeking = True
+            self.player.is_seeking = True
 
     def _trigger_undo(self, old_pos):
         """Slides in the floating undo button."""
         duration = self.config.get_undo_duration()
-        if duration == 0:
+        
+        # Delegate undo point saving logic to Player
+        if not self.player.save_seek_position(old_pos, duration):
             return
-
-        now = time.time()
-        # Define the window where rapid clicks are treated as a single seek sequence.
-        # We use either 2 seconds or half the button visibility duration, whichever is smaller.
-        #sequence_window = min(2.0, duration / 2.0)
-        sequence_window = duration
-
-        if self._undo_pos is None or (now - self._last_undo_click_time > sequence_window):
-            self._undo_pos = old_pos
-
-        self._last_undo_click_time = now
+            
         self._undo_timer.stop()
 
         width = self.width()
@@ -2000,18 +1951,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _perform_undo(self):
         """Seeks back and slides the button out."""
-        if self.player and self._undo_pos is not None:
-            self.player.time_pos = self._undo_pos
-            self._is_seeking = True
-            self._hide_undo_banner()
+        # Delegate undo seek logic to Player
+        self.player.undo_seek()
+        self._hide_undo_banner()
 
     def _hide_undo_banner(self):
         if not self.undo_overlay.isVisible():
             return
 
         self._undo_pos = None
-        width = self.width()
-
+        width = self.width() # Keep for UI animation
         self.undo_anim.stop()
         if self._undo_slide_in_connected:
             self.undo_anim.finished.disconnect(self._on_undo_slide_in_done)
