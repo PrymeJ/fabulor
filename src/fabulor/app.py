@@ -1322,11 +1322,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.time_pos = progress
                 self._is_seeking = True
         
-        vol_val = self.volume_slider.value()
-        if vol_val == 0:
-            self.player.volume = 0
-        else:
-            self.player.volume = 100 * (math.log10(vol_val) / 2.0)
+        self.player.set_volume_from_slider(self.volume_slider.value())
         
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
@@ -1426,11 +1422,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 # Volume Fade Logic
                 if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
                     ratio = remaining_seconds / self._current_sleep_fade
-                    vol_val = self.volume_slider.value()
-                    if vol_val > 0:
-                        # Scale current MPV volume based on the fade ratio
-                        base_vol = 100 * (math.log10(vol_val) / 2.0)
-                        self.player.volume = base_vol * ratio
+                    self.player.apply_volume_fade(self.volume_slider.value(), ratio)
 
         elif self._sleep_mode == 'end_of_chapter':
             sleep_display_text = "[chapter]"
@@ -1544,11 +1536,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_volume_changed(self, value):
         self.panel_manager.hide_all_panels()
         if self.player:
-            if value == 0:
-                self.player.volume = 0
-            else:
-                # Logarithmic scale: makes the lower end of the slider more granular
-                self.player.volume = 100 * (math.log10(value) / 2.0)
+            self.player.set_volume_from_slider(value)
 
     def _set_speed(self, value, save=True):
         """Applies a specific speed value."""

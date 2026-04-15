@@ -1,5 +1,6 @@
 import locale
 import os
+import math
 from PySide6.QtCore import QObject, Signal
 import time
 from PySide6.QtGui import QPixmap
@@ -157,6 +158,23 @@ class Player(QObject):
     @volume.setter
     def volume(self, value): 
         if self.instance: self.instance.volume = value
+
+    def set_volume_from_slider(self, value: int):
+        """Translates linear slider value (0-100) to logarithmic volume."""
+        if value <= 0:
+            self.volume = 0
+        else:
+            # Logarithmic scale: makes the lower end of the slider more granular
+            self.volume = 100 * (math.log10(value) / 2.0)
+
+    def apply_volume_fade(self, linear_base_vol: int, ratio: float):
+        """Calculates and applies a volume fade based on a linear base and a 0.0-1.0 ratio."""
+        if linear_base_vol <= 0:
+            self.volume = 0
+            return
+        
+        base_log_vol = 100 * (math.log10(linear_base_vol) / 2.0)
+        self.volume = base_log_vol * ratio
 
     def apply_audio_processing(self, norm=False, mono=False, swap=False, balance=0.0, voice_boost=False):
         if not self.instance: return
