@@ -1162,18 +1162,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.play_pause_button.setText("Play")
             return
 
-        # Use Player engine to get stabilized UI position
         pos = self.player.get_stable_position()
-        
-        # is_eof = self.player.eof_reached
-        
+
+        # Delegate into focused helpers to reduce cognitive complexity
+        self._sync_playback_state(current_time, pos, dur)
+        self._sync_ui_render()
+        self._sync_progress_sliders(pos, dur, speed)
+        self._sync_chapter_ui(pos, dur, speed)
+        self._sync_persistence(pos, dur)
+
+    def _sync_playback_state(self, current_time, pos, dur):
         # Delegate Sleep Timer Logic
-        self.sleep_panel.update_timer_state(current_time, is_paused, pos, dur, is_eof)
+        self.sleep_panel.update_timer_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
              self.chapter_list_widget.populate(dur)
              self._update_chapter_label_from_index(self.player.chapter or 0)
 
+    def _sync_ui_render(self):
+        is_eof = self.player.eof_reached
+        if is_eof and self.current_file:
+            self.play_pause_button.setText("Restart") 
+        else:
+            self.play_pause_button.setText("Play" if self.player.pause else "Pause")
+
+    def _sync_progress_sliders(self, pos, dur, speed):
         if dur is not None and dur > 0:
             # Update overall progress
             if not self.is_slider_dragging:
@@ -1187,14 +1200,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.total_time_label.setText(self.player.format_time(dur / speed))
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
-                # Update config every 0.1% (live cache)
-                new_pct = int(percent * 10)
-                if new_pct != self._last_saved_pct:
-                    self._last_saved_pct = new_pct
-                    self.config.set_last_position(self.current_file, pos)
-                    if self.library_panel.isVisible():
-                        self.library_panel.update_current_book_progress()
-
+    def _sync_chapter_ui(self, pos, dur, speed):
         curr_chap = self.player.chapter or 0
         chap_list = self.player.chapter_list or []
         if chap_list and curr_chap < len(chap_list):
@@ -1214,10 +1220,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
-        if is_eof and self.current_file:
-            self.play_pause_button.setText("Restart") # This will be handled by _update_ui_sync
-        else:
-            self.play_pause_button.setText("Play" if self.player.pause else "Pause")
+    def _sync_persistence(self, pos, dur):
+        if dur is not None and dur > 0:
+            if not self.is_slider_dragging:
+                percent = (pos / dur) * 100
+                # Update config every 0.1% (live cache)
+                new_pct = int(percent * 10)
+                if new_pct != self._last_saved_pct:
+                    self._last_saved_pct = new_pct
+                    self.config.set_last_position(self.current_file, pos)
+                    if self.library_panel.isVisible():
+                        self.library_panel.update_current_book_progress()
 
     def _on_slider_pressed(self):
         self.is_slider_dragging = True
