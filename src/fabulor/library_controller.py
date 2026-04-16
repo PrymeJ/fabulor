@@ -125,17 +125,19 @@ class LibraryController(QObject):
             else:
                 self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
 
+    def handle_background_tasks(self, state, manual=False, force_refresh=False):
+        """Triggers scans based on current mode and location status."""
+        if state["mode"] != "scanning" and state["has_locations"]:
+            if manual or force_refresh or not state["has_indexed_books"]:
+                msg = "Forcing deep scan..." if force_refresh else "Library scanning..."
+                self.ui.update_status(msg, show_banner=True, show_cancel=True)
+            self.scanner.start(force_refresh=force_refresh)
+
     def _check_library_status(self, manual=False, force_refresh=False):
         """Main entry point for verifying library health and starting scans."""
         state = self.compute_library_state()
         self.apply_library_state(state)
-
-        if state["has_locations"]:
-            if state["mode"] != "scanning":
-                if manual or force_refresh or not state["has_indexed_books"]:
-                    self.ui.update_status("Forcing deep scan..." if force_refresh else "Library scanning...", 
-                                         show_banner=True, show_cancel=True)
-                self.scanner.start(force_refresh=force_refresh)
+        self.handle_background_tasks(state, manual, force_refresh)
 
     def _rotate_quote(self):
         """Update metadata label with a random quote when idle."""
