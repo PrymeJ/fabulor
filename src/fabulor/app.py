@@ -32,6 +32,8 @@ from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
+from types import SimpleNamespace
+from .settings_controller import SettingsController
 
 class UIInterface:
     def __init__(self, main):
@@ -150,6 +152,34 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         self.library_controller._check_library_status()
         self.ui_timer.start(200)
+
+        # Wire SettingsController with three explicit, minimal interfaces.
+        visuals = SimpleNamespace(
+            set_naming_pattern_selection=self._update_pattern_visuals,
+            set_folder_list=self._update_folder_list_widget,
+            get_selected_folder_path=self._get_selected_folder_path,
+            open_folder_dialog=self._get_new_folder_path,
+            update_status_banner=self._update_status_banner_ui,
+            update_metadata=self._update_metadata_ui,
+            set_chapter_title=self._update_chapter_title_text,
+        )
+
+        library_actions = SimpleNamespace(
+            reparse_db=self.db.reparse_library,
+            refresh_library_panel=self.library_panel.refresh,
+        )
+
+        player_actions = SimpleNamespace(
+            get_current_file=self.get_current_file,
+            load_cover_art=self._load_cover_art,
+        )
+
+        self.settings_controller = SettingsController(self.config, visuals, library_actions, player_actions)
+
+        # Ensure existing signal connections that call `_update_naming_pattern`
+        # continue to work: forward the MainWindow handler name to the
+        # controller implementation.
+        self._update_naming_pattern = self.settings_controller._update_naming_pattern
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
@@ -862,6 +892,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.terminate()
         self._load_cover_art("")
         self.config.set_last_book("")
+
+    def get_current_file(self):
+        """Return the currently loaded file path."""
+        return self.current_file
 
     def _update_folder_list_widget(self, paths):
         self.folder_list_widget.clear()
