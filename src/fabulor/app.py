@@ -1,6 +1,7 @@
 import os
 import math
 import random
+from types import SimpleNamespace
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
@@ -69,22 +70,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.file_loaded.connect(self._on_file_ready)
 
         # Initialize Library Controller
+        ui_interface = SimpleNamespace(
+            set_visible=self._set_interface_visible,
+            update_folders=self._update_folder_list_widget,
+            refresh_panel=self.library_panel.refresh,
+            update_status=self._update_status_banner_ui,
+            update_metadata=self._update_metadata_ui,
+            update_prompts=self._update_idle_prompts_ui,
+            update_quote=self._update_quote_ui
+        )
+        app_interface = SimpleNamespace(
+            get_current_file=lambda: self.current_file,
+            on_book_removed=self._on_book_removed,
+            quote_timer=self.quote_timer
+        )
+        browser_interface = SimpleNamespace(
+            get_selected_folder=self._get_selected_folder_path,
+            pick_folder=self._get_new_folder_path
+        )
+
         self.library_controller = LibraryController(
-            db=self.db,
-            config=self.config,
-            scanner=self.scanner,
-            quote_timer=self.quote_timer,
-            get_current_file_cb=lambda: self.current_file,
-            on_book_removed_cb=self._on_book_removed,
-            set_interface_visible_cb=self._set_interface_visible,
-            update_folder_list_cb=self._update_folder_list_widget,
-            get_selected_folder_cb=self._get_selected_folder_path,
-            refresh_library_panel_cb=self.library_panel.refresh,
-            set_status_cb=self._update_status_banner_ui,
-            set_metadata_cb=self._update_metadata_ui,
-            set_idle_prompts_cb=self._update_idle_prompts_ui,
-            set_quote_cb=self._update_quote_ui,
-            pick_folder_cb=self._get_new_folder_path
+            self.db, self.config, self.scanner,
+            ui_interface, app_interface, browser_interface
         )
 
         # Consolidated connections for library-related UI -> controller
