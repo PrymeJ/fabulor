@@ -1,48 +1,43 @@
 import os
 import random
-from PySide6.QtWidgets import QFileDialog
-from PySide6.QtCore import QObject, QTimer, Qt
+from PySide6.QtCore import QObject, QTimer
 from .book_quotes import BOOK_QUOTES
 
 class LibraryController(QObject):
     """Handles library scanning, folder management, and idle UI states."""
-    def __init__(self, db, config, scanner, library_panel, status_label, status_banner, 
-                 cancel_scan_btn, folder_list_widget, metadata_label, go_to_library_btn, 
-                 library_prompt_label, scan_now_btn, scan_info_label, quote_label, quote_timer,
-                 get_current_file_cb, on_book_removed_cb, set_interface_visible_cb):
+    def __init__(self, db, config, scanner, quote_timer,
+                 get_current_file_cb, on_book_removed_cb, set_interface_visible_cb,
+                 update_folder_list_cb, get_selected_folder_cb, refresh_library_panel_cb,
+                 set_status_cb, set_metadata_cb, set_idle_prompts_cb, set_quote_cb,
+                 pick_folder_cb):
         super().__init__()
         self.db = db
         self.config = config
         self.scanner = scanner
-        self.library_panel = library_panel
-        self.status_label = status_label
-        self.status_banner = status_banner
-        self.cancel_scan_btn = cancel_scan_btn
-        self.folder_list_widget = folder_list_widget
-        self.metadata_label = metadata_label
-        self.go_to_library_btn = go_to_library_btn
-        self.library_prompt_label = library_prompt_label
-        self.scan_now_btn = scan_now_btn
-        self.scan_info_label = scan_info_label
-        self.quote_label = quote_label
         self.quote_timer = quote_timer
         
-        # Callbacks to MainWindow state
+        # Functional UI Callbacks
         self.get_current_file = get_current_file_cb
         self.on_book_removed = on_book_removed_cb
         self.set_interface_visible = set_interface_visible_cb
+        self.update_folder_list_ui = update_folder_list_cb
+        self.get_selected_folder_ui = get_selected_folder_cb
+        self.refresh_library_panel_ui = refresh_library_panel_cb
+        self.set_status_ui = set_status_cb
+        self.set_metadata_ui = set_metadata_cb
+        self.set_idle_prompts_ui = set_idle_prompts_cb
+        self.set_quote_ui = set_quote_cb
+        self.pick_folder_ui = pick_folder_cb
 
     def _refresh_folder_list(self):
         """Updates the folder list widget with current scan locations."""
-        self.folder_list_widget.clear()
-        for loc in self.db.get_scan_locations():
-            self.folder_list_widget.addItem(loc)
+        locs = self.db.get_scan_locations()
+        self.update_folder_list_ui(locs)
 
     def _on_remove_folder_clicked(self):
         """Removes the selected folder from the database and updates UI."""
-        current_item = self.folder_list_widget.currentItem()
-        if current_item:
-            path = current_item.text()
+        path = self.get_selected_folder_ui()
+        if path:
             self.db.remove_scan_location(path)
             
             # Unload the book if it was inside the removed library folder
@@ -53,11 +48,11 @@ class LibraryController(QObject):
 
             self._refresh_folder_list()
             self._check_library_status(manual=True)
-            self.library_panel.refresh(force=True)
+            self.refresh_library_panel_ui(force=True)
 
     def _on_scan_now_clicked(self):
         """Triggers a folder picker and starts scanning."""
-        folder = QFileDialog.getExistingDirectory(None, "Select Library Folder")
+        folder = self.pick_folder_ui()
         if folder:
             new_path = os.path.abspath(folder)
             existing = self.db.get_scan_locations()
@@ -83,26 +78,23 @@ class LibraryController(QObject):
     def _on_cancel_scan_clicked(self):
         """Stops the current scan."""
         self.scanner.stop()
-        self.status_label.setText("Scan cancelled.")
-        self.cancel_scan_btn.hide()
+        self.set_status_ui("Scan cancelled.", show_banner=True, show_cancel=False)
 
     def _on_scan_progress(self, current, total):
         """Updates the status banner with scan progress."""
-        if self.status_banner.isVisible():
-            self.status_label.setText(f"Loading Library... ({current}/{total})")
-            self.status_banner.raise_()
+        # Logic for banner updates is now handled by the callback which checks visibility
+        self.set_status_ui(f"Loading Library... ({current}/{total})", 
+                          show_banner=None, show_cancel=None)
         
         if current == 1:
             self._check_library_status()
 
     def _on_scan_finished(self, total):
         """Finalizes scan and hides banner."""
-        if self.status_banner.isVisible():
-            self.status_label.setText(f"Library updated: {total} books.")
-            self.cancel_scan_btn.hide()
-            QTimer.singleShot(3000, self.status_banner.hide)
+        self.set_status_ui(f"Library updated: {total} books.", 
+                          show_banner=None, show_cancel=False, auto_hide=True)
         
-        self.library_panel.refresh(force=True)
+        self.refresh_library_panel_ui(force=True)
         self._refresh_folder_list()
 
     def _check_library_status(self, manual=False, force_refresh=False):
@@ -117,32 +109,24 @@ class LibraryController(QObject):
         if not has_locations or not has_indexed_books:
             self.quote_timer.start(60000)
             self._rotate_quote()
-            self.library_prompt_label.show()
-            self.scan_now_btn.show()
-            self.scan_info_label.show()
-            self.status_banner.show()
-            self.metadata_label.hide()
-            self.go_to_library_btn.hide()
+            self.set_idle_prompts_ui(True)
+            self.set_status_ui(None, show_banner=True, show_cancel=None)
+            self.set_metadata_ui(None, show_metadata=False, show_go_to_lib=False)
         else:
-            self.library_prompt_label.hide()
-            self.scan_now_btn.hide()
-            self.scan_info_label.hide()
-            self.quote_label.hide()
+            self.set_idle_prompts_ui(False)
+            self.set_quote_ui(None, show_quote=False)
             self.quote_timer.stop()
             
             if not has_book:
-                self.metadata_label.setText("No book selected.")
-                self.metadata_label.show()
-                self.go_to_library_btn.show()
+                self.set_metadata_ui("No book selected.", show_metadata=True, show_go_to_lib=True)
             else:
-                self.go_to_library_btn.hide()
+                self.set_metadata_ui(None, show_metadata=False, show_go_to_lib=False)
 
         if has_locations:
             if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
                 if manual or force_refresh or not has_indexed_books:
-                    self.status_label.setText("Forcing deep scan..." if force_refresh else "Library scanning...")
-                    self.cancel_scan_btn.show()
-                    self.status_banner.show()
+                    self.set_status_ui("Forcing deep scan..." if force_refresh else "Library scanning...", 
+                                      show_banner=True, show_cancel=True)
                 
                 self.scanner.start(force_refresh=force_refresh)
 
@@ -154,5 +138,4 @@ class LibraryController(QObject):
                 f"<div style='font-size: {text_size}px; color: {color}; text-align: {text_align}; width: 100%;'>{text}</div>"
                 f"<div style='text-align: right; font-size: {title_size}px; color: #ddd;'><br>{title}</div>"
             )
-            self.quote_label.setText(styled_quote)
-            self.quote_label.show()
+            self.set_quote_ui(styled_quote, show_quote=True)

@@ -73,21 +73,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             db=self.db,
             config=self.config,
             scanner=self.scanner,
-            library_panel=self.library_panel,
-            status_label=self.status_label,
-            status_banner=self.status_banner,
-            cancel_scan_btn=self.cancel_scan_btn,
-            folder_list_widget=self.folder_list_widget,
-            metadata_label=self.metadata_label,
-            go_to_library_btn=self.go_to_library_btn,
-            library_prompt_label=self.library_prompt_label,
-            scan_now_btn=self.scan_now_btn,
-            scan_info_label=self.scan_info_label,
-            quote_label=self.quote_label,
             quote_timer=self.quote_timer,
             get_current_file_cb=lambda: self.current_file,
             on_book_removed_cb=self._on_book_removed,
-            set_interface_visible_cb=self._set_interface_visible
+            set_interface_visible_cb=self._set_interface_visible,
+            update_folder_list_cb=self._update_folder_list_widget,
+            get_selected_folder_cb=self._get_selected_folder_path,
+            refresh_library_panel_cb=self.library_panel.refresh,
+            set_status_cb=self._update_status_banner_ui,
+            set_metadata_cb=self._update_metadata_ui,
+            set_idle_prompts_cb=self._update_idle_prompts_ui,
+            set_quote_cb=self._update_quote_ui,
+            pick_folder_cb=self._get_new_folder_path
         )
 
         # Consolidated connections for library-related UI -> controller
@@ -848,6 +845,57 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.terminate()
         self._load_cover_art("")
         self.config.set_last_book("")
+
+    def _update_folder_list_widget(self, paths):
+        self.folder_list_widget.clear()
+        for loc in paths:
+            self.folder_list_widget.addItem(loc)
+
+    def _get_selected_folder_path(self):
+        item = self.folder_list_widget.currentItem()
+        return item.text() if item else None
+
+    def _get_new_folder_path(self):
+        return QFileDialog.getExistingDirectory(None, "Select Library Folder")
+
+    def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False):
+        if text is not None and (self.status_banner.isVisible() or show_banner):
+            self.status_label.setText(text)
+            if self.status_banner.isVisible():
+                self.status_banner.raise_()
+
+        if show_banner is True: self.status_banner.show()
+        elif show_banner is False: self.status_banner.hide()
+
+        if show_cancel is True: self.cancel_scan_btn.show()
+        elif show_cancel is False: self.cancel_scan_btn.hide()
+
+        if auto_hide:
+            QTimer.singleShot(3000, self.status_banner.hide)
+
+    def _update_metadata_ui(self, text=None, show_metadata=None, show_go_to_lib=None):
+        if text is not None:
+            self.metadata_label.setText(text)
+        if show_metadata is True: self.metadata_label.show()
+        elif show_metadata is False: self.metadata_label.hide()
+        if show_go_to_lib is True: self.go_to_library_btn.show()
+        elif show_go_to_lib is False: self.go_to_library_btn.hide()
+
+    def _update_idle_prompts_ui(self, visible):
+        if visible:
+            self.library_prompt_label.show()
+            self.scan_now_btn.show()
+            self.scan_info_label.show()
+        else:
+            self.library_prompt_label.hide()
+            self.scan_now_btn.hide()
+            self.scan_info_label.hide()
+
+    def _update_quote_ui(self, rich_text=None, show_quote=None):
+        if rich_text is not None:
+            self.quote_label.setText(rich_text)
+        if show_quote is True: self.quote_label.show()
+        elif show_quote is False: self.quote_label.hide()
 
     def _set_interface_visible(self, visible):
         """Toggles visibility of book-specific UI elements."""
