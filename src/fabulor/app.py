@@ -24,6 +24,7 @@ from .ui.audio_controls import AudioSettingsTab
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
+from .library_controller import LibraryController
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
@@ -62,13 +63,46 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.ui_timer = QTimer()
         self.quote_timer = QTimer()
-        self.quote_timer.timeout.connect(self._rotate_quote)
         
         self.ui_timer.timeout.connect(self._update_ui_sync)
-        self.scanner.progress.connect(self._on_scan_progress)
-        self.scanner.finished.connect(self._on_scan_finished)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
         self.player.file_loaded.connect(self._on_file_ready)
+
+        # Initialize Library Controller
+        self.library_controller = LibraryController(
+            db=self.db,
+            config=self.config,
+            scanner=self.scanner,
+            library_panel=self.library_panel,
+            status_label=self.status_label,
+            status_banner=self.status_banner,
+            cancel_scan_btn=self.cancel_scan_btn,
+            folder_list_widget=self.folder_list_widget,
+            metadata_label=self.metadata_label,
+            go_to_library_btn=self.go_to_library_btn,
+            library_prompt_label=self.library_prompt_label,
+            scan_now_btn=self.scan_now_btn,
+            scan_info_label=self.scan_info_label,
+            quote_label=self.quote_label,
+            quote_timer=self.quote_timer,
+            get_current_file_cb=lambda: self.current_file,
+            on_book_removed_cb=self._on_book_removed,
+            set_interface_visible_cb=self._set_interface_visible
+        )
+
+        # Consolidated connections for library-related UI -> controller
+        # (moved here to ensure `self.library_controller` is available)
+        self.cancel_scan_btn.clicked.connect(self.library_controller._on_cancel_scan_clicked)
+        self.next_quote_btn.clicked.connect(self.library_controller._rotate_quote)
+        self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
+        self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
+        self.remove_folder_btn.clicked.connect(self.library_controller._on_remove_folder_clicked)
+        self.refresh_library_btn.clicked.connect(lambda: self.library_controller._check_library_status(manual=True, force_refresh=True))
+
+        self.scanner.progress.connect(self.library_controller._on_scan_progress)
+        self.scanner.finished.connect(self.library_controller._on_scan_finished)
+        self.quote_timer.timeout.connect(self.library_controller._rotate_quote)
+        self.library_controller._refresh_folder_list()
 
         self._undo_timer.setSingleShot(True)
         self._undo_timer.timeout.connect(self._hide_undo_banner)
@@ -100,7 +134,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Handle selection from library
         self.library_panel.book_selected.connect(self._on_book_selected_from_library)
         
-        self._check_library_status()
+        self.library_controller._check_library_status()
         self.ui_timer.start(200)
 
     def _setup_ui(self):
@@ -214,13 +248,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cancel_scan_btn = QPushButton("✕")
         self.cancel_scan_btn.setFixedSize(20, 20)
         self.cancel_scan_btn.setToolTip("Cancel scan")
-        self.cancel_scan_btn.clicked.connect(self._on_cancel_scan_clicked)
         
         # Temporary button for quote testing
         self.next_quote_btn = QPushButton("Next Quote")
         self.next_quote_btn.setFixedSize(70, 22)
         self.next_quote_btn.setStyleSheet("font-size: 9px; padding: 2px;")
-        self.next_quote_btn.clicked.connect(self._rotate_quote)
         
         self.temp_settings_btn = QPushButton("S")
         self.temp_settings_btn.setFixedSize(22, 22)
@@ -270,7 +302,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.scan_now_btn = QPushButton("Scan now")
         self.scan_now_btn.setFixedWidth(120)
-        self.scan_now_btn.clicked.connect(self._on_scan_now_clicked)
         self.visual_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
         self.scan_info_label = QLabel(
             "Loading all your books may take a while. If you wish, you can instead "
@@ -753,9 +784,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         folder_btns_layout.addWidget(self.refresh_library_btn)
         lib_layout.addLayout(folder_btns_layout)
 
-        self.add_folder_btn.clicked.connect(self._on_scan_now_clicked)
-        self.remove_folder_btn.clicked.connect(self._on_remove_folder_clicked)
-        self.refresh_library_btn.clicked.connect(lambda: self._check_library_status(manual=True, force_refresh=True))
+        # Library controller connections are consolidated in __init__
         lib_layout.addStretch()
         self.tabs.addTab(library_tab, "Library")
         self._update_pattern_visuals()
@@ -772,7 +801,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.tabs.addTab(shortcuts_tab, "Controls")
 
         settings_layout.addWidget(self.tabs)
-        self._refresh_folder_list()
         self.settings_panel.hide()
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
@@ -813,118 +841,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Update the scrolling label text."""
         self.current_chapter_label.setText(text)
 
-    def _refresh_folder_list(self):
-        """Updates the folder list widget with current scan locations."""
-        if hasattr(self, 'folder_list_widget'):
-            self.folder_list_widget.clear()
-            for loc in self.db.get_scan_locations():
-                self.folder_list_widget.addItem(loc)
-
-    def _on_remove_folder_clicked(self):
-        """Removes the selected folder from the database and updates UI."""
-        current_item = self.folder_list_widget.currentItem()
-        if current_item:
-            path = current_item.text()
-            self.db.remove_scan_location(path)
-            
-            # Unload the book if it was inside the removed library folder
-            path_p = path if path.endswith(os.sep) else path + os.sep
-            if self.current_file and self.current_file.startswith(path_p):
-                self.current_file = ""
-                self.player.terminate()
-                self._load_cover_art("")
-                self.config.set_last_book("")
-
-            self._refresh_folder_list()
-            self._check_library_status(manual=True)
-            self.library_panel.refresh(force=True)
-
-    def _check_library_status(self, manual=False, force_refresh=False):
-        """Lazy scan on startup. Checks if locations exist but books are missing."""
-        locs = self.db.get_scan_locations()
-        has_locations = len(locs) > 0
-        has_indexed_books = self.db.get_book_count() > 0
-        has_book = bool(self.current_file)
-
-        self._set_interface_visible(has_book)
-
-        if not has_locations or not has_indexed_books:
-            self.quote_timer.start(60000) # Rotate every minute
-            self._rotate_quote()
-            self.library_prompt_label.show()
-            self.scan_now_btn.show()
-            self.scan_info_label.show()
-            self.status_banner.show() # Keep banner visible for quote testing access
-            self.metadata_label.hide()
-            self.go_to_library_btn.hide() # Hide this button in empty state
-        else:
-            # We have at least one book! Switch to "Ready" state
-            self.library_prompt_label.hide()
-            self.scan_now_btn.hide()
-            self.scan_info_label.hide()
-            self.quote_label.hide()
-            self.quote_timer.stop()
-            
-            if not has_book:
-                self.metadata_label.setText("No book selected.") # Added period
-                self.metadata_label.show()
-                self.go_to_library_btn.show() # Show this button if books exist but none selected
-            else:
-                self.go_to_library_btn.hide() # Hide if a book is selected
-
-        if has_locations:
-            if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
-                # Only show the banner if it's the first run (no indexed books)
-                # OR if the user manually triggered a scan (added/removed a folder)
-                if manual or force_refresh or not has_indexed_books:
-                    self.status_label.setText("Forcing deep scan..." if force_refresh else "Library scanning...")
-                    self.cancel_scan_btn.show()
-                    self.status_banner.show()
-                
-                self.scanner.start(force_refresh=force_refresh)
-
-    def _on_cancel_scan_clicked(self):
-        self.scanner.stop()
-        self.status_label.setText("Scan cancelled.")
-        self.cancel_scan_btn.hide()
-
-    def _on_scan_now_clicked(self):
-        # Passing None as parent ensures the dialog uses the native OS style
-        folder = QFileDialog.getExistingDirectory(None, "Select Library Folder")
-        if folder:
-            new_path = os.path.abspath(folder)
-            existing = self.db.get_scan_locations()
-            
-            # Redundancy logic
-            is_redundant = False
-            for loc in existing:
-                # Add separator to prevent /Books matching /Bookshelf
-                loc_p = loc if loc.endswith(os.sep) else loc + os.sep
-                new_p = new_path if new_path.endswith(os.sep) else new_path + os.sep
-                
-                if new_p.startswith(loc_p): 
-                    is_redundant = True # User selected a subfolder of an already scanned path
-                    break
-                if loc_p.startswith(new_p):
-                    self.db.remove_scan_location(loc) # Remove subfolders if user selected parent
-            
-            if not is_redundant:
-                self.scanner.stop() # Stop any current silent scan to prioritize the new folder
-                self.db.add_scan_location(new_path)
-                self._check_library_status(manual=True)
-                self._refresh_folder_list()
-
-    def _rotate_quote(self):
-        """Update metadata label with a random quote when idle."""
-        if not self.db.get_scan_locations():
-            text, title, text_size, title_size, color, text_align = random.choice(BOOK_QUOTES)
-            # Rich text for right alignment of the author
-            styled_quote = (
-                f"<div style='font-size: {text_size}px; color: {color}; text-align: {text_align}; width: 100%;'>{text}</div>"
-                f"<div style='text-align: right; font-size: {title_size}px; color: #ddd;'><br>{title}</div>"
-            )
-            self.quote_label.setText(styled_quote)
-            self.quote_label.show()
+    def _on_book_removed(self):
+        """Helper for controller when the currently playing folder is removed from library."""
+        self.current_file = ""
+        if self.player:
+            self.player.terminate()
+        self._load_cover_art("")
+        self.config.set_last_book("")
 
     def _set_interface_visible(self, visible):
         """Toggles visibility of book-specific UI elements."""
@@ -938,16 +861,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_duration_label.setVisible(visible)
         self.progress_percentage_label.setVisible(visible)
         self.chapter_preview_label.setVisible(visible)
-
-    def _on_scan_progress(self, current, total):
-        # Only update banner if it's already visible (prevents silent scans from popping up)
-        if self.status_banner.isVisible():
-            self.status_label.setText(f"Loading Library... ({current}/{total})")
-            self.status_banner.raise_()
-        
-        # As soon as the very first book is indexed, enable UI access
-        if current == 1:
-            self._check_library_status()
 
     def _save_current_progress(self):
         """Saves the current playback position to both DB and Config."""
@@ -965,18 +878,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.db.update_last_played(path)
         self.player.load_book(path)
         self._load_cover_art(path)
-        self._check_library_status()
+        self.library_controller._check_library_status()
         self.panel_manager.hide_all_panels()
         self._update_ui_sync() # Force UI update
-
-    def _on_scan_finished(self, total):
-        if self.status_banner.isVisible():
-            self.status_label.setText(f"Library updated: {total} books.")
-            self.cancel_scan_btn.hide()
-            QTimer.singleShot(3000, self.status_banner.hide)
-        
-        self.library_panel.refresh(force=True)
-        self._refresh_folder_list()
 
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
