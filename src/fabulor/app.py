@@ -154,8 +154,62 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.start(200)
 
         # Wire SettingsController with three explicit, minimal interfaces.
+        def set_naming_pattern_selection(current):
+            if not hasattr(self, 'at_pattern_btn'): return
+            self.at_pattern_btn.setProperty("selected", "true" if current == "Author - Title" else "false")
+            self.ta_pattern_btn.setProperty("selected", "true" if current == "Title - Author" else "false")
+            for btn in [self.at_pattern_btn, self.ta_pattern_btn]:
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_scroll_selection(current):
+            if not hasattr(self, 'scroll_buttons'): return
+            self.current_chapter_label.set_scroll_mode(current)
+            for mode, btn in self.scroll_buttons.items():
+                btn.setProperty("selected", "true" if mode == current else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_hints_selection(enabled):
+            if not hasattr(self, 'hints_buttons'): return
+            for mode, btn in self.hints_buttons.items():
+                is_selected = (mode == "On" if enabled else mode == "Off")
+                btn.setProperty("selected", "true" if is_selected else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_undo_selection(current):
+            if not hasattr(self, 'undo_buttons'): return
+            for val, btn in self.undo_buttons.items():
+                btn.setProperty("selected", "true" if val == current else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_fade_selection(current):
+            if not hasattr(self, 'fade_buttons'): return
+            for ms, btn in self.fade_buttons.items():
+                btn.setProperty("selected", "true" if ms == current else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_blur_selection(enabled):
+            if not hasattr(self, 'blur_buttons'): return
+            for state, btn in self.blur_buttons.items():
+                is_selected = (state == "On" if enabled else state == "Off")
+                btn.setProperty("selected", "true" if is_selected else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+            if not enabled:
+                self.blur_effect.setBlurRadius(0)
+
         visuals = SimpleNamespace(
-            set_naming_pattern_selection=self._update_pattern_visuals,
+            set_naming_pattern_selection=set_naming_pattern_selection,
+            set_scroll_selection=set_scroll_selection,
+            set_hints_selection=set_hints_selection,
+            set_undo_selection=set_undo_selection,
+            set_fade_selection=set_fade_selection,
+            set_blur_selection=set_blur_selection,
+            validate_speed_panel_settings=lambda: self.speed_panel._validate_smart_rewind_settings() if self.speed_panel else None,
             set_folder_list=self._update_folder_list_widget,
             get_selected_folder_path=self._get_selected_folder_path,
             open_folder_dialog=self._get_new_folder_path,
@@ -180,6 +234,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # continue to work: forward the MainWindow handler name to the
         # controller implementation.
         self._update_naming_pattern = self.settings_controller._update_naming_pattern
+        self._update_scroll_mode = self.settings_controller._update_scroll_mode
+        self._update_hints_mode = self.settings_controller._update_hints_mode
+        self._update_undo_mode = self.settings_controller._update_undo_mode
+        self._update_fade_mode = self.settings_controller._update_fade_mode
+        self._update_blur_mode = self.settings_controller._update_blur_mode
+        self._debug_settings_controller_wiring()
+
+    def _debug_settings_controller_wiring(self):
+        checks = [
+            hasattr(self, "settings_controller"),
+            hasattr(self.settings_controller, "_update_scroll_mode"),
+            hasattr(self.settings_controller, "_update_hints_mode"),
+            hasattr(self.settings_controller, "_update_undo_mode"),
+            hasattr(self.settings_controller, "_update_fade_mode"),
+            hasattr(self.settings_controller, "_update_blur_mode"),
+        ]
+        print("SettingsController wiring OK:", all(checks), checks)
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
