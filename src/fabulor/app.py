@@ -51,7 +51,6 @@ class AppInterface:
 
     def get_current_file(self): return self._main.current_file
     def on_book_removed(self): self._main._on_book_removed()
-    def is_running(self): return self._main.scanner.is_running()
 
     @property
     def quote_timer(self): return self._main.quote_timer

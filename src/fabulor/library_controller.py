@@ -90,11 +90,10 @@ class LibraryController(QObject):
         has_locations = len(locs) > 0
         has_indexed_books = self.db.get_book_count() > 0
         has_book = bool(self.app.get_current_file())
-        should_show_idle_ui = not has_locations or not has_indexed_books
 
-        if should_show_idle_ui:
+        if not has_locations or not has_indexed_books:
             mode = "empty"
-        elif self.app.is_running():
+        elif self.scanner.is_running():
             mode = "scanning"
         else:
             mode = "ready"
@@ -103,15 +102,14 @@ class LibraryController(QObject):
             "mode": mode,
             "has_book": has_book,
             "has_locations": has_locations,
-            "has_indexed_books": has_indexed_books,
-            "should_show_idle_ui": should_show_idle_ui
+            "has_indexed_books": has_indexed_books
         }
 
     def apply_library_state(self, state):
         """Updates the UI components based on the provided state object."""
         self.ui.set_visible(state["has_book"])
 
-        if state["should_show_idle_ui"]:
+        if state["mode"] == "empty":
             self.app.quote_timer.start(60000)
             self._rotate_quote()
             self.ui.update_prompts(True)
@@ -133,7 +131,7 @@ class LibraryController(QObject):
         self.apply_library_state(state)
 
         if state["has_locations"]:
-            if not self.app.is_running():
+            if state["mode"] != "scanning":
                 if manual or force_refresh or not state["has_indexed_books"]:
                     self.ui.update_status("Forcing deep scan..." if force_refresh else "Library scanning...", 
                                          show_banner=True, show_cancel=True)
