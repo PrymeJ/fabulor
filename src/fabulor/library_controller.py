@@ -1,6 +1,6 @@
 import os
 import random
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject
 from .book_quotes import BOOK_QUOTES
 
 class LibraryController(QObject):
@@ -110,7 +110,7 @@ class LibraryController(QObject):
         self.ui.set_visible(state["has_book"])
 
         if state["mode"] == "empty":
-            self.app.quote_timer.start(60000)
+            self.ui.set_quote_rotation(True)
             self._rotate_quote()
             self.ui.update_prompts(True)
             self.ui.update_status(None, show_banner=True, show_cancel=None)
@@ -118,7 +118,7 @@ class LibraryController(QObject):
         else:
             self.ui.update_prompts(False)
             self.ui.update_quote(None, show_quote=False)
-            self.app.quote_timer.stop()
+            self.ui.set_quote_rotation(False)
             
             if not state["has_book"]:
                 self.ui.update_metadata("No book selected.", show_metadata=True, show_go_to_lib=True)

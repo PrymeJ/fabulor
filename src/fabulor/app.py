@@ -44,6 +44,7 @@ class UIInterface:
     def update_metadata(self, *a, **k): self._main._update_metadata_ui(*a, **k)
     def update_prompts(self, v): self._main._update_idle_prompts_ui(v)
     def update_quote(self, *a, **k): self._main._update_quote_ui(*a, **k)
+    def set_quote_rotation(self, v): self._main._set_quote_rotation(v)
 
 class AppInterface:
     def __init__(self, main):
@@ -51,9 +52,6 @@ class AppInterface:
 
     def get_current_file(self): return self._main.current_file
     def on_book_removed(self): self._main._on_book_removed()
-
-    @property
-    def quote_timer(self): return self._main.quote_timer
 
 class BrowserInterface:
     def __init__(self, main):
@@ -915,6 +913,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.quote_label.setText(rich_text)
         if show_quote is True: self.quote_label.show()
         elif show_quote is False: self.quote_label.hide()
+
+    def _set_quote_rotation(self, enabled):
+        """Starts or stops the 60s quote rotation timer."""
+        if enabled:
+            if not self.quote_timer.isActive():
+                self.quote_timer.start(60000)
+        else:
+            self.quote_timer.stop()
 
     def _set_interface_visible(self, visible):
         """Toggles visibility of book-specific UI elements."""
