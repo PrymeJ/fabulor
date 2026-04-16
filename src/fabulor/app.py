@@ -233,6 +233,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_controller.bind_mainwindow_handlers(self)
         self._debug_settings_controller_wiring()
 
+        # Ensure initial visuals are synchronized via the controller (was previously done
+        # during _build_settings_panel when these methods existed on MainWindow).
+        # Delegate to SettingsController visual updaters now that it's bound.
+        try:
+            self.settings_controller._update_pattern_visuals()
+            self.settings_controller._update_speed_grid_styling()
+            self.settings_controller._update_scroll_mode_visuals()
+            self.settings_controller._update_hints_visuals()
+            self.settings_controller._update_fade_visuals()
+            self.settings_controller._update_blur_visuals()
+            self.settings_controller._update_undo_visuals()
+        except Exception:
+            pass
+
     def _debug_settings_controller_wiring(self):
         checks = [
             hasattr(self, "settings_controller"),
@@ -313,7 +327,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_pulse_anim.setLoopCount(-1)
         self.sleep_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
 
-        self._update_speed_grid_styling()
+        # Speed/grid visual initialization moved to after SettingsController binding
 
         # Initialize Blur Effect for background depth
         self.blur_effect = QGraphicsBlurEffect(self.visual_area)
@@ -838,11 +852,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Look")
-        self._update_scroll_mode_visuals()
-        self._update_hints_visuals()
-        self._update_undo_visuals()
-        self._update_fade_visuals()
-        self._update_blur_visuals()
+        # Visual initialization moved to after SettingsController binding
 
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
@@ -1349,20 +1359,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if save:
             self.config.set_sleep_fade_duration(seconds)
         self._update_sleep_panel_styling()
-
-    def _update_speed_grid_styling(self):
-        """Applies the current theme's gradient styling to the speed grid buttons."""
-        if self.speed_panel:
-            self.speed_panel.update_visuals()
-            
-        self._update_pattern_visuals()
-        self._update_scroll_mode_visuals()
-        self._update_hints_visuals()
-        self._update_fade_visuals()
-        self._update_blur_visuals()
-        self._update_undo_visuals()
-        if self.sleep_panel:
-            self.sleep_panel.update_panel_styling()
+    
 
     def _on_player_speed_changed(self, value):
         """Slot to sync the main UI speed button text with the player engine."""
@@ -1746,77 +1743,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 
         event.accept()
 
-    def _update_hints_mode(self, enabled):
-        """Changes the chapter hint visibility setting."""
-        self.config.set_chapter_hints_enabled(enabled)
-        self._update_hints_visuals()
-
-    def _update_hints_visuals(self):
-        """Updates the highlight state of hint toggle buttons."""
-        if not hasattr(self, 'hints_buttons'): return
-        enabled = self.config.get_chapter_hints_enabled()
-        for mode, btn in self.hints_buttons.items():
-            is_selected = (mode == "On" if enabled else mode == "Off")
-            btn.setProperty("selected", "true" if is_selected else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_scroll_mode(self, mode):
-        self.config.set_scroll_mode(mode)
-        self.current_chapter_label.set_scroll_mode(mode)
-        self._update_scroll_mode_visuals()
-
-    def _update_scroll_mode_visuals(self):
-        if not hasattr(self, 'scroll_buttons'): return
-        current = self.config.get_scroll_mode()
-        for mode, btn in self.scroll_buttons.items():
-            btn.setProperty("selected", "true" if mode == current else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_undo_mode(self, val):
-        self.config.set_undo_duration(val)
-        self._update_undo_visuals()
-
-    def _update_undo_visuals(self):
-        if not hasattr(self, 'undo_buttons'): return
-        current = self.config.get_undo_duration()
-        for val, btn in self.undo_buttons.items():
-            btn.setProperty("selected", "true" if val == current else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_fade_mode(self, ms):
-        """Changes the theme hover fade duration."""
-        self.config.set_theme_fade_duration(ms)
-        self._update_fade_visuals()
-
-    def _update_fade_visuals(self):
-        """Updates the highlight state of fade buttons."""
-        if not hasattr(self, 'fade_buttons'): return
-        current = self.config.get_theme_fade_duration()
-        for ms, btn in self.fade_buttons.items():
-            btn.setProperty("selected", "true" if ms == current else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-
-    def _update_blur_mode(self, enabled):
-        """Changes the blur setting."""
-        self.config.set_blur_enabled(enabled)
-        # Apply setting immediately if a panel is open
-        if not enabled:
-            self.blur_effect.setBlurRadius(0)
-        self._update_blur_visuals()
-
-    def _update_blur_visuals(self):
-        """Updates the highlight state of blur buttons."""
-        if not hasattr(self, 'blur_buttons'): return
-        enabled = self.config.get_blur_enabled()
-        for state, btn in self.blur_buttons.items():
-            is_selected = (state == "On" if enabled else state == "Off")
-            btn.setProperty("selected", "true" if is_selected else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+    
 
     def _validate_smart_rewind_settings(self):
         if self.speed_panel:
