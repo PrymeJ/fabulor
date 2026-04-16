@@ -84,16 +84,34 @@ class LibraryController(QObject):
         self.ui.refresh_panel(force=True)
         self._refresh_folder_list()
 
-    def _check_library_status(self, manual=False, force_refresh=False):
-        """Determines if the UI should show library prompts or the player interface."""
+    def compute_library_state(self):
+        """Computes the current logical state of the library."""
         locs = self.db.get_scan_locations()
         has_locations = len(locs) > 0
         has_indexed_books = self.db.get_book_count() > 0
         has_book = bool(self.app.get_current_file())
+        should_show_idle_ui = not has_locations or not has_indexed_books
 
-        self.ui.set_visible(has_book)
+        if should_show_idle_ui:
+            mode = "empty"
+        elif self.app.is_running():
+            mode = "scanning"
+        else:
+            mode = "ready"
 
-        if not has_locations or not has_indexed_books:
+        return {
+            "mode": mode,
+            "has_book": has_book,
+            "has_locations": has_locations,
+            "has_indexed_books": has_indexed_books,
+            "should_show_idle_ui": should_show_idle_ui
+        }
+
+    def apply_library_state(self, state):
+        """Updates the UI components based on the provided state object."""
+        self.ui.set_visible(state["has_book"])
+
+        if state["should_show_idle_ui"]:
             self.app.quote_timer.start(60000)
             self._rotate_quote()
             self.ui.update_prompts(True)
@@ -104,17 +122,21 @@ class LibraryController(QObject):
             self.ui.update_quote(None, show_quote=False)
             self.app.quote_timer.stop()
             
-            if not has_book:
+            if not state["has_book"]:
                 self.ui.update_metadata("No book selected.", show_metadata=True, show_go_to_lib=True)
             else:
                 self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
 
-        if has_locations:
+    def _check_library_status(self, manual=False, force_refresh=False):
+        """Main entry point for verifying library health and starting scans."""
+        state = self.compute_library_state()
+        self.apply_library_state(state)
+
+        if state["has_locations"]:
             if not self.app.is_running():
-                if manual or force_refresh or not has_indexed_books:
+                if manual or force_refresh or not state["has_indexed_books"]:
                     self.ui.update_status("Forcing deep scan..." if force_refresh else "Library scanning...", 
                                          show_banner=True, show_cancel=True)
-                
                 self.scanner.start(force_refresh=force_refresh)
 
     def _rotate_quote(self):
