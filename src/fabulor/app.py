@@ -209,7 +209,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             set_undo_selection=set_undo_selection,
             set_fade_selection=set_fade_selection,
             set_blur_selection=set_blur_selection,
-            validate_speed_panel_settings=lambda: self.speed_panel._validate_smart_rewind_settings() if self.speed_panel else None,
+            validate_speed_panel_settings=lambda: self.speed_panel._validate_smart_rewind_settings(finalize=True) if self.speed_panel else None,
             set_folder_list=self._update_folder_list_widget,
             get_selected_folder_path=self._get_selected_folder_path,
             open_folder_dialog=self._get_new_folder_path,

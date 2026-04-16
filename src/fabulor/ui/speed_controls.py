@@ -147,13 +147,13 @@ class SpeedControlsPanel(QWidget):
     def _update_step_mode(self, val): self.config.set_speed_increment(val); self.update_visuals()
     def _update_skip_mode(self, val): self.config.set_skip_duration(val); self.update_visuals()
     def _update_long_skip_mode(self, val): self.config.set_long_skip_duration(val); self.update_visuals()
-    def _update_smart_rewind_mode(self, val): self.config.set_smart_rewind_wait(val); self._validate_smart_rewind_settings()
-    def _update_smart_rewind_duration(self, val): self.config.set_smart_rewind_duration(val); self._validate_smart_rewind_settings()
+    def _update_smart_rewind_mode(self, val): self.config.set_smart_rewind_wait(val); self._validate_smart_rewind_settings(finalize=False)
+    def _update_smart_rewind_duration(self, val): self.config.set_smart_rewind_duration(val); self._validate_smart_rewind_settings(finalize=False)
 
-    def _validate_smart_rewind_settings(self):
+    def _validate_smart_rewind_settings(self, finalize=False):
         wait = self.config.get_smart_rewind_wait()
         dur = self.config.get_smart_rewind_duration()
-        if (wait > 0 and dur == 0) or (wait == 0 and dur > 0):
+        if finalize and ((wait > 0 and dur == 0) or (wait == 0 and dur > 0)):
             self.config.set_smart_rewind_wait(0)
             self.config.set_smart_rewind_duration(0)
         self.update_visuals()
