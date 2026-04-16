@@ -230,15 +230,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.settings_controller = SettingsController(self.config, visuals, library_actions, player_actions)
 
-        # Ensure existing signal connections that call `_update_naming_pattern`
-        # continue to work: forward the MainWindow handler name to the
-        # controller implementation.
-        self._update_naming_pattern = self.settings_controller._update_naming_pattern
-        self._update_scroll_mode = self.settings_controller._update_scroll_mode
-        self._update_hints_mode = self.settings_controller._update_hints_mode
-        self._update_undo_mode = self.settings_controller._update_undo_mode
-        self._update_fade_mode = self.settings_controller._update_fade_mode
-        self._update_blur_mode = self.settings_controller._update_blur_mode
+        self.settings_controller.bind_mainwindow_handlers(self)
         self._debug_settings_controller_wiring()
 
     def _debug_settings_controller_wiring(self):
