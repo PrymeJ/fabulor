@@ -110,7 +110,7 @@ class LibraryController(QObject):
                 self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
 
         if has_locations:
-            if not self.scanner._worker_thread or not self.scanner._worker_thread.isRunning():
+            if not self.app.is_running():
                 if manual or force_refresh or not has_indexed_books:
                     self.ui.update_status("Forcing deep scan..." if force_refresh else "Library scanning...", 
                                          show_banner=True, show_cancel=True)

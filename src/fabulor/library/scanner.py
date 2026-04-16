@@ -189,6 +189,10 @@ class LibraryScanner(QObject):
         if self.worker:
             self.worker.stop()
 
+    def is_running(self):
+        """Returns True if the scanner's worker thread is currently active."""
+        return self._worker_thread is not None and self._worker_thread.isRunning()
+
     def start(self, force_refresh=False):
         # Prevent multiple overlapping threads
         if self._worker_thread and self._worker_thread.isRunning():

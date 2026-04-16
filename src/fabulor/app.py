@@ -1,7 +1,6 @@
 import os
 import math
 import random
-from types import SimpleNamespace
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
@@ -33,6 +32,37 @@ from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
+
+class UIInterface:
+    def __init__(self, main):
+        self._main = main
+
+    def set_visible(self, v): self._main._set_interface_visible(v)
+    def update_folders(self, p): self._main._update_folder_list_widget(p)
+    def refresh_panel(self, *a, **k): self._main.library_panel.refresh(*a, **k)
+    def update_status(self, *a, **k): self._main._update_status_banner_ui(*a, **k)
+    def update_metadata(self, *a, **k): self._main._update_metadata_ui(*a, **k)
+    def update_prompts(self, v): self._main._update_idle_prompts_ui(v)
+    def update_quote(self, *a, **k): self._main._update_quote_ui(*a, **k)
+
+class AppInterface:
+    def __init__(self, main):
+        self._main = main
+
+    def get_current_file(self): return self._main.current_file
+    def on_book_removed(self): self._main._on_book_removed()
+    def is_running(self): return self._main.scanner.is_running()
+
+    @property
+    def quote_timer(self): return self._main.quote_timer
+
+class BrowserInterface:
+    def __init__(self, main):
+        self._main = main
+
+    def get_selected_folder(self): return self._main._get_selected_folder_path()
+    def pick_folder(self): return self._main._get_new_folder_path()
+
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     def __init__(self, parent=None):
@@ -70,28 +100,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.file_loaded.connect(self._on_file_ready)
 
         # Initialize Library Controller
-        ui_interface = SimpleNamespace(
-            set_visible=self._set_interface_visible,
-            update_folders=self._update_folder_list_widget,
-            refresh_panel=self.library_panel.refresh,
-            update_status=self._update_status_banner_ui,
-            update_metadata=self._update_metadata_ui,
-            update_prompts=self._update_idle_prompts_ui,
-            update_quote=self._update_quote_ui
-        )
-        app_interface = SimpleNamespace(
-            get_current_file=lambda: self.current_file,
-            on_book_removed=self._on_book_removed,
-            quote_timer=self.quote_timer
-        )
-        browser_interface = SimpleNamespace(
-            get_selected_folder=self._get_selected_folder_path,
-            pick_folder=self._get_new_folder_path
-        )
-
         self.library_controller = LibraryController(
             self.db, self.config, self.scanner,
-            ui_interface, app_interface, browser_interface
+            UIInterface(self), 
+            AppInterface(self), 
+            BrowserInterface(self)
         )
 
         # Consolidated connections for library-related UI -> controller
