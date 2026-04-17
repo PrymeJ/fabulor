@@ -231,7 +231,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_controller = SettingsController(self.config, visuals, library_actions, player_actions)
 
         self.settings_controller.bind_mainwindow_handlers(self)
-        self._debug_settings_controller_wiring()
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -246,17 +245,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.settings_controller._update_undo_visuals()
         except Exception:
             pass
-
-    def _debug_settings_controller_wiring(self):
-        checks = [
-            hasattr(self, "settings_controller"),
-            hasattr(self.settings_controller, "_update_scroll_mode"),
-            hasattr(self.settings_controller, "_update_hints_mode"),
-            hasattr(self.settings_controller, "_update_undo_mode"),
-            hasattr(self.settings_controller, "_update_fade_mode"),
-            hasattr(self.settings_controller, "_update_blur_mode"),
-        ]
-        print("SettingsController wiring OK:", all(checks), checks)
 
     def _setup_ui(self):
         self.setMinimumWidth(300)
