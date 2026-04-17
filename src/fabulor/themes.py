@@ -1243,7 +1243,7 @@ def get_stylesheet(theme_name="default"):
             text-align: left;
             font-size: 12px;
             padding: 1px 0px;
-            font-weight: normal;
+            font-weight: bold;
         }}
         QPushButton#theme_item[selected="true"] {{
             color: {t['accent']};

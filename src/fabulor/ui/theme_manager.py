@@ -211,7 +211,7 @@ class ThemeManager:
         """Dim unselected themes and highlight selected ones."""
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
-            is_active_display = (name == self._active_display_theme)
+            is_active_display = (name == self._current_theme_name)
             
             btn.setProperty("selected", is_selected) # For selected in pool
             btn.setProperty("active_display", is_active_display) # For currently displayed
