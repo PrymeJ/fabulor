@@ -95,7 +95,7 @@ class SettingsController:
         if hasattr(self.visuals, 'set_blur_selection'):
             self.visuals.set_blur_selection(enabled)
 
-    def _update_speed_grid_styling(self):
+    def _update_speed_grid_styling(self, theme_name=None):
         """Applies current theme's styling to various settings components."""
         self._update_pattern_visuals()
         self._update_scroll_mode_visuals()
@@ -103,6 +103,8 @@ class SettingsController:
         self._update_fade_visuals()
         self._update_blur_visuals()
         self._update_undo_visuals()
+        if hasattr(self.visuals, 'update_speed_panel_visuals'):
+            self.visuals.update_speed_panel_visuals(theme_name)
 
     def _validate_smart_rewind_settings(self):
         """Delegates validation to the speed panel via UI interface."""

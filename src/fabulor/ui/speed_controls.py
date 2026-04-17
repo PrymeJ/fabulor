@@ -158,8 +158,9 @@ class SpeedControlsPanel(QWidget):
             self.config.set_smart_rewind_duration(0)
         self.update_visuals()
 
-    def update_visuals(self):
-        t = THEMES.get(self.theme_manager._current_theme_name, THEMES["The Color Purple"])
+    def update_visuals(self, theme_name=None):
+        name = theme_name or self.theme_manager._current_theme_name
+        t = THEMES.get(name, THEMES["The Color Purple"])
         accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 

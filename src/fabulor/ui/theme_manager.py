@@ -97,7 +97,7 @@ class ThemeManager:
             self._theme_fade_anim = anim
 
         self.main_window.setStyleSheet(get_stylesheet(theme_name))
-        self.main_window._update_speed_grid_styling()
+        self.main_window._update_speed_grid_styling(theme_name)
         self.update_theme_list_visuals()
 
     def toggle_theme_selection(self, theme_name):
