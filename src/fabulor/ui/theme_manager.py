@@ -1,6 +1,7 @@
 import random
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
+from PySide6.QtGui import QFont, QFontMetrics
 from ..themes import get_stylesheet, THEMES
 
 class ThemeComboBox(QComboBox):
@@ -46,12 +47,47 @@ class ThemeManager:
         self._theme_fade_anim = None
         self.theme_widgets = {} # theme_name -> QPushButton
         self.interval_widgets = {} # minutes -> QPushButton
+        self._packed_themes_cache = None
         self._active_display_theme = self._current_theme_name
 
         # Rotation Timer
         self.rotation_timer = QTimer()
         self.rotation_timer.timeout.connect(self._rotate_theme)
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
+
+    def get_packed_themes(self, limit=290, spacing=6, padding=10):
+        if self._packed_themes_cache is not None:
+            return self._packed_themes_cache
+
+        bold_font = QFont()
+        bold_font.setBold(True)
+        metrics = QFontMetrics(bold_font)
+
+        themes_to_pack = [
+            {'name': name, 'width': metrics.horizontalAdvance(name) + padding}
+            for name in THEMES.keys()
+        ]
+        themes_to_pack.sort(key=lambda x: x['width'], reverse=True)
+
+        rows = []
+        remaining = list(themes_to_pack)
+        while remaining:
+            row = []
+            current_w = 0
+            idx = 0
+            while idx < len(remaining):
+                item = remaining[idx]
+                needed = item['width'] + (spacing if current_w > 0 else 0)
+                if current_w + needed <= limit:
+                    row.append(item)
+                    current_w += needed
+                    remaining.pop(idx)
+                else:
+                    idx += 1
+            rows.append(row)
+
+        self._packed_themes_cache = rows
+        return rows
 
     def _rotate_theme(self):
         if len(self.selected_themes) > 1:

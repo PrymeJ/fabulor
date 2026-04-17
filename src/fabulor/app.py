@@ -669,44 +669,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         theme_hint.setStyleSheet("margin-bottom: 4px;")
         themes_layout.addWidget(theme_hint)
 
-        metrics = self.fontMetrics()
-        limit = 290 #Adjusted for tab width
-        
-        # Clear widget tracker
         self.theme_manager.theme_widgets = {}
-        
-        themes_to_pack = []
-        for name in THEMES.keys():
-            w = metrics.horizontalAdvance(name) + 10 
-            themes_to_pack.append({'name': name, 'width': w})
-        
-        # Sort by width descending to handle "large" items first
-        themes_to_pack.sort(key=lambda x: x['width'], reverse=True)
 
-        while themes_to_pack:
+        for row_items in self.theme_manager.get_packed_themes():
             row_layout = QHBoxLayout()
             row_layout.setSpacing(6)
             row_layout.setAlignment(Qt.AlignLeft)
-            current_w = 0
-            
-            idx = 0
-            while idx < len(themes_to_pack):
-                item = themes_to_pack[idx]
-                needed = item['width'] + (6 if current_w > 0 else 0)
-                
-                if current_w + needed <= limit:
-                    btn = ThemeItem(item['name'])
-                    btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
-                    btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
-                    btn.hovered.connect(self.theme_manager._on_theme_hovered)
-                    self.theme_manager.theme_widgets[item['name']] = btn
-                    
-                    row_layout.addWidget(btn)
-                    current_w += needed
-                    themes_to_pack.pop(idx)
-                else:
-                    idx += 1
-            
+
+            for item in row_items:
+                btn = ThemeItem(item['name'])
+                btn.setFixedWidth(item['width'])
+                btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
+                btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
+                btn.hovered.connect(self.theme_manager._on_theme_hovered)
+                self.theme_manager.theme_widgets[item['name']] = btn
+                row_layout.addWidget(btn)
+
             row_layout.addStretch()
             themes_layout.addLayout(row_layout)
             
