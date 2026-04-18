@@ -55,6 +55,25 @@ class ThemeManager:
         self.rotation_timer.timeout.connect(self._rotate_theme)
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
 
+        self._save_on_fade = False
+        self._fade_overlay = QLabel(self.main_window)
+        self._fade_overlay.setObjectName("theme_fade_overlay")
+        self._fade_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._fade_overlay.hide()
+
+        self._fade_effect = QGraphicsOpacityEffect(self._fade_overlay)
+        self._fade_overlay.setGraphicsEffect(self._fade_effect)
+
+        self._fade_anim = QPropertyAnimation(self._fade_effect, b"opacity", self._fade_overlay)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.finished.connect(self._on_fade_finished)
+
+    def _on_fade_finished(self):
+        self._fade_overlay.hide()
+        if self._save_on_fade:
+            self._cached_theme_pixmap = self.main_window.grab()
+
     def get_packed_themes(self, limit=290, spacing=6, padding=10):
         if self._packed_themes_cache is not None:
             return self._packed_themes_cache
@@ -106,31 +125,25 @@ class ThemeManager:
 
         self._active_display_theme = theme_name
 
-        # Clear existing overlays
-        for old_overlay in self.main_window.findChildren(QLabel, "theme_fade_overlay"):
-            old_overlay.setObjectName("deleting_overlay")
-            old_overlay.hide() 
+        # Clear any in-progress animation
+        if self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
 
         if fade_ms > 0:
             pix = self.main_window.grab()
-            overlay = QLabel(self.main_window)
-            overlay.setObjectName("theme_fade_overlay")
-            overlay.setPixmap(pix)
-            overlay.setGeometry(self.main_window.rect())
-            overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
-            overlay.show()
-            overlay.raise_()
-            
-            eff = QGraphicsOpacityEffect(overlay)
-            overlay.setGraphicsEffect(eff)
-            
-            anim = QPropertyAnimation(eff, b"opacity", overlay)
-            anim.setDuration(fade_ms)
-            anim.setStartValue(1.0)
-            anim.setEndValue(0.0)
-            anim.finished.connect(overlay.deleteLater)
-            anim.start()
-            self._theme_fade_anim = anim
+            self._fade_overlay.setPixmap(pix)
+            self._fade_overlay.setGeometry(self.main_window.rect())
+            self._fade_overlay.show()
+            self._fade_overlay.raise_()
+
+            self._save_on_fade = save
+            self._fade_anim.setDuration(fade_ms)
+            self._fade_anim.start()
+            self._theme_fade_anim = self._fade_anim
+        else:
+            self._fade_overlay.hide()
+            if save:
+                self._cached_theme_pixmap = self.main_window.grab()
 
         self.main_window.setStyleSheet(get_stylesheet(theme_name))
         self.main_window._update_speed_grid_styling(theme_name)
