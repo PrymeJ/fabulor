@@ -1236,7 +1236,7 @@ def get_stylesheet(theme_name="default"):
         QScrollArea QWidget#qt_scrollarea_viewport {{
             background: transparent;
         }}
-        QPushButton#theme_item {{ /* Default state for unselected, unhovered */
+        QPushButton#theme_item, QPushButton#theme_interval_btn {{ /* Default state for unselected, unhovered */
             background: transparent;
             color: {panel_dimmed_color};
             border: none;
@@ -1245,18 +1245,18 @@ def get_stylesheet(theme_name="default"):
             padding: 1px 0px;
             font-weight: bold;
         }}
-        QPushButton#theme_item[selected="true"] {{
+        QPushButton#theme_item[selected="true"], QPushButton#theme_interval_btn[selected="true"] {{
             color: {t['accent']};
             font-weight: bold;
         }}
-        QPushButton#theme_item:hover {{
+        QPushButton#theme_item:hover, QPushButton#theme_interval_btn:hover {{
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
         }}
         QPushButton#theme_item[active_display="true"] {{
             text-decoration: underline;
         }}
-        QPushButton#secondary_button {{
+        QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now, QPushButton#secondary_button {{
             background: transparent;
             color: {t['text']};
             border: 1px solid {t['accent_dark']};
@@ -1277,7 +1277,7 @@ def get_stylesheet(theme_name="default"):
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
         }}
-        QPushButton#secondary_button:hover {{
+        QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover, QPushButton#secondary_button:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}

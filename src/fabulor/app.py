@@ -697,13 +697,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         bulk_layout = QHBoxLayout()
         bulk_layout.setSpacing(10)
         self.add_all_btn = QPushButton("Add all")
-        self.add_all_btn.setObjectName("secondary_button")
+        self.add_all_btn.setObjectName("theme_add_all")
         self.add_all_btn.setFixedWidth(80)
         self.remove_all_btn = QPushButton("Remove all")
-        self.remove_all_btn.setObjectName("secondary_button")
+        self.remove_all_btn.setObjectName("theme_remove_all")
         self.remove_all_btn.setFixedWidth(80)
         self.change_now_btn = QPushButton("Change now")
-        self.change_now_btn.setObjectName("secondary_button")
+        self.change_now_btn.setObjectName("theme_change_now")
         self.change_now_btn.setFixedWidth(80)
         
         self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
@@ -728,7 +728,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         intervals = [(2, "2"), (5, "5"), (10, "10"), (15, "15"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
         for mins, label in intervals:
             btn = QPushButton(label)
-            btn.setObjectName("theme_item") # Re-use the theme item bare style
+            btn.setObjectName("theme_interval_btn")
             btn.clicked.connect(lambda _, m=mins: self.theme_manager.set_rotation_interval(m))
             self.theme_manager.interval_widgets[mins] = btn
             interval_row.addWidget(btn)
