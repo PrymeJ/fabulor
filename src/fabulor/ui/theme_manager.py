@@ -125,6 +125,11 @@ class ThemeManager:
         if getattr(self, "_active_display_theme", None) == theme_name:
             return
 
+        # Guard against theme changes during panel animation to prevent hitches
+        if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
+            QTimer.singleShot(150, lambda: self._on_theme_changed(theme_name, save, fade_ms))
+            return
+
         self._active_display_theme = theme_name
 
         # Clear any in-progress animation

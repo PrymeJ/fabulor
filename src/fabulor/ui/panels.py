@@ -285,6 +285,18 @@ class PanelManager:
             pass
         self.settings_panel.hide()
 
+    def _any_panel_animating(self):
+        """Returns True if any sliding panel or blur animation is currently running."""
+        animations = [
+            self.sidebar_animation,
+            self.library_panel_animation,
+            self.settings_panel_animation,
+            self.speed_panel_animation,
+            self.sleep_panel_animation,
+            self.blur_animation
+        ]
+        return any(anim.state() == QPropertyAnimation.Running for anim in animations)
+
     def is_any_panel_visible(self):
         """Returns True if the sidebar or any configuration panel is currently open."""
         return (
