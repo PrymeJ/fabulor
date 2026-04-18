@@ -247,6 +247,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except Exception:
             pass
 
+        self.show()
+        self.theme_manager.initialize_fade_overlay()
+
     def _setup_ui(self):
         self.setMinimumWidth(300)
         self.resize(300, 450)

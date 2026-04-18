@@ -56,6 +56,8 @@ class ThemeManager:
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
 
         self._save_on_fade = False
+
+    def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
         self._fade_overlay.setObjectName("theme_fade_overlay")
         self._fade_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
