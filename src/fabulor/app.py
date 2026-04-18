@@ -479,16 +479,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         controls_layout = QHBoxLayout()
         self.prev_button = HoverButton("|<<")
+        self.prev_button.setObjectName("prev_btn")
         self.rewind_button = RightClickButton("<")
+        self.rewind_button.setObjectName("rewind_btn")
         self.rewind_button.setAutoRepeat(True)
         self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
         self.rewind_button.setAutoRepeatInterval(150) # Skip again every 150ms
         self.play_pause_button = QPushButton("Play")
+        self.play_pause_button.setObjectName("play_pause_btn")
         self.forward_button = RightClickButton(">")
+        self.forward_button.setObjectName("forward_btn")
         self.forward_button.setAutoRepeat(True)
         self.forward_button.setAutoRepeatDelay(500)
         self.forward_button.setAutoRepeatInterval(150)
         self.next_button = HoverButton(">>|")
+        self.next_button.setObjectName("next_btn")
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
             btn.setFixedHeight(33)
@@ -513,11 +518,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 1. Chapter Info Row (Top of secondary stack)
         chapter_info_layout = QHBoxLayout()
         self.chap_elapsed_label = QLabel("00:00:00")
+        self.chap_elapsed_label.setObjectName("chap_elapsed_label")
         self.chap_elapsed_label.setFixedWidth(48)
         self.chap_elapsed_label.setFixedHeight(24)
         self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         self.chap_duration_label = QLabel("00:00:00")
+        self.chap_duration_label.setObjectName("chap_duration_label")
         self.chap_duration_label.setFixedWidth(48)
         self.chap_duration_label.setFixedHeight(24)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
