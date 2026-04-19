@@ -25,6 +25,7 @@ class ThemeManager:
     def __init__(self, main_window):
         self.main_window = main_window
         self.config = main_window.config
+        self._is_hover_active = False
         
         # Load selection pool from config
         saved = self.config.get_theme()
@@ -121,9 +122,12 @@ class ThemeManager:
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
 
-        # Guard against redundant style updates
-        if getattr(self, "_active_display_theme", None) == theme_name:
+        # Only guard if both the theme and hover state match
+        if (getattr(self, "_active_display_theme", None) == theme_name 
+                and self._is_hover_active == hover):
             return
+
+        self._is_hover_active = hover
 
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
