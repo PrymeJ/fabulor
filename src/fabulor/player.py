@@ -183,18 +183,33 @@ class Player(QObject):
 
     def apply_audio_processing(self, norm=False, mono=False, swap=False, balance=0.0, voice_boost=False):
         if not self.instance: return
-        
+
         filters = []
-        if norm: filters.append("dynaudnorm") # Dynamic normalization
+        if norm:
+            filters.append("dynaudnorm")
+
         if voice_boost:
-            # Boost mid-range frequencies (500Hz to 4kHz) for speech clarity
-            filters.append("equalizer=g1=0:g2=0:g3=0:g4=0:g5=2:g6=5:g7=5:g8=2:g9=0:g10=0")
-        if mono: filters.append("pan=1:c0=0.5*c0+0.5*c1") # Downmix to mono
-        if swap: filters.append("pan=2:c0=c1:c1=c0")      # Swap L/R
-        
-        # python-mpv often expects a comma-separated string for 'af'
-        self.instance.af = ",".join(filters)
-        self.instance.balance = balance
+            filters.append("equalizer=f=500:width_type=o:width=2:g=3")
+            filters.append("equalizer=f=2000:width_type=o:width=2:g=5")
+            filters.append("equalizer=f=4000:width_type=o:width=2:g=3")
+
+        if mono:
+            filters.append("pan=1:c0=0.5*c0+0.5*c1")
+        elif swap or balance != 0.0:
+            l_mul = 1.0 if balance <= 0 else max(0.0, 1.0 - balance)
+            r_mul = 1.0 if balance >= 0 else max(0.0, 1.0 + balance)
+            
+            if swap:
+                filters.append(f"pan=2:c0={r_mul:.2f}*c1:c1={l_mul:.2f}*c0")
+            else:
+                filters.append(f"pan=2:c0={l_mul:.2f}*c0:c1={r_mul:.2f}*c1")
+
+        try:
+            self.instance.command('af', 'clr', '')
+            for f in filters:
+                self.instance.command('af', 'add', f)
+        except Exception as e:
+            print(f"af command error: {e}")
 
     @property
     def eof_reached(self):
