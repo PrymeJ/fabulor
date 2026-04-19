@@ -684,10 +684,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.theme_manager.theme_widgets = {}
 
-        for row_items in self.theme_manager.get_packed_themes():
+        # During __init__, widget width is not yet accurate. We use a sensible 
+        # minimum floor (230) to ensure the bin-packer has enough room to function.
+        limit = max(230, self.settings_panel.width() - 20)
+        for row_items in self.theme_manager.get_packed_themes(limit=limit):
             row_layout = QHBoxLayout()
-            row_layout.setSpacing(6)
+            row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setAlignment(Qt.AlignLeft)
+
+            total_btn_width = sum(item['width'] for item in row_items)
+            gaps = len(row_items) - 1
+            base_spacing = 0
+            remaining = limit - total_btn_width - (base_spacing * gaps)
+            extra_per_gap = max(0, remaining // gaps) if gaps > 0 else 0
+            print(f"Row: {[i['name'] for i in row_items]}")
+            print(f"  total_btn_width={total_btn_width}, gaps={gaps}, remaining={remaining}, extra={extra_per_gap}, final_spacing={base_spacing + extra_per_gap}")
+
+            if gaps > 0:
+                row_layout.setSpacing(base_spacing + extra_per_gap)
+            else:
+                row_layout.setSpacing(0)
 
             for item in row_items:
                 btn = ThemeItem(item['name'])
@@ -698,7 +714,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.theme_manager.theme_widgets[item['name']] = btn
                 row_layout.addWidget(btn)
 
-            row_layout.addStretch()
+            if gaps == 0:
+                row_layout.addStretch()
+
             themes_layout.addLayout(row_layout)
             
         themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()

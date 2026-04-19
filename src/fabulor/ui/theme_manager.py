@@ -49,6 +49,8 @@ class ThemeManager:
         self.theme_widgets = {} # theme_name -> QPushButton
         self.interval_widgets = {} # minutes -> QPushButton
         self._packed_themes_cache = None
+        self._packed_themes_limit = None
+        self._stylesheet_cache = {}
         self._active_display_theme = self._current_theme_name
 
         # Rotation Timer
@@ -77,9 +79,10 @@ class ThemeManager:
         if self._save_on_fade:
             self._cached_theme_pixmap = self.main_window.grab()
 
-    def get_packed_themes(self, limit=290, spacing=6, padding=10):
-        if self._packed_themes_cache is not None:
+    def get_packed_themes(self, limit=230, spacing=0, padding=0):
+        if self._packed_themes_cache is not None and self._packed_themes_limit == limit:
             return self._packed_themes_cache
+        self._packed_themes_limit = limit
 
         bold_font = QFont()
         bold_font.setBold(True)
@@ -106,6 +109,12 @@ class ThemeManager:
                     remaining.pop(idx)
                 else:
                     idx += 1
+
+            # Safety break: If the limit is so small that no item can fit, 
+            # force the first remaining item into its own row to prevent an infinite loop.
+            if not row and remaining:
+                row.append(remaining.pop(0))
+
             rows.append(row)
 
         self._packed_themes_cache = rows
