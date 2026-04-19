@@ -1129,6 +1129,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not self.chapter_list_widget.count():
             self.chapter_list_widget.populate(self.player.duration or 0) # Populate if empty
             
+        self.chapter_list_widget.setStyleSheet(self.styleSheet())
         # Recalculate height and position the menu centered above the label
         # Ensure height is correct before positioning, re-populate if needed
         if self.chapter_list_widget.count() == 0: # Re-check in case populate failed
