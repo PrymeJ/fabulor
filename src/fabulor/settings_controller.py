@@ -105,6 +105,8 @@ class SettingsController:
         self._update_undo_visuals()
         if hasattr(self.visuals, 'update_speed_panel_visuals'):
             self.visuals.update_speed_panel_visuals(theme_name)
+        if hasattr(self.visuals, 'update_sleep_panel_visuals'):
+            self.visuals.update_sleep_panel_visuals()
 
     def _validate_smart_rewind_settings(self):
         """Delegates validation to the speed panel via UI interface."""

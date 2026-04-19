@@ -1391,10 +1391,6 @@ def get_hover_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
-        #balance_slider {{
-            qproperty-bg_color: "{t['slider_vol_bg']}";
-            qproperty-fill_color: "{t['slider_vol_fill']}";
-        }}
         QPushButton#play_pause_btn, QPushButton#prev_btn, QPushButton#rewind_btn, QPushButton#forward_btn, QPushButton#next_btn, QPushButton#speed_btn {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
