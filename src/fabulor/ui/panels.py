@@ -262,6 +262,8 @@ class PanelManager:
         
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
+        if hasattr(self.main_window, 'theme_manager'):
+            self.main_window.theme_manager._on_theme_unhovered()
         if self.settings_panel_animation.state() == QPropertyAnimation.Running:
             return
         panel_w = self.settings_panel.width()
