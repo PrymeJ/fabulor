@@ -1240,11 +1240,12 @@ def get_stylesheet(theme_name="default"):
             background: transparent;
             color: {panel_dimmed_color};
             border: none;
-            text-align: left;
+            text-align: center;
             font-size: 12px;
             padding: 1px 0px;
-            font-weight: bold;
         }}
+        QPushButton#theme_item {{ font-weight: normal; }}
+        QPushButton#theme_interval_btn {{ font-weight: bold; }}
         QPushButton#theme_item[selected="true"], QPushButton#theme_interval_btn[selected="true"] {{
             color: {t['accent']};
             font-weight: bold;
@@ -1255,6 +1256,7 @@ def get_stylesheet(theme_name="default"):
         }}
         QPushButton#theme_item[active_display="true"] {{
             text-decoration: underline;
+            font-weight: bold;
         }}
         QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now, QPushButton#secondary_button {{
             background: transparent;
@@ -1263,6 +1265,7 @@ def get_stylesheet(theme_name="default"):
             font-size: 11px;
             padding: 4px;
             border-radius: 4px;
+            font-weight: bold;
         }}
         QPushButton#pattern_button {{
             background: transparent;
@@ -1281,6 +1284,7 @@ def get_stylesheet(theme_name="default"):
         QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover, QPushButton#secondary_button:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-weight: bold;
         }}
         #disable_sleep_btn, #reset_audio_btn {{ /* Shared styling for prominent action buttons */
             background: {accent_style};
@@ -1396,13 +1400,15 @@ def get_hover_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
             padding: 6px;
-            font-weight: bold;
+            font-weight: normal;
         }}
         QPushButton#play_pause_btn:hover, QPushButton#prev_btn:hover, QPushButton#rewind_btn:hover, QPushButton#forward_btn:hover, QPushButton#next_btn:hover, QPushButton#speed_btn:hover {{
             background-color: {t['accent_light']};
+            font-weight: normal;
         }}
         QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed, QPushButton#speed_btn:pressed {{
             background-color: {t['accent_dark']};
+            font-weight: normal;
         }}
         QPushButton#sleep_timer_display {{
             background: transparent;
@@ -1444,10 +1450,10 @@ def get_hover_stylesheet(theme_name="default"):
             background: transparent;
             color: {panel_dimmed_color};
             border: none;
-            text-align: left;
+            text-align: center;
             font-size: 12px;
             padding: 1px 0px;
-            font-weight: bold;
+            font-weight: normal;
         }}
         QPushButton#theme_item[selected="true"] {{
             color: {t['accent']};
@@ -1459,12 +1465,13 @@ def get_hover_stylesheet(theme_name="default"):
         }}
         QPushButton#theme_item[active_display="true"] {{
             text-decoration: underline;
+            font-weight: bold;
         }}
         QPushButton#theme_interval_btn {{
             background: transparent;
             color: {panel_dimmed_color};
             border: none;
-            text-align: left;
+            text-align: center;
             font-size: 12px;
             padding: 1px 0px;
             font-weight: bold;
@@ -1476,6 +1483,7 @@ def get_hover_stylesheet(theme_name="default"):
         QPushButton#theme_interval_btn:hover {{
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+            font-weight: bold;
         }}
         QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now {{
             background: transparent;
@@ -1484,10 +1492,12 @@ def get_hover_stylesheet(theme_name="default"):
             font-size: 11px;
             padding: 4px;
             border-radius: 4px;
+            font-weight: bold;
         }}
         QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-weight: bold;
         }}
         QLabel#theme_hint {{
             font-size: 12px;
