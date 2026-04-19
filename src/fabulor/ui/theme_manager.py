@@ -2,7 +2,7 @@ import random
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
 from PySide6.QtGui import QFont, QFontMetrics
-from ..themes import get_stylesheet, THEMES
+from ..themes import get_stylesheet, get_hover_stylesheet, THEMES
 
 class ThemeComboBox(QComboBox):
     """Custom QComboBox that provides signals for popup visibility events."""
@@ -116,7 +116,7 @@ class ThemeManager:
             self._current_theme_name = random.choice(pool)
             self._on_theme_changed(self._current_theme_name, save=False)
 
-    def _on_theme_changed(self, theme_name, save=True, fade_ms=None):
+    def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
         """Update the appearance with a subtle fade transition."""
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
@@ -127,7 +127,7 @@ class ThemeManager:
 
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
-            QTimer.singleShot(150, lambda: self._on_theme_changed(theme_name, save, fade_ms))
+            QTimer.singleShot(150, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover))
             return
 
         self._active_display_theme = theme_name
@@ -152,7 +152,10 @@ class ThemeManager:
             if save:
                 self._cached_theme_pixmap = self.main_window.grab()
 
-        self.main_window.setStyleSheet(get_stylesheet(theme_name))
+        if hover:
+            self.main_window.setStyleSheet(get_hover_stylesheet(theme_name))
+        else:
+            self.main_window.setStyleSheet(get_stylesheet(theme_name))
         self.main_window._update_speed_grid_styling(theme_name)
         self.update_theme_list_visuals()
 
@@ -220,12 +223,12 @@ class ThemeManager:
     def _on_theme_hovered(self, theme_name):
         """Preview the theme visually."""
         fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(theme_name, save=False, fade_ms=fade)
+        self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
     def _on_theme_unhovered(self):
         """Revert preview back to the active session theme."""
         fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade)
+        self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade, hover=False)
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""

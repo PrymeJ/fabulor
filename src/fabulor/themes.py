@@ -1324,3 +1324,156 @@ def get_stylesheet(theme_name="default"):
             background: none;
         }}
     """
+
+
+def get_hover_stylesheet(theme_name="default"):
+    """
+    Returns a minimal stylesheet covering only widgets visible during settings panel hover preview.
+    Uses the same theme lookup logic as get_stylesheet().
+    """
+    base = THEMES["The Color Purple"].copy()
+    custom = THEMES.get(theme_name, {})
+    base.update(custom)
+    t = base
+
+    text_rgb = _hex_to_rgb(t['text'])
+
+    # Prepare dynamic backgrounds
+    main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
+    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+
+    return f"""
+        QWidget#mainwindow {{
+            background: {main_bg_style};
+            border-radius: 8px;
+        }}
+        TitleBar {{
+            background-color: {t['bg_deep']};
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }}
+        TitleBar QPushButton {{
+            background: transparent;
+            color: {t['text']};
+            border: none;
+            font-size: 14px;
+            padding: 0;
+        }}
+        TitleBar QPushButton:hover {{
+            background: {t['accent']};
+        }}
+        TitleBar QPushButton:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+        QLabel#percentage_label {{
+            color: rgba({_hex_to_rgb(t.get('progress_text', t.get('text_on_light_bg', t['text'])))}, 0.85);
+            font-weight: bold;
+            font-size: 16px;
+            background: transparent;
+        }}
+        QLabel#chap_elapsed_label, QLabel#chap_duration_label {{
+            color: {t['text']};
+        }}
+        #overall_progress {{
+            qproperty-bg_color: "{t['slider_overall_bg']}";
+            qproperty-fill_color: "{t['slider_overall_fill']}";
+        }}
+        #chapter_progress {{
+            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
+        QPushButton#play_pause_btn, QPushButton#prev_btn, QPushButton#rewind_btn, QPushButton#forward_btn, QPushButton#next_btn {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border-radius: 4px;
+            padding: 6px;
+            font-weight: bold;
+        }}
+        QPushButton#play_pause_btn:hover, QPushButton#prev_btn:hover, QPushButton#rewind_btn:hover, QPushButton#forward_btn:hover, QPushButton#next_btn:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+        QWidget#settings_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border-right: 1px solid {t['accent']};
+            border-radius: 0px;
+        }}
+        QTabWidget#settings_tabs {{
+            background: transparent;
+        }}
+        QTabBar {{
+            background: transparent;
+        }}
+        QTabBar::tab {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.5);
+            padding: 3px 8px 3px 9px;
+            font-size: 12px;
+            font-weight: bold;
+            border-top-left-radius: 2px; 
+            border-top-right-radius: 2px;
+            margin-right: 0px;
+            margin-left: 2px
+        }}
+        QTabBar::tab:selected {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#theme_item {{
+            background: transparent;
+            color: {panel_dimmed_color};
+            border: none;
+            text-align: left;
+            font-size: 12px;
+            padding: 1px 0px;
+            font-weight: bold;
+        }}
+        QPushButton#theme_item[selected="true"] {{
+            color: {t['accent']};
+            font-weight: bold;
+        }}
+        QPushButton#theme_item:hover {{
+            color: {t['accent_light']};
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+        }}
+        QPushButton#theme_item[active_display="true"] {{
+            text-decoration: underline;
+        }}
+        QPushButton#theme_interval_btn {{
+            background: transparent;
+            color: {panel_dimmed_color};
+            border: none;
+            text-align: left;
+            font-size: 12px;
+            padding: 1px 0px;
+            font-weight: bold;
+        }}
+        QPushButton#theme_interval_btn[selected="true"] {{
+            color: {t['accent']};
+            font-weight: bold;
+        }}
+        QPushButton#theme_interval_btn:hover {{
+            color: {t['accent_light']};
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+        }}
+        QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            font-size: 11px;
+            padding: 4px;
+        }}
+        QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QLabel#theme_hint {{
+            font-size: 12px;
+            color: {t['accent']};
+        }}
+        QWidget#visual_area {{
+            background-color: transparent;
+        }}
+    """
