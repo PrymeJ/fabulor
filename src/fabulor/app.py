@@ -555,11 +555,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 3. Book Info Row (Elapsed - Speed - Total/Remaining)
         book_info_layout = QHBoxLayout()
         self.current_time_label = QLabel("00:00:00")
+        self.current_time_label.setObjectName("curr_time_label")
         self.current_time_label.setFixedWidth(80)
         self.current_time_label.setFixedHeight(24)
         self.current_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         self.total_time_label = QLabel("00:00:00")
+        self.total_time_label.setObjectName("total_time_label")
         self.total_time_label.setFixedWidth(80)
         self.total_time_label.setFixedHeight(24)
         self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)

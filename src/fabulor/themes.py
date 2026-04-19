@@ -1011,6 +1011,9 @@ def get_stylesheet(theme_name="default"):
         QLabel {{
             color: {t['text']};
         }}
+        QLabel#curr_time_label, QLabel#total_time_label {{
+            color: {t['text']};
+        }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('progress_text', t.get('text_on_light_bg', t['text'])))}, 0.85);
             font-weight: bold;
@@ -1153,10 +1156,7 @@ def get_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
-        #balance_slider {{
-            qproperty-bg_color: "{t['slider_vol_bg']}";
-            qproperty-fill_color: "{t['slider_vol_fill']}";
-        }}
+
 
         QComboBox {{
             background-color: {t['bg_dropdown']};
@@ -1372,7 +1372,7 @@ def get_hover_stylesheet(theme_name="default"):
             font-size: 16px;
             background: transparent;
         }}
-        QLabel#chap_elapsed_label, QLabel#chap_duration_label {{
+        QLabel#chap_elapsed_label, QLabel#chap_duration_label, QLabel#curr_time_label, QLabel#total_time_label {{
             color: {t['text']};
         }}
         #overall_progress {{
@@ -1384,6 +1384,10 @@ def get_hover_stylesheet(theme_name="default"):
             qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
         #volume_slider {{
+            qproperty-bg_color: "{t['slider_vol_bg']}";
+            qproperty-fill_color: "{t['slider_vol_fill']}";
+        }}
+        #balance_slider {{
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
@@ -1400,9 +1404,15 @@ def get_hover_stylesheet(theme_name="default"):
         QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed, QPushButton#speed_btn:pressed {{
             background-color: {t['accent_dark']};
         }}
+        QPushButton#sleep_timer_display {{
+            background: transparent;
+            border: none;
+            padding: 0px;
+            color: {t['text']};
+        }}
         QWidget#settings_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border-right: 1px solid {t['accent']};
+            border: none;
             border-radius: 0px;
         }}
         QTabWidget#settings_tabs {{
