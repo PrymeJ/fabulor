@@ -699,8 +699,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             base_spacing = 0
             remaining = limit - total_btn_width - (base_spacing * gaps)
             extra_per_gap = max(0, remaining // gaps) if gaps > 0 else 0
+
+            """ BIN PACKING DEBUG PRINT
             print(f"Row: {[i['name'] for i in row_items]}")
             print(f"  total_btn_width={total_btn_width}, gaps={gaps}, remaining={remaining}, extra={extra_per_gap}, final_spacing={base_spacing + extra_per_gap}")
+            """
 
             if gaps > 0:
                 row_layout.setSpacing(base_spacing + extra_per_gap)
