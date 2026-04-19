@@ -1418,7 +1418,7 @@ def get_hover_stylesheet(theme_name="default"):
         }}
         QWidget#settings_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border: none;
+            border-right: 1px solid {t['accent']};
             border-radius: 0px;
         }}
         QTabWidget#settings_tabs {{
