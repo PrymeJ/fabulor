@@ -72,10 +72,12 @@ class BookItem(QFrame):
 
         # Styling and Constraints
         self.progress_outer.setFixedHeight(6)
-        if self.view_mode == "1 per row":
+        if self.view_mode == "3 per row":
+            self.progress_outer.setFixedWidth(65)
+        elif self.view_mode == "2 per row":
+            self.progress_outer.setFixedWidth(65)
+        elif self.view_mode == "1 per row":
             self.progress_outer.setFixedWidth(132)
-        else:
-            self.progress_outer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
         self.pct_label.setFixedWidth(35)
         self.pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
