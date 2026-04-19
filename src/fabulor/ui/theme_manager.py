@@ -121,6 +121,9 @@ class ThemeManager:
         """Update the appearance with a subtle fade transition."""
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
+        
+        if not hover:
+            fade_ms = 200
 
         # Only guard if both the theme and hover state match
         if (getattr(self, "_active_display_theme", None) == theme_name 
