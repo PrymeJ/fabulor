@@ -450,6 +450,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         speed_row = QHBoxLayout()
         speed_row.addStretch()
         self.speed_button = QPushButton("1.00x")
+        self.speed_button.setObjectName("speed_btn")
         self.speed_button.setFixedWidth(60)
         self.speed_button.setFixedHeight(33)
         self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)

@@ -226,7 +226,7 @@ class ThemeManager:
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
     def _on_theme_unhovered(self):
-        """Revert preview back to the active session theme."""
+
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade, hover=False)
 

@@ -1262,6 +1262,7 @@ def get_stylesheet(theme_name="default"):
             border: 1px solid {t['accent_dark']};
             font-size: 11px;
             padding: 4px;
+            border-radius: 4px;
         }}
         QPushButton#pattern_button {{
             background: transparent;
@@ -1382,17 +1383,21 @@ def get_hover_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_chapter_bg']}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
-        QPushButton#play_pause_btn, QPushButton#prev_btn, QPushButton#rewind_btn, QPushButton#forward_btn, QPushButton#next_btn {{
+        #volume_slider {{
+            qproperty-bg_color: "{t['slider_vol_bg']}";
+            qproperty-fill_color: "{t['slider_vol_fill']}";
+        }}
+        QPushButton#play_pause_btn, QPushButton#prev_btn, QPushButton#rewind_btn, QPushButton#forward_btn, QPushButton#next_btn, QPushButton#speed_btn {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border-radius: 4px;
             padding: 6px;
             font-weight: bold;
         }}
-        QPushButton#play_pause_btn:hover, QPushButton#prev_btn:hover, QPushButton#rewind_btn:hover, QPushButton#forward_btn:hover, QPushButton#next_btn:hover {{
+        QPushButton#play_pause_btn:hover, QPushButton#prev_btn:hover, QPushButton#rewind_btn:hover, QPushButton#forward_btn:hover, QPushButton#next_btn:hover, QPushButton#speed_btn:hover {{
             background-color: {t['accent_light']};
         }}
-        QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed {{
+        QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed, QPushButton#speed_btn:pressed {{
             background-color: {t['accent_dark']};
         }}
         QWidget#settings_panel {{
@@ -1401,6 +1406,10 @@ def get_hover_stylesheet(theme_name="default"):
             border-radius: 0px;
         }}
         QTabWidget#settings_tabs {{
+            background: transparent;
+        }}
+        QTabWidget#settings_tabs::pane {{
+            border-top: 1px solid {t['accent_dark']};
             background: transparent;
         }}
         QTabBar {{
@@ -1464,6 +1473,7 @@ def get_hover_stylesheet(theme_name="default"):
             border: 1px solid {t['accent_dark']};
             font-size: 11px;
             padding: 4px;
+            border-radius: 4px;
         }}
         QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover {{
             background: {t['accent']};
