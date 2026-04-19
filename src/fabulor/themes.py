@@ -1152,6 +1152,10 @@ def get_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_chapter_bg']}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
+        #balance_slider {{
+            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
         #volume_slider {{
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";

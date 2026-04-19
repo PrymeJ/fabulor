@@ -154,6 +154,10 @@ class AudioSettingsTab(QWidget):
             btn.setProperty("selected", "true" if (s == "Swapped" if swap else s == "Normal") else "false")
             btn.style().unpolish(btn); btn.style().polish(btn)
             
+        # Force the balance slider to re-evaluate its QSS properties (bg_color, fill_color)
+        self.balance_slider.style().unpolish(self.balance_slider)
+        self.balance_slider.style().polish(self.balance_slider)
+            
         balance = self.config.get_balance()
         is_default = (not norm and not voice and not mono and not swap and math.isclose(balance, 0.0, abs_tol=0.01))
         self.reset_audio_btn.setVisible(not is_default)

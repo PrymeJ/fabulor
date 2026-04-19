@@ -212,6 +212,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             validate_speed_panel_settings=lambda: self.speed_panel._validate_smart_rewind_settings(finalize=True) if self.speed_panel else None,
             update_speed_panel_visuals=lambda n=None: self.speed_panel.update_visuals(n) if self.speed_panel else None,
             update_sleep_panel_visuals=lambda: self.sleep_panel.update_panel_styling() if self.sleep_panel else None,
+            update_audio_panel_visuals=lambda: self.audio_tab.update_visuals() if self.audio_tab else None,
             set_folder_list=self._update_folder_list_widget,
             get_selected_folder_path=self._get_selected_folder_path,
             open_folder_dialog=self._get_new_folder_path,
