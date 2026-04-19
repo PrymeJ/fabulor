@@ -60,6 +60,11 @@ class ThemeManager:
 
         self._save_on_fade = False
 
+    def _get_stylesheet_cached(self, theme_name):
+        if theme_name not in self._stylesheet_cache:
+            self._stylesheet_cache[theme_name] = get_stylesheet(theme_name)
+        return self._stylesheet_cache[theme_name]
+    
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
         self._fade_overlay.setObjectName("theme_fade_overlay")
@@ -174,6 +179,17 @@ class ThemeManager:
             self.main_window.setStyleSheet(get_stylesheet(theme_name))
         self.main_window._update_speed_grid_styling(theme_name)
         self.update_theme_list_visuals()
+
+        """
+        TEMPORARY GUARD AGAINST STYLESHEET COLLAPSE
+
+        applied = get_hover_stylesheet(theme_name) if hover else self._get_stylesheet_cached(theme_name)
+        self.main_window.setStyleSheet(applied)
+        # Verify stylesheet was applied
+        if len(self.main_window.styleSheet()) < 100:
+            # Something cleared it, reapply
+            QTimer.singleShot(50, lambda: self.main_window.setStyleSheet(applied))
+        """
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""
