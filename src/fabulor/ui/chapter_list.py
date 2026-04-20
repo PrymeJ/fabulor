@@ -44,7 +44,7 @@ class ChapterList(QListWidget):
             
             name_label = QLabel(self._elide_text(title, 180))
             time_label = QLabel(duration_str)
-            time_label.setStyleSheet("color: gray;") # subtle color for the duration
+            time_label.setObjectName("chapter_time")
             
             layout.addWidget(name_label)
             layout.addStretch()
