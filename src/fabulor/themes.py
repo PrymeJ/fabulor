@@ -1398,7 +1398,7 @@ def get_stylesheet(theme_name="default"):
         }}
         QTabBar::tab {{
             background: {t['bg_deep']};
-            color: rgba({text_rgb}, 0.5);
+            color: rgba({text_rgb}, 0.9);
             padding: 3px 8px 3px 9px;
             font-size: 12px;
             font-weight: bold;
@@ -1412,7 +1412,7 @@ def get_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
         QTabBar::tab:hover:!selected {{
-            background: rgba({_hex_to_rgb(t['accent'])}, 0.2);
+            background: rgba({_hex_to_rgb(t['accent'])}, 0.85);
             color: {t['text']};
         }}
         QTabWidget QWidget {{
@@ -1627,7 +1627,7 @@ def get_hover_stylesheet(theme_name="default"):
         }}
         QTabBar::tab {{
             background: {t['bg_deep']};
-            color: rgba({text_rgb}, 0.5);
+            color: rgba({text_rgb}, 0.9);
             padding: 3px 8px 3px 9px;
             font-size: 12px;
             font-weight: bold;
