@@ -332,7 +332,7 @@ class LibraryPanel(QFrame):
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
-        self.sort_combo.setFixedWidth(85) # Increased to prevent clipping
+        self.sort_combo.setFixedWidth(73) # Increased to prevent clipping
         self.sort_combo.setCurrentText(self.config.get_library_sort_key())
         self._sort_ascending = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentText()
@@ -351,8 +351,8 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.insertWidget(1, self.sort_dir_btn)
 
         self.style_combo = QComboBox()
-        self.style_combo.addItems(["3 per row", "2 per row", "1 per row", "List"])
-        self.style_combo.setFixedWidth(75) 
+        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "List"])
+        self.style_combo.setFixedWidth(86) 
         self.style_combo.setCurrentText(self.config.get_library_view_mode())
         self.top_bar_layout.setSpacing(3)
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
