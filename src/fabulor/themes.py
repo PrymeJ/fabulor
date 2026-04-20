@@ -1550,12 +1550,17 @@ def get_hover_stylesheet(theme_name="default"):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }}
+        TitleBar QLabel {{
+            color: {t['text']};
+            font-weight: bold;
+        }}
         TitleBar QPushButton {{
             background: transparent;
             color: {t['text']};
             border: none;
             font-size: 14px;
             padding: 0;
+            font-weight: bold;
         }}
         TitleBar QPushButton:hover {{
             background: {t['accent']};
