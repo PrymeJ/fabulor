@@ -201,17 +201,15 @@ class BookItem(QFrame):
 
         # -------- LIST --------
         else:  # list
-            self.setFixedSize(292,44)
+            self.setFixedSize(290,28)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(4,4,4,4)
             layout.setSpacing(6)
 
-            
-
             self.title_label = QLabel()
             self.title_label.setObjectName("book_item_title")
             self.title_label.setStyleSheet("font-size: 14px;")
-            self.title_label.setContentsMargins(0,0,0,0)
+            self.title_label.setContentsMargins(4,0,0,0)
 
             self.author_label = QLabel()
             self.author_label.setObjectName("book_item_author")
@@ -223,7 +221,7 @@ class BookItem(QFrame):
             self.total_label = QLabel()
             self.total_label.setObjectName("book_item_total")
             self.total_label.setStyleSheet("font-size: 14px;")
-            self.total_label.setFixedWidth(60)
+            self.total_label.setFixedWidth(46)
             self.total_label.setAlignment(Qt.AlignRight)
             self.total_label.setContentsMargins(0,0,0,0)
 
@@ -558,18 +556,20 @@ class LibraryPanel(QFrame):
                 self._sort_items_in_place()
 
     def _on_cover_loaded(self, book_path, pixmap, book_item):
-        if not pixmap.isNull():
-            book_item.cover_label.setPixmap(pixmap.scaled(
-                book_item.cover_label.size(), 
-                Qt.KeepAspectRatioByExpanding, 
-                Qt.SmoothTransformation
-            ))
-            book_item.cover_label.setProperty("placeholder", False)
-            book_item.cover_label.setText("") 
-            book_item.cover_label.style().unpolish(book_item.cover_label)
-            book_item.cover_label.style().polish(book_item.cover_label)
-        else:
-            # If still no pixmap, ensure placeholder is visible
-            display_title = book_item.book_data.get("title") or "Unknown"
-            book_item.cover_label.setText(display_title[:1])
-            book_item.cover_label.setProperty("placeholder", True)
+        # Only attempt to set cover if the BookItem actually has a cover_label (i.e., not in List view)
+        if hasattr(book_item, 'cover_label'):
+            if not pixmap.isNull():
+                book_item.cover_label.setPixmap(pixmap.scaled(
+                    book_item.cover_label.size(), 
+                    Qt.KeepAspectRatioByExpanding, 
+                    Qt.SmoothTransformation
+                ))
+                book_item.cover_label.setProperty("placeholder", False)
+                book_item.cover_label.setText("") 
+                book_item.cover_label.style().unpolish(book_item.cover_label)
+                book_item.cover_label.style().polish(book_item.cover_label)
+            else:
+                # If still no pixmap, ensure placeholder is visible
+                display_title = book_item.book_data.get("title") or "Unknown"
+                book_item.cover_label.setText(display_title[:1])
+                book_item.cover_label.setProperty("placeholder", True)

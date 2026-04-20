@@ -32,16 +32,17 @@ class SleepTimerPanel(QWidget):
 
         # Time Presets Grid
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setSpacing(8)
         presets_minutes = [2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 75, 90, 120]
         self._sleep_presets_buttons = []
         for i, val in enumerate(presets_minutes):
             btn = QPushButton(f"{val} min")
-            btn.setFixedSize(55, 30)
+            btn.setFixedSize(57, 30)
             btn.clicked.connect(lambda _, v=val: self.set_sleep_timer(duration_minutes=v))
             grid.addWidget(btn, i // 4, i % 4)
             self._sleep_presets_buttons.append(btn)
         layout.addLayout(grid)
+        layout.addSpacing(2)
 
         # Special Modes
         special_modes_layout = QHBoxLayout()
@@ -53,6 +54,7 @@ class SleepTimerPanel(QWidget):
         self.end_book_btn.clicked.connect(lambda: self.set_sleep_timer(mode='end_of_book'))
         special_modes_layout.addWidget(self.end_book_btn)
         layout.addLayout(special_modes_layout)
+        
 
         # Custom Time Input
         custom_time_layout = QHBoxLayout()

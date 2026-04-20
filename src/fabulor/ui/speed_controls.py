@@ -42,7 +42,7 @@ class SpeedControlsPanel(QWidget):
         grid.setSpacing(8)
         for i, val in enumerate(self._speed_presets):
             btn = QPushButton(f"{val:.2f}x")
-            btn.setFixedSize(55, 30)
+            btn.setFixedSize(57, 30)
             # Note: We pass None for current_file here because UI clicks usually happen on an active book.
             # The parent (MainWindow) handles the context via set_speed.
             btn.clicked.connect(lambda _, v=val: self._on_preset_clicked(v))
@@ -50,7 +50,7 @@ class SpeedControlsPanel(QWidget):
             self._speed_grid_buttons.append(btn)
         layout.addLayout(grid)
         
-        layout.addSpacing(10)
+        layout.addSpacing(2)
 
         # Default Speed Section
         def_header = QLabel("Default speed")
