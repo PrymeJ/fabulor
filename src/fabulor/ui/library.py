@@ -48,6 +48,16 @@ class BookItem(QFrame):
         self.total_label.setObjectName("book_item_total")
         self.total_label.setContentsMargins(0,0,0,0)
 
+        # Hardcoded sizes
+        if self.view_mode == "1 per row":
+            size = 14
+        elif self.view_mode == "2 per row":
+            size = 13
+        else: # 3 per row
+            size = 12
+        self.elapsed_label.setStyleSheet(f"font-size: {size}px;")
+        self.total_label.setStyleSheet(f"font-size: {size}px;")
+
         row.addWidget(self.elapsed_label)
         row.addStretch()
         row.addWidget(self.total_label)
@@ -72,6 +82,15 @@ class BookItem(QFrame):
         self.pct_label = QLabel()
         self.pct_label.setObjectName("book_item_percentage")
         self.pct_label.setContentsMargins(0,0,0,0)
+
+        # Hardcoded size
+        if self.view_mode == "1 per row":
+            size = 14
+        elif self.view_mode == "2 per row":
+            size = 13
+        else: # 3 per row
+            size = 12
+        self.pct_label.setStyleSheet(f"font-size: {size}px;")
 
         # Styling and Constraints
         self.progress_outer.setFixedHeight(6)
@@ -122,8 +141,10 @@ class BookItem(QFrame):
 
             self.title_label = QLabel()
             self.title_label.setObjectName("book_item_title")
+            self.title_label.setStyleSheet("font-size: 14px;")
             self.author_label = QLabel()
             self.author_label.setObjectName("book_item_author")
+            self.author_label.setStyleSheet("font-size: 13px;")
 
             for lbl in (self.title_label, self.author_label):
                 lbl.setContentsMargins(0,0,0,0)
@@ -152,11 +173,15 @@ class BookItem(QFrame):
 
             self.title_label = QLabel()
             self.title_label.setObjectName("book_item_title")
+            self.title_label.setStyleSheet("font-size: 14px;")
             self.author_label = QLabel()
             self.author_label.setObjectName("book_item_author")
+            self.author_label.setStyleSheet("font-size: 14px;")
             self.narrator_label = QLabel()
             self.narrator_label.setObjectName("book_item_narrator")
+            self.narrator_label.setStyleSheet("font-size: 14px;")
             self.year_label = QLabel()
+            self.year_label.setStyleSheet("font-size: 12px;")
 
             for lbl in (self.title_label, self.author_label, self.narrator_label, self.year_label):
                 lbl.setContentsMargins(0,0,0,0)
@@ -179,23 +204,25 @@ class BookItem(QFrame):
             self.setFixedSize(292,44)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(4,4,4,4)
-            layout.setSpacing(8)
+            layout.setSpacing(6)
 
-            self.cover_label = self._make_cover(28,40)
-            layout.addWidget(self.cover_label)
+            
 
             self.title_label = QLabel()
             self.title_label.setObjectName("book_item_title")
+            self.title_label.setStyleSheet("font-size: 14px;")
             self.title_label.setContentsMargins(0,0,0,0)
 
             self.author_label = QLabel()
             self.author_label.setObjectName("book_item_author")
+            self.author_label.setStyleSheet("font-size: 14px;")
             self.author_label.setFixedWidth(100)
             self.author_label.setAlignment(Qt.AlignRight)
             self.author_label.setContentsMargins(0,0,0,0)
 
             self.total_label = QLabel()
             self.total_label.setObjectName("book_item_total")
+            self.total_label.setStyleSheet("font-size: 14px;")
             self.total_label.setFixedWidth(60)
             self.total_label.setAlignment(Qt.AlignRight)
             self.total_label.setContentsMargins(0,0,0,0)

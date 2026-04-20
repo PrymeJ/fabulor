@@ -69,14 +69,14 @@ THEMES = {
         "accent_dark":            "#0A375A",
         "bg_sidebar":             "#060A49",
         "bg_library":             "#0D0630",
-        "library_title":          "#FFFFFF",
+        "library_title":          "#36F1EE",
         "library_author":         "#22BDDD",
         "library_narrator":       "#9CBAD4",
         "library_slider_bg":      "#4A5F6F",
         "library_slider_fill":    "#DE1515",
-        "library_elapsed":        "#791EE0",
-        "library_total":          "#B719CC",
-        "library_percentage":     "#FFFFFF",
+        "library_elapsed":        "#9CBAD4",
+        "library_total":          "#9CBAD4",
+        "library_percentage":     "#9CBAD4",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
         "sidebar_text":           "#D61717",
@@ -1250,28 +1250,22 @@ def get_stylesheet(theme_name="default"):
             border-radius: 0px;
         }}
         #book_item_title {{
-            font-size: 10px;
             font-weight: bold;
             color: {t.get('library_title', t['text'])};
         }}
         #book_item_author {{
-            font-size: 9px;
             color: {t.get('library_author', t['accent_light'])};
         }}
         #book_item_narrator {{
-            font-size: 9px;
             color: {t.get('library_narrator', t['text'])};
         }}
         #book_item_elapsed {{
-            font-size: 9px;
             color: {t.get('library_elapsed', t['text'])};
         }}
         #book_item_total {{
-            font-size: 9px;
             color: {t.get('library_total', t['text'])};
         }}
         #book_item_percentage {{
-            font-size: 9px;
             color: {t.get('library_percentage', t['text'])};
         }}
         QListWidget#chapter_dropdown {{
@@ -1307,8 +1301,6 @@ def get_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_vol_bg']}";
             qproperty-fill_color: "{t['slider_vol_fill']}";
         }}
-
-
         QComboBox {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
