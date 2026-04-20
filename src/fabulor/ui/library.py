@@ -347,6 +347,7 @@ class LibraryPanel(QFrame):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         self.container = QWidget()
+        self.container.setObjectName("library_scroll_contents")
         self.grid = QGridLayout(self.container)
         self.grid.setSpacing(5)
         self.grid.setContentsMargins(0, 0, 0, 0)

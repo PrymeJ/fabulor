@@ -5,6 +5,7 @@ bg_deep: The darkest background color. Used for the custom title bar, the backgr
 bg_main: The primary background color for the main window and panels (settings, library, speed, etc.).
 bg_sidebar: The background color for the sliding sidebar on the left.
 bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
+bg_library: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
@@ -59,6 +60,7 @@ THEMES = {
         "accent_light":           "#7A9BB5",
         "accent_dark":            "#0A375A",
         "bg_sidebar":             "#060A49",
+        "bg_library":             "#0D0630",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
         "sidebar_text":           "#D61717",
@@ -1005,6 +1007,7 @@ def get_stylesheet(theme_name="default"):
 
     sidebar_text_rgb = _hex_to_rgb(s_text)
     sidebar_text_hover_rgb = _hex_to_rgb(s_hover)
+    lib_bg_rgb = _hex_to_rgb(t.get('bg_library', '#1A1A1A'))
 
     # Prepare dynamic backgrounds
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
@@ -1043,11 +1046,16 @@ def get_stylesheet(theme_name="default"):
 
         }}
         QWidget#library_panel {{
-            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']}); /* Panel background (includes top bar) */
             border-right: 1px solid {t['accent']};
-            border-radius: 0px;
             border: none;
-                         
+        }}
+        #library_panel QScrollArea, #library_panel QWidget#library_scroll_contents {{
+            background-color: rgba({lib_bg_rgb}, {t['panel_opacity_hover']}); /* Actual book display area */
+            border: none;
+        }}
+        #library_panel QScrollArea QWidget#qt_scrollarea_viewport {{
+            background-color: transparent;
         }}
         QWidget#sidebar {{ /* Sidebar background opacity */
             background: {sidebar_style};
