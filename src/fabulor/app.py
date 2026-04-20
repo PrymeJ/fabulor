@@ -897,8 +897,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         folder_btns_layout = QHBoxLayout()
         self.add_folder_btn = QPushButton("Add")
+        self.add_folder_btn.setObjectName("library_add_folder_btn")
         self.remove_folder_btn = QPushButton("Remove")
+        self.remove_folder_btn.setObjectName("library_remove_folder_btn")
         self.refresh_library_btn = QPushButton("Rescan")
+        self.refresh_library_btn.setObjectName("library_rescan_btn")
         folder_btns_layout.addWidget(self.add_folder_btn)
         folder_btns_layout.addWidget(self.remove_folder_btn)
         folder_btns_layout.addWidget(self.refresh_library_btn)

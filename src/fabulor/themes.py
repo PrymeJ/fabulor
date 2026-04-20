@@ -1479,6 +1479,25 @@ def get_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
+        QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn, QPushButton#library_rescan_btn {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            padding: 4px;
+            border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#library_add_folder_btn:hover, QPushButton#library_remove_folder_btn:hover, QPushButton#library_rescan_btn:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-weight: bold;
+        }}
+        QPushButton#library_add_folder_btn:pressed, QPushButton#library_remove_folder_btn:pressed, QPushButton#library_rescan_btn:pressed {{
+            background-color: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-weight: bold;
+        }}
+
         #disable_sleep_btn, #reset_audio_btn {{ /* Shared styling for prominent action buttons */
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
