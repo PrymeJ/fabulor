@@ -530,7 +530,14 @@ class LibraryPanel(QFrame):
         self.container.setUpdatesEnabled(False)
         while self.grid.count():
             self.grid.takeAt(self.grid.count() - 1)
+            
+        is_alternating = view_mode in ["1 per row", "List"]
+        
         for i, item in enumerate(items):
+            # Apply alternating row property for QSS targeting
+            item.setProperty("alt_row", str(i % 2) if is_alternating else "none")
+            item.style().unpolish(item)
+            item.style().polish(item)
             self.grid.addWidget(item, i // cols, i % cols)
         self.container.setUpdatesEnabled(True)
 

@@ -6,6 +6,8 @@ bg_main: The primary background color for the main window and panels (settings, 
 bg_sidebar: The background color for the sliding sidebar on the left.
 bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
 bg_library: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
+library_row_one: Background color for odd rows in 1-per-row and List views. Falls back to bg_library.
+library_row_two: Background color for even rows in 1-per-row and List views. Falls back to bg_library.
 library_title: Text color for book titles in the library view.
 library_author: Text color for book authors in the library view.
 library_narrator: Text color for book narrators in the library view.
@@ -69,6 +71,8 @@ THEMES = {
         "accent_dark":            "#0A375A",
         "bg_sidebar":             "#060A49",
         "bg_library":             "#0D0630",
+        "library_row_one":        "#0D0630",
+        "library_row_two":        "#130A40",
         "library_title":          "#36F1EE",
         "library_author":         "#22BDDD",
         "library_narrator":       "#9CBAD4",
@@ -1224,8 +1228,16 @@ def get_stylesheet(theme_name="default"):
         }}
         /* Library Panel Styling */
         #book_item {{
-            background: transparent;
             border-radius: 4px;
+        }}
+        #book_item[alt_row="0"] {{
+            background-color: {t.get('library_row_one', t.get('bg_library', '#1A1A1A'))};
+        }}
+        #book_item[alt_row="1"] {{
+            background-color: {t.get('library_row_two', t.get('bg_library', '#1A1A1A'))};
+        }}
+        #book_item[alt_row="none"] {{
+            background-color: transparent;
         }}
         #book_item:hover {{
             background-color: rgba({_hex_to_rgb(t['accent'])}, 0.1);
