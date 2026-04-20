@@ -61,7 +61,7 @@ THEMES = {
         "bg_sidebar":             "#060A49",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
-        "sidebar_text":           "#FF0202",
+        "sidebar_text":           "#D61717",
         "sidebar_text_hover":     "#5A97C6",
         "dropdown_time_text":     "#6FA0F9",
         "sidebar_opacity":        0.70,
@@ -1063,7 +1063,7 @@ def get_stylesheet(theme_name="default"):
         }}
         #sidebar QLabel {{
             font-size: 12px;
-            color: rgba({sidebar_text_rgb}, {t['sidebar_opacity']});
+            color: rgb({sidebar_text_rgb});
             background: transparent;
             border: none;
             text-align: left;
@@ -1072,7 +1072,7 @@ def get_stylesheet(theme_name="default"):
         }}
         #sidebar QPushButton {{
             font-size: 12px;
-            color: rgba({sidebar_text_rgb}, {t['sidebar_opacity']});
+            color: rgb({sidebar_text_rgb});
             background: transparent;
             border: none;
             text-align: left;
@@ -1080,7 +1080,7 @@ def get_stylesheet(theme_name="default"):
             padding: 0;
         }}
         #sidebar QLabel:hover, #sidebar QPushButton:hover {{
-            color: rgba({sidebar_text_hover_rgb}, {t['panel_opacity_hover']});
+            color: rgb({sidebar_text_hover_rgb});
         }}
         QLabel#sidebar_title {{
             font-weight: bold;
