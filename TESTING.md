@@ -142,7 +142,7 @@
 ## Audio Processing || no effect
 
 - [] Normalization (Speech Compression) toggles correctly
-- [] Voice Boost equalizer applies mid-range lift
+- [x] Voice Boost equalizer applies mid-range lift
 - [] Stereo/Mono switch works
 - [] Channel swap (L ↔ R) functions correctly
 - [] L/R balance slider adjusts volume bias
