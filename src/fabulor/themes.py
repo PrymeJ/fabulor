@@ -60,40 +60,40 @@ gradient_[prefix]_angle: Integer angle in degrees (e.g., 115 or 135).
 
 THEMES = {
         "Alzabo": {
-        "bg_deep":                "#0A0E82",
+        "text":                   "#9CBAD4",
+        "accent":                 "#366FF4",
+        "accent_light":           "#7A9BB5",
+        "accent_dark":            "#0A375A",
         "bg_main":                "#1A0570",
+        "bg_deep":                "#0A0E82",
         "slider_overall_bg":      "#4A5F6F",
         "slider_overall_fill":    "#DE1515",
         "slider_chapter_bg":      "#771327",
         "slider_chapter_fill":    "#205A86",
         "slider_vol_bg":          "#084A84",
         "slider_vol_fill":        "#7A9BB5",
-        "accent":                 "#366FF4",
-        "accent_light":           "#7A9BB5",
-        "accent_dark":            "#0A375A",
+        "sidebar_text":           "#D61717",
         "bg_sidebar":             "#060A49",
+        "sidebar_text_hover":     "#5A97C6",
+        "sidebar_opacity":        0.70,
+        "bg_dropdown":            "#4A5F6F",
+        "curr_chap_highlight":    "#A13F73",
+        "dropdown_time_text":     "#6FA0F9",
         "bg_library":             "#0D0630",
         "library_row_one":        "#130848",
         "library_row_two":        "#0D0630",
         "library_title":          "#7ACAC9",
         "library_author":         "#22BDDD",
         "library_narrator":       "#9CBAD4",
-        "library_slider_bg":      "#4A5F6F",
-        "library_slider_fill":    "#DE1515",
         "library_elapsed":        "#9CBAD4",
         "library_total":          "#9CBAD4",
         "library_percentage":     "#9CBAD4",
+        "library_slider_bg":      "#4A5F6F",
+        "library_slider_fill":    "#DE1515",
         "library_input_bg":       "#06263F",
         "library_input_text":     "#FFFFFF",
-        "bg_dropdown":            "#4A5F6F",
-        "curr_chap_highlight":    "#A13F73",
-        "sidebar_text":           "#D61717",
-        "sidebar_text_hover":     "#5A97C6",
-        "dropdown_time_text":     "#6FA0F9",
-        "sidebar_opacity":        0.70,
-        "panel_opacity_hover":    1.00,
         "panel_theme_names_dimmed": "#CDE1E1",
-        "text":                   "#9CBAD4"
+        "panel_opacity_hover":    1.00,
     },
     "Anomander": { # Black & White with Deep Amber Progress Text
         "bg_deep":      "#000000",
@@ -244,6 +244,25 @@ THEMES = {
         "panel_opacity_hover":    0.9,
         "text":                   "#F5E2D0"
     },
+    "Crimson Guard": {
+        "bg_deep":                "#1A0F1A",
+        "bg_main":                "#2E1A24",
+        "slider_overall_bg":      "#4A2A3A",
+        "slider_overall_fill":    "#D96A2A",
+        "slider_chapter_bg":      "#4A2A3A",
+        "slider_chapter_fill":    "#E87A3A",
+        "slider_vol_bg":          "#2E1A24",
+        "slider_vol_fill":        "#D96A2A",
+        "accent":                 "#B84A6A",
+        "accent_light":           "#D06A8A",
+        "accent_dark":            "#7A2A4A",
+        "bg_sidebar":             "#1A0F1A",
+        "bg_dropdown":            "#4A2A3A",
+        "curr_chap_highlight":    "#E87A3A",
+        "sidebar_opacity":        0.84,
+        "panel_opacity_hover":    0.92,
+        "text":                   "#F2E0E8"
+},
     "Dorian Grey": { # Dark grey, orange, and brown
         "bg_deep":      "#121212",
         "bg_main":      "#1E1E1E",
@@ -1232,7 +1251,7 @@ def get_stylesheet(theme_name="default"):
         }}
         /* Library Panel Styling */
         #book_item {{
-            border-radius: 4px;
+            border-radius: 0px;
         }}
         #book_item[alt_row="0"] {{
             background-color: {t.get('library_row_one', t.get('bg_library', '#1A1A1A'))};
@@ -1244,7 +1263,7 @@ def get_stylesheet(theme_name="default"):
             background-color: transparent;
         }}
         #book_item:hover {{
-            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.1);
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.50);
         }}
         #book_cover {{
             background-color: {t['bg_dropdown']};
