@@ -19,6 +19,7 @@ class SleepTimerPanel(QWidget):
         
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
+        self._total_timer_duration = 0 # Initial duration in seconds for the active timer
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
         
         self._setup_ui()
@@ -118,6 +119,7 @@ class SleepTimerPanel(QWidget):
             self.player.pause = False
 
         if duration_minutes is not None:
+            self._total_timer_duration = duration_minutes * 60
             self._sleep_timer_end_time = time.time() + duration_minutes * 60
             self._sleep_mode = 'timed'
             self.config.set_sleep_duration(duration_minutes)
@@ -125,6 +127,7 @@ class SleepTimerPanel(QWidget):
             self.disable_sleep_btn.show()
             self.timer_started.emit()
         elif mode in ['end_of_chapter', 'end_of_book']:
+            self._total_timer_duration = 0
             self._sleep_mode = mode
             self.config.set_sleep_mode(mode)
             self.disable_sleep_btn.show()
@@ -191,8 +194,10 @@ class SleepTimerPanel(QWidget):
             else:
                 display_text = f"[{self.player.format_time(remaining_seconds)}]"
                 # Volume Fade Logic
-                if self._current_sleep_fade > 0 and remaining_seconds <= self._current_sleep_fade:
-                    ratio = remaining_seconds / self._current_sleep_fade
+                # Cap the fade duration at the total length of the timer to prevent low starting volume
+                effective_fade = min(self._current_sleep_fade, self._total_timer_duration)
+                if effective_fade > 0 and remaining_seconds <= effective_fade:
+                    ratio = remaining_seconds / effective_fade
                     self.player.set_fade_ratio(ratio)
 
         elif self._sleep_mode == 'end_of_chapter':
