@@ -20,6 +20,9 @@ library_total: Text color for total duration labels in library items.
 library_percentage: Text color for the progress percentage in library items.
 library_input_bg: Background color for sort/view dropdowns and the search field in the library. Falls back to bg_dropdown.
 library_input_text: Text color for sort/view dropdowns and the search field in the library. Falls back to text.
+settings_tab_hover_bg: Background color for unselected tabs when hovered. Falls back to accent.
+settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Falls back to 0.85.
+settings_tab_hover_text: Text color for unselected tabs when hovered. Falls back to text.
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
@@ -96,6 +99,9 @@ THEMES = {
         "library_slider_fill":    "#DE1515",
         "library_input_bg":       "#06263F",
         "library_input_text":     "#FFFFFF",
+        "settings_tab_hover_bg":      "#FF0000",
+        "settings_tab_hover_opacity": 0.9,
+        "settings_tab_hover_text":    "#150C79",
         "panel_theme_names_dimmed": "#CDE1E1",
         "panel_opacity_hover":    1.00,
     },
@@ -111,10 +117,12 @@ THEMES = {
         "accent":              "#FFFFFF",
         "accent_light":        "#E0E0E0",
         "accent_dark":         "#404040",
+        "library_row_one":        "#000000",
+        "library_row_two":        "#0C0C0C",
         "bg_sidebar":          "#000000",
         "bg_dropdown":         "#080808",
         "curr_chap_highlight": "#FFA807",
-        "library_item_hover_alpha": 0.20,
+        "library_item_hover_alpha": 0.15,
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#FFA807",
@@ -122,6 +130,7 @@ THEMES = {
         "progress_text":       "#FFBF00",
         "text":                "#FFFFFF",
         "sidebar_text_hover":  "#E0E0E0",
+        "settings_tab_hover_text":    "#000000",
     },
     "Blood Meridian": {
         "bg_deep": "#2F1A0F", # Dried blood brown
@@ -135,7 +144,7 @@ THEMES = {
         "accent": "#C10808",
         "accent_light": "#A52A2A",
         "accent_dark": "#CD3F3F",
-        "bg_sidebar": "#2F1A0F",
+        "bg_sidebar": "#3C1F10",
         "bg_dropdown": "#4A2F1F",
         "curr_chap_highlight": "#8B0000",
         "sidebar_text_hover": "#A52A2A",
@@ -153,17 +162,25 @@ THEMES = {
         "slider_chapter_fill": "#3CA4E0",
         "slider_vol_bg":       "#3CA4E0",
         "slider_vol_fill":     "#39FF14",
-        "accent":              "#3CA4E0",
-        "accent_light":        "#7CFF8A",
+        "accent":              "#3C7BE0",
+        "accent_light":        "#29E442",
         "accent_dark":         "#00A32A",
         "bg_sidebar":          "#001219",
         "bg_dropdown":         "#001B2E",
-        "curr_chap_highlight": "#39FF14",
-        "sidebar_text_hover": "#7CFF8A",
+        "curr_chap_highlight": "#227AED",
+        "dropdown_time_text":  "#6FA0F9",
+        "sidebar_text_hover":  "#7CFF8A",
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
         "panel_theme_names_dimmed": "#8DCECF",
-        "text":                "#E0E0E0",
+        "bg_library":             "#11064A",
+        "library_title":         "#3EA5EA",
+        "library_author":         "#10D742",
+        "library_row_one":        "#0E0442",
+        "library_row_two":        "#0A032A",
+        "library_item_hover_color": "#1049CF",
+        "library_item_hover_alpha": 0.50,
+        "text":                "#B9EFEE",
     },
     "Brave New World": {
         "bg_deep": "#3A2F5F", # Sterile purple
@@ -183,7 +200,9 @@ THEMES = {
         "sidebar_text_hover": "#9ACFE0",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
-        "panel_theme_names_dimmed": "#839CA2",
+        "panel_theme_names_dimmed": "#CA94CB",
+        "bg_library":             "#240B2E",
+        "library_author":         "#D71087",
         "text": "#F1E7C2", # Pale lemon text
     },
         "Camorr": {
@@ -198,36 +217,53 @@ THEMES = {
         "accent": "#00A98B",
         "accent_light": "#00D4B3",
         "accent_dark": "#006F5A",
-        "bg_sidebar": "#0F1419",
+        "bg_sidebar": "#032516",
         "bg_dropdown": "#1A1F24",
         "curr_chap_highlight": "#00A98B",
         "sidebar_text_hover": "#00D4B3",
         "sidebar_opacity": 0.65,
         "panel_opacity_hover": 0.88,
         "panel_theme_names_dimmed": "#C0D8CA",
-        "text": "#E0E6ED",
+        "library_title":          "#BEE6DF",
+        "library_percentage":        "#5FFD0A",
+        "library_item_hover_color": "#00A98B",
+        "library_item_hover_alpha": 0.80,
+        "library_row_one":        "#012D20",
+        "library_row_two":        "#082A03",
+        "text": "#B1EBAF",
     },
-    "Chatsubo": { # Neuromancer - Dark, vibrant neons
+    "Chatsubo": {
         "bg_deep":      "#0D001A",
-        "bg_main":      "#1A002E", # Deep purple background
+        "bg_main":      "#1A002E",
+        "bg_library":  "#260242",
         "slider_overall_bg":   "#333333",
-        "slider_overall_fill": "#FF00FF", # Swapped
+        "slider_overall_fill": "#FF00FF",
         "slider_chapter_bg":   "#2A2A2A",
-        "slider_chapter_fill": "#00FFFF", # Swapped
+        "slider_chapter_fill": "#00FFFF",
         "slider_vol_bg":       "#0D001A",
-        "slider_vol_fill":     "#00FF00", # Green neon
+        "slider_vol_fill":     "#00FF00",
         "accent":              "#FF00FF",
         "accent_light":        "#FF33FF",
         "accent_dark":         "#CC00CC",
         "bg_sidebar":          "#0D001A",
         "bg_dropdown":         "#1A1A1A",
-        "curr_chap_highlight": "#FF00FF", # Pink highlight
+        "curr_chap_highlight": "#FF00FF",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "text":                "#E0E0E0",
         "sidebar_text_hover": "#FF33FF",
         "panel_theme_names_dimmed": "#00F7FF",
-        "dropdown_text":       "#FFFF00", # Yellow font
+        "dropdown_text":       "#FFFF00",
+        "library_title":          "#00EAFF",
+        "library_narrator":        "#FFFF00",
+        "library_elapsed":        "#6CFAFF",
+        "library_total":          "#00C8FF",
+        "library_percentage":     "#D97DEC",
+        "library_row_one":        "#26053F",
+        "library_row_two":        "#1A032C",
+        "library_item_hover_color": "#FF66CC",
+        "library_item_hover_alpha": 0.20,
+
     },
     "Cibola Burn": {
         "bg_deep":                "#1A1210",
@@ -567,7 +603,9 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#DBECF0",
         "button_text":         "#2A0A60",
-        "text": "#A5C4E2", # Ice blue text
+        "text": "#A5C4E2",
+        "settings_tab_hover_opacity": 0.9,
+        "settings_tab_hover_text":    "#0B0A0A",
     },
     "Rebma": {
         "bg_deep": "#2D4A2D", # Deep mossy earth
@@ -1057,6 +1095,10 @@ def get_stylesheet(theme_name="default"):
     sidebar_text_hover_rgb = _hex_to_rgb(s_hover)
     lib_bg_rgb = _hex_to_rgb(t.get('bg_library', '#1A1A1A'))
 
+    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+
     # Prepare dynamic backgrounds
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
     sidebar_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['sidebar_opacity'])
@@ -1412,8 +1454,8 @@ def get_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
         QTabBar::tab:hover:!selected {{
-            background: rgba({_hex_to_rgb(t['accent'])}, 0.85);
-            color: {t['text']};
+            background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
+            color: {tab_hover_text};
         }}
         QTabWidget QWidget {{
             background: transparent;
@@ -1561,6 +1603,10 @@ def get_hover_stylesheet(theme_name="default"):
     # Prepare dynamic backgrounds
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
     panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+
+    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
 
     return f"""
         QWidget#mainwindow {{
