@@ -367,7 +367,6 @@ class LibraryPanel(QFrame):
         self.search_field.setAlignment(Qt.AlignCenter) 
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
-        self.search_field.setStyleSheet("QLineEdit { font-size: 12px; }")
         self.top_bar_layout.setSpacing(3)
         self.top_bar_layout.addWidget(self.search_field)
 

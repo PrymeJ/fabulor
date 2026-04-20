@@ -16,6 +16,8 @@ library_slider_fill: Fill color for the progress bar in library items.
 library_elapsed: Text color for elapsed time labels in library items.
 library_total: Text color for total duration labels in library items.
 library_percentage: Text color for the progress percentage in library items.
+library_input_bg: Background color for sort/view dropdowns and the search field in the library. Falls back to bg_dropdown.
+library_input_text: Text color for sort/view dropdowns and the search field in the library. Falls back to text.
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
@@ -73,7 +75,7 @@ THEMES = {
         "bg_library":             "#0D0630",
         "library_row_one":        "#0D0630",
         "library_row_two":        "#130A40",
-        "library_title":          "#36F1EE",
+        "library_title":          "#ABE8E7",
         "library_author":         "#22BDDD",
         "library_narrator":       "#9CBAD4",
         "library_slider_bg":      "#4A5F6F",
@@ -81,6 +83,8 @@ THEMES = {
         "library_elapsed":        "#9CBAD4",
         "library_total":          "#9CBAD4",
         "library_percentage":     "#9CBAD4",
+        "library_input_bg":       "#06263F",
+        "library_input_text":     "#FFFFFF",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
         "sidebar_text":           "#D61717",
@@ -1280,6 +1284,15 @@ def get_stylesheet(theme_name="default"):
         #book_item_percentage {{
             color: {t.get('library_percentage', t['text'])};
         }}
+        /* Specialized Library Inputs */
+        #library_panel QComboBox, #library_panel QLineEdit {{
+            background-color: {t.get('library_input_bg', t['bg_dropdown'])};
+            color: {t.get('library_input_text', t['text'])};
+        }}
+        #library_panel QComboBox QAbstractItemView {{
+            background-color: {t.get('library_input_bg', t['bg_dropdown'])};
+            color: {t.get('library_input_text', t['text'])};
+        }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};
             border: 1px solid {t['accent']};
@@ -1349,6 +1362,7 @@ def get_stylesheet(theme_name="default"):
         QLineEdit {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
+            font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 2px;
