@@ -1,4 +1,50 @@
 import math
+"""
+CORE BACKGROUND COLORS
+bg_deep: The darkest background color. Used for the custom title bar, the background behind the volume overlay, and the status banner at the bottom.
+bg_main: The primary background color for the main window and panels (settings, library, speed, etc.).
+bg_sidebar: The background color for the sliding sidebar on the left.
+bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
+
+UI TEXT COLORS
+text: The default color for most labels and UI text.
+button_text: (Optional) Specific color for text inside buttons. If not provided, it falls back to text_on_light_bg or text.
+progress_text: (Optional) Color for the percentage label that sits on top of the overall progress slider.
+sidebar_text: (Optional) Color for text and buttons inside the sidebar. Falls back to the main text color.
+dropdown_text: (Optional) Color for text inside the chapter dropdown list.
+dropdown_time_text: (Optional) Color for the duration text inside the chapter dropdown list.
+text_on_light_bg: (Optional) Used as a fallback for buttons or specific labels if they are placed over light-colored elements.
+panel_theme_names_dimmed: Specifically used in the Settings panel for theme names that are currently unselected/dimmed.
+
+SLIDERS
+slider_overall_bg: Background (groove) color of the main book progress bar.
+slider_overall_fill: The filled portion color of the main book progress bar.
+slider_chapter_bg: Background of the chapter-specific progress bar.
+slider_chapter_fill: The filled portion of the chapter-specific progress bar.
+slider_vol_bg: Background of the volume slider.
+slider_vol_fill: The filled portion of the volume slider.
+
+ACCENT AND INTERACTION COLORS
+accent: The primary interaction color. Used for selected tabs, slider handles (implicitly via fill), and primary buttons.
+accent_light: The color used when hovering over buttons or selecting list items.
+accent_dark: The color used for borders or when a button is actively pressed.
+curr_chap_highlight: The color used to highlight the currently playing chapter within the chapter dropdown list.
+
+TRANSPARENCY AND EFFECTS
+sidebar_opacity: A float (0.0 to 1.0) defining how transparent the sidebar is when idle.
+panel_opacity_hover: A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
+bg_image: (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
+
+DYNAMIC GRADIENTS
+The theme engine supports linear gradients for several components. You can define these by adding the following keys using a specific prefix:
+
+Prefixes: bg, sidebar, accent, slider_fill
+Properties:
+gradient_[prefix]_start: Hex color for the start of the gradient.
+gradient_[prefix]_end: Hex color for the end of the gradient.
+gradient_[prefix]_angle: Integer angle in degrees (e.g., 115 or 135).
+"""
+
 THEMES = {
         "Alzabo": {
         "bg_deep":                "#0A0E82",
@@ -12,11 +58,14 @@ THEMES = {
         "accent":                 "#366FF4",
         "accent_light":           "#7A9BB5",
         "accent_dark":            "#0A375A",
-        "bg_sidebar":             "#1B2B3B",
+        "bg_sidebar":             "#060A49",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
-        "sidebar_opacity":        0.88,
-        "panel_opacity_hover":    0.94,
+        "sidebar_text":           "#FF0202",
+        "sidebar_text_hover":     "#5A97C6",
+        "dropdown_time_text":     "#6FA0F9",
+        "sidebar_opacity":        0.70,
+        "panel_opacity_hover":    1.00,
         "panel_theme_names_dimmed": "#CDE1E1",
         "text":                   "#9CBAD4"
     },
@@ -41,6 +90,7 @@ THEMES = {
         "button_text":         "#000000",
         "progress_text":       "#FFBF00",
         "text":                "#FFFFFF",
+        "sidebar_text_hover":  "#E0E0E0",
     },
     "Blood Meridian": {
         "bg_deep": "#2F1A0F", # Dried blood brown
@@ -57,6 +107,7 @@ THEMES = {
         "bg_sidebar": "#2F1A0F",
         "bg_dropdown": "#4A2F1F",
         "curr_chap_highlight": "#8B0000",
+        "sidebar_text_hover": "#A52A2A",
         "sidebar_opacity": 0.72,
         "panel_opacity_hover": 0.91,
         "panel_theme_names_dimmed": "#E47575",
@@ -77,6 +128,7 @@ THEMES = {
         "bg_sidebar":          "#001219",
         "bg_dropdown":         "#001B2E",
         "curr_chap_highlight": "#39FF14",
+        "sidebar_text_hover": "#7CFF8A",
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
         "panel_theme_names_dimmed": "#8DCECF",
@@ -97,6 +149,7 @@ THEMES = {
         "bg_sidebar": "#3A2F5F",
         "bg_dropdown": "#5A4A7F",
         "curr_chap_highlight": "#77B2CC",
+        "sidebar_text_hover": "#9ACFE0",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#839CA2",
@@ -117,6 +170,7 @@ THEMES = {
         "bg_sidebar": "#0F1419",
         "bg_dropdown": "#1A1F24",
         "curr_chap_highlight": "#00A98B",
+        "sidebar_text_hover": "#00D4B3",
         "sidebar_opacity": 0.65,
         "panel_opacity_hover": 0.88,
         "panel_theme_names_dimmed": "#C0D8CA",
@@ -140,6 +194,7 @@ THEMES = {
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "text":                "#E0E0E0",
+        "sidebar_text_hover": "#FF33FF",
         "panel_theme_names_dimmed": "#00F7FF",
         "dropdown_text":       "#FFFF00", # Yellow font
     },
@@ -158,6 +213,7 @@ THEMES = {
         "bg_sidebar":             "#1A1210",
         "bg_dropdown":            "#4A3024",
         "curr_chap_highlight":    "#F0944C",
+        "sidebar_text_hover":     "#F0944C",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
         "text":                   "#F5E2D0"
@@ -177,12 +233,14 @@ THEMES = {
         "bg_sidebar":          "#121212",
         "bg_dropdown":         "#1E1E1E",
         "curr_chap_highlight": "#8B4513",
+        "sidebar_text_hover": "#F39C12",
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#BCB6BB",
         "text":                "#E8BC6C", # Dark Grey/Silver (non-white)
         "button_text":         "#000000",
         "progress_text":       "#FCD586", # Match bg_deep for visibility on orange fill
+        "sidebar_text_hover": "#F39C12",
     },
     "Earthsea": {
         "bg_deep": "#1A2A44", # Deep ocean indigo
@@ -199,6 +257,7 @@ THEMES = {
         "bg_sidebar": "#1A2A44",
         "bg_dropdown": "#2B4A6A",
         "curr_chap_highlight": "#4A90A7",
+        "sidebar_text_hover": "#6AB8C7",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#D2ECF1",
@@ -219,6 +278,7 @@ THEMES = {
         "bg_sidebar":             "#0A1F0A",
         "bg_dropdown":            "#1F4F1F",
         "curr_chap_highlight":    "#4CFF94",
+        "sidebar_text_hover":     "#6CFFB0",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
         "text":                   "#D0FFD0"
@@ -238,6 +298,7 @@ THEMES = {
         "bg_sidebar":             "#0A1128",
         "bg_dropdown":            "#1A2A5A",
         "curr_chap_highlight":    "#5B8AFF",
+        "sidebar_text_hover":     "#6B9AFF",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
         "panel_theme_names_dimmed": "#8FEBE6",
@@ -258,6 +319,7 @@ THEMES = {
         "bg_sidebar":             "#3B2A24",
         "bg_dropdown":            "#70554A",
         "curr_chap_highlight":    "#B88462",
+        "sidebar_text_hover":     "#B88462",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
         "panel_theme_names_dimmed": "#E4C7B7",
@@ -282,6 +344,7 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "text":                "#CFECEC", # Cyan text
         "progress_text":       "#FF00FF", # Magenta progress
+        "sidebar_text_hover": "#00FFFF",
         "panel_theme_names_dimmed": "#E94F4F",
         "button_text":         "#2b0052",
         "gradient_bg_angle":      115,
@@ -303,6 +366,7 @@ THEMES = {
         "bg_sidebar":          "#230903",
         "bg_dropdown":         "#451208",
         "curr_chap_highlight": "#E3B23C", # chapter dropdown selection
+        "sidebar_text_hover": "#D60808",
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#F47272",
@@ -325,6 +389,7 @@ THEMES = {
         "curr_chap_highlight": "#3B404C",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
+        "sidebar_text_hover": "#E1B67E",
         "panel_theme_names_dimmed": "#FEC074",
         "text": "#F1E7C2", # Pale lemon text
     },
@@ -343,6 +408,7 @@ THEMES = {
         "bg_sidebar": "#1A2F44",
         "bg_dropdown": "#2F4A66",
         "curr_chap_highlight": "#4682B4",
+        "sidebar_text_hover": "#5A94D0",
         "sidebar_opacity": 0.73,
         "panel_opacity_hover": 0.92,
         "panel_theme_names_dimmed": "#EEECF9",
@@ -363,6 +429,7 @@ THEMES = {
         "bg_sidebar":          "#002E22",
         "bg_dropdown":         "#003D2E",
         "curr_chap_highlight": "#00A86B",
+        "sidebar_text_hover": "#2ECC71",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#DCDCC7",
@@ -383,6 +450,7 @@ THEMES = {
         "bg_sidebar":             "#2E2B33",
         "bg_dropdown":            "#5A5562",
         "curr_chap_highlight":    "#A89AB5",
+        "sidebar_text_hover":     "#C2B5CC",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "panel_theme_names_dimmed": "#876B81",
@@ -403,6 +471,7 @@ THEMES = {
         "bg_sidebar":             "#2A353C",
         "bg_dropdown":            "#55626B",
         "curr_chap_highlight":    "#AFC9CC",
+        "sidebar_text_hover":     "#C2D6D9",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
         "text":                   "#F0F3F0"
@@ -422,6 +491,7 @@ THEMES = {
         "bg_sidebar":          "#2C3E50",
         "bg_dropdown":         "#34495E",
         "curr_chap_highlight": "#E74C3C",
+        "sidebar_text_hover": "#F05948",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#8CF1F8FF",
@@ -442,6 +512,7 @@ THEMES = {
         "bg_sidebar": "#0A0F1A",
         "bg_dropdown": "#1A1F2E",
         "curr_chap_highlight": "#00FFFF",
+        "sidebar_text_hover": "#66FFFF",
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#DBECF0",
@@ -463,6 +534,7 @@ THEMES = {
         "bg_sidebar": "#2D4A2D",
         "bg_dropdown": "#4A704A",
         "curr_chap_highlight": "#C59EC5",
+        "sidebar_text_hover": "#A8D0A8",
         "sidebar_opacity": 0.75,
         "panel_opacity_hover": 0.92,
         "text": "#F8F0F7", # Soft cream text
@@ -483,6 +555,7 @@ THEMES = {
         "bg_sidebar":          "#2b0000",
         "bg_dropdown":         "#4a0000",
         "curr_chap_highlight": "#ff0000",
+        "sidebar_text_hover": "#ff6666",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#FFFFFFFF",
@@ -505,6 +578,7 @@ THEMES = {
         "bg_sidebar":          "#E0E7E9",
         "bg_dropdown":         "#CFD8DC",
         "curr_chap_highlight": "#81C784",
+        "sidebar_text_hover": "#81C784",
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
         "text":                "#263238",
@@ -538,6 +612,7 @@ THEMES = {
         "gradient_sidebar_end":   "#5A4838",
         "bg_dropdown":            "#6B5A49",
         "curr_chap_highlight":    "#D4A85C",
+        "sidebar_text_hover":     "#E2CDA7",
         "sidebar_opacity":        0.6,
         "panel_opacity_hover":    0.9,
         "panel_theme_names_dimmed": "#B1A792",
@@ -558,6 +633,7 @@ THEMES = {
         "bg_sidebar":             "#0A0A1A",
         "bg_dropdown":            "#1A2140",
         "curr_chap_highlight":    "#5B80B8",
+        "sidebar_text_hover":     "#5B80B8",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
         "panel_theme_names_dimmed": "#41BAEA",
@@ -587,6 +663,7 @@ THEMES = {
         "bg_sidebar":             "#1B2B3B",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#AC668B",
+        "sidebar_text_hover":     "#7A9BB5",
         "sidebar_opacity":        0.88,
         "panel_opacity_hover":    0.94,
         "panel_theme_names_dimmed": "#CDE1E1",
@@ -607,6 +684,7 @@ THEMES = {
         "bg_sidebar":             "#1E1814",
         "bg_dropdown":            "#4A3A2E",
         "curr_chap_highlight":    "#CC6C54",
+        "sidebar_text_hover":     "#CC6C54",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
         "panel_theme_names_dimmed": "#ECECAE",
@@ -627,6 +705,7 @@ THEMES = {
         "bg_sidebar":             "#3A2A1E",
         "bg_dropdown":            "#765A40",
         "curr_chap_highlight":    "#F0BC6C",
+        "sidebar_text_hover":     "#F0BC6C",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
         "text":                   "#FFF2E0"
@@ -646,6 +725,7 @@ THEMES = {
         "bg_sidebar":             "#0A1C1A",
         "bg_dropdown":            "#1A4A44",
         "curr_chap_highlight":    "#4CCCB8",
+        "sidebar_text_hover":     "#4CCCB8",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
         "panel_theme_names_dimmed": "#C5DCE1",
@@ -666,6 +746,7 @@ THEMES = {
         "bg_sidebar":             "#2A2020",
         "bg_dropdown":            "#5C4A44",
         "curr_chap_highlight":    "#F2E6D8",
+        "sidebar_text_hover":     "#E07A6A",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "panel_theme_names_dimmed": "#D7B6D2",
@@ -686,6 +767,7 @@ THEMES = {
         "bg_sidebar":             "#0E1E24",
         "bg_dropdown":            "#244A52",
         "curr_chap_highlight":    "#6AAAA0",
+        "sidebar_text_hover":     "#6AAAA0",
         "sidebar_opacity":        0.83,
         "panel_opacity_hover":    0.91,
         "panel_theme_names_dimmed": "#A2C1C8",
@@ -706,6 +788,7 @@ THEMES = {
         "bg_sidebar":   "#120024",  # drawer background
         "bg_dropdown":  "#120024",  # combobox popup
         "curr_chap_highlight": "#C8A2C8", # chapter dropdown selection
+        "sidebar_text_hover": "#9D4EDD",
         "sidebar_opacity": 0.6,
         "panel_opacity_hover": 0.9,
         "text":         "#EF94E9",  # all labels and button text
@@ -725,6 +808,7 @@ THEMES = {
         "bg_sidebar":             "#2E1E14",
         "bg_dropdown":            "#6B4530",
         "curr_chap_highlight":    "#BB0606",
+        "sidebar_text_hover":     "#BB0606",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "panel_theme_names_dimmed": "#F05632",
@@ -746,6 +830,7 @@ THEMES = {
         "bg_sidebar": "#1A1A1A",
         "bg_dropdown": "#2F2F2F",
         "curr_chap_highlight": "#B8860B",
+        "sidebar_text_hover": "#DAA520",
         "sidebar_opacity": 0.68,
         "panel_opacity_hover": 0.87,
         "panel_theme_names_dimmed": "#839CA2",
@@ -766,6 +851,7 @@ THEMES = {
         "bg_sidebar":             "#121826",
         "bg_dropdown":            "#30405C",
         "curr_chap_highlight":    "#C4B2D0",
+        "sidebar_text_hover":     "#D8D0B4",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "text":                   "#F0ECDC"
@@ -785,6 +871,7 @@ THEMES = {
         "bg_sidebar":             "#2A261A",
         "bg_dropdown":            "#5C543E",
         "curr_chap_highlight":    "#F2E49C",
+        "sidebar_text_hover":     "#F2E49C",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
         "text":                   "#FFF8E8"
@@ -804,6 +891,7 @@ THEMES = {
         "bg_sidebar":             "#1A1824",
         "bg_dropdown":            "#3D3650",
         "curr_chap_highlight":    "#D0C8E4",
+        "sidebar_text_hover":     "#B8B0D0",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
         "panel_theme_names_dimmed": "#C18EAC",
@@ -824,6 +912,7 @@ THEMES = {
         "bg_sidebar":          "#001219",
         "bg_dropdown":         "#001B24",
         "curr_chap_highlight": "#94D2BD",
+        "sidebar_text_hover": "#94D2BD",
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#D3EBEC",
@@ -844,6 +933,7 @@ THEMES = {
         "bg_sidebar":             "#1E2229",
         "bg_dropdown":            "#464E5C",
         "curr_chap_highlight":    "#A2B2CC",
+        "sidebar_text_hover":     "#A2B2CC",
         "sidebar_opacity":        0.85,
         "panel_opacity_hover":    0.92,
         "panel_theme_names_dimmed": "#726A6A",
@@ -864,6 +954,7 @@ THEMES = {
         "bg_sidebar":          "#212529",
         "bg_dropdown":         "#343A40",
         "curr_chap_highlight": "#DEE2E6", # chapter dropdown selection
+        "sidebar_text_hover": "#DEE2E6",
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#000000",
@@ -909,6 +1000,11 @@ def get_stylesheet(theme_name="default"):
     t = base
 
     text_rgb = _hex_to_rgb(t['text'])
+    s_text = t.get('sidebar_text', t['text'])
+    s_hover = t.get('sidebar_text_hover', '#FFFFFF')
+
+    sidebar_text_rgb = _hex_to_rgb(s_text)
+    sidebar_text_hover_rgb = _hex_to_rgb(s_hover)
 
     # Prepare dynamic backgrounds
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
@@ -965,18 +1061,26 @@ def get_stylesheet(theme_name="default"):
             color: {t['text']};
             font-weight: bold;
         }}
-        /* Sidebar items opacity sync */
-        #sidebar QLabel, #sidebar QPushButton {{
+        #sidebar QLabel {{
             font-size: 12px;
-            color: rgba({text_rgb}, {t['panel_opacity_hover']});
+            color: rgba({sidebar_text_rgb}, {t['sidebar_opacity']});
             background: transparent;
             border: none;
             text-align: left;
             font-weight: bold;
             padding: 0;
         }}
-        #sidebar:hover QLabel, #sidebar:hover QPushButton {{
-            color: rgba({text_rgb}, {t['panel_opacity_hover']}) !important;
+        #sidebar QPushButton {{
+            font-size: 12px;
+            color: rgba({sidebar_text_rgb}, {t['sidebar_opacity']});
+            background: transparent;
+            border: none;
+            text-align: left;
+            font-weight: bold;
+            padding: 0;
+        }}
+        #sidebar QLabel:hover, #sidebar QPushButton:hover {{
+            color: rgba({sidebar_text_hover_rgb}, {t['panel_opacity_hover']});
         }}
         QLabel#sidebar_title {{
             font-weight: bold;
@@ -1138,6 +1242,9 @@ def get_stylesheet(theme_name="default"):
         }}
         QListWidget#chapter_dropdown QLabel {{
             color: {t.get('dropdown_text', t['text'])};
+        }}
+        QListWidget#chapter_dropdown QLabel#chapter_time {{
+            color: {t.get('dropdown_time_text', t.get('dropdown_text', t['text']))};
         }}
         QListWidget#chapter_dropdown::item:selected {{
             background-color: {t['curr_chap_highlight']}; /* Chapter dropdown selection highlight */
