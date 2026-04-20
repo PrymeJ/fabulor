@@ -6,6 +6,14 @@ bg_main: The primary background color for the main window and panels (settings, 
 bg_sidebar: The background color for the sliding sidebar on the left.
 bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
 bg_library: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
+library_title: Text color for book titles in the library view.
+library_author: Text color for book authors in the library view.
+library_narrator: Text color for book narrators in the library view.
+library_slider_bg: Background color for the progress bar groove in library items.
+library_slider_fill: Fill color for the progress bar in library items.
+library_elapsed: Text color for elapsed time labels in library items.
+library_total: Text color for total duration labels in library items.
+library_percentage: Text color for the progress percentage in library items.
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
@@ -61,6 +69,14 @@ THEMES = {
         "accent_dark":            "#0A375A",
         "bg_sidebar":             "#060A49",
         "bg_library":             "#0D0630",
+        "library_title":          "#FFFFFF",
+        "library_author":         "#22BDDD",
+        "library_narrator":       "#9CBAD4",
+        "library_slider_bg":      "#4A5F6F",
+        "library_slider_fill":    "#DE1515",
+        "library_elapsed":        "#791EE0",
+        "library_total":          "#B719CC",
+        "library_percentage":     "#FFFFFF",
         "bg_dropdown":            "#4A5F6F",
         "curr_chap_highlight":    "#A13F73",
         "sidebar_text":           "#D61717",
@@ -1226,21 +1242,37 @@ def get_stylesheet(theme_name="default"):
             background-color: {t['bg_deep']};
         }}
         #book_progress_outer {{
-            background-color: {t['slider_overall_bg']};
+            background-color: {t.get('library_slider_bg', t['slider_overall_bg'])};
             border-radius: 0px;
         }}
         #book_progress_inner {{
-            background-color: {t['slider_overall_fill']};
+            background-color: {t.get('library_slider_fill', t['slider_overall_fill'])};
             border-radius: 0px;
         }}
         #book_item_title {{
             font-size: 10px;
             font-weight: bold;
-            color: {t['text']};
+            color: {t.get('library_title', t['text'])};
         }}
         #book_item_author {{
             font-size: 9px;
-            color: {t['accent_light']};
+            color: {t.get('library_author', t['accent_light'])};
+        }}
+        #book_item_narrator {{
+            font-size: 9px;
+            color: {t.get('library_narrator', t['text'])};
+        }}
+        #book_item_elapsed {{
+            font-size: 9px;
+            color: {t.get('library_elapsed', t['text'])};
+        }}
+        #book_item_total {{
+            font-size: 9px;
+            color: {t.get('library_total', t['text'])};
+        }}
+        #book_item_percentage {{
+            font-size: 9px;
+            color: {t.get('library_percentage', t['text'])};
         }}
         QListWidget#chapter_dropdown {{
             background-color: {t['bg_deep']};

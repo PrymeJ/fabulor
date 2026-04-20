@@ -42,8 +42,10 @@ class BookItem(QFrame):
         row.setSpacing(0)
 
         self.elapsed_label = QLabel()
+        self.elapsed_label.setObjectName("book_item_elapsed")
         self.elapsed_label.setContentsMargins(0,0,0,0)
         self.total_label = QLabel()
+        self.total_label.setObjectName("book_item_total")
         self.total_label.setContentsMargins(0,0,0,0)
 
         row.addWidget(self.elapsed_label)
@@ -68,6 +70,7 @@ class BookItem(QFrame):
         self.progress_inner.setFixedHeight(6)
 
         self.pct_label = QLabel()
+        self.pct_label.setObjectName("book_item_percentage")
         self.pct_label.setContentsMargins(0,0,0,0)
 
         # Styling and Constraints
@@ -118,7 +121,9 @@ class BookItem(QFrame):
             layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
 
             self.title_label = QLabel()
+            self.title_label.setObjectName("book_item_title")
             self.author_label = QLabel()
+            self.author_label.setObjectName("book_item_author")
 
             for lbl in (self.title_label, self.author_label):
                 lbl.setContentsMargins(0,0,0,0)
@@ -146,8 +151,11 @@ class BookItem(QFrame):
             text_layout.setSpacing(2)
 
             self.title_label = QLabel()
+            self.title_label.setObjectName("book_item_title")
             self.author_label = QLabel()
+            self.author_label.setObjectName("book_item_author")
             self.narrator_label = QLabel()
+            self.narrator_label.setObjectName("book_item_narrator")
             self.year_label = QLabel()
 
             for lbl in (self.title_label, self.author_label, self.narrator_label, self.year_label):
@@ -177,14 +185,17 @@ class BookItem(QFrame):
             layout.addWidget(self.cover_label)
 
             self.title_label = QLabel()
+            self.title_label.setObjectName("book_item_title")
             self.title_label.setContentsMargins(0,0,0,0)
 
             self.author_label = QLabel()
+            self.author_label.setObjectName("book_item_author")
             self.author_label.setFixedWidth(100)
             self.author_label.setAlignment(Qt.AlignRight)
             self.author_label.setContentsMargins(0,0,0,0)
 
             self.total_label = QLabel()
+            self.total_label.setObjectName("book_item_total")
             self.total_label.setFixedWidth(60)
             self.total_label.setAlignment(Qt.AlignRight)
             self.total_label.setContentsMargins(0,0,0,0)
