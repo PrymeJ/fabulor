@@ -8,6 +8,8 @@ bg_dropdown: The background color for lists and dropdown menus (like the chapter
 bg_library: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
 library_row_one: Background color for odd rows in 1-per-row and List views. Falls back to bg_library.
 library_row_two: Background color for even rows in 1-per-row and List views. Falls back to bg_library.
+library_item_hover_color: Background color for a book item when hovered. Falls back to accent.
+library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover background. Falls back to 0.5.
 library_title: Text color for book titles in the library view.
 library_author: Text color for book authors in the library view.
 library_narrator: Text color for book narrators in the library view.
@@ -82,6 +84,8 @@ THEMES = {
         "bg_library":             "#0D0630",
         "library_row_one":        "#130848",
         "library_row_two":        "#0D0630",
+        "library_item_hover_color": "#1049CF",
+        "library_item_hover_alpha": 0.50,
         "library_title":          "#7ACAC9",
         "library_author":         "#22BDDD",
         "library_narrator":       "#9CBAD4",
@@ -1263,7 +1267,7 @@ def get_stylesheet(theme_name="default"):
             background-color: transparent;
         }}
         #book_item:hover {{
-            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.50);
+            background-color: rgba({_hex_to_rgb(t.get('library_item_hover_color', t['accent']))}, {t.get('library_item_hover_alpha', 0.50)});
         }}
         #book_cover {{
             background-color: {t['bg_dropdown']};
