@@ -384,7 +384,7 @@ class LibraryPanel(QFrame):
         self.container = QWidget()
         self.container.setObjectName("library_scroll_contents")
         self.grid = QGridLayout(self.container)
-        self.grid.setSpacing(5)
+        self.grid.setSpacing(0)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         
