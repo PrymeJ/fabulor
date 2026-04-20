@@ -1471,6 +1471,9 @@ def get_stylesheet(theme_name="default"):
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
+        QPushButton#pattern_button[is_default="true"] {{
+            border: 2px solid {t['accent_light']};
+        }}
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
         }}

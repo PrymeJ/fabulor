@@ -26,7 +26,7 @@ class SleepTimerPanel(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         
-        sleep_header = QLabel("Sleep Timer")
+        sleep_header = QLabel("Sleep timer")
         sleep_header.setObjectName("settings_header")
         layout.addWidget(sleep_header)
 
@@ -65,6 +65,7 @@ class SleepTimerPanel(QWidget):
         custom_time_layout.addWidget(self.custom_sleep_input)
 
         set_custom_btn = QPushButton("Set")
+        set_custom_btn.setFixedHeight(25)
         set_custom_btn.clicked.connect(self._on_custom_sleep_time_set)
         custom_time_layout.addWidget(set_custom_btn)
         custom_time_layout.addStretch()
@@ -81,7 +82,8 @@ class SleepTimerPanel(QWidget):
         fade_options = [("Off", 0), ("30s", 30), ("1m", 60), ("2m", 120), ("5m", 300)]
         for text, seconds in fade_options:
             btn = RightClickButton(text)
-            btn.setFixedSize(45, 28)
+            btn.setObjectName("pattern_button")
+            btn.setFixedSize(45, 25)
             btn.setToolTip("Right-click to set as default")
             btn.clicked.connect(lambda _, s=seconds: self.set_sleep_fade(s, save=False))
             btn.rightClicked.connect(lambda s=seconds: self.set_sleep_fade(s, save=True))
@@ -161,18 +163,15 @@ class SleepTimerPanel(QWidget):
             btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
 
         for i, (seconds, btn) in enumerate(self._sleep_fade_btns.items()):
-            alpha = int(75 + (180 * (i / (len(self._sleep_fade_btns) - 1))))
-            c = QColor(accent)
-            c.setAlpha(alpha)
-            
             is_active = (seconds == self._current_sleep_fade)
             is_default = (seconds == default_fade)
+
+            btn.setProperty("selected", "true" if is_active else "false")
+            btn.setProperty("is_default", "true" if is_default else "false")
             
-            border = f"2px solid {t['accent_light']}" if is_default else f"1px solid {t['accent']}"
-            bg = f"rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})" if is_active else t['bg_dropdown']
-            fg = btn_text if is_active else t['text']
-            
-            btn.setStyleSheet(f"background-color: {bg}; color: {fg}; border: {border};")
+            # Trigger style refresh for property changes
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
         # Refresh the panel's own style to ensure background is updated
         self.style().unpolish(self); self.style().polish(self)
