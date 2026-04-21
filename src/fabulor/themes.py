@@ -1685,14 +1685,7 @@ def get_hover_stylesheet(theme_name="default"):
             padding: 6px;
             font-weight: normal;
         }}
-        QPushButton#play_pause_btn:hover, QPushButton#prev_btn:hover, QPushButton#rewind_btn:hover, QPushButton#forward_btn:hover, QPushButton#next_btn:hover, QPushButton#speed_btn:hover {{
-            background-color: {t['accent_light']};
-            font-weight: normal;
-        }}
-        QPushButton#play_pause_btn:pressed, QPushButton#prev_btn:pressed, QPushButton#rewind_btn:pressed, QPushButton#forward_btn:pressed, QPushButton#next_btn:pressed, QPushButton#speed_btn:pressed {{
-            background-color: {t['accent_dark']};
-            font-weight: normal;
-        }}
+
         QPushButton#sleep_timer_display {{
             background: transparent;
             border: none;
