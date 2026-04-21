@@ -268,6 +268,7 @@ THEMES = {
     "Cibola Burn": {
         "bg_deep":                "#1A1210",
         "bg_main":                "#2E1C16",
+        "bg_library":             "#1E1524",
         "slider_overall_bg":      "#4A3024",
         "slider_overall_fill":    "#E87A3A",
         "slider_chapter_bg":      "#4A3024",
@@ -279,10 +280,12 @@ THEMES = {
         "accent_dark":            "#A85222",
         "bg_sidebar":             "#1A1210",
         "bg_dropdown":            "#4A3024",
-        "curr_chap_highlight":    "#F0944C",
+        "curr_chap_highlight":    "#E87A3A",
         "sidebar_text_hover":     "#F0944C",
-        "sidebar_opacity":        0.82,
+        "sidebar_opacity":        0.7,
         "panel_opacity_hover":    0.9,
+        "library_item_hover_color": "#CD591A",
+        "library_item_hover_alpha": 0.80,
         "text":                   "#F5E2D0"
     },
     "Crimson Guard": {
@@ -300,19 +303,27 @@ THEMES = {
         "bg_sidebar":             "#1A0F1A",
         "bg_dropdown":            "#4A2A3A",
         "curr_chap_highlight":    "#E87A3A",
+        "sidebar_text_hover": "#F19616",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.92,
+        "panel_theme_names_dimmed": "#D8C0D4",
+        "library_title":          "#EBF4CF",
+        "library_narrator":        "#F0A9CF",
+        "library_elapsed":        "#F0A9CF",
+        "library_total":          "#F0A9CF",
+        "library_percentage":     "#F0A9CF",
         "text":                   "#F2E0E8"
+
 },
-    "Dorian Grey": { # Dark grey, orange, and brown
+    "Dorian Grey": { 
         "bg_deep":      "#121212",
         "bg_main":      "#1E1E1E",
         "slider_overall_bg":   "#333333",
-        "slider_overall_fill": "#E67E22", # Orange
+        "slider_overall_fill": "#E67E22", 
         "slider_chapter_bg":   "#252525",
-        "slider_chapter_fill": "#8B4513", # Saddle Brown
+        "slider_chapter_fill": "#8B4513", 
         "slider_vol_bg":       "#121212",
-        "slider_vol_fill":     "#D35400", # Pumpkin
+        "slider_vol_fill":     "#D35400", 
         "accent":              "#E67E22",
         "accent_light":        "#F39C12",
         "accent_dark":         "#A04000",
@@ -323,9 +334,9 @@ THEMES = {
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#BCB6BB",
-        "text":                "#E8BC6C", # Dark Grey/Silver (non-white)
+        "text":                "#E8BC6C", 
         "button_text":         "#000000",
-        "progress_text":       "#FCD586", # Match bg_deep for visibility on orange fill
+        "progress_text":       "#FCD586",
         "sidebar_text_hover": "#F39C12",
     },
     "Earthsea": {
