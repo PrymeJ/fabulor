@@ -1584,15 +1584,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
+            old_pos = self.player.time_pos
             self.player.previous_chapter()
             self.player.is_seeking = True
+            
+            speed = self.player.speed or 1.0
+            if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
+                self._trigger_undo(old_pos)
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
+            old_pos = self.player.time_pos
             self.player.next_chapter()
             self.player.is_seeking = True
+
+            speed = self.player.speed or 1.0
+            if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
+                self._trigger_undo(old_pos)
 
     def _trigger_undo(self, old_pos):
         """Slides in the floating undo button."""
