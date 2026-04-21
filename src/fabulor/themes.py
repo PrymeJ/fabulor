@@ -1342,6 +1342,16 @@ def get_stylesheet(theme_name="default"):
             background-color: {t.get('library_slider_fill', t['slider_overall_fill'])};
             border-radius: 0px;
         }}
+        QProgressBar#overlay_progress_bar {{
+            background-color: {t.get('library_slider_bg', t['slider_overall_bg'])};
+            border: none;
+            border-radius: 0px;
+        }}
+        QProgressBar#overlay_progress_bar::chunk {{
+            background-color: {t.get('library_slider_fill', t['slider_overall_fill'])};
+            border: none;
+            border-radius: 0px;
+        }}
         #book_item_title {{
             font-weight: bold;
             color: {t.get('library_title', t['text'])};

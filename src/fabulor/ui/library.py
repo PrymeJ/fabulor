@@ -1,6 +1,6 @@
 import os
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
 from PySide6.QtCore import Qt, Signal, QCoreApplication
@@ -263,12 +263,12 @@ class BookItem(QFrame):
             bottom_layout = QHBoxLayout(bottom_row)
             bottom_layout.setContentsMargins(0, 0, 0, 0)
             bottom_layout.setSpacing(4)
-            self.overlay_progress_outer = QFrame()
-            self.overlay_progress_outer.setObjectName("book_progress_outer")
-            self.overlay_progress_outer.setFixedHeight(4)
-            self.overlay_progress_inner = QFrame(self.overlay_progress_outer)
-            self.overlay_progress_inner.setObjectName("book_progress_inner")
-            self.overlay_progress_inner.setFixedHeight(4)
+            self.overlay_progress_bar = QProgressBar()
+            self.overlay_progress_bar.setObjectName("overlay_progress_bar")
+            self.overlay_progress_bar.setFixedHeight(6)
+            self.overlay_progress_bar.setTextVisible(False)
+            self.overlay_progress_bar.setRange(0, 1000)
+            self.overlay_progress_bar.setValue(0)
             self.overlay_pct_label = QLabel()
             self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
             self.overlay_pct_label.setFixedWidth(30)
@@ -279,7 +279,7 @@ class BookItem(QFrame):
             progress_container_layout = QHBoxLayout(self.overlay_progress_container)
             progress_container_layout.setContentsMargins(0,0,0,0)
             progress_container_layout.setSpacing(4)
-            progress_container_layout.addWidget(self.overlay_progress_outer)
+            progress_container_layout.addWidget(self.overlay_progress_bar, 1)
             progress_container_layout.addWidget(self.overlay_pct_label)
 
             # Label for total duration when no progress
@@ -316,10 +316,19 @@ class BookItem(QFrame):
         self.overlay_widget.move(cx, cy + ch - oh)
         self.overlay_widget.resize(cw, oh)
 
+    def _update_progress_bar(self):
+        if not hasattr(self, 'overlay_progress_bar'):
+            return
+        prog = float(self.book_data.get("progress") or 0)
+        dur = float(self.book_data.get("duration") or 0)
+        pct = (prog / dur) if dur > 0 else 0
+        self.overlay_progress_bar.setValue(int(pct * 1000))
+
     def enterEvent(self, event):
         if hasattr(self, 'overlay_widget'):
             self.overlay_widget.show()
             self.overlay_widget.raise_()
+            self._update_progress_bar()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -379,6 +388,7 @@ class BookItem(QFrame):
         prog = float(book_data.get("progress") or 0)
         dur = float(book_data.get("duration") or 0)
         pct = (prog / dur) if dur > 0 else 0
+        speed = float(self.book_data.get("speed") or 1.0)
         has_progress = prog > 0 and dur > 0
 
         def fmt_time(s):
@@ -406,7 +416,6 @@ class BookItem(QFrame):
             self.elapsed_label.setVisible(prog > 0)
 
         if hasattr(self, "total_label"):
-            speed = float(self.book_data.get("speed") or 1.0)
             if has_progress and self._show_remaining:
                 self.total_label.setText(f"-{fmt_time((dur - prog) / speed)}")
             else:
@@ -453,8 +462,7 @@ class BookItem(QFrame):
                 self.overlay_progress_container.setVisible(True)
                 self.overlay_total_duration_label.setVisible(False) # Hide total duration label
                 self.overlay_pct_label.setText(f"{int(pct * 100)}%")
-                w = int(self.overlay_progress_outer.width() * pct)
-                self.overlay_progress_inner.setFixedWidth(max(0, w))
+                self._update_progress_bar()
             else:
                 self.overlay_time_row.setVisible(False)
                 self.overlay_progress_container.setVisible(False) # Hide progress bar elements
