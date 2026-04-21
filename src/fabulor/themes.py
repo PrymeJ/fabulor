@@ -1219,7 +1219,7 @@ def get_stylesheet(theme_name="default"):
             border-radius: 2px; /* Makes minimize/close buttons square */
         }}
         QWidget#library_top_bar {{
-            background-color: rgba(0, 0, 0, 0.2); /* Gives the header a darker tint */
+            background-color: rgb({lib_bg_rgb});
         }}
         QLabel {{
             color: {t['text']};
