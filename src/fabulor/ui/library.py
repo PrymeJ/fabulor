@@ -269,7 +269,7 @@ class BookItem(QFrame):
             self.overlay_progress_inner.setObjectName("book_progress_inner")
             self.overlay_progress_inner.setFixedHeight(4)
             self.overlay_pct_label = QLabel()
-            self.overlay_pct_label.setStyleSheet("color: white; font-size: 11px; background: transparent;")
+            self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
             self.overlay_pct_label.setFixedWidth(30)
             self.overlay_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
@@ -283,8 +283,8 @@ class BookItem(QFrame):
 
             # Label for total duration when no progress
             self.overlay_total_duration_label = QLabel()
-            self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 11px; background: transparent;")
-            self.overlay_total_duration_label.setAlignment(Qt.AlignCenter)
+            self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
+            self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
             bottom_layout.addWidget(self.overlay_progress_container)
             bottom_layout.addWidget(self.overlay_total_duration_label)
@@ -295,7 +295,7 @@ class BookItem(QFrame):
             self.overlay_time_row.setStyleSheet("background: transparent;")
             bottom_row.setStyleSheet("background: transparent;")
             for lbl in (self.overlay_elapsed_label, self.overlay_remaining_label, self.overlay_pct_label):
-                lbl.setStyleSheet("color: white; font-size: 11px; background: transparent;")
+                lbl.setStyleSheet("color: white; font-size: 12px; background: transparent;")
             self.overlay_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
@@ -418,6 +418,12 @@ class BookItem(QFrame):
             if has_progress:
                 # Show elapsed and remaining/total in the top row
                 self.overlay_time_row.setVisible(True)
+                if self.view_mode == "2 per row":
+                    style = "color: white; font-size: 14px; background: transparent;"
+                    self.overlay_elapsed_label.setStyleSheet(style)
+                    self.overlay_remaining_label.setStyleSheet(style)
+                    self.overlay_pct_label.setStyleSheet(style)
+
                 self.overlay_elapsed_label.setVisible(True)
                 self.overlay_remaining_label.setVisible(True)
                 remaining_s = (dur - prog) / speed
@@ -439,7 +445,11 @@ class BookItem(QFrame):
                 self.overlay_time_row.setVisible(False)
                 self.overlay_progress_container.setVisible(False) # Hide progress bar elements
                 self.overlay_total_duration_label.setVisible(True) # Show total duration label
+                if self.view_mode == "2 per row":
+                    self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 15px; background: transparent;")
+
                 self.overlay_total_duration_label.setText(fmt_time(dur / speed))
+                self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
     def set_cover(self, pixmap):
         if not pixmap or pixmap.isNull():
