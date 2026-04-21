@@ -97,7 +97,7 @@ class BookItem(QFrame):
         if self.view_mode == "3 per row":
             self.progress_outer.setFixedWidth(65)
         elif self.view_mode == "2 per row":
-            self.progress_outer.setFixedWidth(65)
+            self.progress_outer.setFixedWidth(84)
         elif self.view_mode == "1 per row":
             self.progress_outer.setFixedWidth(132)
         
@@ -117,7 +117,7 @@ class BookItem(QFrame):
         if mode == "3 per row":
             self.setFixedSize(92,175)
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(0,0,0,0)
+            layout.setContentsMargins(4,0,0,0)
             layout.setSpacing(0)
 
             self.cover_label = self._make_cover(90,129)
@@ -133,10 +133,10 @@ class BookItem(QFrame):
         elif mode == "2 per row":
             self.setFixedSize(140,274)
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(17,0,0,17)
-            layout.setSpacing(4)
+            layout.setContentsMargins(13,8,0,0)
+            layout.setSpacing(0)
 
-            self.cover_label = self._make_cover(113,165)
+            self.cover_label = self._make_cover(113,172)
             layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
 
             self.title_label = QLabel()
@@ -147,15 +147,17 @@ class BookItem(QFrame):
             self.author_label.setStyleSheet("font-size: 13px;")
 
             for lbl in (self.title_label, self.author_label):
-                lbl.setContentsMargins(0,0,0,0)
+                lbl.setContentsMargins(0,0,14,0)
 
             layout.addWidget(self.title_label)
             layout.addWidget(self.author_label)
 
             self.time_row = self._make_time_row()
+            self.time_row.setContentsMargins(0,0,14,0)
             layout.addLayout(self.time_row)
 
             self.progress_row = self._make_progress_row()
+            self.progress_row.setContentsMargins(0,0,14,0)
             layout.addWidget(self.progress_row)
 
         # -------- 1 PER ROW --------
