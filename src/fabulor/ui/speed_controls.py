@@ -18,7 +18,7 @@ class SpeedControlsPanel(QWidget):
         
         self._speed_presets = [
             0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
-            3.25, 3.50, 3.75, 4.00, 5.00, 6.00, 7.00, 8.00
+            3.25, 3.50, 3.75, 4.00
         ]
         self._speed_grid_buttons = []
         self.def_speed_buttons = {}
