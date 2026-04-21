@@ -14,6 +14,8 @@ class BookItem(QFrame):
         self.book_data = book_data
         self.view_mode = view_mode
         self.setObjectName("book_item")
+        self._is_toggling = False
+        self._show_remaining = True
         self.setCursor(Qt.PointingHandCursor)
         
         self._build_ui()
@@ -233,7 +235,6 @@ class BookItem(QFrame):
             layout.addWidget(self.total_label)
 
         if mode in ("2 per row", "3 per row"):
-            self._overlay_show_remaining = True
             self._overlay_has_progress = False
             self.overlay_widget = QWidget(self)
             ovl_layout = QVBoxLayout(self.overlay_widget)
@@ -331,18 +332,28 @@ class BookItem(QFrame):
         self._reposition_overlay()
 
     def mousePressEvent(self, event):
-        if (event.button() == Qt.LeftButton
-                and hasattr(self, 'overlay_widget')
-                and self.overlay_widget.isVisible()
-                and self._overlay_has_progress):
-            lbl = self.overlay_remaining_label
-            from PySide6.QtCore import QRect
-            hit_rect = QRect(lbl.mapToGlobal(lbl.rect().topLeft()), lbl.size())
-            if hit_rect.contains(event.globalPosition().toPoint()):
-                self._overlay_show_remaining = not self._overlay_show_remaining
-                self.update_data(self.book_data)
-                event.accept()
-                return
+        self._is_toggling = False
+        if event.button() == Qt.LeftButton:
+            prog = float(self.book_data.get("progress") or 0)
+            dur = float(self.book_data.get("duration") or 0)
+            
+            if prog > 0 and dur > 0:
+                target = None
+                # If overlay is visible, it takes precedence for the hit test
+                if hasattr(self, 'overlay_widget') and self.overlay_widget.isVisible():
+                    target = self.overlay_remaining_label
+                elif hasattr(self, 'total_label'):
+                    target = self.total_label
+
+                if target:
+                    from PySide6.QtCore import QRect
+                    hit_rect = QRect(target.mapToGlobal(target.rect().topLeft()), target.size())
+                    if hit_rect.contains(event.globalPosition().toPoint()):
+                        self._is_toggling = True
+                        self._show_remaining = not self._show_remaining
+                        self.update_data(self.book_data)
+                        event.accept()
+                        return
         super().mousePressEvent(event)
 
     def resizeEvent(self, event):
@@ -368,6 +379,7 @@ class BookItem(QFrame):
         prog = float(book_data.get("progress") or 0)
         dur = float(book_data.get("duration") or 0)
         pct = (prog / dur) if dur > 0 else 0
+        has_progress = prog > 0 and dur > 0
 
         def fmt_time(s):
             s = int(s or 0)
@@ -394,7 +406,11 @@ class BookItem(QFrame):
             self.elapsed_label.setVisible(prog > 0)
 
         if hasattr(self, "total_label"):
-            self.total_label.setText(fmt_time(dur))
+            speed = float(self.book_data.get("speed") or 1.0)
+            if has_progress and self._show_remaining:
+                self.total_label.setText(f"-{fmt_time((dur - prog) / speed)}")
+            else:
+                self.total_label.setText(fmt_time(dur / speed))
 
         # progress
         show_progress = prog > 0
@@ -408,8 +424,6 @@ class BookItem(QFrame):
             self.progress_inner.setFixedWidth(w)
 
         if hasattr(self, 'overlay_widget'):
-            has_progress = prog > 0 and dur > 0
-            speed = float(self.book_data.get("speed") or 1.0)
 
             if has_progress != self._overlay_has_progress:
                 self._overlay_has_progress = has_progress
@@ -429,8 +443,8 @@ class BookItem(QFrame):
                 remaining_s = (dur - prog) / speed
                 total_s = dur / speed
                 self.overlay_elapsed_label.setText(fmt_time(prog))
-                if self._overlay_show_remaining:
-                    self.overlay_remaining_label.setText(fmt_time(remaining_s))
+                if self._show_remaining:
+                    self.overlay_remaining_label.setText(f"-{fmt_time(remaining_s)}")
                 else:
                     self.overlay_remaining_label.setText(fmt_time(total_s))
                 self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -463,7 +477,11 @@ class BookItem(QFrame):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self._is_toggling:
+                self._is_toggling = False
+                return
             self.clicked.emit(self.book_data["path"])
+        super().mouseReleaseEvent(event)
 
 
 class LibraryPanel(QFrame):
