@@ -2,8 +2,6 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
-from ..themes import THEMES
-from ..config import Config
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
 from PySide6.QtCore import Qt, Signal, QCoreApplication
 from PySide6.QtGui import QPixmap
@@ -11,13 +9,15 @@ from PySide6.QtGui import QPixmap
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
 
-    def __init__(self, book_data, view_mode="3 per row", player_instance=None, parent=None):
+    def __init__(self, book_data, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None, parent=None):
         super().__init__(parent)
         self.book_data = book_data
         self.view_mode = view_mode
         self.setObjectName("book_item")
         self._is_toggling = False
         self._show_remaining = True
+        self._pg_bg = pg_bg
+        self._pg_fill = pg_fill
         self.setCursor(Qt.PointingHandCursor)
         
         self._build_ui()
@@ -266,25 +266,14 @@ class BookItem(QFrame):
             bottom_layout.setContentsMargins(0, 0, 0, 0)
             bottom_layout.setSpacing(4)
 
-            conf = Config()
-            raw_theme = conf.get_theme()
-            t_name = raw_theme.split(',')[0].strip() if ',' in raw_theme else raw_theme
-            t = THEMES.get(t_name, THEMES["The Color Purple"])
-
             self.overlay_progress_bar = QProgressBar()
             self.overlay_progress_bar.setFixedHeight(6)
             self.overlay_progress_bar.setTextVisible(False)
             self.overlay_progress_bar.setRange(0, 1000)
             self.overlay_progress_bar.setValue(0)
             self.overlay_progress_bar.setStyleSheet(f"""
-                QProgressBar {{
-                    background-color: {t.get('library_slider_bg', t['slider_overall_bg'])};
-                    border: none;
-                }}
-                QProgressBar::chunk {{
-                    background-color: {t.get('library_slider_fill', t['slider_overall_fill'])};
-                    border: none;
-                }}
+                QProgressBar {{ background-color: {self._pg_bg}; border: none; }}
+                QProgressBar::chunk {{ background-color: {self._pg_fill}; border: none; }}
             """)
 
             self.overlay_pct_label = QLabel()
@@ -519,6 +508,12 @@ class LibraryPanel(QFrame):
         self.db = db
         self.config = config
         self.player_instance = player_instance
+        # Resolve theme colors once at construction
+        from ..themes import THEMES
+        t_name = parent.theme_manager._current_theme_name if parent and hasattr(parent, 'theme_manager') else "The Color Purple"
+        t = THEMES.get(t_name, THEMES["The Color Purple"])
+        self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
+        self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
         self._active_workers = set() # Keep track of active cover loader workers
         self._initialized = False
@@ -613,6 +608,15 @@ class LibraryPanel(QFrame):
             self.update_current_book_progress()
             return
 
+        # Update colors from current theme (handles theme rotation)
+        from ..themes import THEMES
+        main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
+        if main_win and hasattr(main_win, 'theme_manager'):
+            t_name = main_win.theme_manager._current_theme_name
+            t = THEMES.get(t_name, THEMES["The Color Purple"])
+            self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
+            self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
+
         sort_text = self.sort_combo.currentText()
         # Robustly get the currently playing file from the main window
         main_win = self.parent() if hasattr(self.parent(), 'current_file') else self.window()
@@ -646,7 +650,13 @@ class LibraryPanel(QFrame):
                 book["progress"] = self.config.get_last_position(path)
 
             if path not in existing_paths:
-                item = BookItem(book, view_mode=self.style_combo.currentText(), player_instance=self.player_instance)
+                item = BookItem(
+                    book, 
+                    view_mode=self.style_combo.currentText(), 
+                    player_instance=self.player_instance,
+                    pg_bg=self._pg_bg,
+                    pg_fill=self._pg_fill
+                )
                 from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
                 
                 worker = CoverLoaderWorker(book, self.player_instance)
