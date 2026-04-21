@@ -1612,12 +1612,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not self.player.save_seek_position(old_pos, duration):
             return
             
-        self._undo_timer.stop()
-
         width = self.width()
         overlay_w = 32
         y_pos = 56
         target_x = width - overlay_w
+
+        # Guard 1: If the button is already sliding in, let it finish.
+        # The player logic has already updated the click timestamp to keep it alive.
+        if self.undo_anim.state() == QPropertyAnimation.Running and self._undo_slide_in_connected:
+            return
+
+        # Guard 2: If the button is already visible and settled at its target, 
+        # just refresh the hide timer.
+        if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
+            self._undo_timer.stop()
+            if duration > 0:
+                self._undo_timer.start(duration * 1000)
+            return
+
+        self._undo_timer.stop()
 
         self.undo_anim.stop()
         if self._undo_slide_out_connected:
