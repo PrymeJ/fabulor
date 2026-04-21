@@ -328,7 +328,7 @@ class LibraryPanel(QFrame):
         self.top_bar_widget.setObjectName("library_top_bar") # For specific styling if needed
         self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
         self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
-        self.top_bar_layout.setSpacing(5)
+        self.top_bar_layout.setSpacing(0)
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
