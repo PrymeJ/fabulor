@@ -17,12 +17,13 @@ class SpeedControlsPanel(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         
         self._speed_presets = [
-            0.25, 0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
-            3.25, 3.50, 3.75, 4.00
+            1.00, 1.25, 1.50, 1.75, 2.00, 2.25, 2.50, 2.75, 3.00,
+            3.25, 3.50, 4.00
         ]
         self._speed_grid_buttons = []
         self.def_speed_buttons = {}
         self.step_buttons = {}
+        self.undo_buttons = {}
         self.skip_buttons = {}
         self.long_skip_buttons = {}
         self.smart_wait_buttons = {}
@@ -79,6 +80,20 @@ class SpeedControlsPanel(QWidget):
             self.step_buttons[val] = btn
         step_row_layout.addStretch()
         layout.addLayout(step_row_layout)
+
+        # Undo Seek Section
+        undo_header = QLabel("Undo seek")
+        undo_header.setObjectName("settings_header")
+        layout.addWidget(undo_header)
+        undo_row = QHBoxLayout()
+        for val, label in [(0, "Off"), (3, "3"), (5, "5"), (8, "8")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_undo_mode(v))
+            undo_row.addWidget(btn)
+            self.undo_buttons[val] = btn
+        undo_row.addStretch()
+        layout.addLayout(undo_row)
 
         # Skip & Long Skip Section
         skip_header_row = QHBoxLayout()
@@ -145,6 +160,10 @@ class SpeedControlsPanel(QWidget):
 
     def _update_def_speed_mode(self, val): self.config.set_default_speed(val); self.update_visuals()
     def _update_step_mode(self, val): self.config.set_speed_increment(val); self.update_visuals()
+    def _update_undo_mode(self, val): 
+        self.config.set_undo_duration(val)
+        self.update_visuals()
+
     def _update_skip_mode(self, val): self.config.set_skip_duration(val); self.update_visuals()
     def _update_long_skip_mode(self, val): self.config.set_long_skip_duration(val); self.update_visuals()
     def _update_smart_rewind_mode(self, val): self.config.set_smart_rewind_wait(val); self._validate_smart_rewind_settings(finalize=False)
@@ -177,6 +196,7 @@ class SpeedControlsPanel(QWidget):
 
         sync_btn(self.def_speed_buttons, self.config.get_default_speed())
         sync_btn(self.step_buttons, self.config.get_speed_increment())
+        sync_btn(self.undo_buttons, self.config.get_undo_duration())
         sync_btn(self.skip_buttons, self.config.get_skip_duration())
         sync_btn(self.long_skip_buttons, self.config.get_long_skip_duration())
         sync_btn(self.smart_wait_buttons, self.config.get_smart_rewind_wait())

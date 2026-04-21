@@ -179,8 +179,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.style().polish(btn)
 
         def set_undo_selection(current):
-            if not hasattr(self, 'undo_buttons'): return
-            for val, btn in self.undo_buttons.items():
+            if not hasattr(self, 'speed_panel'): return
+            for val, btn in self.speed_panel.undo_buttons.items():
                 btn.setProperty("selected", "true" if val == current else "false")
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
@@ -837,21 +837,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.hints_buttons[mode] = btn
         hints_row.addStretch()
         app_layout.addLayout(hints_row)
-
-        undo_header = QLabel("Undo seek button")
-        undo_header.setObjectName("settings_header")
-        app_layout.addWidget(undo_header)
-
-        undo_row = QHBoxLayout()
-        self.undo_buttons = {}
-        for val, label in [(0, "Off"), (3, "3"), (5, "5"), (8, "8")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self._update_undo_mode(v))
-            undo_row.addWidget(btn)
-            self.undo_buttons[val] = btn
-        undo_row.addStretch()
-        app_layout.addLayout(undo_row)
 
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Look")
