@@ -1216,7 +1216,7 @@ def get_stylesheet(theme_name="default"):
             background: {t['accent']};
         }}
         TitleBar QPushButton {{
-            border-radius: 0px; /* Makes minimize/close buttons square */
+            border-radius: 2px; /* Makes minimize/close buttons square */
         }}
         QWidget#library_top_bar {{
             background-color: rgba(0, 0, 0, 0.2); /* Gives the header a darker tint */
