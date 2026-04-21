@@ -115,10 +115,10 @@ class BookItem(QFrame):
 
         # -------- 3 PER ROW --------
         if mode == "3 per row":
-            self.setFixedSize(92,186)
+            self.setFixedSize(96,186)
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(4,0,0,0)
-            layout.setSpacing(0)
+            layout.setContentsMargins(3,2,0,0)
+            layout.setSpacing(2)
 
             self.cover_label = self._make_cover(90,140)
             layout.addWidget(self.cover_label)
