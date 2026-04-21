@@ -2,6 +2,8 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
+from ..themes import THEMES
+from ..config import Config
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
 from PySide6.QtCore import Qt, Signal, QCoreApplication
 from PySide6.QtGui import QPixmap
@@ -263,12 +265,28 @@ class BookItem(QFrame):
             bottom_layout = QHBoxLayout(bottom_row)
             bottom_layout.setContentsMargins(0, 0, 0, 0)
             bottom_layout.setSpacing(4)
+
+            conf = Config()
+            raw_theme = conf.get_theme()
+            t_name = raw_theme.split(',')[0].strip() if ',' in raw_theme else raw_theme
+            t = THEMES.get(t_name, THEMES["The Color Purple"])
+
             self.overlay_progress_bar = QProgressBar()
-            self.overlay_progress_bar.setObjectName("overlay_progress_bar")
             self.overlay_progress_bar.setFixedHeight(6)
             self.overlay_progress_bar.setTextVisible(False)
             self.overlay_progress_bar.setRange(0, 1000)
             self.overlay_progress_bar.setValue(0)
+            self.overlay_progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background-color: {t.get('library_slider_bg', t['slider_overall_bg'])};
+                    border: none;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {t.get('library_slider_fill', t['slider_overall_fill'])};
+                    border: none;
+                }}
+            """)
+
             self.overlay_pct_label = QLabel()
             self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
             self.overlay_pct_label.setFixedWidth(30)

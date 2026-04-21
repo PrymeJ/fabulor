@@ -1344,7 +1344,7 @@ def get_stylesheet(theme_name="default"):
         }}
         QProgressBar#overlay_progress_bar {{
             background-color: {t.get('library_slider_bg', t['slider_overall_bg'])};
-            border: none;
+            border: 1px solid transparent;
             border-radius: 0px;
         }}
         QProgressBar#overlay_progress_bar::chunk {{
