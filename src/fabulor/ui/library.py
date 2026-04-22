@@ -1,5 +1,4 @@
 import os
-import time
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
@@ -513,6 +512,7 @@ class LibraryPanel(QFrame):
         self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
         self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
+        self._item_cache_widget = QWidget()  # parentless off-tree cache for hidden items
         self._active_workers = set()
         self._books_cache = []
         self._data_initialized = False
@@ -679,14 +679,34 @@ class LibraryPanel(QFrame):
             
         self._sort_items_in_place()
 
-    def _on_view_mode_changed(self, mode):
-        print(f"view mode change start: {time.time():.3f}")
-        self.config.set_library_view_mode(mode)
+    def _detach_items(self):
+        while self.grid.count():
+            self.grid.takeAt(self.grid.count() - 1)
         for item in self._grid_items.values():
+            item.setParent(self._item_cache_widget)
+
+    def _on_view_mode_changed(self, mode):
+        self.config.set_library_view_mode(mode)
+        # Save pixmaps before destroying items
+        pixmap_cache = {}
+        for path, item in self._grid_items.items():
+            if hasattr(item, 'cover_label'):
+                pm = item.cover_label.pixmap()
+                if pm and not pm.isNull():
+                    pixmap_cache[path] = pm
             item.deleteLater()
         self._grid_items.clear()
-        self.refresh()
-        print(f"view mode change end: {time.time():.3f}")
+        self.refresh(force=True)
+        # Restore pixmaps to avoid re-loading from disk
+        for path, item in self._grid_items.items():
+            if path in pixmap_cache and hasattr(item, 'cover_label'):
+                item.cover_label.setPixmap(
+                    pixmap_cache[path].scaled(
+                        item.cover_label.size(),
+                        Qt.KeepAspectRatioByExpanding,
+                        Qt.SmoothTransformation
+                    )
+                )
 
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
