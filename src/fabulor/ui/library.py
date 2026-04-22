@@ -1,4 +1,5 @@
 import os
+import time
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
@@ -512,12 +513,9 @@ class LibraryPanel(QFrame):
         self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
         self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
-        self._widget_cache = QWidget()
-        self._widget_cache.hide()
-        self._active_workers = set() # Keep track of active cover loader workers
+        self._active_workers = set()
         self._books_cache = []
-        self._data_initialized = False  # DB data has been loaded
-        self._widgets_built = False      # BookItem widgets exist in grid
+        self._data_initialized = False
         self.setObjectName("library_panel")
         self.setStyleSheet("QFrame#library_panel { }")
         self.main_layout = QVBoxLayout(self) # Main layout for the panel
@@ -596,21 +594,6 @@ class LibraryPanel(QFrame):
             self.grid.setColumnStretch(col, 0)
         self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
 
-    def detach_widgets(self):
-        """Reparent BookItems out of the main window tree without destroying them."""
-        for item in self._grid_items.values():
-            item.setParent(self._widget_cache)
-            item.hide()
-        self._widgets_built = False
-
-    def reattach_widgets(self):
-        """Reparent cached BookItems back into the grid."""
-        for path, item in self._grid_items.items():
-            item.setParent(self.container)
-            item.show()
-        self._widgets_built = bool(self._grid_items)
-        self._sort_items_in_place()
-
     def refresh(self, force=False):
         # Resolve colors from current theme
         from ..themes import THEMES
@@ -630,7 +613,6 @@ class LibraryPanel(QFrame):
             for path in stale:
                 self._grid_items[path].deleteLater()
                 del self._grid_items[path]
-            self._widgets_built = False
 
         sort_text = self.sort_combo.currentText()
         
@@ -647,8 +629,6 @@ class LibraryPanel(QFrame):
             return
 
         # Phase 2: Create or update BookItem widgets
-        if self._grid_items and not self._widgets_built:
-            self.reattach_widgets()
         current_file = getattr(main_win, 'current_file', "")
         
         # Remove stale
@@ -698,11 +678,15 @@ class LibraryPanel(QFrame):
                 self._grid_items[path].update_data(book)
             
         self._sort_items_in_place()
-        self._widgets_built = True
-    
+
     def _on_view_mode_changed(self, mode):
+        print(f"view mode change start: {time.time():.3f}")
         self.config.set_library_view_mode(mode)
-        self.refresh(force=True)
+        for item in self._grid_items.values():
+            item.deleteLater()
+        self._grid_items.clear()
+        self.refresh()
+        print(f"view mode change end: {time.time():.3f}")
 
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
