@@ -1147,7 +1147,7 @@ def get_stylesheet(theme_name="default"):
 
         }}
         QWidget#library_panel {{
-            background-color: {'bg_library'}; /* Panel background (includes top bar) */
+            background-color: rgb({lib_bg_rgb}); /* Panel background (includes top bar) */
             border-right: 1px solid {t['accent']};
             border: none;
         }}
