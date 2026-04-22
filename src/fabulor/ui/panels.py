@@ -95,7 +95,7 @@ class PanelManager:
         try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
         except: pass
         self.library_panel._is_animating = False
-        self.library_panel.refresh()
+        self.library_panel.refresh(force=True)
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""
@@ -189,6 +189,7 @@ class PanelManager:
         except: pass
         self.library_panel._is_animating = False
         self.library_panel.hide()
+        self.library_panel.clear_widgets()
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""

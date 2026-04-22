@@ -516,6 +516,7 @@ class LibraryPanel(QFrame):
         self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
         self._active_workers = set() # Keep track of active cover loader workers
+        self._books_cache = []
         self._data_initialized = False  # DB data has been loaded
         self._widgets_built = False      # BookItem widgets exist in grid
         self.setObjectName("library_panel")
@@ -596,43 +597,48 @@ class LibraryPanel(QFrame):
             self.grid.setColumnStretch(col, 0)
         self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
 
+    def clear_widgets(self):
+        for item in self._grid_items.values():
+            item.deleteLater()
+        self._grid_items.clear()
+        self._widgets_built = False
+
     def refresh(self, force=False):
+        # Resolve colors from current theme
+        from ..themes import THEMES
+        main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
+        if main_win and hasattr(main_win, 'theme_manager'):
+            t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
+            self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
+            self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
+
         if force:
             # Clear all existing items to force rebuild with the new view_mode
             for item in self._grid_items.values():
                 item.deleteLater()
             self._grid_items.clear()
-        
-        if self._data_initialized and not force:
-            # Even if we don't do a full DB refresh, we MUST sync the 
-            # live progress of the current book before returning.
-            self.update_current_book_progress()
-            return
 
-        # Update colors from current theme (handles theme rotation)
-        from ..themes import THEMES
-        main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
-        if main_win and hasattr(main_win, 'theme_manager'):
-            t_name = main_win.theme_manager._current_theme_name
-            t = THEMES.get(t_name, THEMES["The Color Purple"])
-            self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
-            self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
-
-        sort_text = self.sort_combo.currentText()
-        # Robustly get the currently playing file from the main window
-        main_win = self.parent() if hasattr(self.parent(), 'current_file') else self.window()
-        current_file = getattr(main_win, 'current_file', "")
-
-        # Always fetch from DB with a simple title sort; display sorting is handled in-memory
+            self._widgets_built = False
+        # Phase 1: Always fetch data and update the cache    
         books = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
 
+        sort_text = self.sort_combo.currentText()
+        
         # For last played, it will show only books with non-null last_played
         if sort_text == "Last Played":
             books = [b for b in books if b.get("last_played") is not None]
 
-        existing_paths = {self._grid_items[p].book_data["path"] 
-                         for p in self._grid_items}
-        new_paths = {b["path"] for b in books}
+        self._books_cache = books
+        self._data_initialized = True
+
+        # Phase 2 Guard: Build widgets only when visible or forced
+        if not self.isVisible() and not force:
+            self.update_current_book_progress()
+            return
+
+        # Phase 2: Create or update BookItem widgets
+        current_file = getattr(main_win, 'current_file', "")
+        new_paths = {b["path"] for b in self._books_cache}
         
         # Remove stale
         for path in list(self._grid_items.keys()):
@@ -641,16 +647,13 @@ class LibraryPanel(QFrame):
                 del self._grid_items[path]
         pool = QThreadPool.globalInstance()
         
-        # Update existing items or create new ones
-        for i, book in enumerate(books):
+        for book in self._books_cache:
             path = book["path"]
 
-            # Inject live progress from Config for the active book to ensure 
-            # accuracy even if DB sync is still pending.
             if path == current_file:
                 book["progress"] = self.config.get_last_position(path)
 
-            if path not in existing_paths:
+            if path not in self._grid_items:
                 item = BookItem(
                     book, 
                     view_mode=self.style_combo.currentText(), 
@@ -659,9 +662,7 @@ class LibraryPanel(QFrame):
                     pg_fill=self._pg_fill
                 )
                 from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
-                
                 worker = CoverLoaderWorker(book, self.player_instance)
-                # Keep a reference to prevent garbage collection of the signals object
                 self._active_workers.add(worker)
                 worker.signals.cover_loaded.connect(lambda bp, pm, book_item=item: self._on_cover_loaded(bp, pm, book_item))
                 worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
@@ -672,7 +673,6 @@ class LibraryPanel(QFrame):
             else:
                 self._grid_items[path].update_data(book)
             
-        self._data_initialized = True
         self._sort_items_in_place()
         self._widgets_built = True
     
