@@ -267,14 +267,11 @@ class BookItem(QFrame):
             bottom_layout.setSpacing(4)
 
             self.overlay_progress_bar = QProgressBar()
+            self.overlay_progress_bar.setObjectName("overlay_progress_bar")
             self.overlay_progress_bar.setFixedHeight(6)
             self.overlay_progress_bar.setTextVisible(False)
             self.overlay_progress_bar.setRange(0, 1000)
             self.overlay_progress_bar.setValue(0)
-            self.overlay_progress_bar.setStyleSheet(f"""
-                QProgressBar {{ background-color: {self._pg_bg}; border: none; }}
-                QProgressBar::chunk {{ background-color: {self._pg_fill}; border: none; }}
-            """)
 
             self.overlay_pct_label = QLabel()
             self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
