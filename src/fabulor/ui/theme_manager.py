@@ -133,6 +133,10 @@ class ThemeManager:
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
         """Update the appearance with a subtle fade transition."""
+        from PySide6.QtWidgets import QWidget as _QW
+        all_w = self.main_window.findChildren(_QW)
+        print(f"Total widgets during hover: {len(all_w)}")
+        
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
         

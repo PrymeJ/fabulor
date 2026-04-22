@@ -515,12 +515,14 @@ class LibraryPanel(QFrame):
         self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
         self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
+        self._widget_cache = QWidget()
+        self._widget_cache.hide()
         self._active_workers = set() # Keep track of active cover loader workers
         self._books_cache = []
         self._data_initialized = False  # DB data has been loaded
         self._widgets_built = False      # BookItem widgets exist in grid
         self.setObjectName("library_panel")
-        
+        self.setStyleSheet("QFrame#library_panel { }")
         self.main_layout = QVBoxLayout(self) # Main layout for the panel
         self.main_layout.setContentsMargins(0, 0, 0, 0) # Remove top margin to cover the progress bar
 
@@ -610,7 +612,8 @@ class LibraryPanel(QFrame):
             item.setParent(self.container)
             item.show()
         self._widgets_built = bool(self._grid_items)
-        
+        self._sort_items_in_place()
+
     def refresh(self, force=False):
         # Resolve colors from current theme
         from ..themes import THEMES
@@ -642,7 +645,7 @@ class LibraryPanel(QFrame):
         self._data_initialized = True
 
         # Phase 2 Guard: Build widgets only when visible or forced
-        if not self.isVisible() and not force:
+        if not self.isVisible():
             self.update_current_book_progress()
             return
 
