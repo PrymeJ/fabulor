@@ -516,7 +516,8 @@ class LibraryPanel(QFrame):
         self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
         self._grid_items = {}
         self._active_workers = set() # Keep track of active cover loader workers
-        self._initialized = False
+        self._data_initialized = False  # DB data has been loaded
+        self._widgets_built = False      # BookItem widgets exist in grid
         self.setObjectName("library_panel")
         
         self.main_layout = QVBoxLayout(self) # Main layout for the panel
@@ -602,7 +603,7 @@ class LibraryPanel(QFrame):
                 item.deleteLater()
             self._grid_items.clear()
         
-        if self._initialized and not force:
+        if self._data_initialized and not force:
             # Even if we don't do a full DB refresh, we MUST sync the 
             # live progress of the current book before returning.
             self.update_current_book_progress()
@@ -671,8 +672,9 @@ class LibraryPanel(QFrame):
             else:
                 self._grid_items[path].update_data(book)
             
-        self._initialized = True
+        self._data_initialized = True
         self._sort_items_in_place()
+        self._widgets_built = True
     
     def _on_view_mode_changed(self, mode):
         self.config.set_library_view_mode(mode)
