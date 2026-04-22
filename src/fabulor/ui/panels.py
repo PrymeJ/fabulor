@@ -95,7 +95,7 @@ class PanelManager:
         try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
         except: pass
         self.library_panel._is_animating = False
-        self.library_panel.refresh(force=True)
+        self.library_panel.refresh()
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""
