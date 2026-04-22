@@ -597,12 +597,20 @@ class LibraryPanel(QFrame):
             self.grid.setColumnStretch(col, 0)
         self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
 
-    def clear_widgets(self):
+    def detach_widgets(self):
+        """Reparent BookItems out of the main window tree without destroying them."""
         for item in self._grid_items.values():
-            item.deleteLater()
-        self._grid_items.clear()
+            item.setParent(self._widget_cache)
+            item.hide()
         self._widgets_built = False
 
+    def reattach_widgets(self):
+        """Reparent cached BookItems back into the grid."""
+        for path, item in self._grid_items.items():
+            item.setParent(self.container)
+            item.show()
+        self._widgets_built = bool(self._grid_items)
+        
     def refresh(self, force=False):
         # Resolve colors from current theme
         from ..themes import THEMES
@@ -612,15 +620,17 @@ class LibraryPanel(QFrame):
             self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
             self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
 
-        if force:
-            # Clear all existing items to force rebuild with the new view_mode
-            for item in self._grid_items.values():
-                item.deleteLater()
-            self._grid_items.clear()
-
-            self._widgets_built = False
+        
         # Phase 1: Always fetch data and update the cache    
         books = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
+        new_paths = {b["path"] for b in books}
+
+        if force:
+            stale = [p for p in self._grid_items if p not in new_paths]
+            for path in stale:
+                self._grid_items[path].deleteLater()
+                del self._grid_items[path]
+            self._widgets_built = False
 
         sort_text = self.sort_combo.currentText()
         
@@ -637,8 +647,9 @@ class LibraryPanel(QFrame):
             return
 
         # Phase 2: Create or update BookItem widgets
+        if self._grid_items and not self._widgets_built:
+            self.reattach_widgets()
         current_file = getattr(main_win, 'current_file', "")
-        new_paths = {b["path"] for b in self._books_cache}
         
         # Remove stale
         for path in list(self._grid_items.keys()):
@@ -669,6 +680,19 @@ class LibraryPanel(QFrame):
 
                 item.clicked.connect(self.book_selected.emit)
                 self._grid_items[path] = item
+                pool.start(worker)
+            elif hasattr(self._grid_items[path], 'cover_label') and (
+                not self._grid_items[path].cover_label.pixmap() or 
+                self._grid_items[path].cover_label.pixmap().isNull()
+            ):
+                # Item exists but cover is missing/null, trigger loader
+                item = self._grid_items[path]
+                item.update_data(book)
+                from .cover_loader import CoverLoaderWorker
+                worker = CoverLoaderWorker(book, self.player_instance)
+                self._active_workers.add(worker)
+                worker.signals.cover_loaded.connect(lambda bp, pm, book_item=item: self._on_cover_loaded(bp, pm, book_item))
+                worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
                 pool.start(worker)
             else:
                 self._grid_items[path].update_data(book)
