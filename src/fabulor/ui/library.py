@@ -629,6 +629,7 @@ class LibraryPanel(QFrame):
             return
 
         # Phase 2: Create or update BookItem widgets
+        self._reattach_items()
         current_file = getattr(main_win, 'current_file', "")
         
         # Remove stale
@@ -685,11 +686,13 @@ class LibraryPanel(QFrame):
         for item in self._grid_items.values():
             item.setParent(self._item_cache_widget)
 
+    def _reattach_items(self):
+        for item in self._grid_items.values():
+            item.setParent(self.container)
+            item.show()
+
     def _on_view_mode_changed(self, mode):
-        import time
-        print(f"view mode change start: {time.time():.3f}")
         self.config.set_library_view_mode(mode)
-        # Save pixmaps before destroying items
         pixmap_cache = {}
         for path, item in self._grid_items.items():
             if hasattr(item, 'cover_label'):
@@ -698,9 +701,10 @@ class LibraryPanel(QFrame):
                     pixmap_cache[path] = pm
             item.deleteLater()
         self._grid_items.clear()
+        for child in list(self._item_cache_widget.children()):
+            if isinstance(child, QWidget):
+                child.deleteLater()
         self.refresh(force=True)
-        print(f"view mode change end: {time.time():.3f}")
-        # Restore pixmaps to avoid re-loading from disk
         for path, item in self._grid_items.items():
             if path in pixmap_cache and hasattr(item, 'cover_label'):
                 item.cover_label.setPixmap(
@@ -778,10 +782,10 @@ class LibraryPanel(QFrame):
         is_alternating = view_mode in ["1 per row", "List"]
         
         for i, item in enumerate(items):
-            # Apply alternating row property for QSS targeting
-            item.setProperty("alt_row", str(i % 2) if is_alternating else "none")
-            item.style().unpolish(item)
-            item.style().polish(item)
+            if is_alternating:
+                item.setProperty("alt_row", str(i % 2))
+                item.style().unpolish(item)
+                item.style().polish(item)
             self.grid.addWidget(item, i // cols, i % cols)
         self.container.setUpdatesEnabled(True)
 
