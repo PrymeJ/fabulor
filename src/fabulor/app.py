@@ -15,7 +15,7 @@ from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegu
 
 from .player import Player
 from .config import Config
-from .themes import get_stylesheet, THEMES
+from .themes import THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
@@ -264,7 +264,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
         self.setObjectName("mainwindow")
-        self.setStyleSheet(get_stylesheet(self.theme_manager._current_theme_name))
 
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(0, 0, 0, 0)
@@ -347,6 +346,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             lambda: self.panel_manager._close_speed_flow() if self.panel_manager else None
         )
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
+
+        self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
 
     def _build_status_banner(self):
         self.status_banner = QWidget(self)
@@ -1117,7 +1118,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not self.chapter_list_widget.count():
             self.chapter_list_widget.populate(self.player.duration or 0) # Populate if empty
             
-        self.chapter_list_widget.setStyleSheet(self.styleSheet())
         # Recalculate height and position the menu centered above the label
         # Ensure height is correct before positioning, re-populate if needed
         if self.chapter_list_widget.count() == 0: # Re-check in case populate failed

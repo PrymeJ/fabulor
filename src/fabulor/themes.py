@@ -1091,38 +1091,20 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
         return f"rgba({_hex_to_rgb(fallback_color)}, {opacity})"
     return fallback_color
 
-def get_stylesheet(theme_name="default"):
-    # Fallback logic for stubs
+def _resolve_theme(theme_name):
     base = THEMES["The Color Purple"].copy()
-    custom = THEMES.get(theme_name, {})
-    base.update(custom)
-    t = base
+    base.update(THEMES.get(theme_name, {}))
+    return base
 
-    text_rgb = _hex_to_rgb(t['text'])
-    s_text = t.get('sidebar_text', t['text'])
-    s_hover = t.get('sidebar_text_hover', '#FFFFFF')
 
-    sidebar_text_rgb = _hex_to_rgb(s_text)
-    sidebar_text_hover_rgb = _hex_to_rgb(s_hover)
-    lib_bg_rgb = _hex_to_rgb(t.get('bg_library', '#1A1A1A'))
-
-    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
-    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
-    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
-
-    # Prepare dynamic backgrounds
+def get_base_stylesheet(theme_name="default"):
+    """
+    Rules for widgets that live directly on MainWindow or its root_layout:
+    main window background, QToolTip, overall progress slider + percentage label,
+    status_banner, chapter dropdown (floating child of MainWindow), undo_overlay.
+    """
+    t = _resolve_theme(theme_name)
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
-    sidebar_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['sidebar_opacity'])
-    sidebar_hover_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['panel_opacity_hover'])
-    accent_style = _get_gradient_style(t, "accent", t['accent'])
-
-    # Determine the color for unselected theme names in the panel
-    # Use custom override if available, otherwise fall back to accent_dark
-    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
-
-    visual_area_bg = ""
-    if t.get("bg_image"):
-        visual_area_bg = f"background-image: url({t['bg_image']}); background-position: center; background-repeat: no-repeat;"
 
     return f"""
         QWidget#mainwindow {{
@@ -1135,103 +1117,131 @@ def get_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             font-size: 10px;
         }}
-        TitleBar {{
-            background-color: {t['bg_deep']};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        }}
-        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#status_banner {{
+        QWidget#status_banner {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
-
         }}
-        QWidget#library_panel {{
-            background-color: rgb({lib_bg_rgb}); /* Panel background (includes top bar) */
-            border-right: 1px solid {t['accent']};
-            border: none;
-        }}
-        #library_panel QScrollArea, #library_panel QWidget#library_scroll_contents {{
-            background-color: rgba({lib_bg_rgb}, {t['panel_opacity_hover']}); /* Actual book display area */
-            border: none;
-        }}
-        #library_panel QScrollArea QWidget#qt_scrollarea_viewport {{
-            background-color: transparent;
-        }}
-        QWidget#sidebar {{ /* Sidebar background opacity */
-            background: {sidebar_style};
-            border-right: 1px solid {t['slider_overall_bg']};
-            border-radius: 0px;
-        }}
-        QWidget#sidebar:hover {{
-            background: {sidebar_hover_style};
-        }}
-        TitleBar QLabel {{
-            color: {t['text']};
-            font-weight: bold;
-        }}
-        #sidebar QLabel {{
-            font-size: 12px;
-            color: rgb({sidebar_text_rgb});
-            background: transparent;
-            border: none;
-            text-align: left;
-            font-weight: bold;
-            padding: 0;
-        }}
-        #sidebar QPushButton {{
-            font-size: 12px;
-            color: rgb({sidebar_text_rgb});
-            background: transparent;
-            border: none;
-            text-align: left;
-            font-weight: bold;
-            padding: 0;
-        }}
-        #sidebar QLabel:hover, #sidebar QPushButton:hover {{
-            color: rgb({sidebar_text_hover_rgb});
-        }}
-        QLabel#sidebar_title {{
-            font-weight: bold;
-            margin-bottom: 10px;
-        }}
-        QLabel#settings_header {{
-            font-weight: bold;
-            font-size: 14px;
-            margin-top: 10px;
-            color: {t['accent_light']};
-        }}
-        QWidget#visual_area {{
-            background-color: transparent;
-            {visual_area_bg}
-        }}
-        TitleBar QPushButton {{
-            background: transparent;
-            color: {t['text']};
-            border: none;
-            font-size: 14px;
-            padding: 0;
-        }}
-        TitleBar QPushButton:hover {{
-            background: {t['accent']};
-        }}
-        TitleBar QPushButton {{
-            border-radius: 2px; /* Makes minimize/close buttons square */
-        }}
-        QWidget#library_top_bar {{
-            background-color: rgb({lib_bg_rgb});
-        }}
-        QLabel {{
+        QWidget#status_banner QLabel {{
             color: {t['text']};
         }}
-        QLabel#curr_time_label, QLabel#total_time_label {{
-            color: {t['text']};
+        QProgressBar#scan_progress {{
+            background-color: {t['slider_overall_bg']};
+            border: none;
+            border-radius: 3px;
+        }}
+        QProgressBar#scan_progress::chunk {{
+            background-color: {t['accent']};
+            border-radius: 3px;
+        }}
+        #overall_progress {{
+            qproperty-bg_color: "{t['slider_overall_bg']}";
+            qproperty-fill_color: "{t['slider_overall_fill']}";
         }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('progress_text', t.get('text_on_light_bg', t['text'])))}, 0.85);
             font-weight: bold;
             font-size: 16px;
             background: transparent;
+        }}
+        QListWidget#chapter_dropdown {{
+            background-color: {t['bg_deep']};
+            border: 1px solid {t['accent']};
+            outline: none;
+            color: {t.get('dropdown_text', t['text'])};
+        }}
+        QListWidget#chapter_dropdown QLabel {{
+            color: {t.get('dropdown_text', t['text'])};
+        }}
+        QListWidget#chapter_dropdown QLabel#chapter_time {{
+            color: {t.get('dropdown_time_text', t.get('dropdown_text', t['text']))};
+        }}
+        QListWidget#chapter_dropdown::item:selected {{
+            background-color: {t['curr_chap_highlight']};
+            color: {t['text']};
+        }}
+        QListWidget#chapter_dropdown QScrollBar:vertical {{
+            width: 8px;
+            background: {t['bg_deep']};
+            border: none;
+            margin: 0px;
+        }}
+        QListWidget#chapter_dropdown QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QListWidget#chapter_dropdown QScrollBar::add-line:vertical,
+        QListWidget#chapter_dropdown QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QListWidget#chapter_dropdown QScrollBar::add-page:vertical,
+        QListWidget#chapter_dropdown QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+        QPushButton#undo_overlay {{
+            font-size: 11px;
+            color: {t['text']};
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.8);
+            border: 0px solid {t['accent_dark']};
+            border-radius: 0px;
+            padding: 0px 4px;
+        }}
+        QPushButton#undo_overlay:hover {{
+            background-color: {t['accent']};
+        }}
+    """
+
+
+def get_title_bar_stylesheet(theme_name="default"):
+    t = _resolve_theme(theme_name)
+    return f"""
+        TitleBar {{
+            background-color: {t['bg_deep']};
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }}
+        TitleBar QLabel {{
+            color: {t['text']};
+            font-weight: bold;
+        }}
+        TitleBar QPushButton {{
+            background: transparent;
+            color: {t['text']};
+            border: none;
+            font-size: 14px;
+            padding: 0;
+            border-radius: 2px;
+        }}
+        TitleBar QPushButton:hover {{
+            background: {t['accent']};
+        }}
+        TitleBar QPushButton:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+    """
+
+
+def get_player_stylesheet(theme_name="default"):
+    """
+    Rules for content_container and its descendants: playback controls, chapter
+    labels, time labels, sliders, visual area. Generic QLabel/QPushButton rules
+    here only cascade within content_container's subtree.
+    """
+    t = _resolve_theme(theme_name)
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+
+    visual_area_bg = ""
+    if t.get("bg_image"):
+        visual_area_bg = f"background-image: url({t['bg_image']}); background-position: center; background-repeat: no-repeat;"
+
+    return f"""
+        QWidget#visual_area {{
+            background-color: transparent;
+            {visual_area_bg}
+        }}
+        QLabel {{
+            color: {t['text']};
         }}
         QPushButton {{
             background: {accent_style};
@@ -1261,19 +1271,6 @@ def get_stylesheet(theme_name="default"):
             border-radius: 3px;
             padding: 1px 0px 0px 0px;
         }}
-        QPushButton#undo_overlay {{
-            font-size: 12px;
-            font-size: 11px;
-            color: {t['text']};
-            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.5);
-            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.8);
-            border: 0px solid {t['accent_dark']};
-            border-radius: 0px;
-            padding: 0px 4px;
-        }}
-        QPushButton#undo_overlay:hover {{
-            background-color: {t['accent']};
-        }}
         QLabel#quote_label {{
             background-color: rgba(0, 0, 0, 100);
             color: white;
@@ -1287,27 +1284,97 @@ def get_stylesheet(theme_name="default"):
             padding: 0px;
             color: {t['text']};
         }}
-        QListWidget#settings_folder_list {{
-            background-color: {t['bg_dropdown']};
+        #chapter_progress {{
+            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
+        #volume_slider {{
+            qproperty-bg_color: "{t['slider_vol_bg']}";
+            qproperty-fill_color: "{t['slider_vol_fill']}";
+        }}
+    """
+
+
+def get_library_stylesheet(theme_name="default"):
+    t = _resolve_theme(theme_name)
+    lib_bg_rgb = _hex_to_rgb(t.get('bg_library', '#1A1A1A'))
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+    input_bg = t.get('library_input_bg', t['bg_dropdown'])
+    input_text = t.get('library_input_text', t['text'])
+
+    return f"""
+        QFrame#library_panel {{
+            background-color: rgb({lib_bg_rgb});
+            border: none;
+        }}
+        QWidget#library_top_bar {{
+            background-color: rgb({lib_bg_rgb});
+        }}
+        QScrollArea,
+        QWidget#library_scroll_contents {{
+            background-color: rgba({lib_bg_rgb}, {t['panel_opacity_hover']});
+            border: none;
+        }}
+        QScrollArea QWidget#qt_scrollarea_viewport {{
+            background-color: transparent;
+        }}
+        QLabel {{
+            color: {t['text']};
+        }}
+        QPushButton {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border-radius: 4px;
+            padding: 6px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+        QComboBox {{
+            background-color: {input_bg};
+            color: {input_text};
             border: 1px solid {t['accent']};
             border-radius: 4px;
-            color: {t['text']};
+            padding: 3px 5px;
+            padding-right: 0px;
+            font-size: 12px;
+            min-height: 22px;
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 20px;
+        }}
+        QComboBox::down-arrow {{
+            image: none;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 5px solid {t['accent']};
+            margin-top: 2px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {input_bg};
+            color: {input_text};
+            selection-background-color: {t['accent']};
+            border: 1px solid {t['accent']};
+            outline: none;
+            padding: 0px;
             font-size: 12px;
         }}
-        QListWidget#settings_folder_list::item:selected {{
-            background-color: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        QComboBox QAbstractItemView::item {{
+            min-height: 22px;
         }}
-        QProgressBar#scan_progress {{
-            background-color: {t['slider_overall_bg']};
-            border: none;
-            border-radius: 3px;
+        QLineEdit {{
+            background-color: {input_bg};
+            color: {input_text};
+            font-size: 12px;
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 2px;
         }}
-        QProgressBar#scan_progress::chunk {{
-            background-color: {t['accent']};
-            border-radius: 3px;
-        }}
-        /* Library Panel Styling */
         #book_item {{
             border-radius: 0px;
         }}
@@ -1371,47 +1438,73 @@ def get_stylesheet(theme_name="default"):
         #book_item_percentage {{
             color: {t.get('library_percentage', t['text'])};
         }}
-        /* Specialized Library Inputs */
-        #library_panel QComboBox, #library_panel QLineEdit {{
-            background-color: {t.get('library_input_bg', t['bg_dropdown'])};
-            color: {t.get('library_input_text', t['text'])};
+        QScrollBar:vertical {{
+            width: 8px;
+            background: {t['bg_deep']};
+            border: none;
+            margin: 0px;
         }}
-        #library_panel QComboBox QAbstractItemView {{
-            background-color: {t.get('library_input_bg', t['bg_dropdown'])};
-            color: {t.get('library_input_text', t['text'])};
+        QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
         }}
-        QListWidget#chapter_dropdown {{
-            background-color: {t['bg_deep']};
-            border: 1px solid {t['accent']};
-            outline: none;
-            color: {t.get('dropdown_text', t['text'])};
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 0px;
         }}
-        QListWidget#chapter_dropdown QLabel {{
-            color: {t.get('dropdown_text', t['text'])};
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            background: none;
         }}
-        QListWidget#chapter_dropdown QLabel#chapter_time {{
-            color: {t.get('dropdown_time_text', t.get('dropdown_text', t['text']))};
+    """
+
+
+def get_settings_stylesheet(theme_name="default"):
+    """
+    Rules for settings_panel, speed_panel, and sleep_panel (all share this
+    stylesheet). Contains tab widget styling, theme/pattern buttons, folder list,
+    and panel backgrounds.
+    """
+    t = _resolve_theme(theme_name)
+    text_rgb = _hex_to_rgb(t['text'])
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+
+    return f"""
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border-right: 1px solid {t['accent']};
+            border-radius: 0px;
         }}
-        QListWidget#chapter_dropdown::item:selected {{
-            background-color: {t['curr_chap_highlight']}; /* Chapter dropdown selection highlight */
+        QLabel {{
             color: {t['text']};
         }}
-        /* Custom ClickSlider Theme Integration */
-        #overall_progress {{
-            qproperty-bg_color: "{t['slider_overall_bg']}";
-            qproperty-fill_color: "{t['slider_overall_fill']}";
+        QLabel#settings_header {{
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
+            color: {t['accent_light']};
         }}
-        #chapter_progress {{
-            qproperty-bg_color: "{t['slider_chapter_bg']}";
-            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        QLabel#theme_hint {{
+            font-size: 12px;
+            color: {t['accent']};
         }}
-        #balance_slider {{
-            qproperty-bg_color: "{t['slider_chapter_bg']}";
-            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        QPushButton {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border-radius: 4px;
+            padding: 6px;
+            font-weight: bold;
         }}
-        #volume_slider {{
-            qproperty-bg_color: "{t['slider_vol_bg']}";
-            qproperty-fill_color: "{t['slider_vol_fill']}";
+        QPushButton:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton:pressed {{
+            background-color: {t['accent_dark']};
         }}
         QComboBox {{
             background-color: {t['bg_dropdown']};
@@ -1419,16 +1512,16 @@ def get_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 3px 5px;
-            padding-right: 0px; /* Prevent scrollbar sliver on closed combo box */
-            font-size: 12px; /* Increased by 1px */
-            min-height: 22px; /* Increased to accommodate larger font */
+            padding-right: 0px;
+            font-size: 12px;
+            min-height: 22px;
         }}
         QComboBox::drop-down {{
             border: none;
             width: 20px;
         }}
         QComboBox::down-arrow {{
-            image: none; /* Hide default arrow */
+            image: none;
             border-left: 5px solid transparent;
             border-right: 5px solid transparent;
             border-top: 5px solid {t['accent']};
@@ -1440,11 +1533,11 @@ def get_stylesheet(theme_name="default"):
             selection-background-color: {t['accent']};
             border: 1px solid {t['accent']};
             outline: none;
-            padding: 0px; /* Remove any default padding that might affect scrollbar */
-            font-size: 12px; /* Smaller font for dropdown list items */
+            padding: 0px;
+            font-size: 12px;
         }}
         QComboBox QAbstractItemView::item {{
-            min-height: 22px; /* Ensure each item has a minimum height */
+            min-height: 22px;
         }}
         QLineEdit {{
             background-color: {t['bg_dropdown']};
@@ -1454,7 +1547,6 @@ def get_stylesheet(theme_name="default"):
             border-radius: 4px;
             padding: 2px;
         }}
-        /* TabWidget Styling */
         QTabWidget::pane {{
             border-top: 1px solid {t['accent_dark']};
             background: transparent;
@@ -1465,10 +1557,10 @@ def get_stylesheet(theme_name="default"):
             padding: 3px 8px 3px 9px;
             font-size: 12px;
             font-weight: bold;
-            border-top-left-radius: 2px; 
+            border-top-left-radius: 2px;
             border-top-right-radius: 2px;
             margin-right: 0px;
-            margin-left: 2px
+            margin-left: 2px;
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
@@ -1481,18 +1573,26 @@ def get_stylesheet(theme_name="default"):
         QTabWidget QWidget {{
             background: transparent;
         }}
-        QLabel#theme_hint {{
-            font-size: 12px;
-            color: {t['accent']};
-        }}
-        QScrollArea, QWidget#theme_selector_container {{
+        QScrollArea,
+        QWidget#theme_selector_container {{
             background: transparent;
             border: none;
         }}
         QScrollArea QWidget#qt_scrollarea_viewport {{
             background: transparent;
         }}
-        QPushButton#theme_item, QPushButton#theme_interval_btn {{ /* Default state for unselected, unhovered */
+        QListWidget#settings_folder_list {{
+            background-color: {t['bg_dropdown']};
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            color: {t['text']};
+            font-size: 12px;
+        }}
+        QListWidget#settings_folder_list::item:selected {{
+            background-color: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#theme_item, QPushButton#theme_interval_btn {{
             background: transparent;
             color: {panel_dimmed_color};
             border: none;
@@ -1502,11 +1602,13 @@ def get_stylesheet(theme_name="default"):
         }}
         QPushButton#theme_item {{ font-weight: normal; }}
         QPushButton#theme_interval_btn {{ font-weight: bold; }}
-        QPushButton#theme_item[selected="true"], QPushButton#theme_interval_btn[selected="true"] {{
+        QPushButton#theme_item[selected="true"],
+        QPushButton#theme_interval_btn[selected="true"] {{
             color: {t['accent']};
             font-weight: bold;
         }}
-        QPushButton#theme_item:hover, QPushButton#theme_interval_btn:hover {{
+        QPushButton#theme_item:hover,
+        QPushButton#theme_interval_btn:hover {{
             color: {t['accent_light']};
             background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
         }}
@@ -1514,13 +1616,20 @@ def get_stylesheet(theme_name="default"):
             text-decoration: underline;
             font-weight: bold;
         }}
-        QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now, QPushButton#secondary_button {{
+        QPushButton#theme_add_all, QPushButton#theme_remove_all,
+        QPushButton#theme_change_now, QPushButton#secondary_button {{
             background: transparent;
             color: {t['text']};
             border: 1px solid {t['accent_dark']};
             font-size: 11px;
             padding: 4px;
             border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover,
+        QPushButton#theme_change_now:hover, QPushButton#secondary_button:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
         QPushButton#pattern_button {{
@@ -1540,12 +1649,8 @@ def get_stylesheet(theme_name="default"):
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
         }}
-        QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover, QPushButton#secondary_button:hover {{
-            background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-            font-weight: bold;
-        }}
-        QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn, QPushButton#library_rescan_btn {{
+        QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn,
+        QPushButton#library_rescan_btn {{
             background: transparent;
             color: {t['text']};
             border: 1px solid {t['accent_dark']};
@@ -1553,29 +1658,32 @@ def get_stylesheet(theme_name="default"):
             border-radius: 4px;
             font-weight: bold;
         }}
-        QPushButton#library_add_folder_btn:hover, QPushButton#library_remove_folder_btn:hover, QPushButton#library_rescan_btn:hover {{
+        QPushButton#library_add_folder_btn:hover, QPushButton#library_remove_folder_btn:hover,
+        QPushButton#library_rescan_btn:hover {{
             background: {t['accent']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
-        QPushButton#library_add_folder_btn:pressed, QPushButton#library_remove_folder_btn:pressed, QPushButton#library_rescan_btn:pressed {{
+        QPushButton#library_add_folder_btn:pressed, QPushButton#library_remove_folder_btn:pressed,
+        QPushButton#library_rescan_btn:pressed {{
             background-color: {t['accent_dark']};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
-
-        #disable_sleep_btn, #reset_audio_btn {{ /* Shared styling for prominent action buttons */
+        #disable_sleep_btn, #reset_audio_btn {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-size: 14px;
             padding: 10px;
             margin-top: 10px;
         }}
-        /* Custom Scrollbar for QComboBox dropdown list */
+        #balance_slider {{
+            qproperty-bg_color: "{t['slider_chapter_bg']}";
+            qproperty-fill_color: "{t['slider_chapter_fill']}";
+        }}
+        QScrollBar:vertical,
         QComboBox QAbstractItemView QScrollBar:vertical,
-        QListWidget#chapter_dropdown QScrollBar:vertical,
-        QListWidget#settings_folder_list QScrollBar:vertical,
-        #library_panel QScrollBar:vertical {{
+        QListWidget#settings_folder_list QScrollBar:vertical {{
             width: 8px;
             background: {t['bg_deep']};
             border: none;
@@ -1586,200 +1694,68 @@ def get_stylesheet(theme_name="default"):
             background: transparent;
             margin: 0px;
         }}
+        QScrollBar::handle:vertical,
         QComboBox QAbstractItemView QScrollBar::handle:vertical,
-        QListWidget#chapter_dropdown QScrollBar::handle:vertical,
-        QListWidget#settings_folder_list QScrollBar::handle:vertical,
-        #library_panel QScrollBar::handle:vertical {{
+        QListWidget#settings_folder_list QScrollBar::handle:vertical {{
             background: {t['accent']};
             min-height: 20px;
             border-radius: 4px;
         }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical,
         QComboBox QAbstractItemView QScrollBar::add-line:vertical,
-        QComboBox QAbstractItemView QScrollBar::sub-line:vertical,
-        QListWidget#chapter_dropdown QScrollBar::add-line:vertical,
-        QListWidget#chapter_dropdown QScrollBar::sub-line:vertical {{
+        QComboBox QAbstractItemView QScrollBar::sub-line:vertical {{
             height: 0px;
         }}
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical,
         QComboBox QAbstractItemView QScrollBar::add-page:vertical,
-        QComboBox QAbstractItemView QScrollBar::sub-page:vertical,
-        QListWidget#chapter_dropdown QScrollBar::add-page:vertical,
-        QListWidget#chapter_dropdown QScrollBar::sub-page:vertical {{
+        QComboBox QAbstractItemView QScrollBar::sub-page:vertical {{
             background: none;
         }}
     """
 
 
-def get_hover_stylesheet(theme_name="default"):
-    """
-    Returns a minimal stylesheet covering only widgets visible during settings panel hover preview.
-    Uses the same theme lookup logic as get_stylesheet().
-    """
-    base = THEMES["The Color Purple"].copy()
-    custom = THEMES.get(theme_name, {})
-    base.update(custom)
-    t = base
-
-    text_rgb = _hex_to_rgb(t['text'])
-
-    # Prepare dynamic backgrounds
-    main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
-    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
-
-    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
-    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
-    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+def get_sidebar_stylesheet(theme_name="default"):
+    t = _resolve_theme(theme_name)
+    sidebar_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['sidebar_opacity'])
+    sidebar_hover_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['panel_opacity_hover'])
+    sidebar_text_rgb = _hex_to_rgb(t.get('sidebar_text', t['text']))
+    sidebar_text_hover_rgb = _hex_to_rgb(t.get('sidebar_text_hover', '#FFFFFF'))
 
     return f"""
-        QWidget#mainwindow {{
-            background: {main_bg_style};
-            border-radius: 8px;
-        }}
-        TitleBar {{
-            background-color: {t['bg_deep']};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        }}
-        TitleBar QLabel {{
-            color: {t['text']};
-            font-weight: bold;
-        }}
-        TitleBar QPushButton {{
-            background: transparent;
-            color: {t['text']};
-            border: none;
-            font-size: 14px;
-            padding: 0;
-            font-weight: bold;
-        }}
-        TitleBar QPushButton:hover {{
-            background: {t['accent']};
-        }}
-        TitleBar QPushButton:pressed {{
-            background-color: {t['accent_dark']};
-        }}
-        QLabel#percentage_label {{
-            color: rgba({_hex_to_rgb(t.get('progress_text', t.get('text_on_light_bg', t['text'])))}, 0.85);
-            font-weight: bold;
-            font-size: 16px;
-            background: transparent;
-        }}
-        QLabel#chap_elapsed_label, QLabel#chap_duration_label, QLabel#curr_time_label, QLabel#total_time_label {{
-            color: {t['text']};
-        }}
-        #overall_progress {{
-            qproperty-bg_color: "{t['slider_overall_bg']}";
-            qproperty-fill_color: "{t['slider_overall_fill']}";
-        }}
-        #chapter_progress {{
-            qproperty-bg_color: "{t['slider_chapter_bg']}";
-            qproperty-fill_color: "{t['slider_chapter_fill']}";
-        }}
-        #volume_slider {{
-            qproperty-bg_color: "{t['slider_vol_bg']}";
-            qproperty-fill_color: "{t['slider_vol_fill']}";
-        }}
-        QPushButton#play_pause_btn, QPushButton#prev_btn, QPushButton#rewind_btn, QPushButton#forward_btn, QPushButton#next_btn, QPushButton#speed_btn {{
-            background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-            border-radius: 4px;
-            padding: 6px;
-            font-weight: normal;
-        }}
-
-        QPushButton#sleep_timer_display {{
-            background: transparent;
-            border: none;
-            padding: 0px;
-            color: {t['text']};
-        }}
-        QWidget#settings_panel {{
-            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border-right: 1px solid {t['accent']};
+        QWidget#sidebar {{
+            background: {sidebar_style};
+            border-right: 1px solid {t['slider_overall_bg']};
             border-radius: 0px;
         }}
-        QTabWidget#settings_tabs {{
-            background: transparent;
+        QWidget#sidebar:hover {{
+            background: {sidebar_hover_style};
         }}
-        QTabWidget#settings_tabs::pane {{
-            border-top: 1px solid {t['accent_dark']};
-            background: transparent;
-        }}
-        QTabBar {{
-            background: transparent;
-        }}
-        QTabBar::tab {{
-            background: {t['bg_deep']};
-            color: rgba({text_rgb}, 0.9);
-            padding: 3px 8px 3px 9px;
+        #sidebar QLabel {{
             font-size: 12px;
-            font-weight: bold;
-            border-top-left-radius: 2px; 
-            border-top-right-radius: 2px;
-            margin-right: 0px;
-            margin-left: 2px
-        }}
-        QTabBar::tab:selected {{
-            background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-        }}
-        QPushButton#theme_item {{
+            color: rgb({sidebar_text_rgb});
             background: transparent;
-            color: {panel_dimmed_color};
             border: none;
-            text-align: center;
+            text-align: left;
+            font-weight: bold;
+            padding: 0;
+        }}
+        #sidebar QPushButton {{
             font-size: 12px;
-            padding: 1px 0px;
-            font-weight: normal;
-        }}
-        QPushButton#theme_item[selected="true"] {{
-            color: {t['accent']};
-            font-weight: bold;
-        }}
-        QPushButton#theme_item:hover {{
-            color: {t['accent_light']};
-            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
-        }}
-        QPushButton#theme_item[active_display="true"] {{
-            text-decoration: underline;
-            font-weight: bold;
-        }}
-        QPushButton#theme_interval_btn {{
+            color: rgb({sidebar_text_rgb});
             background: transparent;
-            color: {panel_dimmed_color};
             border: none;
-            text-align: center;
-            font-size: 12px;
-            padding: 1px 0px;
+            text-align: left;
             font-weight: bold;
+            padding: 0;
         }}
-        QPushButton#theme_interval_btn[selected="true"] {{
-            color: {t['accent']};
+        #sidebar QLabel:hover, #sidebar QPushButton:hover {{
+            color: rgb({sidebar_text_hover_rgb});
+        }}
+        QLabel#sidebar_title {{
             font-weight: bold;
-        }}
-        QPushButton#theme_interval_btn:hover {{
-            color: {t['accent_light']};
-            background: rgba({_hex_to_rgb(t['accent'])}, 0.1);
-            font-weight: bold;
-        }}
-        QPushButton#theme_add_all, QPushButton#theme_remove_all, QPushButton#theme_change_now {{
-            background: transparent;
-            color: {t['text']};
-            border: 1px solid {t['accent_dark']};
-            font-size: 11px;
-            padding: 4px;
-            border-radius: 4px;
-            font-weight: bold;
-        }}
-        QPushButton#theme_add_all:hover, QPushButton#theme_remove_all:hover, QPushButton#theme_change_now:hover {{
-            background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-            font-weight: bold;
-        }}
-        QLabel#theme_hint {{
-            font-size: 12px;
-            color: {t['accent']};
-        }}
-        QWidget#visual_area {{
-            background-color: transparent;
+            margin-bottom: 10px;
         }}
     """
+

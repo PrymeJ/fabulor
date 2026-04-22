@@ -2,7 +2,10 @@ import random
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
 from PySide6.QtGui import QFont, QFontMetrics
-from ..themes import get_stylesheet, get_hover_stylesheet, THEMES
+from ..themes import (
+    get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
+    get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet, THEMES
+)
 
 class ThemeComboBox(QComboBox):
     """Custom QComboBox that provides signals for popup visibility events."""
@@ -50,7 +53,6 @@ class ThemeManager:
         self.interval_widgets = {} # minutes -> QPushButton
         self._packed_themes_cache = None
         self._packed_themes_limit = None
-        self._stylesheet_cache = {}
         self._active_display_theme = self._current_theme_name
 
         # Rotation Timer
@@ -60,11 +62,6 @@ class ThemeManager:
 
         self._save_on_fade = False
 
-    def _get_stylesheet_cached(self, theme_name):
-        if theme_name not in self._stylesheet_cache:
-            self._stylesheet_cache[theme_name] = get_stylesheet(theme_name)
-        return self._stylesheet_cache[theme_name]
-    
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
         self._fade_overlay.setObjectName("theme_fade_overlay")
@@ -133,10 +130,6 @@ class ThemeManager:
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
         """Update the appearance with a subtle fade transition."""
-        from PySide6.QtWidgets import QWidget as _QW
-        all_w = self.main_window.findChildren(_QW)
-        print(f"Total widgets during hover: {len(all_w)}")
-        
         if fade_ms is None:
             fade_ms = self.config.get_theme_fade_duration()
         
@@ -177,23 +170,26 @@ class ThemeManager:
             if save:
                 self._cached_theme_pixmap = self.main_window.grab()
 
-        if hover:
-            self.main_window.setStyleSheet(get_hover_stylesheet(theme_name))
-        else:
-            self.main_window.setStyleSheet(get_stylesheet(theme_name))
+        self._apply_stylesheets(theme_name, hover=hover)
         self.main_window._update_speed_grid_styling(theme_name)
         self.update_theme_list_visuals()
 
-        """
-        TEMPORARY GUARD AGAINST STYLESHEET COLLAPSE
-
-        applied = get_hover_stylesheet(theme_name) if hover else self._get_stylesheet_cached(theme_name)
-        self.main_window.setStyleSheet(applied)
-        # Verify stylesheet was applied
-        if len(self.main_window.styleSheet()) < 100:
-            # Something cleared it, reapply
-            QTimer.singleShot(50, lambda: self.main_window.setStyleSheet(applied))
-        """
+    def _apply_stylesheets(self, theme_name, hover=False):
+        mw = self.main_window
+        mw.setStyleSheet(get_base_stylesheet(theme_name))
+        if hasattr(mw, 'title_bar'):
+            mw.title_bar.setStyleSheet(get_title_bar_stylesheet(theme_name))
+        if hasattr(mw, 'content_container'):
+            mw.content_container.setStyleSheet(get_player_stylesheet(theme_name))
+        if not hover and hasattr(mw, 'library_panel'):
+            mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
+        ss_panels = get_settings_stylesheet(theme_name)
+        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+            w = getattr(mw, attr, None)
+            if w:
+                w.setStyleSheet(ss_panels)
+        if hasattr(mw, 'sidebar'):
+            mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""
