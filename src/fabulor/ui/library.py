@@ -686,6 +686,8 @@ class LibraryPanel(QFrame):
             item.setParent(self._item_cache_widget)
 
     def _on_view_mode_changed(self, mode):
+        import time
+        print(f"view mode change start: {time.time():.3f}")
         self.config.set_library_view_mode(mode)
         # Save pixmaps before destroying items
         pixmap_cache = {}
@@ -697,6 +699,7 @@ class LibraryPanel(QFrame):
             item.deleteLater()
         self._grid_items.clear()
         self.refresh(force=True)
+        print(f"view mode change end: {time.time():.3f}")
         # Restore pixmaps to avoid re-loading from disk
         for path, item in self._grid_items.items():
             if path in pixmap_cache and hasattr(item, 'cover_label'):
