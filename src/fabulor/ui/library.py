@@ -120,7 +120,7 @@ class BookItem(QFrame):
 
         # -------- 3 PER ROW --------
         if mode == "3 per row":
-            self.setFixedSize(96,186)
+            self.setFixedSize(96,145)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(3,2,0,0)
             layout.setSpacing(2)
@@ -128,15 +128,9 @@ class BookItem(QFrame):
             self.cover_label = self._make_cover(90,140)
             layout.addWidget(self.cover_label)
 
-            self.time_row = self._make_time_row()
-            layout.addLayout(self.time_row)
-
-            self.progress_row = self._make_progress_row()
-            layout.addWidget(self.progress_row)
-
         # -------- 2 PER ROW --------
         elif mode == "2 per row":
-            self.setFixedSize(140,274)
+            self.setFixedSize(140,226)
             layout = QVBoxLayout(self)
             layout.setContentsMargins(13,8,0,0)
             layout.setSpacing(0)
@@ -156,14 +150,6 @@ class BookItem(QFrame):
 
             layout.addWidget(self.title_label)
             layout.addWidget(self.author_label)
-
-            self.time_row = self._make_time_row()
-            self.time_row.setContentsMargins(0,0,14,0)
-            layout.addLayout(self.time_row)
-
-            self.progress_row = self._make_progress_row()
-            self.progress_row.setContentsMargins(0,0,14,0)
-            layout.addWidget(self.progress_row)
 
         # -------- 1 PER ROW --------
         elif mode == "1 per row":
