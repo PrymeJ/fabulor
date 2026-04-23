@@ -337,15 +337,23 @@ class BookItem(QFrame):
             return
 
         try:
-            cx = self.cover_label.x()
-            cy = self.cover_label.y()
-            cw = self.cover_label.width()
-            ch = self.cover_label.height()
-            
+            # Get the current geometry of the thumbnail
+            cover_rect = self.cover_label.geometry()
+            cw, ch = cover_rect.width(), cover_rect.height()
+
+            # Calculate target overlay height based on progress state
             pct = 0.30 if getattr(self, '_overlay_has_progress', False) else 0.20
             oh = int(ch * pct)
-            self.overlay_widget.move(cx, cy + ch - oh)
+
+            # Update the size of the overlay first
             self.overlay_widget.resize(cw, oh)
+
+            # Calculate the position by aligning bottom-right corners.
+            # In Qt, geometry.right() is (x + width - 1)
+            new_x = cover_rect.right() - self.overlay_widget.width() + 1
+            new_y = cover_rect.bottom() - self.overlay_widget.height() + 1
+
+            self.overlay_widget.move(new_x, new_y)
         except RuntimeError:
             # C++ object was deleted mid-access during view mode transition
             return
