@@ -120,12 +120,12 @@ class BookItem(QFrame):
 
         # -------- 3 PER ROW --------
         if mode == "3 per row":
-            self.setFixedSize(96,145)
+            self.setFixedSize(96,146)
             layout = QVBoxLayout(self)
-            layout.setContentsMargins(3,2,0,0)
-            layout.setSpacing(2)
+            layout.setContentsMargins(3,2,0,2)
+            layout.setSpacing(0)
 
-            self.cover_label = self._make_cover(90,140)
+            self.cover_label = self._make_cover(92,142)
             layout.addWidget(self.cover_label)
 
         # -------- 2 PER ROW --------
@@ -748,10 +748,13 @@ class LibraryPanel(QFrame):
         view_mode = self.style_combo.currentText()
         if view_mode == "3 per row":
             cols = 3
+            self.grid.setContentsMargins(1, 0, 0, 0)
         elif view_mode == "2 per row":
             cols = 2
+            self.grid.setContentsMargins(6, 0, 0, 0)
         else:
             cols = 1
+            self.grid.setContentsMargins(0, 0, 0, 0)
 
         # Numeric fields sort as float, datetime as string (ISO format sorts correctly), text as lower
         numeric_keys = {"progress", "duration"}

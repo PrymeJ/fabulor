@@ -662,11 +662,12 @@ THEMES = {
         "button_text":         "#000000",
         "progress_text":       "#f88a8a", # Contrast against bright red fill
     },
-    "Rivendell": { # Lord of the Rings - Elven, light, natural
+    "Rivendell": { 
         "bg_deep":      "#E0E7E9",
-        "bg_main":      "#F0FFF0", # Tinted green
+        "bg_main":      "#F0FFF0",
+        "bg_library":          "#D7EBB4",
         "slider_overall_bg":   "#B0BEC5",
-        "slider_overall_fill": "#4CAF50", # Green accent
+        "slider_overall_fill": "#4CAF50",
         "slider_chapter_bg":   "#CFD8DC",
         "slider_chapter_fill": "#81C784",
         "slider_vol_bg":       "#E0E7E9",
@@ -676,6 +677,7 @@ THEMES = {
         "accent_dark":         "#388E3C",
         "bg_sidebar":          "#E0E7E9",
         "bg_dropdown":         "#CFD8DC",
+        
         "curr_chap_highlight": "#81C784",
         "sidebar_text_hover": "#81C784",
         "sidebar_opacity":     0.9,
