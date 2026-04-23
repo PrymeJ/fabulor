@@ -148,7 +148,7 @@ class ScannerWorker(QObject):
                         if data: img.loadFromData(data)
 
                 if not img.isNull():
-                    img = img.scaled(118, 165, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    img = img.scaled(226, 344, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     if img.save(str(thumb_path), "JPEG"):
                         cover_path = str(thumb_path)
             except:
