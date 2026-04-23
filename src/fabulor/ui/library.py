@@ -690,6 +690,7 @@ class LibraryPanel(QFrame):
         self.sort_combo.setFixedWidth(73)
         self.sort_combo.setCurrentText(self.config.get_library_sort_key())
         self._sort_ascending = self.config.get_library_sort_ascending()
+        self._last_filter_mode = self.sort_combo.currentText()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
 
         self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
