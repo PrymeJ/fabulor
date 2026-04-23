@@ -110,7 +110,7 @@ class BookItem(QFrame):
         self.progress_outer.setObjectName("book_progress_outer")
         self.progress_inner = QFrame(self.progress_outer)
         self.progress_inner.setObjectName("book_progress_inner")
-        self.progress_inner.setFixedHeight(6)
+        self.progress_inner.setGeometry(0, 0, 0, 6)
 
         self.pct_label = QLabel()
         self.pct_label.setObjectName("book_item_percentage")
@@ -418,8 +418,8 @@ class BookItem(QFrame):
             dur = float(self.book_data.get("duration") or 0)
             pct = (prog / dur) if dur > 0 else 0
             try:
-                w = int(self.progress_outer.width() * pct)
-                self.progress_inner.setFixedWidth(w)
+                w = int(self.progress_outer.maximumWidth() * pct)
+                self.progress_inner.setGeometry(0, 0, w, 6)
             except RuntimeError: pass
         self._reposition_overlay()
 
@@ -475,8 +475,8 @@ class BookItem(QFrame):
             self.pct_label.setText(f"{int(pct*100)}%")
 
         if hasattr(self, "progress_inner"):
-            w = int(self.progress_outer.width() * pct)
-            self.progress_inner.setFixedWidth(w)
+            w = int(self.progress_outer.maximumWidth() * pct)
+            self.progress_inner.setGeometry(0, 0, w, 6)
 
         if hasattr(self, 'overlay_widget'):
 
