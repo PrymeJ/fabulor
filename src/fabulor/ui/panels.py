@@ -189,7 +189,6 @@ class PanelManager:
         except: pass
         self.library_panel._is_animating = False
         self.library_panel.hide()
-        self.library_panel._detach_items()
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""

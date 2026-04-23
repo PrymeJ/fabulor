@@ -1,19 +1,31 @@
 import os
 import time
+import math
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
-from PySide6.QtCore import Qt, Signal, QCoreApplication
+from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
 from PySide6.QtGui import QPixmap
+
+# Constants for Virtual Scrolling
+ITEM_DIMENSIONS = {
+    "3 per row": {"w": 96,  "h": 146, "cols": 3},
+    "2 per row": {"w": 140, "h": 226, "cols": 2},
+    "1 per row": {"w": 292, "h": 161, "cols": 1},
+    "List":      {"w": 290, "h": 28,  "cols": 1}
+}
 
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
 
-    def __init__(self, book_data, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None, parent=None):
+    def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None, parent=None):
         super().__init__(parent)
-        self.book_data = book_data
+        self._is_building_ui = True
+        self.book_data = {}
+        self.current_path = ""
         self.view_mode = view_mode
+        self.player_instance = player_instance
         self.setObjectName("book_item")
         self._is_toggling = False
         self._show_remaining = True
@@ -22,13 +34,32 @@ class BookItem(QFrame):
         self.setCursor(Qt.PointingHandCursor)
         
         self._build_ui()
-        self.update_data(book_data)
+        self._is_building_ui = False
 
     # ---------------- UI BUILD ----------------
+    def set_view_mode(self, mode):
+        """Re-initializes the UI for a new view mode without destroying the widget."""
+        if self.view_mode == mode:
+            return
+        self._is_building_ui = True
+        self.view_mode = mode
+        self._build_ui()
+        self._is_building_ui = False
+        if self.book_data:
+            self.bind(self.book_data)
+
     def _clear_layout(self):
         if self.layout():
             # Immediately detach the layout by setting it on a dummy widget
             QWidget().setLayout(self.layout())
+            
+        # Reset mode-specific attributes to avoid using dead C++ objects
+        for attr in ['cover_label', 'overlay_widget', 'title_label', 'author_label', 
+                    'narrator_label', 'year_label', 'elapsed_label', 'total_label',
+                    'pct_label', 'progress_outer', 'progress_inner', 'progress_container']:
+            if hasattr(self, attr):
+                try: delattr(self, attr)
+                except AttributeError: pass
 
     def _make_cover(self, w, h):
         label = QLabel()
@@ -292,17 +323,32 @@ class BookItem(QFrame):
             self.overlay_widget.hide()
             self._reposition_overlay()
 
+    def bind(self, book_data):
+        """Virtual Scroll entry point: Rebinds the widget to new data."""
+        self.book_data = book_data
+        old_path = self.current_path
+        self.current_path = book_data.get("path", "")
+        
+        self._update_ui_content()
+        return old_path != self.current_path
+
     def _reposition_overlay(self):
-        if not hasattr(self, 'overlay_widget'):
+        if not hasattr(self, 'overlay_widget') or not hasattr(self, 'cover_label'):
             return
-        cx = self.cover_label.x()
-        cy = self.cover_label.y()
-        cw = self.cover_label.width()
-        ch = self.cover_label.height()
-        pct = 0.30 if self._overlay_has_progress else 0.20
-        oh = int(ch * pct)
-        self.overlay_widget.move(cx, cy + ch - oh)
-        self.overlay_widget.resize(cw, oh)
+
+        try:
+            cx = self.cover_label.x()
+            cy = self.cover_label.y()
+            cw = self.cover_label.width()
+            ch = self.cover_label.height()
+            
+            pct = 0.30 if getattr(self, '_overlay_has_progress', False) else 0.20
+            oh = int(ch * pct)
+            self.overlay_widget.move(cx, cy + ch - oh)
+            self.overlay_widget.resize(cw, oh)
+        except RuntimeError:
+            # C++ object was deleted mid-access during view mode transition
+            return
 
     def _update_progress_bar(self):
         if not hasattr(self, 'overlay_progress_bar'):
@@ -348,26 +394,30 @@ class BookItem(QFrame):
                     if hit_rect.contains(event.globalPosition().toPoint()):
                         self._is_toggling = True
                         self._show_remaining = not self._show_remaining
-                        self.update_data(self.book_data)
+                        self._update_ui_content()
                         event.accept()
                         return
         super().mousePressEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if getattr(self, '_is_building_ui', False):
+            return
+            
         # Ensure progress inner width is updated when the layout resizes the parent
         if hasattr(self, "progress_inner") and hasattr(self, "progress_outer"):
             prog = float(self.book_data.get("progress") or 0)
             dur = float(self.book_data.get("duration") or 0)
             pct = (prog / dur) if dur > 0 else 0
-            w = int(self.progress_outer.width() * pct)
-            self.progress_inner.setFixedWidth(w)        
+            try:
+                w = int(self.progress_outer.width() * pct)
+                self.progress_inner.setFixedWidth(w)
+            except RuntimeError: pass
         self._reposition_overlay()
 
-    def update_data(self, book_data):
-        """Updates the item's metadata and UI labels."""
-        self.book_data = book_data
-
+    def _update_ui_content(self):
+        """Internal: Updates labels based on current book_data."""
+        book_data = self.book_data
         title = book_data.get("title") or ""
         author = book_data.get("author") or ""
         narrator = book_data.get("narrator")
@@ -489,99 +539,23 @@ class LibraryPanel(QFrame):
         self.db = db
         self.config = config
         self.player_instance = player_instance
-        # Resolve theme colors once at construction
-        from ..themes import THEMES
-        t_name = parent.theme_manager._current_theme_name if parent and hasattr(parent, 'theme_manager') else "The Color Purple"
-        t = THEMES.get(t_name, THEMES["The Color Purple"])
-        self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
-        self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
-        self._grid_items = {}
-        self._item_cache_widget = QWidget()  # parentless off-tree cache for hidden items
-        self._active_workers = set()
+        
+        # Virtual Pool Configuration
+        self._pool_size = 30 # Default buffer
+        self._pool = []
         self._books_cache = []
+        self._filtered_books = []
+        self._pixmap_cache = {}
+        
         self._data_initialized = False
-        self.setObjectName("library_panel")
-        self.setStyleSheet("QFrame#library_panel { }")
-        self.main_layout = QVBoxLayout(self) # Main layout for the panel
-        self.main_layout.setContentsMargins(0, 0, 0, 0) # Remove top margin to cover the progress bar
+        self._ignore_scroll = False
+        self._active_workers = set()
 
-        # Top bar for controls (Back button, Sort, Styles, Search)
-        self.top_bar_widget = QFrame()
-        self.top_bar_widget.setObjectName("library_top_bar") # For specific styling if needed
-        self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
-        self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
-        self.top_bar_layout.setSpacing(0)
+        self._setup_ui()
+        self._resolve_theme_colors()
+        self._setup_pool()
 
-        self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"]) 
-        self.sort_combo.setFixedWidth(73) # Increased to prevent clipping
-        self.sort_combo.setCurrentText(self.config.get_library_sort_key())
-        self._sort_ascending = self.config.get_library_sort_ascending()
-        self._last_filter_mode = self.sort_combo.currentText()
-
-        self.top_bar_layout.setSpacing(3)
-        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
-        self.top_bar_layout.addWidget(self.sort_combo)
-
-        self.sort_dir_btn = QPushButton("↑")
-        self.sort_dir_btn.setFixedWidth(16)
-        self.sort_dir_btn.setFixedHeight(26)
-        self.sort_dir_btn.setCheckable(True)
-        self.sort_dir_btn.setChecked(not self._sort_ascending)
-        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
-        self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
-        self.top_bar_layout.insertWidget(1, self.sort_dir_btn)
-
-        self.style_combo = QComboBox()
-        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "List"])
-        self.style_combo.setFixedWidth(86) 
-        self.style_combo.setCurrentText(self.config.get_library_view_mode())
-        self.top_bar_layout.setSpacing(3)
-        self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
-        self.top_bar_layout.addWidget(self.style_combo)
-
-        #self.top_bar_layout.addStretch() # Pushes subsequent widgets to the right
-
-        self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search #tag")
-        self.search_field.setAlignment(Qt.AlignCenter) 
-        self.search_field.setFixedWidth(63)
-        self.search_field.setFixedHeight(30)
-        self.top_bar_layout.setSpacing(3)
-        self.top_bar_layout.addWidget(self.search_field)
-
-        self.back_button = QPushButton("Back")
-        self.back_button.setFixedHeight(28)
-        self.top_bar_layout.setSpacing(3)
-        self.back_button.clicked.connect(self.back_requested.emit)
-        self.top_bar_layout.addWidget(self.back_button)
-
-        self.main_layout.addWidget(self.top_bar_widget) # Add the top bar to the main layout
-
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
-        self.container = QWidget()
-        self.container.setObjectName("library_scroll_contents")
-        self.grid = QGridLayout(self.container)
-        self.grid.setSpacing(0)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        
-        self.scroll.setWidget(self.container)
-        self.main_layout.addWidget(self.scroll)
-
-        # Prevent grid expansion by fixing column stretches and adding a spacer column
-        for col in range(3):
-            self.grid.setColumnStretch(col, 0)
-        self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
-
-    def refresh(self, force=False):
-        #BookItem._creation_count = 0
-        #t_start = time.perf_counter()
-        # Resolve colors from current theme
+    def _resolve_theme_colors(self):
         from ..themes import THEMES
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
@@ -589,133 +563,170 @@ class LibraryPanel(QFrame):
             self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
             self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
 
-        
-        # Phase 1: Always fetch data and update the cache    
-        books = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
-        new_paths = {b["path"] for b in books}
+    def _setup_pool(self):
+        """Creates the fixed widget pool and sets container to manual positioning."""
+        # Clear existing
+        for w in self._pool:
+            w.deleteLater()
+        self._pool.clear()
 
-        if force:
-            stale = [p for p in self._grid_items if p not in new_paths]
-            for path in stale:
-                self._grid_items[path].deleteLater()
-                del self._grid_items[path]
+        mode = self.style_combo.currentText()
+        for _ in range(self._pool_size):
+            item = BookItem(
+                view_mode=mode,
+                player_instance=self.player_instance,
+                pg_bg=self._pg_bg,
+                pg_fill=self._pg_fill,
+                parent=self.container
+            )
+            item.clicked.connect(self.book_selected.emit)
+            item.hide()
+            self._pool.append(item)
 
-        sort_text = self.sort_combo.currentText()
-        
-        # For last played, it will show only books with non-null last_played
-        if sort_text == "Last Played":
-            books = [b for b in books if b.get("last_played") is not None]
-
-        self._books_cache = books
-        self._data_initialized = True
-
-        #t_db = time.perf_counter()
-        #print(f"DEBUG - Phase 1 (DB fetch): {t_db - t_start:.4f}s")
-
-        # Phase 2 Guard: Build widgets only when visible or forced
-        if not self.isVisible():
-            self.update_current_book_progress()
+    def _update_viewport(self):
+        """Repositions and rebinds pool widgets based on scroll position."""
+        if not self._data_initialized or self._ignore_scroll:
             return
 
-        # Phase 2: Create or update BookItem widgets
-        self._reattach_items()
-        current_file = getattr(main_win, 'current_file', "")
+        mode = self.style_combo.currentText()
+        dim = ITEM_DIMENSIONS[mode]
+        item_h, cols = dim['h'], dim['cols']
         
-        # Remove stale
-        for path in list(self._grid_items.keys()):
-            if path not in new_paths:
-                self._grid_items[path].deleteLater()
-                del self._grid_items[path]
-        pool = QThreadPool.globalInstance()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        viewport_h = self.scroll.height()
         
-        #t_loop_start = time.perf_counter()
-        for book in self._books_cache:
-            path = book["path"]
-
-            if path == current_file:
-                book["progress"] = self.config.get_last_position(path)
-
-            if path not in self._grid_items:
-                item = BookItem(
-                    book, 
-                    view_mode=self.style_combo.currentText(), 
-                    player_instance=self.player_instance,
-                    pg_bg=self._pg_bg,
-                    pg_fill=self._pg_fill
-                )
-                #t_single_end = time.perf_counter()
-                #if BookItem._creation_count == 1:
-                    #print(f"DEBUG - Single BookItem constructor (inc. UI build): {t_single_end - t_single_start:.6f}s")
-
-                from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
-                worker = CoverLoaderWorker(book, self.player_instance)
-                self._active_workers.add(worker)
-                worker.signals.cover_loaded.connect(lambda bp, pm, book_item=item: self._on_cover_loaded(bp, pm, book_item))
-                worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
-
-                item.clicked.connect(self.book_selected.emit)
-                self._grid_items[path] = item
-                pool.start(worker)
-            elif hasattr(self._grid_items[path], 'cover_label') and (
-                not self._grid_items[path].cover_label.pixmap() or 
-                self._grid_items[path].cover_label.pixmap().isNull()
-            ):
-                # Item exists but cover is missing/null, trigger loader
-                item = self._grid_items[path]
-                item.update_data(book)
-                from .cover_loader import CoverLoaderWorker
-                worker = CoverLoaderWorker(book, self.player_instance)
-                self._active_workers.add(worker)
-                worker.signals.cover_loaded.connect(lambda bp, pm, book_item=item: self._on_cover_loaded(bp, pm, book_item))
-                worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
-                pool.start(worker)
-            else:
-                self._grid_items[path].update_data(book)
+        start_row = max(0, scroll_y // item_h)
+        end_row = (scroll_y + viewport_h) // item_h + 1
+        
+        start_idx = start_row * cols
+        end_idx = end_row * cols
+        
+        self.container.setUpdatesEnabled(False)
+        
+        pool_idx = 0
+        data_count = len(self._filtered_books)
+        
+        for i in range(start_idx, end_idx):
+            if pool_idx >= len(self._pool) or i >= data_count:
+                break
+                
+            widget = self._pool[pool_idx]
+            book = self._filtered_books[i]
             
-        #print(f"DEBUG - Total BookItems created this refresh: {BookItem._creation_count}")
-        #t_loop_end = time.perf_counter()
-        #print(f"DEBUG - Phase 2 (Widget Loop & Loader Trigger): {t_loop_end - t_loop_start:.4f}s")
+            # Alternate row styling for lists
+            if mode in ("1 per row", "List"):
+                widget.setProperty("alt_row", str(i % 2))
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
 
-        #t_sort_start = time.perf_counter()
-        self._sort_items_in_place()
-        #t_sort_end = time.perf_counter()
-        #print(f"DEBUG - Phase 3 (Sorting/Layout): {t_sort_end - t_sort_start:.4f}s")
-        #print(f"DEBUG - Total Refresh: {t_sort_end - t_start:.4f}s")
+            # Bind Data
+            path_changed = widget.bind(book)
+            
+            # Handle Pixmap Cache
+            if hasattr(widget, 'cover_label'):
+                path = book['path']
+                if path in self._pixmap_cache:
+                    widget.set_cover(self._pixmap_cache[path])
+                elif path_changed or not widget.cover_label.pixmap():
+                    widget.cover_label.setPixmap(QPixmap())
+                    self._trigger_cover_load(book, widget)
 
-    def _detach_items(self):
-        while self.grid.count():
-            self.grid.takeAt(self.grid.count() - 1)
-        for item in self._grid_items.values():
-            item.setParent(self._item_cache_widget)
+            # Position
+            row, col = i // cols, i % cols
+            widget.move(col * dim['w'], row * item_h)
+            widget.show()
+            pool_idx += 1
 
-    def _reattach_items(self):
-        for item in self._grid_items.values():
-            item.setParent(self.container)
-            item.show()
+        # Hide remaining pool
+        for i in range(pool_idx, len(self._pool)):
+            self._pool[i].hide()
+            
+        self.container.setUpdatesEnabled(True)
+
+    def refresh(self, force=False):
+        self._resolve_theme_colors()
+        self._books_cache = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
+        self._data_initialized = True
+
+        if not self.isVisible():
+            return
+
+        self._on_search_changed(self.search_field.text())
+
+    def _trigger_cover_load(self, book, widget):
+        from .cover_loader import CoverLoaderWorker
+        worker = CoverLoaderWorker(book, self.player_instance)
+        self._active_workers.add(worker)
+        worker.signals.cover_loaded.connect(lambda p, pix, w=widget: self._on_cover_loaded(p, pix, w))
+        worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_cover_loaded(self, path, pixmap, widget):
+        if not pixmap.isNull():
+            self._pixmap_cache[path] = pixmap
+            if widget.current_path == path:
+                widget.set_cover(pixmap)
 
     def _on_view_mode_changed(self, mode):
         self.config.set_library_view_mode(mode)
-        pixmap_cache = {}
-        for path, item in self._grid_items.items():
-            if hasattr(item, 'cover_label'):
-                pm = item.cover_label.pixmap()
-                if pm and not pm.isNull():
-                    pixmap_cache[path] = pm
-            item.deleteLater()
-        self._grid_items.clear()
-        for child in list(self._item_cache_widget.children()):
-            if isinstance(child, QWidget):
-                child.deleteLater()
-        self.refresh(force=True)
-        for path, item in self._grid_items.items():
-            if path in pixmap_cache and hasattr(item, 'cover_label'):
-                item.cover_label.setPixmap(
-                    pixmap_cache[path].scaled(
-                        item.cover_label.size(),
-                        Qt.KeepAspectRatioByExpanding,
-                        Qt.SmoothTransformation
-                    )
-                )
+        for item in self._pool:
+            item.set_view_mode(mode)
+        self._sort_items_in_place()
+
+    def _setup_ui(self):
+        # Moved UI setup logic here for cleaner __init__
+        self.setObjectName("library_panel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.top_bar_widget = QFrame()
+        self.top_bar_widget.setObjectName("library_top_bar")
+        self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
+        self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
+
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"])
+        self.sort_combo.setFixedWidth(73)
+        self.sort_combo.setCurrentText(self.config.get_library_sort_key())
+        self._sort_ascending = self.config.get_library_sort_ascending()
+        self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+
+        self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
+        self.sort_dir_btn.setFixedWidth(16)
+        self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
+
+        self.style_combo = QComboBox()
+        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "List"])
+        self.style_combo.setFixedWidth(86)
+        self.style_combo.setCurrentText(self.config.get_library_view_mode())
+        self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
+
+        self.search_field = QLineEdit()
+        self.search_field.setPlaceholderText("search")
+        self.search_field.setFixedWidth(63)
+        self.search_field.textChanged.connect(self._on_search_changed)
+
+        self.back_button = QPushButton("Back")
+        self.back_button.clicked.connect(self.back_requested.emit)
+
+        self.top_bar_layout.addWidget(self.sort_combo)
+        self.top_bar_layout.addWidget(self.sort_dir_btn)
+        self.top_bar_layout.addWidget(self.style_combo)
+        self.top_bar_layout.addWidget(self.search_field)
+        self.top_bar_layout.addWidget(self.back_button)
+        self.main_layout.addWidget(self.top_bar_widget)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.verticalScrollBar().valueChanged.connect(self._update_viewport)
+        
+        self.container = QWidget()
+        self.container.setObjectName("library_scroll_contents")
+        # Virtual scrolling uses absolute positioning; Grid layout is removed
+        self.scroll.setWidget(self.container)
+        self.main_layout.addWidget(self.scroll)
 
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
@@ -727,42 +738,41 @@ class LibraryPanel(QFrame):
         if sort_text == "Last Played" or self._last_filter_mode == "Last Played":
             self.refresh(force=True)
         else:
-            self._sort_items_in_place()
+            self._sort_items_in_place(reset_scroll=True)
         self._last_filter_mode = sort_text
 
-    def _sort_items_in_place(self, ascending=None):
+    def _on_search_changed(self, text):
+        text = text.lower().strip()
+        if not text:
+            self._filtered_books = list(self._books_cache)
+        else:
+            self._filtered_books = [
+                b for b in self._books_cache
+                if text in (b.get('title') or '').lower() or 
+                   text in (b.get('author') or '').lower()
+            ]
+        self._sort_items_in_place(reset_scroll=True)
+
+    def _sort_items_in_place(self, ascending=None, reset_scroll=False):
         # Toggle direction if called from button, otherwise keep current
         if ascending is None:
             ascending = getattr(self, '_sort_ascending', True)
-        else:
-            self._sort_ascending = ascending
+        self._sort_ascending = ascending
 
         sort_text = self.sort_combo.currentText()
         self.config.set_library_sort_key(sort_text)
         self.config.set_library_sort_ascending(ascending)
 
         sort_key = sort_text.lower().replace(" ", "_")
-        view_mode = self.style_combo.currentText()
-        if view_mode == "3 per row":
-            cols = 3
-            self.grid.setContentsMargins(2, 0, 0, 0)
-        elif view_mode == "2 per row":
-            cols = 2
-            self.grid.setContentsMargins(6, 0, 0, 0)
-        else:
-            cols = 1
-            self.grid.setContentsMargins(0, 0, 0, 0)
-
-        # Numeric fields sort as float, datetime as string (ISO format sorts correctly), text as lower
         numeric_keys = {"progress", "duration"}
         datetime_keys = {"last_played", "date_added"}
 
-        def sort_value(item):
-            val = item.book_data.get(sort_key)
+        def sort_value(book_dict):
+            val = book_dict.get(sort_key)
             if val is None:
                 return (1, 0 if sort_key in numeric_keys else "")
             if sort_key == "progress":
-                duration = item.book_data.get("duration") or 1
+                duration = book_dict.get("duration") or 1
                 return (0, float(val) / float(duration))
             if sort_key in numeric_keys:
                 return (0, float(val))
@@ -770,46 +780,38 @@ class LibraryPanel(QFrame):
                 return (0, str(val))
             return (0, str(val).lower())
 
-        # Split into items with values and items with None to ensure nulls always go last
-        items = sorted(
-            [i for i in self._grid_items.values() if i.book_data.get(sort_key) is not None],
+        has_val = [b for b in self._filtered_books if b.get(sort_key) is not None]
+        no_val = [b for b in self._filtered_books if b.get(sort_key) is None]
+
+        self._filtered_books = sorted(
+            has_val,
             key=sort_value,
             reverse=not ascending
-        ) + sorted(
-            [i for i in self._grid_items.values() if i.book_data.get(sort_key) is None],
-            key=sort_value
-        )
+        ) + sorted(no_val, key=sort_value)
 
-        self.container.setUpdatesEnabled(False)
-        while self.grid.count():
-            self.grid.takeAt(self.grid.count() - 1)
-            
-        is_alternating = view_mode in ["1 per row", "List"]
+        # Update Logical Scroll Height
+        dim = ITEM_DIMENSIONS[self.style_combo.currentText()]
+        rows = math.ceil(len(self._filtered_books) / dim['cols'])
+        self.container.setFixedHeight(rows * dim['h'])
         
-        for i, item in enumerate(items):
-            if is_alternating:
-                item.setProperty("alt_row", str(i % 2))
-                item.style().unpolish(item)
-                item.style().polish(item)
-            self.grid.addWidget(item, i // cols, i % cols)
-        self.container.setUpdatesEnabled(True)
+        if reset_scroll:
+            self._ignore_scroll = True
+            self.scroll.verticalScrollBar().setValue(0)
+            self._ignore_scroll = False
+            
+        self._update_viewport()
 
     def update_current_book_progress(self):
         """Live update for the currently playing book's progress and sorting."""
         if getattr(self, '_is_animating', False):
             return
-            
-        main_win = self.parent() if hasattr(self.parent(), 'current_file') else self.window()
-        current_file = getattr(main_win, 'current_file', "")
-        if current_file and current_file in self._grid_items:
-            # Sync the in-memory data from the config cache
-            live_pos = self.config.get_last_position(current_file)
-            item = self._grid_items[current_file]
-            item.book_data["progress"] = live_pos
-            item.update_data(item.book_data)
-            # Only re-sort if currently sorting by progress
-            if self.sort_combo.currentText() == "Progress":
-                self._sort_items_in_place()
+        
+        # Since virtualization only re-renders visible items, we just need to refresh
+        # if the "Progress" sort is active, or if the current book is in the viewport.
+        if self.sort_combo.currentText() == "Progress":
+            self._sort_items_in_place()
+        else:
+            self._update_viewport()
 
     def _on_cover_loaded(self, book_path, pixmap, book_item):
         # Only attempt to set cover if the BookItem actually has a cover_label (i.e., not in List view)
