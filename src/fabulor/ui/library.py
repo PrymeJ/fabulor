@@ -11,6 +11,7 @@ from PySide6.QtGui import QPixmap
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
     "3 per row": {"w": 96,  "h": 146, "cols": 3},
+    "Square":    {"w": 96,  "h": 96,  "cols": 3},
     "2 per row": {"w": 140, "h": 226, "cols": 2},
     "1 per row": {"w": 292, "h": 161, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
@@ -156,6 +157,16 @@ class BookItem(QFrame):
             self.cover_label = self._make_cover(92,142)
             layout.addWidget(self.cover_label)
 
+        # -------- SQUARE --------
+        elif mode == "Square":
+            self.setFixedSize(96,96)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(2,2,1,2)
+            layout.setSpacing(0)
+
+            self.cover_label = self._make_cover(92,92)
+            layout.addWidget(self.cover_label)
+
         # -------- 2 PER ROW --------
         elif mode == "2 per row":
             self.setFixedSize(140,226)
@@ -251,7 +262,7 @@ class BookItem(QFrame):
             layout.addWidget(self.author_label)
             layout.addWidget(self.total_label)
 
-        if mode in ("2 per row", "3 per row"):
+        if mode in ("2 per row", "3 per row", "Square"):
             self._overlay_has_progress = False
             self.overlay_widget = QWidget(self)
             ovl_layout = QVBoxLayout(self.overlay_widget)
@@ -534,13 +545,16 @@ class BookItem(QFrame):
 
                 # Smart scaling: Crop if ratios are close, letterbox if they differ significantly
                 cell_size = self.cover_label.size()
-                mode = Qt.KeepAspectRatio
-                if cell_size.height() > 0 and pixmap.height() > 0:
-                    cell_ratio = cell_size.width() / cell_size.height()
-                    cover_ratio = pixmap.width() / pixmap.height()
-                    # If within 8% of the cell ratio, expand/crop for a cleaner look
-                    if abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
-                        mode = Qt.KeepAspectRatioByExpanding
+                if self.view_mode == "Square":
+                    mode = Qt.KeepAspectRatioByExpanding
+                else:
+                    mode = Qt.KeepAspectRatio
+                    if cell_size.height() > 0 and pixmap.height() > 0:
+                        cell_ratio = cell_size.width() / cell_size.height()
+                        cover_ratio = pixmap.width() / pixmap.height()
+                        # If within 8% of the cell ratio, expand/crop for a cleaner look
+                        if abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
+                            mode = Qt.KeepAspectRatioByExpanding
 
                 scaled = pixmap.scaled(
                     cell_size * dpr,
@@ -765,7 +779,7 @@ class LibraryPanel(QFrame):
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
 
         self.style_combo = QComboBox()
-        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "List"])
+        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "Square", "List"])
         self.style_combo.setFixedWidth(86)
         self.style_combo.setCurrentText(self.config.get_library_view_mode())
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
