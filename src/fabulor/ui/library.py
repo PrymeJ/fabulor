@@ -1,12 +1,21 @@
 import os
 import time
 import math
+import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
 from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
 from PySide6.QtGui import QPixmap
+
+# View mode: (internal_key, [display_name_options])
+ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
+TWO_PER_ROW_MODE   = ("2 per row", ["2 Cities", "2 Towers", "Swim-2-Birds", "2nd Sex", "2nd Sons"])
+THREE_PER_ROW_MODE = ("3 per row", ["3 Body", "3 Stigmata", "3 Kingdoms", "Drawing of 3", "3 Lives", "The 3rd Man", "3rd Policeman", "3 Guineas", "3 Comrades"])
+SQUARE_MODE        = ("Square",    ["Washington Sq."])
+LIST_MODE          = ("List",      ["Cannery Row"])
+VIEW_MODES = [ONE_PER_ROW_MODE, TWO_PER_ROW_MODE, THREE_PER_ROW_MODE, SQUARE_MODE, LIST_MODE]
 
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
@@ -641,7 +650,7 @@ class LibraryPanel(QFrame):
             w.deleteLater()
         self._pool.clear()
 
-        mode = self.style_combo.currentText()
+        mode = self.style_combo.currentData()
         for _ in range(self._pool_size):
             item = BookItem(
                 view_mode=mode,
@@ -659,7 +668,7 @@ class LibraryPanel(QFrame):
         if not self._data_initialized or self._ignore_scroll:
             return
 
-        mode = self.style_combo.currentText()
+        mode = self.style_combo.currentData()
         dim = ITEM_DIMENSIONS[mode]
         item_h, cols = dim['h'], dim['cols']
         
@@ -714,7 +723,14 @@ class LibraryPanel(QFrame):
             
         self.container.setUpdatesEnabled(True)
 
+    def _rotate_view_mode_labels(self):
+        self.style_combo.blockSignals(True)
+        for i, (_, options) in enumerate(VIEW_MODES):
+            self.style_combo.setItemText(i, random.choice(options))
+        self.style_combo.blockSignals(False)
+
     def refresh(self, force=False):
+        self._rotate_view_mode_labels()
         self._resolve_theme_colors()
         self._books_cache = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
         self._data_initialized = True
@@ -743,7 +759,8 @@ class LibraryPanel(QFrame):
         if widget.current_path == path:
             widget.set_cover(pixmap)
 
-    def _on_view_mode_changed(self, mode):
+    def _on_view_mode_changed(self, _):
+        mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
         for item in self._pool:
@@ -779,9 +796,14 @@ class LibraryPanel(QFrame):
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
 
         self.style_combo = QComboBox()
-        self.style_combo.addItems(["1 per row", "2 per row", "3 per row", "Square", "List"])
+        for key, options in VIEW_MODES:
+            self.style_combo.addItem(random.choice(options), key)
         self.style_combo.setFixedWidth(86)
-        self.style_combo.setCurrentText(self.config.get_library_view_mode())
+        saved_mode = self.config.get_library_view_mode()
+        for i in range(self.style_combo.count()):
+            if self.style_combo.itemData(i) == saved_mode:
+                self.style_combo.setCurrentIndex(i)
+                break
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
@@ -874,7 +896,7 @@ class LibraryPanel(QFrame):
         ) + sorted(no_val, key=sort_value)
 
         # Update Logical Scroll Height
-        dim = ITEM_DIMENSIONS[self.style_combo.currentText()]
+        dim = ITEM_DIMENSIONS[self.style_combo.currentData()]
         rows = math.ceil(len(self._filtered_books) / dim['cols'])
         self.container.setFixedHeight(rows * dim['h'])
         
