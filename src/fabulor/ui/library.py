@@ -527,14 +527,28 @@ class BookItem(QFrame):
                 self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
     def set_cover(self, pixmap):
-        if not pixmap or pixmap.isNull():
-            return
-        scaled = pixmap.scaled(
-            self.cover_label.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.cover_label.setPixmap(scaled)
+        if hasattr(self, 'cover_label'):
+            if pixmap and not pixmap.isNull():
+                # Fetch current screen DPR to ensure crispness without size issues
+                dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+                scaled = pixmap.scaled(
+                    self.cover_label.size() * dpr,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                scaled.setDevicePixelRatio(dpr)
+                self.cover_label.setPixmap(scaled)
+                self.cover_label.setProperty("placeholder", False)
+                self.cover_label.setText("")
+            else:
+                # Fallback to placeholder if no cover is available
+                display_title = self.book_data.get("title") or "Unknown"
+                self.cover_label.setText(display_title[:1])
+                self.cover_label.setProperty("placeholder", True)
+                self.cover_label.setPixmap(QPixmap())
+            
+            self.cover_label.style().unpolish(self.cover_label)
+            self.cover_label.style().polish(self.cover_label)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -695,9 +709,14 @@ class LibraryPanel(QFrame):
 
     def _on_cover_loaded(self, path, pixmap, widget):
         if not pixmap.isNull():
+            dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+            pixmap.setDevicePixelRatio(dpr)
             self._pixmap_cache[path] = pixmap
             if widget.current_path == path:
                 widget.set_cover(pixmap)
+        
+        if widget.current_path == path:
+            widget.set_cover(pixmap)
 
     def _on_view_mode_changed(self, mode):
         self.config.set_library_view_mode(mode)
@@ -852,22 +871,3 @@ class LibraryPanel(QFrame):
             self._sort_items_in_place()
         else:
             self._update_viewport()
-
-    def _on_cover_loaded(self, book_path, pixmap, book_item):
-        # Only attempt to set cover if the BookItem actually has a cover_label (i.e., not in List view)
-        if hasattr(book_item, 'cover_label'):
-            if not pixmap.isNull():
-                book_item.cover_label.setPixmap(pixmap.scaled(
-                    book_item.cover_label.size(), 
-                    Qt.KeepAspectRatioByExpanding, 
-                    Qt.SmoothTransformation
-                ))
-                book_item.cover_label.setProperty("placeholder", False)
-                book_item.cover_label.setText("") 
-                book_item.cover_label.style().unpolish(book_item.cover_label)
-                book_item.cover_label.style().polish(book_item.cover_label)
-            else:
-                # If still no pixmap, ensure placeholder is visible
-                display_title = book_item.book_data.get("title") or "Unknown"
-                book_item.cover_label.setText(display_title[:1])
-                book_item.cover_label.setProperty("placeholder", True)
