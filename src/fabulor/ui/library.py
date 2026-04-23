@@ -310,7 +310,7 @@ class BookItem(QFrame):
             bottom_layout.addWidget(self.overlay_total_duration_label)
             ovl_layout.addWidget(bottom_row)
             self.overlay_widget.setStyleSheet(
-                "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(0,0,0,100), stop:1 rgba(0,0,0,230));"
+                "background: qlineargradient(x1:2, y1:2, x1:4, y1:4, stop:0 rgba(0,0,0,100), stop:1 rgba(0,0,0,230));"
             )
             self.overlay_time_row.setStyleSheet("background: transparent;")
             bottom_row.setStyleSheet("background: transparent;")
@@ -692,10 +692,12 @@ class LibraryPanel(QFrame):
         self.top_bar_widget.setObjectName("library_top_bar")
         self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
         self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
+        self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"])
         self.sort_combo.setFixedWidth(73)
+        self.sort_combo.setFixedHeight(30)
         self.sort_combo.setCurrentText(self.config.get_library_sort_key())
         self._sort_ascending = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentText()
@@ -703,6 +705,7 @@ class LibraryPanel(QFrame):
 
         self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
         self.sort_dir_btn.setFixedWidth(16)
+        self.sort_dir_btn.setFixedHeight(26)
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
 
         self.style_combo = QComboBox()
@@ -712,11 +715,13 @@ class LibraryPanel(QFrame):
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search")
+        self.search_field.setPlaceholderText("search #tag")
         self.search_field.setFixedWidth(63)
+        self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
 
         self.back_button = QPushButton("Back")
+        self.back_button.setFixedHeight(28)
         self.back_button.clicked.connect(self.back_requested.emit)
 
         self.top_bar_layout.addWidget(self.sort_combo)
