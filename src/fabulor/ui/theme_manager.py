@@ -184,6 +184,7 @@ class ThemeManager:
             mw.content_container.setStyleSheet(get_player_stylesheet(theme_name))
         if not hover and hasattr(mw, 'library_panel'):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
+            mw.library_panel.update_progress_bar_theme()
         ss_panels = get_settings_stylesheet(theme_name)
         for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
             w = getattr(mw, attr, None)

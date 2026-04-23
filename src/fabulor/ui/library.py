@@ -287,6 +287,18 @@ class BookItem(QFrame):
             self.overlay_progress_bar.setTextVisible(False)
             self.overlay_progress_bar.setRange(0, 1000)
             self.overlay_progress_bar.setValue(0)
+            self.overlay_progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background-color: {self._pg_bg};
+                    border: none;
+                    border-radius: 0px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {self._pg_fill};
+                    border: none;
+                    border-radius: 0px;
+                }}
+            """)
 
             self.overlay_pct_label = QLabel()
             self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
@@ -570,6 +582,23 @@ class LibraryPanel(QFrame):
             t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
             self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
             self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
+
+    def update_progress_bar_theme(self):
+        self._resolve_theme_colors()
+        for item in self._pool:
+            if hasattr(item, 'overlay_progress_bar'):
+                item.overlay_progress_bar.setStyleSheet(f"""
+                    QProgressBar {{
+                        background-color: {self._pg_bg};
+                        border: none;
+                        border-radius: 0px;
+                    }}
+                    QProgressBar::chunk {{
+                        background-color: {self._pg_fill};
+                        border: none;
+                        border-radius: 0px;
+                    }}
+                """)
 
     def _setup_pool(self):
         """Creates the fixed widget pool and sets container to manual positioning."""
