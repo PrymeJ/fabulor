@@ -706,9 +706,11 @@ class LibraryPanel(QFrame):
 
     def _on_view_mode_changed(self, mode):
         self.config.set_library_view_mode(mode)
+        self._resolve_theme_colors()
         for item in self._pool:
             item.set_view_mode(mode)
         self._sort_items_in_place()
+        self.update_progress_bar_theme()
 
     def _setup_ui(self):
         # Moved UI setup logic here for cleaner __init__
