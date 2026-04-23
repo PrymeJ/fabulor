@@ -531,9 +531,20 @@ class BookItem(QFrame):
             if pixmap and not pixmap.isNull():
                 # Fetch current screen DPR to ensure crispness without size issues
                 dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+
+                # Smart scaling: Crop if ratios are close, letterbox if they differ significantly
+                cell_size = self.cover_label.size()
+                mode = Qt.KeepAspectRatio
+                if cell_size.height() > 0 and pixmap.height() > 0:
+                    cell_ratio = cell_size.width() / cell_size.height()
+                    cover_ratio = pixmap.width() / pixmap.height()
+                    # If within 8% of the cell ratio, expand/crop for a cleaner look
+                    if abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
+                        mode = Qt.KeepAspectRatioByExpanding
+
                 scaled = pixmap.scaled(
-                    self.cover_label.size() * dpr,
-                    Qt.KeepAspectRatio,
+                    cell_size * dpr,
+                    mode,
                     Qt.SmoothTransformation
                 )
                 scaled.setDevicePixelRatio(dpr)
