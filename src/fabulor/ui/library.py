@@ -9,11 +9,9 @@ from PySide6.QtGui import QPixmap
 
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
-    _creation_count = 0
 
     def __init__(self, book_data, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None, parent=None):
         super().__init__(parent)
-        BookItem._creation_count += 1
         self.book_data = book_data
         self.view_mode = view_mode
         self.setObjectName("book_item")
@@ -598,8 +596,8 @@ class LibraryPanel(QFrame):
         self.grid.setColumnStretch(3, 1) # Absorbs extra horizontal space
 
     def refresh(self, force=False):
-        BookItem._creation_count = 0
-        t_start = time.perf_counter()
+        #BookItem._creation_count = 0
+        #t_start = time.perf_counter()
         # Resolve colors from current theme
         from ..themes import THEMES
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
@@ -628,8 +626,8 @@ class LibraryPanel(QFrame):
         self._books_cache = books
         self._data_initialized = True
 
-        t_db = time.perf_counter()
-        print(f"DEBUG - Phase 1 (DB fetch): {t_db - t_start:.4f}s")
+        #t_db = time.perf_counter()
+        #print(f"DEBUG - Phase 1 (DB fetch): {t_db - t_start:.4f}s")
 
         # Phase 2 Guard: Build widgets only when visible or forced
         if not self.isVisible():
@@ -647,7 +645,7 @@ class LibraryPanel(QFrame):
                 del self._grid_items[path]
         pool = QThreadPool.globalInstance()
         
-        t_loop_start = time.perf_counter()
+        #t_loop_start = time.perf_counter()
         for book in self._books_cache:
             path = book["path"]
 
@@ -655,7 +653,6 @@ class LibraryPanel(QFrame):
                 book["progress"] = self.config.get_last_position(path)
 
             if path not in self._grid_items:
-                t_single_start = time.perf_counter()
                 item = BookItem(
                     book, 
                     view_mode=self.style_combo.currentText(), 
@@ -663,9 +660,9 @@ class LibraryPanel(QFrame):
                     pg_bg=self._pg_bg,
                     pg_fill=self._pg_fill
                 )
-                t_single_end = time.perf_counter()
-                if BookItem._creation_count == 1:
-                    print(f"DEBUG - Single BookItem constructor (inc. UI build): {t_single_end - t_single_start:.6f}s")
+                #t_single_end = time.perf_counter()
+                #if BookItem._creation_count == 1:
+                    #print(f"DEBUG - Single BookItem constructor (inc. UI build): {t_single_end - t_single_start:.6f}s")
 
                 from .cover_loader import CoverLoaderWorker # Import here to avoid circular dependency
                 worker = CoverLoaderWorker(book, self.player_instance)
@@ -692,15 +689,15 @@ class LibraryPanel(QFrame):
             else:
                 self._grid_items[path].update_data(book)
             
-        print(f"DEBUG - Total BookItems created this refresh: {BookItem._creation_count}")
-        t_loop_end = time.perf_counter()
-        print(f"DEBUG - Phase 2 (Widget Loop & Loader Trigger): {t_loop_end - t_loop_start:.4f}s")
+        #print(f"DEBUG - Total BookItems created this refresh: {BookItem._creation_count}")
+        #t_loop_end = time.perf_counter()
+        #print(f"DEBUG - Phase 2 (Widget Loop & Loader Trigger): {t_loop_end - t_loop_start:.4f}s")
 
-        t_sort_start = time.perf_counter()
+        #t_sort_start = time.perf_counter()
         self._sort_items_in_place()
-        t_sort_end = time.perf_counter()
-        print(f"DEBUG - Phase 3 (Sorting/Layout): {t_sort_end - t_sort_start:.4f}s")
-        print(f"DEBUG - Total Refresh: {t_sort_end - t_start:.4f}s")
+        #t_sort_end = time.perf_counter()
+        #print(f"DEBUG - Phase 3 (Sorting/Layout): {t_sort_end - t_sort_start:.4f}s")
+        #print(f"DEBUG - Total Refresh: {t_sort_end - t_start:.4f}s")
 
     def _detach_items(self):
         while self.grid.count():
