@@ -10,9 +10,9 @@ from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
 from PySide6.QtGui import QPixmap
 
 # View mode: (internal_key, [display_name_options])
-ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
+ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
 TWO_PER_ROW_MODE   = ("2 per row", ["2 Cities", "2 Towers", "Swim-2-Birds", "2nd Sex", "2nd Sons"])
-THREE_PER_ROW_MODE = ("3 per row", ["3 Body", "3 Stigmata", "3 Kingdoms", "Drawing of 3", "3 Lives", "The 3rd Man", "3rd Policeman", "3 Guineas", "3 Comrades"])
+THREE_PER_ROW_MODE = ("3 per row", ["3 Body", "3 Stigmata", "3 Kingdoms", "Drawing of the 3", "3 Lives", "The 3rd Man", "3rd Policeman", "3 Guineas", "3 Comrades"])
 SQUARE_MODE        = ("Square",    ["Washington Sq."])
 LIST_MODE          = ("List",      ["Cannery Row"])
 VIEW_MODES = [ONE_PER_ROW_MODE, TWO_PER_ROW_MODE, THREE_PER_ROW_MODE, SQUARE_MODE, LIST_MODE]
@@ -729,8 +729,11 @@ class LibraryPanel(QFrame):
             self.style_combo.setItemText(i, random.choice(options))
         self.style_combo.blockSignals(False)
 
-    def refresh(self, force=False):
+    def hideEvent(self, event):
+        super().hideEvent(event)
         self._rotate_view_mode_labels()
+
+    def refresh(self, force=False):
         self._resolve_theme_colors()
         self._books_cache = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
         self._data_initialized = True
@@ -782,12 +785,17 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Title", "Author", "Last Played", "Progress", "Duration"])
-        self.sort_combo.setFixedWidth(73)
+        for display, key in [("Title", "Title"), ("Author", "Author"), ("Recent", "Last Played"), ("Progress", "Progress"), ("Duration", "Duration")]:
+            self.sort_combo.addItem(display, key)
+        self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
-        self.sort_combo.setCurrentText(self.config.get_library_sort_key())
+        saved_sort = self.config.get_library_sort_key()
+        for i in range(self.sort_combo.count()):
+            if self.sort_combo.itemData(i) == saved_sort:
+                self.sort_combo.setCurrentIndex(i)
+                break
         self._sort_ascending = self.config.get_library_sort_ascending()
-        self._last_filter_mode = self.sort_combo.currentText()
+        self._last_filter_mode = self.sort_combo.currentData()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
 
         self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
@@ -798,7 +806,7 @@ class LibraryPanel(QFrame):
         self.style_combo = QComboBox()
         for key, options in VIEW_MODES:
             self.style_combo.addItem(random.choice(options), key)
-        self.style_combo.setFixedWidth(86)
+        self.style_combo.setFixedWidth(94)
         saved_mode = self.config.get_library_view_mode()
         for i in range(self.style_combo.count()):
             if self.style_combo.itemData(i) == saved_mode:
@@ -840,7 +848,7 @@ class LibraryPanel(QFrame):
         self._sort_items_in_place(ascending=self._sort_ascending)
 
     def _on_sort_changed(self):
-        sort_text = self.sort_combo.currentText()
+        sort_text = self.sort_combo.currentData()
         if sort_text == "Last Played" or self._last_filter_mode == "Last Played":
             self.refresh(force=True)
         else:
@@ -865,7 +873,7 @@ class LibraryPanel(QFrame):
             ascending = getattr(self, '_sort_ascending', True)
         self._sort_ascending = ascending
 
-        sort_text = self.sort_combo.currentText()
+        sort_text = self.sort_combo.currentData()
         self.config.set_library_sort_key(sort_text)
         self.config.set_library_sort_ascending(ascending)
 
@@ -914,7 +922,7 @@ class LibraryPanel(QFrame):
         
         # Since virtualization only re-renders visible items, we just need to refresh
         # if the "Progress" sort is active, or if the current book is in the viewport.
-        if self.sort_combo.currentText() == "Progress":
+        if self.sort_combo.currentData() == "Progress":
             self._sort_items_in_place()
         else:
             self._update_viewport()
