@@ -14,6 +14,8 @@ class SettingsController:
         main.undo_mode_changed.connect(self._update_undo_mode)
         main.fade_mode_changed.connect(self._update_fade_mode)
         main.blur_mode_changed.connect(self._update_blur_mode)
+        main._update_speed_grid_styling = self._update_speed_grid_styling
+        main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
