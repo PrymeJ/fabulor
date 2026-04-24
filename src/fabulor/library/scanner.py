@@ -47,7 +47,7 @@ class ScannerWorker(QObject):
         processed = 0
         
         # Optimization: Get all known paths first to avoid re-extracting tags
-        known_paths = {b['path'] for b in db.get_all_books()}
+        known_paths = {b.path for b in db.get_all_books()}
 
         # Phase 2: Metadata Extraction
         for book_dir in book_dirs:

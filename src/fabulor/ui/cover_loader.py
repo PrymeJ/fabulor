@@ -19,8 +19,8 @@ class CoverLoaderWorker(QRunnable):
 
     @Slot()
     def run(self):
-        book_path = self.book_data["path"]
-        cover_source_path = self.book_data.get("cover_path")
+        book_path = self.book_data.path
+        cover_source_path = self.book_data.cover_path
 
         pixmap = QPixmap()
         if cover_source_path:

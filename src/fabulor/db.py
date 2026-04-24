@@ -158,7 +158,7 @@ class LibraryDB:
         collate = " COLLATE NOCASE" if sort_by in self._TEXT_SORT_COLUMNS else ""
         with self._get_conn() as conn:
             cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}{collate} {order}")
-            return [dict(row) for row in cursor.fetchall()]
+            return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
     def get_book_count(self):
         """Returns the total number of books in the library."""

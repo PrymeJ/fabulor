@@ -414,7 +414,7 @@ class BookItem(QFrame):
         """Virtual Scroll entry point: Rebinds the widget to new data."""
         self.book_data = book_data
         old_path = self.current_path
-        self.current_path = book_data.get("path", "")
+        self.current_path = book_data.path
         
         self._update_ui_content()
         return old_path != self.current_path
@@ -455,8 +455,8 @@ class BookItem(QFrame):
     def _update_progress_bar(self):
         if not hasattr(self, 'overlay_progress_bar'):
             return
-        prog = float(self.book_data.get("progress") or 0)
-        dur = float(self.book_data.get("duration") or 0)
+        prog = self.book_data.progress
+        dur = self.book_data.duration
         pct = (prog / dur) if dur > 0 else 0
         self.overlay_progress_bar.setValue(int(pct * 1000))
 
@@ -482,12 +482,12 @@ class BookItem(QFrame):
             if event.type() == QEvent.Enter:
                 if obj is title_lbl and getattr(self, '_title_is_elided', False):
                     author_lbl.hide()
-                    title_lbl.setText(self.book_data.get("title", ""))
+                    title_lbl.setText(self.book_data.title)
                 elif obj is author_lbl and getattr(self, '_author_is_elided', False):
                     title_lbl.hide()
                     # Expand author to take available space (matches AVAILABLE in _update_ui_content)
                     author_lbl.setFixedWidth(218)
-                    author_lbl.setText(self.book_data.get("author", ""))
+                    author_lbl.setText(self.book_data.author)
             elif event.type() == QEvent.Leave:
                 if obj is title_lbl or obj is author_lbl:
                     title_lbl.show()
@@ -502,9 +502,9 @@ class BookItem(QFrame):
     def mousePressEvent(self, event):
         self._is_toggling = False
         if event.button() == Qt.LeftButton:
-            prog = float(self.book_data.get("progress") or 0)
-            dur = float(self.book_data.get("duration") or 0)
-            
+            prog = self.book_data.progress
+            dur = self.book_data.duration
+
             if prog > 0 and dur > 0:
                 target = None
                 # If overlay is visible, it takes precedence for the hit test
@@ -531,8 +531,8 @@ class BookItem(QFrame):
             
         # Ensure progress inner width is updated when the layout resizes the parent
         if hasattr(self, "progress_inner") and hasattr(self, "progress_outer"):
-            prog = float(self.book_data.get("progress") or 0)
-            dur = float(self.book_data.get("duration") or 0)
+            prog = self.book_data.progress
+            dur = self.book_data.duration
             pct = (prog / dur) if dur > 0 else 0
             try:
                 w = int(self.progress_outer.maximumWidth() * pct)
@@ -543,15 +543,15 @@ class BookItem(QFrame):
     def _update_ui_content(self):
         """Internal: Updates labels based on current book_data."""
         book_data = self.book_data
-        title = book_data.get("title") or ""
-        author = book_data.get("author") or ""
-        narrator = book_data.get("narrator")
-        year = book_data.get("year")
+        title = book_data.title or ""
+        author = book_data.author or ""
+        narrator = book_data.narrator
+        year = book_data.year
 
-        prog = float(book_data.get("progress") or 0)
-        dur = float(book_data.get("duration") or 0)
+        prog = book_data.progress
+        dur = book_data.duration
         pct = (prog / dur) if dur > 0 else 0
-        speed = float(self.book_data.get("speed") or 1.0)
+        speed = self.book_data.speed
         has_progress = prog > 0 and dur > 0
 
         def fmt_time(s):
@@ -720,7 +720,7 @@ class BookItem(QFrame):
                 self.cover_label.setText("")
             else:
                 # Fallback to placeholder if no cover is available
-                display_title = self.book_data.get("title") or "Unknown"
+                display_title = self.book_data.title or "Unknown"
                 self.cover_label.setText(display_title[:1])
                 self.cover_label.setProperty("placeholder", True)
                 self.cover_label.setPixmap(QPixmap())
@@ -733,7 +733,7 @@ class BookItem(QFrame):
             if self._is_toggling:
                 self._is_toggling = False
                 return
-            self.clicked.emit(self.book_data["path"])
+            self.clicked.emit(self.book_data.path)
         super().mouseReleaseEvent(event)
 
 
@@ -862,7 +862,7 @@ class LibraryPanel(QFrame):
             
             # Handle Pixmap Cache
             if hasattr(widget, 'cover_label'):
-                path = book['path']
+                path = book.path
                 if path in self._pixmap_cache:
                     widget.set_cover(self._pixmap_cache[path])
                 elif path_changed or not widget.cover_label.pixmap():
@@ -906,7 +906,7 @@ class LibraryPanel(QFrame):
 
         rendered_by_path = {w.current_path: w for w in self._pool if w.current_path}
         rendered_paths = set(rendered_by_path)
-        new_by_path = {b['path']: b for b in new_books}
+        new_by_path = {b.path: b for b in new_books}
         new_paths = set(new_by_path)
 
         added   = new_paths - rendered_paths
@@ -935,7 +935,7 @@ class LibraryPanel(QFrame):
         self._on_search_changed(self.search_field.text())
 
     def _trigger_cover_load(self, book, widget):
-        cover_path = book["path"]
+        cover_path = book.path
         if cover_path in self._pixmap_cache:
             pixmap = self._pixmap_cache[cover_path]
             if widget.current_path == cover_path:
@@ -1072,8 +1072,8 @@ class LibraryPanel(QFrame):
         else:
             self._filtered_books = [
                 b for b in self._books_cache
-                if text in (b.get('title') or '').lower() or 
-                   text in (b.get('author') or '').lower()
+                if text in (b.title or '').lower() or
+                   text in (b.author or '').lower()
             ]
         self._sort_items_in_place(reset_scroll=True)
 
@@ -1093,14 +1093,14 @@ class LibraryPanel(QFrame):
         datetime_keys = {"last_played", "date_added"}
 
         if sort_key == "last_played":
-            self._filtered_books = [b for b in self._filtered_books if (b.get("progress") or 0) > 0]
+            self._filtered_books = [b for b in self._filtered_books if b.progress > 0]
 
-        def sort_value(book_dict):
-            val = book_dict.get(sort_key)
+        def sort_value(book):
+            val = getattr(book, sort_key, None)
             if val is None:
                 return (1, 0 if sort_key in numeric_keys else "")
             if sort_key == "progress":
-                duration = book_dict.get("duration") or 1
+                duration = book.duration or 1
                 return (0, float(val) / float(duration))
             if sort_key in numeric_keys:
                 return (0, float(val))
@@ -1109,11 +1109,11 @@ class LibraryPanel(QFrame):
             return (0, str(val).lower())
 
         if sort_key == "progress":
-            has_val = [b for b in self._filtered_books if (b.get("progress") or 0) > 0]
-            no_val  = [b for b in self._filtered_books if not (b.get("progress") or 0) > 0]
+            has_val = [b for b in self._filtered_books if b.progress > 0]
+            no_val  = [b for b in self._filtered_books if not b.progress > 0]
         else:
-            has_val = [b for b in self._filtered_books if b.get(sort_key) is not None]
-            no_val  = [b for b in self._filtered_books if b.get(sort_key) is None]
+            has_val = [b for b in self._filtered_books if getattr(b, sort_key, None) is not None]
+            no_val  = [b for b in self._filtered_books if getattr(b, sort_key, None) is None]
 
         self._filtered_books = sorted(
             has_val,

@@ -19,6 +19,7 @@ class Book:
     id: Optional[int] = None
     date_added: Optional[datetime] = None
     last_played: Optional[datetime] = None
+    speed: float = 1.0
 
     def __post_init__(self):
         if not self.path:
