@@ -104,6 +104,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.timeout.connect(self._update_ui_sync)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index)
         self.player.file_loaded.connect(self._on_file_ready)
+        self.player.file_loaded.connect(self._on_file_loaded_populate_chapters)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
@@ -1073,6 +1074,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
 
+    def _on_file_loaded_populate_chapters(self):
+        dur = self.player.duration
+        if dur:
+            self.chapter_list_widget.populate(dur)
+
     def _restore_position(self):
         """Seeks to the saved position from config."""
         # Crash recovery/Sync: Ensure DB is up to date with the last known config position
@@ -1185,7 +1191,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.update_timer_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
-             self.chapter_list_widget.populate(dur)
              self._update_chapter_label_from_index(self.player.chapter or 0)
 
     def _sync_ui_render(self):
