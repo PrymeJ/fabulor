@@ -56,11 +56,6 @@ class LibraryDB:
                     last_played DATETIME
                 )
             """)
-            try:
-                conn.execute("ALTER TABLE books ADD COLUMN year INTEGER")
-                conn.commit()
-            except Exception:
-                pass
 
     # --- Scan Locations CRUD ---
 
