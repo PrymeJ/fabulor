@@ -50,6 +50,17 @@ class BookItem(QFrame):
         self._is_building_ui = False
 
     # ---------------- UI BUILD ----------------
+    def _get_or_create_label(self, attr_name, object_name=None, style=None):
+        if not hasattr(self, attr_name):
+            lbl = QLabel()
+            if object_name:
+                lbl.setObjectName(object_name)
+            if style:
+                lbl.setStyleSheet(style)
+            setattr(self, attr_name, lbl)
+            return lbl, True
+        return getattr(self, attr_name), False
+
     def _get_archetype(self, mode):
         """Categorizes view modes into structural archetypes for lazy rebuild."""
         if mode in ("2 per row", "3 per row", "Square"):
@@ -356,32 +367,41 @@ class BookItem(QFrame):
         # -------- LIST --------
         else:  # list
             self.setFixedSize(290,28)
-            layout = QHBoxLayout(self)
-            layout.setContentsMargins(4,4,4,4)
-            layout.setSpacing(6)
+            if not self.layout():
+                layout = QHBoxLayout(self)
+                layout.setContentsMargins(4,4,4,4)
+                layout.setSpacing(6)
+            else:
+                layout = self.layout()
 
-            self.title_label = QLabel()
-            self.title_label.setObjectName("book_item_title")
-            self.title_label.setStyleSheet("font-size: 14px;")
-            self.title_label.setContentsMargins(4,0,0,0)
+            title_lbl, is_new_t = self._get_or_create_label('title_label', "book_item_title", "font-size: 14px;")
+            author_lbl, is_new_a = self._get_or_create_label('author_label', "book_item_author", "font-size: 14px;")
+            if is_new_t:
+                title_lbl.setContentsMargins(4,0,0,0)
+                layout.addWidget(title_lbl)
+                title_lbl.installEventFilter(self)
+            else:
+                title_lbl.show()
 
-            self.author_label = QLabel()
-            self.author_label.setObjectName("book_item_author")
-            self.author_label.setStyleSheet("font-size: 14px;")
-            self.author_label.setAlignment(Qt.AlignRight)
-            self.author_label.setContentsMargins(0,0,0,0)
+            if is_new_a:
+                author_lbl.setAlignment(Qt.AlignRight)
+                author_lbl.setContentsMargins(0,0,0,0)
+                layout.addStretch()
+                layout.addWidget(author_lbl)
+                author_lbl.installEventFilter(self)
+            else:
+                author_lbl.show()
 
-            self.total_label = QLabel()
-            self.total_label.setObjectName("book_item_total")
-            self.total_label.setStyleSheet("font-size: 14px;")
-            self.total_label.setFixedWidth(46)
-            self.total_label.setAlignment(Qt.AlignRight)
-            self.total_label.setContentsMargins(0,0,0,0)
-
-            layout.addWidget(self.title_label)
-            layout.addStretch()
-            layout.addWidget(self.author_label)
-            layout.addWidget(self.total_label)
+            if not hasattr(self, 'total_label'):
+                self.total_label = QLabel()
+                self.total_label.setObjectName("book_item_total")
+                self.total_label.setStyleSheet("font-size: 14px;")
+                self.total_label.setFixedWidth(46)
+                self.total_label.setAlignment(Qt.AlignRight)
+                self.total_label.setContentsMargins(0,0,0,0)
+                layout.addWidget(self.total_label)
+            else:
+                self.total_label.show()
 
             self._title_is_elided = False
             self._author_is_elided = False
