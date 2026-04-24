@@ -1868,6 +1868,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if new_speed != current:
                 self._set_speed(new_speed)
             event.accept()
+        elif self.chapter_progress_slider.underMouse():
+            if not self.player or not self.current_file: return
+            delta = event.angleDelta().y()
+            modifiers = QGuiApplication.keyboardModifiers()
+            long_skip = bool(modifiers & Qt.ShiftModifier)
+            
+            if delta > 0:
+                self.handle_forward(long_skip=long_skip*15)
+            else:
+                self.handle_rewind(long_skip=long_skip*15)
+            event.accept()
         else:
             super().wheelEvent(event)
 
