@@ -523,6 +523,11 @@ class BookItem(QFrame):
             else:
                 self.total_label.setText(fmt_time(dur / speed))
 
+            if self.view_mode == "1 per row" and not has_progress:
+                self.total_label.setVisible(False)
+            else:
+                self.total_label.setVisible(True)
+
         # List: invade elision
         if self.view_mode == "List" and hasattr(self, "title_label") and hasattr(self, "author_label"):
             self.title_label.ensurePolished()
@@ -556,8 +561,15 @@ class BookItem(QFrame):
         show_progress = prog > 0
         if hasattr(self, "progress_outer") and hasattr(self, "pct_label"):
             self.progress_outer.setVisible(show_progress)
-            self.pct_label.setVisible(show_progress)
-            self.pct_label.setText(f"{int(pct*100)}%")
+
+            if self.view_mode == "1 per row" and not show_progress:
+                self.pct_label.setText(fmt_time(dur / speed))
+                self.pct_label.setFixedWidth(60)
+                self.pct_label.setVisible(True)
+            else:
+                self.pct_label.setFixedWidth(35)
+                self.pct_label.setText(f"{int(pct*100)}%")
+                self.pct_label.setVisible(show_progress)
 
         if hasattr(self, "progress_inner"):
             w = int(self.progress_outer.maximumWidth() * pct)
