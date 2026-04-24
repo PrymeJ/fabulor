@@ -64,6 +64,13 @@ class BrowserInterface:
 
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
+    naming_pattern_changed = Signal(str)
+    scroll_mode_changed = Signal(str)
+    hints_mode_changed = Signal(bool)
+    undo_mode_changed = Signal(int)
+    fade_mode_changed = Signal(int)
+    blur_mode_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -788,7 +795,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             label = "Off" if ms_val == 0 else str(ms_val)
             btn = QPushButton(label)
             btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=ms_val: self._update_fade_mode(v))
+            btn.clicked.connect(lambda _, v=ms_val: self.fade_mode_changed.emit(v))
             fade_row.addWidget(btn)
             self.fade_buttons[ms_val] = btn
         fade_row.addStretch()
@@ -803,7 +810,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for state in ["On", "Off"]:
             btn = QPushButton(state)
             btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self._update_blur_mode(s == "On"))
+            btn.clicked.connect(lambda _, s=state: self.blur_mode_changed.emit(s == "On"))
             blur_row.addWidget(btn)
             self.blur_buttons[state] = btn
         blur_row.addStretch()
@@ -818,7 +825,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for mode in ["Slow", "Normal", "Off"]:
             btn = QPushButton(mode)
             btn.setObjectName("pattern_button") # Re-use styling for consistency
-            btn.clicked.connect(lambda _, m=mode: self._update_scroll_mode(m))
+            btn.clicked.connect(lambda _, m=mode: self.scroll_mode_changed.emit(m))
             scroll_row.addWidget(btn)
             self.scroll_buttons[mode] = btn
         scroll_row.addStretch()
@@ -833,7 +840,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for mode in ["On", "Off"]:
             btn = QPushButton(mode)
             btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self._update_hints_mode(m == "On"))
+            btn.clicked.connect(lambda _, m=mode: self.hints_mode_changed.emit(m == "On"))
             hints_row.addWidget(btn)
             self.hints_buttons[mode] = btn
         hints_row.addStretch()
@@ -864,8 +871,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pattern_row.addStretch()
         lib_layout.addLayout(pattern_row)
 
-        self.at_pattern_btn.clicked.connect(lambda: self._update_naming_pattern("Author - Title"))
-        self.ta_pattern_btn.clicked.connect(lambda: self._update_naming_pattern("Title - Author"))
+        self.at_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Author - Title"))
+        self.ta_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Title - Author"))
 
         lib_layout.addSpacing(10)
 

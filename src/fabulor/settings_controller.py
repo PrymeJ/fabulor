@@ -7,15 +7,13 @@ class SettingsController:
         self.player = player
 
     def bind_mainwindow_handlers(self, main):
-        """Rebinds MainWindow local methods to controller implementations."""
-        main._update_naming_pattern = self._update_naming_pattern
-        main._update_scroll_mode = self._update_scroll_mode
-        main._update_hints_mode = self._update_hints_mode
-        main._update_undo_mode = self._update_undo_mode
-        main._update_fade_mode = self._update_fade_mode
-        main._update_blur_mode = self._update_blur_mode
-        main._update_speed_grid_styling = self._update_speed_grid_styling
-        main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
+        """Connects MainWindow signals to controller handler methods."""
+        main.naming_pattern_changed.connect(self._update_naming_pattern)
+        main.scroll_mode_changed.connect(self._update_scroll_mode)
+        main.hints_mode_changed.connect(self._update_hints_mode)
+        main.undo_mode_changed.connect(self._update_undo_mode)
+        main.fade_mode_changed.connect(self._update_fade_mode)
+        main.blur_mode_changed.connect(self._update_blur_mode)
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
