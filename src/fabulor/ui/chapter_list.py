@@ -76,6 +76,9 @@ class ChapterList(QListWidget):
             if idx >= len(chapters):
                 return  # Player state is stale, ignore click
             self.player.chapter = idx
-            self.hide()
-            actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
-            self.chapter_changed.emit(actual_title)
+            self.hide() # Close dropdown after selection
+            widget = self.itemWidget(item)
+            if widget:
+                if 0 <= idx < len(chapters):
+                    actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
+                    self.chapter_changed.emit(actual_title)

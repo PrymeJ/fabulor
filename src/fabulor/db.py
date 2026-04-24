@@ -60,6 +60,7 @@ class LibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_last_played ON books (last_played)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books (title)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books (author)")
+            conn.execute("PRAGMA foreign_keys = ON")
 
     # --- Scan Locations CRUD ---
 
