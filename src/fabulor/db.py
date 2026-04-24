@@ -139,8 +139,15 @@ class LibraryDB:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    _ALLOWED_SORT_COLUMNS = frozenset({
+        "title", "author", "narrator", "duration", "progress",
+        "last_played", "date_added", "year", "folder_name_raw",
+    })
+
     def get_all_books(self, sort_by="title"):
         """Returns all books in the library."""
+        if sort_by not in self._ALLOWED_SORT_COLUMNS:
+            raise ValueError(f"Invalid sort column: {sort_by!r}")
         with self._get_conn() as conn:
             cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}")
             return [dict(row) for row in cursor.fetchall()]
