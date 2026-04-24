@@ -347,6 +347,34 @@ class LibraryDB:
                 'per_day': [dict(row) for row in per_day],
             }
 
+    def get_overall_stats(self) -> dict:
+        with self._get_conn() as conn:
+            time_row = conn.execute(
+                "SELECT SUM((julianday(session_end) - julianday(session_start)) * 86400) AS total_seconds"
+                " FROM listening_sessions"
+            ).fetchone()
+            books_started = conn.execute(
+                "SELECT COUNT(DISTINCT book_path) AS cnt FROM listening_sessions"
+            ).fetchone()
+            sessions = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM listening_sessions"
+            ).fetchone()
+            most_listened = conn.execute(
+                "SELECT book_title,"
+                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
+                " FROM listening_sessions"
+                " GROUP BY book_path"
+                " ORDER BY seconds DESC"
+                " LIMIT 1"
+            ).fetchone()
+        return {
+            'total_seconds': time_row['total_seconds'] or 0.0,
+            'books_started': books_started['cnt'] or 0,
+            'sessions': sessions['cnt'] or 0,
+            'most_listened_title': most_listened['book_title'] if most_listened else None,
+            'most_listened_seconds': most_listened['seconds'] if most_listened else 0.0,
+        }
+
     def get_books_listened_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:
         if granularity not in self._GRANULARITY_FORMATS:
             raise ValueError(f"Invalid granularity: {granularity!r}")

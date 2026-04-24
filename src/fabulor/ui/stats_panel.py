@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QLabel
+    QWidget, QVBoxLayout, QTabWidget, QLabel, QGridLayout
 )
 from PySide6.QtCore import Qt
 
@@ -13,6 +13,58 @@ class StatsPanel(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._build_ui()
 
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        if h > 0:
+            return f"{h}h {m}m"
+        return f"{m}m"
+
+    def _build_overall_tab(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(10, 10, 10, 10)
+
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(8)
+
+        rows = [
+            ("Listening time", "—"),
+            ("Books started",  "—"),
+            ("Sessions",       "—"),
+            ("Most listened",  "—"),
+        ]
+
+        self._overall_value_labels = []
+        for i, (key, default) in enumerate(rows):
+            key_lbl = QLabel(key)
+            key_lbl.setObjectName("stats_key_label")
+            val_lbl = QLabel(default)
+            val_lbl.setObjectName("stats_value_label")
+            grid.addWidget(key_lbl, i, 0, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(val_lbl, i, 1, Qt.AlignmentFlag.AlignLeft)
+            self._overall_value_labels.append(val_lbl)
+
+        outer.addStretch()
+        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addStretch()
+        return widget
+
+    def refresh_overall(self):
+        stats = self.db.get_overall_stats()
+        self._overall_value_labels[0].setText(self._format_duration(stats['total_seconds']))
+        self._overall_value_labels[1].setText(str(stats['books_started']))
+        self._overall_value_labels[2].setText(str(stats['sessions']))
+        if stats['most_listened_title']:
+            duration = self._format_duration(stats['most_listened_seconds'])
+            self._overall_value_labels[3].setText(f"{stats['most_listened_title']}  ({duration})")
+        else:
+            self._overall_value_labels[3].setText("—")
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -20,15 +72,18 @@ class StatsPanel(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
 
-        for name in ["Overall", "Daily", "Weekly", "Monthly"]:
+        self.tabs.addTab(self._build_overall_tab(), "Overall")
+
+        for name in ["Daily", "Weekly", "Monthly"]:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
             tab_layout.setContentsMargins(10, 10, 10, 10)
             lbl = QLabel(f"{name} stats coming soon...")
             lbl.setObjectName("stats_placeholder_label")
-            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             tab_layout.addWidget(lbl)
             tab_layout.addStretch()
             self.tabs.addTab(tab, name)
 
         layout.addWidget(self.tabs)
+        self.refresh_overall()
