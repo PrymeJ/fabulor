@@ -803,6 +803,11 @@ class LibraryPanel(QFrame):
         mode = self.style_combo.currentData()
         dim = ITEM_DIMENSIONS[mode]
         item_h, cols = dim['h'], dim['cols']
+
+        # Horizontal offset to balance the grid within the viewport
+        offset_x = 0
+        if mode == "2 per row":
+            offset_x = 7
         
         scroll_y = self.scroll.verticalScrollBar().value()
         viewport_h = self.scroll.height()
@@ -845,7 +850,7 @@ class LibraryPanel(QFrame):
 
             # Position
             row, col = i // cols, i % cols
-            widget.move(col * dim['w'], row * item_h)
+            widget.move(offset_x + (col * dim['w']), row * item_h)
             widget.show()
             pool_idx += 1
 
