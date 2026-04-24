@@ -798,7 +798,6 @@ THEMES = {
         "accent_dark":         "#388E3C",
         "bg_sidebar":          "#E0E7E9",
         "bg_dropdown":         "#CFD8DC",
-        
         "curr_chap_highlight": "#81C784",
         "sidebar_text_hover": "#81C784",
         "sidebar_opacity":     0.9,

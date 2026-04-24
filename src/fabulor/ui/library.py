@@ -5,9 +5,9 @@ import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
 )
-from PySide6.QtCore import QThread, QThreadPool # Added QThreadPool
+from PySide6.QtCore import QThreadPool, QEvent
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QColor
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -29,7 +29,8 @@ ITEM_DIMENSIONS = {
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
 
-    def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None, parent=None):
+    def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None,
+                 hover_bg_color=None, parent=None):
         super().__init__(parent)
         self._is_building_ui = True
         self.book_data = {}
@@ -41,6 +42,7 @@ class BookItem(QFrame):
         self._show_remaining = True
         self._pg_bg = pg_bg
         self._pg_fill = pg_fill
+        self._hover_bg_color = hover_bg_color or QColor(80, 80, 80, 180)
         self.setCursor(Qt.PointingHandCursor)
         
         self._build_ui()
@@ -64,7 +66,7 @@ class BookItem(QFrame):
             QWidget().setLayout(self.layout())
             
         # Reset mode-specific attributes to avoid using dead C++ objects
-        for attr in ['cover_label', 'overlay_widget', 'title_label', 'author_label', 
+        for attr in ['cover_label', 'overlay_widget', 'title_label', 'author_label',
                     'narrator_label', 'year_label', 'elapsed_label', 'total_label',
                     'pct_label', 'progress_outer', 'progress_inner', 'progress_container']:
             if hasattr(self, attr):
@@ -278,6 +280,12 @@ class BookItem(QFrame):
             layout.addWidget(self.author_label)
             layout.addWidget(self.total_label)
 
+            self._title_is_elided = False
+            self._author_is_elided = False
+
+            self.title_label.installEventFilter(self)
+            self.author_label.installEventFilter(self)
+
         if mode in ("2 per row", "3 per row", "Square"):
             self._overlay_has_progress = False
             self.overlay_widget = QWidget(self)
@@ -424,6 +432,29 @@ class BookItem(QFrame):
             self.overlay_widget.hide()
         super().leaveEvent(event)
 
+    def eventFilter(self, obj, event):
+        if self.view_mode == "List":
+            title_lbl = getattr(self, 'title_label', None)
+            author_lbl = getattr(self, 'author_label', None)
+            if not title_lbl or not author_lbl:
+                return super().eventFilter(obj, event)
+
+            if event.type() == QEvent.Enter:
+                if obj is title_lbl and getattr(self, '_title_is_elided', False):
+                    author_lbl.hide()
+                    title_lbl.setText(self.book_data.get("title", ""))
+                elif obj is author_lbl and getattr(self, '_author_is_elided', False):
+                    title_lbl.hide()
+                    # Expand author to take available space (matches AVAILABLE in _update_ui_content)
+                    author_lbl.setFixedWidth(218)
+                    author_lbl.setText(self.book_data.get("author", ""))
+            elif event.type() == QEvent.Leave:
+                if obj is title_lbl or obj is author_lbl:
+                    title_lbl.show()
+                    author_lbl.show()
+                    self._update_ui_content()
+        return super().eventFilter(obj, event)
+
     def showEvent(self, event):
         super().showEvent(event)
         self._reposition_overlay()
@@ -556,6 +587,9 @@ class BookItem(QFrame):
             self.author_label.setFixedWidth(max(1, author_w))
             self.title_label.setText(disp_title)
             self.author_label.setText(disp_author)
+
+            self._title_is_elided = (disp_title != title)
+            self._author_is_elided = (disp_author != author)
 
         # progress
         show_progress = prog > 0
@@ -695,6 +729,10 @@ class LibraryPanel(QFrame):
             t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
             self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
             self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
+            hc = t.get('library_item_hover_color', t['accent'])
+            ha = t.get('library_item_hover_alpha', 0.50)
+            r, g, b = int(hc[1:3], 16), int(hc[3:5], 16), int(hc[5:7], 16)
+            self._hover_bg_color = QColor(r, g, b, int(ha * 255))
 
     def update_progress_bar_theme(self):
         self._resolve_theme_colors()
@@ -712,6 +750,9 @@ class LibraryPanel(QFrame):
                         border-radius: 0px;
                     }}
                 """)
+        qc = getattr(self, '_hover_bg_color', QColor(80, 80, 80, 180))
+        for item in self._pool:
+            item._hover_bg_color = qc
 
     def _setup_pool(self):
         """Creates the fixed widget pool and sets container to manual positioning."""
@@ -727,6 +768,7 @@ class LibraryPanel(QFrame):
                 player_instance=self.player_instance,
                 pg_bg=self._pg_bg,
                 pg_fill=self._pg_fill,
+                hover_bg_color=getattr(self, '_hover_bg_color', QColor(80, 80, 80, 180)),
                 parent=self.container
             )
             item.clicked.connect(self.book_selected.emit)
