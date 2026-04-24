@@ -1,8 +1,10 @@
 class SettingsController:
     """Handles logic for application settings and synchronizes visual states."""
-    def __init__(self, config, visuals, library, player):
+    def __init__(self, config, visuals, panels, ui_callbacks, library, player):
         self.config = config
         self.visuals = visuals
+        self.panels = panels
+        self.ui_callbacks = ui_callbacks
         self.library = library
         self.player = player
 
@@ -14,7 +16,7 @@ class SettingsController:
         main.undo_mode_changed.connect(self._update_undo_mode)
         main.fade_mode_changed.connect(self._update_fade_mode)
         main.blur_mode_changed.connect(self._update_blur_mode)
-        main._update_speed_grid_styling = self._update_speed_grid_styling
+        main._update_speed_grid_styling = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
     def _update_naming_pattern(self, pattern):
@@ -42,8 +44,7 @@ class SettingsController:
 
     def _update_scroll_mode_visuals(self):
         current = self.config.get_scroll_mode()
-        if hasattr(self.visuals, 'set_scroll_selection'):
-            self.visuals.set_scroll_selection(current)
+        self.visuals.set_scroll_selection(current)
 
     def _update_hints_mode(self, enabled):
         #print(f"[SettingsController] _update_hints_mode called with: {enabled}")
@@ -55,8 +56,7 @@ class SettingsController:
     def _update_hints_visuals(self):
         """Updates the highlight state of hint toggle buttons."""
         enabled = self.config.get_chapter_hints_enabled()
-        if hasattr(self.visuals, 'set_hints_selection'):
-            self.visuals.set_hints_selection(enabled)
+        self.visuals.set_hints_selection(enabled)
 
     def _update_undo_mode(self, val):
         #print(f"[SettingsController] _update_undo_mode called with: {val}")
@@ -66,8 +66,7 @@ class SettingsController:
 
     def _update_undo_visuals(self):
         current = self.config.get_undo_duration()
-        if hasattr(self.visuals, 'set_undo_selection'):
-            self.visuals.set_undo_selection(current)
+        self.visuals.set_undo_selection(current)
 
     def _update_fade_mode(self, ms):
         #print(f"[SettingsController] _update_fade_mode called with: {ms}")
@@ -79,8 +78,7 @@ class SettingsController:
     def _update_fade_visuals(self):
         """Updates the highlight state of fade buttons."""
         current = self.config.get_theme_fade_duration()
-        if hasattr(self.visuals, 'set_fade_selection'):
-            self.visuals.set_fade_selection(current)
+        self.visuals.set_fade_selection(current)
 
     def _update_blur_mode(self, enabled):
         #print(f"[SettingsController] _update_blur_mode called with: {enabled}")
@@ -92,28 +90,22 @@ class SettingsController:
     def _update_blur_visuals(self):
         """Updates the highlight state of blur buttons."""
         enabled = self.config.get_blur_enabled()
-        if hasattr(self.visuals, 'set_blur_selection'):
-            self.visuals.set_blur_selection(enabled)
+        self.visuals.set_blur_selection(enabled)
 
-    def _update_speed_grid_styling(self, theme_name=None):
-        """Applies current theme's styling to various settings components."""
+    def sync_all_settings_visuals(self, theme_name=None):
+        """Syncs all settings button states and panel visuals to current config."""
         self._update_pattern_visuals()
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
         self._update_undo_visuals()
-        if hasattr(self.visuals, 'update_speed_panel_visuals'):
-            self.visuals.update_speed_panel_visuals(theme_name)
-        if hasattr(self.visuals, 'update_sleep_panel_visuals'):
-            self.visuals.update_sleep_panel_visuals()
-        if hasattr(self.visuals, 'update_audio_panel_visuals'):
-            self.visuals.update_audio_panel_visuals()
+        self.panels.update_speed_panel_visuals(theme_name)
+        self.panels.update_sleep_panel_visuals()
+        self.panels.update_audio_panel_visuals()
 
     def _validate_smart_rewind_settings(self):
-        """Delegates validation to the speed panel via UI interface."""
-        if hasattr(self.visuals, 'validate_speed_panel_settings'):
-            self.visuals.validate_speed_panel_settings()
+        self.panels.validate_speed_panel_settings()
 
     # def _debug_settings_state(self):
     #     print("[Settings] scroll:", self.config.get_scroll_mode())

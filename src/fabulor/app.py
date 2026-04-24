@@ -32,7 +32,6 @@ from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
-from types import SimpleNamespace
 from .settings_controller import SettingsController
 
 class UIInterface:
@@ -210,36 +209,60 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not enabled:
                 self.blur_effect.setBlurRadius(0)
 
-        visuals = SimpleNamespace(
-            set_naming_pattern_selection=set_naming_pattern_selection,
-            set_scroll_selection=set_scroll_selection,
-            set_hints_selection=set_hints_selection,
-            set_undo_selection=set_undo_selection,
-            set_fade_selection=set_fade_selection,
-            set_blur_selection=set_blur_selection,
-            validate_speed_panel_settings=lambda: self.speed_panel._validate_smart_rewind_settings(finalize=True) if self.speed_panel else None,
-            update_speed_panel_visuals=lambda n=None: self.speed_panel.update_visuals(n) if self.speed_panel else None,
-            update_sleep_panel_visuals=lambda: self.sleep_panel.update_panel_styling() if self.sleep_panel else None,
-            update_audio_panel_visuals=lambda: self.audio_tab.update_visuals() if self.audio_tab else None,
-            set_folder_list=self._update_folder_list_widget,
-            get_selected_folder_path=self._get_selected_folder_path,
-            open_folder_dialog=self._get_new_folder_path,
-            update_status_banner=self._update_status_banner_ui,
-            update_metadata=self._update_metadata_ui,
-            set_chapter_title=self._update_chapter_title_text,
-        )
+        class VisualsInterface:
+            def __init__(self):
+                pass
+            def set_naming_pattern_selection(self, pattern): set_naming_pattern_selection(pattern)
+            def set_scroll_selection(self, mode): set_scroll_selection(mode)
+            def set_hints_selection(self, enabled): set_hints_selection(enabled)
+            def set_undo_selection(self, val): set_undo_selection(val)
+            def set_fade_selection(self, ms): set_fade_selection(ms)
+            def set_blur_selection(self, enabled): set_blur_selection(enabled)
 
-        library_actions = SimpleNamespace(
-            reparse_db=self.db.reparse_library,
-            refresh_library_panel=self.library_panel.refresh,
-        )
+        class PanelInterface:
+            def __init__(self, speed_panel, sleep_panel, audio_tab):
+                self._speed = speed_panel
+                self._sleep = sleep_panel
+                self._audio = audio_tab
+            def validate_speed_panel_settings(self):
+                if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
+            def update_speed_panel_visuals(self, theme_name=None):
+                if self._speed: self._speed.update_visuals(theme_name)
+            def update_sleep_panel_visuals(self):
+                if self._sleep: self._sleep.update_panel_styling()
+            def update_audio_panel_visuals(self):
+                if self._audio: self._audio.update_visuals()
 
-        player_actions = SimpleNamespace(
-            get_current_file=self.get_current_file,
-            load_cover_art=self._load_cover_art,
-        )
+        class UICallbackInterface:
+            def __init__(self, main):
+                self._main = main
+            def set_folder_list(self, folders): self._main._update_folder_list_widget(folders)
+            def get_selected_folder_path(self): return self._main._get_selected_folder_path()
+            def open_folder_dialog(self): return self._main._get_new_folder_path()
+            def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
+            def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
+            def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
+            def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
 
-        self.settings_controller = SettingsController(self.config, visuals, library_actions, player_actions)
+        class LibraryInterface:
+            def __init__(self, db, library_panel):
+                self._db = db
+                self._panel = library_panel
+            def reparse_db(self, pattern): self._db.reparse_library(pattern)
+            def refresh_library_panel(self, force=False): self._panel.refresh(force=force)
+
+        class PlayerInterface:
+            def __init__(self, main):
+                self._main = main
+            def get_current_file(self): return self._main.get_current_file()
+            def load_cover_art(self, path): self._main._load_cover_art(path)
+
+        visuals = VisualsInterface()
+        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab)
+        ui_callbacks = UICallbackInterface(self)
+        library = LibraryInterface(self.db, self.library_panel)
+        player = PlayerInterface(self)
+        self.settings_controller = SettingsController(self.config, visuals, panels, ui_callbacks, library, player)
 
         self.settings_controller.bind_mainwindow_handlers(self)
 
@@ -248,7 +271,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Delegate to SettingsController visual updaters now that it's bound.
         try:
             self.settings_controller._update_pattern_visuals()
-            self.settings_controller._update_speed_grid_styling()
+            self.settings_controller.sync_all_settings_visuals()
             self.settings_controller._update_scroll_mode_visuals()
             self.settings_controller._update_hints_visuals()
             self.settings_controller._update_fade_visuals()

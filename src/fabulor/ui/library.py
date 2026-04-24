@@ -530,7 +530,7 @@ class BookItem(QFrame):
             return
             
         # Ensure progress inner width is updated when the layout resizes the parent
-        if hasattr(self, "progress_inner") and hasattr(self, "progress_outer"):
+        if hasattr(self, "progress_inner") and hasattr(self, "progress_outer") and self.book_data:
             prog = self.book_data.progress
             dur = self.book_data.duration
             pct = (prog / dur) if dur > 0 else 0
