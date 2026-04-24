@@ -1,6 +1,7 @@
 import os
 import math
 import random
+from datetime import datetime
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
@@ -95,6 +96,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.audio_tab = None
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
+
+        # Session recording
+        self._current_book = None
+        self._session_start: datetime | None = None
+        self._session_position_start: float | None = None
+        self._session_furthest_position: float | None = None
+        self._post_seek_pending_position: float | None = None
+
+        self._session_pause_timer = QTimer(self)
+        self._session_pause_timer.setSingleShot(True)
+        self._session_pause_timer.setInterval(3 * 60 * 1000)  # 3 minutes
+        self._session_pause_timer.timeout.connect(self._close_session)
+
+        self._post_seek_credit_timer = QTimer(self)
+        self._post_seek_credit_timer.setSingleShot(True)
+        self._post_seek_credit_timer.setInterval(15 * 1000)  # 15 seconds
+        self._post_seek_credit_timer.timeout.connect(self._on_seek_credit_earned)
 
         self._setup_ui()
 
@@ -1074,6 +1092,52 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.db.update_progress(self.current_file, pos)
                 self.config.set_last_position(self.current_file, pos)
 
+    def _get_current_position(self) -> float:
+        return self.player.time_pos or 0.0
+
+    def _open_session(self):
+        self._session_start = datetime.now()
+        self._session_position_start = self._get_current_position()
+        self._session_furthest_position = self._session_position_start
+
+    def _close_session(self):
+        self._session_pause_timer.stop()
+        self._post_seek_credit_timer.stop()
+        if self._session_start is None:
+            print("[SESSION] _close_session called but no session open")
+            return
+        now = datetime.now()
+        elapsed = (now - self._session_start).total_seconds()
+        print(f"[SESSION] closing session, elapsed={elapsed:.1f}s, book={self._current_book}")
+        if elapsed >= 60 and self._current_book is not None:
+            print("[SESSION] writing to DB")
+            current_pos = self._get_current_position()
+            self.db.write_session(
+                book_path=self._current_book.path,
+                book_title=self._current_book.title,
+                book_author=self._current_book.author,
+                session_start=self._session_start,
+                session_end=now,
+                position_start=self._session_position_start,
+                position_end=current_pos,
+                furthest_position=self._session_furthest_position,
+            )
+            if not self.db.get_book_started_at(self._current_book.path):
+                self.db.set_started_at(self._current_book.path, self._session_start)
+        self._session_start = None
+        self._session_position_start = None
+        self._session_furthest_position = None
+        self._post_seek_pending_position = None
+
+    def _on_seek_credit_earned(self):
+        if self._post_seek_pending_position is not None:
+            if self._session_furthest_position is not None:
+                self._session_furthest_position = max(
+                    self._session_furthest_position,
+                    self._post_seek_pending_position,
+                )
+        self._post_seek_pending_position = None
+
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
         self._save_current_progress() # Save state of the book we are leaving
@@ -1092,6 +1156,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
              self.status_banner.setText("Error: File missing!")
              self.status_banner.show()
              return
+        self._current_book = self.db.get_book(self.current_file)
+        if self._session_start is None:
+            self._open_session()
+        else:
+            self._session_pause_timer.stop()
         self._restore_position()
         if self.player.duration:
             self.chapter_list_widget.populate(self.player.duration)
@@ -1175,6 +1244,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             is_paused = self.player.pause if self.current_file else True
             speed = self.player.speed or 1.0
             current_time = time.time()
+            if (self._session_start is not None
+                    and self._post_seek_pending_position is None
+                    and self._session_furthest_position is not None
+                    and mpv_pos is not None):
+                if mpv_pos > self._session_furthest_position:
+                    self._session_furthest_position = mpv_pos
         except ShutdownError:
             return
 
@@ -1302,6 +1377,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if abs(new_pos - old_pos) > 60 * speed:
                 self._trigger_undo(old_pos)
             self.player.time_pos = new_pos
+            if self._session_furthest_position is not None:
+                if new_pos > self._session_furthest_position:
+                    self._post_seek_pending_position = new_pos
+                    self._post_seek_credit_timer.start()
+                else:
+                    self._post_seek_pending_position = None
+                    self._post_seek_credit_timer.stop()
             self.player.is_seeking = True
             # Immediately sync for library reactivity
             self.config.set_last_position(self.current_file, new_pos)
@@ -1325,7 +1407,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             speed = self.player.speed or 1.0
             if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
                 self._trigger_undo(old_pos)
-            
+            new_pos = self.player.time_pos or 0.0
+            if self._session_furthest_position is not None:
+                if new_pos > self._session_furthest_position:
+                    self._post_seek_pending_position = new_pos
+                    self._post_seek_credit_timer.start()
+                else:
+                    self._post_seek_pending_position = None
+                    self._post_seek_credit_timer.stop()
+
             # Immediately sync for library reactivity
             self.config.set_last_position(self.current_file, self.player.time_pos or 0)
             if self.library_panel.isVisible():
@@ -1578,6 +1668,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         
         if self.player.eof_reached or self.play_pause_button.text() == "Restart":
+            self._close_session()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
             self.player.load_book(self.current_file, start_paused=False)
@@ -1587,16 +1678,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if was_paused:
                 if self.current_file:
                     self.db.update_last_played(self.current_file)
-                
+
                 # Delegate smart rewind logic to Player
                 self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
-                
+
                 self.player.pause = False
+                if self._session_start is None:
+                    self._open_session()
+                else:
+                    self._session_pause_timer.stop()
             else:
                 # Pausing: Record when we stopped
                 self._last_pause_timestamp = time.time()
                 self._save_current_progress()
                 self.player.pause = True
+                self._session_pause_timer.start()
                 if self.library_panel.isVisible():
                     self.library_panel.update_current_book_progress()
 
@@ -1816,7 +1912,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self.scanner._worker_thread and self.scanner._worker_thread.isRunning():
                 self.scanner._worker_thread.quit()
                 self.scanner._worker_thread.wait()
-                
+
+        self._close_session()
         event.accept()
 
     

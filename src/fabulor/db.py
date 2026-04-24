@@ -62,6 +62,26 @@ class LibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books (author)")
             conn.execute("PRAGMA foreign_keys = ON")
 
+            # Migration: add started_at to pre-existing databases
+            try:
+                conn.execute("ALTER TABLE books ADD COLUMN started_at DATETIME")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS listening_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_path TEXT NOT NULL,
+                    book_title TEXT,
+                    book_author TEXT,
+                    session_start TEXT NOT NULL,
+                    session_end TEXT NOT NULL,
+                    position_start REAL,
+                    position_end REAL,
+                    furthest_position REAL
+                )
+            """)
+
     # --- Scan Locations CRUD ---
 
     def add_scan_location(self, path):
@@ -212,3 +232,46 @@ class LibraryDB:
                         "UPDATE books SET title = ?, author = ?, folder_name_raw = ? WHERE id = ?",
                         (title, author, raw, row["id"])
                     )
+
+    # --- Session Recording ---
+
+    def write_session(self, book_path, book_title, book_author, session_start, session_end, position_start, position_end, furthest_position):
+        """Inserts one listening session row."""
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute("""
+                    INSERT INTO listening_sessions
+                        (book_path, book_title, book_author, session_start, session_end,
+                         position_start, position_end, furthest_position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(book_path),
+                    book_title,
+                    book_author,
+                    session_start.isoformat(),
+                    session_end.isoformat(),
+                    position_start,
+                    position_end,
+                    furthest_position,
+                ))
+
+    def set_started_at(self, book_path: str, started_at: datetime):
+        """Sets started_at only if it has not been set yet."""
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute(
+                    "UPDATE books SET started_at = ? WHERE path = ? AND started_at IS NULL",
+                    (started_at.isoformat(), str(book_path))
+                )
+
+    def get_book_started_at(self, book_path: str) -> datetime | None:
+        """Returns the started_at datetime for the given path, or None."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT started_at FROM books WHERE path = ?",
+                (str(book_path),)
+            )
+            row = cursor.fetchone()
+            if row is None or row["started_at"] is None:
+                return None
+            return datetime.fromisoformat(row["started_at"])
