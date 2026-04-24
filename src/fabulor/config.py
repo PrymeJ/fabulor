@@ -86,6 +86,9 @@ class Config:
 
     def get_day_start_hour(self):
         return int(self.settings.value("day_start_hour", 0))
+    
+    def set_day_start_hour(self, hour: int):
+        self.settings.setValue("day_start_hour", hour)
 
     def get_last_position(self, file_path):
 

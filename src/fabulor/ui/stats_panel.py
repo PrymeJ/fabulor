@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QLabel, QGridLayout
+    QWidget, QVBoxLayout, QTabWidget, QLabel, QGridLayout, QSpinBox, QHBoxLayout
 )
 from PySide6.QtCore import Qt
 
@@ -49,6 +49,8 @@ class StatsPanel(QWidget):
             grid.addWidget(val_lbl, i, 1, Qt.AlignmentFlag.AlignLeft)
             self._overall_value_labels.append(val_lbl)
 
+        
+
         outer.addStretch()
         outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch()
@@ -65,6 +67,8 @@ class StatsPanel(QWidget):
         else:
             self._overall_value_labels[3].setText("—")
 
+        
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -73,6 +77,7 @@ class StatsPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
+        
 
         for name in ["Daily", "Weekly", "Monthly"]:
             tab = QWidget()
@@ -84,6 +89,15 @@ class StatsPanel(QWidget):
             tab_layout.addWidget(lbl)
             tab_layout.addStretch()
             self.tabs.addTab(tab, name)
+
+        pref_row = QHBoxLayout()
+        pref_row.addWidget(QLabel("Day starts at"))
+        self.day_start_spin = QSpinBox()
+        self.day_start_spin.setRange(0, 23)
+        self.day_start_spin.setValue(self.config.get_day_start_hour())
+        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
+        pref_row.addWidget(self.day_start_spin)
+        layout.addLayout(pref_row)
 
         layout.addWidget(self.tabs)
         self.refresh_overall()
