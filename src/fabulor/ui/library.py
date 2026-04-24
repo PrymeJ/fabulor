@@ -28,6 +28,7 @@ ITEM_DIMENSIONS = {
 
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
+    _total_clear_time = 0.0 # Profile accumulator
 
     def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None,
                  hover_bg_color=None, parent=None):
@@ -49,6 +50,12 @@ class BookItem(QFrame):
         self._is_building_ui = False
 
     # ---------------- UI BUILD ----------------
+    def _get_archetype(self, mode):
+        """Categorizes view modes into structural archetypes for lazy rebuild."""
+        if mode in ("2 per row", "3 per row", "Square"):
+            return "grid"
+        return mode # "1 per row" and "List" remain distinct structural types
+
     def set_view_mode(self, mode):
         """Re-initializes the UI for a new view mode without destroying the widget."""
         if self.view_mode == mode:
@@ -61,6 +68,7 @@ class BookItem(QFrame):
             self.bind(self.book_data)
 
     def _clear_layout(self):
+        t0 = time.perf_counter()
         if self.layout():
             # Immediately detach the layout by setting it on a dummy widget
             QWidget().setLayout(self.layout())
@@ -72,6 +80,7 @@ class BookItem(QFrame):
             if hasattr(self, attr):
                 try: delattr(self, attr)
                 except AttributeError: pass
+        BookItem._total_clear_time += (time.perf_counter() - t0)
 
     @staticmethod
     def _elide(label, text, width):
@@ -162,55 +171,149 @@ class BookItem(QFrame):
         return self.progress_container
 
     def _build_ui(self):
-        self._clear_layout()
-
         mode = self.view_mode
+        new_arch = self._get_archetype(mode)
+        old_arch = getattr(self, "_current_arch", None)
 
-        # -------- 3 PER ROW --------
-        if mode == "3 per row":
-            self.setFixedSize(96,146)
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(2,2,1,2)
-            layout.setSpacing(0)
+        # Only teardown if the underlying layout archetype changed
+        if new_arch != old_arch:
+            self._clear_layout()
+            self._current_arch = new_arch
 
-            self.cover_label = self._make_cover(92,142)
-            layout.addWidget(self.cover_label)
+        # -------- GRID ARCHETYPE (2 per, 3 per, Square) --------
+        if new_arch == "grid":
+            if not self.layout():
+                layout = QVBoxLayout(self)
+                layout.setSpacing(0)
+            else:
+                layout = self.layout()
 
-        # -------- SQUARE --------
-        elif mode == "Square":
-            self.setFixedSize(96,96)
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(2,2,1,2)
-            layout.setSpacing(0)
+            if mode == "3 per row":
+                self.setFixedSize(96, 146)
+                layout.setContentsMargins(2, 2, 1, 2)
+                if not hasattr(self, 'cover_label'):
+                    self.cover_label = self._make_cover(92, 142)
+                    layout.addWidget(self.cover_label)
+                else:
+                    self.cover_label.setFixedSize(92, 142)
+                    self.cover_label.show()
+                if hasattr(self, 'title_label'): self.title_label.hide()
+                if hasattr(self, 'author_label'): self.author_label.hide()
 
-            self.cover_label = self._make_cover(92,92)
-            layout.addWidget(self.cover_label)
+            elif mode == "Square":
+                self.setFixedSize(96, 96)
+                layout.setContentsMargins(2, 2, 1, 2)
+                if not hasattr(self, 'cover_label'):
+                    self.cover_label = self._make_cover(92, 92)
+                    layout.addWidget(self.cover_label)
+                else:
+                    self.cover_label.setFixedSize(92, 92)
+                    self.cover_label.show()
+                if hasattr(self, 'title_label'): self.title_label.hide()
+                if hasattr(self, 'author_label'): self.author_label.hide()
 
-        # -------- 2 PER ROW --------
-        elif mode == "2 per row":
-            self.setFixedSize(140,226)
-            layout = QVBoxLayout(self)
-            layout.setContentsMargins(13,8,0,0)
-            layout.setSpacing(0)
+            elif mode == "2 per row":
+                self.setFixedSize(140, 226)
+                layout.setContentsMargins(13, 8, 0, 0)
+                if not hasattr(self, 'cover_label'):
+                    self.cover_label = self._make_cover(113, 172)
+                    layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
+                else:
+                    self.cover_label.setFixedSize(113, 172)
+                    self.cover_label.show()
+                    layout.setAlignment(self.cover_label, Qt.AlignLeft)
 
-            self.cover_label = self._make_cover(113,172)
-            layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
+                if not hasattr(self, 'title_label'):
+                    self.title_label = QLabel()
+                    self.title_label.setObjectName("book_item_title")
+                    self.title_label.setStyleSheet("font-size: 14px;")
+                    self.title_label.setContentsMargins(0, 0, 14, 0)
+                    layout.addWidget(self.title_label)
+                else:
+                    self.title_label.show()
 
-            self.title_label = QLabel()
-            self.title_label.setObjectName("book_item_title")
-            self.title_label.setStyleSheet("font-size: 14px;")
-            self.author_label = QLabel()
-            self.author_label.setObjectName("book_item_author")
-            self.author_label.setStyleSheet("font-size: 13px;")
+                if not hasattr(self, 'author_label'):
+                    self.author_label = QLabel()
+                    self.author_label.setObjectName("book_item_author")
+                    self.author_label.setStyleSheet("font-size: 13px;")
+                    self.author_label.setContentsMargins(0, 0, 14, 0)
+                    layout.addWidget(self.author_label)
+                else:
+                    self.author_label.show()
 
-            for lbl in (self.title_label, self.author_label):
-                lbl.setContentsMargins(0,0,14,0)
+            if not hasattr(self, 'overlay_widget'):
+                self._overlay_has_progress = False
+                self.overlay_widget = QWidget(self)
+                ovl_layout = QVBoxLayout(self.overlay_widget)
+                ovl_layout.setContentsMargins(4, 4, 4, 4)
+                ovl_layout.setSpacing(2)
+                ovl_layout.addStretch()
 
-            layout.addWidget(self.title_label)
-            layout.addWidget(self.author_label)
+                self.overlay_time_row = QWidget()
+                self.overlay_time_row.setAttribute(Qt.WA_TransparentForMouseEvents)
+                time_row_layout = QHBoxLayout(self.overlay_time_row)
+                time_row_layout.setContentsMargins(0, 0, 0, 0)
+                time_row_layout.setSpacing(0)
+                self.overlay_elapsed_label = QLabel()
+                self.overlay_remaining_label = QLabel()
+                time_row_layout.addWidget(self.overlay_elapsed_label)
+                time_row_layout.addStretch()
+                time_row_layout.addWidget(self.overlay_remaining_label)
+                ovl_layout.addWidget(self.overlay_time_row)
+
+                bottom_row = QWidget()
+                bottom_row.setAttribute(Qt.WA_TransparentForMouseEvents)
+                bottom_layout = QHBoxLayout(bottom_row)
+                bottom_layout.setContentsMargins(0, 0, 0, 0)
+                bottom_layout.setSpacing(4)
+
+                self.overlay_progress_bar = QProgressBar()
+                self.overlay_progress_bar.setObjectName("overlay_progress_bar")
+                self.overlay_progress_bar.setFixedHeight(6)
+                self.overlay_progress_bar.setTextVisible(False)
+                self.overlay_progress_bar.setRange(0, 1000)
+                self.overlay_progress_bar.setValue(0)
+                self.overlay_progress_bar.setStyleSheet(f"""
+                    QProgressBar {{ background-color: {self._pg_bg}; border: none; border-radius: 0px; }}
+                    QProgressBar::chunk {{ background-color: {self._pg_fill}; border: none; border-radius: 0px; }}
+                """)
+
+                self.overlay_pct_label = QLabel()
+                self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
+                self.overlay_pct_label.setFixedWidth(30)
+                self.overlay_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                self.overlay_progress_container = QWidget()
+                progress_container_layout = QHBoxLayout(self.overlay_progress_container)
+                progress_container_layout.setContentsMargins(0,0,0,0)
+                progress_container_layout.setSpacing(4)
+                progress_container_layout.addWidget(self.overlay_progress_bar, 1)
+                progress_container_layout.addWidget(self.overlay_pct_label)
+
+                self.overlay_total_duration_label = QLabel()
+                self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
+                self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                bottom_layout.addWidget(self.overlay_progress_container)
+                bottom_layout.addWidget(self.overlay_total_duration_label)
+                ovl_layout.addWidget(bottom_row)
+                self.overlay_widget.setStyleSheet(
+                    "background: qlineargradient(x1:2, y1:2, x1:4, y1:4, stop:0 rgba(0,0,0,100), stop:1 rgba(0,0,0,230));"
+                )
+                self.overlay_time_row.setStyleSheet("background: transparent;")
+                bottom_row.setStyleSheet("background: transparent;")
+                for lbl in (self.overlay_elapsed_label, self.overlay_remaining_label, self.overlay_pct_label):
+                    lbl.setStyleSheet("color: white; font-size: 12px; background: transparent;")
+                self.overlay_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                self.overlay_widget.setAttribute(Qt.WA_TransparentForMouseEvents)
+                self.overlay_widget.hide()
+            self._reposition_overlay()
+            return
 
         # -------- 1 PER ROW --------
-        elif mode == "1 per row":
+        if mode == "1 per row":
             self.setFixedSize(292,161)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(4,4,4,4)
@@ -286,89 +389,6 @@ class BookItem(QFrame):
             self.title_label.installEventFilter(self)
             self.author_label.installEventFilter(self)
 
-        if mode in ("2 per row", "3 per row", "Square"):
-            self._overlay_has_progress = False
-            self.overlay_widget = QWidget(self)
-            ovl_layout = QVBoxLayout(self.overlay_widget)
-            ovl_layout.setContentsMargins(4, 4, 4, 4)
-            ovl_layout.setSpacing(2)
-            ovl_layout.addStretch()
-
-            # Top row: elapsed (left) · remaining/total (right). Hidden when no progress.
-            self.overlay_time_row = QWidget()
-            self.overlay_time_row.setAttribute(Qt.WA_TransparentForMouseEvents)
-            time_row_layout = QHBoxLayout(self.overlay_time_row)
-            time_row_layout.setContentsMargins(0, 0, 0, 0)
-            time_row_layout.setSpacing(0)
-            self.overlay_elapsed_label = QLabel()
-            self.overlay_remaining_label = QLabel()
-            time_row_layout.addWidget(self.overlay_elapsed_label)
-            time_row_layout.addStretch()
-            time_row_layout.addWidget(self.overlay_remaining_label)
-            ovl_layout.addWidget(self.overlay_time_row)
-
-            # Bottom row: progress bar + pct% if progress; total duration centered if no progress.
-            # We use a container for progress elements and a separate label for total duration (no progress)
-            # and manage their visibility.
-            bottom_row = QWidget()
-            bottom_row.setAttribute(Qt.WA_TransparentForMouseEvents)
-            bottom_layout = QHBoxLayout(bottom_row)
-            bottom_layout.setContentsMargins(0, 0, 0, 0)
-            bottom_layout.setSpacing(4)
-
-            self.overlay_progress_bar = QProgressBar()
-            self.overlay_progress_bar.setObjectName("overlay_progress_bar")
-            self.overlay_progress_bar.setFixedHeight(6)
-            self.overlay_progress_bar.setTextVisible(False)
-            self.overlay_progress_bar.setRange(0, 1000)
-            self.overlay_progress_bar.setValue(0)
-            self.overlay_progress_bar.setStyleSheet(f"""
-                QProgressBar {{
-                    background-color: {self._pg_bg};
-                    border: none;
-                    border-radius: 0px;
-                }}
-                QProgressBar::chunk {{
-                    background-color: {self._pg_fill};
-                    border: none;
-                    border-radius: 0px;
-                }}
-            """)
-
-            self.overlay_pct_label = QLabel()
-            self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
-            self.overlay_pct_label.setFixedWidth(30)
-            self.overlay_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-            # Container for progress bar and percentage
-            self.overlay_progress_container = QWidget()
-            progress_container_layout = QHBoxLayout(self.overlay_progress_container)
-            progress_container_layout.setContentsMargins(0,0,0,0)
-            progress_container_layout.setSpacing(4)
-            progress_container_layout.addWidget(self.overlay_progress_bar, 1)
-            progress_container_layout.addWidget(self.overlay_pct_label)
-
-            # Label for total duration when no progress
-            self.overlay_total_duration_label = QLabel()
-            self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
-            self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-            bottom_layout.addWidget(self.overlay_progress_container)
-            bottom_layout.addWidget(self.overlay_total_duration_label)
-            ovl_layout.addWidget(bottom_row)
-            self.overlay_widget.setStyleSheet(
-                "background: qlineargradient(x1:2, y1:2, x1:4, y1:4, stop:0 rgba(0,0,0,100), stop:1 rgba(0,0,0,230));"
-            )
-            self.overlay_time_row.setStyleSheet("background: transparent;")
-            bottom_row.setStyleSheet("background: transparent;")
-            for lbl in (self.overlay_elapsed_label, self.overlay_remaining_label, self.overlay_pct_label):
-                lbl.setStyleSheet("color: white; font-size: 12px; background: transparent;")
-            self.overlay_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-            self.overlay_widget.setAttribute(Qt.WA_TransparentForMouseEvents)
-            self.overlay_widget.hide()
-            self._reposition_overlay()
 
     def bind(self, book_data):
         """Virtual Scroll entry point: Rebinds the widget to new data."""
@@ -875,13 +895,26 @@ class LibraryPanel(QFrame):
             widget.set_cover(pixmap)
 
     def _on_view_mode_changed(self, _):
+        start_time = time.perf_counter()
         mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
+        
+        self.container.setUpdatesEnabled(False) # Batch the massive UI rebuild
+        BookItem._total_clear_time = 0.0
+        loop_start = time.perf_counter()
         for item in self._pool:
             item.set_view_mode(mode)
+        loop_dur = (time.perf_counter() - loop_start) * 1000
+
         self._sort_items_in_place()
         self.update_progress_bar_theme()
+        self.container.setUpdatesEnabled(True)
+
+        duration = (time.perf_counter() - start_time) * 1000
+        print(f"[DEBUG] _clear_layout total: {BookItem._total_clear_time * 1000:.2f}ms")
+        print(f"[DEBUG] set_view_mode loop: {loop_dur:.2f}ms")
+        print(f"[DEBUG] View mode change to '{mode}' took {duration:.2f}ms")
 
     def _setup_ui(self):
         # Moved UI setup logic here for cleaner __init__
@@ -980,6 +1013,7 @@ class LibraryPanel(QFrame):
         self._sort_items_in_place(reset_scroll=True)
 
     def _sort_items_in_place(self, ascending=None, reset_scroll=False):
+        start_time = time.perf_counter()
         # Toggle direction if called from button, otherwise keep current
         if ascending is None:
             ascending = getattr(self, '_sort_ascending', True)
@@ -1033,6 +1067,8 @@ class LibraryPanel(QFrame):
             self._ignore_scroll = False
             
         self._update_viewport()
+        duration = (time.perf_counter() - start_time) * 1000
+        print(f"[DEBUG] Sort/Filter (key: {sort_text}, ascending: {ascending}) took {duration:.2f}ms")
 
     def update_current_book_progress(self):
         """Live update for the currently playing book's progress and sorting."""
