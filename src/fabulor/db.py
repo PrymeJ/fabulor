@@ -51,10 +51,16 @@ class LibraryDB:
                     duration REAL,
                     progress REAL DEFAULT 0,
                     cover_path TEXT,
+                    year INTEGER,
                     date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_played DATETIME
                 )
             """)
+            try:
+                conn.execute("ALTER TABLE books ADD COLUMN year INTEGER")
+                conn.commit()
+            except Exception:
+                pass
 
     # --- Scan Locations CRUD ---
 
@@ -104,7 +110,8 @@ class LibraryDB:
             "narrator": book_data.get("narrator"),
             "duration": book_data.get("duration"),
             "progress": book_data.get("progress"),
-            "cover_path": book_data.get("cover_path")
+            "cover_path": book_data.get("cover_path"),
+            "year": book_data.get("year"),
         }
 
         cleaned = {
@@ -114,8 +121,8 @@ class LibraryDB:
         # COALESCE(:progress, 0) ensures new records start at 0 if no progress is supplied.
         # COALESCE(excluded.progress, books.progress) ensures updates don't overwrite saved progress with NULL.
         query = """
-            INSERT INTO books (path, folder_name_raw, title, author, narrator, duration, progress, cover_path)
-            VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path)
+            INSERT INTO books (path, folder_name_raw, title, author, narrator, duration, progress, cover_path, year)
+            VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path, :year)
             ON CONFLICT(path) DO UPDATE SET
                 folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
                 title=excluded.title,
@@ -123,7 +130,8 @@ class LibraryDB:
                 narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
                 duration=excluded.duration,
                 progress=COALESCE(excluded.progress, books.progress),
-                cover_path=excluded.cover_path
+                cover_path=excluded.cover_path,
+                year=COALESCE(excluded.year, books.year)
         """
         with self._get_conn() as conn:
             with conn:

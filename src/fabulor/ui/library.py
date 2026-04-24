@@ -785,7 +785,7 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
-        for display, key in [("Title", "Title"), ("Author", "Author"), ("Recent", "Last Played"), ("Progress", "Progress"), ("Duration", "Duration")]:
+        for display, key in [("Title", "Title"), ("Author", "Author"), ("Recent", "Last Played"), ("Progress", "Progress"), ("Duration", "Duration"), ("Year", "Year")]:
             self.sort_combo.addItem(display, key)
         self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
@@ -878,8 +878,11 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(ascending)
 
         sort_key = sort_text.lower().replace(" ", "_")
-        numeric_keys = {"progress", "duration"}
+        numeric_keys = {"progress", "duration", "year"}
         datetime_keys = {"last_played", "date_added"}
+
+        if sort_key == "last_played":
+            self._filtered_books = [b for b in self._filtered_books if (b.get("progress") or 0) > 0]
 
         def sort_value(book_dict):
             val = book_dict.get(sort_key)
@@ -894,8 +897,12 @@ class LibraryPanel(QFrame):
                 return (0, str(val))
             return (0, str(val).lower())
 
-        has_val = [b for b in self._filtered_books if b.get(sort_key) is not None]
-        no_val = [b for b in self._filtered_books if b.get(sort_key) is None]
+        if sort_key == "progress":
+            has_val = [b for b in self._filtered_books if (b.get("progress") or 0) > 0]
+            no_val  = [b for b in self._filtered_books if not (b.get("progress") or 0) > 0]
+        else:
+            has_val = [b for b in self._filtered_books if b.get(sort_key) is not None]
+            no_val  = [b for b in self._filtered_books if b.get(sort_key) is None]
 
         self._filtered_books = sorted(
             has_val,

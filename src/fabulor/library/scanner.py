@@ -1,4 +1,5 @@
 import os
+import re
 import hashlib
 import platformdirs
 import mutagen
@@ -69,11 +70,33 @@ class ScannerWorker(QObject):
             
         self.finished.emit(processed)
 
+    @staticmethod
+    def _parse_year(val):
+        if val is None:
+            return None
+        if isinstance(val, (list, tuple)):
+            val = val[0] if val else None
+        if val is None:
+            return None
+        if isinstance(val, (bytes, bytearray)):
+            raw = val.decode('utf-8', errors='ignore')
+        elif hasattr(val, 'text') and val.text:
+            raw = str(val.text[0])
+        else:
+            raw = str(val)
+        m = re.search(r'\d{4}', raw)
+        if m:
+            y = int(m.group())
+            if 1800 <= y <= 2030:
+                return y
+        return None
+
     def _extract_metadata(self, book_dir, extensions):
         duration = 0.0
         narrator = ""
         tag_title = None
         tag_author = None
+        tag_year = None
         cover_path = ""
         
         # Look for cover images
@@ -119,6 +142,16 @@ class ScannerWorker(QObject):
 
                     if '\xa9ART' in m.tags: tag_author = str(m.tags['\xa9ART'][0])
                     elif 'TPE1' in m.tags: tag_author = str(m.tags['TPE1'])
+
+                    if tag_year is None:
+                        for ytag in ['TDOR', '----:com.apple.iTunes:originaldate',
+                                     '----:com.apple.iTunes:ORIGINALDATE',
+                                     '\xa9day', 'originaldate', 'original_release_date',
+                                     'TDRC', 'TYER', 'date']:
+                            if ytag in m.tags:
+                                tag_year = self._parse_year(m.tags[ytag])
+                                if tag_year:
+                                    break
             except:
                 continue
 
@@ -171,7 +204,8 @@ class ScannerWorker(QObject):
             "path": str(book_dir), 
             "folder_name_raw": book_dir.name,
             "title": title, "author": author,
-            "narrator": narrator, "duration": duration, "cover_path": cover_path
+            "narrator": narrator, "duration": duration, "cover_path": cover_path,
+            "year": tag_year,
         }
 
 class LibraryScanner(QObject):
