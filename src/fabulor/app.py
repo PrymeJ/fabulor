@@ -349,6 +349,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_sidebar()
         self._build_library_panel()
         self._build_settings_panel()
+        self._build_stats_panel()
         
         self.speed_panel = SpeedControlsPanel(self.player, self.config, self.theme_manager, self)
         self.speed_panel.hide()
@@ -695,6 +696,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
         self.sidebar_layout.addWidget(self.sleep_trigger_btn)
 
+        self.stats_trigger_btn = QPushButton("STATS")
+        self.stats_trigger_btn.setObjectName("sidebar_stats_btn")
+        self.sidebar_layout.addWidget(self.stats_trigger_btn)
+
         self.sleep_cancel_btn = QPushButton("✕", self.sleep_trigger_btn)
         self.sleep_cancel_btn.setFixedSize(16, 16)
         self.sleep_cancel_btn.move(34, 1)
@@ -964,6 +969,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
         self.settings_panel_animation.setDuration(300)
         self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _build_stats_panel(self):
+        self.stats_panel = QWidget(self)
+        self.stats_panel.setObjectName("stats_panel")
+        self.stats_panel.setAttribute(Qt.WA_StyledBackground, True)
+        stats_layout = QVBoxLayout(self.stats_panel)
+        stats_layout.setContentsMargins(5, 5, 5, 5)
+
+        self.stats_tabs = QTabWidget()
+        self.stats_tabs.setObjectName("stats_tabs")
+
+        for name in ["Overall", "Daily", "Weekly", "Monthly"]:
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(10, 10, 10, 10)
+            lbl = QLabel(f"{name} stats coming soon...")
+            lbl.setAlignment(Qt.AlignCenter)
+            tab_layout.addWidget(lbl)
+            tab_layout.addStretch()
+            self.stats_tabs.addTab(tab, name)
+
+        stats_layout.addWidget(self.stats_tabs)
+
+        self.stats_panel.hide()
+        self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
+        self.stats_panel_animation.setDuration(300)
+        self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""

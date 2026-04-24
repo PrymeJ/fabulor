@@ -1579,7 +1579,7 @@ def get_settings_stylesheet(theme_name="default"):
     panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
 
     return f"""
-        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#stats_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
