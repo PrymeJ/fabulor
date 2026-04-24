@@ -1188,7 +1188,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if is_eof and dur is None:
             book = self.db.get_book(self.current_file)
-            dur = book['duration'] if book and book['duration'] else 0.0
+            dur = book.duration if book and book.duration else 0.0
 
         # If we aren't at EOF and don't have a position, we can't update.
         # If we ARE at EOF, we continue even if mpv_pos is None.
@@ -1578,7 +1578,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         
         if self.player.eof_reached or self.play_pause_button.text() == "Restart":
-            # Re-loading the book is the only way to reliably "wake" mpv from EOF idle
+            self.config.set_last_position(self.current_file, 0)
+            self.db.update_progress(self.current_file, 0)
             self.player.load_book(self.current_file, start_paused=False)
             return
         else:

@@ -73,6 +73,7 @@ class Player(QObject):
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()
+        self._eof = False
         self.instance.play(path)
         if start_paused:
             self.instance.pause = True
