@@ -275,3 +275,94 @@ class LibraryDB:
             if row is None or row["started_at"] is None:
                 return None
             return datetime.fromisoformat(row["started_at"])
+
+    # --- Listening Stats ---
+
+    _GRANULARITY_FORMATS = {
+        'day':   '%Y-%m-%d',
+        'week':  '%Y-W%W',
+        'month': '%Y-%m',
+        'year':  '%Y',
+    }
+
+    def get_active_periods(self, granularity: str, day_start_hour: int) -> list[str]:
+        if granularity not in self._GRANULARITY_FORMATS:
+            raise ValueError(f"Invalid granularity: {granularity!r}")
+        fmt = self._GRANULARITY_FORMATS[granularity]
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT DISTINCT strftime(?, datetime(session_start, ?)) AS period"
+                " FROM listening_sessions"
+                " ORDER BY period DESC",
+                (fmt, offset)
+            )
+            return [row['period'] for row in cursor.fetchall()]
+
+    def get_listening_time_per_period(self, granularity: str, day_start_hour: int) -> list[dict]:
+        if granularity not in self._GRANULARITY_FORMATS:
+            raise ValueError(f"Invalid granularity: {granularity!r}")
+        fmt = self._GRANULARITY_FORMATS[granularity]
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT"
+                "  strftime(?, datetime(session_start, ?)) AS period,"
+                "  book_path,"
+                "  book_title,"
+                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
+                " FROM listening_sessions"
+                " GROUP BY period, book_path"
+                " ORDER BY period DESC, seconds DESC",
+                (fmt, offset)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_per_book_stats(self, book_path: str, day_start_hour: int) -> dict:
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            agg = conn.execute(
+                "SELECT"
+                "  MAX(furthest_position) AS furthest_position,"
+                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS total_seconds"
+                " FROM listening_sessions"
+                " WHERE book_path = ?",
+                (book_path,)
+            ).fetchone()
+            if agg is None or agg['total_seconds'] is None:
+                return {'furthest_position': 0.0, 'total_seconds': 0.0, 'per_day': []}
+            per_day = conn.execute(
+                "SELECT"
+                "  strftime('%Y-%m-%d', datetime(session_start, ?)) AS date,"
+                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
+                " FROM listening_sessions"
+                " WHERE book_path = ?"
+                " GROUP BY date"
+                " ORDER BY date ASC",
+                (offset, book_path)
+            ).fetchall()
+            return {
+                'furthest_position': agg['furthest_position'] or 0.0,
+                'total_seconds': agg['total_seconds'] or 0.0,
+                'per_day': [dict(row) for row in per_day],
+            }
+
+    def get_books_listened_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:
+        if granularity not in self._GRANULARITY_FORMATS:
+            raise ValueError(f"Invalid granularity: {granularity!r}")
+        fmt = self._GRANULARITY_FORMATS[granularity]
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "SELECT"
+                "  book_path,"
+                "  book_title,"
+                "  book_author,"
+                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
+                " FROM listening_sessions"
+                " WHERE strftime(?, datetime(session_start, ?)) = ?"
+                " GROUP BY book_path"
+                " ORDER BY seconds DESC",
+                (fmt, offset, period_label)
+            )
+            return [dict(row) for row in cursor.fetchall()]
