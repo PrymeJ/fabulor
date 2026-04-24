@@ -71,6 +71,10 @@ class BookItem(QFrame):
                 try: delattr(self, attr)
                 except AttributeError: pass
 
+    @staticmethod
+    def _elide(label, text, width):
+        return label.fontMetrics().elidedText(text or "", Qt.ElideRight, width)
+
     def _make_cover(self, w, h):
         label = QLabel()
         label.setFixedSize(w, h)
@@ -255,7 +259,6 @@ class BookItem(QFrame):
             self.author_label = QLabel()
             self.author_label.setObjectName("book_item_author")
             self.author_label.setStyleSheet("font-size: 14px;")
-            self.author_label.setFixedWidth(100)
             self.author_label.setAlignment(Qt.AlignRight)
             self.author_label.setContentsMargins(0,0,0,0)
 
@@ -468,15 +471,25 @@ class BookItem(QFrame):
             s = int(s or 0)
             return f"{s//3600}:{(s%3600)//60:02}:{s%60:02}"
 
-        # title/author
+        # title/author (elision by mode; List is handled in the invade block below)
         if hasattr(self, "title_label"):
-            self.title_label.setText(title)
+            if self.view_mode == "1 per row":
+                self.title_label.setText(self._elide(self.title_label, title, 176))
+            elif self.view_mode == "2 per row":
+                self.title_label.setText(self._elide(self.title_label, title, 113))
+
         if hasattr(self, "author_label"):
-            self.author_label.setText(author)
+            if self.view_mode == "1 per row":
+                self.author_label.setText(self._elide(self.author_label, author, 176))
+            elif self.view_mode == "2 per row":
+                self.author_label.setText(self._elide(self.author_label, author, 113))
 
         # narrator/year visibility
         if hasattr(self, "narrator_label"):
-            self.narrator_label.setText(narrator or "")
+            if self.view_mode == "1 per row":
+                self.narrator_label.setText(self._elide(self.narrator_label, narrator or "", 176))
+            else:
+                self.narrator_label.setText(narrator or "")
             self.narrator_label.setVisible(bool(narrator))
 
         if hasattr(self, "year_label"):
@@ -493,6 +506,28 @@ class BookItem(QFrame):
                 self.total_label.setText(f"-{fmt_time((dur - prog) / speed)}")
             else:
                 self.total_label.setText(fmt_time(dur / speed))
+
+        # List: invade elision
+        if self.view_mode == "List" and hasattr(self, "title_label") and hasattr(self, "author_label"):
+            self.title_label.ensurePolished()
+            self.author_label.ensurePolished()
+            fm_t = self.title_label.fontMetrics()
+            fm_a = self.author_label.fontMetrics()
+            AVAILABLE   = 218
+            AUTHOR_BASE = 100
+            TITLE_CM    = 4
+            title_natural_lw = fm_t.horizontalAdvance(title) + TITLE_CM
+            author_text_w    = fm_a.horizontalAdvance(author)
+            author_w = AUTHOR_BASE
+            if author_text_w > AUTHOR_BASE:
+                spare    = max(0, (AVAILABLE - AUTHOR_BASE) - title_natural_lw)
+                author_w = min(author_text_w, AUTHOR_BASE + spare)
+            title_max_lw = AVAILABLE - author_w
+            disp_title  = fm_t.elidedText(title,  Qt.ElideRight, title_max_lw - TITLE_CM)
+            disp_author = fm_a.elidedText(author, Qt.ElideRight, author_w)
+            self.author_label.setFixedWidth(max(1, author_w))
+            self.title_label.setText(disp_title)
+            self.author_label.setText(disp_author)
 
         # progress
         show_progress = prog > 0
