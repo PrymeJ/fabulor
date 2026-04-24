@@ -516,13 +516,17 @@ class BookItem(QFrame):
             AVAILABLE   = 218
             AUTHOR_BASE = 100
             TITLE_CM    = 4
-            title_natural_lw = fm_t.horizontalAdvance(title) + TITLE_CM
-            author_text_w    = fm_a.horizontalAdvance(author)
-            author_w = AUTHOR_BASE
-            if author_text_w > AUTHOR_BASE:
-                spare    = max(0, (AVAILABLE - AUTHOR_BASE) - title_natural_lw)
-                author_w = min(author_text_w, AUTHOR_BASE + spare)
+            BUFFER      = 4
+            title_text_w  = fm_t.horizontalAdvance(title)
+            author_text_w = fm_a.horizontalAdvance(author)
+            # Short author donates unused space to title; buffer absorbs sub-pixel slack
+            author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
             title_max_lw = AVAILABLE - author_w
+            # Long author invades title's spare space
+            if author_text_w + BUFFER > AUTHOR_BASE:
+                spare    = max(0, title_max_lw - (title_text_w + TITLE_CM))
+                author_w = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
+                title_max_lw = AVAILABLE - author_w
             disp_title  = fm_t.elidedText(title,  Qt.ElideRight, title_max_lw - TITLE_CM)
             disp_author = fm_a.elidedText(author, Qt.ElideRight, author_w)
             self.author_label.setFixedWidth(max(1, author_w))
