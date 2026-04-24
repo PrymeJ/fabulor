@@ -382,6 +382,9 @@ class BookItem(QFrame):
             pct = 0.30 if getattr(self, '_overlay_has_progress', False) else 0.20
             oh = int(ch * pct)
 
+            if self.view_mode == "2 per row" and not getattr(self, '_overlay_has_progress', False):
+                oh -= 9
+
             self.overlay_widget.resize(cw, oh)
 
             # Use the layout margins directly — cover_label sits at (left, top) within
