@@ -75,7 +75,7 @@ class BookItem(QFrame):
     def _elide(label, text, width):
         text = text or ""
         fm = label.fontMetrics()
-        if fm.horizontalAdvance(text) - width < 8:
+        if fm.horizontalAdvance(text) - width < fm.horizontalAdvance("…"):
             return text
         return fm.elidedText(text, Qt.ElideRight, width)
 
@@ -532,8 +532,10 @@ class BookItem(QFrame):
                 author_w = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
                 title_max_lw = AVAILABLE - author_w
             title_avail = title_max_lw - TITLE_CM
-            disp_title  = title  if title_text_w  - title_avail < 8 else fm_t.elidedText(title,  Qt.ElideRight, title_avail)
-            disp_author = author if author_text_w  - author_w    < 8 else fm_a.elidedText(author, Qt.ElideRight, author_w)
+            ew_t = fm_t.horizontalAdvance("…")
+            ew_a = fm_a.horizontalAdvance("…")
+            disp_title  = title  if title_text_w  - title_avail < ew_t else fm_t.elidedText(title,  Qt.ElideRight, title_avail)
+            disp_author = author if author_text_w  - author_w    < ew_a else fm_a.elidedText(author, Qt.ElideRight, author_w)
             self.author_label.setFixedWidth(max(1, author_w))
             self.title_label.setText(disp_title)
             self.author_label.setText(disp_author)
