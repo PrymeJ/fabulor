@@ -385,8 +385,14 @@ class BookItem(QFrame):
             if self.view_mode == "2 per row" and not getattr(self, '_overlay_has_progress', False):
                 oh -= 9
 
-            if self.view_mode == "3 per row" and not getattr(self, '_overlay_has_progress', False):
+            elif self.view_mode == "3 per row" and not getattr(self, '_overlay_has_progress', False):
                 oh -= 4
+
+            elif self.view_mode == "Square":
+                if getattr(self, '_overlay_has_progress', False): 
+                    oh += 12
+                elif self.view_mode == "Square" and not getattr(self, '_overlay_has_progress', False):
+                    oh += 4
 
             self.overlay_widget.resize(cw, oh)
 
