@@ -56,6 +56,9 @@ class LibraryDB:
                     last_played DATETIME
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_books_last_played ON books (last_played)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books (title)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books (author)")
 
     # --- Scan Locations CRUD ---
 
