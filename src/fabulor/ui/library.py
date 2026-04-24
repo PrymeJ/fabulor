@@ -901,6 +901,12 @@ class LibraryPanel(QFrame):
         self._on_search_changed(self.search_field.text())
 
     def _trigger_cover_load(self, book, widget):
+        cover_path = book["path"]
+        if cover_path in self._pixmap_cache:
+            pixmap = self._pixmap_cache[cover_path]
+            if widget.current_path == cover_path:
+                widget.set_cover(pixmap)
+            return
         from .cover_loader import CoverLoaderWorker
         worker = CoverLoaderWorker(book, self.player_instance)
         self._active_workers.add(worker)
