@@ -1088,7 +1088,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         book_data = self.db.get_book(self.current_file)
         if book_data:
-            progress = book_data.get("progress", 0)
+            progress = book_data.progress
             if progress > 0:
                 self.player.time_pos = progress
                 self._is_seeking = True
@@ -1465,7 +1465,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.cover_art_label.hide()
             self.metadata_label.show()
             if book:
-                self.metadata_label.setText(f"{book['author']} - {book['title']}")
+                self.metadata_label.setText(f"{book.author} - {book.title}")
             else:
                 self.metadata_label.setText("Unknown book")
 

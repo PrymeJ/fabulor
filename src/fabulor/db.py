@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
+from .models.book import Book
 import platformdirs
 
 class LibraryDB:
@@ -140,7 +141,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             cursor = conn.execute("SELECT * FROM books WHERE path = ?", (str(path),))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            return Book.from_dict(dict(row)) if row else None
 
     _ALLOWED_SORT_COLUMNS = frozenset({
         "title", "author", "narrator", "duration", "progress",
