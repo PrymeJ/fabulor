@@ -751,6 +751,7 @@ class LibraryPanel(QFrame):
         self._pool_size = 30 # Default buffer
         self._pool = []
         self._books_cache = []
+        self._last_book_list = []
         self._filtered_books = []
         self._pixmap_cache = {}
         
@@ -892,12 +893,45 @@ class LibraryPanel(QFrame):
 
     def refresh(self, force=False):
         self._resolve_theme_colors()
-        self._books_cache = self.db.get_all_books(sort_by="title", order="ASC")
+        new_books = self.db.get_all_books(sort_by="title", order="ASC")
         self._data_initialized = True
+
+        if force:
+            self._books_cache = new_books
+            self._last_book_list = new_books
+            if not self.isVisible():
+                return
+            self._on_search_changed(self.search_field.text())
+            return
+
+        rendered_by_path = {w.current_path: w for w in self._pool if w.current_path}
+        rendered_paths = set(rendered_by_path)
+        new_by_path = {b['path']: b for b in new_books}
+        new_paths = set(new_by_path)
+
+        added   = new_paths - rendered_paths
+        removed = rendered_paths - new_paths
+        changed = {
+            path for path in rendered_paths & new_paths
+            if rendered_by_path[path].book_data != new_by_path[path]
+        }
+
+        self._last_book_list = new_books
+
+        if not added and not removed and not changed:
+            return
+
+        self._books_cache = new_books
+
+        if not added and not removed:
+            if self.isVisible():
+                for w in self._pool:
+                    if w.current_path in changed:
+                        w.bind(new_by_path[w.current_path])
+            return
 
         if not self.isVisible():
             return
-
         self._on_search_changed(self.search_field.text())
 
     def _trigger_cover_load(self, book, widget):
