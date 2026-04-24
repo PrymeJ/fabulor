@@ -29,6 +29,7 @@ from .library_controller import LibraryController
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
+from .ui.stats_panel import StatsPanel
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
@@ -971,27 +972,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _build_stats_panel(self):
-        self.stats_panel = QWidget(self)
-        self.stats_panel.setObjectName("stats_panel")
-        self.stats_panel.setAttribute(Qt.WA_StyledBackground, True)
-        stats_layout = QVBoxLayout(self.stats_panel)
-        stats_layout.setContentsMargins(5, 5, 5, 5)
-
-        self.stats_tabs = QTabWidget()
-        self.stats_tabs.setObjectName("stats_tabs")
-
-        for name in ["Overall", "Daily", "Weekly", "Monthly"]:
-            tab = QWidget()
-            tab_layout = QVBoxLayout(tab)
-            tab_layout.setContentsMargins(10, 10, 10, 10)
-            lbl = QLabel(f"{name} stats coming soon...")
-            lbl.setAlignment(Qt.AlignCenter)
-            tab_layout.addWidget(lbl)
-            tab_layout.addStretch()
-            self.stats_tabs.addTab(tab, name)
-
-        stats_layout.addWidget(self.stats_tabs)
-
+        self.stats_panel = StatsPanel(self.db, self.config, parent=self)
         self.stats_panel.hide()
         self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
         self.stats_panel_animation.setDuration(300)
@@ -1539,7 +1520,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel]:
+        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return
         self._hide_popups()

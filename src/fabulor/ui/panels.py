@@ -23,6 +23,7 @@ class PanelManager:
         self.settings_panel = main_window.settings_panel
         self.speed_panel = main_window.speed_panel
         self.sleep_panel = main_window.sleep_panel
+        self.stats_panel = main_window.stats_panel
         self.blur_effect = main_window.blur_effect # Reference to the blur effect
         self.blur_animation = main_window.blur_animation # Reference to the blur animation
 
@@ -348,6 +349,7 @@ class PanelManager:
             self.settings_panel_animation,
             self.speed_panel_animation,
             self.sleep_panel_animation,
+            self.stats_panel_animation,
             self.blur_animation
         ]
         return any(anim.state() == QPropertyAnimation.Running for anim in animations)
@@ -360,6 +362,7 @@ class PanelManager:
             self.settings_panel.isVisible() or
             self.speed_panel.isVisible() or
             self.sleep_panel.isVisible() or
+            self.stats_panel.isVisible() or
             self.main_window.chapter_list_widget.isVisible()
         )
 
@@ -382,7 +385,7 @@ class PanelManager:
 
     def handle_mouse_press(self, event):
         """Handles mouse press events to prevent panel dismissal when clicking inside."""
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel]:
+        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return True # Event handled, do not propagate
         return False # Event not handled, propagate
@@ -397,6 +400,8 @@ class PanelManager:
             self._close_speed_flow()
         elif self.sleep_panel.isVisible():
             self._close_sleep_flow()
+        elif self.stats_panel.isVisible():
+            self._close_stats_flow()
         elif self.main_window.chapter_list_widget.isVisible():
             self.main_window.chapter_list_widget.hide()
         else:
