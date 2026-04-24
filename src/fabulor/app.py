@@ -1096,6 +1096,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return self.player.time_pos or 0.0
 
     def _open_session(self):
+        
         self._session_start = datetime.now()
         self._session_position_start = self._get_current_position()
         self._session_furthest_position = self._session_position_start
@@ -1104,13 +1105,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_pause_timer.stop()
         self._post_seek_credit_timer.stop()
         if self._session_start is None:
-            print("[SESSION] _close_session called but no session open")
             return
         now = datetime.now()
         elapsed = (now - self._session_start).total_seconds()
-        print(f"[SESSION] closing session, elapsed={elapsed:.1f}s, book={self._current_book}")
         if elapsed >= 60 and self._current_book is not None:
-            print("[SESSION] writing to DB")
             current_pos = self._get_current_position()
             self.db.write_session(
                 book_path=self._current_book.path,
@@ -1157,13 +1155,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
              self.status_banner.show()
              return
         self._current_book = self.db.get_book(self.current_file)
-        if self._session_start is None:
-            self._open_session()
-        else:
-            self._session_pause_timer.stop()
+        # Close any existing session before opening a new one
+        self._close_session()
+        self._current_book = self.db.get_book(self.current_file)
+        self._open_session()
         self._restore_position()
-        if self.player.duration:
-            self.chapter_list_widget.populate(self.player.duration)
+        self._session_position_start = self.config.get_last_position(self.current_file)
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
 
