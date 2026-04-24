@@ -81,8 +81,8 @@ class LibraryDB:
             with conn:
                 # Remove books from this folder first
                 conn.execute(
-                    "DELETE FROM books WHERE path LIKE ?", 
-                    (str(path) + "%",)
+                    "DELETE FROM books WHERE path LIKE ?",
+                    (str(path).rstrip("/") + "/%",)
                 )
                 conn.execute("DELETE FROM scan_locations WHERE path = ?", (str(path),))
 
@@ -143,13 +143,17 @@ class LibraryDB:
         "title", "author", "narrator", "duration", "progress",
         "last_played", "date_added", "year", "folder_name_raw",
     })
+    _TEXT_SORT_COLUMNS = frozenset({"title", "author", "narrator", "folder_name_raw"})
 
-    def get_all_books(self, sort_by="title"):
+    def get_all_books(self, sort_by="title", order="ASC"):
         """Returns all books in the library."""
         if sort_by not in self._ALLOWED_SORT_COLUMNS:
             raise ValueError(f"Invalid sort column: {sort_by!r}")
+        if order not in ("ASC", "DESC"):
+            raise ValueError(f"Invalid sort order: {order!r}")
+        collate = " COLLATE NOCASE" if sort_by in self._TEXT_SORT_COLUMNS else ""
         with self._get_conn() as conn:
-            cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}")
+            cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}{collate} {order}")
             return [dict(row) for row in cursor.fetchall()]
 
     def get_book_count(self):

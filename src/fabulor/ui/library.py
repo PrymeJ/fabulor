@@ -892,7 +892,7 @@ class LibraryPanel(QFrame):
 
     def refresh(self, force=False):
         self._resolve_theme_colors()
-        self._books_cache = self.db.get_all_books(sort_by="title COLLATE NOCASE ASC")
+        self._books_cache = self.db.get_all_books(sort_by="title", order="ASC")
         self._data_initialized = True
 
         if not self.isVisible():
