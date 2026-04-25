@@ -96,20 +96,16 @@ class BarChartWidget(QWidget):
                     self.date_clicked.emit(date_str)
                     break
     def mouseMoveEvent(self, event):
+        new_index = -1
         for i, (rect, _) in enumerate(self._bar_rects):
             if rect.contains(event.pos()):
-                if self._hovered_index != i:
-                    self._hovered_index = i
-                    self.update()
-                return
-        if self._hovered_index != -1:
-            self._hovered_index = -1
+                new_index = i
+                break
+
+        if new_index != self._hovered_index:
+            self._hovered_index = new_index
+            self.setCursor(Qt.PointingHandCursor if new_index != -1 else Qt.ArrowCursor)
             self.update()
-        
-        from PySide6.QtCore import Qt
-        self.setCursor(Qt.CursorShape.PointingHandCursor if self._hovered_index != -1 
-               else Qt.CursorShape.ArrowCursor)
-        
     def leaveEvent(self, event):
         self._hovered_index = -1
         self.update()
