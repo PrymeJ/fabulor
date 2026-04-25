@@ -67,7 +67,22 @@ class StatsPanel(QWidget):
         else:
             self._overall_value_labels[3].setText("—")
 
-        
+    def _build_options_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        pref_row = QHBoxLayout()
+        pref_row.addWidget(QLabel("Day starts at"))
+        self.day_start_spin = QSpinBox()
+        self.day_start_spin.setRange(0, 23)
+        self.day_start_spin.setValue(self.config.get_day_start_hour())
+        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
+        pref_row.addWidget(self.day_start_spin)
+        pref_row.addStretch()
+        layout.addLayout(pref_row)
+        layout.addStretch()
+        return widget   
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -90,14 +105,7 @@ class StatsPanel(QWidget):
             tab_layout.addStretch()
             self.tabs.addTab(tab, name)
 
-        pref_row = QHBoxLayout()
-        pref_row.addWidget(QLabel("Day starts at"))
-        self.day_start_spin = QSpinBox()
-        self.day_start_spin.setRange(0, 23)
-        self.day_start_spin.setValue(self.config.get_day_start_hour())
-        self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
-        pref_row.addWidget(self.day_start_spin)
-        layout.addLayout(pref_row)
+        self.tabs.addTab(self._build_options_tab(), "Options")
 
         layout.addWidget(self.tabs)
         self.refresh_overall()
