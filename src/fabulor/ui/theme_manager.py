@@ -4,7 +4,8 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
 from PySide6.QtGui import QFont, QFontMetrics
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
-    get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet, THEMES
+    get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
+    get_stats_stylesheet, THEMES
 )
 
 class ThemeComboBox(QComboBox):
@@ -186,10 +187,12 @@ class ThemeManager:
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
             mw.library_panel.update_progress_bar_theme()
         ss_panels = get_settings_stylesheet(theme_name)
-        for attr in ('settings_panel', 'speed_panel', 'sleep_panel', 'stats_panel'):
+        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
             w = getattr(mw, attr, None)
             if w:
                 w.setStyleSheet(ss_panels)
+        if hasattr(mw, 'stats_panel'):
+            mw.stats_panel.setStyleSheet(get_stats_stylesheet(theme_name))
         if hasattr(mw, 'sidebar'):
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
 

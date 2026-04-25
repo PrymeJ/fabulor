@@ -1587,7 +1587,7 @@ def get_settings_stylesheet(theme_name="default"):
     panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
 
     return f"""
-        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#stats_panel {{
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
@@ -1823,6 +1823,144 @@ def get_settings_stylesheet(theme_name="default"):
         QScrollBar::sub-page:vertical,
         QComboBox QAbstractItemView QScrollBar::add-page:vertical,
         QComboBox QAbstractItemView QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+    """
+
+
+def get_stats_stylesheet(theme_name="default"):
+    """
+    Dedicated stylesheet for the StatsPanel. Copy of settings style but with
+    reduced horizontal padding for tabs to accommodate more categories.
+    """
+    t = _resolve_theme(theme_name)
+    text_rgb = _hex_to_rgb(t['text'])
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+    panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+
+    return f"""
+        QWidget#stats_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border-right: 1px solid {t['accent']};
+            border-radius: 0px;
+        }}
+        QLabel {{
+            color: {t['text']};
+        }}
+        QLabel#settings_header {{
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
+            color: {t['accent_light']};
+        }}
+        QPushButton {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border-radius: 4px;
+            padding: 6px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+        QTabWidget::pane {{
+            border-top: 1px solid {t['accent_dark']};
+            background: transparent;
+        }}
+        QTabBar::tab {{
+            background: {t['bg_deep']};
+            color: rgba({text_rgb}, 0.9);
+            padding: 3px 7px 3px 7px;
+            font-size: 12px;
+            font-weight: bold;
+            border-top-left-radius: 2px;
+            border-top-right-radius: 2px;
+            margin-right: 0px;
+            margin-left: 2px;
+        }}
+        QTabBar::tab:selected {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
+            color: {tab_hover_text};
+        }}
+        QTabWidget QWidget {{
+            background: transparent;
+        }}
+        QScrollArea {{
+            background: transparent;
+            border: none;
+        }}
+        QScrollArea QWidget#qt_scrollarea_viewport {{
+            background: transparent;
+        }}
+        QPushButton#pattern_button {{
+            background: transparent;
+            color: {panel_dimmed_color};
+            border: 1px solid {t['accent_dark']};
+            font-size: 11px;
+            padding: 4px;
+        }}
+        QPushButton#pattern_button[selected="true"] {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#pattern_button:hover {{
+            border: 1px solid {t['accent']};
+        }}
+        QSpinBox {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 2px;
+        }}
+        QSpinBox::up-button, QSpinBox::down-button {{
+            width: 16px;
+            border: none;
+            background-color: {t['accent_dark']};
+        }}
+        QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+            background-color: {t['accent']};
+        }}
+        QLabel#stats_key_label {{
+            color: {t['accent_light']};
+            font-size: 12px;
+        }}
+        QLabel#stats_value_label {{
+            color: {t['text']};
+            font-weight: bold;
+            font-size: 13px;
+        }}
+        QLabel#stats_placeholder_label {{
+            color: {t['accent_dark']};
+            font-style: italic;
+        }}
+        QScrollBar:vertical {{
+            width: 8px;
+            background: {t['bg_deep']};
+            border: none;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
             background: none;
         }}
     """
