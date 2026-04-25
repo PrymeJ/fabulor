@@ -11,8 +11,13 @@ class BarChartWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []  # list of {'date': str, 'seconds': float}
+        self._accent_color = QColor("#9B59B6")
         self.setFixedHeight(110)
         self.setMinimumWidth(200)
+
+    def set_accent_color(self, color: QColor):
+        self._accent_color = color
+        self.update()
 
     def set_data(self, days: list[dict]):
         self._data = days
@@ -36,7 +41,7 @@ class BarChartWidget(QWidget):
         if max_seconds == 0:
             max_seconds = 1
 
-        accent = self.palette().highlight().color()
+        accent = self._accent_color
         max_idx = max(range(n), key=lambda i: self._data[i]['seconds'])
 
         for i, day in enumerate(self._data):
@@ -89,6 +94,7 @@ class StatsPanel(QWidget):
         self.config = config
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self._accent_color = QColor("#9B59B6")
         self._build_ui()
 
     @staticmethod
@@ -134,6 +140,11 @@ class StatsPanel(QWidget):
         outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch()
         return widget
+
+    def on_theme_changed(self, theme: dict):
+        self._accent_color = QColor(theme.get("accent", "#9B59B6"))
+        if hasattr(self, '_bar_chart'):
+            self._bar_chart.set_accent_color(self._accent_color)
 
     def refresh_overall(self):
         day_start = self.config.get_day_start_hour()

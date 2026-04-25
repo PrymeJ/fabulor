@@ -1,6 +1,6 @@
 import random
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
-from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint, QObject
 from PySide6.QtGui import QFont, QFontMetrics
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
@@ -24,9 +24,12 @@ class ThemeComboBox(QComboBox):
         super().hidePopup()
         self.aboutToHidePopup.emit()
 
-class ThemeManager:
+class ThemeManager(QObject):
     """Manages theme application, previews, and multi-selection pool."""
+    theme_applied = Signal(dict)
+
     def __init__(self, main_window):
+        super().__init__()
         self.main_window = main_window
         self.config = main_window.config
         self._is_hover_active = False
@@ -174,6 +177,7 @@ class ThemeManager:
 
         self._apply_stylesheets(theme_name, hover=hover)
         self.main_window._update_speed_grid_styling(theme_name)
+        self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
         self.update_theme_list_visuals()
 
     def _apply_stylesheets(self, theme_name, hover=False):

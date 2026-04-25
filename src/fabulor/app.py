@@ -1001,6 +1001,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _build_stats_panel(self):
         self.stats_panel = StatsPanel(self.db, self.config, parent=self)
+        self.theme_manager.theme_applied.connect(self.stats_panel.on_theme_changed)
         self.stats_panel.hide()
         self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
         self.stats_panel_animation.setDuration(300)
