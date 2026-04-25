@@ -66,6 +66,10 @@ class ThemeManager(QObject):
 
         self._save_on_fade = False
 
+    def get_current_theme(self) -> dict:
+        return THEMES.get(self._active_display_theme or self._current_theme_name, 
+                      THEMES["The Color Purple"])
+    
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
         self._fade_overlay.setObjectName("theme_fade_overlay")
