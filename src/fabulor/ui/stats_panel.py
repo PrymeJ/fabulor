@@ -1,5 +1,6 @@
 import os
 from datetime import date
+from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
@@ -321,10 +322,12 @@ class StatsPanel(QWidget):
         grid.setVerticalSpacing(8)
 
         rows = [
-            ("Listening time", "—"),
-            ("Books started",  "—"),
-            ("Sessions",       "—"),
-            ("Most listened",  "—"),
+            ("Listening time",  "—"),
+            ("Books started",   "—"),
+            ("Sessions",        "—"),
+            ("Most listened",   "—"),
+            ("Longest session", "—"),
+            ("Average session", "—"),
         ]
 
         self._overall_value_labels = []
@@ -340,11 +343,30 @@ class StatsPanel(QWidget):
         self._bar_chart = BarChartWidget()
         self._bar_chart.date_clicked.connect(self._on_bar_date_clicked)
 
+        self._finished_section = QWidget()
+        finished_layout = QVBoxLayout(self._finished_section)
+        finished_layout.setContentsMargins(0, 8, 0, 0)
+        finished_layout.setSpacing(4)
+
+        finished_header = QLabel("Recently finished")
+        finished_header.setObjectName("stats_section_header")
+        finished_layout.addWidget(finished_header)
+
+        self._finished_thumbs_row = QHBoxLayout()
+        self._finished_thumbs_row.setSpacing(8)
+        self._finished_thumbs_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        finished_layout.addLayout(self._finished_thumbs_row)
+
+        outer.addWidget(self._finished_section)
+        self._finished_section.hide()
+
         outer.addWidget(self._bar_chart)
         outer.addSpacing(16)
         outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch()
         return widget
+    
+        
 
     def on_theme_changed(self, theme: dict):
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
@@ -364,6 +386,33 @@ class StatsPanel(QWidget):
             self._overall_value_labels[3].setText("—")
         days = self.db.get_last_n_days(7, day_start)
         self._bar_chart.set_data(days)
+        # Longest session
+        if stats['longest_session_title']:
+            dur = self._format_duration(stats['longest_session_seconds'])
+            self._overall_value_labels[4].setText(f"{stats['longest_session_title']}  ({dur})")
+        else:
+            self._overall_value_labels[4].setText("—")
+
+        # Avg session
+        self._overall_value_labels[5].setText(
+            self._format_duration(stats['avg_session_seconds'])
+        )
+
+        # Recently finished books
+        finished = self.db.get_recently_finished(limit=5)
+
+        while self._finished_thumbs_row.count() > 0:
+            item = self._finished_thumbs_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if finished:
+            for f in finished[:5]:  # cap at 5 thumbs
+                thumb = FinishedBookThumb(f, self._assets_dir)
+                self._finished_thumbs_row.addWidget(thumb)
+            self._finished_section.show()
+        else:
+            self._finished_section.hide()
 
     def _build_options_tab(self) -> QWidget:
         widget = QWidget()

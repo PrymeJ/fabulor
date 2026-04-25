@@ -500,3 +500,21 @@ class LibraryDB:
                 ORDER BY be.event_time DESC
             """, (fmt, offset, period_label)).fetchall()
         return [dict(r) for r in rows]
+    
+    def get_recently_finished(self, limit: int = 5) -> list[dict]:
+        """Returns the most recently finished books, up to limit."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    be.book_path,
+                    be.event_time,
+                    b.cover_path,
+                    COALESCE(b.title, be.book_path) as book_title,
+                    COALESCE(b.author, '') as book_author
+                FROM book_events be
+                LEFT JOIN books b ON be.book_path = b.path
+                WHERE be.event_type = 'finished'
+                ORDER BY be.event_time DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
