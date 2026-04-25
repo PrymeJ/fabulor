@@ -1185,6 +1185,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_saved_pct = -1
         self.current_file = path
         self.db.update_last_played(path)
+        self.config.set_last_book(path)
         self.player.load_book(path)
         self._load_cover_art(path)
         self.library_controller._check_library_status()
