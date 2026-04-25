@@ -1,7 +1,84 @@
+from datetime import date
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTabWidget, QLabel, QGridLayout, QSpinBox, QHBoxLayout
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QPainter, QColor, QFont
+
+
+class BarChartWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = []  # list of {'date': str, 'seconds': float}
+        self.setFixedHeight(110)
+        self.setMinimumWidth(200)
+
+    def set_data(self, days: list[dict]):
+        self._data = days
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._data:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        label_h = 16
+        y_label_h = 12
+        chart_h = h - label_h - y_label_h
+        n = len(self._data)
+        bar_gap = 4
+        bar_w = max(4, (w - bar_gap * (n + 1)) // n)
+        max_seconds = max((d['seconds'] for d in self._data), default=1)
+        if max_seconds == 0:
+            max_seconds = 1
+
+        accent = self.palette().highlight().color()
+        max_idx = max(range(n), key=lambda i: self._data[i]['seconds'])
+
+        for i, day in enumerate(self._data):
+            x = bar_gap + i * (bar_w + bar_gap)
+            ratio = day['seconds'] / max_seconds
+            bar_h = max(2, int(ratio * chart_h)) if day['seconds'] > 0 else 0
+            bar_y = y_label_h + chart_h - bar_h
+
+            color = QColor(accent)
+            if i == max_idx and day['seconds'] > 0:
+                color = color.lighter(130)
+            painter.fillRect(x, bar_y, bar_w, bar_h, color)
+
+            day_date = date.fromisoformat(day['date'])
+            label = day_date.strftime('%a')
+            painter.setPen(self.palette().text().color())
+            font = QFont()
+            font.setPointSize(7)
+            painter.setFont(font)
+            painter.drawText(QRect(x, h - label_h, bar_w, label_h),
+                             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                             label)
+
+        if max_seconds > 0:
+            max_bar_x = bar_gap + max_idx * (bar_w + bar_gap)
+            max_label = self._format_seconds(max_seconds)
+            painter.setPen(self.palette().text().color())
+            font = QFont()
+            font.setPointSize(7)
+            painter.setFont(font)
+            painter.drawText(QRect(max_bar_x - 20, 0, bar_w + 40, y_label_h),
+                             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                             max_label)
+
+        painter.end()
+
+    @staticmethod
+    def _format_seconds(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        if h > 0:
+            return f"{h}h {m}m"
+        return f"{m}m"
 
 
 class StatsPanel(QWidget):
@@ -49,23 +126,27 @@ class StatsPanel(QWidget):
             grid.addWidget(val_lbl, i, 1, Qt.AlignmentFlag.AlignLeft)
             self._overall_value_labels.append(val_lbl)
 
-        
+        self._bar_chart = BarChartWidget()
 
-        outer.addStretch()
         outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer.addSpacing(16)
+        outer.addWidget(self._bar_chart)
         outer.addStretch()
         return widget
 
     def refresh_overall(self):
-        stats = self.db.get_overall_stats()
+        day_start = self.config.get_day_start_hour()
+        stats = self.db.get_overall_stats(day_start)
         self._overall_value_labels[0].setText(self._format_duration(stats['total_seconds']))
         self._overall_value_labels[1].setText(str(stats['books_started']))
-        self._overall_value_labels[2].setText(str(stats['sessions']))
+        self._overall_value_labels[2].setText(str(stats['total_sessions']))
         if stats['most_listened_title']:
             duration = self._format_duration(stats['most_listened_seconds'])
             self._overall_value_labels[3].setText(f"{stats['most_listened_title']}  ({duration})")
         else:
             self._overall_value_labels[3].setText("—")
+        days = self.db.get_last_n_days(7, day_start)
+        self._bar_chart.set_data(days)
 
     def _build_options_tab(self) -> QWidget:
         widget = QWidget()
@@ -82,7 +163,7 @@ class StatsPanel(QWidget):
         pref_row.addStretch()
         layout.addLayout(pref_row)
         layout.addStretch()
-        return widget   
+        return widget
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -92,7 +173,6 @@ class StatsPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
-        
 
         for name in ["Daily", "Weekly", "Monthly"]:
             tab = QWidget()
