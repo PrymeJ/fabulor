@@ -4,17 +4,21 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect
+from PySide6.QtCore import Qt, QRect, Signal
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
 
 
 class BarChartWidget(QWidget):
+    
+    date_clicked = Signal(str)
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []  # list of {'date': str, 'seconds': float}
         self._accent_color = QColor("#9B59B6")
+        self._bar_rects = []
         self.setFixedHeight(110)
         self.setMinimumWidth(200)
+        
 
     def set_accent_color(self, color: QColor):
         self._accent_color = color
@@ -29,6 +33,7 @@ class BarChartWidget(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._bar_rects = []  # (rect, date_str)
 
         w = self.width()
         h = self.height()
@@ -55,6 +60,7 @@ class BarChartWidget(QWidget):
             if i == max_idx and day['seconds'] > 0:
                 color = color.lighter(130)
             painter.fillRect(x, bar_y, bar_w, bar_h, color)
+            self._bar_rects.append((QRect(x, y_label_h, bar_w, chart_h), day['date']))
 
             day_date = date.fromisoformat(day['date'])
             label = day_date.strftime('%a')
@@ -78,6 +84,13 @@ class BarChartWidget(QWidget):
                              max_label)
 
         painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            for rect, date_str in self._bar_rects:
+                if rect.contains(event.pos()):
+                    self.date_clicked.emit(date_str)
+                    break
 
     @staticmethod
     def _format_seconds(seconds: float) -> str:
@@ -307,6 +320,7 @@ class StatsPanel(QWidget):
             self._overall_value_labels.append(val_lbl)
 
         self._bar_chart = BarChartWidget()
+        self._bar_chart.date_clicked.connect(self._on_bar_date_clicked)
 
         outer.addWidget(self._bar_chart)
         outer.addSpacing(16)
@@ -746,3 +760,17 @@ class StatsPanel(QWidget):
 
         layout.addWidget(self.tabs)
         self.refresh_overall()
+
+    def _on_bar_date_clicked(self, date_str: str):
+    # Find the date in active_days and set index
+        self._active_days = self.db.get_active_periods('day', self.config.get_day_start_hour())
+        if date_str in self._active_days:
+            self._current_day_index = self._active_days.index(date_str)
+        else:
+            self._current_day_index = 0
+        # Switch to Daily tab
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == "Daily":
+                self.tabs.setCurrentIndex(i)
+                break
+    # _on_tab_changed fires automatically, which calls _refresh_daily        
