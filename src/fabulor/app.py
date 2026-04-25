@@ -459,6 +459,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.setFixedHeight(24)
         self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
         self.progress_slider.sliderReleased.connect(self._on_slider_released)
+        self.progress_slider.rightClicked.connect(self._on_slider_right_clicked)
         self.root_layout.addWidget(self.progress_slider)
 
         self.progress_percentage_label = QLabel(self.progress_slider)
@@ -1445,6 +1446,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.library_panel.update_current_book_progress()
 
         self.is_slider_dragging = False
+
+    def _on_slider_right_clicked(self, ratio):
+        """Handler for right-click snapping to chapter notches."""
+        if not self.player or not self.player.duration:
+            return
+
+        self._hide_popups()
+        old_pos = self.player.time_pos or 0.0
+        # Calculate new position and add a tiny nudge (0.1s) to ensure 
+        # we land inside the intended chapter boundary.
+        new_pos = min(self.player.duration, (ratio * self.player.duration) + 0.1)
+        speed = self.player.speed or 1.0
+        
+        if abs(new_pos - old_pos) > 60 * speed:
+            self._trigger_undo(old_pos)
+            
+        self.player.time_pos = new_pos
+        self.player.is_seeking = True
+
+        if self.player.pause:
+            if self.current_file:
+                self.db.update_last_played(self.current_file)
+            self.player.pause = False
+            if self._session_start is None:
+                self._open_session()
+            else:
+                self._session_pause_timer.stop()
 
     def _on_chap_slider_pressed(self):
         self.is_chapter_slider_dragging = True

@@ -6,6 +6,7 @@ class ClickSlider(QWidget):
     valueChanged = Signal(int)
     sliderPressed = Signal()
     sliderReleased = Signal()
+    rightClicked = Signal(float)
 
     def __init__(self, orientation=Qt.Horizontal, parent=None):
         super().__init__(parent)
@@ -76,6 +77,14 @@ class ClickSlider(QWidget):
             self._dragging = True
             self.sliderPressed.emit()
             self.setValue(self._val_from_x(event.position().x()))
+        elif event.button() == Qt.RightButton:
+            click_ratio = event.position().x() / max(1, self.width())
+            # Always seek. Snap to closest marker if available, otherwise use click position.
+            if self._markers:
+                target_ratio = min(self._markers, key=lambda x: abs(x - click_ratio))
+            else:
+                target_ratio = click_ratio
+            self.rightClicked.emit(target_ratio)
 
     def mouseMoveEvent(self, event):
         if self._dragging:
