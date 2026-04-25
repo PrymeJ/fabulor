@@ -2,7 +2,7 @@ import os
 from datetime import date
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QGridLayout, QSpinBox, QScrollArea, QProgressBar, QPushButton
+    QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
@@ -108,7 +108,7 @@ class BookDayRow(QWidget):
         # Cover thumbnail 48x48
         cover_label = QLabel()
         cover_label.setFixedSize(48, 48)
-        cover_label.setScaledContents(True)
+        cover_label.setAlignment(Qt.AlignCenter)
         cover_path = row_data.get("cover_path")
         pixmap = QPixmap()
         if cover_path and os.path.exists(cover_path):
@@ -116,12 +116,22 @@ class BookDayRow(QWidget):
         if pixmap.isNull():
             icon_path = os.path.join(assets_dir, "fabulor.ico")
             pixmap.load(icon_path)
-        if deleted and not pixmap.isNull():
-            # Convert to grayscale
-            image = pixmap.toImage()
-            gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
-            pixmap = QPixmap.fromImage(gray)
-        cover_label.setPixmap(pixmap)
+
+        if not pixmap.isNull():
+            if deleted:
+                # Convert to grayscale
+                image = pixmap.toImage()
+                gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
+                pixmap = QPixmap.fromImage(gray)
+
+            # Scale with KeepAspectRatioByExpanding to fill the 48x48 square
+            scaled = pixmap.scaled(
+                48, 48,
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation
+            )
+            cover_label.setPixmap(scaled)
+
         if deleted:
             cover_label.setGraphicsEffect(_dim_effect())
         layout.addWidget(cover_label)
@@ -132,48 +142,57 @@ class BookDayRow(QWidget):
 
         title_lbl = QLabel(row_data.get("book_title", "Unknown"))
         title_lbl.setObjectName("stats_book_title")
+        title_lbl.setFixedWidth(105)
+        f_title = title_lbl.font()
+        f_title.setPointSize(f_title.pointSize() - 2)
+        title_lbl.setFont(f_title)
         if deleted:
             title_lbl.setObjectName("stats_book_title_deleted")
         title_lbl.setWordWrap(False)
 
         author_lbl = QLabel(row_data.get("book_author", ""))
         author_lbl.setObjectName("stats_book_author")
+        author_lbl.setFixedWidth(90)
+        f_author = author_lbl.font()
+        f_author.setPointSize(f_author.pointSize() - 2)
+        author_lbl.setFont(f_author)
 
         text_block.addWidget(title_lbl)
         text_block.addWidget(author_lbl)
 
-        # Percentage bar
-        duration = row_data.get("book_duration")
-        furthest = row_data.get("furthest_position") or 0.0
-        if duration and duration > 0:
-            pct = min(100.0, (furthest / duration) * 100)
-            bar = QProgressBar()
-            bar.setObjectName("stats_progress_bar")
-            bar.setRange(0, 100)
-            bar.setValue(int(pct))
-            bar.setFixedHeight(4)
-            bar.setTextVisible(False)
-            text_block.addWidget(bar)
-
         layout.addLayout(text_block, stretch=1)
 
-        # Right side — clock time and book time advanced
+        # Right side — stats (matching rows of the text block)
         time_block = QVBoxLayout()
+        time_block.setSpacing(2)
         time_block.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         clock_seconds = row_data.get("clock_seconds") or 0.0
-        book_seconds = row_data.get("book_seconds_advanced") or 0.0
-
         clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
         clock_lbl.setObjectName("stats_time_label")
         clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        book_lbl = QLabel(f"📖 {StatsPanel._format_duration(book_seconds)}")
-        book_lbl.setObjectName("stats_book_time_label")
-        book_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-
+        f_clock = clock_lbl.font()
+        f_clock.setPointSize(f_clock.pointSize() - 2)
+        clock_lbl.setFont(f_clock)
         time_block.addWidget(clock_lbl)
-        time_block.addWidget(book_lbl)
+
+        book_seconds = row_data.get("book_seconds_advanced") or 0.0
+        duration = row_data.get("book_duration")
+        furthest = row_data.get("furthest_position") or 0.0
+        
+        stats_text = StatsPanel._format_duration(book_seconds)
+        if duration and duration > 0:
+            pct = int((furthest / duration) * 100)
+            stats_text += f" · {pct}%"
+
+        stats_lbl = QLabel(stats_text)
+        stats_lbl.setObjectName("stats_book_time_label")
+        stats_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        f_stats = stats_lbl.font()
+        f_stats.setPointSize(f_stats.pointSize() - 2)
+        stats_lbl.setFont(f_stats)
+        time_block.addWidget(stats_lbl)
+
         layout.addLayout(time_block)
 
 
@@ -367,6 +386,7 @@ class StatsPanel(QWidget):
                 item.widget().deleteLater()
 
         total_seconds = 0.0
+        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir)
