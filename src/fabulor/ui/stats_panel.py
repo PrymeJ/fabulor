@@ -179,19 +179,37 @@ class BookDayRow(QWidget):
         book_seconds = row_data.get("book_seconds_advanced") or 0.0
         duration = row_data.get("book_duration")
         furthest = row_data.get("furthest_position") or 0.0
-        
-        stats_text = StatsPanel._format_duration(book_seconds)
-        if duration and duration > 0:
-            pct = int((furthest / duration) * 100)
-            stats_text += f" · {pct}%"
 
-        stats_lbl = QLabel(stats_text)
-        stats_lbl.setObjectName("stats_book_time_label")
-        stats_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        f_stats = stats_lbl.font()
-        f_stats.setPointSize(f_stats.pointSize() - 2)
-        stats_lbl.setFont(f_stats)
-        time_block.addWidget(stats_lbl)
+        book_row2 = QHBoxLayout()
+        book_row2.setSpacing(4)
+        book_row2.setContentsMargins(0, 0, 0, 0)
+
+        book_lbl = QLabel(StatsPanel._format_duration(book_seconds))
+        book_lbl.setObjectName("stats_book_time_label")
+        book_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        f_book = book_lbl.font()
+        f_book.setPointSize(f_book.pointSize() - 2)
+        book_lbl.setFont(f_book)
+        book_row2.addWidget(book_lbl)
+
+        if duration and duration > 0:
+            pct = min(100, int((furthest / duration) * 100))
+            sep_lbl = QLabel("·")
+            sep_lbl.setObjectName("stats_book_time_label")
+            f_sep = sep_lbl.font()
+            f_sep.setPointSize(f_sep.pointSize() - 2)
+            sep_lbl.setFont(f_sep)
+            book_row2.addWidget(sep_lbl)
+
+            pct_lbl = QLabel(f"{pct}%")
+            pct_lbl.setObjectName("stats_book_time_label")
+            pct_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+            f_pct = pct_lbl.font()
+            f_pct.setPointSize(f_pct.pointSize() - 2)
+            pct_lbl.setFont(f_pct)
+            book_row2.addWidget(pct_lbl)
+
+        time_block.addLayout(book_row2)
 
         layout.addLayout(time_block)
 
