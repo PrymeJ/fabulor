@@ -140,14 +140,19 @@ class BookDayRow(QWidget):
         text_block = QVBoxLayout()
         text_block.setSpacing(2)
 
+        is_finished = bool(row_data.get("is_finished", 0))
+
         title_lbl = QLabel(row_data.get("book_title", "Unknown"))
-        title_lbl.setObjectName("stats_book_title")
+        if deleted:
+            title_lbl.setObjectName("stats_book_title_deleted")
+        elif is_finished:
+            title_lbl.setObjectName("stats_book_title_finished")
+        else:
+            title_lbl.setObjectName("stats_book_title")
         title_lbl.setFixedWidth(105)
         f_title = title_lbl.font()
         f_title.setPointSize(f_title.pointSize() - 2)
         title_lbl.setFont(f_title)
-        if deleted:
-            title_lbl.setObjectName("stats_book_title_deleted")
         title_lbl.setWordWrap(False)
 
         author_lbl = QLabel(row_data.get("book_author", ""))
@@ -214,6 +219,39 @@ class BookDayRow(QWidget):
         layout.addLayout(time_block)
 
 
+class FinishedBookThumb(QWidget):
+    def __init__(self, row_data: dict, assets_dir: str, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        cover_label = QLabel()
+        cover_label.setFixedSize(48, 48)
+        cover_label.setScaledContents(True)
+        cover_path = row_data.get("cover_path")
+        pixmap = QPixmap()
+        if cover_path and os.path.exists(cover_path):
+            pixmap.load(cover_path)
+        if pixmap.isNull():
+            icon_path = os.path.join(assets_dir, "fabulor.ico")
+            pixmap.load(icon_path)
+        cover_label.setPixmap(pixmap)
+
+        title_lbl = QLabel(row_data.get("book_title", "Unknown"))
+        title_lbl.setObjectName("stats_finished_thumb_title")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        title_lbl.setWordWrap(True)
+        title_lbl.setFixedWidth(56)
+        font = title_lbl.font()
+        font.setPointSize(font.pointSize() - 2)
+        title_lbl.setFont(font)
+
+        layout.addWidget(cover_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(title_lbl)
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -224,6 +262,8 @@ class StatsPanel(QWidget):
         self._accent_color = QColor("#9B59B6")
         self._active_days: list[str] = []
         self._current_day_index: int = 0
+        self._active_weeks: list[str] = []
+        self._current_week_index: int = 0
         self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
@@ -412,9 +452,144 @@ class StatsPanel(QWidget):
 
         self._day_total_label.setText(self._format_duration(total_seconds))
 
+    def _build_weekly_tab(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("stats_daily_header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+
+        self._week_prev_btn = QPushButton("‹")
+        self._week_prev_btn.setObjectName("stats_nav_btn")
+        self._week_prev_btn.setFixedWidth(28)
+        self._week_prev_btn.clicked.connect(self._week_prev)
+
+        self._week_label = QLabel("—")
+        self._week_label.setObjectName("stats_day_label")
+        self._week_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._week_next_btn = QPushButton("›")
+        self._week_next_btn.setObjectName("stats_nav_btn")
+        self._week_next_btn.setFixedWidth(28)
+        self._week_next_btn.clicked.connect(self._week_next)
+
+        header_layout.addWidget(self._week_prev_btn)
+        header_layout.addWidget(self._week_label, stretch=1)
+        header_layout.addWidget(self._week_next_btn)
+        outer.addWidget(header)
+
+        self._week_total_label = QLabel("")
+        self._week_total_label.setObjectName("stats_day_total")
+        self._week_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self._week_total_label)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("stats_scroll_area")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._week_rows_widget = QWidget()
+        self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
+        self._week_rows_layout.setContentsMargins(4, 4, 4, 4)
+        self._week_rows_layout.setSpacing(4)
+        self._week_rows_layout.addStretch()
+
+        scroll.setWidget(self._week_rows_widget)
+        outer.addWidget(scroll, stretch=1)
+
+        self._week_finished_section = QWidget()
+        self._week_finished_section.setObjectName("stats_finished_section")
+        finished_outer = QVBoxLayout(self._week_finished_section)
+        finished_outer.setContentsMargins(4, 4, 4, 4)
+        finished_outer.setSpacing(4)
+
+        finished_header = QLabel("Finished this week")
+        finished_header.setObjectName("stats_section_header")
+        finished_outer.addWidget(finished_header)
+
+        self._week_finished_row = QHBoxLayout()
+        self._week_finished_row.setSpacing(8)
+        self._week_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        finished_outer.addLayout(self._week_finished_row)
+
+        outer.addWidget(self._week_finished_section)
+        self._week_finished_section.hide()
+
+        return widget
+
+    def _week_prev(self):
+        if self._current_week_index < len(self._active_weeks) - 1:
+            self._current_week_index += 1
+            self._refresh_weekly()
+
+    def _week_next(self):
+        if self._current_week_index > 0:
+            self._current_week_index -= 1
+            self._refresh_weekly()
+
+    def _refresh_weekly(self):
+        from datetime import datetime, timedelta
+        self._active_weeks = self.db.get_active_periods('week', self.config.get_day_start_hour())
+        if not self._active_weeks:
+            self._week_label.setText("No activity yet")
+            self._week_total_label.setText("")
+            self._week_prev_btn.setEnabled(False)
+            self._week_next_btn.setEnabled(False)
+            self._week_finished_section.hide()
+            return
+
+        self._current_week_index = min(self._current_week_index, len(self._active_weeks) - 1)
+        week_str = self._active_weeks[self._current_week_index]
+
+        year, week = week_str.split("-W")
+        monday = datetime.strptime(f"{year}-W{week}-1", "%Y-W%W-%w").date()
+        sunday = monday + timedelta(days=6)
+        self._week_label.setText(f"{monday.strftime('%b %-d')} – {sunday.strftime('%b %-d')}")
+
+        self._week_prev_btn.setEnabled(self._current_week_index < len(self._active_weeks) - 1)
+        self._week_next_btn.setEnabled(self._current_week_index > 0)
+
+        day_start = self.config.get_day_start_hour()
+        rows = self.db.get_books_listened_in_period('week', week_str, day_start)
+        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+
+        while self._week_rows_layout.count() > 1:
+            item = self._week_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        total_seconds = 0.0
+        for row in rows:
+            total_seconds += row.get("clock_seconds") or 0.0
+            book_row = BookDayRow(row, self._assets_dir)
+            self._week_rows_layout.insertWidget(self._week_rows_layout.count() - 1, book_row)
+
+        self._week_total_label.setText(self._format_duration(total_seconds))
+
+        finished = self.db.get_finished_in_period('week', week_str, day_start)
+
+        while self._week_finished_row.count() > 0:
+            item = self._week_finished_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if finished:
+            for f in finished:
+                thumb = FinishedBookThumb(f, self._assets_dir)
+                self._week_finished_row.addWidget(thumb)
+            self._week_finished_section.show()
+        else:
+            self._week_finished_section.hide()
+
     def _on_tab_changed(self, index: int):
         if self.tabs.tabText(index) == "Daily":
             self._refresh_daily()
+        elif self.tabs.tabText(index) == "Weekly":
+            self._refresh_weekly()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -425,17 +600,17 @@ class StatsPanel(QWidget):
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
         self.tabs.addTab(self._build_daily_tab(), "Daily")
+        self.tabs.addTab(self._build_weekly_tab(), "Weekly")
 
-        for name in ["Weekly", "Monthly"]:
-            tab = QWidget()
-            tab_layout = QVBoxLayout(tab)
-            tab_layout.setContentsMargins(10, 10, 10, 10)
-            lbl = QLabel(f"{name} stats coming soon...")
-            lbl.setObjectName("stats_placeholder_label")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            tab_layout.addWidget(lbl)
-            tab_layout.addStretch()
-            self.tabs.addTab(tab, name)
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(10, 10, 10, 10)
+        lbl = QLabel("Monthly stats coming soon...")
+        lbl.setObjectName("stats_placeholder_label")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tab_layout.addWidget(lbl)
+        tab_layout.addStretch()
+        self.tabs.addTab(tab, "Monthly")
 
         self.tabs.addTab(self._build_options_tab(), "Options")
 

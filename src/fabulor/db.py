@@ -271,9 +271,11 @@ class LibraryDB:
                     SUM((julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as clock_seconds,
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
-                    b.cover_path
+                    b.cover_path,
+                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_path = b.path
+                LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
                 WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_path
                 ORDER BY clock_seconds DESC
@@ -449,16 +451,50 @@ class LibraryDB:
         fmt = self._GRANULARITY_FORMATS[granularity]
         offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
-            cursor = conn.execute(
-                "SELECT"
-                "  book_path,"
-                "  book_title,"
-                "  book_author,"
-                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
-                " FROM listening_sessions"
-                " WHERE strftime(?, datetime(session_start, ?)) = ?"
-                " GROUP BY book_path"
-                " ORDER BY seconds DESC",
-                (fmt, offset, period_label)
-            )
-            return [dict(row) for row in cursor.fetchall()]
+            rows = conn.execute("""
+                SELECT
+                    ls.book_path,
+                    ls.book_title,
+                    ls.book_author,
+                    ls.book_duration,
+                    SUM((julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as clock_seconds,
+                    SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
+                    MAX(ls.furthest_position) as furthest_position,
+                    b.cover_path,
+                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished
+                FROM listening_sessions ls
+                LEFT JOIN books b ON ls.book_path = b.path
+                LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
+                WHERE strftime(?, datetime(ls.session_start, ?)) = ?
+                GROUP BY ls.book_path
+                ORDER BY clock_seconds DESC
+            """, (fmt, offset, period_label)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_finished_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:
+        """Returns books with a finished event whose event_time falls within the given period."""
+        formats = {
+            'day':   '%Y-%m-%d',
+            'week':  '%Y-W%W',
+            'month': '%Y-%m',
+            'year':  '%Y',
+        }
+        if granularity not in formats:
+            raise ValueError(f"Invalid granularity: {granularity}")
+        fmt = formats[granularity]
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    be.book_path,
+                    be.event_time,
+                    b.cover_path,
+                    COALESCE(b.title, be.book_path) as book_title,
+                    COALESCE(b.author, '') as book_author
+                FROM book_events be
+                LEFT JOIN books b ON be.book_path = b.path
+                WHERE be.event_type = 'finished'
+                AND strftime(?, datetime(be.event_time, ?)) = ?
+                ORDER BY be.event_time DESC
+            """, (fmt, offset, period_label)).fetchall()
+        return [dict(r) for r in rows]
