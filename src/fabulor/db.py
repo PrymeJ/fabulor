@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from contextlib import contextmanager
 from .models.book import Book
 import platformdirs
@@ -438,8 +438,10 @@ class LibraryDB:
 
         by_date = {r['date']: r['seconds'] for r in rows}
 
+        now = datetime.now()
+        today = (now - timedelta(hours=day_start_hour)).date()
+
         result = []
-        today = date.today()
         for i in range(n - 1, -1, -1):
             d = (today - timedelta(days=i)).isoformat()
             result.append({'date': d, 'seconds': by_date.get(d, 0.0)})
