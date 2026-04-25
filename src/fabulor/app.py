@@ -1180,6 +1180,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
+        if path == self.current_file:
+            self.panel_manager.hide_all_panels()
+            return
+
         self._save_current_progress() # Save state of the book we are leaving
         self.progress_slider.set_markers([])
         self._last_saved_pct = -1
