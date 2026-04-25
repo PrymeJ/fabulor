@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QPainter, QColor, QFont
 
 
+
 class BarChartWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -128,9 +129,9 @@ class StatsPanel(QWidget):
 
         self._bar_chart = BarChartWidget()
 
-        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addSpacing(16)
         outer.addWidget(self._bar_chart)
+        outer.addSpacing(16)
+        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch()
         return widget
 
