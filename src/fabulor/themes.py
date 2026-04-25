@@ -1,4 +1,6 @@
 import math
+from fabulor.assets import get_asset_path
+
 """
 CORE BACKGROUND COLORS
 bg_deep: The darkest background color. Used for the custom title bar, the background behind the volume overlay, and the status banner at the bottom.
@@ -1343,7 +1345,8 @@ def get_player_stylesheet(theme_name="default"):
 
     visual_area_bg = ""
     if t.get("bg_image"):
-        visual_area_bg = f"background-image: url({t['bg_image']}); background-position: center; background-repeat: no-repeat;"
+        bg_path = get_asset_path(t["bg_image"])
+        visual_area_bg = f"background-image: url({bg_path}); background-position: center; background-repeat: no-repeat;"
 
     return f"""
         QWidget#visual_area {{
