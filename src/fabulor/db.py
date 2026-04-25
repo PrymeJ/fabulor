@@ -1,6 +1,6 @@
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from contextlib import contextmanager
 from .models.book import Book
 import platformdirs
@@ -347,33 +347,76 @@ class LibraryDB:
                 'per_day': [dict(row) for row in per_day],
             }
 
-    def get_overall_stats(self) -> dict:
+    def get_overall_stats(self, day_start_hour: int = 0) -> dict:
         with self._get_conn() as conn:
-            time_row = conn.execute(
-                "SELECT SUM((julianday(session_end) - julianday(session_start)) * 86400) AS total_seconds"
-                " FROM listening_sessions"
-            ).fetchone()
-            books_started = conn.execute(
-                "SELECT COUNT(DISTINCT book_path) AS cnt FROM listening_sessions"
-            ).fetchone()
-            sessions = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM listening_sessions"
-            ).fetchone()
-            most_listened = conn.execute(
-                "SELECT book_title,"
-                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
-                " FROM listening_sessions"
-                " GROUP BY book_path"
-                " ORDER BY seconds DESC"
-                " LIMIT 1"
-            ).fetchone()
+            agg = conn.execute("""
+                SELECT
+                    COUNT(*) as total_sessions,
+                    COUNT(DISTINCT book_path) as books_started,
+                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as total_seconds,
+                    AVG((julianday(session_end) - julianday(session_start)) * 86400) as avg_seconds
+                FROM listening_sessions
+            """).fetchone()
+
+            longest = conn.execute("""
+                SELECT book_title,
+                    (julianday(session_end) - julianday(session_start)) * 86400 as seconds
+                FROM listening_sessions
+                ORDER BY seconds DESC
+                LIMIT 1
+            """).fetchone()
+
+            top = conn.execute("""
+                SELECT book_title,
+                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                FROM listening_sessions
+                GROUP BY book_path
+                ORDER BY seconds DESC
+                LIMIT 1
+            """).fetchone()
+
+            finished = conn.execute("""
+                SELECT COUNT(*) as n FROM book_events WHERE event_type = 'finished'
+            """).fetchone()
+
         return {
-            'total_seconds': time_row['total_seconds'] or 0.0,
-            'books_started': books_started['cnt'] or 0,
-            'sessions': sessions['cnt'] or 0,
-            'most_listened_title': most_listened['book_title'] if most_listened else None,
-            'most_listened_seconds': most_listened['seconds'] if most_listened else 0.0,
+            'total_sessions': agg['total_sessions'] or 0,
+            'books_started': agg['books_started'] or 0,
+            'total_seconds': agg['total_seconds'] or 0.0,
+            'avg_session_seconds': agg['avg_seconds'] or 0.0,
+            'books_finished': finished['n'] or 0,
+            'longest_session_title': longest['book_title'] if longest else None,
+            'longest_session_seconds': longest['seconds'] if longest else 0.0,
+            'most_listened_title': top['book_title'] if top else None,
+            'most_listened_seconds': top['seconds'] if top else 0.0,
         }
+
+    def get_last_n_days(self, n: int = 7, day_start_hour: int = 0) -> list[dict]:
+        """Returns total listening seconds per day for the last N days.
+        Days with no activity are included as zero so the chart has a consistent shape."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
+                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                FROM listening_sessions
+                WHERE datetime(session_start, ?) >= datetime('now', ?)
+                GROUP BY date
+                ORDER BY date ASC
+            """, (
+                f'-{day_start_hour} hours',
+                f'-{day_start_hour} hours',
+                f'-{n} days',
+            )).fetchall()
+
+        by_date = {r['date']: r['seconds'] for r in rows}
+
+        result = []
+        today = date.today()
+        for i in range(n - 1, -1, -1):
+            d = (today - timedelta(days=i)).isoformat()
+            result.append({'date': d, 'seconds': by_date.get(d, 0.0)})
+        return result
 
     def get_books_listened_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:
         if granularity not in self._GRANULARITY_FORMATS:
