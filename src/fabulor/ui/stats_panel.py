@@ -1,10 +1,11 @@
+import os
 from datetime import date
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTabWidget, QLabel, QGridLayout, QSpinBox, QHBoxLayout
+    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
+    QGridLayout, QSpinBox, QScrollArea, QProgressBar, QPushButton
 )
 from PySide6.QtCore import Qt, QRect
-from PySide6.QtGui import QPainter, QColor, QFont
-
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
 
 
 class BarChartWidget(QWidget):
@@ -87,6 +88,95 @@ class BarChartWidget(QWidget):
         return f"{m}m"
 
 
+def _dim_effect():
+    from PySide6.QtWidgets import QGraphicsOpacityEffect
+    effect = QGraphicsOpacityEffect()
+    effect.setOpacity(0.4)
+    return effect
+
+
+class BookDayRow(QWidget):
+    def __init__(self, row_data: dict, assets_dir: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("stats_book_day_row")
+        deleted = row_data.get("book_path") is None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(8)
+
+        # Cover thumbnail 48x48
+        cover_label = QLabel()
+        cover_label.setFixedSize(48, 48)
+        cover_label.setScaledContents(True)
+        cover_path = row_data.get("cover_path")
+        pixmap = QPixmap()
+        if cover_path and os.path.exists(cover_path):
+            pixmap.load(cover_path)
+        if pixmap.isNull():
+            icon_path = os.path.join(assets_dir, "fabulor.ico")
+            pixmap.load(icon_path)
+        if deleted and not pixmap.isNull():
+            # Convert to grayscale
+            image = pixmap.toImage()
+            gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
+            pixmap = QPixmap.fromImage(gray)
+        cover_label.setPixmap(pixmap)
+        if deleted:
+            cover_label.setGraphicsEffect(_dim_effect())
+        layout.addWidget(cover_label)
+
+        # Text block — title, author, progress bar
+        text_block = QVBoxLayout()
+        text_block.setSpacing(2)
+
+        title_lbl = QLabel(row_data.get("book_title", "Unknown"))
+        title_lbl.setObjectName("stats_book_title")
+        if deleted:
+            title_lbl.setObjectName("stats_book_title_deleted")
+        title_lbl.setWordWrap(False)
+
+        author_lbl = QLabel(row_data.get("book_author", ""))
+        author_lbl.setObjectName("stats_book_author")
+
+        text_block.addWidget(title_lbl)
+        text_block.addWidget(author_lbl)
+
+        # Percentage bar
+        duration = row_data.get("book_duration")
+        furthest = row_data.get("furthest_position") or 0.0
+        if duration and duration > 0:
+            pct = min(100.0, (furthest / duration) * 100)
+            bar = QProgressBar()
+            bar.setObjectName("stats_progress_bar")
+            bar.setRange(0, 100)
+            bar.setValue(int(pct))
+            bar.setFixedHeight(4)
+            bar.setTextVisible(False)
+            text_block.addWidget(bar)
+
+        layout.addLayout(text_block, stretch=1)
+
+        # Right side — clock time and book time advanced
+        time_block = QVBoxLayout()
+        time_block.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        clock_seconds = row_data.get("clock_seconds") or 0.0
+        book_seconds = row_data.get("book_seconds_advanced") or 0.0
+
+        clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
+        clock_lbl.setObjectName("stats_time_label")
+        clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        book_lbl = QLabel(f"📖 {StatsPanel._format_duration(book_seconds)}")
+        book_lbl.setObjectName("stats_book_time_label")
+        book_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        time_block.addWidget(clock_lbl)
+        time_block.addWidget(book_lbl)
+        layout.addLayout(time_block)
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -95,6 +185,10 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._active_days: list[str] = []
+        self._current_day_index: int = 0
+        self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
+        self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
 
     @staticmethod
@@ -177,6 +271,113 @@ class StatsPanel(QWidget):
         layout.addStretch()
         return widget
 
+    def _build_daily_tab(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header
+        header = QWidget()
+        header.setObjectName("stats_daily_header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+
+        self._day_prev_btn = QPushButton("‹")
+        self._day_prev_btn.setObjectName("stats_nav_btn")
+        self._day_prev_btn.setFixedWidth(28)
+        self._day_prev_btn.clicked.connect(self._day_prev)
+
+        self._day_label = QLabel("—")
+        self._day_label.setObjectName("stats_day_label")
+        self._day_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._day_next_btn = QPushButton("›")
+        self._day_next_btn.setObjectName("stats_nav_btn")
+        self._day_next_btn.setFixedWidth(28)
+        self._day_next_btn.clicked.connect(self._day_next)
+
+        header_layout.addWidget(self._day_prev_btn)
+        header_layout.addWidget(self._day_label, stretch=1)
+        header_layout.addWidget(self._day_next_btn)
+        outer.addWidget(header)
+
+        # Total time for the day
+        self._day_total_label = QLabel("")
+        self._day_total_label.setObjectName("stats_day_total")
+        self._day_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self._day_total_label)
+
+        # Scrollable book rows
+        scroll = QScrollArea()
+        scroll.setObjectName("stats_scroll_area")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._day_rows_widget = QWidget()
+        self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
+        self._day_rows_layout.setContentsMargins(4, 4, 4, 4)
+        self._day_rows_layout.setSpacing(4)
+        self._day_rows_layout.addStretch()
+
+        scroll.setWidget(self._day_rows_widget)
+        outer.addWidget(scroll, stretch=1)
+
+        return widget
+
+    def _day_prev(self):
+        if self._current_day_index < len(self._active_days) - 1:
+            self._current_day_index += 1
+            self._refresh_daily()
+
+    def _day_next(self):
+        if self._current_day_index > 0:
+            self._current_day_index -= 1
+            self._refresh_daily()
+
+    def _refresh_daily(self):
+        self._active_days = self.db.get_active_periods(
+            'day', self.config.get_day_start_hour()
+        )
+        if not self._active_days:
+            self._day_label.setText("No activity yet")
+            self._day_total_label.setText("")
+            self._day_prev_btn.setEnabled(False)
+            self._day_next_btn.setEnabled(False)
+            return
+
+        self._current_day_index = min(self._current_day_index, len(self._active_days) - 1)
+        date_str = self._active_days[self._current_day_index]
+
+        # Format date label
+        d = date.fromisoformat(date_str)
+        self._day_label.setText(d.strftime("%A, %B %-d"))
+
+        # Navigation button state
+        self._day_prev_btn.setEnabled(self._current_day_index < len(self._active_days) - 1)
+        self._day_next_btn.setEnabled(self._current_day_index > 0)
+
+        # Fetch and display rows
+        rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
+
+        # Clear existing rows (keep the stretch at the end)
+        while self._day_rows_layout.count() > 1:
+            item = self._day_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        total_seconds = 0.0
+        for row in rows:
+            total_seconds += row.get("clock_seconds") or 0.0
+            book_row = BookDayRow(row, self._assets_dir)
+            self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
+
+        self._day_total_label.setText(self._format_duration(total_seconds))
+
+    def _on_tab_changed(self, index: int):
+        if self.tabs.tabText(index) == "Daily":
+            self._refresh_daily()
+
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -185,8 +386,9 @@ class StatsPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
+        self.tabs.addTab(self._build_daily_tab(), "Daily")
 
-        for name in ["Daily", "Weekly", "Monthly"]:
+        for name in ["Weekly", "Monthly"]:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
             tab_layout.setContentsMargins(10, 10, 10, 10)
@@ -198,6 +400,8 @@ class StatsPanel(QWidget):
             self.tabs.addTab(tab, name)
 
         self.tabs.addTab(self._build_options_tab(), "Options")
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         layout.addWidget(self.tabs)
         self.refresh_overall()
