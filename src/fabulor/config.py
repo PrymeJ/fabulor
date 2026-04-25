@@ -165,6 +165,12 @@ class Config:
     def set_chapter_hints_enabled(self, enabled):
         self.settings.setValue("chapter_hints_enabled", str(enabled).lower())
 
+    def get_chapter_notches_enabled(self):
+        return self.settings.value("chapter_notches_enabled", "false") == "true"
+
+    def set_chapter_notches_enabled(self, enabled):
+        self.settings.setValue("chapter_notches_enabled", str(enabled).lower())
+
     def get_undo_duration(self):
         return self._safe_int("undo_duration", 3)
 

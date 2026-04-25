@@ -68,6 +68,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     naming_pattern_changed = Signal(str)
     scroll_mode_changed = Signal(str)
     hints_mode_changed = Signal(bool)
+    notches_mode_changed = Signal(bool)
     undo_mode_changed = Signal(int)
     fade_mode_changed = Signal(int)
     blur_mode_changed = Signal(bool)
@@ -229,6 +230,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not enabled:
                 self.blur_effect.setBlurRadius(0)
 
+        def set_notches_selection(enabled):
+            if not hasattr(self, 'notches_buttons'): return
+            for mode, btn in self.notches_buttons.items():
+                is_selected = (mode == "On" if enabled else mode == "Off")
+                btn.setProperty("selected", "true" if is_selected else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
         class VisualsInterface:
             def __init__(self):
                 pass
@@ -238,6 +247,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def set_undo_selection(self, val): set_undo_selection(val)
             def set_fade_selection(self, ms): set_fade_selection(ms)
             def set_blur_selection(self, enabled): set_blur_selection(enabled)
+            def set_notches_selection(self, enabled): set_notches_selection(enabled)
 
         class PanelInterface:
             def __init__(self, speed_panel, sleep_panel, audio_tab):
@@ -262,6 +272,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
             def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
             def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
+            def refresh_notches(self): self._main._refresh_notches()
             def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
 
         class LibraryInterface:
@@ -294,6 +305,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.settings_controller.sync_all_settings_visuals()
             self.settings_controller._update_scroll_mode_visuals()
             self.settings_controller._update_hints_visuals()
+            self.settings_controller._update_notches_visuals()
             self.settings_controller._update_fade_visuals()
             self.settings_controller._update_blur_visuals()
             self.settings_controller._update_undo_visuals()
@@ -895,6 +907,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         hints_row.addStretch()
         app_layout.addLayout(hints_row)
 
+        notches_header = QLabel("Chapter notches")
+        notches_header.setObjectName("settings_header")
+        app_layout.addWidget(notches_header)
+
+        notches_row = QHBoxLayout()
+        self.notches_buttons = {}
+        for mode in ["On", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.notches_mode_changed.emit(m == "On"))
+            notches_row.addWidget(btn)
+            self.notches_buttons[mode] = btn
+        notches_row.addStretch()
+        app_layout.addLayout(notches_row)
+
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Look")
         # Visual initialization moved to after SettingsController binding
@@ -1183,9 +1210,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         dur = self.player.duration
         if dur and self.player.chapter_list:
             self.chapter_list_widget.populate(dur)
-            # Calculate chapter start ratios for the overall progress bar notches
-            ratios = [c.get('time', 0) / dur for c in self.player.chapter_list]
-            self.progress_slider.set_markers(ratios)
+            self._refresh_notches()
+
+    def _refresh_notches(self):
+        """Updates the progress bar with chapter markers if enabled in settings."""
+        if not self.current_file or not self.player or not self.player.chapter_list:
+            self.progress_slider.set_markers([])
+            return
+        
+        if self.config.get_chapter_notches_enabled():
+            dur = self.player.duration
+            if dur:
+                ratios = [c.get('time', 0) / dur for c in self.player.chapter_list]
+                self.progress_slider.set_markers(ratios)
+        else:
+            self.progress_slider.set_markers([])
 
     def _restore_position(self):
         """Seeks to the saved position from config."""

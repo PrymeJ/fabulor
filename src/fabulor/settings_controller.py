@@ -13,6 +13,7 @@ class SettingsController:
         main.naming_pattern_changed.connect(self._update_naming_pattern)
         main.scroll_mode_changed.connect(self._update_scroll_mode)
         main.hints_mode_changed.connect(self._update_hints_mode)
+        main.notches_mode_changed.connect(self._update_notches_mode)
         main.undo_mode_changed.connect(self._update_undo_mode)
         main.fade_mode_changed.connect(self._update_fade_mode)
         main.blur_mode_changed.connect(self._update_blur_mode)
@@ -58,6 +59,15 @@ class SettingsController:
         enabled = self.config.get_chapter_hints_enabled()
         self.visuals.set_hints_selection(enabled)
 
+    def _update_notches_mode(self, enabled):
+        self.config.set_chapter_notches_enabled(enabled)
+        self._update_notches_visuals()
+        self.ui_callbacks.refresh_notches()
+
+    def _update_notches_visuals(self):
+        enabled = self.config.get_chapter_notches_enabled()
+        self.visuals.set_notches_selection(enabled)
+
     def _update_undo_mode(self, val):
         #print(f"[SettingsController] _update_undo_mode called with: {val}")
         self.config.set_undo_duration(val)
@@ -97,6 +107,7 @@ class SettingsController:
         self._update_pattern_visuals()
         self._update_scroll_mode_visuals()
         self._update_hints_visuals()
+        self._update_notches_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
         self._update_undo_visuals()
