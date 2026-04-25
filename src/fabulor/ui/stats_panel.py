@@ -16,6 +16,8 @@ class BarChartWidget(QWidget):
         self._data = []  # list of {'date': str, 'seconds': float}
         self._accent_color = QColor("#9B59B6")
         self._bar_rects = []
+        self._hovered_index: int = -1
+        self.setMouseTracking(True)
         self.setFixedHeight(110)
         self.setMinimumWidth(200)
         
@@ -33,7 +35,7 @@ class BarChartWidget(QWidget):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._bar_rects = []  # (rect, date_str)
+        self._bar_rects: list[tuple[QRect, str]] = []  # (rect, date_str)
 
         w = self.width()
         h = self.height()
@@ -56,11 +58,13 @@ class BarChartWidget(QWidget):
             bar_h = max(2, int(ratio * chart_h)) if day['seconds'] > 0 else 0
             bar_y = y_label_h + chart_h - bar_h
 
-            color = QColor(accent)
+            color = QColor(self._accent_color)
             if i == max_idx and day['seconds'] > 0:
                 color = color.lighter(130)
+            if i == self._hovered_index:
+                color = color.lighter(150)
             painter.fillRect(x, bar_y, bar_w, bar_h, color)
-            self._bar_rects.append((QRect(x, y_label_h, bar_w, chart_h), day['date']))
+            self._bar_rects.append((QRect(x, bar_y, bar_w, bar_h), day['date']))
 
             day_date = date.fromisoformat(day['date'])
             label = day_date.strftime('%a')
@@ -91,6 +95,24 @@ class BarChartWidget(QWidget):
                 if rect.contains(event.pos()):
                     self.date_clicked.emit(date_str)
                     break
+    def mouseMoveEvent(self, event):
+        for i, (rect, _) in enumerate(self._bar_rects):
+            if rect.contains(event.pos()):
+                if self._hovered_index != i:
+                    self._hovered_index = i
+                    self.update()
+                return
+        if self._hovered_index != -1:
+            self._hovered_index = -1
+            self.update()
+        
+        from PySide6.QtCore import Qt
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._hovered_index != -1 
+               else Qt.CursorShape.ArrowCursor)
+        
+    def leaveEvent(self, event):
+        self._hovered_index = -1
+        self.update()
 
     @staticmethod
     def _format_seconds(seconds: float) -> str:
