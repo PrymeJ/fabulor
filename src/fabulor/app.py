@@ -1158,6 +1158,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 book_path=self._current_book.path,
                 book_title=self._current_book.title,
                 book_author=self._current_book.author,
+                book_duration=self._current_book.duration,
                 session_start=self._session_start,
                 session_end=now,
                 position_start=self._session_position_start,

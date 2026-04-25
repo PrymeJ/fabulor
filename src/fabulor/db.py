@@ -235,25 +235,50 @@ class LibraryDB:
 
     # --- Session Recording ---
 
-    def write_session(self, book_path, book_title, book_author, session_start, session_end, position_start, position_end, furthest_position):
+    def write_session(self, book_path, book_title, book_author, book_duration,
+                      session_start, session_end, position_start, position_end, furthest_position):
         """Inserts one listening session row."""
         with self._get_conn() as conn:
             with conn:
                 conn.execute("""
                     INSERT INTO listening_sessions
-                        (book_path, book_title, book_author, session_start, session_end,
+                        (book_path, book_title, book_author, book_duration,
+                         session_start, session_end,
                          position_start, position_end, furthest_position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    str(book_path),
+                    str(book_path) if book_path else None,
                     book_title,
                     book_author,
+                    book_duration,
                     session_start.isoformat(),
                     session_end.isoformat(),
                     position_start,
                     position_end,
                     furthest_position,
                 ))
+
+    def get_daily_book_breakdown(self, date_str: str, day_start_hour: int) -> list[dict]:
+        """Returns per-book listening rows for a given day, with cover from books table via LEFT JOIN."""
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    ls.book_path,
+                    ls.book_title,
+                    ls.book_author,
+                    ls.book_duration,
+                    SUM((julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as clock_seconds,
+                    SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
+                    MAX(ls.furthest_position) as furthest_position,
+                    b.cover_path
+                FROM listening_sessions ls
+                LEFT JOIN books b ON ls.book_path = b.path
+                WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
+                GROUP BY ls.book_path
+                ORDER BY clock_seconds DESC
+            """, (offset, date_str)).fetchall()
+        return [dict(r) for r in rows]
 
     def set_started_at(self, book_path: str, started_at: datetime):
         """Sets started_at only if it has not been set yet."""
