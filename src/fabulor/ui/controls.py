@@ -19,6 +19,8 @@ class ClickSlider(QWidget):
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
         self._fill_color = QColor("#C8A2C8")
+        self._notch_color = QColor("#FFFFFF")
+        self._notch_opacity = 100
 
     @Property(QColor)
     def bg_color(self): return self._bg_color
@@ -29,6 +31,16 @@ class ClickSlider(QWidget):
     def fill_color(self): return self._fill_color
     @fill_color.setter
     def fill_color(self, color): self._fill_color = color; self.update()
+
+    @Property(QColor)
+    def notch_color(self): return self._notch_color
+    @notch_color.setter
+    def notch_color(self, color): self._notch_color = color; self.update()
+
+    @Property(int)
+    def notch_opacity(self): return self._notch_opacity
+    @notch_opacity.setter
+    def notch_opacity(self, val): self._notch_opacity = val; self.update()
 
     def minimum(self): return self._minimum
     def maximum(self): return self._maximum
@@ -96,7 +108,9 @@ class ClickSlider(QWidget):
                 if i == 0 or i == len(self._markers) - 1:
                     continue
                 x = int(ratio * self.width())
-                p.setPen(QColor(255, 255, 255, 100))
+                c = QColor(self._notch_color)
+                c.setAlpha(self._notch_opacity)
+                p.setPen(c)
                 if i % 2 == 1:
                     p.drawLine(x, mid_y, x, self.height()) # Center to Bottom
                 else:

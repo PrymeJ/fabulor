@@ -41,6 +41,8 @@ slider_chapter_bg: Background of the chapter-specific progress bar.
 slider_chapter_fill: The filled portion of the chapter-specific progress bar.
 slider_vol_bg: Background of the volume slider.
 slider_vol_fill: The filled portion of the volume slider.
+notch_color: (Optional) The color of chapter markers on the progress bars.
+notch_opacity: (Optional) The transparency (0-255) of chapter markers.
 
 ACCENT AND INTERACTION COLORS
 accent: The primary interaction color. Used for selected tabs, slider handles (implicitly via fill), and primary buttons.
@@ -104,6 +106,8 @@ THEMES = {
         "settings_tab_hover_text":    "#150C79",
         "panel_theme_names_dimmed": "#CDE1E1",
         "panel_opacity_hover":    1.00,
+        "notch_color":            "#3DE8EB",
+        "notch_opacity":          110,
     },
     "Anomander": { # Black & White with Deep Amber Progress Text
         "bg_deep":      "#000000",
@@ -1241,6 +1245,8 @@ def get_base_stylesheet(theme_name="default"):
         #overall_progress {{
             qproperty-bg_color: "{t['slider_overall_bg']}";
             qproperty-fill_color: "{t['slider_overall_fill']}";
+            qproperty-notch_color: "{t.get('notch_color', '#FFFFFF')}";
+            qproperty-notch_opacity: {t.get('notch_opacity', 100)};
         }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('progress_text', t.get('text_on_light_bg', t['text'])))}, 0.85);
@@ -1391,6 +1397,8 @@ def get_player_stylesheet(theme_name="default"):
         #chapter_progress {{
             qproperty-bg_color: "{t['slider_chapter_bg']}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
+            qproperty-notch_color: "{t.get('notch_color', '#FFFFFF')}";
+            qproperty-notch_opacity: {t.get('notch_opacity', 100)};
         }}
         #volume_slider {{
             qproperty-bg_color: "{t['slider_vol_bg']}";
@@ -1862,4 +1870,3 @@ def get_sidebar_stylesheet(theme_name="default"):
             margin-bottom: 10px;
         }}
     """
-
