@@ -278,7 +278,7 @@ class LibraryDB:
                 LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
                 WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_path
-                ORDER BY clock_seconds DESC
+                ORDER BY clock_seconds DESC, book_seconds_advanced DESC
             """, (offset, date_str)).fetchall()
         return [dict(r) for r in rows]
 
@@ -467,7 +467,7 @@ class LibraryDB:
                 LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
                 WHERE strftime(?, datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_path
-                ORDER BY clock_seconds DESC
+                ORDER BY clock_seconds DESC, book_seconds_advanced DESC
             """, (fmt, offset, period_label)).fetchall()
         return [dict(r) for r in rows]
 
