@@ -14,6 +14,7 @@ class ClickSlider(QWidget):
         self._maximum = 1000
         self._dragging = False
         self.center_mark = False
+        self._markers = []
         self.snap_to_center = False
         # Default colors (will be overridden by QSS)
         self._bg_color = QColor("#4B0082")
@@ -37,6 +38,10 @@ class ClickSlider(QWidget):
         self._maximum = max_
 
     def value(self): return self._value
+
+    def set_markers(self, ratios):
+        self._markers = ratios
+        self.update()
 
     def setValue(self, val):
         val = max(self._minimum, min(self._maximum, val))
@@ -82,6 +87,20 @@ class ClickSlider(QWidget):
             p.setPen(QColor(255, 255, 255, 60))
             mid = self.width() // 2
             p.drawLine(mid, 0, mid, self.height())
+
+        if self._markers and len(self._markers) > 2:
+            mid_y = self.height() // 2
+            # Draw subtle markers for internal chapter boundaries
+            # Skip first (0) and last (len-1) as requested
+            for i, ratio in enumerate(self._markers):
+                if i == 0 or i == len(self._markers) - 1:
+                    continue
+                x = int(ratio * self.width())
+                p.setPen(QColor(255, 255, 255, 100))
+                if i % 2 == 1:
+                    p.drawLine(x, mid_y, x, self.height()) # Center to Bottom
+                else:
+                    p.drawLine(x, mid_y, x, 0)             # Center to Top
         p.end()
 
 class ScrollingLabel(QLabel):

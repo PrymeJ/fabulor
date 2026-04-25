@@ -1018,6 +1018,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_file = ""
         if self.player:
             self.player.terminate()
+        self.progress_slider.set_markers([])
         self._load_cover_art("")
         self.config.set_last_book("")
 
@@ -1152,6 +1153,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
         self._save_current_progress() # Save state of the book we are leaving
+        self.progress_slider.set_markers([])
         self._last_saved_pct = -1
         self.current_file = path
         self.db.update_last_played(path)
@@ -1179,8 +1181,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
-        if dur:
+        if dur and self.player.chapter_list:
             self.chapter_list_widget.populate(dur)
+            # Calculate chapter start ratios for the overall progress bar notches
+            ratios = [c.get('time', 0) / dur for c in self.player.chapter_list]
+            self.progress_slider.set_markers(ratios)
 
     def _restore_position(self):
         """Seeks to the saved position from config."""
