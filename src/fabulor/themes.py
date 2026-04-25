@@ -1947,6 +1947,9 @@ def get_stats_stylesheet(theme_name="default"):
             color: {t['accent_dark']};
             font-style: italic;
         }}
+        QPushButton#stats_nav_btn:disabled {{
+            color: rgba({_hex_to_rgb(t['accent_dark'])}, .90);
+        }}       
         QScrollBar:vertical {{
             width: 8px;
             background: {t['bg_deep']};
