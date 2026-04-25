@@ -264,6 +264,8 @@ class StatsPanel(QWidget):
         self._current_day_index: int = 0
         self._active_weeks: list[str] = []
         self._current_week_index: int = 0
+        self._active_months: list[str] = []
+        self._current_month_index: int = 0
         self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
@@ -585,11 +587,144 @@ class StatsPanel(QWidget):
         else:
             self._week_finished_section.hide()
 
+    def _build_monthly_tab(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("stats_daily_header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+
+        self._month_prev_btn = QPushButton("‹")
+        self._month_prev_btn.setObjectName("stats_nav_btn")
+        self._month_prev_btn.setFixedWidth(28)
+        self._month_prev_btn.clicked.connect(self._month_prev)
+
+        self._month_label = QLabel("—")
+        self._month_label.setObjectName("stats_day_label")
+        self._month_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._month_next_btn = QPushButton("›")
+        self._month_next_btn.setObjectName("stats_nav_btn")
+        self._month_next_btn.setFixedWidth(28)
+        self._month_next_btn.clicked.connect(self._month_next)
+
+        header_layout.addWidget(self._month_prev_btn)
+        header_layout.addWidget(self._month_label, stretch=1)
+        header_layout.addWidget(self._month_next_btn)
+        outer.addWidget(header)
+
+        self._month_total_label = QLabel("")
+        self._month_total_label.setObjectName("stats_day_total")
+        self._month_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self._month_total_label)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("stats_scroll_area")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._month_rows_widget = QWidget()
+        self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
+        self._month_rows_layout.setContentsMargins(4, 4, 4, 4)
+        self._month_rows_layout.setSpacing(4)
+        self._month_rows_layout.addStretch()
+
+        scroll.setWidget(self._month_rows_widget)
+        outer.addWidget(scroll, stretch=1)
+
+        self._month_finished_section = QWidget()
+        self._month_finished_section.setObjectName("stats_finished_section")
+        finished_outer = QVBoxLayout(self._month_finished_section)
+        finished_outer.setContentsMargins(4, 4, 4, 4)
+        finished_outer.setSpacing(4)
+
+        finished_header = QLabel("Finished this month")
+        finished_header.setObjectName("stats_section_header")
+        finished_outer.addWidget(finished_header)
+
+        self._month_finished_row = QHBoxLayout()
+        self._month_finished_row.setSpacing(8)
+        self._month_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        finished_outer.addLayout(self._month_finished_row)
+
+        outer.addWidget(self._month_finished_section)
+        self._month_finished_section.hide()
+
+        return widget
+
+    def _month_prev(self):
+        if self._current_month_index < len(self._active_months) - 1:
+            self._current_month_index += 1
+            self._refresh_monthly()
+
+    def _month_next(self):
+        if self._current_month_index > 0:
+            self._current_month_index -= 1
+            self._refresh_monthly()
+
+    def _refresh_monthly(self):
+        from datetime import datetime
+        self._active_months = self.db.get_active_periods('month', self.config.get_day_start_hour())
+        if not self._active_months:
+            self._month_label.setText("No activity yet")
+            self._month_total_label.setText("")
+            self._month_prev_btn.setEnabled(False)
+            self._month_next_btn.setEnabled(False)
+            self._month_finished_section.hide()
+            return
+
+        self._current_month_index = min(self._current_month_index, len(self._active_months) - 1)
+        month_str = self._active_months[self._current_month_index]
+
+        d = datetime.strptime(month_str, "%Y-%m").date()
+        self._month_label.setText(d.strftime("%B %Y"))
+
+        self._month_prev_btn.setEnabled(self._current_month_index < len(self._active_months) - 1)
+        self._month_next_btn.setEnabled(self._current_month_index > 0)
+
+        day_start = self.config.get_day_start_hour()
+        rows = self.db.get_books_listened_in_period('month', month_str, day_start)
+        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+
+        while self._month_rows_layout.count() > 1:
+            item = self._month_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        total_seconds = 0.0
+        for row in rows:
+            total_seconds += row.get("clock_seconds") or 0.0
+            book_row = BookDayRow(row, self._assets_dir)
+            self._month_rows_layout.insertWidget(self._month_rows_layout.count() - 1, book_row)
+
+        self._month_total_label.setText(self._format_duration(total_seconds))
+
+        finished = self.db.get_finished_in_period('month', month_str, day_start)
+
+        while self._month_finished_row.count() > 0:
+            item = self._month_finished_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if finished:
+            for f in finished:
+                thumb = FinishedBookThumb(f, self._assets_dir)
+                self._month_finished_row.addWidget(thumb)
+            self._month_finished_section.show()
+        else:
+            self._month_finished_section.hide()
+
     def _on_tab_changed(self, index: int):
         if self.tabs.tabText(index) == "Daily":
             self._refresh_daily()
         elif self.tabs.tabText(index) == "Weekly":
             self._refresh_weekly()
+        elif self.tabs.tabText(index) == "Monthly":
+            self._refresh_monthly()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -601,16 +736,7 @@ class StatsPanel(QWidget):
         self.tabs.addTab(self._build_overall_tab(), "Overall")
         self.tabs.addTab(self._build_daily_tab(), "Daily")
         self.tabs.addTab(self._build_weekly_tab(), "Weekly")
-
-        tab = QWidget()
-        tab_layout = QVBoxLayout(tab)
-        tab_layout.setContentsMargins(10, 10, 10, 10)
-        lbl = QLabel("Monthly stats coming soon...")
-        lbl.setObjectName("stats_placeholder_label")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tab_layout.addWidget(lbl)
-        tab_layout.addStretch()
-        self.tabs.addTab(tab, "Monthly")
+        self.tabs.addTab(self._build_monthly_tab(), "Monthly")
 
         self.tabs.addTab(self._build_options_tab(), "Options")
 
