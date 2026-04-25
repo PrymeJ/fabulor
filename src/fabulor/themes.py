@@ -1485,6 +1485,8 @@ def get_library_stylesheet(theme_name="default"):
         QLineEdit {{
             background-color: {input_bg};
             color: {input_text};
+            selection-background-color: {t['accent']};
+            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
@@ -1657,6 +1659,8 @@ def get_settings_stylesheet(theme_name="default"):
         QLineEdit {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
+            selection-background-color: {t['accent']};
+            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-size: 12px;
             border: 1px solid {t['accent']};
             border-radius: 4px;
@@ -1922,6 +1926,8 @@ def get_stats_stylesheet(theme_name="default"):
         QSpinBox {{
             background-color: {t['bg_dropdown']};
             color: {t['text']};
+            selection-background-color: {t['accent']};
+            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 2px;
