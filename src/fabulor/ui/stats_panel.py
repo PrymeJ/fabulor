@@ -428,12 +428,12 @@ class StatsPanel(QWidget):
 
         # Format date label
         d = date.fromisoformat(date_str)
-        self._day_label.setText(d.strftime("%A, %B %-d"))
+        self._day_label.setText(f"{d.strftime('%A, %B')} {d.day}")
 
         # Navigation button state
         self._day_prev_btn.setEnabled(self._current_day_index < len(self._active_days) - 1)
         self._day_next_btn.setEnabled(self._current_day_index > 0)
-
+    
         # Fetch and display rows
         rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
 
@@ -548,7 +548,7 @@ class StatsPanel(QWidget):
         year, week = week_str.split("-W")
         monday = datetime.strptime(f"{year}-W{week}-1", "%Y-W%W-%w").date()
         sunday = monday + timedelta(days=6)
-        self._week_label.setText(f"{monday.strftime('%b %-d')} – {sunday.strftime('%b %-d')}")
+        self._week_label.setText(f"{monday.strftime('%b')} {monday.day} – {sunday.strftime('%b')} {sunday.day}")
 
         self._week_prev_btn.setEnabled(self._current_week_index < len(self._active_weeks) - 1)
         self._week_next_btn.setEnabled(self._current_week_index > 0)
