@@ -541,6 +541,25 @@ class LibraryDB:
                     VALUES (?, ?)
                 """, (book_path, event_type))
 
+    def reset_stats(self):
+        """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute("DELETE FROM listening_sessions")
+                conn.execute("DELETE FROM book_events")
+                conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
+
+    def delete_book_stats(self, book_path: str):
+        """Deletes all session and event rows for a specific book path."""
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute("DELETE FROM listening_sessions WHERE book_path = ?", (book_path,))
+                conn.execute("DELETE FROM book_events WHERE book_path = ?", (book_path,))
+                conn.execute(
+                    "UPDATE books SET started_at = NULL, finished_at = NULL WHERE path = ?",
+                    (book_path,)
+                )
+
     def get_streaks(self, day_start_hour: int) -> dict:
         """Returns current and longest listening streaks in days."""
         from datetime import date, timedelta, datetime

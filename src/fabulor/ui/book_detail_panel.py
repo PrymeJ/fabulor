@@ -51,7 +51,7 @@ class BookDetailPanel(QWidget):
         header_layout.setSpacing(12)
 
         self._cover_label = QLabel()
-        self._cover_label.setFixedSize(72, 72)
+        self._cover_label.setMaximumSize(120, 120)
         self._cover_label.setScaledContents(False)
         header_layout.addWidget(self._cover_label)
 
@@ -141,6 +141,12 @@ class BookDetailPanel(QWidget):
         outer.addWidget(self._book_chart)
 
         outer.addStretch()
+
+        delete_btn = QPushButton("Delete listening history")
+        delete_btn.setObjectName("stats_reset_btn")
+        delete_btn.clicked.connect(self._on_delete_book_stats)
+        outer.addWidget(delete_btn)
+
         return widget
 
     def _build_metadata_tab(self) -> QWidget:
@@ -165,15 +171,13 @@ class BookDetailPanel(QWidget):
         if pixmap.isNull():
             pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
         if not pixmap.isNull():
-            side = min(pixmap.width(), pixmap.height())
-            x = (pixmap.width() - side) // 2
-            y = (pixmap.height() - side) // 2
-            cropped = pixmap.copy(x, y, side, side).scaled(
-                72, 72,
-                Qt.AspectRatioMode.IgnoreAspectRatio,
+            scaled = pixmap.scaled(
+                120, 120,
+                Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
-            self._cover_label.setPixmap(cropped)
+            self._cover_label.setPixmap(scaled)
+            self._cover_label.setFixedSize(scaled.width(), scaled.height())
 
         self._title_label.setText(book_data.get('title') or book_data.get('book_title', ''))
         self._author_label.setText(book_data.get('author') or book_data.get('book_author', ''))
@@ -233,6 +237,19 @@ class BookDetailPanel(QWidget):
             )
 
         self._book_chart.set_data(stats['per_day'])
+
+    def _on_delete_book_stats(self):
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Delete history",
+            f"Delete all listening history for this book? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if self._book_path:
+                self.db.delete_book_stats(self._book_path)
+                self._refresh_stats()
 
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor

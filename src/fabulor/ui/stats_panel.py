@@ -134,6 +134,7 @@ class BookDayRow(QWidget):
         super().__init__(parent)
         self._row_data = row_data
         self.setObjectName("stats_book_day_row")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         deleted = row_data.get("book_path") is None
 
         layout = QHBoxLayout(self)
@@ -264,6 +265,7 @@ class FinishedBookThumb(QWidget):
         super().__init__(parent)
         self._row_data = row_data
         self.setFixedSize(48, 48)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -449,6 +451,12 @@ class StatsPanel(QWidget):
         pref_row.addWidget(self.day_start_spin)
         pref_row.addStretch()
         layout.addLayout(pref_row)
+
+        reset_btn = QPushButton("Reset all stats")
+        reset_btn.setObjectName("stats_reset_btn")
+        reset_btn.clicked.connect(self._on_reset_stats)
+        layout.addWidget(reset_btn)
+
         layout.addStretch()
         return widget
 
@@ -867,6 +875,21 @@ class StatsPanel(QWidget):
                 self.tabs.setCurrentIndex(i)
                 break
     # _on_tab_changed fires automatically, which calls _refresh_daily
+
+    def _on_reset_stats(self):
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Reset stats",
+            "Delete all listening history? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.db.reset_stats()
+            self.refresh_overall()
+            self._refresh_daily()
+            self._refresh_weekly()
+            self._refresh_monthly()
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager
