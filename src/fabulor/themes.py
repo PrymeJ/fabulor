@@ -1850,7 +1850,7 @@ def get_stats_stylesheet(theme_name="default"):
     finished_color = t.get('stats_finished_title', t.get('accent_light', t.get('accent_dark', '#BA7BBA')))
 
     return f"""
-        QWidget#stats_panel {{
+        QWidget#stats_panel, QWidget#book_detail_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;

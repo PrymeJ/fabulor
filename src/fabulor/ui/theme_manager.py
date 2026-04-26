@@ -199,8 +199,11 @@ class ThemeManager(QObject):
             w = getattr(mw, attr, None)
             if w:
                 w.setStyleSheet(ss_panels)
-        if hasattr(mw, 'stats_panel'):
-            mw.stats_panel.setStyleSheet(get_stats_stylesheet(theme_name))
+        ss_stats = get_stats_stylesheet(theme_name)
+        for attr in ('stats_panel', 'book_detail_panel'):
+            target = getattr(mw, attr, None)
+            if target:
+                target.setStyleSheet(ss_stats)
         if hasattr(mw, 'sidebar'):
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
 
