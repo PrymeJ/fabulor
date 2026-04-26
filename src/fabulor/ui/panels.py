@@ -35,6 +35,8 @@ class PanelManager:
         self.sleep_panel_animation = main_window.sleep_panel_animation
         self.stats_panel = main_window.stats_panel
         self.stats_panel_animation = main_window.stats_panel_animation
+        self.book_detail_panel = None
+        self.book_detail_panel_animation = None
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -315,6 +317,40 @@ class PanelManager:
         except: pass
         self.stats_panel.hide()
 
+    def open_book_detail(self, book_data: dict, tab: str = 'stats'):
+        self.main_window.book_detail_panel.load_book(book_data, tab=tab)
+        self._start_book_detail_entry()
+
+    def _start_book_detail_entry(self):
+        panel_w = self.main_window.width()
+        sidebar_y = 56
+        self.book_detail_panel.setFixedWidth(panel_w)
+        self.book_detail_panel.setFixedHeight(self.main_window.height() - sidebar_y)
+        self.book_detail_panel.move(panel_w, sidebar_y)
+        self.book_detail_panel.show()
+        self.book_detail_panel.raise_()
+
+        self.book_detail_panel_animation.setStartValue(QPoint(panel_w, sidebar_y))
+        self.book_detail_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.book_detail_panel_animation.start()
+
+    def _close_book_detail_flow(self):
+        if self.book_detail_panel_animation.state() == QPropertyAnimation.Running:
+            return
+        panel_w = self.main_window.width()
+        sidebar_y = 56
+        self.book_detail_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.book_detail_panel_animation.setEndValue(QPoint(panel_w, sidebar_y))
+        self.book_detail_panel_animation.finished.connect(self._on_book_detail_hidden)
+        self.book_detail_panel_animation.start()
+
+    def _on_book_detail_hidden(self):
+        try:
+            self.book_detail_panel_animation.finished.disconnect(self._on_book_detail_hidden)
+        except:
+            pass
+        self.book_detail_panel.hide()
+
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
         if hasattr(self.main_window, 'theme_manager'):
@@ -351,6 +387,7 @@ class PanelManager:
             self.speed_panel_animation,
             self.sleep_panel_animation,
             self.stats_panel_animation,
+            self.book_detail_panel_animation,
             self.blur_animation
         ]
         return any(anim.state() == QPropertyAnimation.Running for anim in animations)
@@ -364,6 +401,7 @@ class PanelManager:
             self.speed_panel.isVisible() or
             self.sleep_panel.isVisible() or
             self.stats_panel.isVisible() or
+            self.book_detail_panel.isVisible() or
             self.main_window.chapter_list_widget.isVisible()
         )
 
@@ -383,13 +421,18 @@ class PanelManager:
             self._close_sleep_flow()
         if self.stats_panel.isVisible():
             self._close_stats_flow()
+        if self.book_detail_panel and self.book_detail_panel.isVisible():
+            self._close_book_detail_flow()
 
     def handle_mouse_press(self, event):
         """Handles mouse press events to prevent panel dismissal when clicking inside."""
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
+        panels = [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]
+        if self.book_detail_panel:
+            panels.append(self.book_detail_panel)
+        for panel in panels:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
-                return True # Event handled, do not propagate
-        return False # Event not handled, propagate
+                return True
+        return False
 
     def handle_drag_area_right_click(self, event):
         """Handles right-click on drag area to dismiss panels or toggle sidebar."""
@@ -403,6 +446,8 @@ class PanelManager:
             self._close_sleep_flow()
         elif self.stats_panel.isVisible():
             self._close_stats_flow()
+        elif self.book_detail_panel and self.book_detail_panel.isVisible():
+            self._close_book_detail_flow()
         elif self.main_window.chapter_list_widget.isVisible():
             self.main_window.chapter_list_widget.hide()
         else:
@@ -456,3 +501,11 @@ class PanelManager:
         if self.stats_panel_animation.state() != QPropertyAnimation.Running:
             x = 0 if self.stats_panel.isVisible() else -panel_w
             self.stats_panel.move(x, sidebar_y)
+
+        # Update Book Detail Panel position if not animating
+        if self.book_detail_panel and self.book_detail_panel_animation and \
+                self.book_detail_panel_animation.state() != QPropertyAnimation.Running:
+            if self.book_detail_panel.isVisible():
+                self.book_detail_panel.setFixedWidth(self.main_window.width())
+                self.book_detail_panel.move(0, sidebar_y)
+            self.book_detail_panel.setFixedHeight(self.main_window.height() - sidebar_y)

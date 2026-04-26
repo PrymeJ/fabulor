@@ -345,34 +345,45 @@ class LibraryDB:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_per_book_stats(self, book_path: str, day_start_hour: int) -> dict:
-        offset = f'-{day_start_hour} hours'
+    def get_book_stats(self, book_path: str, day_start_hour: int) -> dict:
         with self._get_conn() as conn:
-            agg = conn.execute(
-                "SELECT"
-                "  MAX(furthest_position) AS furthest_position,"
-                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS total_seconds"
-                " FROM listening_sessions"
-                " WHERE book_path = ?",
-                (book_path,)
-            ).fetchone()
-            if agg is None or agg['total_seconds'] is None:
-                return {'furthest_position': 0.0, 'total_seconds': 0.0, 'per_day': []}
-            per_day = conn.execute(
-                "SELECT"
-                "  strftime('%Y-%m-%d', datetime(session_start, ?)) AS date,"
-                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
-                " FROM listening_sessions"
-                " WHERE book_path = ?"
-                " GROUP BY date"
-                " ORDER BY date ASC",
-                (offset, book_path)
-            ).fetchall()
-            return {
-                'furthest_position': agg['furthest_position'] or 0.0,
-                'total_seconds': agg['total_seconds'] or 0.0,
-                'per_day': [dict(row) for row in per_day],
-            }
+            agg = conn.execute("""
+                SELECT
+                    MAX(furthest_position) as furthest_position,
+                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as total_seconds,
+                    COUNT(*) as session_count,
+                    MIN(session_start) as first_session,
+                    MAX(session_end) as last_session
+                FROM listening_sessions
+                WHERE book_path = ?
+            """, (book_path,)).fetchone()
+
+            per_day = conn.execute("""
+                SELECT
+                    strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
+                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                FROM listening_sessions
+                WHERE book_path = ?
+                GROUP BY date
+                ORDER BY date ASC
+            """, (f'-{day_start_hour} hours', book_path)).fetchall()
+
+            finished = conn.execute("""
+                SELECT COUNT(*) as n, MAX(event_time) as last_finished
+                FROM book_events
+                WHERE book_path = ? AND event_type = 'finished'
+            """, (book_path,)).fetchone()
+
+        return {
+            'furthest_position': agg['furthest_position'] or 0.0,
+            'total_seconds': agg['total_seconds'] or 0.0,
+            'session_count': agg['session_count'] or 0,
+            'first_session': agg['first_session'],
+            'last_session': agg['last_session'],
+            'finished_count': finished['n'] or 0,
+            'last_finished': finished['last_finished'],
+            'per_day': [dict(r) for r in per_day],
+        }
 
     def get_overall_stats(self, day_start_hour: int = 0) -> dict:
         with self._get_conn() as conn:

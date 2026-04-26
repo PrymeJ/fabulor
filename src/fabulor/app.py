@@ -30,6 +30,7 @@ from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
+from .ui.book_detail_panel import BookDetailPanel
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
@@ -401,7 +402,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
-        
+        self._build_book_detail_panel()
+        self.stats_panel.set_panel_manager(self.panel_manager)
+
         # Connect Sleep Timer signals after panel_manager is initialized
         self.sleep_panel.timer_started.connect(self._on_sleep_timer_started)
         self.sleep_panel.timer_stopped.connect(self._on_sleep_timer_stopped)
@@ -1010,6 +1013,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
         self.stats_panel_animation.setDuration(300)
         self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _build_book_detail_panel(self):
+        self.book_detail_panel = BookDetailPanel(self.db, self.config, parent=self)
+        self.book_detail_panel.hide()
+        self.book_detail_panel_animation = QPropertyAnimation(
+            self.book_detail_panel, b"pos"
+        )
+        self.book_detail_panel_animation.setDuration(300)
+        self.book_detail_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.panel_manager.book_detail_panel = self.book_detail_panel
+        self.panel_manager.book_detail_panel_animation = self.book_detail_panel_animation
+        self.book_detail_panel.close_requested.connect(
+            self.panel_manager._close_book_detail_flow
+        )
+        self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
+        self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""

@@ -128,8 +128,11 @@ def _dim_effect():
 
 
 class BookDayRow(QWidget):
+    clicked = Signal(dict)
+
     def __init__(self, row_data: dict, assets_dir: str, parent=None):
         super().__init__(parent)
+        self._row_data = row_data
         self.setObjectName("stats_book_day_row")
         deleted = row_data.get("book_path") is None
 
@@ -250,10 +253,16 @@ class BookDayRow(QWidget):
 
         layout.addLayout(time_block)
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._row_data)
+
 
 class FinishedBookThumb(QWidget):
+    clicked = Signal(dict)
     def __init__(self, row_data: dict, assets_dir: str, parent=None):
         super().__init__(parent)
+        self._row_data = row_data
         self.setFixedSize(48, 48)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -282,6 +291,10 @@ class FinishedBookThumb(QWidget):
             cover_label.setPixmap(scaled)
 
         layout.addWidget(cover_label)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._row_data)
 
 
 class StatsPanel(QWidget):
@@ -410,6 +423,7 @@ class StatsPanel(QWidget):
         if finished:
             for f in finished[:5]:  # cap at 5 thumbs
                 thumb = FinishedBookThumb(f, self._assets_dir)
+                thumb.clicked.connect(self._on_book_row_clicked)
                 self._finished_thumbs_row.addWidget(thumb)
             self._finished_section.show()
         else:
@@ -538,6 +552,7 @@ class StatsPanel(QWidget):
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir)
+            book_row.clicked.connect(self._on_book_row_clicked)
             self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
 
         self._day_total_label.setText(self._format_duration(total_seconds))
@@ -656,6 +671,7 @@ class StatsPanel(QWidget):
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir)
+            book_row.clicked.connect(self._on_book_row_clicked)
             self._week_rows_layout.insertWidget(self._week_rows_layout.count() - 1, book_row)
 
         self._week_total_label.setText(self._format_duration(total_seconds))
@@ -670,6 +686,7 @@ class StatsPanel(QWidget):
         if finished:
             for f in finished:
                 thumb = FinishedBookThumb(f, self._assets_dir)
+                thumb.clicked.connect(self._on_book_row_clicked)
                 self._week_finished_row.addWidget(thumb)
             self._week_finished_section.show()
         else:
@@ -787,6 +804,7 @@ class StatsPanel(QWidget):
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir)
+            book_row.clicked.connect(self._on_book_row_clicked)
             self._month_rows_layout.insertWidget(self._month_rows_layout.count() - 1, book_row)
 
         self._month_total_label.setText(self._format_duration(total_seconds))
@@ -801,6 +819,7 @@ class StatsPanel(QWidget):
         if finished:
             for f in finished:
                 thumb = FinishedBookThumb(f, self._assets_dir)
+                thumb.clicked.connect(self._on_book_row_clicked)
                 self._month_finished_row.addWidget(thumb)
             self._month_finished_section.show()
         else:
@@ -847,4 +866,11 @@ class StatsPanel(QWidget):
             if self.tabs.tabText(i) == "Daily":
                 self.tabs.setCurrentIndex(i)
                 break
-    # _on_tab_changed fires automatically, which calls _refresh_daily        
+    # _on_tab_changed fires automatically, which calls _refresh_daily
+
+    def set_panel_manager(self, panel_manager):
+        self._panel_manager = panel_manager
+
+    def _on_book_row_clicked(self, row_data: dict):
+        if hasattr(self, '_panel_manager'):
+            self._panel_manager.open_book_detail(row_data, tab='stats')
