@@ -203,6 +203,10 @@ class BookDetailPanel(QWidget):
         day_start = self.config.get_day_start_hour()
         stats = self.db.get_book_stats(self._book_path, day_start)
         duration = self._book_data.get('duration')
+        if not duration:
+            book = self.db.get_book(self._book_path)
+            if book:
+                duration = book.duration
 
         furthest = stats['furthest_position']
         if duration and duration > 0:
