@@ -387,23 +387,24 @@ class PanelManager:
             self.speed_panel_animation,
             self.sleep_panel_animation,
             self.stats_panel_animation,
-            self.book_detail_panel_animation,
-            self.blur_animation
+            self.blur_animation,
         ]
+        if self.book_detail_panel_animation:
+            animations.append(self.book_detail_panel_animation)
         return any(anim.state() == QPropertyAnimation.Running for anim in animations)
 
     def is_any_panel_visible(self):
         """Returns True if the sidebar or any configuration panel is currently open."""
-        return (
-            self.sidebar_expanded or
-            self.library_panel.isVisible() or
-            self.settings_panel.isVisible() or
-            self.speed_panel.isVisible() or
-            self.sleep_panel.isVisible() or
-            self.stats_panel.isVisible() or
-            self.book_detail_panel.isVisible() or
-            self.main_window.chapter_list_widget.isVisible()
-        )
+        return any([
+            self.sidebar_expanded,
+            self.library_panel.isVisible(),
+            self.settings_panel.isVisible(),
+            self.speed_panel.isVisible(),
+            self.sleep_panel.isVisible(),
+            self.stats_panel.isVisible(),
+            self.book_detail_panel.isVisible() if self.book_detail_panel else False,
+            self.main_window.chapter_list_widget.isVisible(),
+        ])
 
     def hide_all_panels(self):
         """Closes any open panels."""
