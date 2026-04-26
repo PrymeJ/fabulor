@@ -1847,6 +1847,7 @@ def get_stats_stylesheet(theme_name="default"):
     tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
     tab_hover_text = t.get('settings_tab_hover_text', t['text'])
     panel_dimmed_color = t.get('panel_theme_names_dimmed', t['accent_dark'])
+    finished_color = t.get('stats_finished_title', t.get('accent_light', t.get('accent_dark', '#BA7BBA')))
 
     return f"""
         QWidget#stats_panel {{
@@ -1943,6 +1944,9 @@ def get_stats_stylesheet(theme_name="default"):
         QLabel#stats_key_label {{
             color: {t['accent_light']};
             font-size: 12px;
+        }}
+        QLabel#stats_book_title_finished {{
+            color: {finished_color};
         }}
         QLabel#stats_value_label {{
             color: {t['text']};
