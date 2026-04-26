@@ -1884,7 +1884,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#book_detail_close_btn {{
             background-color: {t['accent']};
-            color: {t['text']};
+            color: {t['bg_main']};
             border: 0px solid currentColor;
             border-radius: 7px;
             font-size: 9px;
@@ -1892,7 +1892,7 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#book_detail_close_btn:hover {{
             background-color: {t['accent']};
-            color: {t['bg_main']};
+            color: {t['text']};
         }}
 
         QTabWidget::pane {{
