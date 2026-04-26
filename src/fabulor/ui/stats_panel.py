@@ -254,14 +254,15 @@ class BookDayRow(QWidget):
 class FinishedBookThumb(QWidget):
     def __init__(self, row_data: dict, assets_dir: str, parent=None):
         super().__init__(parent)
+        self.setFixedSize(48, 48)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         cover_label = QLabel()
         cover_label.setFixedSize(48, 48)
-        cover_label.setScaledContents(True)
+        cover_label.setScaledContents(False)
         cover_path = row_data.get("cover_path")
         pixmap = QPixmap()
         if cover_path and os.path.exists(cover_path):
@@ -269,19 +270,18 @@ class FinishedBookThumb(QWidget):
         if pixmap.isNull():
             icon_path = os.path.join(assets_dir, "fabulor.ico")
             pixmap.load(icon_path)
-        cover_label.setPixmap(pixmap)
 
-        title_lbl = QLabel(row_data.get("book_title", "Unknown"))
-        title_lbl.setObjectName("stats_finished_thumb_title")
-        title_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        title_lbl.setWordWrap(True)
-        title_lbl.setFixedWidth(56)
-        font = title_lbl.font()
-        font.setPointSize(font.pointSize() - 2)
-        title_lbl.setFont(font)
+        if not pixmap.isNull():
+            # Crop to center square
+            side = min(pixmap.width(), pixmap.height())
+            x = (pixmap.width() - side) // 2
+            y = (pixmap.height() - side) // 2
+            cropped = pixmap.copy(x, y, side, side)
+            scaled = cropped.scaled(48, 48, Qt.AspectRatioMode.IgnoreAspectRatio, 
+                                    Qt.TransformationMode.SmoothTransformation)
+            cover_label.setPixmap(scaled)
 
-        layout.addWidget(cover_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(title_lbl)
+        layout.addWidget(cover_label)
 
 
 class StatsPanel(QWidget):
@@ -357,7 +357,7 @@ class StatsPanel(QWidget):
         finished_layout.addWidget(finished_header)
 
         self._finished_thumbs_row = QHBoxLayout()
-        self._finished_thumbs_row.setSpacing(8)
+        self._finished_thumbs_row.setSpacing(2)
         self._finished_thumbs_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         finished_layout.addLayout(self._finished_thumbs_row)
 
@@ -366,8 +366,6 @@ class StatsPanel(QWidget):
 
         outer.addStretch()
         return widget
-    
-        
 
     def on_theme_changed(self, theme: dict):
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
@@ -596,7 +594,7 @@ class StatsPanel(QWidget):
         finished_outer.addWidget(finished_header)
 
         self._week_finished_row = QHBoxLayout()
-        self._week_finished_row.setSpacing(8)
+        self._week_finished_row.setSpacing(2)
         self._week_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         finished_outer.addLayout(self._week_finished_row)
 
@@ -729,7 +727,7 @@ class StatsPanel(QWidget):
         finished_outer.addWidget(finished_header)
 
         self._month_finished_row = QHBoxLayout()
-        self._month_finished_row.setSpacing(8)
+        self._month_finished_row.setSpacing(2)
         self._month_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
         finished_outer.addLayout(self._month_finished_row)
 
