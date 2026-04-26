@@ -328,6 +328,8 @@ class StatsPanel(QWidget):
             ("Most listened",   "—"),
             ("Longest session", "—"),
             ("Average session", "—"),
+            ("Current streak", "—"),
+            ("Longest streak", "—"),
         ]
 
         self._overall_value_labels = []
@@ -412,6 +414,12 @@ class StatsPanel(QWidget):
             self._finished_section.show()
         else:
             self._finished_section.hide()
+
+        # Streaks
+
+        streaks = self.db.get_streaks(self.config.get_day_start_hour())
+        self._overall_value_labels[6].setText(f"{streaks['current']} days")
+        self._overall_value_labels[7].setText(f"{streaks['longest']} days")
 
     def _build_options_tab(self) -> QWidget:
         widget = QWidget()

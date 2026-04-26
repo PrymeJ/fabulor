@@ -529,3 +529,43 @@ class LibraryDB:
                     INSERT INTO book_events (book_path, event_type)
                     VALUES (?, ?)
                 """, (book_path, event_type))
+
+    def get_streaks(self, day_start_hour: int) -> dict:
+        """Returns current and longest listening streaks in days."""
+        from datetime import date, timedelta, datetime
+
+        now = datetime.now()
+        adjusted_today = (now - timedelta(hours=day_start_hour)).date()
+        adjusted_yesterday = adjusted_today - timedelta(days=1)
+
+        active_days = self.get_active_periods('day', day_start_hour)
+        if not active_days:
+            return {'current': 0, 'longest': 0}
+
+        # Convert to date objects, sorted newest first
+        dates = sorted(
+            [date.fromisoformat(d) for d in active_days],
+            reverse=True
+        )
+
+        # Current streak — walk back from today or yesterday
+        current = 0
+        anchor = adjusted_today if dates[0] == adjusted_today else adjusted_yesterday
+        for d in dates:
+            if d == anchor:
+                current += 1
+                anchor -= timedelta(days=1)
+            elif d < anchor:
+                break
+
+        # Longest streak — walk entire history
+        longest = 1
+        run = 1
+        for i in range(1, len(dates)):
+            if dates[i - 1] - dates[i] == timedelta(days=1):
+                run += 1
+                longest = max(longest, run)
+            else:
+                run = 1
+
+        return {'current': current, 'longest': longest}
