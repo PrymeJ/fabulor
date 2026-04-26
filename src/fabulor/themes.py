@@ -1293,6 +1293,7 @@ def get_base_stylesheet(theme_name="default"):
         }}
         QPushButton#undo_overlay {{
             font-size: 11px;
+            font-weight: bold;
             color: {t['text']};
             background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.8);
             border: 0px solid {t['accent_dark']};
