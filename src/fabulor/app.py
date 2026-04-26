@@ -99,6 +99,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
 
+        # Temporary
+        self._eof_event_written: bool = False
+
         # Session recording
         self._current_book = None
         self._session_start: datetime | None = None
@@ -1205,6 +1208,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
              self.status_banner.setText("Error: File missing!")
              self.status_banner.show()
              return
+        self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
         # Close any existing session before opening a new one
         self._close_session()
@@ -1338,6 +1342,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if is_eof:
             pos = dur
             self.play_pause_button.setText("Restart")
+            if not self._eof_event_written and self._current_book is not None: #Temporary
+                self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
+                self._eof_event_written = True #Temporary
+                print("Event written")     #Temporary
             self._paused_time = None
             self.progress_slider.setValue(1000)
             self.current_time_label.setText(self.player.format_time(pos / speed))
@@ -1376,7 +1384,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _sync_ui_render(self):
         is_eof = self.player.eof_reached
         if is_eof and self.current_file:
-            self.play_pause_button.setText("Restart") 
+            self.play_pause_button.setText("Restart")     
         else:
             self.play_pause_button.setText("Play" if self.player.pause else "Pause")
 

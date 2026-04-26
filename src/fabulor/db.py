@@ -518,3 +518,12 @@ class LibraryDB:
                 LIMIT ?
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
+    
+    #Temporary
+    def write_book_event(self, book_path: str, event_type: str):
+        with self._get_conn() as conn:
+            with conn:
+                conn.execute("""
+                    INSERT INTO book_events (book_path, event_type)
+                    VALUES (?, ?)
+                """, (book_path, event_type))

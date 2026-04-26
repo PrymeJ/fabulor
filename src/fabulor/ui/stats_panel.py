@@ -343,6 +343,10 @@ class StatsPanel(QWidget):
         self._bar_chart = BarChartWidget()
         self._bar_chart.date_clicked.connect(self._on_bar_date_clicked)
 
+        outer.addWidget(self._bar_chart)
+        outer.addSpacing(16)
+        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
+
         self._finished_section = QWidget()
         finished_layout = QVBoxLayout(self._finished_section)
         finished_layout.setContentsMargins(0, 8, 0, 0)
@@ -360,9 +364,6 @@ class StatsPanel(QWidget):
         outer.addWidget(self._finished_section)
         self._finished_section.hide()
 
-        outer.addWidget(self._bar_chart)
-        outer.addSpacing(16)
-        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
         outer.addStretch()
         return widget
     
