@@ -1345,7 +1345,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if not self._eof_event_written and self._current_book is not None: #Temporary
                 self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
                 self._eof_event_written = True #Temporary
-                print("Event written")     #Temporary
+                if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
+                    self.stats_panel.refresh_overall()
+            self.stats_panel.refresh_overall()     #Temporary
             self._paused_time = None
             self.progress_slider.setValue(1000)
             self.current_time_label.setText(self.player.format_time(pos / speed))
