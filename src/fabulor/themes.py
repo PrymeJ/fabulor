@@ -1852,8 +1852,10 @@ def get_stats_stylesheet(theme_name="default"):
     return f"""
         QWidget#stats_panel, QWidget#book_detail_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border-right: 1px solid {t['accent']};
             border-radius: 0px;
+        }}
+        QWidget#stats_panel {{
+            border-right: 1px solid {t['accent']};
         }}
         QLabel {{
             color: {t['text']};
