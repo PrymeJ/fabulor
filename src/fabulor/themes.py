@@ -1850,12 +1850,14 @@ def get_stats_stylesheet(theme_name="default"):
     finished_color = t.get('stats_finished_title', t.get('accent_light', t.get('accent_dark', '#BA7BBA')))
 
     return f"""
-        QWidget#stats_panel, QWidget#book_detail_panel {{
+        QWidget#book_detail_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-radius: 0px;
         }}
         QWidget#stats_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
+            border-radius: 0px;
         }}
         QLabel {{
             color: {t['text']};
@@ -1879,6 +1881,19 @@ def get_stats_stylesheet(theme_name="default"):
         QPushButton:pressed {{
             background-color: {t['accent_dark']};
         }}
+        QPushButton#book_detail_close_btn {{
+            background-color: {t['accent']};
+            color: {t['text']};
+            border: 0px solid currentColor;
+            border-radius: 7px;
+            font-size: 9px;
+            padding: 0px;
+        }}
+        QPushButton#book_detail_close_btn:hover {{
+            background-color: {t['accent']};
+            color: {t['bg_main']};
+        }}
+
         QTabWidget::pane {{
             border-top: 1px solid {t['accent_dark']};
             background: transparent;

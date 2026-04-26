@@ -31,19 +31,6 @@ class BookDetailPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        title_bar = QWidget()
-        title_bar.setObjectName("book_detail_title_bar")
-        title_bar_layout = QHBoxLayout(title_bar)
-        title_bar_layout.setContentsMargins(8, 6, 8, 6)
-
-        back_btn = QPushButton("‹ Back")
-        back_btn.setObjectName("stats_nav_btn")
-        back_btn.clicked.connect(self.close_requested.emit)
-        title_bar_layout.addWidget(back_btn)
-        title_bar_layout.addStretch()
-
-        layout.addWidget(title_bar)
-
         header = QWidget()
         header.setObjectName("book_detail_header")
         header_layout = QHBoxLayout(header)
@@ -78,6 +65,13 @@ class BookDetailPanel(QWidget):
         meta_block.addStretch()
 
         header_layout.addLayout(meta_block, stretch=1)
+
+        self._close_btn = QPushButton("✕")
+        self._close_btn.setObjectName("book_detail_close_btn")
+        self._close_btn.setFixedSize(15, 15)
+        self._close_btn.clicked.connect(self.close_requested.emit)
+        header_layout.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignTop)
+
         layout.addWidget(header)
 
         self.tabs = QTabWidget()
