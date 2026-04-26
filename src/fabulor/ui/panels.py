@@ -231,6 +231,7 @@ class PanelManager:
         self.stats_panel.setFixedWidth(panel_w)
         self.stats_panel.move(-panel_w, sidebar_y)
         self.stats_panel.show()
+        self.stats_panel.refresh_overall()
         self.stats_panel.raise_()
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
