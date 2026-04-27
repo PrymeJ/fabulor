@@ -2,12 +2,14 @@ import os
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
-    QPushButton, QScrollArea, QProgressBar, QGridLayout
+    QPushButton, QScrollArea, QProgressBar, QGridLayout,
+    QLineEdit, QCompleter
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QStringListModel
 from PySide6.QtGui import QPixmap
 
 from .stats_panel import BarChartWidget
+from .flow_layout import FlowLayout
 
 
 class BookDetailPanel(QWidget):
@@ -145,21 +147,179 @@ class BookDetailPanel(QWidget):
 
     def _build_metadata_tab(self) -> QWidget:
         widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        placeholder = QLabel("Metadata editing coming soon")
-        placeholder.setObjectName("stats_placeholder_label")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(placeholder)
-        layout.addStretch()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(10)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+
+        def make_field(label_text):
+            lbl = QLabel(label_text)
+            lbl.setObjectName("stats_key_label")
+            field = QLineEdit()
+            field.setObjectName("metadata_field")
+            return lbl, field
+
+        title_lbl, self._meta_title = make_field("Title")
+        author_lbl, self._meta_author = make_field("Author")
+        narrator_lbl, self._meta_narrator = make_field("Narrator")
+        year_lbl, self._meta_year = make_field("Year")
+
+        grid.addWidget(title_lbl,           0, 0)
+        grid.addWidget(self._meta_title,    1, 0)
+        grid.addWidget(author_lbl,          0, 1)
+        grid.addWidget(self._meta_author,   1, 1)
+        grid.addWidget(narrator_lbl,        2, 0)
+        grid.addWidget(self._meta_narrator, 3, 0)
+        grid.addWidget(year_lbl,            2, 1)
+        grid.addWidget(self._meta_year,     3, 1)
+
+        outer.addLayout(grid)
+
+        save_btn = QPushButton("Save")
+        save_btn.setObjectName("stats_nav_btn")
+        save_btn.clicked.connect(self._on_save_metadata)
+        outer.addWidget(save_btn)
+
+        tag_header = QLabel("Tags")
+        tag_header.setObjectName("stats_key_label")
+        outer.addWidget(tag_header)
+
+        self._tag_chip_container = QWidget()
+        self._tag_chip_layout = FlowLayout(self._tag_chip_container)
+        outer.addWidget(self._tag_chip_container)
+
+        tag_input_row = QHBoxLayout()
+        self._tag_input = QLineEdit()
+        self._tag_input.setObjectName("metadata_field")
+        self._tag_input.setPlaceholderText("Add tag…")
+        self._tag_input.setMaxLength(30)
+        self._tag_input.returnPressed.connect(self._on_add_tag)
+
+        self._tag_completer_model = QStringListModel()
+        completer = QCompleter(self._tag_completer_model, self._tag_input)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.activated.connect(self._on_tag_completer_activated)
+        self._tag_input.setCompleter(completer)
+        self._tag_input.textChanged.connect(self._on_tag_input_changed)
+
+        add_tag_btn = QPushButton("+")
+        add_tag_btn.setObjectName("book_detail_close_btn")
+        add_tag_btn.setFixedSize(28, 28)
+        add_tag_btn.clicked.connect(self._on_add_tag)
+
+        tag_input_row.addWidget(self._tag_input)
+        tag_input_row.addWidget(add_tag_btn)
+        outer.addLayout(tag_input_row)
+
+        outer.addStretch()
         return widget
+
+    def _rebuild_tag_chips(self):
+        while self._tag_chip_layout.count():
+            item = self._tag_chip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        tags = self.db.get_book_tags(self._book_path)
+        for tag in tags:
+            chip = QWidget()
+            chip.setObjectName("tag_chip")
+            row = QHBoxLayout(chip)
+            row.setContentsMargins(6, 2, 4, 2)
+            row.setSpacing(4)
+            lbl = QLabel(tag)
+            lbl.setObjectName("tag_chip_label")
+            x_btn = QPushButton("✕")
+            x_btn.setObjectName("tag_chip_remove_btn")
+            x_btn.setFixedSize(16, 16)
+            x_btn.clicked.connect(lambda checked, t=tag: self._on_remove_tag(t))
+            row.addWidget(lbl)
+            row.addWidget(x_btn)
+            self._tag_chip_layout.addWidget(chip)
+
+        # Update container height so the outer VBoxLayout knows how much space to allocate.
+        row_h = 28
+        v_gap = 6
+        n = len(tags)
+        rows = max(1, n)  # at least one row height so the area is visible
+        self._tag_chip_container.setMinimumHeight(rows * row_h + (rows - 1) * v_gap if n else row_h)
+
+    def _on_tag_input_changed(self, text: str):
+        text = text.strip()
+        if text and self._book_path:
+            suggestions = self.db.get_tag_suggestions(text, self._book_path)
+            self._tag_completer_model.setStringList(suggestions)
+        else:
+            self._tag_completer_model.setStringList([])
+
+    def _on_tag_completer_activated(self, text: str):
+        self._tag_input.setText(text)
+        self._on_add_tag()
+
+    def _on_add_tag(self):
+        tag = self._tag_input.text().strip().lower()
+        if not tag or not self._book_path:
+            return
+        added = self.db.add_book_tag(self._book_path, tag)
+        if added:
+            self._tag_input.clear()
+            self._rebuild_tag_chips()
+        else:
+            self._tag_input.setStyleSheet("border: 1px solid red;")
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(800, lambda: self._tag_input.setStyleSheet(""))
+
+    def _on_remove_tag(self, tag: str):
+        if self._book_path:
+            self.db.remove_book_tag(self._book_path, tag)
+            self._rebuild_tag_chips()
+
+    def _on_save_metadata(self):
+        if not self._book_path:
+            return
+        title = self._meta_title.text().strip()
+        author = self._meta_author.text().strip()
+        narrator = self._meta_narrator.text().strip()
+        year = self._meta_year.text().strip()
+        self.db.update_book_metadata(self._book_path, title, author, narrator, year)
+        self._book_data.update({
+            'title': title, 'author': author,
+            'narrator': narrator, 'year': year
+        })
+        self._sync_header_from_fields()
+
+    def _sync_header_from_fields(self):
+        self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
+        self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
+        narrator = self._book_data.get('narrator', '')
+        self._narrator_label.setText(narrator)
+        self._narrator_label.setVisible(bool(narrator))
+        year = self._book_data.get('year')
+        self._year_label.setText(str(year) if year else '')
+        self._year_label.setVisible(bool(year))
 
     def load_book(self, book_data: dict, tab: str = 'stats'):
         self._book_path = book_data.get('path') or book_data.get('book_path')
         self._book_data = book_data
+        if 'duration' not in book_data:
+            full = self.db.get_book(self._book_path)
+            if full:
+                self._book_data = {
+                    'path': full.path,
+                    'title': full.title,
+                    'author': full.author,
+                    'narrator': full.narrator or '',
+                    'year': full.year,
+                    'cover_path': full.cover_path,
+                    'duration': full.duration,
+                }
 
         pixmap = QPixmap()
-        cover_path = book_data.get('cover_path')
+        cover_path = self._book_data.get('cover_path')
         if cover_path and os.path.exists(cover_path):
             pixmap.load(cover_path)
         if pixmap.isNull():
@@ -173,16 +333,22 @@ class BookDetailPanel(QWidget):
             self._cover_label.setPixmap(scaled)
             self._cover_label.setFixedSize(scaled.width(), scaled.height())
 
-        self._title_label.setText(book_data.get('title') or book_data.get('book_title', ''))
-        self._author_label.setText(book_data.get('author') or book_data.get('book_author', ''))
+        self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
+        self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
 
-        narrator = book_data.get('narrator', '')
+        narrator = self._book_data.get('narrator', '')
         self._narrator_label.setText(narrator if narrator else '')
         self._narrator_label.setVisible(bool(narrator))
 
-        year = book_data.get('year')
+        year = self._book_data.get('year')
         self._year_label.setText(str(year) if year else '')
         self._year_label.setVisible(bool(year))
+
+        self._meta_title.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
+        self._meta_author.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
+        self._meta_narrator.setText(self._book_data.get('narrator', '') or '')
+        self._meta_year.setText(str(self._book_data.get('year')) if self._book_data.get('year') else '')
+        self._rebuild_tag_chips()
 
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i).lower() == tab.lower():
