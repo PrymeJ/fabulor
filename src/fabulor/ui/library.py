@@ -1576,59 +1576,47 @@ class BookDelegate(QStyledItemDelegate):
         disp_author = fm.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
 
         # Layout geometry derived from option.rect
-        left      = r.x() + LEFT_PAD + TITLE_CM
-        mid       = left + title_avail
-        right     = r.x() + LEFT_PAD + AVAILABLE
-        time_rect = QRect(right, r.y(), TIME_W, r.height())
+        left       = r.x() + LEFT_PAD + TITLE_CM
+        mid        = left + title_avail
+        right      = r.x() + LEFT_PAD + AVAILABLE
+        title_rect = QRect(left, r.y(), title_avail, r.height())
+        author_rect = QRect(mid, r.y(), author_w, r.height())
+        time_rect  = QRect(right, r.y(), TIME_W, r.height())
 
         # Hover-expand: expand whichever field is elided, hide the other
         if hovered and title_elided:
             self._set_font(painter, mode=self._view_mode, field="title")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
+            expand_rect = QRect(left, r.y(), AVAILABLE, r.height())
             painter.setPen(self._color_title)
-            painter.drawText(left, text_y, title)
+            painter.drawText(expand_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
         elif hovered and author_elided:
             self._set_font(painter, mode=self._view_mode, field="author")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
+            expand_rect = QRect(mid, r.y(), AVAILABLE - title_avail, r.height())
             painter.setPen(self._color_author)
-            painter.drawText(mid, text_y, author)
+            painter.drawText(expand_rect, Qt.AlignLeft | Qt.AlignVCenter, author)
         else:
             self._set_font(painter, mode=self._view_mode, field="title")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_title)
-            painter.drawText(left, text_y, disp_title)
+            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, disp_title)
             self._set_font(painter, mode=self._view_mode, field="author")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_author)
-            painter.drawText(mid,  text_y, disp_author)
+            painter.drawText(author_rect, Qt.AlignRight | Qt.AlignVCenter, disp_author)
 
         # Time column
         if has_progress:
             elapsed_str = self._fmt(pos)
             right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
             self._set_font(painter, mode=self._view_mode, field="elapsed")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_elapsed)
-            painter.drawText(time_rect.x(), text_y, elapsed_str)
+            painter.drawText(time_rect, Qt.AlignLeft | Qt.AlignVCenter, elapsed_str)
             self._set_font(painter, mode=self._view_mode, field="total")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_total)
-            rw = fm.horizontalAdvance(right_str)
-            painter.drawText(time_rect.right() - rw, text_y, right_str)
+            painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, right_str)
         else:
             self._set_font(painter, mode=self._view_mode, field="total")
-            fm = painter.fontMetrics()
-            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             dur_str = self._fmt(dur)
             painter.setPen(self._color_total)
-            dw = fm.horizontalAdvance(dur_str)
-            painter.drawText(time_rect.right() - dw, text_y, dur_str)
+            painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, dur_str)
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
 
