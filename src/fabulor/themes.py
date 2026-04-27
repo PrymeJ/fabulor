@@ -292,6 +292,7 @@ THEMES = {
         "panel_theme_names_dimmed": "#00F7FF",
         "dropdown_text":       "#FFFF00",
         "library_title":          "#00EAFF",
+        "library_author":           "#FF00FF",
         "library_narrator":        "#FFFF00",
         "library_elapsed":        "#6CFAFF",
         "library_total":          "#00C8FF",
