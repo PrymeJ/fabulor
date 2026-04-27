@@ -4,7 +4,7 @@ import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
 from typing import Optional
 from ..models.book import Book
@@ -25,6 +25,15 @@ ITEM_DIMENSIONS = {
     "2 per row": {"w": 140, "h": 226, "cols": 2},
     "1 per row": {"w": 292, "h": 161, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
+}
+
+SORT_KEY_MAP = {
+    "Title":       "title",
+    "Author":      "author",
+    "Last Played": "last_played",
+    "Progress":    "progress",
+    "Duration":    "duration",
+    "Year":        "year",
 }
 
 class BookItem(QFrame):
@@ -917,6 +926,14 @@ class LibraryPanel(QFrame):
         self._delegate.set_view_mode(mode)
         self._book_model.set_hovered(None)
 
+        dim = ITEM_DIMENSIONS[mode]
+        if mode in ("3 per row", "2 per row", "Square"):
+            self._list_view.setViewMode(QListView.ViewMode.IconMode)
+            self._list_view.setGridSize(QSize(dim["w"], dim["h"]))
+        else:
+            self._list_view.setViewMode(QListView.ViewMode.ListMode)
+            self._list_view.setGridSize(QSize())
+
         if mode == "List":
             self._populate_list_widgets()
         else:
@@ -965,7 +982,7 @@ class LibraryPanel(QFrame):
             self._trigger_cover_load(book)
 
         if self.style_combo.currentData() == "List":
-            self._populate_list_widgets()
+            QTimer.singleShot(0, self._populate_list_widgets)
 
     def _apply_current_sort_filter(self):
         text = self.search_field.text().lower().strip()
@@ -973,7 +990,8 @@ class LibraryPanel(QFrame):
 
         sort_key  = self.sort_combo.currentData()
         ascending = getattr(self, '_sort_ascending', True)
-        self._book_model.sort_books(sort_key, ascending)
+        direction = "ascending" if ascending else "descending"
+        self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
         self.config.set_library_sort_ascending(ascending)
 
@@ -999,12 +1017,16 @@ class LibraryPanel(QFrame):
     def _toggle_sort_direction(self):
         self._sort_ascending = not getattr(self, '_sort_ascending', True)
         self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
-        self._book_model.sort_books(self.sort_combo.currentData(), self._sort_ascending)
+        sort_key  = self.sort_combo.currentData()
+        direction = "ascending" if self._sort_ascending else "descending"
+        self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_ascending(self._sort_ascending)
 
     def _on_sort_changed(self):
-        sort_key = self.sort_combo.currentData()
-        self._book_model.sort_books(sort_key, getattr(self, '_sort_ascending', True))
+        sort_key  = self.sort_combo.currentData()
+        ascending = getattr(self, '_sort_ascending', True)
+        direction = "ascending" if ascending else "descending"
+        self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
         self._last_filter_mode = sort_key
 
@@ -1206,7 +1228,6 @@ class BookDelegate(QStyledItemDelegate):
         self._view_mode = mode
 
     def sizeHint(self, option, index):
-        from PySide6.QtCore import QSize
         dim = ITEM_DIMENSIONS.get(self._view_mode, ITEM_DIMENSIONS["3 per row"])
         return QSize(dim["w"], dim["h"])
 
