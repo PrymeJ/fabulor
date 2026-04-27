@@ -2,10 +2,10 @@ import os
 import time
 import random
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, 
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime
-from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
+from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
 from PySide6.QtGui import QPixmap, QColor
@@ -841,7 +841,7 @@ class LibraryPanel(QFrame):
         self._list_view.entered.connect(self._on_view_entered)
         self._list_view.viewport().installEventFilter(self)
         self._list_view.verticalScrollBar().valueChanged.connect(self._load_visible_covers)
-
+        self._list_view.viewport().setMouseTracking(True)
         self.main_layout.addWidget(self._list_view)
 
         saved_mode = self.style_combo.currentData()
@@ -946,9 +946,17 @@ class LibraryPanel(QFrame):
         self._book_model.set_hovered(None)
 
     def eventFilter(self, obj, event):
-        if obj is self._list_view.viewport() and event.type() == QEvent.Type.Leave:
-            self._on_view_left()
-        return False
+        if obj is self._list_view.viewport():
+            if event.type() == QEvent.Type.MouseMove:
+                self._delegate._hover_pos = event.position().toPoint()
+                idx = self._list_view.indexAt(event.position().toPoint())
+                if idx.isValid():
+                    self._list_view.update(idx)
+            elif event.type() == QEvent.Type.Leave:
+                self._on_view_left()
+        return super().eventFilter(obj, event)
+
+
 
     # ── View mode ────────────────────────────────────────────────────────────
 
@@ -1294,6 +1302,7 @@ class BookDelegate(QStyledItemDelegate):
         self.last_event_was_toggle = False
         self._view_mode = "3 per row"
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
+        self._hover_pos = QPoint()
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1574,17 +1583,30 @@ class BookDelegate(QStyledItemDelegate):
         author_rect = QRect(mid, r.y(), author_w, r.height())
         time_rect  = QRect(right, r.y(), TIME_W, r.height())
 
-        # Hover-expand: expand whichever field is elided, hide the other
-        if hovered and title_elided:
+        local_x = self._hover_pos.x() - r.x()
+        cursor_over_title  = hovered and (left - r.x() <= local_x < mid - r.x())
+        cursor_over_author = hovered and (mid - r.x() <= local_x < right - r.x())
+
+        # Hover-expand: clip to the expanding field's zone so it can't bleed over.
+        if cursor_over_title and title_elided:
             self._set_font(painter, mode=self._view_mode, field="title")
-            expand_rect = QRect(left, r.y(), AVAILABLE, r.height())
             painter.setPen(self._color_title)
-            painter.drawText(expand_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
-        elif hovered and author_elided:
+            painter.setClipRect(title_rect)
+            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
+            painter.setClipRect(option.rect)
             self._set_font(painter, mode=self._view_mode, field="author")
-            expand_rect = QRect(mid, r.y(), AVAILABLE - title_avail, r.height())
             painter.setPen(self._color_author)
-            painter.drawText(expand_rect, Qt.AlignLeft | Qt.AlignVCenter, author)
+            painter.drawText(author_rect, Qt.AlignRight | Qt.AlignVCenter, disp_author)
+        elif cursor_over_author and author_elided:
+            self._set_font(painter, mode=self._view_mode, field="title")
+            painter.setPen(self._color_title)
+            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, disp_title)
+            self._set_font(painter, mode=self._view_mode, field="author")
+            painter.setPen(self._color_author)
+            expand_rect = QRect(left, r.y(), AVAILABLE - TITLE_CM, r.height())
+            painter.setClipRect(expand_rect)
+            painter.drawText(expand_rect, Qt.AlignRight | Qt.AlignVCenter, author)
+            painter.setClipRect(option.rect)
         else:
             self._set_font(painter, mode=self._view_mode, field="title")
             painter.setPen(self._color_title)
@@ -1593,21 +1615,14 @@ class BookDelegate(QStyledItemDelegate):
             painter.setPen(self._color_author)
             painter.drawText(author_rect, Qt.AlignRight | Qt.AlignVCenter, disp_author)
 
-        # Time column
+        # Time column — single value, right-aligned; toggle switches elapsed/remaining
+        self._set_font(painter, mode=self._view_mode, field="total")
+        painter.setPen(self._color_total)
         if has_progress:
-            elapsed_str = self._fmt(pos)
-            right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
-            self._set_font(painter, mode=self._view_mode, field="elapsed")
-            painter.setPen(self._color_elapsed)
-            painter.drawText(time_rect, Qt.AlignLeft | Qt.AlignVCenter, elapsed_str)
-            self._set_font(painter, mode=self._view_mode, field="total")
-            painter.setPen(self._color_total)
-            painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, right_str)
+            time_str = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(pos)
         else:
-            self._set_font(painter, mode=self._view_mode, field="total")
-            dur_str = self._fmt(dur)
-            painter.setPen(self._color_total)
-            painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, dur_str)
+            time_str = self._fmt(dur)
+        painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, time_str)
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
 
