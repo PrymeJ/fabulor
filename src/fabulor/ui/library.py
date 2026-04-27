@@ -759,9 +759,7 @@ class LibraryPanel(QFrame):
         self.player_instance = player_instance
 
         self._active_workers = set()
-        self._pg_bg          = "#333333"
-        self._pg_fill        = "#aaaaaa"
-        self._hover_bg_color = QColor(80, 80, 80, 180)
+        self._current_theme  = {}
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -774,18 +772,12 @@ class LibraryPanel(QFrame):
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
             t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
-            self._pg_bg   = t.get('library_slider_bg',   t['slider_overall_bg'])
-            self._pg_fill = t.get('library_slider_fill',  t['slider_overall_fill'])
-            hc = t.get('library_item_hover_color', t['accent'])
-            ha = t.get('library_item_hover_alpha',  0.50)
-            r, g, b = int(hc[1:3], 16), int(hc[3:5], 16), int(hc[5:7], 16)
-            self._hover_bg_color = QColor(r, g, b, int(ha * 255))
-    
-    def update_progress_bar_theme(self):
+            print("DEBUG full theme keys:", list(t.keys()))
+            self._current_theme = t
+
+    def update_progress_bar_theme(self) -> None:
         self._resolve_theme_colors()
-        self._delegate._pg_bg = self._pg_bg
-        self._delegate._pg_fill = self._pg_fill
-        self._delegate._hover_bg_color = self._hover_bg_color
+        self._delegate.update_theme(self._current_theme)
         self._list_view.viewport().update()
 
     # ── Model / view setup ───────────────────────────────────────────────────
@@ -793,9 +785,7 @@ class LibraryPanel(QFrame):
     def _setup_model_view(self):
         self._book_model = BookModel(parent=self)
         self._delegate   = BookDelegate(
-            pg_bg=self._pg_bg,
-            pg_fill=self._pg_fill,
-            hover_bg_color=self._hover_bg_color,
+            theme=self._current_theme,
             parent=self,
         )
 
@@ -945,10 +935,10 @@ class LibraryPanel(QFrame):
         self._book_model.set_hovered(None)
 
         if mode == "List":
-            self._populate_list_widgets()
-        else:
             for row in range(self._book_model.rowCount()):
-                self._list_view.setIndexWidget(self._book_model.index(row, 0), None)
+                self._list_view.setIndexWidget(
+                    self._book_model.index(row, 0), None
+                )
 
         self._list_view.reset()
         QTimer.singleShot(0, self._load_visible_covers)
@@ -991,8 +981,8 @@ class LibraryPanel(QFrame):
 
         QTimer.singleShot(0, self._load_visible_covers)
 
-        if self.style_combo.currentData() == "List":
-            QTimer.singleShot(0, self._populate_list_widgets)
+        # if self.style_combo.currentData() == "List":
+        #     QTimer.singleShot(0, self._populate_list_widgets)
 
     def _apply_current_sort_filter(self):
         text = self.search_field.text().lower().strip()
@@ -1268,13 +1258,40 @@ class BookDelegate(QStyledItemDelegate):
     Accepts theme colors as constructor arguments; never resolves them itself.
     """
 
-    def __init__(self, pg_bg: str, pg_fill: str, hover_bg_color: QColor, parent=None):
+    def __init__(self, theme: dict, parent=None):
         super().__init__(parent)
-        self._pg_bg = pg_bg
-        self._pg_fill = pg_fill
-        self._hover_bg_color = hover_bg_color
+        self._apply_theme(theme)
         self.last_event_was_toggle = False
         self._view_mode = "3 per row"
+        self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
+
+    def _apply_theme(self, theme: dict) -> None:
+        def qc(hex_str, alpha=255):
+            h = hex_str.lstrip('#')
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return QColor(r, g, b, alpha)
+
+        self._pg_bg          = theme.get('library_slider_bg',   theme.get('slider_overall_bg',   '#333333'))
+        self._pg_fill        = theme.get('library_slider_fill', theme.get('slider_overall_fill', '#aaaaaa'))
+        hc = theme.get('library_item_hover_color', theme.get('accent', '#ffffff'))
+        ha = theme.get('library_item_hover_alpha', 0.50)
+        self._hover_bg_color = qc(hc, int(ha * 255))
+        print("DEBUG theme keys:", list(theme.keys())[:5])
+
+        self._bg_library     = qc(theme.get('bg_library',         '#1e1e1e'))
+        self._row_one        = qc(theme.get('library_row_one',    '#242424'))
+        self._row_two        = qc(theme.get('library_row_two',    '#2a2a2a'))
+        self._color_title    = qc(theme.get('library_title',      '#ffffff'))
+        self._color_author   = qc(theme.get('library_author',     '#aaaaaa'))
+        self._color_narrator = qc(theme.get('library_narrator',   '#888888'))
+        self._color_elapsed  = qc(theme.get('library_elapsed',    '#aaaaaa'))
+        self._color_total    = qc(theme.get('library_total',      '#aaaaaa'))
+        self._color_pct      = qc(theme.get('library_percentage', '#888888'))
+        self._alt_row_color  = self._row_two
+        print("DEBUG theme keys:", list(theme.keys())[:5])
+
+    def update_theme(self, theme: dict) -> None:
+        self._apply_theme(theme)
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -1288,11 +1305,8 @@ class BookDelegate(QStyledItemDelegate):
     # ── Paint dispatch ──────────────────────────────────────────────────────
 
     def paint(self, painter, option, index):
-        if self._view_mode == "List":
-            return  # List mode uses widgets; delegate does not paint
-
         book     = index.data(ROLE_BOOK)
-        cover    = index.data(ROLE_COVER)   # QPixmap or None
+        cover    = index.data(ROLE_COVER)
         hovered  = index.data(ROLE_HOVERED) or False
         show_rem = index.data(ROLE_SHOW_REM)
         if show_rem is None:
@@ -1312,6 +1326,8 @@ class BookDelegate(QStyledItemDelegate):
             self._paint_two_per_row(painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur)
         elif self._view_mode in ("3 per row", "Square"):
             self._paint_grid_cell(painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur)
+        elif self._view_mode == "List":
+            self._paint_list_row(painter, option, index, book, hovered, show_rem, live_pos, live_dur)
 
         painter.restore()
 
@@ -1321,10 +1337,8 @@ class BookDelegate(QStyledItemDelegate):
         from PySide6.QtCore import QEvent as _QEvent
         if event.type() not in (_QEvent.Type.MouseButtonPress, _QEvent.Type.MouseButtonRelease):
             return False
-        if self._view_mode == "List":
-            return False
 
-        book     = index.data(ROLE_BOOK)
+        book = index.data(ROLE_BOOK)
         if not book:
             return False
 
@@ -1370,7 +1384,7 @@ class BookDelegate(QStyledItemDelegate):
 
         # Title
         title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
-        painter.setPen(option.palette.text().color())
+        painter.setPen(self._color_title)
         self._set_font(painter, bold=True, size_delta=0)
         painter.drawText(text_x, text_y + painter.fontMetrics().ascent(), title_text)
         text_y += line_h
@@ -1381,18 +1395,20 @@ class BookDelegate(QStyledItemDelegate):
 
         # Author
         author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
-        painter.setPen(option.palette.text().color())
+        painter.setPen(self._color_author)
         painter.drawText(text_x, text_y + fm.ascent(), author_text)
         text_y += line_h
 
         # Narrator
         if book.narrator:
             narrator_text = fm.elidedText(book.narrator, Qt.ElideRight, text_w)
+            painter.setPen(self._color_narrator)
             painter.drawText(text_x, text_y + fm.ascent(), narrator_text)
             text_y += line_h
 
         # Year
         if book.year:
+            painter.setPen(self._color_author)
             painter.drawText(text_x, text_y + fm.ascent(), str(book.year))
             text_y += line_h
 
@@ -1404,7 +1420,9 @@ class BookDelegate(QStyledItemDelegate):
                 right_str = f"-{self._fmt(dur - pos)}"
             else:
                 right_str = self._fmt(dur)
+            painter.setPen(self._color_elapsed)
             painter.drawText(text_x, time_y + fm.ascent(), elapsed_str)
+            painter.setPen(self._color_total)
             right_w = fm.horizontalAdvance(right_str)
             painter.drawText(r.right() - 4 - right_w, time_y + fm.ascent(), right_str)
 
@@ -1415,10 +1433,12 @@ class BookDelegate(QStyledItemDelegate):
 
             # Percentage label
             pct_str = f"{int(pct * 100)}%"
+            painter.setPen(self._color_pct)
             painter.drawText(bar_rect.right() + 8, bar_y + fm.ascent(), pct_str)
         else:
             # No progress: show total duration only
             dur_str = self._fmt(dur)
+            painter.setPen(self._color_total)
             painter.drawText(text_x, time_y + fm.ascent(), dur_str)
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
@@ -1441,11 +1461,12 @@ class BookDelegate(QStyledItemDelegate):
         fm = painter.fontMetrics()
 
         title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
-        painter.setPen(option.palette.text().color())
+        painter.setPen(self._color_title)
         painter.drawText(text_x, text_y + fm.ascent(), title_text)
         text_y += fm.height() + 2
 
         author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
+        painter.setPen(self._color_author)
         painter.drawText(text_x, text_y + fm.ascent(), author_text)
 
         # Hover overlay over cover rect
@@ -1462,6 +1483,87 @@ class BookDelegate(QStyledItemDelegate):
 
         if hovered:
             self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
+
+    def _paint_list_row(self, painter, option, index, book, hovered, show_rem, live_pos, live_dur):
+        r   = option.rect
+        fm  = option.fontMetrics
+
+        # Alternating row background, then hover on top
+        painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
+        if hovered:
+            painter.fillRect(r, self._hover_bg_color)
+
+        pos = live_pos if live_pos > 0 else (book.progress or 0.0)
+        dur = live_dur if live_dur > 0 else (book.duration or 0.0)
+        has_progress = pos > 0 and dur > 0
+
+        # Time column width — derived from font, same rule as ListBookItem
+        TIME_W    = fm.horizontalAdvance("-00:00:00") + 2
+        LEFT_PAD  = 4
+        RIGHT_PAD = 4
+        AVAILABLE = option.rect.width() - LEFT_PAD - RIGHT_PAD - TIME_W
+
+        AUTHOR_BASE = 100
+        TITLE_CM    = 4
+        BUFFER      = 4
+
+        title  = book.title  or ""
+        author = book.author or ""
+
+        title_text_w  = fm.horizontalAdvance(title)
+        author_text_w = fm.horizontalAdvance(author)
+
+        author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
+        title_max_lw = AVAILABLE - author_w
+
+        if author_text_w + BUFFER > AUTHOR_BASE:
+            spare        = max(0, title_max_lw - (title_text_w + TITLE_CM))
+            author_w     = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
+            title_max_lw = AVAILABLE - author_w
+
+        title_avail = title_max_lw - TITLE_CM
+
+        ew = fm.horizontalAdvance("…")
+        title_elided  = title_text_w  - title_avail >= ew
+        author_elided = author_text_w - author_w    >= ew
+
+        disp_title  = fm.elidedText(title,  Qt.ElideRight, title_avail) if title_elided  else title
+        disp_author = fm.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
+
+        # Layout geometry derived from option.rect
+        left      = r.x() + LEFT_PAD + TITLE_CM
+        mid       = left + title_avail
+        right     = r.x() + LEFT_PAD + AVAILABLE
+        text_y    = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
+        time_rect = QRect(right, r.y(), TIME_W, r.height())
+
+        # Hover-expand: expand whichever field is elided, hide the other
+        if hovered and title_elided:
+            painter.setPen(self._color_title)
+            painter.drawText(left, text_y, title)
+        elif hovered and author_elided:
+            painter.setPen(self._color_author)
+            painter.drawText(mid, text_y, author)
+        else:
+            painter.setPen(self._color_title)
+            painter.drawText(left, text_y, disp_title)
+            painter.setPen(self._color_author)
+            painter.drawText(mid,  text_y, disp_author)
+
+        # Time column
+        if has_progress:
+            elapsed_str = self._fmt(pos)
+            right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
+            painter.setPen(self._color_elapsed)
+            painter.drawText(time_rect.x(), text_y, elapsed_str)
+            painter.setPen(self._color_total)
+            rw = fm.horizontalAdvance(right_str)
+            painter.drawText(time_rect.right() - rw, text_y, right_str)
+        else:
+            dur_str = self._fmt(dur)
+            painter.setPen(self._color_total)
+            dw = fm.horizontalAdvance(dur_str)
+            painter.drawText(time_rect.right() - dw, text_y, dur_str)
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
 
@@ -1572,6 +1674,11 @@ class BookDelegate(QStyledItemDelegate):
             overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
             # Safe zone: The top line of the overlay area where both time labels sit
             return QRect(overlay_rect.x(), overlay_rect.y(), overlay_rect.width(), 20)
+        elif self._view_mode == "List":
+            r      = option.rect
+            fm     = option.fontMetrics
+            time_w = fm.horizontalAdvance("-00:00:00") + 2
+            return QRect(r.right() - 4 - time_w, r.y(), time_w, r.height())
         return None
 
     def _cover_rect(self, r: QRect) -> QRect:
