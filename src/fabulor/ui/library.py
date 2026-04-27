@@ -1514,3 +1514,187 @@ class BookDelegate(QStyledItemDelegate):
                 f.setPixelSize(max(6, current + size_delta))
         f.setBold(bold)
         painter.setFont(f)
+
+
+class ListBookItem(QWidget):
+    clicked           = Signal(str)
+    context_requested = Signal(str)
+
+    _AVAILABLE   = 218
+    _AUTHOR_BASE = 100
+    _TITLE_CM    = 4
+    _BUFFER      = 4
+
+    def __init__(self, hover_bg_color: QColor = None, alt_row: bool = False, parent=None):
+        super().__init__(parent)
+        self._hover_bg_color = hover_bg_color or QColor(80, 80, 80, 180)
+        self._alt_row        = alt_row
+        self._show_remaining = True
+        self._title_elided   = False
+        self._author_elided  = False
+        self._book           = None
+        self._pos            = 0.0
+        self._dur            = 0.0
+
+        self.setFixedHeight(28)
+        self.setCursor(Qt.PointingHandCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.title_label = QLabel()
+        self.title_label.setObjectName("book_item_title")
+        self.title_label.setStyleSheet("font-size: 14px;")
+        self.title_label.setContentsMargins(4, 0, 0, 0)
+
+        self.author_label = QLabel()
+        self.author_label.setObjectName("book_item_author")
+        self.author_label.setStyleSheet("font-size: 14px;")
+        self.author_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.author_label.setContentsMargins(0, 0, 0, 0)
+
+        self.time_label = QLabel()
+        self.time_label.setObjectName("book_item_total")
+        self.time_label.setStyleSheet("font-size: 14px;")
+        self.time_label.setFixedWidth(46)  # placeholder until first bind polishes the font
+        self.time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.time_label.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+        layout.addWidget(self.author_label)
+        layout.addWidget(self.time_label)
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def bind(self, book, position: float, duration: float):
+        self._book           = book
+        self._pos            = float(position or 0.0)
+        self._dur            = float(duration  or 0.0)
+        self._show_remaining = True
+
+        elision = self._calculate_elision(book.title or "", book.author or "")
+        self.title_label.setText(elision["title"])
+        self.author_label.setText(elision["author"])
+        self.author_label.setFixedWidth(max(1, elision["author_width"]))
+        self._title_elided  = elision["title_elided"]
+        self._author_elided = elision["author_elided"]
+
+        self._resize_time_label()
+        self._refresh_time()
+
+    def update_progress(self, position: float, duration: float):
+        self._pos = float(position or 0.0)
+        self._dur = float(duration  or 0.0)
+        self._refresh_time()
+
+    # ── Elision ─────────────────────────────────────────────────────────────
+
+    def _calculate_elision(self, title: str, author: str) -> dict:
+        self.ensurePolished()
+        fm_t = self.title_label.fontMetrics()
+        fm_a = self.author_label.fontMetrics()
+
+        title_text_w  = fm_t.horizontalAdvance(title)
+        author_text_w = fm_a.horizontalAdvance(author)
+
+        author_w     = min(author_text_w + self._BUFFER, self._AUTHOR_BASE)
+        title_max_lw = self._AVAILABLE - author_w
+
+        if author_text_w + self._BUFFER > self._AUTHOR_BASE:
+            spare        = max(0, title_max_lw - (title_text_w + self._TITLE_CM))
+            author_w     = min(author_text_w + self._BUFFER, self._AUTHOR_BASE + spare)
+            title_max_lw = self._AVAILABLE - author_w
+
+        title_avail = title_max_lw - self._TITLE_CM
+        ew_t = fm_t.horizontalAdvance("…")
+        ew_a = fm_a.horizontalAdvance("…")
+
+        disp_title  = title  if title_text_w  - title_avail < ew_t else fm_t.elidedText(title,  Qt.ElideRight, title_avail)
+        disp_author = author if author_text_w  - author_w   < ew_a else fm_a.elidedText(author, Qt.ElideRight, author_w)
+
+        return {
+            "title":        disp_title,
+            "author":       disp_author,
+            "author_width": author_w,
+            "title_elided":  disp_title  != title,
+            "author_elided": disp_author != author,
+        }
+
+    # ── Time display ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fmt(seconds: float) -> str:
+        s = int(seconds or 0)
+        return f"{s // 3600}:{(s % 3600) // 60:02}:{s % 60:02}"
+
+    def _resize_time_label(self):
+        self.ensurePolished()
+        fm = self.time_label.fontMetrics()
+        self.time_label.setFixedWidth(fm.horizontalAdvance("-00:00:00") + 2)
+
+    def _refresh_time(self):
+        pos, dur = self._pos, self._dur
+        if pos > 0 and dur > 0:
+            if self._show_remaining:
+                self.time_label.setText(f"-{self._fmt(dur - pos)}")
+            else:
+                self.time_label.setText(self._fmt(dur))
+        else:
+            self.time_label.setText(self._fmt(dur))
+
+    # ── Events ───────────────────────────────────────────────────────────────
+
+    def enterEvent(self, event):
+        if self._title_elided:
+            self.author_label.hide()
+            self.title_label.setText(self._book.title if self._book else "")
+        elif self._author_elided:
+            self.title_label.hide()
+            self.author_label.setFixedWidth(self._AVAILABLE)
+            self.author_label.setText(self._book.author if self._book else "")
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.title_label.show()
+        self.author_label.show()
+        if self._book:
+            elision = self._calculate_elision(self._book.title or "", self._book.author or "")
+            self.title_label.setText(elision["title"])
+            self.author_label.setText(elision["author"])
+            self.author_label.setFixedWidth(max(1, elision["author_width"]))
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._pos > 0 and self._dur > 0:
+                if self.time_label.geometry().contains(event.position().toPoint()):
+                    self._show_remaining = not self._show_remaining
+                    self._refresh_time()
+                    event.accept()
+                    return
+        elif event.button() == Qt.RightButton:
+            if self._book:
+                self.context_requested.emit(self._book.path)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._book:
+                self.clicked.emit(self._book.path)
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter
+        painter = QPainter(self)
+        if self._alt_row:
+            painter.fillRect(self.rect(), QColor(255, 255, 255, 10))
+        if self.underMouse():
+            painter.fillRect(self.rect(), self._hover_bg_color)
+        painter.end()
+        super().paintEvent(event)

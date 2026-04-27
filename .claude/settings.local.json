@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python -c ' *)",
       "Bash(python -c \"from src.fabulor.ui.library import BookDelegate, ROLE_BOOK, ROLE_HOVERED; print\\('OK'\\)\")",
-      "Bash(python3 -c \"import mpv; help\\(mpv.MPV.path\\)\")"
+      "Bash(python3 -c \"import mpv; help\\(mpv.MPV.path\\)\")",
+      "Bash(python3 -)"
     ]
   }
 }
