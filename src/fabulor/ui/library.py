@@ -36,12 +36,49 @@ SORT_KEY_MAP = {
     "Year":        "year",
 }
 
+FONT_SIZES = {
+    "1 per row": {
+        "title":      (14, True),   # (px, bold)
+        "author":     (14, False),
+        "narrator":   (13, False),
+        "year":       (14, False),
+        "elapsed":    (14, False),
+        "total":      (14, False),
+        "percentage": (14, False),
+    },
+    "2 per row": {
+        "title":      (13, True),
+        "author":     (12, False),
+        "elapsed":    (14, False),
+        "total":      (14, False),
+        "percentage": (14, False),
+    },
+    "3 per row": {
+        "elapsed":    (12, False),
+        "total":      (12, False),
+        "percentage": (12, False),
+    },
+    "Square": {
+        "elapsed":    (12, False),
+        "total":      (12, False),
+        "percentage": (12, False),
+    },
+    "List": {
+        "title":      (14, True),
+        "author":     (13, False),
+        "total":      (13, False),
+        "elapsed":    (13, False),
+    },
+}
+
+
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
     _total_clear_time = 0.0 # Profile accumulator
 
     def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None,
                  hover_bg_color=None, parent=None):
+        
         super().__init__(parent)
         self._is_building_ui = True
         self.book_data = {}
@@ -1374,45 +1411,47 @@ class BookDelegate(QStyledItemDelegate):
         text_w = r.right() - text_x - 4
         text_y = r.y() + 4
 
-        fm = painter.fontMetrics()
-        line_h = fm.height() + 2
-
         pos  = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur  = live_dur if live_dur > 0 else (book.duration or 0.0)
         has_progress = pos > 0 and dur > 0
         pct  = min(1.0, pos / dur) if has_progress else 0.0
 
         # Title
+        self._set_font(painter, mode=self._view_mode, field="title")
+        fm = painter.fontMetrics()
         title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
         painter.setPen(self._color_title)
-        self._set_font(painter, bold=True, size_delta=0)
-        painter.drawText(text_x, text_y + painter.fontMetrics().ascent(), title_text)
-        text_y += line_h
-
-        self._set_font(painter, bold=False, size_delta=-1)
-        fm = painter.fontMetrics()
-        line_h = fm.height() + 2
+        painter.drawText(text_x, text_y + fm.ascent(), title_text)
+        text_y += fm.height() + 2
 
         # Author
+        self._set_font(painter, mode=self._view_mode, field="author")
+        fm = painter.fontMetrics()
         author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
         painter.setPen(self._color_author)
         painter.drawText(text_x, text_y + fm.ascent(), author_text)
-        text_y += line_h
+        text_y += fm.height() + 2
 
         # Narrator
         if book.narrator:
+            self._set_font(painter, mode=self._view_mode, field="narrator")
+            fm = painter.fontMetrics()
             narrator_text = fm.elidedText(book.narrator, Qt.ElideRight, text_w)
             painter.setPen(self._color_narrator)
             painter.drawText(text_x, text_y + fm.ascent(), narrator_text)
-            text_y += line_h
+            text_y += fm.height() + 2
 
         # Year
         if book.year:
+            self._set_font(painter, mode=self._view_mode, field="year")
+            fm = painter.fontMetrics()
             painter.setPen(self._color_author)
             painter.drawText(text_x, text_y + fm.ascent(), str(book.year))
-            text_y += line_h
+            text_y += fm.height() + 2
 
         # Times
+        self._set_font(painter, mode=self._view_mode, field="elapsed")
+        fm = painter.fontMetrics()
         time_y = r.bottom() - 4 - 6 - 4 - fm.height()  # bar below, then time row above
         if has_progress:
             elapsed_str = self._fmt(pos)
@@ -1422,6 +1461,8 @@ class BookDelegate(QStyledItemDelegate):
                 right_str = self._fmt(dur)
             painter.setPen(self._color_elapsed)
             painter.drawText(text_x, time_y + fm.ascent(), elapsed_str)
+            self._set_font(painter, mode=self._view_mode, field="total")
+            fm = painter.fontMetrics()
             painter.setPen(self._color_total)
             right_w = fm.horizontalAdvance(right_str)
             painter.drawText(r.right() - 4 - right_w, time_y + fm.ascent(), right_str)
@@ -1433,11 +1474,15 @@ class BookDelegate(QStyledItemDelegate):
 
             # Percentage label
             pct_str = f"{int(pct * 100)}%"
+            self._set_font(painter, mode=self._view_mode, field="percentage")
+            fm = painter.fontMetrics()
             painter.setPen(self._color_pct)
             painter.drawText(bar_rect.right() + 8, bar_y + fm.ascent(), pct_str)
         else:
             # No progress: show total duration only
             dur_str = self._fmt(dur)
+            self._set_font(painter, mode=self._view_mode, field="total")
+            fm = painter.fontMetrics()
             painter.setPen(self._color_total)
             painter.drawText(text_x, time_y + fm.ascent(), dur_str)
 
@@ -1455,16 +1500,16 @@ class BookDelegate(QStyledItemDelegate):
         text_x = cover_x
         text_w = cover_w - 14  # matching right margin from BookItem
         text_y = cover_y + cover_h + 2
-        fm = painter.fontMetrics()
 
-        self._set_font(painter, bold=False, size_delta=-1)
+        self._set_font(painter, mode=self._view_mode, field="title")
         fm = painter.fontMetrics()
-
         title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
         painter.setPen(self._color_title)
         painter.drawText(text_x, text_y + fm.ascent(), title_text)
         text_y += fm.height() + 2
 
+        self._set_font(painter, mode=self._view_mode, field="author")
+        fm = painter.fontMetrics()
         author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
         painter.setPen(self._color_author)
         painter.drawText(text_x, text_y + fm.ascent(), author_text)
@@ -1534,19 +1579,30 @@ class BookDelegate(QStyledItemDelegate):
         left      = r.x() + LEFT_PAD + TITLE_CM
         mid       = left + title_avail
         right     = r.x() + LEFT_PAD + AVAILABLE
-        text_y    = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
         time_rect = QRect(right, r.y(), TIME_W, r.height())
 
         # Hover-expand: expand whichever field is elided, hide the other
         if hovered and title_elided:
+            self._set_font(painter, mode=self._view_mode, field="title")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_title)
             painter.drawText(left, text_y, title)
         elif hovered and author_elided:
+            self._set_font(painter, mode=self._view_mode, field="author")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_author)
             painter.drawText(mid, text_y, author)
         else:
+            self._set_font(painter, mode=self._view_mode, field="title")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_title)
             painter.drawText(left, text_y, disp_title)
+            self._set_font(painter, mode=self._view_mode, field="author")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_author)
             painter.drawText(mid,  text_y, disp_author)
 
@@ -1554,12 +1610,21 @@ class BookDelegate(QStyledItemDelegate):
         if has_progress:
             elapsed_str = self._fmt(pos)
             right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
+            self._set_font(painter, mode=self._view_mode, field="elapsed")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_elapsed)
             painter.drawText(time_rect.x(), text_y, elapsed_str)
+            self._set_font(painter, mode=self._view_mode, field="total")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             painter.setPen(self._color_total)
             rw = fm.horizontalAdvance(right_str)
             painter.drawText(time_rect.right() - rw, text_y, right_str)
         else:
+            self._set_font(painter, mode=self._view_mode, field="total")
+            fm = painter.fontMetrics()
+            text_y = r.y() + (r.height() - fm.height()) // 2 + fm.ascent()
             dur_str = self._fmt(dur)
             painter.setPen(self._color_total)
             dw = fm.horizontalAdvance(dur_str)
@@ -1617,9 +1682,7 @@ class BookDelegate(QStyledItemDelegate):
         grad.setColorAt(1.0, QColor(0, 0, 0, 230))
         painter.fillRect(overlay_rect, QBrush(grad))
 
-        font_size = 14 if large else 12
-        self._set_font(painter, bold=False, size_delta=0, absolute_size=font_size)
-        fm = painter.fontMetrics()
+        overlay_mode = "2 per row" if large else "3 per row"
         painter.setPen(QColor(255, 255, 255))
 
         pad = 4
@@ -1630,19 +1693,27 @@ class BookDelegate(QStyledItemDelegate):
             # Time row: elapsed left, remaining/total right
             elapsed_str = self._fmt(pos)
             right_str = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
-            right_w = fm.horizontalAdvance(right_str)
+            self._set_font(painter, mode=overlay_mode, field="elapsed")
+            fm = painter.fontMetrics()
             painter.drawText(inner.x(), y + fm.ascent(), elapsed_str)
+            self._set_font(painter, mode=overlay_mode, field="total")
+            fm = painter.fontMetrics()
+            right_w = fm.horizontalAdvance(right_str)
             painter.drawText(inner.right() - right_w, y + fm.ascent(), right_str)
             y += fm.height() + 2
 
             # Progress bar + percentage
             pct_str = f"{int(pct * 100)}%"
+            self._set_font(painter, mode=overlay_mode, field="percentage")
+            fm = painter.fontMetrics()
             pct_w = fm.horizontalAdvance(pct_str) + 4
             bar_rect = QRect(inner.x(), y, inner.width() - pct_w, 6)
             self._draw_progress_bar(painter, bar_rect, pct)
             painter.drawText(bar_rect.right() + 4, y + fm.ascent(), pct_str)
         else:
             # No progress: just show total duration right-aligned
+            self._set_font(painter, mode=overlay_mode, field="total")
+            fm = painter.fontMetrics()
             dur_str = self._fmt(dur)
             dur_w = fm.horizontalAdvance(dur_str)
             painter.drawText(inner.right() - dur_w, y + fm.ascent(), dur_str)
@@ -1695,18 +1766,11 @@ class BookDelegate(QStyledItemDelegate):
         return f"{s // 3600}:{(s % 3600) // 60:02}:{s % 60:02}"
 
     @staticmethod
-    def _set_font(painter, *, bold: bool = False, size_delta: int = 0, absolute_size: int = 0):
+    def _set_font(painter, *, mode: str, field: str):
         from PySide6.QtGui import QFont
+        size, bold = FONT_SIZES.get(mode, {}).get(field, (13, False))
         f = QFont(painter.font())
-        if absolute_size:
-            f.setPixelSize(absolute_size)
-        elif size_delta:
-            current = f.pixelSize()
-            if current < 0:
-                current = f.pointSize()
-                f.setPointSize(max(6, current + size_delta))
-            else:
-                f.setPixelSize(max(6, current + size_delta))
+        f.setPixelSize(size)
         f.setBold(bold)
         painter.setFont(f)
 
