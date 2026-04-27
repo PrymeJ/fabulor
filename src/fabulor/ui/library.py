@@ -1,12 +1,13 @@
 import os
 import time
-import math
 import random
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView
 )
-from PySide6.QtCore import QThreadPool, QEvent
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
+from typing import Optional
+from ..models.book import Book
 from PySide6.QtGui import QPixmap, QColor
 
 # View mode: (internal_key, [display_name_options])
@@ -738,251 +739,83 @@ class BookItem(QFrame):
 
 
 class LibraryPanel(QFrame):
-    book_selected = Signal(str)
-    back_requested = Signal() # Signal to request closing the panel
+    book_selected    = Signal(str)
+    back_requested   = Signal()
+    detail_requested = Signal(str)
 
     def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
-        self.db = db
-        self.config = config
+        self.db              = db
+        self.config          = config
         self.player_instance = player_instance
-        
-        # Virtual Pool Configuration
-        self._pool_size = 30 # Default buffer
-        self._pool = []
-        self._books_cache = []
-        self._last_book_list = []
-        self._filtered_books = []
-        self._pixmap_cache = {}
-        
-        self._data_initialized = False
-        self._ignore_scroll = False
+
         self._active_workers = set()
+        self._pg_bg          = "#333333"
+        self._pg_fill        = "#aaaaaa"
+        self._hover_bg_color = QColor(80, 80, 80, 180)
 
         self._setup_ui()
         self._resolve_theme_colors()
-        self._setup_pool()
+        self._setup_model_view()
+
+    # ── Theme ────────────────────────────────────────────────────────────────
 
     def _resolve_theme_colors(self):
         from ..themes import THEMES
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
             t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
-            self._pg_bg = t.get('library_slider_bg', t['slider_overall_bg'])
-            self._pg_fill = t.get('library_slider_fill', t['slider_overall_fill'])
+            self._pg_bg   = t.get('library_slider_bg',   t['slider_overall_bg'])
+            self._pg_fill = t.get('library_slider_fill',  t['slider_overall_fill'])
             hc = t.get('library_item_hover_color', t['accent'])
-            ha = t.get('library_item_hover_alpha', 0.50)
+            ha = t.get('library_item_hover_alpha',  0.50)
             r, g, b = int(hc[1:3], 16), int(hc[3:5], 16), int(hc[5:7], 16)
             self._hover_bg_color = QColor(r, g, b, int(ha * 255))
-
+    
     def update_progress_bar_theme(self):
         self._resolve_theme_colors()
-        for item in self._pool:
-            if hasattr(item, 'overlay_progress_bar'):
-                item.overlay_progress_bar.setStyleSheet(f"""
-                    QProgressBar {{
-                        background-color: {self._pg_bg};
-                        border: none;
-                        border-radius: 0px;
-                    }}
-                    QProgressBar::chunk {{
-                        background-color: {self._pg_fill};
-                        border: none;
-                        border-radius: 0px;
-                    }}
-                """)
-        qc = getattr(self, '_hover_bg_color', QColor(80, 80, 80, 180))
-        for item in self._pool:
-            item._hover_bg_color = qc
+        self._delegate._pg_bg = self._pg_bg
+        self._delegate._pg_fill = self._pg_fill
+        self._delegate._hover_bg_color = self._hover_bg_color
+        self._list_view.viewport().update()
 
-    def _setup_pool(self):
-        """Creates the fixed widget pool and sets container to manual positioning."""
-        # Clear existing
-        for w in self._pool:
-            w.deleteLater()
-        self._pool.clear()
+    # ── Model / view setup ───────────────────────────────────────────────────
 
-        mode = self.style_combo.currentData()
-        for _ in range(self._pool_size):
-            item = BookItem(
-                view_mode=mode,
-                player_instance=self.player_instance,
-                pg_bg=self._pg_bg,
-                pg_fill=self._pg_fill,
-                hover_bg_color=getattr(self, '_hover_bg_color', QColor(80, 80, 80, 180)),
-                parent=self.container
-            )
-            item.clicked.connect(self.book_selected.emit)
-            item.hide()
-            self._pool.append(item)
+    def _setup_model_view(self):
+        print("DEBUG: creating BookModel")
+        self._book_model = BookModel(parent=self)
+        print("DEBUG: BookModel created", self._book_model)
+        self._delegate   = BookDelegate(
+            pg_bg=self._pg_bg,
+            pg_fill=self._pg_fill,
+            hover_bg_color=self._hover_bg_color,
+            parent=self,
+        )
 
-    def _update_viewport(self):
-        """Repositions and rebinds pool widgets based on scroll position."""
-        if not self._data_initialized or self._ignore_scroll:
-            return
+        self._list_view = QListView(self)
+        self._list_view.setModel(self._book_model)
+        self._list_view.setItemDelegate(self._delegate)
+        self._list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._list_view.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
+        self._list_view.setResizeMode(QListView.ResizeMode.Adjust)
+        self._list_view.setViewMode(QListView.ViewMode.ListMode)
+        self._list_view.setUniformItemSizes(True)
+        self._list_view.setMouseTracking(True)
+        self._list_view.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        self._list_view.clicked.connect(self._on_item_clicked)
+        self._list_view.customContextMenuRequested.connect(self._on_context_menu)
+        self._list_view.entered.connect(self._on_view_entered)
+        self._list_view.viewport().installEventFilter(self)
+
+        self.main_layout.addWidget(self._list_view)
 
         mode = self.style_combo.currentData()
-        dim = ITEM_DIMENSIONS[mode]
-        item_h, cols = dim['h'], dim['cols']
+        self._delegate.set_view_mode(mode)
 
-        # Horizontal offset to balance the grid within the viewport
-        offset_x = 0
-        if mode == "2 per row":
-            offset_x = 7
-        
-        scroll_y = self.scroll.verticalScrollBar().value()
-        viewport_h = self.scroll.height()
-        
-        start_row = max(0, scroll_y // item_h)
-        end_row = (scroll_y + viewport_h) // item_h + 1
-        
-        start_idx = start_row * cols
-        end_idx = end_row * cols
-        
-        self.container.setUpdatesEnabled(False)
-        
-        pool_idx = 0
-        data_count = len(self._filtered_books)
-        
-        for i in range(start_idx, end_idx):
-            if pool_idx >= len(self._pool) or i >= data_count:
-                break
-                
-            widget = self._pool[pool_idx]
-            book = self._filtered_books[i]
-            
-            # Alternate row styling for lists
-            if mode in ("1 per row", "List"):
-                widget.setProperty("alt_row", str(i % 2))
-                widget.style().unpolish(widget)
-                widget.style().polish(widget)
-
-            # Bind Data
-            path_changed = widget.bind(book)
-            
-            # Handle Pixmap Cache
-            if hasattr(widget, 'cover_label'):
-                path = book.path
-                if path in self._pixmap_cache:
-                    widget.set_cover(self._pixmap_cache[path])
-                elif path_changed or not widget.cover_label.pixmap():
-                    widget.cover_label.setPixmap(QPixmap())
-                    self._trigger_cover_load(book, widget)
-
-            # Position
-            row, col = i // cols, i % cols
-            widget.move(offset_x + (col * dim['w']), row * item_h)
-            widget.show()
-            pool_idx += 1
-
-        # Hide remaining pool
-        for i in range(pool_idx, len(self._pool)):
-            self._pool[i].hide()
-            
-        self.container.setUpdatesEnabled(True)
-
-    def _rotate_view_mode_labels(self):
-        self.style_combo.blockSignals(True)
-        for i, (_, options) in enumerate(VIEW_MODES):
-            self.style_combo.setItemText(i, random.choice(options))
-        self.style_combo.blockSignals(False)
-
-    def hideEvent(self, event):
-        super().hideEvent(event)
-        self._rotate_view_mode_labels()
-
-    def refresh(self, force=False):
-        self._resolve_theme_colors()
-        new_books = self.db.get_all_books(sort_by="title", order="ASC")
-        self._data_initialized = True
-
-        if force:
-            self._books_cache = new_books
-            self._last_book_list = new_books
-            if not self.isVisible():
-                return
-            self._on_search_changed(self.search_field.text())
-            return
-
-        rendered_by_path = {w.current_path: w for w in self._pool if w.current_path}
-        rendered_paths = set(rendered_by_path)
-        new_by_path = {b.path: b for b in new_books}
-        new_paths = set(new_by_path)
-
-        added   = new_paths - rendered_paths
-        removed = rendered_paths - new_paths
-        changed = {
-            path for path in rendered_paths & new_paths
-            if rendered_by_path[path].book_data != new_by_path[path]
-        }
-
-        self._last_book_list = new_books
-
-        if not added and not removed and not changed:
-            return
-
-        self._books_cache = new_books
-
-        if not added and not removed:
-            if self.isVisible():
-                for w in self._pool:
-                    if w.current_path in changed:
-                        w.bind(new_by_path[w.current_path])
-            return
-
-        if not self.isVisible():
-            return
-        self._on_search_changed(self.search_field.text())
-
-    def _trigger_cover_load(self, book, widget):
-        cover_path = book.path
-        if cover_path in self._pixmap_cache:
-            pixmap = self._pixmap_cache[cover_path]
-            if widget.current_path == cover_path:
-                widget.set_cover(pixmap)
-            return
-        from .cover_loader import CoverLoaderWorker
-        worker = CoverLoaderWorker(book, self.player_instance)
-        self._active_workers.add(worker)
-        worker.signals.cover_loaded.connect(lambda p, pix, w=widget: self._on_cover_loaded(p, pix, w))
-        worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
-        QThreadPool.globalInstance().start(worker)
-
-    def _on_cover_loaded(self, path, pixmap, widget):
-        if not pixmap.isNull():
-            dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
-            pixmap.setDevicePixelRatio(dpr)
-            self._pixmap_cache[path] = pixmap
-            if widget.current_path == path:
-                widget.set_cover(pixmap)
-        
-        if widget.current_path == path:
-            widget.set_cover(pixmap)
-
-    def _on_view_mode_changed(self, _):
-        start_time = time.perf_counter()
-        mode = self.style_combo.currentData()
-        self.config.set_library_view_mode(mode)
-        self._resolve_theme_colors()
-        
-        self.container.setUpdatesEnabled(False) # Batch the massive UI rebuild
-        BookItem._total_clear_time = 0.0
-        loop_start = time.perf_counter()
-        for item in self._pool:
-            item.set_view_mode(mode)
-        loop_dur = (time.perf_counter() - loop_start) * 1000
-
-        self._sort_items_in_place()
-        self.update_progress_bar_theme()
-        self.container.setUpdatesEnabled(True)
-
-        duration = (time.perf_counter() - start_time) * 1000
-        print(f"[DEBUG] _clear_layout total: {BookItem._total_clear_time * 1000:.2f}ms")
-        print(f"[DEBUG] set_view_mode loop: {loop_dur:.2f}ms")
-        print(f"[DEBUG] View mode change to '{mode}' took {duration:.2f}ms")
+    # ── Toolbar ──────────────────────────────────────────────────────────────
 
     def _setup_ui(self):
-        # Moved UI setup logic here for cleaner __init__
         self.setObjectName("library_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.main_layout = QVBoxLayout(self)
@@ -995,7 +828,14 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
-        for display, key in [("Title", "Title"), ("Author", "Author"), ("Recent", "Last Played"), ("Progress", "Progress"), ("Duration", "Duration"), ("Year", "Year")]:
+        for display, key in [
+            ("Title",    "Title"),
+            ("Author",   "Author"),
+            ("Recent",   "Last Played"),
+            ("Progress", "Progress"),
+            ("Duration", "Duration"),
+            ("Year",     "Year"),
+        ]:
             self.sort_combo.addItem(display, key)
         self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
@@ -1004,7 +844,7 @@ class LibraryPanel(QFrame):
             if self.sort_combo.itemData(i) == saved_sort:
                 self.sort_combo.setCurrentIndex(i)
                 break
-        self._sort_ascending = self.config.get_library_sort_ascending()
+        self._sort_ascending   = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentData()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
 
@@ -1041,140 +881,310 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.addWidget(self.back_button)
         self.main_layout.addWidget(self.top_bar_widget)
 
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.verticalScrollBar().valueChanged.connect(self._update_viewport)
-        
-        self.container = QWidget()
-        self.container.setObjectName("library_scroll_contents")
-        # Virtual scrolling uses absolute positioning; Grid layout is removed
-        self.scroll.setWidget(self.container)
-        self.main_layout.addWidget(self.scroll)
+    # ── QListView slots ──────────────────────────────────────────────────────
 
-    def _toggle_sort_direction(self):
-        self._sort_ascending = not getattr(self, '_sort_ascending', True)
-        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
-        self._sort_items_in_place(ascending=self._sort_ascending)
+    def _on_item_clicked(self, index):
+        book = index.data(ROLE_BOOK)
+        if book:
+            self.book_selected.emit(book.path)
 
-    def _on_sort_changed(self):
-        sort_text = self.sort_combo.currentData()
-        if sort_text == "Last Played" or self._last_filter_mode == "Last Played":
-            self.refresh(force=True)
-        else:
-            self._sort_items_in_place(reset_scroll=True)
-        self._last_filter_mode = sort_text
-
-    def _on_search_changed(self, text):
-        text = text.lower().strip()
-        if not text:
-            self._filtered_books = list(self._books_cache)
-        else:
-            self._filtered_books = [
-                b for b in self._books_cache
-                if text in (b.title or '').lower() or
-                   text in (b.author or '').lower()
-            ]
-        self._sort_items_in_place(reset_scroll=True)
-
-    def _sort_items_in_place(self, ascending=None, reset_scroll=False):
-        start_time = time.perf_counter()
-        # Toggle direction if called from button, otherwise keep current
-        if ascending is None:
-            ascending = getattr(self, '_sort_ascending', True)
-        self._sort_ascending = ascending
-
-        sort_text = self.sort_combo.currentData()
-        self.config.set_library_sort_key(sort_text)
-        self.config.set_library_sort_ascending(ascending)
-
-        sort_key = sort_text.lower().replace(" ", "_")
-        numeric_keys = {"progress", "duration", "year"}
-        datetime_keys = {"last_played", "date_added"}
-
-        if sort_key == "last_played":
-            self._filtered_books = [b for b in self._filtered_books if b.progress > 0]
-
-        def sort_value(book):
-            val = getattr(book, sort_key, None)
-            if val is None:
-                return (1, 0 if sort_key in numeric_keys else "")
-            if sort_key == "progress":
-                duration = book.duration or 1
-                return (0, float(val) / float(duration))
-            if sort_key in numeric_keys:
-                return (0, float(val))
-            if sort_key in datetime_keys:
-                return (0, str(val))
-            return (0, str(val).lower())
-
-        if sort_key == "progress":
-            has_val = [b for b in self._filtered_books if b.progress > 0]
-            no_val  = [b for b in self._filtered_books if not b.progress > 0]
-        else:
-            has_val = [b for b in self._filtered_books if getattr(b, sort_key, None) is not None]
-            no_val  = [b for b in self._filtered_books if getattr(b, sort_key, None) is None]
-
-        self._filtered_books = sorted(
-            has_val,
-            key=sort_value,
-            reverse=not ascending
-        ) + sorted(no_val, key=sort_value)
-
-        # Update Logical Scroll Height
-        dim = ITEM_DIMENSIONS[self.style_combo.currentData()]
-        rows = math.ceil(len(self._filtered_books) / dim['cols'])
-        self.container.setFixedHeight(rows * dim['h'])
-        
-        if reset_scroll:
-            self._ignore_scroll = True
-            self.scroll.verticalScrollBar().setValue(0)
-            self._ignore_scroll = False
-            
-        self._update_viewport()
-        duration = (time.perf_counter() - start_time) * 1000
-        print(f"[DEBUG] Sort/Filter (key: {sort_text}, ascending: {ascending}) took {duration:.2f}ms")
-
-    def update_current_book_progress(self):
-        """Live update for the currently playing book's progress and sorting."""
-        if getattr(self, '_is_animating', False):
+    def _on_context_menu(self, pos):
+        index = self._list_view.indexAt(pos)
+        if not index.isValid():
             return
-
-        # Model/view path (Stage 6+): push live pos/dur into BookModel so
-        # dataChanged fires and BookDelegate repaints only the affected cell.
-        if hasattr(self, '_book_model') and self.player_instance:
-            path = getattr(self.player_instance.instance, 'path', None) if self.player_instance.instance else None
-            pos  = self.player_instance.time_pos or 0.0
-            dur  = self.player_instance.duration or 0.0
-            if path and dur > 0:
-                self._book_model.update_playing_progress(path, pos, dur)
-
-        # Pool-based path (active until Stage 6 removes the pool).
-        if self.sort_combo.currentData() == "Progress":
-            self._sort_items_in_place()
-        else:
-            self._update_viewport()
+        book = index.data(ROLE_BOOK)
+        if book:
+            self.detail_requested.emit(book.path)
 
     def _on_view_entered(self, index):
-        """Slot for QListView.entered — tracks hovered book in BookModel."""
-        if not hasattr(self, '_book_model'):
-            return
         book = index.data(ROLE_BOOK)
         self._book_model.set_hovered(book.path if book else None)
 
     def _on_view_left(self):
-        """Called when the cursor leaves the QListView — clears hover state."""
-        if hasattr(self, '_book_model'):
-            self._book_model.set_hovered(None)
+        self._book_model.set_hovered(None)
+
+    def eventFilter(self, obj, event):
+        if obj is self._list_view.viewport() and event.type() == QEvent.Type.Leave:
+            self._on_view_left()
+        return False
+
+    # ── View mode ────────────────────────────────────────────────────────────
+
+    def _on_view_mode_changed(self, _):
+        mode = self.style_combo.currentData()
+        self.config.set_library_view_mode(mode)
+        self._resolve_theme_colors()
+        self._delegate.set_view_mode(mode)
+        self._book_model.set_hovered(None)
+
+        if mode == "List":
+            self._populate_list_widgets()
+        else:
+            for row in range(self._book_model.rowCount()):
+                self._list_view.setIndexWidget(self._book_model.index(row, 0), None)
+
+        self._list_view.reset()
+
+    def _populate_list_widgets(self):
+        playing_path = (
+            getattr(self.player_instance.instance, 'path', None)
+            if self.player_instance and self.player_instance.instance else None
+        )
+        pos_now = self.player_instance.time_pos or 0.0 if self.player_instance else 0.0
+        dur_now = self.player_instance.duration  or 0.0 if self.player_instance else 0.0
+
+        for row in range(self._book_model.rowCount()):
+            index = self._book_model.index(row, 0)
+            book  = index.data(ROLE_BOOK)
+            if not book:
+                continue
+
+            live_pos = pos_now if book.path == playing_path else 0.0
+            live_dur = dur_now if book.path == playing_path else (book.duration or 0.0)
+
+            item = ListBookItem(
+                hover_bg_color=self._hover_bg_color,
+                alt_row=(row % 2 == 1),
+                parent=self._list_view.viewport(),
+            )
+            item.bind(book, live_pos, live_dur)
+            item.clicked.connect(self.book_selected.emit)
+            item.context_requested.connect(self.detail_requested.emit)
+            self._list_view.setIndexWidget(index, item)
+
+    # ── Data / refresh ───────────────────────────────────────────────────────
+
+    def refresh(self, force=False):
+        self._resolve_theme_colors()
+        books = self.db.get_all_books(sort_by="title", order="ASC")
+
+        self._book_model.set_books(books)
+        self._apply_current_sort_filter()
+
+        for book in books:
+            self._trigger_cover_load(book)
+
+        if self.style_combo.currentData() == "List":
+            self._populate_list_widgets()
+
+    def _apply_current_sort_filter(self):
+        text = self.search_field.text().lower().strip()
+        self._book_model.filter_books(text)
+
+        sort_key  = self.sort_combo.currentData()
+        ascending = getattr(self, '_sort_ascending', True)
+        self._book_model.sort_books(sort_key, ascending)
+        self.config.set_library_sort_key(sort_key)
+        self.config.set_library_sort_ascending(ascending)
+
+    # ── Cover loading ────────────────────────────────────────────────────────
+
+    def _trigger_cover_load(self, book):
+        from .cover_loader import CoverLoaderWorker
+        worker = CoverLoaderWorker(book, self.player_instance)
+        self._active_workers.add(worker)
+        worker.signals.cover_loaded.connect(self._on_cover_loaded)
+        worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_cover_loaded(self, path, pixmap):
+        if pixmap.isNull():
+            return
+        dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+        pixmap.setDevicePixelRatio(dpr)
+        self._book_model.update_cover(path, pixmap)
+
+    # ── Sort / filter ────────────────────────────────────────────────────────
+
+    def _toggle_sort_direction(self):
+        self._sort_ascending = not getattr(self, '_sort_ascending', True)
+        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
+        self._book_model.sort_books(self.sort_combo.currentData(), self._sort_ascending)
+        self.config.set_library_sort_ascending(self._sort_ascending)
+
+    def _on_sort_changed(self):
+        sort_key = self.sort_combo.currentData()
+        self._book_model.sort_books(sort_key, getattr(self, '_sort_ascending', True))
+        self.config.set_library_sort_key(sort_key)
+        self._last_filter_mode = sort_key
+
+    def _on_search_changed(self, text):
+        self._book_model.filter_books(text.lower().strip())
+
+    # ── Live progress ────────────────────────────────────────────────────────
+
+    def update_current_book_progress(self):
+        if getattr(self, '_is_animating', False):
+            return
+        if not self.player_instance:
+            return
+
+        path = (
+            getattr(self.player_instance.instance, 'path', None)
+            if self.player_instance.instance else None
+        )
+        pos = self.player_instance.time_pos or 0.0
+        dur = self.player_instance.duration  or 0.0
+
+        if not path or dur <= 0:
+            return
+
+        self._book_model.update_playing_progress(path, pos, dur)
+
+        if self.style_combo.currentData() == "List":
+            for row in range(self._book_model.rowCount()):
+                index  = self._book_model.index(row, 0)
+                book   = index.data(ROLE_BOOK)
+                widget = self._list_view.indexWidget(index)
+                if book and book.path == path and isinstance(widget, ListBookItem):
+                    widget.update_progress(pos, dur)
+                    break
+
+    # ── Hide ─────────────────────────────────────────────────────────────────
+
+    def _rotate_view_mode_labels(self):
+        self.style_combo.blockSignals(True)
+        for i, (_, options) in enumerate(VIEW_MODES):
+            self.style_combo.setItemText(i, random.choice(options))
+        self.style_combo.blockSignals(False)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._book_model.set_hovered(None)
+        self._rotate_view_mode_labels()
 
 
-# Role constants (mirrors BookModel — defined here so delegate has no cross-module dep)
 ROLE_BOOK     = Qt.UserRole + 0
 ROLE_COVER    = Qt.UserRole + 1
 ROLE_HOVERED  = Qt.UserRole + 2
 ROLE_SHOW_REM = Qt.UserRole + 3
 ROLE_LIVE_POS = Qt.UserRole + 4
 ROLE_LIVE_DUR = Qt.UserRole + 5
+
+
+class BookModel(QAbstractListModel):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._books: list[Book] = []
+        self._filtered: list[Book] = []
+        self._covers: dict[str, QPixmap] = {}
+        self._show_remaining: dict[str, bool] = {}
+        self._live_pos: dict[str, float] = {}
+        self._live_dur: dict[str, float] = {}
+        self._hovered_path: Optional[str] = None
+        self._filter_text: str = ""
+        self._sort_field: str = "title"
+        self._sort_direction: str = "ascending"
+
+    # ── QAbstractListModel interface ────────────────────────────────────────
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        return len(self._filtered)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid() or not (0 <= index.row() < len(self._filtered)):
+            return None
+        book = self._filtered[index.row()]
+        path = book.path
+
+        if role == ROLE_BOOK:
+            return book
+        if role == ROLE_COVER:
+            return self._covers.get(path)
+        if role == ROLE_HOVERED:
+            return self._hovered_path == path
+        if role == ROLE_SHOW_REM:
+            return self._show_remaining.get(path, True)
+        if role == ROLE_LIVE_POS:
+            return self._live_pos.get(path, book.progress or 0.0)
+        if role == ROLE_LIVE_DUR:
+            return self._live_dur.get(path, book.duration or 0.0)
+        if role == Qt.DisplayRole:
+            return book.title
+        return None
+
+    # ── Data mutation ───────────────────────────────────────────────────────
+
+    def set_books(self, books: list[Book]) -> None:
+        self.beginResetModel()
+        self._books = list(books)
+        self._apply_filter_and_sort()
+        self.endResetModel()
+
+    def update_cover(self, path: str, pixmap: QPixmap) -> None:
+        self._covers[path] = pixmap
+        self._emit_for_path(path)
+
+    def update_playing_progress(self, path: str, position: float, duration: float) -> None:
+        self._live_pos[path] = position
+        self._live_dur[path] = duration
+        self._emit_for_path(path)
+
+    def toggle_show_remaining(self, path: str) -> None:
+        self._show_remaining[path] = not self._show_remaining.get(path, True)
+        self._emit_for_path(path)
+
+    def set_hovered(self, path: Optional[str]) -> None:
+        previous = self._hovered_path
+        self._hovered_path = path
+        if previous:
+            self._emit_for_path(previous)
+        if path:
+            self._emit_for_path(path)
+
+    # ── Sort / filter ───────────────────────────────────────────────────────
+
+    def sort_books(self, field: str, direction: str) -> None:
+        self._sort_field = field
+        self._sort_direction = direction
+        self.beginResetModel()
+        self._apply_filter_and_sort()
+        self.endResetModel()
+
+    def filter_books(self, text: str) -> None:
+        self._filter_text = text.lower()
+        self.beginResetModel()
+        self._apply_filter_and_sort()
+        self.endResetModel()
+
+    # ── Internal ────────────────────────────────────────────────────────────
+
+    def _apply_filter_and_sort(self) -> None:
+        text = self._filter_text
+        if text:
+            books = [
+                b for b in self._books
+                if text in b.title.lower()
+                or text in (b.author or "").lower()
+                or text in (b.narrator or "").lower()
+            ]
+        else:
+            books = list(self._books)
+
+        reverse = self._sort_direction == "descending"
+        field = self._sort_field
+
+        books.sort(
+            key=lambda b: (getattr(b, field, None) or "").lower()
+                          if isinstance(getattr(b, field, None), str)
+                          else (getattr(b, field, None) or 0),
+            reverse=reverse
+        )
+        self._filtered = books
+
+    def _emit_for_path(self, path: str) -> None:
+        for row, book in enumerate(self._filtered):
+            if book.path == path:
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx)
+                return
+
+    def path_to_index(self, path: str) -> Optional[QModelIndex]:
+        for row, book in enumerate(self._filtered):
+            if book.path == path:
+                return self.index(row)
+        return None
 
 
 class BookDelegate(QStyledItemDelegate):
