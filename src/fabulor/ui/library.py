@@ -809,7 +809,6 @@ class LibraryPanel(QFrame):
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
             t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
-            print("DEBUG full theme keys:", list(t.keys()))
             self._current_theme = t
 
     def update_progress_bar_theme(self) -> None:
@@ -970,12 +969,6 @@ class LibraryPanel(QFrame):
         self._resolve_theme_colors()
         self._apply_view_mode(mode)
         self._book_model.set_hovered(None)
-
-        if mode == "List":
-            for row in range(self._book_model.rowCount()):
-                self._list_view.setIndexWidget(
-                    self._book_model.index(row, 0), None
-                )
 
         self._list_view.reset()
         QTimer.singleShot(0, self._load_visible_covers)
@@ -1313,7 +1306,6 @@ class BookDelegate(QStyledItemDelegate):
         hc = theme.get('library_item_hover_color', theme.get('accent', '#ffffff'))
         ha = theme.get('library_item_hover_alpha', 0.50)
         self._hover_bg_color = qc(hc, int(ha * 255))
-        print("DEBUG theme keys:", list(theme.keys())[:5])
 
         self._bg_library     = qc(theme.get('bg_library',         '#1e1e1e'))
         self._row_one        = qc(theme.get('library_row_one',    '#242424'))
@@ -1325,7 +1317,6 @@ class BookDelegate(QStyledItemDelegate):
         self._color_total    = qc(theme.get('library_total',      '#aaaaaa'))
         self._color_pct      = qc(theme.get('library_percentage', '#888888'))
         self._alt_row_color  = self._row_two
-        print("DEBUG theme keys:", list(theme.keys())[:5])
 
     def update_theme(self, theme: dict) -> None:
         self._apply_theme(theme)
