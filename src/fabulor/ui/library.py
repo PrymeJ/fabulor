@@ -1139,13 +1139,33 @@ class LibraryPanel(QFrame):
         """Live update for the currently playing book's progress and sorting."""
         if getattr(self, '_is_animating', False):
             return
-        
-        # Since virtualization only re-renders visible items, we just need to refresh
-        # if the "Progress" sort is active, or if the current book is in the viewport.
+
+        # Model/view path (Stage 6+): push live pos/dur into BookModel so
+        # dataChanged fires and BookDelegate repaints only the affected cell.
+        if hasattr(self, '_book_model') and self.player_instance:
+            path = getattr(self.player_instance.instance, 'path', None) if self.player_instance.instance else None
+            pos  = self.player_instance.time_pos or 0.0
+            dur  = self.player_instance.duration or 0.0
+            if path and dur > 0:
+                self._book_model.update_playing_progress(path, pos, dur)
+
+        # Pool-based path (active until Stage 6 removes the pool).
         if self.sort_combo.currentData() == "Progress":
             self._sort_items_in_place()
         else:
             self._update_viewport()
+
+    def _on_view_entered(self, index):
+        """Slot for QListView.entered — tracks hovered book in BookModel."""
+        if not hasattr(self, '_book_model'):
+            return
+        book = index.data(ROLE_BOOK)
+        self._book_model.set_hovered(book.path if book else None)
+
+    def _on_view_left(self):
+        """Called when the cursor leaves the QListView — clears hover state."""
+        if hasattr(self, '_book_model'):
+            self._book_model.set_hovered(None)
 
 
 # Role constants (mirrors BookModel — defined here so delegate has no cross-module dep)
