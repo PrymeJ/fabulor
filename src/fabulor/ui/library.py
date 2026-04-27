@@ -818,8 +818,8 @@ class LibraryPanel(QFrame):
 
         self.main_layout.addWidget(self._list_view)
 
-        mode = self.style_combo.currentData()
-        self._delegate.set_view_mode(mode)
+        saved_mode = self.style_combo.currentData()
+        self._apply_view_mode(saved_mode)
 
     # ── Toolbar ──────────────────────────────────────────────────────────────
 
@@ -926,20 +926,23 @@ class LibraryPanel(QFrame):
 
     # ── View mode ────────────────────────────────────────────────────────────
 
+    def _apply_view_mode(self, mode: str) -> None:
+        self._delegate.set_view_mode(mode)
+        dim = ITEM_DIMENSIONS.get(mode, ITEM_DIMENSIONS["3 per row"])
+        if mode in ("3 per row", "2 per row", "Square"):
+            self._list_view.setViewMode(QListView.ViewMode.IconMode)
+            self._list_view.setGridSize(QSize(dim["w"], dim["h"]))
+            self._list_view.setSpacing(0)
+        else:
+            self._list_view.setViewMode(QListView.ViewMode.ListMode)
+            self._list_view.setGridSize(QSize())
+
     def _on_view_mode_changed(self, _):
         mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
-        self._delegate.set_view_mode(mode)
+        self._apply_view_mode(mode)
         self._book_model.set_hovered(None)
-
-        dim = ITEM_DIMENSIONS[mode]
-        if mode in ("3 per row", "2 per row", "Square"):
-            self._list_view.setViewMode(QListView.ViewMode.IconMode)
-            self._list_view.setGridSize(QSize(dim["w"], dim["h"]))
-        else:
-            self._list_view.setViewMode(QListView.ViewMode.ListMode)
-            self._list_view.setGridSize(QSize())
 
         if mode == "List":
             self._populate_list_widgets()
