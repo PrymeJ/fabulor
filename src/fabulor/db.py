@@ -81,6 +81,14 @@ class LibraryDB:
                     furthest_position REAL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS book_tags (
+                    book_path TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    UNIQUE(book_path, tag)
+                )
+            """)
+
 
     # --- Scan Locations CRUD ---
 
@@ -599,3 +607,62 @@ class LibraryDB:
                 run = 1
 
         return {'current': current, 'longest': longest}
+    
+    def update_book_metadata(self, path: str, title: str, author: str,
+                          narrator: str, year: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                """UPDATE books
+                SET title=?, author=?, narrator=?, year=?
+                WHERE path=?""",
+                (title or None, author or None, narrator or None, int(year) if year and year.strip().isdigit() else None, path)
+            )
+
+    def get_book_tags(self, book_path: str) -> list[str]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT tag FROM book_tags WHERE book_path=? ORDER BY tag",
+                (book_path,)
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def add_book_tag(self, book_path: str, tag: str) -> bool:
+        """Returns False if tag already exists or limit reached."""
+        tag = tag.strip().lower()
+        if not tag:
+            return False
+        with self._get_connection() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM book_tags WHERE book_path=?",
+                (book_path,)
+            ).fetchone()[0]
+            if count >= 5:
+                return False
+            try:
+                conn.execute(
+                    "INSERT INTO book_tags (book_path, tag) VALUES (?, ?)",
+                    (book_path, tag)
+                )
+                return True
+            except Exception:
+                return False  # UNIQUE constraint hit
+
+    def remove_book_tag(self, book_path: str, tag: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM book_tags WHERE book_path=? AND tag=?",
+                (book_path, tag)
+            )
+
+    def get_tag_suggestions(self, prefix: str, book_path: str) -> list[str]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                """SELECT DISTINCT tag FROM book_tags
+                WHERE tag LIKE ?
+                AND tag NOT IN (
+                    SELECT tag FROM book_tags WHERE book_path=?
+                )
+                ORDER BY tag LIMIT 10""",
+                (f"{prefix.lower()}%", book_path)
+            ).fetchall()
+        return [r[0] for r in rows]
