@@ -3,7 +3,7 @@ import time
 import math
 import random
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QScrollArea, QFrame, QSizePolicy, QApplication, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate
 )
 from PySide6.QtCore import QThreadPool, QEvent
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
@@ -1146,3 +1146,351 @@ class LibraryPanel(QFrame):
             self._sort_items_in_place()
         else:
             self._update_viewport()
+
+
+# Role constants (mirrors BookModel — defined here so delegate has no cross-module dep)
+ROLE_BOOK     = Qt.UserRole + 0
+ROLE_COVER    = Qt.UserRole + 1
+ROLE_HOVERED  = Qt.UserRole + 2
+ROLE_SHOW_REM = Qt.UserRole + 3
+ROLE_LIVE_POS = Qt.UserRole + 4
+ROLE_LIVE_DUR = Qt.UserRole + 5
+
+
+class BookDelegate(QStyledItemDelegate):
+    """
+    QStyledItemDelegate for the model/view library rewrite.
+    Accepts theme colors as constructor arguments; never resolves them itself.
+    """
+
+    def __init__(self, pg_bg: str, pg_fill: str, hover_bg_color: QColor, parent=None):
+        super().__init__(parent)
+        self._pg_bg = pg_bg
+        self._pg_fill = pg_fill
+        self._hover_bg_color = hover_bg_color
+        self._view_mode = "3 per row"
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def set_view_mode(self, mode: str) -> None:
+        self._view_mode = mode
+
+    def sizeHint(self, option, index):
+        from PySide6.QtCore import QSize
+        dim = ITEM_DIMENSIONS.get(self._view_mode, ITEM_DIMENSIONS["3 per row"])
+        return QSize(dim["w"], dim["h"])
+
+    # ── Paint dispatch ──────────────────────────────────────────────────────
+
+    def paint(self, painter, option, index):
+        if self._view_mode == "List":
+            return  # List mode uses widgets; delegate does not paint
+
+        book     = index.data(ROLE_BOOK)
+        cover    = index.data(ROLE_COVER)   # QPixmap or None
+        hovered  = index.data(ROLE_HOVERED) or False
+        show_rem = index.data(ROLE_SHOW_REM)
+        if show_rem is None:
+            show_rem = True
+        live_pos = index.data(ROLE_LIVE_POS) or 0.0
+        live_dur = index.data(ROLE_LIVE_DUR) or 0.0
+
+        if book is None:
+            return
+
+        painter.save()
+        painter.setClipRect(option.rect)
+
+        if self._view_mode == "1 per row":
+            self._paint_one_per_row(painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur)
+        elif self._view_mode == "2 per row":
+            self._paint_two_per_row(painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur)
+        elif self._view_mode in ("3 per row", "Square"):
+            self._paint_grid_cell(painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur)
+
+        painter.restore()
+
+    # ── editorEvent — toggle remaining/total on time label click ────────────
+
+    def editorEvent(self, event, model, option, index):
+        from PySide6.QtCore import QEvent as _QEvent
+        if event.type() != _QEvent.Type.MouseButtonRelease:
+            return False
+        if self._view_mode == "List":
+            return False
+
+        book     = index.data(ROLE_BOOK)
+        live_pos = index.data(ROLE_LIVE_POS) or 0.0
+        live_dur = index.data(ROLE_LIVE_DUR) or 0.0
+        if not book or live_pos <= 0 or live_dur <= 0:
+            return False
+
+        hit = self._time_label_rect(option, index)
+        if hit and hit.contains(event.pos()):
+            model.toggle_show_remaining(book.path)
+            return True
+        return False
+
+    # ── Mode painters ───────────────────────────────────────────────────────
+
+    def _paint_one_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
+        r = option.rect
+
+        # Row hover highlight
+        if hovered:
+            painter.fillRect(r, self._hover_bg_color)
+
+        # Cover (100×151, margins 4,4)
+        cover_w, cover_h = 100, 151
+        cover_rect = QRect(r.x() + 4, r.y() + 4, cover_w, cover_h)
+        self._draw_cover(painter, cover_rect, cover, book, square=False)
+
+        # Text area starts right of cover
+        text_x = r.x() + 4 + cover_w + 8
+        text_w = r.right() - text_x - 4
+        text_y = r.y() + 4
+
+        fm = painter.fontMetrics()
+        line_h = fm.height() + 2
+
+        pos  = live_pos if live_pos > 0 else (book.progress or 0.0)
+        dur  = live_dur if live_dur > 0 else (book.duration or 0.0)
+        has_progress = pos > 0 and dur > 0
+        pct  = min(1.0, pos / dur) if has_progress else 0.0
+
+        # Title
+        title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
+        painter.setPen(option.palette.text().color())
+        self._set_font(painter, bold=True, size_delta=0)
+        painter.drawText(text_x, text_y + painter.fontMetrics().ascent(), title_text)
+        text_y += line_h
+
+        self._set_font(painter, bold=False, size_delta=-1)
+        fm = painter.fontMetrics()
+        line_h = fm.height() + 2
+
+        # Author
+        author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
+        painter.setPen(option.palette.text().color())
+        painter.drawText(text_x, text_y + fm.ascent(), author_text)
+        text_y += line_h
+
+        # Narrator
+        if book.narrator:
+            narrator_text = fm.elidedText(book.narrator, Qt.ElideRight, text_w)
+            painter.drawText(text_x, text_y + fm.ascent(), narrator_text)
+            text_y += line_h
+
+        # Year
+        if book.year:
+            painter.drawText(text_x, text_y + fm.ascent(), str(book.year))
+            text_y += line_h
+
+        # Times
+        time_y = r.bottom() - 4 - 6 - 4 - fm.height()  # bar below, then time row above
+        if has_progress:
+            elapsed_str = self._fmt(pos)
+            if show_rem:
+                right_str = f"-{self._fmt(dur - pos)}"
+            else:
+                right_str = self._fmt(dur)
+            painter.drawText(text_x, time_y + fm.ascent(), elapsed_str)
+            right_w = fm.horizontalAdvance(right_str)
+            painter.drawText(r.right() - 4 - right_w, time_y + fm.ascent(), right_str)
+
+            # Progress bar (132px wide, 6px tall)
+            bar_y = r.bottom() - 4 - 6
+            bar_rect = QRect(text_x, bar_y, 132, 6)
+            self._draw_progress_bar(painter, bar_rect, pct)
+
+            # Percentage label
+            pct_str = f"{int(pct * 100)}%"
+            painter.drawText(bar_rect.right() + 8, bar_y + fm.ascent(), pct_str)
+        else:
+            # No progress: show total duration only
+            dur_str = self._fmt(dur)
+            painter.drawText(text_x, time_y + fm.ascent(), dur_str)
+
+    def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
+        r = option.rect
+
+        # Cover (113×172, left margin 13, top 8)
+        cover_x = r.x() + 13
+        cover_y = r.y() + 8
+        cover_w, cover_h = 113, 172
+        cover_rect = QRect(cover_x, cover_y, cover_w, cover_h)
+        self._draw_cover(painter, cover_rect, cover, book, square=False)
+
+        # Title and author below cover
+        text_x = cover_x
+        text_w = cover_w - 14  # matching right margin from BookItem
+        text_y = cover_y + cover_h + 2
+        fm = painter.fontMetrics()
+
+        self._set_font(painter, bold=False, size_delta=-1)
+        fm = painter.fontMetrics()
+
+        title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
+        painter.setPen(option.palette.text().color())
+        painter.drawText(text_x, text_y + fm.ascent(), title_text)
+        text_y += fm.height() + 2
+
+        author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
+        painter.drawText(text_x, text_y + fm.ascent(), author_text)
+
+        # Hover overlay over cover rect
+        if hovered:
+            self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=True)
+
+    def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
+        r = option.rect
+        square = (self._view_mode == "Square")
+
+        # Cover fills cell with 2px margin
+        cover_rect = QRect(r.x() + 2, r.y() + 2, r.width() - 3, r.height() - 4)
+        self._draw_cover(painter, cover_rect, cover, book, square=square)
+
+        if hovered:
+            self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
+
+    # ── Drawing helpers ─────────────────────────────────────────────────────
+
+    def _draw_cover(self, painter, rect: QRect, cover, book, *, square: bool):
+        # Background
+        painter.fillRect(rect, QColor(13, 0, 26))
+
+        if cover and not cover.isNull():
+            if square:
+                # Center-crop to fill rect
+                src_w, src_h = cover.width(), cover.height()
+                side = min(src_w, src_h)
+                src_rect = QRect(
+                    (src_w - side) // 2,
+                    (src_h - side) // 2,
+                    side, side
+                )
+                painter.drawPixmap(rect, cover, src_rect)
+            else:
+                # KeepAspectRatio — centre in rect
+                pw, ph = cover.width(), cover.height()
+                if pw > 0 and ph > 0:
+                    scale = min(rect.width() / pw, rect.height() / ph)
+                    dw = int(pw * scale)
+                    dh = int(ph * scale)
+                    dx = rect.x() + (rect.width() - dw) // 2
+                    dy = rect.y() + (rect.height() - dh) // 2
+                    painter.drawPixmap(QRect(dx, dy, dw, dh), cover, cover.rect())
+        else:
+            # Placeholder: first letter of title
+            painter.setPen(QColor(180, 180, 180))
+            self._set_font(painter, bold=True, size_delta=6)
+            painter.drawText(rect, Qt.AlignCenter, (book.title or "?")[:1])
+
+    def _draw_hover_overlay(self, painter, cover_rect: QRect, book, show_rem, live_pos, live_dur, *, large: bool):
+        from PySide6.QtGui import QLinearGradient, QBrush
+
+        pos = live_pos if live_pos > 0 else (book.progress or 0.0)
+        dur = live_dur if live_dur > 0 else (book.duration or 0.0)
+        has_progress = pos > 0 and dur > 0
+        pct = min(1.0, pos / dur) if has_progress else 0.0
+
+        # Overlay height: 30% of cover if has_progress, else 20%
+        pct_h = 0.30 if has_progress else 0.20
+        oh = int(cover_rect.height() * pct_h)
+        overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
+
+        # Semi-transparent gradient background
+        grad = QLinearGradient(overlay_rect.topLeft(), overlay_rect.bottomLeft())
+        grad.setColorAt(0.0, QColor(0, 0, 0, 100))
+        grad.setColorAt(1.0, QColor(0, 0, 0, 230))
+        painter.fillRect(overlay_rect, QBrush(grad))
+
+        font_size = 14 if large else 12
+        self._set_font(painter, bold=False, size_delta=0, absolute_size=font_size)
+        fm = painter.fontMetrics()
+        painter.setPen(QColor(255, 255, 255))
+
+        pad = 4
+        inner = overlay_rect.adjusted(pad, pad, -pad, -pad)
+        y = inner.y()
+
+        if has_progress:
+            # Time row: elapsed left, remaining/total right
+            elapsed_str = self._fmt(pos)
+            right_str = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
+            right_w = fm.horizontalAdvance(right_str)
+            painter.drawText(inner.x(), y + fm.ascent(), elapsed_str)
+            painter.drawText(inner.right() - right_w, y + fm.ascent(), right_str)
+            y += fm.height() + 2
+
+            # Progress bar + percentage
+            pct_str = f"{int(pct * 100)}%"
+            pct_w = fm.horizontalAdvance(pct_str) + 4
+            bar_rect = QRect(inner.x(), y, inner.width() - pct_w, 6)
+            self._draw_progress_bar(painter, bar_rect, pct)
+            painter.drawText(bar_rect.right() + 4, y + fm.ascent(), pct_str)
+        else:
+            # No progress: just show total duration right-aligned
+            dur_str = self._fmt(dur)
+            dur_w = fm.horizontalAdvance(dur_str)
+            painter.drawText(inner.right() - dur_w, y + fm.ascent(), dur_str)
+
+    def _draw_progress_bar(self, painter, rect: QRect, pct: float):
+        # Background track
+        painter.fillRect(rect, QColor(self._pg_bg))
+        # Fill
+        fill_w = int(rect.width() * pct)
+        if fill_w > 0:
+            fill_rect = QRect(rect.x(), rect.y(), fill_w, rect.height())
+            painter.fillRect(fill_rect, QColor(self._pg_fill))
+
+    # ── Utilities ───────────────────────────────────────────────────────────
+
+    def _time_label_rect(self, option, index) -> "QRect | None":
+        """Returns the hit-testable rect for the time/remaining label."""
+        if self._view_mode == "1 per row":
+            r = option.rect
+            # Right side of the time row, matching _paint_one_per_row layout
+            fm_h = 14  # approximate
+            y = r.bottom() - 4 - 6 - 4 - fm_h
+            return QRect(r.right() - 70, r.y() + y - r.y(), 66, fm_h)
+        elif self._view_mode in ("2 per row", "3 per row", "Square"):
+            # The overlay's right-side time label occupies the right half of the overlay
+            r = option.rect
+            cover_rect = self._cover_rect(r)
+            oh = int(cover_rect.height() * 0.30)
+            overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
+            return QRect(overlay_rect.x() + overlay_rect.width() // 2,
+                         overlay_rect.y() + 4,
+                         overlay_rect.width() // 2 - 4,
+                         14)
+        return None
+
+    def _cover_rect(self, r: QRect) -> QRect:
+        if self._view_mode == "1 per row":
+            return QRect(r.x() + 4, r.y() + 4, 100, 151)
+        elif self._view_mode == "2 per row":
+            return QRect(r.x() + 13, r.y() + 8, 113, 172)
+        else:
+            return QRect(r.x() + 2, r.y() + 2, r.width() - 3, r.height() - 4)
+
+    @staticmethod
+    def _fmt(seconds: float) -> str:
+        s = int(seconds or 0)
+        return f"{s // 3600}:{(s % 3600) // 60:02}:{s % 60:02}"
+
+    @staticmethod
+    def _set_font(painter, *, bold: bool = False, size_delta: int = 0, absolute_size: int = 0):
+        from PySide6.QtGui import QFont
+        f = QFont(painter.font())
+        if absolute_size:
+            f.setPixelSize(absolute_size)
+        elif size_delta:
+            current = f.pixelSize()
+            if current < 0:
+                current = f.pointSize()
+                f.setPointSize(max(6, current + size_delta))
+            else:
+                f.setPixelSize(max(6, current + size_delta))
+        f.setBold(bold)
+        painter.setFont(f)

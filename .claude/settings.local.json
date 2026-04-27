@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from src.fabulor.ui.library import BookDelegate, ROLE_BOOK, ROLE_HOVERED; print\\('OK'\\)\")"
+    ]
+  }
+}
