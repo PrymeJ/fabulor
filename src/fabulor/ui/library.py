@@ -791,9 +791,7 @@ class LibraryPanel(QFrame):
     # ── Model / view setup ───────────────────────────────────────────────────
 
     def _setup_model_view(self):
-        print("DEBUG: creating BookModel")
         self._book_model = BookModel(parent=self)
-        print("DEBUG: BookModel created", self._book_model)
         self._delegate   = BookDelegate(
             pg_bg=self._pg_bg,
             pg_fill=self._pg_fill,
@@ -816,6 +814,7 @@ class LibraryPanel(QFrame):
         self._list_view.customContextMenuRequested.connect(self._on_context_menu)
         self._list_view.entered.connect(self._on_view_entered)
         self._list_view.viewport().installEventFilter(self)
+        self._list_view.verticalScrollBar().valueChanged.connect(self._load_visible_covers)
 
         self.main_layout.addWidget(self._list_view)
 
@@ -949,6 +948,7 @@ class LibraryPanel(QFrame):
                 self._list_view.setIndexWidget(self._book_model.index(row, 0), None)
 
         self._list_view.reset()
+        QTimer.singleShot(0, self._load_visible_covers)
 
     def _populate_list_widgets(self):
         playing_path = (
@@ -976,7 +976,7 @@ class LibraryPanel(QFrame):
             item.clicked.connect(self.book_selected.emit)
             item.context_requested.connect(self.detail_requested.emit)
             self._list_view.setIndexWidget(index, item)
-
+            
     # ── Data / refresh ───────────────────────────────────────────────────────
 
     def refresh(self, force=False):
@@ -986,8 +986,7 @@ class LibraryPanel(QFrame):
         self._book_model.set_books(books)
         self._apply_current_sort_filter()
 
-        for book in books:
-            self._trigger_cover_load(book)
+        QTimer.singleShot(0, self._load_visible_covers)
 
         if self.style_combo.currentData() == "List":
             QTimer.singleShot(0, self._populate_list_widgets)
@@ -1005,9 +1004,35 @@ class LibraryPanel(QFrame):
 
     # ── Cover loading ────────────────────────────────────────────────────────
 
+    def _load_visible_covers(self):
+        if not self.isVisible():
+            return
+        rect  = self._list_view.viewport().rect()
+        first = self._list_view.indexAt(rect.topLeft())
+        last  = self._list_view.indexAt(rect.bottomRight())
+        if not first.isValid():
+            return
+        first_row = max(0, first.row() - 5)
+        last_row  = min(
+            self._book_model.rowCount() - 1,
+            (last.row() if last.isValid() else self._book_model.rowCount() - 1) + 5,
+        )
+        in_flight = {getattr(w, '_book_path', None) for w in self._active_workers}
+        for row in range(first_row, last_row + 1):
+            index = self._book_model.index(row, 0)
+            book  = index.data(ROLE_BOOK)
+            if not book:
+                continue
+            if self._book_model._covers.get(book.path):
+                continue
+            if book.path in in_flight:
+                continue
+            self._trigger_cover_load(book)
+
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
         worker = CoverLoaderWorker(book, self.player_instance)
+        worker._book_path = book.path
         self._active_workers.add(worker)
         worker.signals.cover_loaded.connect(self._on_cover_loaded)
         worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w))
@@ -1077,6 +1102,10 @@ class LibraryPanel(QFrame):
         for i, (_, options) in enumerate(VIEW_MODES):
             self.style_combo.setItemText(i, random.choice(options))
         self.style_combo.blockSignals(False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._load_visible_covers)
 
     def hideEvent(self, event):
         super().hideEvent(event)
