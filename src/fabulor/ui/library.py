@@ -4,7 +4,7 @@ import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect
 from typing import Optional
 from ..models.book import Book
@@ -894,8 +894,16 @@ class LibraryPanel(QFrame):
 
     def _on_item_clicked(self, index):
         book = index.data(ROLE_BOOK)
-        if book:
-            self.book_selected.emit(book.path)
+        if not book:
+            return
+        live_pos = index.data(ROLE_LIVE_POS) or 0.0
+        live_dur = index.data(ROLE_LIVE_DUR) or 0.0
+        if live_pos > 0 and live_dur > 0:
+            # Check if click was on time rect via delegate
+            if self._delegate.last_event_was_toggle:
+                self._delegate.last_event_was_toggle = False
+                return
+        self.book_selected.emit(book.path)
 
     def _on_context_menu(self, pos):
         index = self._list_view.indexAt(pos)
@@ -1184,15 +1192,28 @@ class BookModel(QAbstractListModel):
         else:
             books = list(self._books)
 
+        # Filter "Recent" to only show books that have progress
+        if self._sort_field == "last_played":
+            books = [b for b in books if (b.progress or 0.0) > 0.0]
+
         reverse = self._sort_direction == "descending"
         field = self._sort_field
 
-        books.sort(
-            key=lambda b: (getattr(b, field, None) or "").lower()
-                          if isinstance(getattr(b, field, None), str)
-                          else (getattr(b, field, None) or 0),
-            reverse=reverse
-        )
+        from datetime import datetime as dt
+        def sort_key(b):
+            val = getattr(b, field, None)
+            if val is None:
+                if field == "last_played": return dt.min
+                # Safeguard: check first book for type hint if available
+                first_b = self._books[0] if self._books else None
+                if first_b and isinstance(getattr(first_b, field, None), str):
+                    return ""
+                return 0
+            if isinstance(val, str):
+                return val.lower()
+            return val
+
+        books.sort(key=sort_key, reverse=reverse)
         self._filtered = books
 
     def _emit_for_path(self, path: str) -> None:
@@ -1220,6 +1241,7 @@ class BookDelegate(QStyledItemDelegate):
         self._pg_bg = pg_bg
         self._pg_fill = pg_fill
         self._hover_bg_color = hover_bg_color
+        self.last_event_was_toggle = False
         self._view_mode = "3 per row"
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -1265,20 +1287,25 @@ class BookDelegate(QStyledItemDelegate):
 
     def editorEvent(self, event, model, option, index):
         from PySide6.QtCore import QEvent as _QEvent
-        if event.type() != _QEvent.Type.MouseButtonRelease:
+        if event.type() not in (_QEvent.Type.MouseButtonPress, _QEvent.Type.MouseButtonRelease):
             return False
         if self._view_mode == "List":
             return False
 
         book     = index.data(ROLE_BOOK)
+        if not book:
+            return False
+
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
         live_dur = index.data(ROLE_LIVE_DUR) or 0.0
-        if not book or live_pos <= 0 or live_dur <= 0:
+        if live_pos <= 0 or live_dur <= 0:
             return False
 
         hit = self._time_label_rect(option, index)
         if hit and hit.contains(event.pos()):
-            model.toggle_show_remaining(book.path)
+            if event.type() == _QEvent.Type.MouseButtonRelease:
+                model.toggle_show_remaining(book.path)
+                self.last_event_was_toggle = True
             return True
         return False
 
@@ -1511,10 +1538,8 @@ class BookDelegate(QStyledItemDelegate):
             cover_rect = self._cover_rect(r)
             oh = int(cover_rect.height() * 0.30)
             overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
-            return QRect(overlay_rect.x() + overlay_rect.width() // 2,
-                         overlay_rect.y() + 4,
-                         overlay_rect.width() // 2 - 4,
-                         14)
+            # Safe zone: The top line of the overlay area where both time labels sit
+            return QRect(overlay_rect.x(), overlay_rect.y(), overlay_rect.width(), 20)
         return None
 
     def _cover_rect(self, r: QRect) -> QRect:
@@ -1564,6 +1589,7 @@ class ListBookItem(QWidget):
         self._title_elided   = False
         self._author_elided  = False
         self._book           = None
+        self._is_toggling    = False
         self._pos            = 0.0
         self._dur            = 0.0
 
@@ -1700,9 +1726,12 @@ class ListBookItem(QWidget):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
+        self._is_toggling = False
         if event.button() == Qt.LeftButton:
             if self._pos > 0 and self._dur > 0:
-                if self.time_label.geometry().contains(event.position().toPoint()):
+                # Safe zone for list toggle: the right 80px containing the time label
+                if event.position().x() > self.width() - 80:
+                    self._is_toggling = True
                     self._show_remaining = not self._show_remaining
                     self._refresh_time()
                     event.accept()
@@ -1716,6 +1745,10 @@ class ListBookItem(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self._is_toggling:
+                self._is_toggling = False
+                event.accept()
+                return
             if self._book:
                 self.clicked.emit(self._book.path)
         super().mouseReleaseEvent(event)
