@@ -2,13 +2,13 @@ import os
 import time
 import random
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, 
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView,
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
-from PySide6.QtGui import QPixmap, QColor
+from PySide6.QtGui import QPixmap, QColor, QFont
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -35,6 +35,8 @@ SORT_KEY_MAP = {
     "Duration":    "duration",
     "Year":        "year",
 }
+
+MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
 
 FONT_SIZES = {
     "1 per row": {
@@ -1212,7 +1214,7 @@ class BookModel(QAbstractListModel):
         self._emit_for_path(path)
 
     def update_playing_progress(self, path: str, position: float, duration: float) -> None:
-        self._live_pos[path] = position
+        self._live_pos[path] = position if position > MIN_PROGRESS else 0.0
         self._live_dur[path] = duration
         self._emit_for_path(path)
 
@@ -1259,7 +1261,7 @@ class BookModel(QAbstractListModel):
 
         # Filter "Recent" to only show books that have progress
         if self._sort_field == "last_played":
-            books = [b for b in books if (b.progress or 0.0) > 0.0]
+            books = [b for b in books if (b.progress or 0.0) > MIN_PROGRESS]
 
         reverse = self._sort_direction == "descending"
         field = self._sort_field
@@ -1278,7 +1280,14 @@ class BookModel(QAbstractListModel):
                 return val.lower()
             return val
 
-        books.sort(key=sort_key, reverse=reverse)
+        if self._sort_field in ("last_played", "progress"):
+            have    = [b for b in books if (b.progress or 0.0) > MIN_PROGRESS]
+            missing = [b for b in books if (b.progress or 0.0) <= MIN_PROGRESS]
+            have.sort(key=sort_key, reverse=reverse)
+            missing.sort(key=lambda b: (b.title or "").lower())
+            books = have + missing
+        else:
+            books.sort(key=sort_key, reverse=reverse)
         self._filtered = books
 
     def _emit_for_path(self, path: str) -> None:
@@ -1418,10 +1427,10 @@ class BookDelegate(QStyledItemDelegate):
         text_w = r.right() - text_x - 4
         text_y = r.y() + 4
 
+        has_progress = (book.progress or 0.0) > MIN_PROGRESS
         pos  = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur  = live_dur if live_dur > 0 else (book.duration or 0.0)
-        has_progress = pos > 0 and dur > 0
-        pct  = min(1.0, pos / dur) if has_progress else 0.0
+        pct  = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
 
         # Title
         self._set_font(painter, mode=self._view_mode, field="title")
@@ -1548,9 +1557,9 @@ class BookDelegate(QStyledItemDelegate):
         if book.path == self._playing_path:
             painter.fillRect(QRect(r.x(), r.y(), ACTIVE_BOOK_STRIPE_WIDTH, r.height()), self._color_accent)
 
+        has_progress = (book.progress or 0.0) > MIN_PROGRESS
         pos = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur = live_dur if live_dur > 0 else (book.duration or 0.0)
-        has_progress = pos > 0 and dur > 0
 
         # Time column width — derived from font, same rule as ListBookItem
         TIME_W    = fm.horizontalAdvance("-00:00:00") + 2
@@ -1653,16 +1662,20 @@ class BookDelegate(QStyledItemDelegate):
         else:
             # Placeholder: first letter of title
             painter.setPen(QColor(180, 180, 180))
-            self._set_font(painter, bold=True, size_delta=6)
+            f = QFont(painter.font())
+            f.setPixelSize(painter.font().pixelSize() + 6 if painter.font().pixelSize() > 0
+                           else painter.font().pointSize() + 6)
+            f.setBold(True)
+            painter.setFont(f)
             painter.drawText(rect, Qt.AlignCenter, (book.title or "?")[:1])
 
     def _draw_hover_overlay(self, painter, cover_rect: QRect, book, show_rem, live_pos, live_dur, *, large: bool):
         from PySide6.QtGui import QLinearGradient, QBrush
 
+        has_progress = (book.progress or 0.0) > MIN_PROGRESS
         pos = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur = live_dur if live_dur > 0 else (book.duration or 0.0)
-        has_progress = pos > 0 and dur > 0
-        pct = min(1.0, pos / dur) if has_progress else 0.0
+        pct = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
 
         # Overlay height: 30% of cover if has_progress, else 20%
         pct_h = 0.30 if has_progress else 0.20
@@ -1760,7 +1773,6 @@ class BookDelegate(QStyledItemDelegate):
 
     @staticmethod
     def _set_font(painter, *, mode: str, field: str):
-        from PySide6.QtGui import QFont
         size, bold = FONT_SIZES.get(mode, {}).get(field, (13, False))
         f = QFont(painter.font())
         f.setPixelSize(size)
