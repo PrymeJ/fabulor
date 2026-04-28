@@ -1703,14 +1703,14 @@ class BookDelegate(QStyledItemDelegate):
         # Measure content height to size overlay precisely
         BAR_H = 6
         HPAD  = 3
-        VPAD  = 5
+        VPAD  = 6
 
         self._set_font(painter, mode=overlay_mode, field="elapsed")
         fm_time = painter.fontMetrics()
 
         if has_progress:
             # time row + 2px gap + bar row, plus VPAD top and bottom
-            oh = VPAD + fm_time.height() + 4 + BAR_H + VPAD
+            oh = VPAD + fm_time.height() + 8 + BAR_H + VPAD
         else:
             # just bar-row height centred on total text, plus VPAD top and bottom
             self._set_font(painter, mode=overlay_mode, field="total")
