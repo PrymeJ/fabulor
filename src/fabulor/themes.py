@@ -807,6 +807,8 @@ THEMES = {
         "accent_dark":         "#388E3C",
         "bg_sidebar":          "#E0E7E9",
         "bg_dropdown":         "#CFD8DC",
+        "library_row_one":        "#ffffff",
+        "library_row_two":        "#ffffff",
         "curr_chap_highlight": "#81C784",
         "sidebar_text_hover": "#81C784",
         "sidebar_opacity":     0.9,
@@ -1485,6 +1487,9 @@ def get_library_stylesheet(theme_name="default"):
         }}
         QComboBox QAbstractItemView::item {{
             min-height: 22px;
+        }}
+        QListView {{  
+            border: none; outline: 0; 
         }}
         QLineEdit {{
             background-color: {input_bg};
