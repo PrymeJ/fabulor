@@ -1651,7 +1651,7 @@ class BookDelegate(QStyledItemDelegate):
         self._set_font(painter, mode=self._view_mode, field="total")
         painter.setPen(self._color_total)
         if has_progress:
-            time_str = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(pos / speed)
+            time_str = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(dur_disp)
         else:
             time_str = self._fmt(dur_disp)
         painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, time_str)
