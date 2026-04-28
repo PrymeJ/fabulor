@@ -23,7 +23,7 @@ ITEM_DIMENSIONS = {
     "3 per row": {"w": 96,  "h": 146, "cols": 3},
     "Square":    {"w": 96,  "h": 96,  "cols": 3},
     "2 per row": {"w": 140, "h": 226, "cols": 2},
-    "1 per row": {"w": 292, "h": 161, "cols": 1},
+    "1 per row": {"w": 292, "h": 159, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
 }
 
