@@ -1196,10 +1196,8 @@ class LibraryPanel(QFrame):
         dur = self.player_instance.duration  or 0.0
 
         if not path or dur <= 0:
-            print(f"  progress tick: no path or dur (path={path}, dur={dur})")
             return
 
-        print(f"  progress tick: pos={pos:.1f} dur={dur:.1f} path={os.path.basename(path)}")
         self._book_model.update_playing_progress(path, pos, dur)
 
         if self.style_combo.currentData() == "List":
@@ -1448,9 +1446,7 @@ class BookModel(QAbstractListModel):
             if book.path == path:
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
-                print(f"  _emit_for_path: emitted row={row} path={os.path.basename(path)}")
                 return
-        print(f"  _emit_for_path: NOT FOUND in _filtered: {os.path.basename(path)}")
 
     def path_to_index(self, path: str) -> Optional[QModelIndex]:
         for row, book in enumerate(self._filtered):
@@ -1522,9 +1518,6 @@ class BookDelegate(QStyledItemDelegate):
             show_rem = True
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
         live_dur = index.data(ROLE_LIVE_DUR) or 0.0
-
-        if book and "Lord of Emperors" in (book.title or ""):
-            print(f"  paint called: live_pos={live_pos:.1f} live_dur={live_dur:.1f}")
 
         if book is None:
             return
