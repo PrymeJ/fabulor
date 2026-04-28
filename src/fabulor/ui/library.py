@@ -1735,7 +1735,8 @@ class BookDelegate(QStyledItemDelegate):
         # Cover (100×151, margins 4,4)
         cover_w, cover_h = 100, 151
         cover_rect = QRect(r.x() + 4, r.y() + 4, cover_w, cover_h)
-        self._draw_cover(painter, cover_rect, cover, book, square=False)
+        row_bg = self._row_one if index.row() % 2 == 0 else self._row_two
+        self._draw_cover(painter, cover_rect, cover, book, square=False, bg=row_bg)
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
@@ -1843,7 +1844,7 @@ class BookDelegate(QStyledItemDelegate):
         cover_y = r.y() + 8
         cover_w, cover_h = 113, 172
         cover_rect = QRect(cover_x, cover_y, cover_w, cover_h)
-        self._draw_cover(painter, cover_rect, cover, book, square=False)
+        self._draw_cover(painter, cover_rect, cover, book, square=False, bg=self._grid_bg)
 
         # Title and author below cover
         text_x = cover_x
@@ -1894,7 +1895,7 @@ class BookDelegate(QStyledItemDelegate):
 
         # Cover fills cell with 2px margin
         cover_rect = QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
-        self._draw_cover(painter, cover_rect, cover, book, square=square)
+        self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
 
         if hovered:
             self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
@@ -1993,9 +1994,8 @@ class BookDelegate(QStyledItemDelegate):
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
 
-    def _draw_cover(self, painter, rect: QRect, cover, book, *, square: bool):
-        # Background
-        painter.fillRect(rect, QColor(13, 0, 26))
+    def _draw_cover(self, painter, rect: QRect, cover, book, *, square: bool, bg: QColor = None):
+        painter.fillRect(rect, bg if bg is not None else QColor(13, 0, 26))
 
         if cover and not cover.isNull():
             if square:
