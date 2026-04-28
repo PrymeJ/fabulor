@@ -817,6 +817,7 @@ class LibraryPanel(QFrame):
     def update_progress_bar_theme(self) -> None:
         self._resolve_theme_colors()
         self._delegate.update_theme(self._current_theme)
+        self._apply_view_mode(self._delegate._view_mode)
         self._list_view.viewport().update()
 
     # ── Model / view setup ───────────────────────────────────────────────────
@@ -970,9 +971,14 @@ class LibraryPanel(QFrame):
             self._list_view.setViewMode(QListView.ViewMode.IconMode)
             self._list_view.setGridSize(QSize(dim["w"], dim["h"]))
             self._list_view.setSpacing(0)
+            c = self._delegate._grid_bg
+            self._list_view.viewport().setStyleSheet(
+                f"background-color: rgb({c.red()},{c.green()},{c.blue()});"
+            )
         else:
             self._list_view.setViewMode(QListView.ViewMode.ListMode)
             self._list_view.setGridSize(QSize())
+            self._list_view.viewport().setStyleSheet("")
 
     def _on_view_mode_changed(self, _):
         mode = self.style_combo.currentData()
@@ -1717,7 +1723,7 @@ class BookDelegate(QStyledItemDelegate):
             fm_total = painter.fontMetrics()
             oh = VPAD + max(BAR_H, fm_total.height()) + VPAD
 
-        oh = max(oh, int(cover_rect.height() * 0.10))  # never shrink below ~10%
+        oh = max(oh, int(cover_rect.height() * 0.18))  # never shrink below ~18%
         overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
 
         # Semi-transparent gradient background
