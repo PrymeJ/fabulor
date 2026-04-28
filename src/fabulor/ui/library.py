@@ -1579,7 +1579,7 @@ class BookDelegate(QStyledItemDelegate):
         left       = r.x() + LEFT_PAD + TITLE_CM
         mid        = left + title_avail
         right      = r.x() + LEFT_PAD + AVAILABLE
-        title_rect = QRect(left, r.y(), title_avail, r.height())
+        title_rect = QRect(left, r.y(), title_max_lw +8, r.height()) # +8 prevents clipping with still some separation
         author_rect = QRect(mid, r.y(), author_w, r.height())
         time_rect  = QRect(right, r.y(), TIME_W, r.height())
 
