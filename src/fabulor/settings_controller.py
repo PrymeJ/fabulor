@@ -17,6 +17,7 @@ class SettingsController:
         main.undo_mode_changed.connect(self._update_undo_mode)
         main.fade_mode_changed.connect(self._update_fade_mode)
         main.blur_mode_changed.connect(self._update_blur_mode)
+        main.hover_fade_changed.connect(self._update_hover_fade)
         main._update_speed_grid_styling = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
@@ -98,9 +99,16 @@ class SettingsController:
         #self._debug_settings_state()
 
     def _update_blur_visuals(self):
-        """Updates the highlight state of blur buttons."""
         enabled = self.config.get_blur_enabled()
         self.visuals.set_blur_selection(enabled)
+
+    def _update_hover_fade(self, mode):
+        self.config.set_hover_fade_mode(mode)
+        self._update_hover_fade_visuals()
+
+    def _update_hover_fade_visuals(self):
+        mode = self.config.get_hover_fade_mode()
+        self.visuals.set_hover_fade_selection(mode)
 
     def sync_all_settings_visuals(self, theme_name=None):
         """Syncs all settings button states and panel visuals to current config."""
@@ -110,6 +118,7 @@ class SettingsController:
         self._update_notches_visuals()
         self._update_fade_visuals()
         self._update_blur_visuals()
+        self._update_hover_fade_visuals()
         self._update_undo_visuals()
         self.panels.update_speed_panel_visuals(theme_name)
         self.panels.update_sleep_panel_visuals()

@@ -73,6 +73,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     undo_mode_changed = Signal(int)
     fade_mode_changed = Signal(int)
     blur_mode_changed = Signal(bool)
+    hover_fade_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -243,6 +244,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
 
+        def set_hover_fade_selection(mode):
+            if not hasattr(self, 'hover_fade_buttons'): return
+            for m, btn in self.hover_fade_buttons.items():
+                btn.setProperty("selected", "true" if m == mode else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+            self.library_panel.set_hover_fade_enabled(mode)
+
         class VisualsInterface:
             def __init__(self):
                 pass
@@ -253,6 +262,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def set_fade_selection(self, ms): set_fade_selection(ms)
             def set_blur_selection(self, enabled): set_blur_selection(enabled)
             def set_notches_selection(self, enabled): set_notches_selection(enabled)
+            def set_hover_fade_selection(self, enabled): set_hover_fade_selection(enabled)
 
         class PanelInterface:
             def __init__(self, speed_panel, sleep_panel, audio_tab):
@@ -740,6 +750,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_library_panel(self):
         self.library_panel = LibraryPanel(self.db, self.config, player_instance=self.player, parent=self)
         self.library_panel.hide()
+        self.library_panel.set_hover_fade_enabled(self.config.get_hover_fade_mode())
         self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
         self.library_panel_animation.setDuration(300)
         self.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -901,6 +912,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.scroll_buttons[mode] = btn
         scroll_row.addStretch()
         app_layout.addLayout(scroll_row)
+
+        hover_fade_header = QLabel("Library hover trail")
+        hover_fade_header.setObjectName("settings_header")
+        app_layout.addWidget(hover_fade_header)
+
+        hover_fade_row = QHBoxLayout()
+        self.hover_fade_buttons = {}
+        for mode in ["Slow", "Normal", "Fast", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.hover_fade_changed.emit(m))
+            hover_fade_row.addWidget(btn)
+            self.hover_fade_buttons[mode] = btn
+        hover_fade_row.addStretch()
+        app_layout.addLayout(hover_fade_row)
 
         hints_header = QLabel("Chapter hints")
         hints_header.setObjectName("settings_header")

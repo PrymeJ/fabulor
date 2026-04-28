@@ -957,13 +957,22 @@ class LibraryPanel(QFrame):
 
     def _on_view_entered(self, index):
         book = index.data(ROLE_BOOK)
-        self._book_model.set_hovered(book.path if book else None)
+        prev_path = getattr(self, '_hovered_book_path', None)
+        self._hovered_book_path = book.path if book else None
+        self._book_model.set_hovered(self._hovered_book_path)
         if book:
             self._delegate.on_hover_enter(book.path)
+            self._delegate.on_list_hover_enter(book.path)
+        if prev_path and prev_path != self._hovered_book_path:
+            self._delegate.on_list_hover_leave(prev_path)
 
     def _on_view_left(self):
+        prev_path = getattr(self, '_hovered_book_path', None)
+        self._hovered_book_path = None
         self._book_model.set_hovered(None)
         self._delegate.on_hover_leave()
+        if prev_path:
+            self._delegate.on_list_hover_leave(prev_path)
 
     def eventFilter(self, obj, event):
         if obj is self._list_view.viewport():
@@ -1224,6 +1233,9 @@ class LibraryPanel(QFrame):
     def set_is_playing(self, playing: bool) -> None:
         self._delegate.set_is_playing(playing)
         self._list_view.viewport().update()
+
+    def set_hover_fade_enabled(self, mode: str) -> None:
+        self._delegate.set_hover_fade_enabled(mode)
 
     # ── Hide ─────────────────────────────────────────────────────────────────
 
@@ -1494,6 +1506,12 @@ class BookDelegate(QStyledItemDelegate):
         self._scroll_timer = QTimer()
         self._scroll_timer.setInterval(40)
         self._scroll_timer.timeout.connect(self._advance_scroll)
+        # Hover fade state — List mode only, user-toggleable
+        self._hover_fade_mode = "Off"   # "Slow", "Normal", "Fast", "Off"
+        self._hover_fade: dict = {}     # path → current alpha (0–255)
+        self._hover_fade_timer = QTimer()
+        self._hover_fade_timer.setInterval(16)  # ~60fps
+        self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1553,6 +1571,56 @@ class BookDelegate(QStyledItemDelegate):
 
     def set_viewport(self, vp) -> None:
         self._viewport = vp
+
+    # ── Hover fade (List mode) ───────────────────────────────────────────────
+
+    def set_hover_fade_enabled(self, mode: str) -> None:
+        self._hover_fade_mode = mode
+        if mode == "Off":
+            self._hover_fade.clear()
+            self._hover_fade_timer.stop()
+
+    def on_list_hover_enter(self, path: str) -> None:
+        if self._hover_fade_mode == "Off":
+            return
+        self._hover_fade[path] = self._hover_fade.get(path, 0)
+        if not self._hover_fade_timer.isActive():
+            self._hover_fade_timer.start()
+
+    def on_list_hover_leave(self, path: str) -> None:
+        if self._hover_fade_mode == "Off":
+            return
+        # Keep the entry — timer will fade it out
+        if path not in self._hover_fade:
+            self._hover_fade[path] = self._hover_bg_color.alpha()
+        if not self._hover_fade_timer.isActive():
+            self._hover_fade_timer.start()
+
+    _HOVER_FADE_STEP_OUT = {"Slow": 2, "Normal": 5, "Fast": 7}
+
+    def _advance_hover_fade(self) -> None:
+        target_alpha = self._hover_bg_color.alpha()
+        step_in  = 25
+        step_out = self._HOVER_FADE_STEP_OUT.get(self._hover_fade_mode, 10)
+        changed = False
+        hovered_path = self._scroll_hovered_path  # reuse existing hovered path tracking
+        for path in list(self._hover_fade):
+            current = self._hover_fade[path]
+            if path == hovered_path:
+                new = min(target_alpha, current + step_in)
+            else:
+                new = max(0, current - step_out)
+            if new != current:
+                self._hover_fade[path] = new
+                changed = True
+            if new == 0 and path != hovered_path:
+                del self._hover_fade[path]
+        if not self._hover_fade:
+            self._hover_fade_timer.stop()
+        if changed:
+            vp = getattr(self, '_viewport', None)
+            if vp:
+                vp.update()
 
     # ── Hover-scroll ────────────────────────────────────────────────────────
 
@@ -1917,7 +1985,13 @@ class BookDelegate(QStyledItemDelegate):
 
         # Alternating row background, then hover on top
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
-        if hovered:
+        if self._hover_fade_mode != "Off":
+            fade_alpha = self._hover_fade.get(book.path, 0)
+            if fade_alpha > 0:
+                fade_color = QColor(self._hover_bg_color)
+                fade_color.setAlpha(fade_alpha)
+                painter.fillRect(r, fade_color)
+        elif hovered:
             painter.fillRect(r, self._hover_bg_color)
 
         if book.path == self._playing_path:
