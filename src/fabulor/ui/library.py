@@ -1332,6 +1332,7 @@ class BookDelegate(QStyledItemDelegate):
         self._hover_bg_color = qc(hc, int(ha * 255))
 
         self._bg_library     = qc(theme.get('bg_library',         '#1e1e1e'))
+        self._grid_bg        = qc(theme.get('library_grid_bg',    theme.get('bg_library', '#1a1a1a')))
         self._row_one        = qc(theme.get('library_row_one',    '#242424'))
         self._row_two        = qc(theme.get('library_row_two',    '#2a2a2a'))
         self._color_title    = qc(theme.get('library_title',      '#ffffff'))
@@ -1413,7 +1414,7 @@ class BookDelegate(QStyledItemDelegate):
     def _paint_one_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
 
-        # Row hover highlight
+        painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
         if hovered:
             painter.fillRect(r, self._hover_bg_color)
 
@@ -1504,6 +1505,7 @@ class BookDelegate(QStyledItemDelegate):
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
+        painter.fillRect(r, self._grid_bg)
 
         # Cover (113×172, left margin 13, top 8)
         cover_x = r.x() + 13
@@ -1536,6 +1538,7 @@ class BookDelegate(QStyledItemDelegate):
 
     def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
+        painter.fillRect(r, self._grid_bg)
         square = (self._view_mode == "Square")
 
         # Cover fills cell with 2px margin

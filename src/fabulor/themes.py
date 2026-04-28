@@ -8,6 +8,7 @@ bg_main: The primary background color for the main window and panels (settings, 
 bg_sidebar: The background color for the sliding sidebar on the left.
 bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
 bg_library: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
+library_grid_bg: Background color for the grid view. Falls back to bg_library.
 library_row_one: Background color for odd rows in 1-per-row and List views. Falls back to bg_library.
 library_row_two: Background color for even rows in 1-per-row and List views. Falls back to bg_library.
 library_item_hover_color: Background color for a book item when hovered. Falls back to accent.
@@ -89,8 +90,9 @@ THEMES = {
         "curr_chap_highlight":    "#A13F73",
         "dropdown_time_text":     "#6FA0F9",
         "bg_library":             "#0D0630",
+        "library_grid_bg":        "#04032D",
         "library_row_one":        "#130848",
-        "library_row_two":        "#0D0630",
+        "library_row_two":        "#04032D",
         "library_item_hover_color": "#1049CF",
         "library_item_hover_alpha": 0.50,
         "library_title":          "#7ACAC9",
