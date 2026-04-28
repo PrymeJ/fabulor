@@ -1076,6 +1076,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.set_markers([])
         self._load_cover_art("")
         self.library_panel.set_playing_path("")
+        self.library_panel.set_is_playing(False)
         self.config.set_last_book("")
 
     def get_current_file(self):
@@ -1218,6 +1219,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_saved_pct = -1
         self.current_file = path
         self.library_panel.set_playing_path(path)
+        self.library_panel.set_is_playing(False)
         self.db.update_last_played(path)
         self.config.set_last_book(path)
         self.player.load_book(path)
@@ -1807,6 +1809,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
 
                 self.player.pause = False
+                self.library_panel.set_is_playing(True)
                 if self._session_start is None:
                     self._open_session()
                 else:
@@ -1816,6 +1819,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._last_pause_timestamp = time.time()
                 self._save_current_progress()
                 self.player.pause = True
+                self.library_panel.set_is_playing(False)
                 self._session_pause_timer.start()
                 if self.library_panel.isVisible():
                     self.library_panel.update_current_book_progress()

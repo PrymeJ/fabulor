@@ -859,6 +859,7 @@ class LibraryPanel(QFrame):
         self._list_view.verticalScrollBar().valueChanged.connect(self._load_visible_covers)
         self._list_view.viewport().setMouseTracking(True)
         self.main_layout.addWidget(self._list_view)
+        self._delegate.set_viewport(self._list_view.viewport())
 
         saved_mode = self.style_combo.currentData()
         self._apply_view_mode(saved_mode)
@@ -1210,7 +1211,11 @@ class LibraryPanel(QFrame):
                     break
 
     def set_playing_path(self, path: str) -> None:
-        self._delegate._playing_path = path or ""
+        self._delegate.set_playing_path(path)
+        self._list_view.viewport().update()
+
+    def set_is_playing(self, playing: bool) -> None:
+        self._delegate.set_is_playing(playing)
         self._list_view.viewport().update()
 
     # ── Hide ─────────────────────────────────────────────────────────────────
@@ -1469,6 +1474,11 @@ class BookDelegate(QStyledItemDelegate):
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
         self._hover_pos = QPoint()
         self._playing_path = ""
+        self._is_playing = False
+        self._pulse_phase = 0.0
+        self._pulse_timer = QTimer()
+        self._pulse_timer.setInterval(40)
+        self._pulse_timer.timeout.connect(self._advance_pulse)
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1502,6 +1512,32 @@ class BookDelegate(QStyledItemDelegate):
 
     def set_view_mode(self, mode: str) -> None:
         self._view_mode = mode
+        self._update_pulse_timer()
+
+    def set_playing_path(self, path: str) -> None:
+        self._playing_path = path or ""
+        self._update_pulse_timer()
+
+    def _update_pulse_timer(self) -> None:
+        should_run = self._view_mode == "List" and bool(self._playing_path) and self._is_playing
+        if should_run and not self._pulse_timer.isActive():
+            self._pulse_timer.start()
+        elif not should_run and self._pulse_timer.isActive():
+            self._pulse_timer.stop()
+            self._pulse_phase = 0.0
+
+    def set_is_playing(self, playing: bool) -> None:
+        self._is_playing = playing
+        self._update_pulse_timer()
+
+    def _advance_pulse(self) -> None:
+        self._pulse_phase = (self._pulse_phase + 0.01) % 1.0
+        vp = getattr(self, '_viewport', None)
+        if vp:
+            vp.update()
+
+    def set_viewport(self, vp) -> None:
+        self._viewport = vp
 
     def sizeHint(self, option, index):
         dim = ITEM_DIMENSIONS.get(self._view_mode, ITEM_DIMENSIONS["3 per row"])
@@ -1725,7 +1761,14 @@ class BookDelegate(QStyledItemDelegate):
             painter.fillRect(r, self._hover_bg_color)
 
         if book.path == self._playing_path:
-            painter.fillRect(QRect(r.x(), r.y(), ACTIVE_BOOK_STRIPE_WIDTH, r.height()), self._color_accent)
+            import math
+            if self._is_playing:
+                alpha = int(120 + 135 * (0.5 + 0.5 * math.sin(self._pulse_phase * 2 * math.pi)))
+            else:
+                alpha = 255
+            stripe_color = QColor(self._color_accent)
+            stripe_color.setAlpha(alpha)
+            painter.fillRect(QRect(r.x(), r.y(), ACTIVE_BOOK_STRIPE_WIDTH, r.height()), stripe_color)
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
