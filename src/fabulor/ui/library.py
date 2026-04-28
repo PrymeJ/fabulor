@@ -958,16 +958,23 @@ class LibraryPanel(QFrame):
     def _on_view_entered(self, index):
         book = index.data(ROLE_BOOK)
         self._book_model.set_hovered(book.path if book else None)
+        if book:
+            self._delegate.on_hover_enter(book.path)
 
     def _on_view_left(self):
         self._book_model.set_hovered(None)
+        self._delegate.on_hover_leave()
 
     def eventFilter(self, obj, event):
         if obj is self._list_view.viewport():
             if event.type() == QEvent.Type.MouseMove:
-                self._delegate._hover_pos = event.position().toPoint()
-                idx = self._list_view.indexAt(event.position().toPoint())
+                pos = event.position().toPoint()
+                self._delegate._hover_pos = pos
+                idx = self._list_view.indexAt(pos)
                 if idx.isValid():
+                    book = idx.data(ROLE_BOOK)
+                    if book:
+                        self._delegate.on_hover_move(book.path, pos)
                     self._list_view.update(idx)
             elif event.type() == QEvent.Type.Leave:
                 self._on_view_left()
@@ -1479,6 +1486,13 @@ class BookDelegate(QStyledItemDelegate):
         self._pulse_timer = QTimer()
         self._pulse_timer.setInterval(40)
         self._pulse_timer.timeout.connect(self._advance_pulse)
+        # Scroll state for 1-per-row and 2-per-row
+        self._scroll_offsets: dict  = {}   # (path, field) → float pixel offset (≤ 0)
+        self._scroll_hovered_path   = ""
+        self._scroll_field_rects: dict = {}  # path → {field: (x, y, w, h, full_text_w)}
+        self._scroll_timer = QTimer()
+        self._scroll_timer.setInterval(40)
+        self._scroll_timer.timeout.connect(self._advance_scroll)
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1538,6 +1552,102 @@ class BookDelegate(QStyledItemDelegate):
 
     def set_viewport(self, vp) -> None:
         self._viewport = vp
+
+    # ── Hover-scroll ────────────────────────────────────────────────────────
+
+    def on_hover_enter(self, path: str) -> None:
+        if self._view_mode not in ("1 per row", "2 per row"):
+            return
+        self._scroll_hovered_path = path
+        self._scroll_offsets = {k: v for k, v in self._scroll_offsets.items() if k[0] == path}
+        self._start_scroll_for_path(path)
+
+    def on_hover_leave(self) -> None:
+        if not self._scroll_hovered_path:
+            return
+        keys = [k for k in self._scroll_offsets if k[0] == self._scroll_hovered_path]
+        for k in keys:
+            del self._scroll_offsets[k]
+        self._scroll_hovered_path = ""
+        if not self._scroll_offsets:
+            self._scroll_timer.stop()
+        vp = getattr(self, '_viewport', None)
+        if vp:
+            vp.update()
+
+    def on_hover_move(self, path: str, viewport_pos) -> None:
+        if self._view_mode not in ("1 per row", "2 per row"):
+            return
+        rects = self._scroll_field_rects.get(path, {})
+        field_under = None
+        for field, (fx, fy, fw, fh, _) in rects.items():
+            if fx <= viewport_pos.x() < fx + fw and fy <= viewport_pos.y() < fy + fh:
+                field_under = field
+                break
+        self._start_scroll_for_path(path, field_override=field_under)
+
+    def _start_scroll_for_path(self, path: str, field_override: str = None) -> None:
+        rects = self._scroll_field_rects.get(path, {})
+        if not rects:
+            return
+
+        # Determine which field(s) are elided
+        elided = {f for f, (_, _, fw, _, ftw) in rects.items() if ftw > fw}
+
+        if not elided:
+            return
+
+        # If hovering a specific elided field, scroll it (plus primary on row)
+        if field_override and field_override in elided:
+            target = field_override
+        else:
+            # Row-level: title > author > narrator per spec
+            for candidate in ("title", "author", "narrator"):
+                if candidate in elided:
+                    target = candidate
+                    break
+            else:
+                return
+
+        # Only add the target if not already scrolling it
+        if (path, target) not in self._scroll_offsets:
+            self._scroll_offsets[(path, target)] = 0.0
+        # Remove any other fields for this path that aren't the current target
+        to_remove = [k for k in self._scroll_offsets if k[0] == path and k[1] != target]
+        for k in to_remove:
+            del self._scroll_offsets[k]
+
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start()
+
+    def _advance_scroll(self) -> None:
+        if not self._scroll_offsets:
+            self._scroll_timer.stop()
+            return
+        changed = False
+        done = []
+        for key, offset in list(self._scroll_offsets.items()):
+            path, field = key
+            rects = self._scroll_field_rects.get(path, {})
+            if field not in rects:
+                done.append(key)
+                continue
+            _, _, fw, _, ftw = rects[field]
+            max_scroll = ftw - fw
+            if max_scroll <= 0:
+                done.append(key)
+                continue
+            new_offset = offset - 1.5
+            if new_offset < -max_scroll:
+                new_offset = -max_scroll
+            self._scroll_offsets[key] = new_offset
+            changed = True
+        for k in done:
+            del self._scroll_offsets[k]
+        if changed:
+            vp = getattr(self, '_viewport', None)
+            if vp:
+                vp.update()
 
     def sizeHint(self, option, index):
         dim = ITEM_DIMENSIONS.get(self._view_mode, ITEM_DIMENSIONS["3 per row"])
@@ -1656,12 +1766,25 @@ class BookDelegate(QStyledItemDelegate):
             "narrator": self._color_narrator,
             "year":     self._color_author,
         }
+        field_rects = {}
+        row_text_y = text_y
         for field, value in fields:
             self._set_font(painter, mode=self._view_mode, field=field)
             fm = painter.fontMetrics()
+            full_w = fm.horizontalAdvance(value)
+            field_rects[field] = (text_x, row_text_y, text_w, line_h, full_w)
             painter.setPen(color_map[field])
-            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
-            text_y += line_h -2
+            offset = self._scroll_offsets.get((book.path, field), None)
+            clip_rect = QRect(text_x, row_text_y, text_w, line_h)
+            if offset is not None and full_w > text_w:
+                painter.save()
+                painter.setClipRect(clip_rect)
+                painter.drawText(text_x + int(offset), row_text_y + fm.ascent(), value)
+                painter.restore()
+            else:
+                painter.drawText(text_x, row_text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
+            row_text_y += line_h - 2
+        self._scroll_field_rects[book.path] = field_rects
 
         # Bottom block
         HPAD = 4
@@ -1722,18 +1845,38 @@ class BookDelegate(QStyledItemDelegate):
         text_w = cover_w - 14  # matching right margin from BookItem
         text_y = cover_y + cover_h + 2
 
+        field_rects = {}
         self._set_font(painter, mode=self._view_mode, field="title")
         fm = painter.fontMetrics()
-        title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
+        title_val = book.title or ""
+        title_full_w = fm.horizontalAdvance(title_val)
+        field_rects["title"] = (text_x, text_y, text_w, fm.height(), title_full_w)
         painter.setPen(self._color_title)
-        painter.drawText(text_x, text_y + fm.ascent(), title_text)
+        title_offset = self._scroll_offsets.get((book.path, "title"), None)
+        if title_offset is not None and title_full_w > text_w:
+            painter.save()
+            painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
+            painter.drawText(text_x + int(title_offset), text_y + fm.ascent(), title_val)
+            painter.restore()
+        else:
+            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(title_val, Qt.ElideRight, text_w))
         text_y += fm.height() + 2
 
         self._set_font(painter, mode=self._view_mode, field="author")
         fm = painter.fontMetrics()
-        author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
+        author_val = book.author or ""
+        author_full_w = fm.horizontalAdvance(author_val)
+        field_rects["author"] = (text_x, text_y, text_w, fm.height(), author_full_w)
         painter.setPen(self._color_author)
-        painter.drawText(text_x, text_y + fm.ascent(), author_text)
+        author_offset = self._scroll_offsets.get((book.path, "author"), None)
+        if author_offset is not None and author_full_w > text_w:
+            painter.save()
+            painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
+            painter.drawText(text_x + int(author_offset), text_y + fm.ascent(), author_val)
+            painter.restore()
+        else:
+            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(author_val, Qt.ElideRight, text_w))
+        self._scroll_field_rects[book.path] = field_rects
 
         # Hover overlay over cover rect
         if hovered:
