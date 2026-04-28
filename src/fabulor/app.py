@@ -183,6 +183,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Handle selection from library
         self.library_panel.book_selected.connect(self._on_book_selected_from_library)
+        self.library_panel.detail_requested.connect(self._on_library_detail_requested)
         
         self.library_controller._check_library_status()
         self.ui_timer.start(200)
@@ -1233,6 +1234,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self._post_seek_pending_position,
                 )
         self._post_seek_pending_position = None
+
+    def _on_library_detail_requested(self, path: str) -> None:
+        self.panel_manager.open_book_detail({"path": path}, tab="stats")
 
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
