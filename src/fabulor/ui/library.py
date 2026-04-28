@@ -1503,7 +1503,8 @@ class BookDelegate(QStyledItemDelegate):
             fm_pct  = painter.fontMetrics()
             pct_y   = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
             painter.setPen(self._color_pct)
-            painter.drawText(bar_rect.right() + HPAD, pct_y, pct_str)
+            pct_w = fm_pct.horizontalAdvance(pct_str)
+            painter.drawText(r.right() - HPAD - pct_w, pct_y, pct_str)
         else:
             # No progress — total time at bar row, right-aligned
             dur_str  = self._fmt(dur)
