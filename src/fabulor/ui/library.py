@@ -1473,12 +1473,17 @@ class BookDelegate(QStyledItemDelegate):
             text_y += line_h -2
 
         # Bottom block
-        baseline = time_y + fm_time.ascent()
+        HPAD = 4
+        VPAD = 8
+        bar_y  = r.bottom() - VPAD - BAR_H
+        time_y = max(r.y() + PAD, bar_y - VPAD - fm_time.height())
+        baseline     = time_y + fm_time.ascent() # vertical center against bar
 
         if has_progress:
             elapsed_str = self._fmt(pos)
             right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
 
+            # Time row
             painter.setPen(self._color_elapsed)
             painter.drawText(text_x, baseline, elapsed_str)
 
@@ -1486,24 +1491,28 @@ class BookDelegate(QStyledItemDelegate):
             fm_total = painter.fontMetrics()
             right_w  = fm_total.horizontalAdvance(right_str)
             painter.setPen(self._color_total)
-            painter.drawText(r.right() - PAD - right_w, baseline, right_str)
+            painter.drawText(r.right() - HPAD - right_w, baseline, right_str)
 
+            # Bar row
             bar_rect = QRect(text_x, bar_y, 147, BAR_H)
             self._draw_progress_bar(painter, bar_rect, pct)
 
+            # Percentage — same row as bar, right of bar
             pct_str = f"{int(pct * 100)}%"
             self._set_font(painter, mode=self._view_mode, field="percentage")
+            fm_pct  = painter.fontMetrics()
+            pct_y   = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
             painter.setPen(self._color_pct)
-            painter.drawText(bar_rect.right() + PAD, baseline, pct_str)
+            painter.drawText(bar_rect.right() + HPAD, pct_y, pct_str)
         else:
+            # No progress — total time at bar row, right-aligned
             dur_str  = self._fmt(dur)
             self._set_font(painter, mode=self._view_mode, field="total")
             fm_total = painter.fontMetrics()
             dur_w    = fm_total.horizontalAdvance(dur_str)
-            painter.setPen(self._color_total)
-            # Align to bar_y row, right-aligned, vertically centered against BAR_H
             no_prog_y = bar_y + (BAR_H - fm_total.height()) // 2 + fm_total.ascent()
-            painter.drawText(r.right() - PAD - dur_w, no_prog_y, dur_str)
+            painter.setPen(self._color_total)
+            painter.drawText(r.right() - HPAD - dur_w, no_prog_y, dur_str)
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
