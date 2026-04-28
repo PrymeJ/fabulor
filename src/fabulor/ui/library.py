@@ -1736,7 +1736,18 @@ class BookDelegate(QStyledItemDelegate):
         cover_w, cover_h = 100, 151
         cover_rect = QRect(r.x() + 4, r.y() + 4, cover_w, cover_h)
         row_bg = self._row_one if index.row() % 2 == 0 else self._row_two
-        self._draw_cover(painter, cover_rect, cover, book, square=False, bg=row_bg)
+        if hovered:
+            ha = self._hover_bg_color.alphaF()
+            def _blend(base, over, a):
+                return int(base * (1 - a) + over * a)
+            cover_bg = QColor(
+                _blend(row_bg.red(),   self._hover_bg_color.red(),   ha),
+                _blend(row_bg.green(), self._hover_bg_color.green(), ha),
+                _blend(row_bg.blue(),  self._hover_bg_color.blue(),  ha),
+            )
+        else:
+            cover_bg = row_bg
+        self._draw_cover(painter, cover_rect, cover, book, square=False, bg=cover_bg)
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
