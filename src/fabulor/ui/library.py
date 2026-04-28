@@ -1565,7 +1565,7 @@ class BookDelegate(QStyledItemDelegate):
         square = (self._view_mode == "Square")
 
         # Cover fills cell with 2px margin
-        cover_rect = QRect(r.x() + 2, r.y() + 2, r.width() - 3, r.height() - 4)
+        cover_rect = QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
         self._draw_cover(painter, cover_rect, cover, book, square=square)
 
         if hovered:
@@ -1698,55 +1698,77 @@ class BookDelegate(QStyledItemDelegate):
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
-        # Overlay height: 30% of cover if has_progress, else 20%
-        pct_h = 0.30 if has_progress else 0.20
-        oh = int(cover_rect.height() * pct_h)
+        overlay_mode = "2 per row" if large else "3 per row"
+
+        # Measure content height to size overlay precisely
+        BAR_H = 6
+        HPAD  = 3
+        VPAD  = 5
+
+        self._set_font(painter, mode=overlay_mode, field="elapsed")
+        fm_time = painter.fontMetrics()
+
+        if has_progress:
+            # time row + 2px gap + bar row, plus VPAD top and bottom
+            oh = VPAD + fm_time.height() + 4 + BAR_H + VPAD
+        else:
+            # just bar-row height centred on total text, plus VPAD top and bottom
+            self._set_font(painter, mode=overlay_mode, field="total")
+            fm_total = painter.fontMetrics()
+            oh = VPAD + max(BAR_H, fm_total.height()) + VPAD
+
+        oh = max(oh, int(cover_rect.height() * 0.18))  # never shrink below ~18%
         overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
 
         # Semi-transparent gradient background
         grad = QLinearGradient(overlay_rect.topLeft(), overlay_rect.bottomLeft())
-        grad.setColorAt(0.0, QColor(0, 0, 0, 100))
-        grad.setColorAt(1.0, QColor(0, 0, 0, 230))
+        grad.setColorAt(0.0, QColor(0, 0, 0, 160))
+        grad.setColorAt(1.0, QColor(0, 0, 0, 240))
         painter.fillRect(overlay_rect, QBrush(grad))
 
-        overlay_mode = "2 per row" if large else "3 per row"
-        painter.setPen(QColor(255, 255, 255))
-
-        pad = 4
-        inner = overlay_rect.adjusted(pad, pad, -pad, -pad)
-        y = inner.y()
+        inner = overlay_rect.adjusted(HPAD, VPAD, -HPAD, -VPAD)
 
         if has_progress:
-            # Time row: elapsed left, remaining/total right
-            elapsed_str = self._fmt(pos / speed)
-            right_str = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(dur_disp)
-            self._set_font(painter, mode=overlay_mode, field="elapsed")
-            fm = painter.fontMetrics()
-            painter.drawText(inner.x(), y + fm.ascent(), elapsed_str)
-            self._set_font(painter, mode=overlay_mode, field="total")
-            fm = painter.fontMetrics()
-            right_w = fm.horizontalAdvance(right_str)
-            painter.drawText(inner.right() - right_w, y + fm.ascent(), right_str)
-            y += fm.height() + 2
+            # Rows bottom-up: bar at inner.bottom(), time row above it
+            bar_y  = inner.bottom() - BAR_H
+            time_y = bar_y - 4 - fm_time.height()
+            time_y = max(inner.y(), time_y)
 
-            # Progress bar + percentage
+            # Time row
+            elapsed_str = self._fmt(pos / speed)
+            right_str   = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(dur_disp)
+
+            self._set_font(painter, mode=overlay_mode, field="elapsed")
+            fm_time = painter.fontMetrics()
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(inner.x(), time_y + fm_time.ascent(), elapsed_str)
+
+            self._set_font(painter, mode=overlay_mode, field="total")
+            fm_total = painter.fontMetrics()
+            right_w  = fm_total.horizontalAdvance(right_str)
+            painter.drawText(inner.right() - right_w, time_y + fm_total.ascent(), right_str)
+
+            # Bar + percentage on same row, percentage right-aligned
             pct_str = f"{int(pct * 100)}%"
             self._set_font(painter, mode=overlay_mode, field="percentage")
-            fm = painter.fontMetrics()
-            pct_w = fm.horizontalAdvance(pct_str) + 4
-            BAR_H  = 6
-            bar_rect = QRect(inner.x(), y, inner.width() - pct_w, BAR_H)
+            fm_pct = painter.fontMetrics()
+            pct_w  = fm_pct.horizontalAdvance(pct_str)
+            bar_w  = max(10, inner.width() - pct_w - 4)
+            bar_rect = QRect(inner.x(), bar_y, bar_w, BAR_H)
             self._draw_progress_bar(painter, bar_rect, pct)
-            # Vertically center percentage against bar height
-            pct_y = y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
-            painter.drawText(bar_rect.right() + 4, pct_y, pct_str)
+
+            pct_y = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(inner.right() - pct_w, pct_y, pct_str)
+
         else:
-            # No progress: just show total duration right-aligned
+            # No progress — total duration vertically centred in inner, right-aligned
             self._set_font(painter, mode=overlay_mode, field="total")
-            fm = painter.fontMetrics()
-            dur_str = self._fmt(dur_disp)
-            dur_w   = fm.horizontalAdvance(dur_str)
-            no_prog_y = y + (6 - fm.height()) // 2 + fm.ascent()
+            fm_total = painter.fontMetrics()
+            dur_str   = self._fmt(dur_disp)
+            dur_w     = fm_total.horizontalAdvance(dur_str)
+            no_prog_y = inner.y() + (inner.height() - fm_total.height()) // 2 + fm_total.ascent() + 2
+            painter.setPen(QColor(255, 255, 255))
             painter.drawText(inner.right() - dur_w, no_prog_y, dur_str)
 
     def _draw_progress_bar(self, painter, rect: QRect, pct: float):
@@ -1769,13 +1791,13 @@ class BookDelegate(QStyledItemDelegate):
             y = r.bottom() - 4 - 6 - 4 - fm_h
             return QRect(r.right() - 70, r.y() + y - r.y(), 66, fm_h)
         elif self._view_mode in ("2 per row", "3 per row", "Square"):
-            # The overlay's right-side time label occupies the right half of the overlay
+            # Approximate overlay height: VPAD(5) + time_row(~16) + 2 + bar(6) + VPAD(5) = ~34px
             r = option.rect
             cover_rect = self._cover_rect(r)
-            oh = int(cover_rect.height() * 0.30)
+            oh = 34
             overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
-            # Safe zone: The top line of the overlay area where both time labels sit
-            return QRect(overlay_rect.x(), overlay_rect.y(), overlay_rect.width(), 20)
+            # Hit zone: the time row at the top of inner (VPAD=5 inset)
+            return QRect(overlay_rect.x(), overlay_rect.y() + 5, overlay_rect.width(), 20)
         elif self._view_mode == "List":
             r      = option.rect
             fm     = option.fontMetrics
@@ -1789,7 +1811,7 @@ class BookDelegate(QStyledItemDelegate):
         elif self._view_mode == "2 per row":
             return QRect(r.x() + 13, r.y() + 8, 113, 172)
         else:
-            return QRect(r.x() + 2, r.y() + 2, r.width() - 3, r.height() - 4)
+            return QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
 
     @staticmethod
     def _fmt(seconds: float) -> str:
