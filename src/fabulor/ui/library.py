@@ -1755,7 +1755,7 @@ class BookDelegate(QStyledItemDelegate):
         if self._view_mode == "1 per row":
             r = option.rect
             # Right side of the time row, matching _paint_one_per_row layout
-            fm_h = 14  # approximate
+            fm_h = 20  # approximate
             y = r.bottom() - 4 - 6 - 4 - fm_h
             return QRect(r.right() - 70, r.y() + y - r.y(), 66, fm_h)
         elif self._view_mode in ("2 per row", "3 per row", "Square"):
