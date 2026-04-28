@@ -1508,6 +1508,7 @@ class BookDelegate(QStyledItemDelegate):
         self._scroll_timer.timeout.connect(self._advance_scroll)
         # Hover fade state — List mode only, user-toggleable
         self._hover_fade_mode = "Off"   # "Slow", "Normal", "Fast", "Off"
+        self._list_hovered_path = ""
         self._hover_fade: dict = {}     # path → current alpha (0–255)
         self._hover_fade_timer = QTimer()
         self._hover_fade_timer.setInterval(16)  # ~60fps
@@ -1577,12 +1578,14 @@ class BookDelegate(QStyledItemDelegate):
     def set_hover_fade_enabled(self, mode: str) -> None:
         self._hover_fade_mode = mode
         if mode == "Off":
+            self._list_hovered_path = ""
             self._hover_fade.clear()
             self._hover_fade_timer.stop()
 
     def on_list_hover_enter(self, path: str) -> None:
         if self._hover_fade_mode == "Off":
             return
+        self._list_hovered_path = path
         self._hover_fade[path] = self._hover_fade.get(path, 0)
         if not self._hover_fade_timer.isActive():
             self._hover_fade_timer.start()
@@ -1590,20 +1593,21 @@ class BookDelegate(QStyledItemDelegate):
     def on_list_hover_leave(self, path: str) -> None:
         if self._hover_fade_mode == "Off":
             return
-        # Keep the entry — timer will fade it out
+        if self._list_hovered_path == path:
+            self._list_hovered_path = ""
         if path not in self._hover_fade:
             self._hover_fade[path] = self._hover_bg_color.alpha()
         if not self._hover_fade_timer.isActive():
             self._hover_fade_timer.start()
 
-    _HOVER_FADE_STEP_OUT = {"Slow": 2, "Normal": 5, "Fast": 7}
+    _HOVER_FADE_STEP_OUT = {"Slow": 3, "Normal": 5, "Fast": 7}
 
     def _advance_hover_fade(self) -> None:
         target_alpha = self._hover_bg_color.alpha()
         step_in  = 25
         step_out = self._HOVER_FADE_STEP_OUT.get(self._hover_fade_mode, 10)
         changed = False
-        hovered_path = self._scroll_hovered_path  # reuse existing hovered path tracking
+        hovered_path = self._list_hovered_path
         for path in list(self._hover_fade):
             current = self._hover_fade[path]
             if path == hovered_path:
