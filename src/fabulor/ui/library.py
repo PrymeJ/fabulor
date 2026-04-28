@@ -1734,16 +1734,20 @@ class BookDelegate(QStyledItemDelegate):
             self._set_font(painter, mode=overlay_mode, field="percentage")
             fm = painter.fontMetrics()
             pct_w = fm.horizontalAdvance(pct_str) + 4
-            bar_rect = QRect(inner.x(), y, inner.width() - pct_w, 6)
+            BAR_H  = 6
+            bar_rect = QRect(inner.x(), y, inner.width() - pct_w, BAR_H)
             self._draw_progress_bar(painter, bar_rect, pct)
-            painter.drawText(bar_rect.right() + 4, y + fm.ascent(), pct_str)
+            # Vertically center percentage against bar height
+            pct_y = y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
+            painter.drawText(bar_rect.right() + 4, pct_y, pct_str)
         else:
             # No progress: just show total duration right-aligned
             self._set_font(painter, mode=overlay_mode, field="total")
             fm = painter.fontMetrics()
             dur_str = self._fmt(dur_disp)
-            dur_w = fm.horizontalAdvance(dur_str)
-            painter.drawText(inner.right() - dur_w, y + fm.ascent(), dur_str)
+            dur_w   = fm.horizontalAdvance(dur_str)
+            no_prog_y = y + (6 - fm.height()) // 2 + fm.ascent()
+            painter.drawText(inner.right() - dur_w, no_prog_y, dur_str)
 
     def _draw_progress_bar(self, painter, rect: QRect, pct: float):
         # Background track
