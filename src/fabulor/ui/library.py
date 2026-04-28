@@ -1818,15 +1818,30 @@ class BookDelegate(QStyledItemDelegate):
                 )
                 painter.drawPixmap(rect, cover, src_rect)
             else:
-                # KeepAspectRatio — centre in rect
                 pw, ph = cover.width(), cover.height()
                 if pw > 0 and ph > 0:
-                    scale = min(rect.width() / pw, rect.height() / ph)
-                    dw = int(pw * scale)
-                    dh = int(ph * scale)
-                    dx = rect.x() + (rect.width() - dw) // 2
-                    dy = rect.y() + (rect.height() - dh) // 2
-                    painter.drawPixmap(QRect(dx, dy, dw, dh), cover, cover.rect())
+                    cell_ratio  = rect.width()  / rect.height()  if rect.height()  > 0 else 1.0
+                    cover_ratio = pw / ph
+                    if cell_ratio > 0 and abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
+                        # Close enough — crop to fill (KeepAspectRatioByExpanding)
+                        scale = max(rect.width() / pw, rect.height() / ph)
+                        sw = int(pw * scale)
+                        sh = int(ph * scale)
+                        sx = (sw - rect.width())  // 2
+                        sy = (sh - rect.height()) // 2
+                        src_rect = QRect(
+                            int(sx / scale), int(sy / scale),
+                            int(rect.width()  / scale), int(rect.height() / scale)
+                        )
+                        painter.drawPixmap(rect, cover, src_rect)
+                    else:
+                        # Letterbox — KeepAspectRatio, centred
+                        scale = min(rect.width() / pw, rect.height() / ph)
+                        dw = int(pw * scale)
+                        dh = int(ph * scale)
+                        dx = rect.x() + (rect.width()  - dw) // 2
+                        dy = rect.y() + (rect.height() - dh) // 2
+                        painter.drawPixmap(QRect(dx, dy, dw, dh), cover, cover.rect())
         else:
             # Placeholder: first letter of title
             painter.setPen(QColor(180, 180, 180))
