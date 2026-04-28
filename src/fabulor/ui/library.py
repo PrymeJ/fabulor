@@ -1089,8 +1089,6 @@ class LibraryPanel(QFrame):
     def _load_visible_covers(self):
         if not self.isVisible():
             return
-        if self.style_combo.currentData() == "List":
-            return
         # Guard: layout not done yet if item 0 has no visual rect
         first_idx = self._book_model.index(0, 0)
         if not first_idx.isValid() or self._list_view.visualRect(first_idx).isEmpty():
