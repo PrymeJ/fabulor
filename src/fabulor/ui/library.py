@@ -1717,12 +1717,12 @@ class BookDelegate(QStyledItemDelegate):
             fm_total = painter.fontMetrics()
             oh = VPAD + max(BAR_H, fm_total.height()) + VPAD
 
-        oh = max(oh, int(cover_rect.height() * 0.18))  # never shrink below ~18%
+        oh = max(oh, int(cover_rect.height() * 0.10))  # never shrink below ~10%
         overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
 
         # Semi-transparent gradient background
         grad = QLinearGradient(overlay_rect.topLeft(), overlay_rect.bottomLeft())
-        grad.setColorAt(0.0, QColor(0, 0, 0, 160))
+        grad.setColorAt(0.0, QColor(0, 0, 0, 180))
         grad.setColorAt(1.0, QColor(0, 0, 0, 240))
         painter.fillRect(overlay_rect, QBrush(grad))
 
