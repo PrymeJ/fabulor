@@ -1487,7 +1487,8 @@ class BookDelegate(QStyledItemDelegate):
         self._pulse_timer.setInterval(40)
         self._pulse_timer.timeout.connect(self._advance_pulse)
         # Scroll state for 1-per-row and 2-per-row
-        self._scroll_offsets: dict  = {}   # (path, field) → float pixel offset (≤ 0)
+        # (path, field) → [offset, direction, pause_ticks]  direction: -1=left, 1=right
+        self._scroll_state: dict    = {}
         self._scroll_hovered_path   = ""
         self._scroll_field_rects: dict = {}  # path → {field: (x, y, w, h, full_text_w)}
         self._scroll_timer = QTimer()
@@ -1555,21 +1556,26 @@ class BookDelegate(QStyledItemDelegate):
 
     # ── Hover-scroll ────────────────────────────────────────────────────────
 
+    _SCROLL_PX       = 0.8   # pixels per tick
+    _SCROLL_PAUSE    = 50    # ticks to pause at each end (~1.2s at 40ms)
+    _SCROLL_PAUSE_START = 10 # longer initial pause before first scroll
+
     def on_hover_enter(self, path: str) -> None:
         if self._view_mode not in ("1 per row", "2 per row"):
             return
         self._scroll_hovered_path = path
-        self._scroll_offsets = {k: v for k, v in self._scroll_offsets.items() if k[0] == path}
+        # Clear state for any other path
+        self._scroll_state = {k: v for k, v in self._scroll_state.items() if k[0] == path}
         self._start_scroll_for_path(path)
 
     def on_hover_leave(self) -> None:
         if not self._scroll_hovered_path:
             return
-        keys = [k for k in self._scroll_offsets if k[0] == self._scroll_hovered_path]
+        keys = [k for k in self._scroll_state if k[0] == self._scroll_hovered_path]
         for k in keys:
-            del self._scroll_offsets[k]
+            del self._scroll_state[k]
         self._scroll_hovered_path = ""
-        if not self._scroll_offsets:
+        if not self._scroll_state:
             self._scroll_timer.stop()
         vp = getattr(self, '_viewport', None)
         if vp:
@@ -1590,60 +1596,59 @@ class BookDelegate(QStyledItemDelegate):
         rects = self._scroll_field_rects.get(path, {})
         if not rects:
             return
-
-        # Determine which field(s) are elided
         elided = {f for f, (_, _, fw, _, ftw) in rects.items() if ftw > fw}
-
         if not elided:
             return
-
-        # If hovering a specific elided field, scroll it (plus primary on row)
         if field_override and field_override in elided:
             target = field_override
         else:
-            # Row-level: title > author > narrator per spec
             for candidate in ("title", "author", "narrator"):
                 if candidate in elided:
                     target = candidate
                     break
             else:
                 return
-
-        # Only add the target if not already scrolling it
-        if (path, target) not in self._scroll_offsets:
-            self._scroll_offsets[(path, target)] = 0.0
-        # Remove any other fields for this path that aren't the current target
-        to_remove = [k for k in self._scroll_offsets if k[0] == path and k[1] != target]
+        # Switch target: remove other fields for this path, keep existing state for target
+        to_remove = [k for k in self._scroll_state if k[0] == path and k[1] != target]
         for k in to_remove:
-            del self._scroll_offsets[k]
-
+            del self._scroll_state[k]
+        if (path, target) not in self._scroll_state:
+            # [offset, direction, pause_ticks]
+            self._scroll_state[(path, target)] = [0.0, -1, self._SCROLL_PAUSE_START]
         if not self._scroll_timer.isActive():
             self._scroll_timer.start()
 
     def _advance_scroll(self) -> None:
-        if not self._scroll_offsets:
+        if not self._scroll_state:
             self._scroll_timer.stop()
             return
         changed = False
-        done = []
-        for key, offset in list(self._scroll_offsets.items()):
+        for key, state in list(self._scroll_state.items()):
             path, field = key
             rects = self._scroll_field_rects.get(path, {})
             if field not in rects:
-                done.append(key)
+                del self._scroll_state[key]
                 continue
             _, _, fw, _, ftw = rects[field]
             max_scroll = ftw - fw
             if max_scroll <= 0:
-                done.append(key)
+                del self._scroll_state[key]
                 continue
-            new_offset = offset - 1.5
-            if new_offset < -max_scroll:
-                new_offset = -max_scroll
-            self._scroll_offsets[key] = new_offset
+            offset, direction, pause = state
+            if pause > 0:
+                state[2] -= 1
+                continue
+            offset += direction * self._SCROLL_PX
+            if offset <= -max_scroll:
+                offset = -max_scroll
+                state[1] = 1
+                state[2] = self._SCROLL_PAUSE
+            elif offset >= 0:
+                offset = 0.0
+                state[1] = -1
+                state[2] = self._SCROLL_PAUSE
+            state[0] = offset
             changed = True
-        for k in done:
-            del self._scroll_offsets[k]
         if changed:
             vp = getattr(self, '_viewport', None)
             if vp:
@@ -1774,7 +1779,7 @@ class BookDelegate(QStyledItemDelegate):
             full_w = fm.horizontalAdvance(value)
             field_rects[field] = (text_x, row_text_y, text_w, line_h, full_w)
             painter.setPen(color_map[field])
-            offset = self._scroll_offsets.get((book.path, field), None)
+            offset = self._scroll_state.get((book.path, field), [None])[0] if (book.path, field) in self._scroll_state else None
             clip_rect = QRect(text_x, row_text_y, text_w, line_h)
             if offset is not None and full_w > text_w:
                 painter.save()
@@ -1852,7 +1857,7 @@ class BookDelegate(QStyledItemDelegate):
         title_full_w = fm.horizontalAdvance(title_val)
         field_rects["title"] = (text_x, text_y, text_w, fm.height(), title_full_w)
         painter.setPen(self._color_title)
-        title_offset = self._scroll_offsets.get((book.path, "title"), None)
+        title_offset = self._scroll_state.get((book.path, "title"), [None])[0] if (book.path, "title") in self._scroll_state else None
         if title_offset is not None and title_full_w > text_w:
             painter.save()
             painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
@@ -1868,7 +1873,7 @@ class BookDelegate(QStyledItemDelegate):
         author_full_w = fm.horizontalAdvance(author_val)
         field_rects["author"] = (text_x, text_y, text_w, fm.height(), author_full_w)
         painter.setPen(self._color_author)
-        author_offset = self._scroll_offsets.get((book.path, "author"), None)
+        author_offset = self._scroll_state.get((book.path, "author"), [None])[0] if (book.path, "author") in self._scroll_state else None
         if author_offset is not None and author_full_w > text_w:
             painter.save()
             painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
