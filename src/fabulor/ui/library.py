@@ -1268,6 +1268,11 @@ class BookModel(QAbstractListModel):
 
         from datetime import datetime as dt
         def sort_key(b):
+            if field == "progress":
+                pos = b.progress or 0.0
+                dur = b.duration or 0.0
+                return pos / dur if dur > 0 else 0.0
+
             val = getattr(b, field, None)
             if val is None:
                 if field == "last_played": return dt.min
@@ -1423,85 +1428,81 @@ class BookDelegate(QStyledItemDelegate):
         cover_rect = QRect(r.x() + 4, r.y() + 4, cover_w, cover_h)
         self._draw_cover(painter, cover_rect, cover, book, square=False)
 
-        # Text area starts right of cover
-        text_x = r.x() + 4 + cover_w + 8
-        text_w = r.right() - text_x - 4
-        text_y = r.y() + 4
-
         has_progress = (book.progress or 0.0) > MIN_PROGRESS
         pos  = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur  = live_dur if live_dur > 0 else (book.duration or 0.0)
         pct  = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
 
-        # Title
-        self._set_font(painter, mode=self._view_mode, field="title")
-        fm = painter.fontMetrics()
-        title_text = fm.elidedText(book.title or "", Qt.ElideRight, text_w)
-        painter.setPen(self._color_title)
-        painter.drawText(text_x, text_y + fm.ascent(), title_text)
-        text_y += fm.height() + 2
+        text_x = r.x() + 4 + cover_w + 8
+        text_w = r.right() - text_x - 4
 
-        # Author
-        self._set_font(painter, mode=self._view_mode, field="author")
-        fm = painter.fontMetrics()
-        author_text = fm.elidedText(book.author or "", Qt.ElideRight, text_w)
-        painter.setPen(self._color_author)
-        painter.drawText(text_x, text_y + fm.ascent(), author_text)
-        text_y += fm.height() + 2
-
-        # Narrator
-        if book.narrator:
-            self._set_font(painter, mode=self._view_mode, field="narrator")
-            fm = painter.fontMetrics()
-            narrator_text = fm.elidedText(book.narrator, Qt.ElideRight, text_w)
-            painter.setPen(self._color_narrator)
-            painter.drawText(text_x, text_y + fm.ascent(), narrator_text)
-            text_y += fm.height() + 2
-
-        # Year
-        if book.year:
-            self._set_font(painter, mode=self._view_mode, field="year")
-            fm = painter.fontMetrics()
-            painter.setPen(self._color_author)
-            painter.drawText(text_x, text_y + fm.ascent(), str(book.year))
-            text_y += fm.height() + 2
-
-        # Times
+        # Zone 1 — bottom block, anchored to r.bottom()
+        BAR_H  = 6
+        PAD    = 4
         self._set_font(painter, mode=self._view_mode, field="elapsed")
-        fm = painter.fontMetrics()
-        time_y = r.bottom() - 4 - 6 - 4 - fm.height()  # bar below, then time row above
+        fm_time = painter.fontMetrics()
+        bar_y  = r.bottom() - PAD - BAR_H
+        time_y = bar_y - PAD - fm_time.height()
+
+        # Zone 2 — text block fills space above bottom block
+        text_y      = r.y() + PAD
+        text_bottom = time_y - PAD
+
+        fields = [("title", book.title or "")]
+        if book.author:
+            fields.append(("author", book.author))
+        if book.narrator:
+            fields.append(("narrator", book.narrator))
+        if book.year:
+            fields.append(("year", str(book.year)))
+
+        available_h = text_bottom - text_y
+        line_h      = available_h // len(fields) if fields else available_h
+
+        color_map = {
+            "title":    self._color_title,
+            "author":   self._color_author,
+            "narrator": self._color_narrator,
+            "year":     self._color_author,
+        }
+        for field, value in fields:
+            self._set_font(painter, mode=self._view_mode, field=field)
+            fm = painter.fontMetrics()
+            painter.setPen(color_map[field])
+            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
+            text_y += line_h -2
+
+        # Bottom block
         if has_progress:
             elapsed_str = self._fmt(pos)
-            if show_rem:
-                right_str = f"-{self._fmt(dur - pos)}"
-            else:
-                right_str = self._fmt(dur)
-            painter.setPen(self._color_elapsed)
-            painter.drawText(text_x, time_y + fm.ascent(), elapsed_str)
-            self._set_font(painter, mode=self._view_mode, field="total")
-            fm = painter.fontMetrics()
-            painter.setPen(self._color_total)
-            right_w = fm.horizontalAdvance(right_str)
-            painter.drawText(r.right() - 4 - right_w, time_y + fm.ascent(), right_str)
+            right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
 
-            # Progress bar (132px wide, 6px tall)
-            bar_y = r.bottom() - 4 - 6
-            bar_rect = QRect(text_x, bar_y, 132, 6)
+            painter.setPen(self._color_elapsed)
+            painter.drawText(text_x, time_y - 8 + fm_time.ascent(), elapsed_str)
+
+            self._set_font(painter, mode=self._view_mode, field="total")
+            fm_total = painter.fontMetrics()
+            right_w  = fm_total.horizontalAdvance(right_str)
+            painter.setPen(self._color_total)
+            painter.drawText(r.right() - PAD - right_w, time_y - 8 + fm_total.ascent(), right_str)
+
+            bar_rect = QRect(text_x, bar_y -3, 147, BAR_H)
             self._draw_progress_bar(painter, bar_rect, pct)
 
-            # Percentage label
             pct_str = f"{int(pct * 100)}%"
             self._set_font(painter, mode=self._view_mode, field="percentage")
-            fm = painter.fontMetrics()
+            fm_pct = painter.fontMetrics()
             painter.setPen(self._color_pct)
-            painter.drawText(bar_rect.right() + 8, bar_y + fm.ascent(), pct_str)
+            pct_baseline = time_y + fm_time.ascent() + 16 - (fm_pct.height() - BAR_H) // 2
+            painter.drawText(bar_rect.right() + 8, pct_baseline, pct_str)
         else:
-            # No progress: show total duration only
             dur_str = self._fmt(dur)
             self._set_font(painter, mode=self._view_mode, field="total")
-            fm = painter.fontMetrics()
+            fm_total = painter.fontMetrics()
+            dur_w    = fm_total.horizontalAdvance(dur_str)
             painter.setPen(self._color_total)
-            painter.drawText(text_x, time_y + fm.ascent(), dur_str)
+            dur_baseline = time_y + fm_total.ascent() + 16 - (fm_total.height() - BAR_H) // 2
+            painter.drawText(r.right() - PAD - dur_w, dur_baseline, dur_str)
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect

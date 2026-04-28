@@ -1488,8 +1488,14 @@ def get_library_stylesheet(theme_name="default"):
         QComboBox QAbstractItemView::item {{
             min-height: 22px;
         }}
-        QListView {{  
-            border: none; outline: 0; 
+        QListView {{
+            border: none;
+            outline: 0;
+        }}
+        QListView::item {{
+            border: none;
+            padding: 0px;
+            margin: 0px;
         }}
         QLineEdit {{
             background-color: {input_bg};
