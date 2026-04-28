@@ -38,6 +38,9 @@ SORT_KEY_MAP = {
 
 MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
 
+PRELOAD_INTERVAL_MS = 50   # ms between preload timer ticks
+PRELOAD_BATCH_SIZE  = 3    # covers dispatched per tick
+
 _cover_cache: dict = {}  # module-level singleton {path: QPixmap}, shared by BookModel and idle preloader
 
 FONT_SIZES = {
@@ -1239,8 +1242,8 @@ class LibraryPanel(QFrame):
         if not getattr(self, '_preload_timer', None):
             self._preload_timer = QTimer(self)
             self._preload_timer.setSingleShot(False)
-            self._preload_timer.setInterval(80)
             self._preload_timer.timeout.connect(self._preload_tick)
+        self._preload_timer.setInterval(PRELOAD_INTERVAL_MS)
         self._preload_timer.start()
         print(f"Idle preload: {len(self._preload_queue)} covers to load")
 
@@ -1249,14 +1252,17 @@ class LibraryPanel(QFrame):
             self._preload_timer.stop()
             print("Idle preload: complete")
             return
-        book = self._preload_queue.pop(0)
-        if book.path in _cover_cache:
-            return
         from .cover_loader import CoverLoaderWorker
-        worker = CoverLoaderWorker(book, self.player_instance)
-        worker._book_path = book.path
-        worker.signals.cover_loaded.connect(self._on_preload_cover_loaded)
-        QThreadPool.globalInstance().start(worker)
+        for _ in range(PRELOAD_BATCH_SIZE):
+            if not self._preload_queue:
+                break
+            book = self._preload_queue.pop(0)
+            if book.path in _cover_cache:
+                continue
+            worker = CoverLoaderWorker(book, self.player_instance)
+            worker._book_path = book.path
+            worker.signals.cover_loaded.connect(self._on_preload_cover_loaded)
+            QThreadPool.globalInstance().start(worker)
 
     def _on_preload_cover_loaded(self, path, pixmap):
         if pixmap.isNull():
