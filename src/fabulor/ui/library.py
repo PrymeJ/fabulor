@@ -1016,6 +1016,8 @@ class LibraryPanel(QFrame):
     def refresh(self, force=False):
         self._resolve_theme_colors()
         books = self.db.get_all_books(sort_by="title", order="ASC")
+        for book in books:
+            book.speed = self.config.get_book_speed(book.path) or 1.0
 
         self._book_model.set_books(books)
         self._apply_current_sort_filter()
@@ -1414,6 +1416,18 @@ class BookDelegate(QStyledItemDelegate):
             return True
         return False
 
+    # ── Playback resolution ──────────────────────────────────────────────────
+
+    def _resolve_playback(self, book, live_pos: float, live_dur: float) -> tuple:
+        """Returns (pos, dur, dur_disp, pct, has_progress, speed)"""
+        has_progress = (book.progress or 0.0) > MIN_PROGRESS
+        pos = live_pos if live_pos > 0 else (book.progress or 0.0)
+        dur = live_dur if live_dur > 0 else (book.duration or 0.0)
+        speed = book.speed or 1.0
+        dur_disp = dur / speed
+        pct = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
+        return pos, dur, dur_disp, pct, has_progress, speed
+
     # ── Mode painters ───────────────────────────────────────────────────────
 
     def _paint_one_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
@@ -1428,10 +1442,7 @@ class BookDelegate(QStyledItemDelegate):
         cover_rect = QRect(r.x() + 4, r.y() + 4, cover_w, cover_h)
         self._draw_cover(painter, cover_rect, cover, book, square=False)
 
-        has_progress = (book.progress or 0.0) > MIN_PROGRESS
-        pos  = live_pos if live_pos > 0 else (book.progress or 0.0)
-        dur  = live_dur if live_dur > 0 else (book.duration or 0.0)
-        pct  = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
+        pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
         text_x = r.x() + 4 + cover_w + 8
         text_w = r.right() - text_x - 4
@@ -1480,8 +1491,8 @@ class BookDelegate(QStyledItemDelegate):
         baseline     = time_y + fm_time.ascent() # vertical center against bar
 
         if has_progress:
-            elapsed_str = self._fmt(pos)
-            right_str   = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
+            elapsed_str = self._fmt(pos / speed)
+            right_str   = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(dur_disp)
 
             # Time row
             painter.setPen(self._color_elapsed)
@@ -1507,7 +1518,7 @@ class BookDelegate(QStyledItemDelegate):
             painter.drawText(r.right() - HPAD - pct_w, pct_y, pct_str)
         else:
             # No progress — total time at bar row, right-aligned
-            dur_str  = self._fmt(dur)
+            dur_str  = self._fmt(dur_disp)
             self._set_font(painter, mode=self._view_mode, field="total")
             fm_total = painter.fontMetrics()
             dur_w    = fm_total.horizontalAdvance(dur_str)
@@ -1572,9 +1583,7 @@ class BookDelegate(QStyledItemDelegate):
         if book.path == self._playing_path:
             painter.fillRect(QRect(r.x(), r.y(), ACTIVE_BOOK_STRIPE_WIDTH, r.height()), self._color_accent)
 
-        has_progress = (book.progress or 0.0) > MIN_PROGRESS
-        pos = live_pos if live_pos > 0 else (book.progress or 0.0)
-        dur = live_dur if live_dur > 0 else (book.duration or 0.0)
+        pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
         # Time column width — derived from font, same rule as ListBookItem
         TIME_W    = fm.horizontalAdvance("-00:00:00") + 2
@@ -1642,9 +1651,9 @@ class BookDelegate(QStyledItemDelegate):
         self._set_font(painter, mode=self._view_mode, field="total")
         painter.setPen(self._color_total)
         if has_progress:
-            time_str = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(pos)
+            time_str = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(pos / speed)
         else:
-            time_str = self._fmt(dur)
+            time_str = self._fmt(dur_disp)
         painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, time_str)
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
@@ -1687,10 +1696,7 @@ class BookDelegate(QStyledItemDelegate):
     def _draw_hover_overlay(self, painter, cover_rect: QRect, book, show_rem, live_pos, live_dur, *, large: bool):
         from PySide6.QtGui import QLinearGradient, QBrush
 
-        has_progress = (book.progress or 0.0) > MIN_PROGRESS
-        pos = live_pos if live_pos > 0 else (book.progress or 0.0)
-        dur = live_dur if live_dur > 0 else (book.duration or 0.0)
-        pct = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
+        pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
         # Overlay height: 30% of cover if has_progress, else 20%
         pct_h = 0.30 if has_progress else 0.20
@@ -1712,8 +1718,8 @@ class BookDelegate(QStyledItemDelegate):
 
         if has_progress:
             # Time row: elapsed left, remaining/total right
-            elapsed_str = self._fmt(pos)
-            right_str = f"-{self._fmt(dur - pos)}" if show_rem else self._fmt(dur)
+            elapsed_str = self._fmt(pos / speed)
+            right_str = f"-{self._fmt((dur - pos) / speed)}" if show_rem else self._fmt(dur_disp)
             self._set_font(painter, mode=overlay_mode, field="elapsed")
             fm = painter.fontMetrics()
             painter.drawText(inner.x(), y + fm.ascent(), elapsed_str)
@@ -1735,7 +1741,7 @@ class BookDelegate(QStyledItemDelegate):
             # No progress: just show total duration right-aligned
             self._set_font(painter, mode=overlay_mode, field="total")
             fm = painter.fontMetrics()
-            dur_str = self._fmt(dur)
+            dur_str = self._fmt(dur_disp)
             dur_w = fm.horizontalAdvance(dur_str)
             painter.drawText(inner.right() - dur_w, y + fm.ascent(), dur_str)
 
