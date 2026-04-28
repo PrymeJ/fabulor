@@ -1583,30 +1583,19 @@ class BookDelegate(QStyledItemDelegate):
         author_rect = QRect(mid, r.y(), author_w, r.height())
         time_rect  = QRect(right, r.y(), TIME_W, r.height())
 
-        local_x = self._hover_pos.x() - r.x()
-        cursor_over_title  = hovered and (left - r.x() <= local_x < mid - r.x())
-        cursor_over_author = hovered and (mid - r.x() <= local_x < right - r.x())
+        local_x       = self._hover_pos.x() - r.x()
+        expand_title  = hovered and (left - r.x() <= local_x < mid - r.x()) and title_elided
+        expand_author = hovered and (mid - r.x() <= local_x < right - r.x()) and author_elided
+        full_rect     = QRect(left, r.y(), AVAILABLE - TITLE_CM, r.height())
 
-        # Hover-expand: clip to the expanding field's zone so it can't bleed over.
-        if cursor_over_title and title_elided:
+        if expand_title:
             self._set_font(painter, mode=self._view_mode, field="title")
             painter.setPen(self._color_title)
-            painter.setClipRect(title_rect)
-            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
-            painter.setClipRect(option.rect)
+            painter.drawText(full_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
+        elif expand_author:
             self._set_font(painter, mode=self._view_mode, field="author")
             painter.setPen(self._color_author)
-            painter.drawText(author_rect, Qt.AlignRight | Qt.AlignVCenter, disp_author)
-        elif cursor_over_author and author_elided:
-            self._set_font(painter, mode=self._view_mode, field="title")
-            painter.setPen(self._color_title)
-            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, disp_title)
-            self._set_font(painter, mode=self._view_mode, field="author")
-            painter.setPen(self._color_author)
-            expand_rect = QRect(left, r.y(), AVAILABLE - TITLE_CM, r.height())
-            painter.setClipRect(expand_rect)
-            painter.drawText(expand_rect, Qt.AlignRight | Qt.AlignVCenter, author)
-            painter.setClipRect(option.rect)
+            painter.drawText(full_rect, Qt.AlignRight | Qt.AlignVCenter, author)
         else:
             self._set_font(painter, mode=self._view_mode, field="title")
             painter.setPen(self._color_title)
