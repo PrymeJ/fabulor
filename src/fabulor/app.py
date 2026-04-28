@@ -420,6 +420,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
 
+        QTimer.singleShot(4000, self.library_panel.start_idle_preload)
+
     def _build_status_banner(self):
         self.status_banner = QWidget(self)
         self.status_banner.setObjectName("status_banner")
@@ -2026,7 +2028,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.panel_manager.hide_all_panels()
         except Exception:
             pass
-            
+
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
+            if hasattr(self, 'library_panel') and not self.library_panel.preload_complete():
+                self.library_panel.cancel_preload()
+                if not hasattr(self, '_preload_restart_timer'):
+                    self._preload_restart_timer = QTimer(self)
+                    self._preload_restart_timer.setSingleShot(True)
+                    self._preload_restart_timer.timeout.connect(self.library_panel.start_idle_preload)
+                self._preload_restart_timer.start(5000)
+
         # Ensure obj is a valid QObject before calling super().eventFilter
         # Some internal Qt objects like QWidgetItem are not QObjects.
         if not isinstance(obj, QObject) or obj is None:

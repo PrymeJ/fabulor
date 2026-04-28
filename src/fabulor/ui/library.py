@@ -38,6 +38,8 @@ SORT_KEY_MAP = {
 
 MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
 
+_cover_cache: dict = {}  # module-level singleton {path: QPixmap}, shared by BookModel and idle preloader
+
 FONT_SIZES = {
     "1 per row": {
         "title":      (14, True),   # (px, bold)
@@ -1220,6 +1222,61 @@ class LibraryPanel(QFrame):
             self.style_combo.setItemText(i, random.choice(options))
         self.style_combo.blockSignals(False)
 
+    # ── Idle preload ─────────────────────────────────────────────────────────
+
+    def start_idle_preload(self):
+        if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
+            return  # already running
+
+        # Resume interrupted queue, or build a fresh one
+        if not getattr(self, '_preload_queue', None):
+            sort_key  = SORT_KEY_MAP.get(self.config.get_library_sort_key(), "title")
+            ascending = self.config.get_library_sort_ascending()
+            books = self.db.get_all_books(sort_by=sort_key, order="ASC" if ascending else "DESC")
+            self._preload_queue = [b for b in books if b.path not in _cover_cache]
+
+        if not self._preload_queue:
+            return
+
+        if not getattr(self, '_preload_timer', None):
+            self._preload_timer = QTimer(self)
+            self._preload_timer.setSingleShot(False)
+            self._preload_timer.setInterval(80)
+            self._preload_timer.timeout.connect(self._preload_tick)
+        self._preload_timer.start()
+        print(f"Idle preload: {len(self._preload_queue)} covers to load")
+
+    def _preload_tick(self):
+        if not getattr(self, '_preload_queue', None):
+            self._preload_timer.stop()
+            print("Idle preload: complete")
+            return
+        book = self._preload_queue.pop(0)
+        if book.path in _cover_cache:
+            return
+        from .cover_loader import CoverLoaderWorker
+        worker = CoverLoaderWorker(book, self.player_instance)
+        worker._book_path = book.path
+        worker.signals.cover_loaded.connect(self._on_preload_cover_loaded)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_preload_cover_loaded(self, path, pixmap):
+        if pixmap.isNull():
+            return
+        dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+        pixmap.setDevicePixelRatio(dpr)
+        _cover_cache[path] = pixmap
+        # If the model is showing this book, notify it
+        self._book_model.notify_cover_cached(path)
+
+    def cancel_preload(self):
+        if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
+            self._preload_timer.stop()
+            # leave _preload_queue intact so start_idle_preload can resume
+
+    def preload_complete(self) -> bool:
+        return not getattr(self, '_preload_queue', None)
+
     def showEvent(self, event):
         super().showEvent(event)
         QTimer.singleShot(0, self._load_visible_covers)
@@ -1247,7 +1304,7 @@ class BookModel(QAbstractListModel):
         super().__init__(parent)
         self._books: list[Book] = []
         self._filtered: list[Book] = []
-        self._covers: dict[str, QPixmap] = {}
+        self._covers = _cover_cache  # shared singleton — preloader writes here before model exists
         self._show_remaining: dict[str, bool] = {}
         self._live_pos: dict[str, float] = {}
         self._live_dur: dict[str, float] = {}
@@ -1293,6 +1350,9 @@ class BookModel(QAbstractListModel):
 
     def update_cover(self, path: str, pixmap: QPixmap) -> None:
         self._covers[path] = pixmap
+        self._emit_for_path(path)
+
+    def notify_cover_cached(self, path: str) -> None:
         self._emit_for_path(path)
 
     def update_playing_progress(self, path: str, position: float, duration: float) -> None:
