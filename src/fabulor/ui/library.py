@@ -71,6 +71,7 @@ FONT_SIZES = {
     },
 }
 
+ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
 
 class BookItem(QFrame):
     clicked = Signal(str) # Emits the file path
@@ -1126,6 +1127,10 @@ class LibraryPanel(QFrame):
                     widget.update_progress(pos, dur)
                     break
 
+    def set_playing_path(self, path: str) -> None:
+        self._delegate._playing_path = path or ""
+        self._list_view.viewport().update()
+
     # ── Hide ─────────────────────────────────────────────────────────────────
 
     def _rotate_view_mode_labels(self):
@@ -1303,6 +1308,7 @@ class BookDelegate(QStyledItemDelegate):
         self._view_mode = "3 per row"
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
         self._hover_pos = QPoint()
+        self._playing_path = ""
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1326,6 +1332,7 @@ class BookDelegate(QStyledItemDelegate):
         self._color_total    = qc(theme.get('library_total',      '#aaaaaa'))
         self._color_pct      = qc(theme.get('library_percentage', '#888888'))
         self._alt_row_color  = self._row_two
+        self._color_accent   = qc(theme.get('accent', '#ffffff'))
 
     def update_theme(self, theme: dict) -> None:
         self._apply_theme(theme)
@@ -1537,6 +1544,9 @@ class BookDelegate(QStyledItemDelegate):
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
         if hovered:
             painter.fillRect(r, self._hover_bg_color)
+
+        if book.path == self._playing_path:
+            painter.fillRect(QRect(r.x(), r.y(), ACTIVE_BOOK_STRIPE_WIDTH, r.height()), self._color_accent)
 
         pos = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur = live_dur if live_dur > 0 else (book.duration or 0.0)

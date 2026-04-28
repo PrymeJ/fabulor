@@ -175,6 +175,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
             self.player.load_book(self.current_file)
+            self.library_panel.set_playing_path(self.current_file)
         self.chapter_list_widget.set_player(self.player)
 
         self._load_cover_art(self.current_file)
@@ -1072,6 +1073,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.terminate()
         self.progress_slider.set_markers([])
         self._load_cover_art("")
+        self.library_panel.set_playing_path("")
         self.config.set_last_book("")
 
     def get_current_file(self):
@@ -1213,6 +1215,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.set_markers([])
         self._last_saved_pct = -1
         self.current_file = path
+        self.library_panel.set_playing_path(path)
         self.db.update_last_played(path)
         self.config.set_last_book(path)
         self.player.load_book(path)
