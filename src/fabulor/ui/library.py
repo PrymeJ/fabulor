@@ -792,6 +792,8 @@ class LibraryPanel(QFrame):
     back_requested   = Signal()
     detail_requested = Signal(str)
 
+    _open_count = 0
+
     def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
         self.db              = db
@@ -800,6 +802,7 @@ class LibraryPanel(QFrame):
 
         self._active_workers = set()
         self._current_theme  = {}
+        self._show_start     = None
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -981,6 +984,8 @@ class LibraryPanel(QFrame):
             self._list_view.viewport().setStyleSheet("")
 
     def _on_view_mode_changed(self, _):
+        t0 = time.perf_counter()
+        label = self.style_combo.currentText()
         mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
@@ -988,7 +993,17 @@ class LibraryPanel(QFrame):
         self._book_model.set_hovered(None)
 
         self._list_view.reset()
-        QTimer.singleShot(0, self._load_visible_covers)
+
+        def _after_reset(_attempt=0):
+            first_idx = self._book_model.index(0, 0)
+            if first_idx.isValid() and self._list_view.visualRect(first_idx).isEmpty() and _attempt < 5:
+                QTimer.singleShot(50, lambda: _after_reset(_attempt + 1))
+                return
+            self._load_visible_covers()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            print(f"{label}: {elapsed_ms:.1f} ms")
+
+        QTimer.singleShot(0, _after_reset)
 
     def _populate_list_widgets(self):
         playing_path = (
@@ -1020,15 +1035,38 @@ class LibraryPanel(QFrame):
     # ── Data / refresh ───────────────────────────────────────────────────────
 
     def refresh(self, force=False):
+        LibraryPanel._open_count += 1
+        _open_n = LibraryPanel._open_count
+        _t0 = time.perf_counter()
+
         self._resolve_theme_colors()
         books = self.db.get_all_books(sort_by="title", order="ASC")
+        t_db = (time.perf_counter() - _t0) * 1000
+
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
 
         self._book_model.set_books(books)
-        self._apply_current_sort_filter()
+        t_model = (time.perf_counter() - _t0) * 1000
 
-        QTimer.singleShot(0, self._load_visible_covers)
+        self._apply_current_sort_filter()
+        t_sort = (time.perf_counter() - _t0) * 1000
+
+        cached = sum(1 for b in books if self._book_model._covers.get(b.path))
+        print(f"Library open #{_open_n}: {len(books)} books | DB={t_db:.1f}ms model={t_model:.1f}ms sort={t_sort:.1f}ms | covers cached={cached}/{len(books)}")
+
+        def _after_covers(_attempt=0):
+            first_idx = self._book_model.index(0, 0)
+            if first_idx.isValid() and self._list_view.visualRect(first_idx).isEmpty() and _attempt < 5:
+                print(f"Library open #{_open_n}: layout not ready, retrying cover load (attempt {_attempt + 1})")
+                QTimer.singleShot(50, lambda: _after_covers(_attempt + 1))
+                return
+            self._load_visible_covers()
+            t_dispatch = (time.perf_counter() - _t0) * 1000
+            in_flight = len(self._active_workers)
+            print(f"Library open #{_open_n}: cover workers dispatched, in_flight={in_flight} | t={t_dispatch:.1f}ms")
+
+        QTimer.singleShot(0, _after_covers)
 
         # if self.style_combo.currentData() == "List":
         #     QTimer.singleShot(0, self._populate_list_widgets)
@@ -1049,27 +1087,53 @@ class LibraryPanel(QFrame):
     def _load_visible_covers(self):
         if not self.isVisible():
             return
-        rect  = self._list_view.viewport().rect()
-        first = self._list_view.indexAt(rect.topLeft())
-        last  = self._list_view.indexAt(rect.bottomRight())
-        if not first.isValid():
+        if self.style_combo.currentData() == "List":
             return
-        first_row = max(0, first.row() - 5)
-        last_row  = min(
-            self._book_model.rowCount() - 1,
-            (last.row() if last.isValid() else self._book_model.rowCount() - 1) + 5,
-        )
+        # Guard: layout not done yet if item 0 has no visual rect
+        first_idx = self._book_model.index(0, 0)
+        if not first_idx.isValid() or self._list_view.visualRect(first_idx).isEmpty():
+            return
+        # Use visualRect to find the true visible row range — indexAt(bottomRight)
+        # is unreliable in IconMode (grid) because it lands in inter-cell gutters.
+        viewport_rect = self._list_view.viewport().rect()
+        row_count = self._book_model.rowCount()
+        def _vr(row): return self._list_view.visualRect(self._book_model.index(row, 0))
+        lo, hi = 0, row_count - 1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if _vr(mid).bottom() < viewport_rect.top():
+                lo = mid + 1
+            else:
+                hi = mid
+        first_row = lo
+        lo, hi = first_row, row_count - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if _vr(mid).top() > viewport_rect.bottom():
+                hi = mid - 1
+            else:
+                lo = mid
+        last_row = lo
+        first_row = max(0, first_row - 5)
+        last_row  = min(row_count - 1, last_row + 5)
         in_flight = {getattr(w, '_book_path', None) for w in self._active_workers}
+        dispatched = 0
+        skipped_cached = 0
+        skipped_flight = 0
         for row in range(first_row, last_row + 1):
             index = self._book_model.index(row, 0)
             book  = index.data(ROLE_BOOK)
             if not book:
                 continue
             if self._book_model._covers.get(book.path):
+                skipped_cached += 1
                 continue
             if book.path in in_flight:
+                skipped_flight += 1
                 continue
             self._trigger_cover_load(book)
+            dispatched += 1
+        print(f"  _load_visible_covers: rows {first_row}-{last_row} | dispatched={dispatched} cached={skipped_cached} in_flight={skipped_flight}")
 
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
@@ -1086,6 +1150,10 @@ class LibraryPanel(QFrame):
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
         self._book_model.update_cover(path, pixmap)
+        cached = len(self._book_model._covers)
+        total  = self._book_model.rowCount()
+        in_flight = len(self._active_workers)
+        print(f"  cover loaded: {cached}/{total} cached, {in_flight} still in flight | {os.path.basename(path)}")
 
     # ── Sort / filter ────────────────────────────────────────────────────────
 
@@ -1098,12 +1166,15 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(self._sort_ascending)
 
     def _on_sort_changed(self):
+        t0 = time.perf_counter()
+        label = self.sort_combo.currentText()
         sort_key  = self.sort_combo.currentData()
         ascending = getattr(self, '_sort_ascending', True)
         direction = "ascending" if ascending else "descending"
         self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
         self._last_filter_mode = sort_key
+        QTimer.singleShot(0, lambda: print(f"{label}: {(time.perf_counter() - t0) * 1000:.1f} ms"))
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
@@ -1154,9 +1225,12 @@ class LibraryPanel(QFrame):
         QTimer.singleShot(0, self._load_visible_covers)
 
     def hideEvent(self, event):
+        t0 = time.perf_counter()
         super().hideEvent(event)
         self._book_model.set_hovered(None)
         self._rotate_view_mode_labels()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        print(f"Library dismiss: {elapsed_ms:.1f} ms")
 
 
 ROLE_BOOK     = Qt.UserRole + 0
