@@ -624,6 +624,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_chapter_label.setFixedHeight(24)
         self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
         self.current_chapter_label.set_scroll_mode(self.config.get_scroll_mode())
+        self._chapter_label_clickable = False
+        self.current_chapter_label.setCursor(Qt.ArrowCursor)
         
         chapter_info_layout.addWidget(self.chap_elapsed_label)
         chapter_info_layout.addWidget(self.current_chapter_label, 1)
@@ -1278,8 +1280,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
         if dur and self.player.chapter_list:
-            self.chapter_list_widget.populate(dur)
+            self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
             self._refresh_notches()
+        self._update_chapter_label_clickability()
+
+    def _update_chapter_label_clickability(self):
+        """Enable the chapter label as a clickable link only when there are 2+ chapters."""
+        from PySide6.QtCore import Qt
+        chaps = self.player.chapter_list or [] if self.player else []
+        clickable = len(chaps) >= 2
+        self.current_chapter_label.setCursor(
+            Qt.PointingHandCursor if clickable else Qt.ArrowCursor
+        )
+        self._chapter_label_clickable = clickable
 
     def _refresh_notches(self):
         """Updates the progress bar with chapter markers if enabled in settings."""
@@ -1338,26 +1351,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _show_chapter_dropdown(self):
         """Positions and shows the floating chapter list."""
+        if not getattr(self, '_chapter_label_clickable', False):
+            return
+
         if self.chapter_list_widget.isVisible():
             self.chapter_list_widget.hide()
             return
 
         self.panel_manager.hide_all_panels()
 
-        if not self.chapter_list_widget.count():
-            self.chapter_list_widget.populate(self.player.duration or 0) # Populate if empty
-            
-        # Recalculate height and position the menu centered above the label
-        # Ensure height is correct before positioning, re-populate if needed
-        if self.chapter_list_widget.count() == 0: # Re-check in case populate failed
-             self.chapter_list_widget.populate(self.player.duration or 0)
-        label_pos = self.current_chapter_label.mapToGlobal(QPoint(0, 0))
-        x = label_pos.x() + (self.current_chapter_label.width() // 2) - (self.chapter_list_widget.width() // 2)
-        y = label_pos.y() - self.chapter_list_widget.height() - 5
-        
-        self.chapter_list_widget.move(x, y)
-        self.chapter_list_widget.show()
-        self.chapter_list_widget.setFocus()
+        speed = self.player.speed or 1.0
+        # Always repopulate so speed changes and new files are reflected
+        self.chapter_list_widget.populate(self.player.duration or 0, speed)
+
+        if self.chapter_list_widget.count() == 0:
+            return
+
+        active_idx = self.player.chapter or 0
+        self.chapter_list_widget.show_centered_on(self.current_chapter_label, self)
+
+        # Apply selection and scroll after the widget is shown and laid out
+        self.chapter_list_widget.setCurrentRow(active_idx)
+        QTimer.singleShot(0, lambda: self.chapter_list_widget.scroll_to_active(active_idx))
 
     def _update_ui_sync(self):
         try:
@@ -1679,7 +1694,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # If the list is empty, trigger population now that we know we have data
         if not self.chapter_list_widget.count():
-            self.chapter_list_widget.populate(self.player.duration or 0)
+            self.chapter_list_widget.populate(self.player.duration or 0, self.player.speed or 1.0)
 
         chaps = self.player.chapter_list or []
         # Ensure index is non-negative to avoid Python's negative indexing (which picks the last chapter)
