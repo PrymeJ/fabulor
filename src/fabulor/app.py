@@ -1356,7 +1356,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         if self.chapter_list_widget.isVisible():
-            self.chapter_list_widget.hide()
+            self.chapter_list_widget.fade_out()
             return
 
         self.panel_manager.hide_all_panels()
@@ -1920,8 +1920,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
                 self._trigger_undo(old_pos)
 
-    def _on_chapter_list_selected(self, title, old_pos):
+    def _on_chapter_list_selected(self, title, old_pos, force_play):
         self.player.is_seeking = True
+        if force_play:
+            self.player.pause = False
         speed = self.player.speed or 1.0
         if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
             self._trigger_undo(old_pos)
@@ -2081,7 +2083,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
                     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
                     if not self.chapter_list_widget.geometry().contains(local_pos):
-                        self.chapter_list_widget.hide()
+                        self.chapter_list_widget.fade_out()
                         # Swallow the event regardless of where outside the list the click
                         # landed — this prevents cover art play/pause and also prevents
                         # _show_chapter_dropdown from re-opening when the label is clicked.

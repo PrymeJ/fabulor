@@ -446,7 +446,7 @@ class PanelManager:
     def hide_all_panels(self):
         """Closes any open panels."""
         if self.main_window.chapter_list_widget.isVisible():
-            self.main_window.chapter_list_widget.hide()
+            self.main_window.chapter_list_widget.fade_out()
         if self.sidebar_expanded:
             self._toggle_sidebar()
         if self.library_panel.isVisible():
@@ -488,7 +488,7 @@ class PanelManager:
         elif self.book_detail_panel and self.book_detail_panel.isVisible():
             self._close_book_detail_flow()
         elif self.main_window.chapter_list_widget.isVisible():
-            self.main_window.chapter_list_widget.hide()
+            self.main_window.chapter_list_widget.fade_out()
         else:
             self._toggle_sidebar()
 
