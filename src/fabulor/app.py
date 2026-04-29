@@ -2075,6 +2075,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
                     if not self.chapter_list_widget.geometry().contains(local_pos):
                         self.chapter_list_widget.hide()
+                        # Swallow the event regardless of where outside the list the click
+                        # landed — this prevents cover art play/pause and also prevents
+                        # _show_chapter_dropdown from re-opening when the label is clicked.
+                        return True
         except Exception:
             pass
 
