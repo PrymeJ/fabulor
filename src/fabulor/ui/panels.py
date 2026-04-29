@@ -69,6 +69,8 @@ class PanelManager:
     def _open_library_flow(self):
         self.library_panel.cancel_preload()
         self.main_window._save_current_progress()
+        _is_animating = True
+        self.library_panel._list_view.setUpdatesEnabled(False)
         if self.sidebar_expanded:
             self._pending_panel_open = "library"
             self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
@@ -102,7 +104,39 @@ class PanelManager:
         try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
         except: pass
         self.library_panel._is_animating = False
+        self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.refresh()
+        # Small delay lets the event loop settle before first paint
+        QTimer.singleShot(16, self.library_panel._list_view.viewport().update)
+
+    def _reveal_list_rows(self):
+        view = self.library_panel._list_view
+        # Find visible row range
+        viewport = view.viewport()
+        first = view.indexAt(viewport.rect().topLeft())
+        last  = view.indexAt(viewport.rect().bottomRight())
+        if not first.isValid():
+            view.setUpdatesEnabled(True)
+            viewport.update()
+            return
+        first_row = first.row()
+        last_row  = last.row() if last.isValid() else first_row + 20
+        
+        self._reveal_rows = list(range(first_row, last_row + 1))
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setInterval(16)  # ~60fps, one row per frame
+        self._reveal_timer.timeout.connect(lambda: self._reveal_next_row(view))
+        view.setUpdatesEnabled(True)
+        view.viewport().update()  # blank canvas ready
+        self._reveal_timer.start()
+
+    def _reveal_next_row(self, view):
+        if not self._reveal_rows:
+            self._reveal_timer.stop()
+            return
+        row = self._reveal_rows.pop(0)
+        idx = self.library_panel._book_model.index(row, 0)
+        view.update(view.visualRect(idx))
 
     def _open_settings_flow(self):
         """Hides sidebar first, then shows settings panel."""
@@ -181,6 +215,7 @@ class PanelManager:
 
         # Set animation guard
         self.library_panel._is_animating = True
+        self.library_panel._list_view.setUpdatesEnabled(False)
 
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
@@ -196,6 +231,7 @@ class PanelManager:
         try: self.library_panel_animation.finished.disconnect(self._on_library_hidden)
         except: pass
         self.library_panel._is_animating = False
+        self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
 
     def _close_speed_flow(self):
