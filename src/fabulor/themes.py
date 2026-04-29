@@ -1296,6 +1296,18 @@ def get_base_stylesheet(theme_name="default"):
         QListWidget#chapter_dropdown QScrollBar::sub-page:vertical {{
             background: none;
         }}
+        QPushButton#chapter_expand_btn {{
+            font-size: 10px;
+            color: {t.get('dropdown_text', t['text'])};
+            background-color: {t['accent']};
+            border: 0px solid {t['bg_deep']};
+            border-radius: 0px;
+            padding: 0px;
+        }}
+        QPushButton#chapter_expand_btn:hover {{
+            background-color: {t['accent']};
+            color: {t['bg_main']};
+        }}
         QPushButton#undo_overlay {{
             font-size: 11px;
             font-weight: bold;

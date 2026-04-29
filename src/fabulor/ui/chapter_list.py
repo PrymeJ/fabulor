@@ -1,14 +1,17 @@
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect
+from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect, QPushButton
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QMouseEvent
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
 TIME_LABEL_WIDTH = 58
-H_MARGIN = 10  # left + right padding total inside items
+H_MARGIN = 10
 
 FADE_IN_MS = 600
 FADE_OUT_MS = 600
+
+EXPAND_BTN_W = 26
+EXPAND_BTN_H = 11
 
 
 class ChapterList(QListWidget):
@@ -34,6 +37,31 @@ class ChapterList(QListWidget):
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._hide_connected = False
+
+        self._expanded = False
+        self._anchor_bottom = 0
+        self._h_overhead = 0
+        self._TOP_MARGIN = 42
+        self._can_expand = False
+
+        # Detached button — sibling widget in the parent window, not inside the list.
+        # Its opacity effect is driven by the same animation via valueChanged so they
+        # fade in perfect sync.
+        self._btn_opacity = QGraphicsOpacityEffect(parent)
+        self._btn_opacity.setOpacity(0.0)
+
+        self._expand_btn = QPushButton("▲", parent)
+        self._expand_btn.setObjectName("chapter_expand_btn")
+        self._expand_btn.setFixedSize(EXPAND_BTN_W, EXPAND_BTN_H)
+        self._expand_btn.setGraphicsEffect(self._btn_opacity)
+        self._expand_btn.clicked.connect(self._toggle_expand)
+        self._expand_btn.hide()
+
+        # Drive the button's opacity from the same animation — no separate timer
+        self._anim.valueChanged.connect(self._sync_btn_opacity)
+
+    def _sync_btn_opacity(self, value):
+        self._btn_opacity.setOpacity(value)
 
     def set_player(self, player):
         self.player = player
@@ -82,48 +110,78 @@ class ChapterList(QListWidget):
             self.setItemWidget(item, widget)
 
         self._visible_rows = min(VISIBLE_ROWS, self.count())
+        self._can_expand = self.count() > VISIBLE_ROWS
+        self._expanded = False
+        self._expand_btn.setText("▲")
 
     def show_above(self, anchor_widget, window):
         """Position the list inside the parent window, just above anchor_widget."""
         self.setFixedWidth(window.width())
 
-        # Measure real height overhead with a hidden show
         self._opacity.setOpacity(0.0)
         self.show()
-        h_overhead = self.height() - self.viewport().height()
-        corrected_height = self._visible_rows * ROW_HEIGHT + h_overhead
-        self.setFixedHeight(corrected_height)
+        self._h_overhead = self.height() - self.viewport().height()
 
         anchor_local_y = anchor_widget.mapTo(window, anchor_widget.rect().topLeft()).y()
-        self.move(0, anchor_local_y - corrected_height)
+        self._anchor_bottom = anchor_local_y
+        available_px = anchor_local_y - self._TOP_MARGIN
+        self._max_rows_available = max(VISIBLE_ROWS, available_px // ROW_HEIGHT)
+
+        self._apply_height(self._visible_rows)
         self.raise_()
         self.setFocus()
 
         self._anim.stop()
         self._anim.setDuration(FADE_IN_MS)
         self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
+        self._anim.setEndValue(0.94)
         self._disconnect_hide()
         self._anim.start()
 
+    def _apply_height(self, rows):
+        """Resize and reposition keeping the bottom edge fixed at _anchor_bottom."""
+        h = rows * ROW_HEIGHT + self._h_overhead
+        self.setFixedHeight(h)
+        self.move(0, self._anchor_bottom - h)
+        self._reposition_btn()
+
+    def _reposition_btn(self):
+        """Place the button just above the list's top-right corner."""
+        if not self._can_expand:
+            self._expand_btn.hide()
+            return
+        self._expand_btn.move(self.width() - EXPAND_BTN_W, self.y() - EXPAND_BTN_H)
+        self._expand_btn.raise_()
+        self._expand_btn.show()
+
+    def _toggle_expand(self):
+        self._expanded = not self._expanded
+        self._expand_btn.setText("▼" if self._expanded else "▲")
+        rows = min(self.count(), self._max_rows_available) if self._expanded else self._visible_rows
+        self._apply_height(rows)
+
     def fade_out(self):
-        """Fade out then hide."""
         self._anim.stop()
         self._anim.setDuration(FADE_OUT_MS)
         self._anim.setStartValue(self._opacity.opacity())
         self._anim.setEndValue(0.0)
         self._disconnect_hide()
-        self._anim.finished.connect(self.hide)
+        self._anim.finished.connect(self._on_fade_out_finished)
         self._hide_connected = True
         self._anim.start()
 
+    def _on_fade_out_finished(self):
+        self._expanded = False
+        self._expand_btn.setText("▲")
+        self._expand_btn.hide()
+        self.hide()
+
     def _disconnect_hide(self):
         if self._hide_connected:
-            self._anim.finished.disconnect(self.hide)
+            self._anim.finished.disconnect(self._on_fade_out_finished)
             self._hide_connected = False
 
     def scroll_to_active(self, index):
-        """Scroll so the active row sits in the middle of the 5-row window."""
         count = self.count()
         if count == 0:
             return
@@ -149,12 +207,10 @@ class ChapterList(QListWidget):
         actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
 
         if event.button() == Qt.LeftButton:
-            # Seek only — respect current play/pause state
             self.fade_out()
             self.chapter_changed.emit(actual_title)
             self.chapter_selected.emit(actual_title, old_pos, False)
         elif event.button() == Qt.RightButton:
-            # Seek + force play
             self.fade_out()
             self.chapter_changed.emit(actual_title)
             self.chapter_selected.emit(actual_title, old_pos, True)

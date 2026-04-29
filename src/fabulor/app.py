@@ -2092,11 +2092,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if event.type() == QEvent.MouseButtonPress:
                 if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
                     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
-                    if not self.chapter_list_widget.geometry().contains(local_pos):
+                    btn = self.chapter_list_widget._expand_btn
+                    if btn.isVisible() and btn.geometry().contains(local_pos):
+                        pass  # let the button handle its own click
+                    elif not self.chapter_list_widget.geometry().contains(local_pos):
                         self.chapter_list_widget.fade_out()
-                        # Swallow the event regardless of where outside the list the click
-                        # landed — this prevents cover art play/pause and also prevents
-                        # _show_chapter_dropdown from re-opening when the label is clicked.
                         return True
         except Exception:
             pass
