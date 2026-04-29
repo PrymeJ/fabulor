@@ -1361,8 +1361,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
 
         speed = self.player.speed or 1.0
-        # Always repopulate so speed changes and new files are reflected
-        self.chapter_list_widget.populate(self.player.duration or 0, speed)
+        # Pass window width so elide widths are correct before the widget is shown
+        self.chapter_list_widget.populate(self.player.duration or 0, speed, self.width())
 
         if self.chapter_list_widget.count() == 0:
             return
