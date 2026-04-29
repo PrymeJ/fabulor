@@ -1,5 +1,3 @@
-import os
-import time
 import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView,
@@ -79,718 +77,6 @@ FONT_SIZES = {
 }
 
 ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
-
-class BookItem(QFrame):
-    clicked = Signal(str) # Emits the file path
-    _total_clear_time = 0.0 # Profile accumulator
-
-    def __init__(self, view_mode="3 per row", player_instance=None, pg_bg=None, pg_fill=None,
-                 hover_bg_color=None, parent=None):
-        
-        super().__init__(parent)
-        self._is_building_ui = True
-        self.book_data = {}
-        self.current_path = ""
-        self.view_mode = view_mode
-        self.player_instance = player_instance
-        self.setObjectName("book_item")
-        self._is_toggling = False
-        self._show_remaining = True
-        self._pg_bg = pg_bg
-        self._pg_fill = pg_fill
-        self._hover_bg_color = hover_bg_color or QColor(80, 80, 80, 180)
-        self.setCursor(Qt.PointingHandCursor)
-        
-        self._build_ui()
-        self._is_building_ui = False
-
-    # ---------------- UI BUILD ----------------
-    def _get_or_create_label(self, attr_name, object_name=None, style=None):
-        if not hasattr(self, attr_name):
-            lbl = QLabel()
-            if object_name:
-                lbl.setObjectName(object_name)
-            if style:
-                lbl.setStyleSheet(style)
-            setattr(self, attr_name, lbl)
-            return lbl, True
-        return getattr(self, attr_name), False
-
-    def _get_archetype(self, mode):
-        """Categorizes view modes into structural archetypes for lazy rebuild."""
-        if mode in ("2 per row", "3 per row", "Square"):
-            return "grid"
-        return mode # "1 per row" and "List" remain distinct structural types
-
-    def set_view_mode(self, mode):
-        """Re-initializes the UI for a new view mode without destroying the widget."""
-        if self.view_mode == mode:
-            return
-        self._is_building_ui = True
-        self.view_mode = mode
-        self._build_ui()
-        self._is_building_ui = False
-        if self.book_data:
-            self.bind(self.book_data)
-
-    def _clear_layout(self):
-        t0 = time.perf_counter()
-        if self.layout():
-            # Immediately detach the layout by setting it on a dummy widget
-            QWidget().setLayout(self.layout())
-            
-        # Reset mode-specific attributes to avoid using dead C++ objects
-        for attr in ['cover_label', 'overlay_widget', 'title_label', 'author_label',
-                    'narrator_label', 'year_label', 'elapsed_label', 'total_label',
-                    'pct_label', 'progress_outer', 'progress_inner', 'progress_container']:
-            if hasattr(self, attr):
-                try: delattr(self, attr)
-                except AttributeError: pass
-        BookItem._total_clear_time += (time.perf_counter() - t0)
-
-    @staticmethod
-    def _elide(label, text, width):
-        text = text or ""
-        fm = label.fontMetrics()
-        if fm.horizontalAdvance(text) - width < fm.horizontalAdvance("…"):
-            return text
-        return fm.elidedText(text, Qt.ElideRight, width)
-
-    def _make_cover(self, w, h):
-        label = QLabel()
-        label.setFixedSize(w, h)
-        label.setStyleSheet("background:#0D001A;")
-        label.setAlignment(Qt.AlignCenter)
-        label.setContentsMargins(0,0,0,0)
-        return label
-
-    def _make_time_row(self):
-        row = QHBoxLayout()
-        row.setContentsMargins(0,0,0,0)
-        row.setSpacing(0)
-
-        self.elapsed_label = QLabel()
-        self.elapsed_label.setObjectName("book_item_elapsed")
-        self.elapsed_label.setContentsMargins(0,0,0,0)
-        self.total_label = QLabel()
-        self.total_label.setObjectName("book_item_total")
-        self.total_label.setContentsMargins(0,0,0,0)
-
-        # Hardcoded sizes
-        if self.view_mode == "1 per row":
-            size = 14
-        elif self.view_mode == "2 per row":
-            size = 13
-        else: # 3 per row
-            size = 12
-        self.elapsed_label.setStyleSheet(f"font-size: {size}px;")
-        self.total_label.setStyleSheet(f"font-size: {size}px;")
-
-        row.addWidget(self.elapsed_label)
-        row.addStretch()
-        row.addWidget(self.total_label)
-        return row
-
-    def _make_progress_row(self):
-        self.progress_container = QWidget()
-        self.progress_container.setFixedHeight(16)
-        row = QHBoxLayout(self.progress_container)
-        row.setContentsMargins(0,0,0,0)
-        row.setSpacing(8)
-
-        if self.view_mode == "1 per row":
-            row.addStretch()
-
-        self.progress_outer = QFrame()
-        self.progress_outer.setObjectName("book_progress_outer")
-        self.progress_inner = QFrame(self.progress_outer)
-        self.progress_inner.setObjectName("book_progress_inner")
-        self.progress_inner.setGeometry(0, 0, 0, 6)
-
-        self.pct_label = QLabel()
-        self.pct_label.setObjectName("book_item_percentage")
-        self.pct_label.setContentsMargins(0,0,0,0)
-
-        # Hardcoded size
-        if self.view_mode == "1 per row":
-            size = 14
-        elif self.view_mode == "2 per row":
-            size = 13
-        else: # 3 per row
-            size = 12
-        self.pct_label.setStyleSheet(f"font-size: {size}px;")
-
-        # Styling and Constraints
-        self.progress_outer.setFixedHeight(6)
-        if self.view_mode == "3 per row":
-            self.progress_outer.setFixedWidth(65)
-        elif self.view_mode == "2 per row":
-            self.progress_outer.setFixedWidth(84)
-        elif self.view_mode == "1 per row":
-            self.progress_outer.setFixedWidth(132)
-        
-        self.pct_label.setFixedWidth(35)
-        self.pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        row.addWidget(self.progress_outer)
-        row.addWidget(self.pct_label)
-        return self.progress_container
-
-    def _build_ui(self):
-        mode = self.view_mode
-        new_arch = self._get_archetype(mode)
-        old_arch = getattr(self, "_current_arch", None)
-
-        # Only teardown if the underlying layout archetype changed
-        if new_arch != old_arch:
-            self._clear_layout()
-            self._current_arch = new_arch
-
-        # -------- GRID ARCHETYPE (2 per, 3 per, Square) --------
-        if new_arch == "grid":
-            if not self.layout():
-                layout = QVBoxLayout(self)
-                layout.setSpacing(0)
-            else:
-                layout = self.layout()
-
-            if mode == "3 per row":
-                self.setFixedSize(96, 146)
-                layout.setContentsMargins(2, 2, 1, 2)
-                if not hasattr(self, 'cover_label'):
-                    self.cover_label = self._make_cover(92, 142)
-                    layout.addWidget(self.cover_label)
-                else:
-                    self.cover_label.setFixedSize(92, 142)
-                    self.cover_label.show()
-                if hasattr(self, 'title_label'): self.title_label.hide()
-                if hasattr(self, 'author_label'): self.author_label.hide()
-
-            elif mode == "Square":
-                self.setFixedSize(96, 96)
-                layout.setContentsMargins(2, 2, 1, 2)
-                if not hasattr(self, 'cover_label'):
-                    self.cover_label = self._make_cover(92, 92)
-                    layout.addWidget(self.cover_label)
-                else:
-                    self.cover_label.setFixedSize(92, 92)
-                    self.cover_label.show()
-                if hasattr(self, 'title_label'): self.title_label.hide()
-                if hasattr(self, 'author_label'): self.author_label.hide()
-
-            elif mode == "2 per row":
-                self.setFixedSize(140, 226)
-                layout.setContentsMargins(13, 8, 0, 0)
-                if not hasattr(self, 'cover_label'):
-                    self.cover_label = self._make_cover(113, 172)
-                    layout.addWidget(self.cover_label, alignment=Qt.AlignLeft)
-                else:
-                    self.cover_label.setFixedSize(113, 172)
-                    self.cover_label.show()
-                    layout.setAlignment(self.cover_label, Qt.AlignLeft)
-
-                if not hasattr(self, 'title_label'):
-                    self.title_label = QLabel()
-                    self.title_label.setObjectName("book_item_title")
-                    self.title_label.setStyleSheet("font-size: 14px;")
-                    self.title_label.setContentsMargins(0, 0, 14, 0)
-                    layout.addWidget(self.title_label)
-                else:
-                    self.title_label.show()
-
-                if not hasattr(self, 'author_label'):
-                    self.author_label = QLabel()
-                    self.author_label.setObjectName("book_item_author")
-                    self.author_label.setStyleSheet("font-size: 13px;")
-                    self.author_label.setContentsMargins(0, 0, 14, 0)
-                    layout.addWidget(self.author_label)
-                else:
-                    self.author_label.show()
-
-            if not hasattr(self, 'overlay_widget'):
-                self._overlay_has_progress = False
-                self.overlay_widget = QWidget(self)
-                ovl_layout = QVBoxLayout(self.overlay_widget)
-                ovl_layout.setContentsMargins(4, 4, 4, 4)
-                ovl_layout.setSpacing(2)
-                ovl_layout.addStretch()
-
-                self.overlay_time_row = QWidget()
-                self.overlay_time_row.setAttribute(Qt.WA_TransparentForMouseEvents)
-                time_row_layout = QHBoxLayout(self.overlay_time_row)
-                time_row_layout.setContentsMargins(0, 0, 0, 0)
-                time_row_layout.setSpacing(0)
-                self.overlay_elapsed_label = QLabel()
-                self.overlay_remaining_label = QLabel()
-                time_row_layout.addWidget(self.overlay_elapsed_label)
-                time_row_layout.addStretch()
-                time_row_layout.addWidget(self.overlay_remaining_label)
-                ovl_layout.addWidget(self.overlay_time_row)
-
-                bottom_row = QWidget()
-                bottom_row.setAttribute(Qt.WA_TransparentForMouseEvents)
-                bottom_layout = QHBoxLayout(bottom_row)
-                bottom_layout.setContentsMargins(0, 0, 0, 0)
-                bottom_layout.setSpacing(4)
-
-                self.overlay_progress_bar = QProgressBar()
-                self.overlay_progress_bar.setObjectName("overlay_progress_bar")
-                self.overlay_progress_bar.setFixedHeight(6)
-                self.overlay_progress_bar.setTextVisible(False)
-                self.overlay_progress_bar.setRange(0, 1000)
-                self.overlay_progress_bar.setValue(0)
-                self.overlay_progress_bar.setStyleSheet(f"""
-                    QProgressBar {{ background-color: {self._pg_bg}; border: none; border-radius: 0px; }}
-                    QProgressBar::chunk {{ background-color: {self._pg_fill}; border: none; border-radius: 0px; }}
-                """)
-
-                self.overlay_pct_label = QLabel()
-                self.overlay_pct_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
-                self.overlay_pct_label.setFixedWidth(30)
-                self.overlay_pct_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                self.overlay_progress_container = QWidget()
-                progress_container_layout = QHBoxLayout(self.overlay_progress_container)
-                progress_container_layout.setContentsMargins(0,0,0,0)
-                progress_container_layout.setSpacing(4)
-                progress_container_layout.addWidget(self.overlay_progress_bar, 1)
-                progress_container_layout.addWidget(self.overlay_pct_label)
-
-                self.overlay_total_duration_label = QLabel()
-                self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 14px; background: transparent;")
-                self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                bottom_layout.addWidget(self.overlay_progress_container)
-                bottom_layout.addWidget(self.overlay_total_duration_label)
-                ovl_layout.addWidget(bottom_row)
-                self.overlay_widget.setStyleSheet(
-                    "background: qlineargradient(x1:2, y1:2, x1:4, y1:4, stop:0 rgba(0,0,0,100), stop:1 rgba(0,0,0,230));"
-                )
-                self.overlay_time_row.setStyleSheet("background: transparent;")
-                bottom_row.setStyleSheet("background: transparent;")
-                for lbl in (self.overlay_elapsed_label, self.overlay_remaining_label, self.overlay_pct_label):
-                    lbl.setStyleSheet("color: white; font-size: 12px; background: transparent;")
-                self.overlay_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                self.overlay_widget.setAttribute(Qt.WA_TransparentForMouseEvents)
-                self.overlay_widget.hide()
-            self._reposition_overlay()
-            return
-
-        # -------- 1 PER ROW --------
-        if mode == "1 per row":
-            self.setFixedSize(292,161)
-            layout = QHBoxLayout(self)
-            layout.setContentsMargins(4,4,4,4)
-            layout.setSpacing(8)
-
-            self.cover_label = self._make_cover(100,151)
-            layout.addWidget(self.cover_label)
-
-            text_layout = QVBoxLayout()
-            text_layout.setSpacing(2)
-
-            self.title_label = QLabel()
-            self.title_label.setObjectName("book_item_title")
-            self.title_label.setStyleSheet("font-size: 14px;")
-            self.author_label = QLabel()
-            self.author_label.setObjectName("book_item_author")
-            self.author_label.setStyleSheet("font-size: 14px;")
-            self.narrator_label = QLabel()
-            self.narrator_label.setObjectName("book_item_narrator")
-            self.narrator_label.setStyleSheet("font-size: 14px;")
-            self.year_label = QLabel()
-            self.year_label.setStyleSheet("font-size: 12px;")
-
-            for lbl in (self.title_label, self.author_label, self.narrator_label, self.year_label):
-                lbl.setContentsMargins(0,0,0,0)
-
-            text_layout.addWidget(self.title_label)
-            text_layout.addWidget(self.author_label)
-            text_layout.addWidget(self.narrator_label)
-            text_layout.addWidget(self.year_label)
-
-            self.time_row = self._make_time_row()
-            text_layout.addLayout(self.time_row)
-
-            self.progress_row = self._make_progress_row()
-            text_layout.addWidget(self.progress_row)
-
-            layout.addLayout(text_layout)
-
-        # -------- LIST --------
-        else:  # list
-            self.setFixedSize(290,28)
-            if not self.layout():
-                layout = QHBoxLayout(self)
-                layout.setContentsMargins(4,4,4,4)
-                layout.setSpacing(6)
-            else:
-                layout = self.layout()
-
-            title_lbl, is_new_t = self._get_or_create_label('title_label', "book_item_title", "font-size: 14px;")
-            author_lbl, is_new_a = self._get_or_create_label('author_label', "book_item_author", "font-size: 14px;")
-            if is_new_t:
-                title_lbl.setContentsMargins(4,0,0,0)
-                layout.addWidget(title_lbl)
-                title_lbl.installEventFilter(self)
-            else:
-                title_lbl.show()
-
-            if is_new_a:
-                author_lbl.setAlignment(Qt.AlignRight)
-                author_lbl.setContentsMargins(0,0,0,0)
-                layout.addStretch()
-                layout.addWidget(author_lbl)
-                author_lbl.installEventFilter(self)
-            else:
-                author_lbl.show()
-
-            if not hasattr(self, 'total_label'):
-                self.total_label = QLabel()
-                self.total_label.setObjectName("book_item_total")
-                self.total_label.setStyleSheet("font-size: 14px;")
-                self.total_label.setFixedWidth(46)
-                self.total_label.setAlignment(Qt.AlignRight)
-                self.total_label.setContentsMargins(0,0,0,0)
-                layout.addWidget(self.total_label)
-            else:
-                self.total_label.show()
-
-            self._title_is_elided = False
-            self._author_is_elided = False
-
-            self.title_label.installEventFilter(self)
-            self.author_label.installEventFilter(self)
-
-
-    def bind(self, book_data):
-        """Virtual Scroll entry point: Rebinds the widget to new data."""
-        self.book_data = book_data
-        old_path = self.current_path
-        self.current_path = book_data.path
-        
-        self._update_ui_content()
-        return old_path != self.current_path
-
-    def _reposition_overlay(self):
-        if not hasattr(self, 'overlay_widget') or not hasattr(self, 'cover_label'):
-            return
-
-        try:
-            cw = self.cover_label.width()
-            ch = self.cover_label.height()
-
-            pct = 0.30 if getattr(self, '_overlay_has_progress', False) else 0.20
-            oh = int(ch * pct)
-
-            if self.view_mode == "2 per row" and not getattr(self, '_overlay_has_progress', False):
-                oh -= 9
-
-            elif self.view_mode == "3 per row" and not getattr(self, '_overlay_has_progress', False):
-                oh -= 4
-
-            elif self.view_mode == "Square":
-                if getattr(self, '_overlay_has_progress', False): 
-                    oh += 12
-                elif self.view_mode == "Square" and not getattr(self, '_overlay_has_progress', False):
-                    oh += 4
-
-            self.overlay_widget.resize(cw, oh)
-
-            # Use the layout margins directly — cover_label sits at (left, top) within
-            # the BookItem in both grid modes, and these values are set before any layout
-            # processing, so they're always reliable.
-            m = self.layout().contentsMargins()
-            self.overlay_widget.move(m.left(), m.top() + ch - oh)
-        except RuntimeError:
-            return
-
-    def _update_progress_bar(self):
-        if not hasattr(self, 'overlay_progress_bar'):
-            return
-        prog = self.book_data.progress
-        dur = self.book_data.duration
-        pct = (prog / dur) if dur > 0 else 0
-        self.overlay_progress_bar.setValue(int(pct * 1000))
-
-    def enterEvent(self, event):
-        if hasattr(self, 'overlay_widget'):
-            self.overlay_widget.show()
-            self.overlay_widget.raise_()
-            self._update_progress_bar()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if hasattr(self, 'overlay_widget'):
-            self.overlay_widget.hide()
-        super().leaveEvent(event)
-
-    def eventFilter(self, obj, event):
-        if self.view_mode == "List":
-            title_lbl = getattr(self, 'title_label', None)
-            author_lbl = getattr(self, 'author_label', None)
-            if not title_lbl or not author_lbl:
-                return super().eventFilter(obj, event)
-
-            if event.type() == QEvent.Enter:
-                if obj is title_lbl and getattr(self, '_title_is_elided', False):
-                    author_lbl.hide()
-                    title_lbl.setText(self.book_data.title)
-                elif obj is author_lbl and getattr(self, '_author_is_elided', False):
-                    title_lbl.hide()
-                    # Expand author to take available space (matches AVAILABLE in _update_ui_content)
-                    author_lbl.setFixedWidth(218)
-                    author_lbl.setText(self.book_data.author)
-            elif event.type() == QEvent.Leave:
-                if obj is title_lbl or obj is author_lbl:
-                    title_lbl.show()
-                    author_lbl.show()
-                    self._update_ui_content()
-        return super().eventFilter(obj, event)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._reposition_overlay()
-
-    def mousePressEvent(self, event):
-        self._is_toggling = False
-        if event.button() == Qt.LeftButton:
-            prog = self.book_data.progress
-            dur = self.book_data.duration
-
-            if prog > 0 and dur > 0:
-                target = None
-                # If overlay is visible, it takes precedence for the hit test
-                if hasattr(self, 'overlay_widget') and self.overlay_widget.isVisible():
-                    target = self.overlay_remaining_label
-                elif hasattr(self, 'total_label'):
-                    target = self.total_label
-
-                if target:
-                    from PySide6.QtCore import QRect
-                    hit_rect = QRect(target.mapToGlobal(target.rect().topLeft()), target.size())
-                    if hit_rect.contains(event.globalPosition().toPoint()):
-                        self._is_toggling = True
-                        self._show_remaining = not self._show_remaining
-                        self._update_ui_content()
-                        event.accept()
-                        return
-        super().mousePressEvent(event)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if getattr(self, '_is_building_ui', False):
-            return
-            
-        # Ensure progress inner width is updated when the layout resizes the parent
-        if hasattr(self, "progress_inner") and hasattr(self, "progress_outer") and self.book_data:
-            prog = self.book_data.progress
-            dur = self.book_data.duration
-            pct = (prog / dur) if dur > 0 else 0
-            try:
-                w = int(self.progress_outer.maximumWidth() * pct)
-                self.progress_inner.setGeometry(0, 0, w, 6)
-            except RuntimeError: pass
-        self._reposition_overlay()
-
-    def _update_ui_content(self):
-        """Internal: Updates labels based on current book_data."""
-        book_data = self.book_data
-        title = book_data.title or ""
-        author = book_data.author or ""
-        narrator = book_data.narrator
-        year = book_data.year
-
-        prog = book_data.progress
-        dur = book_data.duration
-        pct = (prog / dur) if dur > 0 else 0
-        speed = self.book_data.speed
-        has_progress = prog > 0 and dur > 0
-
-        def fmt_time(s):
-            s = int(s or 0)
-            return f"{s//3600}:{(s%3600)//60:02}:{s%60:02}"
-
-        # title/author (elision by mode; List is handled in the invade block below)
-        if hasattr(self, "title_label"):
-            if self.view_mode == "1 per row":
-                self.title_label.setText(self._elide(self.title_label, title, 176))
-            elif self.view_mode == "2 per row":
-                self.title_label.setText(self._elide(self.title_label, title, 113))
-
-        if hasattr(self, "author_label"):
-            if self.view_mode == "1 per row":
-                self.author_label.setText(self._elide(self.author_label, author, 176))
-            elif self.view_mode == "2 per row":
-                self.author_label.setText(self._elide(self.author_label, author, 113))
-
-        # narrator/year visibility
-        if hasattr(self, "narrator_label"):
-            if self.view_mode == "1 per row":
-                self.narrator_label.setText(self._elide(self.narrator_label, narrator or "", 176))
-            else:
-                self.narrator_label.setText(narrator or "")
-            self.narrator_label.setVisible(bool(narrator))
-
-        if hasattr(self, "year_label"):
-            self.year_label.setText(str(year) if year else "")
-            self.year_label.setVisible(bool(year))
-
-        # time row
-        if hasattr(self, "elapsed_label"):
-            self.elapsed_label.setText(fmt_time(prog))
-            self.elapsed_label.setVisible(prog > 0)
-
-        if hasattr(self, "total_label"):
-            if has_progress and self._show_remaining:
-                self.total_label.setText(f"-{fmt_time((dur - prog) / speed)}")
-            else:
-                self.total_label.setText(fmt_time(dur / speed))
-
-            if self.view_mode == "1 per row" and not has_progress:
-                self.total_label.setVisible(False)
-            else:
-                self.total_label.setVisible(True)
-
-        # List: invade elision
-        if self.view_mode == "List" and hasattr(self, "title_label") and hasattr(self, "author_label"):
-            self.title_label.ensurePolished()
-            self.author_label.ensurePolished()
-            fm_t = self.title_label.fontMetrics()
-            fm_a = self.author_label.fontMetrics()
-            AVAILABLE   = 218
-            AUTHOR_BASE = 100
-            TITLE_CM    = 4
-            BUFFER      = 4
-            title_text_w  = fm_t.horizontalAdvance(title)
-            author_text_w = fm_a.horizontalAdvance(author)
-            # Short author donates unused space to title; buffer absorbs sub-pixel slack
-            author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
-            title_max_lw = AVAILABLE - author_w
-            # Long author invades title's spare space
-            if author_text_w + BUFFER > AUTHOR_BASE:
-                spare    = max(0, title_max_lw - (title_text_w + TITLE_CM))
-                author_w = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
-                title_max_lw = AVAILABLE - author_w
-            title_avail = title_max_lw - TITLE_CM
-            ew_t = fm_t.horizontalAdvance("…")
-            ew_a = fm_a.horizontalAdvance("…")
-            disp_title  = title  if title_text_w  - title_avail < ew_t else fm_t.elidedText(title,  Qt.ElideRight, title_avail)
-            disp_author = author if author_text_w  - author_w    < ew_a else fm_a.elidedText(author, Qt.ElideRight, author_w)
-            self.author_label.setFixedWidth(max(1, author_w))
-            self.title_label.setText(disp_title)
-            self.author_label.setText(disp_author)
-
-            self._title_is_elided = (disp_title != title)
-            self._author_is_elided = (disp_author != author)
-
-        # progress
-        show_progress = prog > 0
-        if hasattr(self, "progress_outer") and hasattr(self, "pct_label"):
-            self.progress_outer.setVisible(show_progress)
-
-            if self.view_mode == "1 per row" and not show_progress:
-                self.pct_label.setText(fmt_time(dur / speed))
-                self.pct_label.setFixedWidth(60)
-                self.pct_label.setVisible(True)
-            else:
-                self.pct_label.setFixedWidth(35)
-                self.pct_label.setText(f"{int(pct*100)}%")
-                self.pct_label.setVisible(show_progress)
-
-        if hasattr(self, "progress_inner"):
-            w = int(self.progress_outer.maximumWidth() * pct)
-            self.progress_inner.setGeometry(0, 0, w, 6)
-
-        if hasattr(self, 'overlay_widget'):
-
-            if has_progress != self._overlay_has_progress:
-                self._overlay_has_progress = has_progress
-                self._reposition_overlay()
-
-            if has_progress:
-                # Show elapsed and remaining/total in the top row
-                self.overlay_time_row.setVisible(True)
-                if self.view_mode == "2 per row":
-                    style = "color: white; font-size: 14px; background: transparent;"
-                    self.overlay_elapsed_label.setStyleSheet(style)
-                    self.overlay_remaining_label.setStyleSheet(style)
-                    self.overlay_pct_label.setStyleSheet(style)
-
-                self.overlay_elapsed_label.setVisible(True)
-                self.overlay_remaining_label.setVisible(True)
-                remaining_s = (dur - prog) / speed
-                total_s = dur / speed
-                self.overlay_elapsed_label.setText(fmt_time(prog))
-                if self._show_remaining:
-                    self.overlay_remaining_label.setText(f"-{fmt_time(remaining_s)}")
-                else:
-                    self.overlay_remaining_label.setText(fmt_time(total_s))
-                self.overlay_remaining_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                # Show progress bar elements in the bottom row
-                self.overlay_progress_container.setVisible(True)
-                self.overlay_total_duration_label.setVisible(False) # Hide total duration label
-                self.overlay_pct_label.setText(f"{int(pct * 100)}%")
-                self._update_progress_bar()
-            else:
-                self.overlay_time_row.setVisible(False)
-                self.overlay_progress_container.setVisible(False) # Hide progress bar elements
-                self.overlay_total_duration_label.setVisible(True) # Show total duration label
-                if self.view_mode == "2 per row":
-                    self.overlay_total_duration_label.setStyleSheet("color: white; font-size: 15px; background: transparent;")
-
-                self.overlay_total_duration_label.setText(fmt_time(dur / speed))
-                self.overlay_total_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-    def set_cover(self, pixmap):
-        if hasattr(self, 'cover_label'):
-            if pixmap and not pixmap.isNull():
-                # Fetch current screen DPR to ensure crispness without size issues
-                dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
-
-                # Smart scaling: Crop if ratios are close, letterbox if they differ significantly
-                cell_size = self.cover_label.size()
-                if self.view_mode == "Square":
-                    mode = Qt.KeepAspectRatioByExpanding
-                else:
-                    mode = Qt.KeepAspectRatio
-                    if cell_size.height() > 0 and pixmap.height() > 0:
-                        cell_ratio = cell_size.width() / cell_size.height()
-                        cover_ratio = pixmap.width() / pixmap.height()
-                        # If within 8% of the cell ratio, expand/crop for a cleaner look
-                        if abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
-                            mode = Qt.KeepAspectRatioByExpanding
-
-                scaled = pixmap.scaled(
-                    cell_size * dpr,
-                    mode,
-                    Qt.SmoothTransformation
-                )
-                scaled.setDevicePixelRatio(dpr)
-                self.cover_label.setPixmap(scaled)
-                self.cover_label.setProperty("placeholder", False)
-                self.cover_label.setText("")
-            else:
-                # Fallback to placeholder if no cover is available
-                display_title = self.book_data.title or "Unknown"
-                self.cover_label.setText(display_title[:1])
-                self.cover_label.setProperty("placeholder", True)
-                self.cover_label.setPixmap(QPixmap())
-            
-            self.cover_label.style().unpolish(self.cover_label)
-            self.cover_label.style().polish(self.cover_label)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            if self._is_toggling:
-                self._is_toggling = False
-                return
-            self.clicked.emit(self.book_data.path)
-        super().mouseReleaseEvent(event)
-
 
 class LibraryPanel(QFrame):
     book_selected    = Signal(str)
@@ -1010,8 +296,6 @@ class LibraryPanel(QFrame):
             self._list_view.viewport().setStyleSheet("")
 
     def _on_view_mode_changed(self, _):
-        t0 = time.perf_counter()
-        label = self.style_combo.currentText()
         mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
@@ -1026,73 +310,30 @@ class LibraryPanel(QFrame):
                 QTimer.singleShot(50, lambda: _after_reset(_attempt + 1))
                 return
             self._load_visible_covers()
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            print(f"{label}: {elapsed_ms:.1f} ms")
 
         QTimer.singleShot(0, _after_reset)
 
-    def _populate_list_widgets(self):
-        playing_path = getattr(self.window(), 'current_file', None)
-        pos_now = self.player_instance.time_pos or 0.0 if self.player_instance else 0.0
-        dur_now = self.player_instance.duration  or 0.0 if self.player_instance else 0.0
-
-        for row in range(self._book_model.rowCount()):
-            index = self._book_model.index(row, 0)
-            book  = index.data(ROLE_BOOK)
-            if not book:
-                continue
-
-            live_pos = pos_now if book.path == playing_path else 0.0
-            live_dur = dur_now if book.path == playing_path else (book.duration or 0.0)
-
-            item = ListBookItem(
-                hover_bg_color=self._hover_bg_color,
-                alt_row=(row % 2 == 1),
-                parent=self._list_view.viewport(),
-            )
-            item.bind(book, live_pos, live_dur)
-            item.clicked.connect(self.book_selected.emit)
-            item.context_requested.connect(self.detail_requested.emit)
-            self._list_view.setIndexWidget(index, item)
-            
     # ── Data / refresh ───────────────────────────────────────────────────────
 
     def refresh(self, force=False):
-        LibraryPanel._open_count += 1
-        _open_n = LibraryPanel._open_count
-        _t0 = time.perf_counter()
-
         self._resolve_theme_colors()
         books = self.db.get_all_books(sort_by="title", order="ASC")
-        t_db = (time.perf_counter() - _t0) * 1000
 
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
 
         self._book_model.set_books(books)
-        t_model = (time.perf_counter() - _t0) * 1000
-
         self._apply_current_sort_filter()
-        t_sort = (time.perf_counter() - _t0) * 1000
-
-        cached = sum(1 for b in books if self._book_model._covers.get(b.path))
-        print(f"Library open #{_open_n}: {len(books)} books | DB={t_db:.1f}ms model={t_model:.1f}ms sort={t_sort:.1f}ms | covers cached={cached}/{len(books)}")
 
         def _after_covers(_attempt=0):
             first_idx = self._book_model.index(0, 0)
             if first_idx.isValid() and self._list_view.visualRect(first_idx).isEmpty() and _attempt < 5:
-                print(f"Library open #{_open_n}: layout not ready, retrying cover load (attempt {_attempt + 1})")
                 QTimer.singleShot(50, lambda: _after_covers(_attempt + 1))
                 return
             self._load_visible_covers()
-            t_dispatch = (time.perf_counter() - _t0) * 1000
-            in_flight = len(self._active_workers)
-            print(f"Library open #{_open_n}: cover workers dispatched, in_flight={in_flight} | t={t_dispatch:.1f}ms")
 
         QTimer.singleShot(0, _after_covers)
 
-        # if self.style_combo.currentData() == "List":
-        #     QTimer.singleShot(0, self._populate_list_widgets)
 
     def _apply_current_sort_filter(self):
         text = self.search_field.text().lower().strip()
@@ -1154,7 +395,6 @@ class LibraryPanel(QFrame):
                 continue
             self._trigger_cover_load(book)
             dispatched += 1
-        print(f"  _load_visible_covers: rows {first_row}-{last_row} | dispatched={dispatched} cached={skipped_cached} in_flight={skipped_flight}")
 
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
@@ -1171,10 +411,6 @@ class LibraryPanel(QFrame):
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
         self._book_model.update_cover(path, pixmap)
-        cached = len(self._book_model._covers)
-        total  = self._book_model.rowCount()
-        in_flight = len(self._active_workers)
-        print(f"  cover loaded: {cached}/{total} cached, {in_flight} still in flight | {os.path.basename(path)}")
 
     # ── Sort / filter ────────────────────────────────────────────────────────
 
@@ -1187,15 +423,12 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(self._sort_ascending)
 
     def _on_sort_changed(self):
-        t0 = time.perf_counter()
-        label = self.sort_combo.currentText()
         sort_key  = self.sort_combo.currentData()
         ascending = getattr(self, '_sort_ascending', True)
         direction = "ascending" if ascending else "descending"
         self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
         self._last_filter_mode = sort_key
-        QTimer.singleShot(0, lambda: print(f"{label}: {(time.perf_counter() - t0) * 1000:.1f} ms"))
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
@@ -1216,15 +449,6 @@ class LibraryPanel(QFrame):
             return
 
         self._book_model.update_playing_progress(path, pos, dur)
-
-        if self.style_combo.currentData() == "List":
-            for row in range(self._book_model.rowCount()):
-                index  = self._book_model.index(row, 0)
-                book   = index.data(ROLE_BOOK)
-                widget = self._list_view.indexWidget(index)
-                if book and book.path == path and isinstance(widget, ListBookItem):
-                    widget.update_progress(pos, dur)
-                    break
 
     def set_playing_path(self, path: str) -> None:
         self._delegate.set_playing_path(path)
@@ -1267,12 +491,10 @@ class LibraryPanel(QFrame):
             self._preload_timer.timeout.connect(self._preload_tick)
         self._preload_timer.setInterval(PRELOAD_INTERVAL_MS)
         self._preload_timer.start()
-        print(f"Idle preload: {len(self._preload_queue)} covers to load")
 
     def _preload_tick(self):
         if not getattr(self, '_preload_queue', None):
             self._preload_timer.stop()
-            print("Idle preload: complete")
             return
         from .cover_loader import CoverLoaderWorker
         for _ in range(PRELOAD_BATCH_SIZE):
@@ -1309,13 +531,10 @@ class LibraryPanel(QFrame):
         self._progress_timer.start()
 
     def hideEvent(self, event):
-        t0 = time.perf_counter()
         self._progress_timer.stop()
         super().hideEvent(event)
         self._book_model.set_hovered(None)
         self._rotate_view_mode_labels()
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        print(f"Library dismiss: {elapsed_ms:.1f} ms")
 
 
 ROLE_BOOK     = Qt.UserRole + 0
@@ -1931,7 +1150,7 @@ class BookDelegate(QStyledItemDelegate):
 
         # Title and author below cover
         text_x = cover_x
-        text_w = cover_w - 14  # matching right margin from BookItem
+        text_w = cover_w - 14
         text_y = cover_y + cover_h + 2
 
         field_rects = {}
@@ -2010,7 +1229,7 @@ class BookDelegate(QStyledItemDelegate):
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
-        # Time column width — derived from font, same rule as ListBookItem
+        # Time column width
         TIME_W    = fm.horizontalAdvance("-00:00:00") + 2
         LEFT_PAD  = 4
         RIGHT_PAD = 4
@@ -2264,195 +1483,3 @@ class BookDelegate(QStyledItemDelegate):
         f.setPixelSize(size)
         f.setBold(bold)
         painter.setFont(f)
-
-
-class ListBookItem(QWidget):
-    clicked           = Signal(str)
-    context_requested = Signal(str)
-
-    _AVAILABLE   = 218
-    _AUTHOR_BASE = 100
-    _TITLE_CM    = 4
-    _BUFFER      = 4
-
-    def __init__(self, hover_bg_color: QColor = None, alt_row: bool = False, parent=None):
-        super().__init__(parent)
-        self._hover_bg_color = hover_bg_color or QColor(80, 80, 80, 180)
-        self._alt_row        = alt_row
-        self._show_remaining = True
-        self._title_elided   = False
-        self._author_elided  = False
-        self._book           = None
-        self._is_toggling    = False
-        self._pos            = 0.0
-        self._dur            = 0.0
-
-        self.setFixedHeight(28)
-        self.setCursor(Qt.PointingHandCursor)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.title_label = QLabel()
-        self.title_label.setObjectName("book_item_title")
-        self.title_label.setStyleSheet("font-size: 14px;")
-        self.title_label.setContentsMargins(4, 0, 0, 0)
-
-        self.author_label = QLabel()
-        self.author_label.setObjectName("book_item_author")
-        self.author_label.setStyleSheet("font-size: 14px;")
-        self.author_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.author_label.setContentsMargins(0, 0, 0, 0)
-
-        self.time_label = QLabel()
-        self.time_label.setObjectName("book_item_total")
-        self.time_label.setStyleSheet("font-size: 14px;")
-        self.time_label.setFixedWidth(46)  # placeholder until first bind polishes the font
-        self.time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.time_label.setContentsMargins(0, 0, 0, 0)
-
-        layout.addWidget(self.title_label)
-        layout.addStretch()
-        layout.addWidget(self.author_label)
-        layout.addWidget(self.time_label)
-
-    # ── Public API ──────────────────────────────────────────────────────────
-
-    def bind(self, book, position: float, duration: float):
-        self._book           = book
-        self._pos            = float(position or 0.0)
-        self._dur            = float(duration  or 0.0)
-        self._show_remaining = True
-
-        elision = self._calculate_elision(book.title or "", book.author or "")
-        self.title_label.setText(elision["title"])
-        self.author_label.setText(elision["author"])
-        self.author_label.setFixedWidth(max(1, elision["author_width"]))
-        self._title_elided  = elision["title_elided"]
-        self._author_elided = elision["author_elided"]
-
-        self._resize_time_label()
-        self._refresh_time()
-
-    def update_progress(self, position: float, duration: float):
-        self._pos = float(position or 0.0)
-        self._dur = float(duration  or 0.0)
-        self._refresh_time()
-
-    # ── Elision ─────────────────────────────────────────────────────────────
-
-    def _calculate_elision(self, title: str, author: str) -> dict:
-        self.ensurePolished()
-        fm_t = self.title_label.fontMetrics()
-        fm_a = self.author_label.fontMetrics()
-
-        title_text_w  = fm_t.horizontalAdvance(title)
-        author_text_w = fm_a.horizontalAdvance(author)
-
-        author_w     = min(author_text_w + self._BUFFER, self._AUTHOR_BASE)
-        title_max_lw = self._AVAILABLE - author_w
-
-        if author_text_w + self._BUFFER > self._AUTHOR_BASE:
-            spare        = max(0, title_max_lw - (title_text_w + self._TITLE_CM))
-            author_w     = min(author_text_w + self._BUFFER, self._AUTHOR_BASE + spare)
-            title_max_lw = self._AVAILABLE - author_w
-
-        title_avail = title_max_lw - self._TITLE_CM
-        ew_t = fm_t.horizontalAdvance("…")
-        ew_a = fm_a.horizontalAdvance("…")
-
-        disp_title  = title  if title_text_w  - title_avail < ew_t else fm_t.elidedText(title,  Qt.ElideRight, title_avail)
-        disp_author = author if author_text_w  - author_w   < ew_a else fm_a.elidedText(author, Qt.ElideRight, author_w)
-
-        return {
-            "title":        disp_title,
-            "author":       disp_author,
-            "author_width": author_w,
-            "title_elided":  disp_title  != title,
-            "author_elided": disp_author != author,
-        }
-
-    # ── Time display ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _fmt(seconds: float) -> str:
-        s = int(seconds or 0)
-        return f"{s // 3600}:{(s % 3600) // 60:02}:{s % 60:02}"
-
-    def _resize_time_label(self):
-        self.ensurePolished()
-        fm = self.time_label.fontMetrics()
-        self.time_label.setFixedWidth(fm.horizontalAdvance("-00:00:00") + 2)
-
-    def _refresh_time(self):
-        pos, dur = self._pos, self._dur
-        if pos > 0 and dur > 0:
-            if self._show_remaining:
-                self.time_label.setText(f"-{self._fmt(dur - pos)}")
-            else:
-                self.time_label.setText(self._fmt(dur))
-        else:
-            self.time_label.setText(self._fmt(dur))
-
-    # ── Events ───────────────────────────────────────────────────────────────
-
-    def enterEvent(self, event):
-        if self._title_elided:
-            self.author_label.hide()
-            self.title_label.setText(self._book.title if self._book else "")
-        elif self._author_elided:
-            self.title_label.hide()
-            self.author_label.setFixedWidth(self._AVAILABLE)
-            self.author_label.setText(self._book.author if self._book else "")
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self.title_label.show()
-        self.author_label.show()
-        if self._book:
-            elision = self._calculate_elision(self._book.title or "", self._book.author or "")
-            self.title_label.setText(elision["title"])
-            self.author_label.setText(elision["author"])
-            self.author_label.setFixedWidth(max(1, elision["author_width"]))
-        self.update()
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event):
-        self._is_toggling = False
-        if event.button() == Qt.LeftButton:
-            if self._pos > 0 and self._dur > 0:
-                # Safe zone for list toggle: the right 80px containing the time label
-                if event.position().x() > self.width() - 80:
-                    self._is_toggling = True
-                    self._show_remaining = not self._show_remaining
-                    self._refresh_time()
-                    event.accept()
-                    return
-        elif event.button() == Qt.RightButton:
-            if self._book:
-                self.context_requested.emit(self._book.path)
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            if self._is_toggling:
-                self._is_toggling = False
-                event.accept()
-                return
-            if self._book:
-                self.clicked.emit(self._book.path)
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event):
-        from PySide6.QtGui import QPainter
-        painter = QPainter(self)
-        if self._alt_row:
-            painter.fillRect(self.rect(), QColor(255, 255, 255, 10))
-        if self.underMouse():
-            painter.fillRect(self.rect(), self._hover_bg_color)
-        painter.end()
-        super().paintEvent(event)
