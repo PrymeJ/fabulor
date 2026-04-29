@@ -4,22 +4,24 @@ from PySide6.QtCore import Qt, Signal, QSize
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
 TIME_LABEL_WIDTH = 58
-H_MARGIN = 10  # left + right margin total
+H_MARGIN = 10  # left + right padding total inside items
 
 
 class ChapterList(QListWidget):
-    """Floating popup list for chapter navigation."""
+    """Overlay list for chapter navigation, rendered as a child of the main window."""
     chapter_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.player = None
-        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+        # Child widget, not a popup — stays inside the parent window always
+        self.setWindowFlags(Qt.Widget)
         self.setVerticalScrollMode(QListWidget.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setObjectName("chapter_dropdown")
         self.setUniformItemSizes(True)
+        self.hide()
         self.itemClicked.connect(self._on_item_clicked)
 
     def set_player(self, player):
@@ -33,8 +35,8 @@ class ChapterList(QListWidget):
             self.setFixedWidth(list_width)
         chapters = self.player.chapter_list or []
         effective_speed = speed if speed and speed > 0 else 1.0
-        list_width = self.width()
-        name_width = list_width - TIME_LABEL_WIDTH - H_MARGIN
+        w = self.width()
+        name_width = w - TIME_LABEL_WIDTH - H_MARGIN
 
         for i, chap in enumerate(chapters):
             title = chap.get('title') or f"Chapter {i+1}"
@@ -44,7 +46,7 @@ class ChapterList(QListWidget):
 
             item = QListWidgetItem(self)
             item.setData(Qt.UserRole, i)
-            item.setSizeHint(QSize(list_width, ROW_HEIGHT))
+            item.setSizeHint(QSize(w, ROW_HEIGHT))
 
             widget = QWidget()
             widget.setAttribute(Qt.WA_TranslucentBackground)
@@ -69,27 +71,24 @@ class ChapterList(QListWidget):
             self.setItemWidget(item, widget)
 
         self._visible_rows = min(VISIBLE_ROWS, self.count())
-        # Set a provisional height; the real overhead (stylesheet borders + internal padding)
-        # is only measurable after show(), so show_centered_on corrects it then.
-        self.setFixedHeight(self._visible_rows * ROW_HEIGHT)
 
-    def show_centered_on(self, anchor_widget, window):
-        """Position and show the popup, flush with the window, just above anchor_widget."""
-        win_pos = window.mapToGlobal(window.rect().topLeft())
-        anchor_pos = anchor_widget.mapToGlobal(anchor_widget.rect().topLeft())
-        x = win_pos.x()
+    def show_above(self, anchor_widget, window):
+        """Position the list inside the parent window, just above anchor_widget."""
+        self.setFixedWidth(window.width())
 
-        # Show offscreen first so Qt realises the widget and we can measure real overhead
-        self.move(x, -9999)
+        # Measure real height overhead (borders + any internal padding) after sizing
         self.show()
+        h_overhead = self.height() - self.viewport().height()
+        self.hide()
 
-        # Now measure actual overhead (stylesheet borders aren't reflected in frameWidth())
-        overhead = self.height() - self.viewport().height()
-        corrected_height = self._visible_rows * ROW_HEIGHT + overhead
+        corrected_height = self._visible_rows * ROW_HEIGHT + h_overhead
         self.setFixedHeight(corrected_height)
 
-        y = anchor_pos.y() - corrected_height
-        self.move(x, y)
+        # All coordinates are in window-local space — no mapToGlobal needed
+        anchor_local_y = anchor_widget.mapTo(window, anchor_widget.rect().topLeft()).y()
+        self.move(0, anchor_local_y - corrected_height)
+        self.raise_()
+        self.show()
         self.setFocus()
 
     def scroll_to_active(self, index):

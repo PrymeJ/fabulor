@@ -1368,7 +1368,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         active_idx = self.player.chapter or 0
-        self.chapter_list_widget.show_centered_on(self.current_chapter_label, self)
+        self.chapter_list_widget.show_above(self.current_chapter_label, self)
 
         # Apply selection and scroll after the widget is shown and laid out
         self.chapter_list_widget.setCurrentRow(active_idx)
@@ -2072,9 +2072,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         try:
             if event.type() == QEvent.MouseButtonPress:
                 if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
-                    gp = event.globalPosition().toPoint()
-                    if not self.chapter_list_widget.geometry().contains(gp):
-                        self.panel_manager.hide_all_panels()
+                    local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                    if not self.chapter_list_widget.geometry().contains(local_pos):
+                        self.chapter_list_widget.hide()
         except Exception:
             pass
 
