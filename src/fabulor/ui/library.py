@@ -410,7 +410,9 @@ class LibraryPanel(QFrame):
             return
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
-        self._book_model.update_cover(path, pixmap)
+        _cover_cache[path] = pixmap  # write to cache directly
+        if not getattr(self, '_is_animating', False):
+            self._book_model.notify_cover_cached(path)  # emit dataChanged only if not sliding
 
     # ── Sort / filter ────────────────────────────────────────────────────────
 
@@ -732,6 +734,7 @@ class BookDelegate(QStyledItemDelegate):
         self._hover_fade_timer = QTimer()
         self._hover_fade_timer.setInterval(16)  # ~60fps
         self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
+        
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
