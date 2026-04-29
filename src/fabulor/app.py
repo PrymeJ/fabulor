@@ -374,6 +374,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.chapter_list_widget = ChapterList(self)
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
+        self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
         
         self._build_sidebar()
         self._build_library_panel()
@@ -1918,6 +1919,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             speed = self.player.speed or 1.0
             if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
                 self._trigger_undo(old_pos)
+
+    def _on_chapter_list_selected(self, title, old_pos):
+        self.player.is_seeking = True
+        speed = self.player.speed or 1.0
+        if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
+            self._trigger_undo(old_pos)
 
     def _trigger_undo(self, old_pos):
         """Slides in the floating undo button."""

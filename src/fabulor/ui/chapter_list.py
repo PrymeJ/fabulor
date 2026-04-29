@@ -10,6 +10,7 @@ H_MARGIN = 10  # left + right padding total inside items
 class ChapterList(QListWidget):
     """Overlay list for chapter navigation, rendered as a child of the main window."""
     chapter_changed = Signal(str)
+    chapter_selected = Signal(str, float)  # (title, old_pos)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,7 +117,9 @@ class ChapterList(QListWidget):
         chapters = self.player.chapter_list or []
         if not (0 <= idx < len(chapters)):
             return
+        old_pos = self.player.time_pos or 0.0
         self.player.chapter = idx
         self.hide()
         actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
         self.chapter_changed.emit(actual_title)
+        self.chapter_selected.emit(actual_title, old_pos)
