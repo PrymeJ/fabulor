@@ -73,6 +73,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     undo_mode_changed = Signal(int)
     fade_mode_changed = Signal(int)
     blur_mode_changed = Signal(bool)
+    hover_fade_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -175,12 +176,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
             self.player.load_book(self.current_file)
+            self.library_panel.set_playing_path(self.current_file)
         self.chapter_list_widget.set_player(self.player)
 
         self._load_cover_art(self.current_file)
         
         # Handle selection from library
         self.library_panel.book_selected.connect(self._on_book_selected_from_library)
+        self.library_panel.detail_requested.connect(self._on_library_detail_requested)
         
         self.library_controller._check_library_status()
         self.ui_timer.start(200)
@@ -242,6 +245,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
 
+        def set_hover_fade_selection(mode):
+            if not hasattr(self, 'hover_fade_buttons'): return
+            for m, btn in self.hover_fade_buttons.items():
+                btn.setProperty("selected", "true" if m == mode else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+            self.library_panel.set_hover_fade_enabled(mode)
+
         class VisualsInterface:
             def __init__(self):
                 pass
@@ -252,6 +263,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def set_fade_selection(self, ms): set_fade_selection(ms)
             def set_blur_selection(self, enabled): set_blur_selection(enabled)
             def set_notches_selection(self, enabled): set_notches_selection(enabled)
+            def set_hover_fade_selection(self, enabled): set_hover_fade_selection(enabled)
 
         class PanelInterface:
             def __init__(self, speed_panel, sleep_panel, audio_tab):
@@ -418,6 +430,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
+
+        QTimer.singleShot(4000, self.library_panel.start_idle_preload)
 
     def _build_status_banner(self):
         self.status_banner = QWidget(self)
@@ -737,6 +751,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_library_panel(self):
         self.library_panel = LibraryPanel(self.db, self.config, player_instance=self.player, parent=self)
         self.library_panel.hide()
+        self.library_panel.set_hover_fade_enabled(self.config.get_hover_fade_mode())
         self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
         self.library_panel_animation.setDuration(300)
         self.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -898,6 +913,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.scroll_buttons[mode] = btn
         scroll_row.addStretch()
         app_layout.addLayout(scroll_row)
+
+        hover_fade_header = QLabel("Library hover trail")
+        hover_fade_header.setObjectName("settings_header")
+        app_layout.addWidget(hover_fade_header)
+
+        hover_fade_row = QHBoxLayout()
+        self.hover_fade_buttons = {}
+        for mode in ["Slow", "Normal", "Fast", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.hover_fade_changed.emit(m))
+            hover_fade_row.addWidget(btn)
+            self.hover_fade_buttons[mode] = btn
+        hover_fade_row.addStretch()
+        app_layout.addLayout(hover_fade_row)
 
         hints_header = QLabel("Chapter hints")
         hints_header.setObjectName("settings_header")
@@ -1072,6 +1102,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.terminate()
         self.progress_slider.set_markers([])
         self._load_cover_art("")
+        self.library_panel.set_playing_path("")
+        self.library_panel.set_is_playing(False)
         self.config.set_last_book("")
 
     def get_current_file(self):
@@ -1203,6 +1235,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 )
         self._post_seek_pending_position = None
 
+    def _on_library_detail_requested(self, path: str) -> None:
+        self.panel_manager.open_book_detail({"path": path}, tab="stats")
+
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
         if path == self.current_file:
@@ -1213,6 +1248,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.set_markers([])
         self._last_saved_pct = -1
         self.current_file = path
+        self.library_panel.set_playing_path(path)
+        self.library_panel.set_is_playing(False)
         self.db.update_last_played(path)
         self.config.set_last_book(path)
         self.player.load_book(path)
@@ -1802,6 +1839,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
 
                 self.player.pause = False
+                self.library_panel.set_is_playing(True)
                 if self._session_start is None:
                     self._open_session()
                 else:
@@ -1811,6 +1849,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._last_pause_timestamp = time.time()
                 self._save_current_progress()
                 self.player.pause = True
+                self.library_panel.set_is_playing(False)
                 self._session_pause_timer.start()
                 if self.library_panel.isVisible():
                     self.library_panel.update_current_book_progress()
@@ -2023,7 +2062,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.panel_manager.hide_all_panels()
         except Exception:
             pass
-            
+
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
+            if hasattr(self, 'library_panel') and not self.library_panel.preload_complete():
+                self.library_panel.cancel_preload()
+                if not hasattr(self, '_preload_restart_timer'):
+                    self._preload_restart_timer = QTimer(self)
+                    self._preload_restart_timer.setSingleShot(True)
+                    self._preload_restart_timer.timeout.connect(self.library_panel.start_idle_preload)
+                self._preload_restart_timer.start(5000)
+
         # Ensure obj is a valid QObject before calling super().eventFilter
         # Some internal Qt objects like QWidgetItem are not QObjects.
         if not isinstance(obj, QObject) or obj is None:

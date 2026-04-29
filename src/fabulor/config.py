@@ -159,6 +159,12 @@ class Config:
     def set_scroll_mode(self, mode):
         self.settings.setValue("scroll_mode", mode)
 
+    def get_hover_fade_mode(self):
+        return self.settings.value("hover_fade_mode", "Slow")
+
+    def set_hover_fade_mode(self, mode: str):
+        self.settings.setValue("hover_fade_mode", mode)
+
     def get_chapter_hints_enabled(self):
         return self.settings.value("chapter_hints_enabled", "true") == "true"
 

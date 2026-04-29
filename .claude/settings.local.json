@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from src.fabulor.ui.library import BookDelegate, ROLE_BOOK, ROLE_HOVERED; print\\('OK'\\)\")",
+      "Bash(python3 -c \"import mpv; help\\(mpv.MPV.path\\)\")",
+      "Bash(python3 -)",
+      "Bash(awk '/^class LibraryPanel/,/^class [A-Z]/' /home/pryme/Coding/Python/fabulor/src/fabulor/ui/library.py)",
+      "Bash(python -m py_compile src/fabulor/ui/library.py)"
+    ]
+  }
+}

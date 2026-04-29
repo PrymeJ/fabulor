@@ -67,6 +67,7 @@ class PanelManager:
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
+        self.library_panel.cancel_preload()
         self.main_window._save_current_progress()
         if self.sidebar_expanded:
             self._pending_panel_open = "library"
@@ -437,6 +438,7 @@ class PanelManager:
 
     def handle_drag_area_right_click(self, event):
         """Handles right-click on drag area to dismiss panels or toggle sidebar."""
+        self.library_panel.cancel_preload()
         if self.library_panel.isVisible():
             self._close_library_flow()
         elif self.settings_panel.isVisible():

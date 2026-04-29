@@ -28,6 +28,7 @@
 - [x] Chapter progress bar draggable
 - [x] Chapter progress bar updates the percentage
 - [x] Chapter progress bar updates book progress bar
+- [x] Chapter notches functional
 - [x] Volume slider functional
 - [x] Volume slider draggable
 
@@ -42,7 +43,7 @@
 - [x] Chapter name opens drop-up
 - [x] Chapter names in drop-up responsive
 - [x] Chapter names in drop-up geometry || newlines after the last chapter, width, test slide up
-- [x] Right click on chapter names toggles remaining/total time || not implemented
+- [] Right click on chapter names toggles remaining/total time || not implemented
 - [x] Toolbar buttons displayed and responsive
 - [x] Art displayed when present
 - [x] Size locked
@@ -53,15 +54,17 @@
 - [x] Opacity on on hover
 - [x] Clicking on it dismisses || tbd
 - [x] Hides on menu open
-- [x] Hides on Speed button click || too fast?
+- [x] Hides on Speed button click
 - [x] All clicks on buttons dismisses and performs
 - [x] Settings clickable
 - [x] Playback clickable
+- [x] Stats clickable
+- [x] Sleep clickable
+- [x] Library clickable
 - [x] Clicking on chapter name dismisses
 
-## Settings panel || scrollbar issues, remove vertical line and darken, font size +1
+## Settings panel
 
-- [x] Speed button switcheroo when settings on
 - [x] All clicks on buttons dismisses and performs
 - [x] Blur works || either needs improvement or removal
 - [x] Library add works
@@ -101,15 +104,138 @@
 
 ## Library panel
 
-- [] Books do not flicker when shuffled (Grid re-insertion logic)
-- [x] Views work correctly
+### View modes
+- [x] All five modes display correctly on first launch with saved mode restored
+- [x] Switching between all modes is fast (target <100ms)
+- [x] Grid modes (2/3/Square) use IconMode layout; List and 1-per-row use ListMode
+- [x] Covers load for visible rows only on mode switch; preloaded covers appear instantly
+- [x] Books times are show with speed taken into account
+
+### Cover loading
+- [x] First open: only visible rows dispatch workers
+- [x] Scrolling loads covers for newly visible rows
+- [x] Idle preloader starts 4 seconds after launch, pauses on interaction, resumes after 5 seconds
+- [x] Covers persist across library open/close cycles (cached in _cover_cache)
+- [] Missing covers show letterbox placeholder
+
+### Sort and filter
+- [x] Sorting: Title, Author, Last Played, Progress, Duration, Year
+- [x] Ascending/Descending toggle works for all keys and persists across restarts
+- [] Recent and Progress sort exclude books with progress < 1 second
+- [] Progress sort orders by percentage not raw seconds
+- [] Zero-progress books sort to bottom of Progress/Recent, alphabetically within that group
+- [] Search filter works across title, author, narrator
 - [] Naming Pattern re-parsing (Author-Title / Title-Author live swap)
-- [] Search filter logic
-- [x] Sorting: Title, Author, Last Played, Progress, Duration
-- [x] Ascending/Descending toggle works for all keys
-- [x] Async cover loading (Placeholders active until loaded)
+
+### Dynamic updates (playing book)
+- [x] Times update every ~1 second in all modes
+- [x] Progress bar and percentage update every ~1 second
+- [] Overlay in grid modes (2/3/Square) updates while visible
+- [x] Accent stripe visible on playing book row in List mode
+
+### Interaction
+- [x] Left click opens book
+- [x] Right click opens book details panel on stats tab
+- [x] Time label click toggles remaining/total (requires progress > 1s)
+- [x] Toggle does not dismiss panel or open book
+- [x] Hover overlay appears/disappears correctly in grid modes (2/3/Square)
+- [x] Elision on hover works correctly on 1 per view and 2 per view modes
+- [x] List mode hover-expand works for title and author independently
+- [x] List mode trailing hover fade toggleable in Settings (Slow/Normal/Fast/Off, default Slow)
+- [x] Hovered row stays lit while pointer is stationary; fades out only on leave
+
+### Theme
+- [x] Theme switch updates all delegate colors immediately
+- [] Library stylesheet applies to toolbar inputs and background
+- [x] All five modes respect theme colors
+
+### Performance regression checks
+- [x] Library open #1: <100ms
+- [x] Library open #2 (covers cached): <50ms
+- [x] Mode switch: <30ms
+- [] Library dismiss: <5ms
+
+### Legacy checks (pre-rewrite)
+- [] Books do not flicker when shuffled (Grid re-insertion logic)
 - [x] Persistent thumbnails (Metadata updates don't wipe loaded images)
 - [x] Back button dismisses
+
+## Stats panel
+
+### Overall tab
+- [ ] Panel opens from sidebar with slide-in animation
+- [ ] Listening time, books started, sessions, longest session, avg session, current streak, longest streak display correctly
+- [ ] Most listened replaced with last session (book title + date)
+- [ ] Current streak shows accent-colored dot when today is active
+- [ ] Recently finished strip shows up to 5 thumbnails, hidden when empty
+- [ ] Clicking a finished thumbnail opens Book Detail Panel on Stats tab
+- [ ] Bar chart renders with correct accent color on first open (no system color fallback)
+- [ ] Bar chart updates accent color on theme change
+- [ ] Clicking a bar navigates to Daily tab and loads that date
+- [ ] Day-start hour spinner persists across restarts
+- [ ] Changing day-start hour reflects immediately on all tabs without restart
+- [ ] Reset all stats prompts confirmation, clears all data, refreshes all tabs
+
+### Daily tab
+- [ ] Most recent active day loads automatically on tab activation
+- [ ] Left/right arrows page through active days only, disabled (dimmed) at boundaries
+- [ ] Date header displays as "Friday, April 25"
+- [ ] Per-book rows show cover (48×48 cropped), title, author, clock time, book time, percentage
+- [ ] Rows with < 60s clock time are filtered out
+- [ ] Rows sorted by clock time descending, book time as tiebreaker
+- [ ] Deleted books show dimmed row with app icon placeholder
+- [ ] Finished books show title in finished color
+- [ ] Clicking a row opens Book Detail Panel on Stats tab
+- [ ] Hand cursor on hover over rows
+
+### Weekly tab
+- [ ] Header displays as "Apr 21 – Apr 27"
+- [ ] Navigation pages through active weeks only
+- [ ] Per-book rows same as Daily (cover, times, percentage, finished color)
+- [ ] "Finished this week" thumbnail strip appears only when books were finished that week
+- [ ] Clicking a finished thumbnail opens Book Detail Panel
+- [ ] Hand cursor on rows and finished thumbnails
+
+### Monthly tab
+- [ ] Header displays as "April 2026"
+- [ ] Navigation pages through active months only
+- [ ] Per-book rows same as Daily/Weekly
+- [ ] "Finished this month" thumbnail strip appears only when applicable
+- [ ] Hand cursor on rows and finished thumbnails
+
+### Options tab
+- [ ] Day-start hour spinner range 0–23, persists correctly
+- [ ] Reset all stats button prompts confirmation before executing
+
+## Book Detail Panel
+
+### Navigation
+- [ ] Opens from Daily/Weekly/Monthly row click with slide-in from right
+- [ ] Opens from Overall finished thumbnail click
+- [ ] Back button slides panel out to the right and returns to stats
+- [ ] Panel is full window width, fully covers stats panel (no bleed-through)
+- [ ] Theme applied correctly on first open (no system color fallback)
+- [ ] Accent color updates on theme change
+
+### Header
+- [ ] Cover displays at correct aspect ratio, max 120×120
+- [ ] App icon placeholder shown when no cover available
+- [ ] Title, author shown always
+- [ ] Narrator and year shown only when present, hidden when absent
+- [ ] Deleted book (book_path NULL) handled gracefully
+
+### Stats tab
+- [ ] Furthest position progress bar shows correct percentage and remaining time
+- [ ] Furthest position fetches duration from DB when not in book_data
+- [ ] Total listened, sessions, started date display correctly
+- [ ] Finished shows "—" when never finished
+- [ ] Finished shows date when finished once
+- [ ] Finished shows "Nx — last [date]" when finished more than once
+- [ ] Day-by-day bar chart renders with correct data and accent color
+- [ ] Delete listening history prompts confirmation, clears data, refreshes panel
+
+### Metadata tab
+- [ ] Placeholder shown (implementation pending)
 
 ## Saving states
 
