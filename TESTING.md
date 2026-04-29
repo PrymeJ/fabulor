@@ -101,13 +101,57 @@
 
 ## Library panel
 
-- [] Books do not flicker when shuffled (Grid re-insertion logic)
-- [x] Views work correctly
+### View modes
+- [x] All five modes display correctly on first launch with saved mode restored
+- [x] Switching between all modes is fast (target <100ms)
+- [x] Grid modes (2/3/Square) use IconMode layout; List and 1-per-row use ListMode
+- [x] Covers load for visible rows only on mode switch; preloaded covers appear instantly
+
+### Cover loading
+- [x] First open: only visible rows dispatch workers
+- [x] Scrolling loads covers for newly visible rows
+- [x] Idle preloader starts 4 seconds after launch, pauses on interaction, resumes after 5 seconds
+- [x] Covers persist across library open/close cycles (cached in _cover_cache)
+- [] Missing covers show letterbox placeholder
+
+### Sort and filter
+- [x] Sorting: Title, Author, Last Played, Progress, Duration, Year
+- [x] Ascending/Descending toggle works for all keys and persists across restarts
+- [] Recent and Progress sort exclude books with progress < 1 second
+- [] Progress sort orders by percentage not raw seconds
+- [] Zero-progress books sort to bottom of Progress/Recent, alphabetically within that group
+- [] Search filter works across title, author, narrator
 - [] Naming Pattern re-parsing (Author-Title / Title-Author live swap)
-- [] Search filter logic
-- [x] Sorting: Title, Author, Last Played, Progress, Duration
-- [x] Ascending/Descending toggle works for all keys
-- [x] Async cover loading (Placeholders active until loaded)
+
+### Dynamic updates (playing book)
+- [x] Times update every ~1 second in all modes
+- [x] Progress bar and percentage update every ~1 second
+- [] Overlay in grid modes (2/3/Square) updates while visible
+- [x] Accent stripe visible on playing book row in List mode
+
+### Interaction
+- [x] Left click opens book
+- [x] Right click opens book details panel on stats tab
+- [x] Time label click toggles remaining/total (requires progress > 1s)
+- [x] Toggle does not dismiss panel or open book
+- [] Hover overlay appears/disappears correctly in grid modes (2/3/Square)
+- [] List mode hover-expand works for title and author independently
+- [x] List mode trailing hover fade toggleable in Settings (Slow/Normal/Fast/Off, default Slow)
+- [x] Hovered row stays lit while pointer is stationary; fades out only on leave
+
+### Theme
+- [x] Theme switch updates all delegate colors immediately
+- [] Library stylesheet applies to toolbar inputs and background
+- [] All five modes respect theme colors
+
+### Performance regression checks
+- [x] Library open #1: <100ms
+- [x] Library open #2 (covers cached): <50ms
+- [x] Mode switch: <30ms
+- [] Library dismiss: <5ms
+
+### Legacy checks (pre-rewrite)
+- [] Books do not flicker when shuffled (Grid re-insertion logic)
 - [x] Persistent thumbnails (Metadata updates don't wipe loaded images)
 - [x] Back button dismisses
 
