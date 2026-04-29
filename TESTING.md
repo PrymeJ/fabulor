@@ -109,6 +109,7 @@
 - [x] Switching between all modes is fast (target <100ms)
 - [x] Grid modes (2/3/Square) use IconMode layout; List and 1-per-row use ListMode
 - [x] Covers load for visible rows only on mode switch; preloaded covers appear instantly
+- [x] Books times are show with speed taken into account
 
 ### Cover loading
 - [x] First open: only visible rows dispatch workers
