@@ -229,6 +229,7 @@ class HoverButton(QPushButton):
     """A button that emits signals on mouse enter/leave for hover effects."""
     hovered = Signal()
     unhovered = Signal()
+    rightClicked = Signal()
 
     def enterEvent(self, event):
         self.hovered.emit()
@@ -237,3 +238,9 @@ class HoverButton(QPushButton):
     def leaveEvent(self, event):
         self.unhovered.emit()
         super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.rightClicked.emit()
+        else:
+            super().mousePressEvent(event)

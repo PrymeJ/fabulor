@@ -592,6 +592,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.prev_button.clicked.connect(self.handle_prev)
+        self.prev_button.rightClicked.connect(self._on_prev_right_click)
         self.rewind_button.clicked.connect(self.handle_rewind)
         self.rewind_button.rightClicked.connect(lambda: self.handle_rewind(long_skip=True))
         self.forward_button.clicked.connect(self.handle_forward)
@@ -1895,6 +1896,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             new_pos = min(self.player.duration or 0, (old_pos or 0) + skip)
             self.player.time_pos = new_pos
             self.player.is_seeking = True
+
+    def _on_prev_right_click(self):
+        self.panel_manager.hide_all_panels()
+        self._clear_preview()
+        if self.player and self.current_file:
+            old_pos = self.player.time_pos
+            self.player.time_pos = 0
+            self.player.is_seeking = True
+            self._trigger_undo(old_pos)
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()

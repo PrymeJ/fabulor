@@ -33,6 +33,7 @@ class ChapterList(QListWidget):
 
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._hide_connected = False
 
     def set_player(self, player):
         self.player = player
@@ -102,10 +103,7 @@ class ChapterList(QListWidget):
         self._anim.setDuration(FADE_IN_MS)
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
-        try:
-            self._anim.finished.disconnect()
-        except RuntimeError:
-            pass
+        self._disconnect_hide()
         self._anim.start()
 
     def fade_out(self):
@@ -114,12 +112,15 @@ class ChapterList(QListWidget):
         self._anim.setDuration(FADE_OUT_MS)
         self._anim.setStartValue(self._opacity.opacity())
         self._anim.setEndValue(0.0)
-        try:
-            self._anim.finished.disconnect()
-        except RuntimeError:
-            pass
+        self._disconnect_hide()
         self._anim.finished.connect(self.hide)
+        self._hide_connected = True
         self._anim.start()
+
+    def _disconnect_hide(self):
+        if self._hide_connected:
+            self._anim.finished.disconnect(self.hide)
+            self._hide_connected = False
 
     def scroll_to_active(self, index):
         """Scroll so the active row sits in the middle of the 5-row window."""
