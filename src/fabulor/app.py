@@ -1345,14 +1345,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_position_start = self.config.get_last_position(self.current_file)
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
+        book_data = self.db.get_book(self.current_file)
+        new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
             self._pre_switch_slider_value = None
-            self.progress_slider.animate_to(self.progress_slider.value(), old_value=pre)
+            if new_progress > 0:
+                self.progress_slider.animate_to(self.progress_slider.value(), old_value=pre)
+            else:
+                self.progress_slider.setValue(0)
         pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
         if pre_chap is not None:
             self._pre_switch_chap_slider_value = None
-            self.chapter_progress_slider.animate_to(self.chapter_progress_slider.value(), old_value=pre_chap)
+            if new_progress > 0:
+                self.chapter_progress_slider.animate_to(self.chapter_progress_slider.value(), old_value=pre_chap)
+            else:
+                self.chapter_progress_slider.setValue(0)
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
@@ -1480,9 +1488,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             book = self.db.get_book(self.current_file)
             dur = book.duration if book and book.duration else 0.0
 
-        # If we aren't at EOF and don't have a position, we can't update.
-        # If we ARE at EOF, we continue even if mpv_pos is None.
-        if (not is_eof and mpv_pos is None) or (dur is None or dur <= 0):
+        # If we aren't at EOF and don't have a position, we can't update —
+        # unless we're paused and have a cached position from before the seek.
+        if not is_eof and mpv_pos is None:
+            if is_paused and self._paused_time is not None:
+                pass  # fall through using _paused_time below
+            else:
+                self.play_pause_button.setText("Play")
+                return
+        if dur is None or dur <= 0:
             self.play_pause_button.setText("Play")
             return
 
@@ -1507,10 +1521,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         else:
             if is_paused:
-                m_pos = mpv_pos if mpv_pos is not None else 0.0
-                if self._paused_time is None or self.player.is_seeking or abs(m_pos - self._paused_time) > 1.0:
-                    self._paused_time = m_pos
-                    self.player.is_seeking = False
+                if mpv_pos is not None:
+                    m_pos = mpv_pos
+                    if self._paused_time is None or self.player.is_seeking or abs(m_pos - self._paused_time) > 1.0:
+                        self._paused_time = m_pos
+                        self.player.is_seeking = False
+                # if mpv_pos is None we're mid-seek; keep _paused_time as-is
                 pos = self._paused_time
             else:
                 self._paused_time = None
@@ -1557,9 +1573,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
     def _sync_chapter_ui(self, pos, dur, speed):
-        curr_chap = self.player.chapter or 0
         chap_list = self.player.chapter_list or []
-        if chap_list and curr_chap < len(chap_list):
+        if not chap_list:
+            return
+        # Derive the chapter index from pos rather than the live mpv property,
+        # so the UI stays consistent while mpv is mid-seek (paused rewind).
+        curr_chap = 0
+        for i, chap in enumerate(chap_list):
+            if chap.get('time', 0) <= pos:
+                curr_chap = i
+        if curr_chap < len(chap_list):
             # Update chapter progress
             start = chap_list[curr_chap].get('time', 0)
             end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
