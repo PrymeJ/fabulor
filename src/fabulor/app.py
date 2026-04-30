@@ -74,6 +74,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     fade_mode_changed = Signal(int)
     blur_mode_changed = Signal(bool)
     hover_fade_changed = Signal(str)
+    chapter_digit_mode_changed = Signal(str)
+    chapter_digit_autoplay_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -178,6 +180,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.load_book(self.current_file)
             self.library_panel.set_playing_path(self.current_file)
         self.chapter_list_widget.set_player(self.player)
+        self.chapter_list_widget.set_config(self.config)
 
         self._load_cover_art(self.current_file)
         
@@ -253,6 +256,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.style().polish(btn)
             self.library_panel.set_hover_fade_enabled(mode)
 
+        def set_digit_mode_selection(mode):
+            if not hasattr(self, 'digit_mode_buttons'): return
+            for m, btn in self.digit_mode_buttons.items():
+                btn.setProperty("selected", "true" if m == mode else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+        def set_digit_autoplay_selection(enabled):
+            if not hasattr(self, 'digit_autoplay_buttons'): return
+            for v, btn in self.digit_autoplay_buttons.items():
+                btn.setProperty("selected", "true" if v == enabled else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
         class VisualsInterface:
             def __init__(self):
                 pass
@@ -264,6 +281,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def set_blur_selection(self, enabled): set_blur_selection(enabled)
             def set_notches_selection(self, enabled): set_notches_selection(enabled)
             def set_hover_fade_selection(self, enabled): set_hover_fade_selection(enabled)
+            def set_digit_mode_selection(self, mode): set_digit_mode_selection(mode)
+            def set_digit_autoplay_selection(self, enabled): set_digit_autoplay_selection(enabled)
 
         class PanelInterface:
             def __init__(self, speed_panel, sleep_panel, audio_tab):
@@ -1029,7 +1048,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 4: SHORTCUTS ---
         shortcuts_tab = QWidget()
         short_layout = QVBoxLayout(shortcuts_tab)
-        short_layout.addWidget(QLabel("Shortcuts configuration coming soon..."))
+        short_layout.setContentsMargins(10, 10, 10, 10)
+        short_layout.setSpacing(6)
+
+        digit_header = QLabel("Chapter number keys")
+        digit_header.setObjectName("settings_header")
+        short_layout.addWidget(digit_header)
+
+        digit_row = QHBoxLayout()
+        self.digit_mode_buttons = {}
+        for mode, label in [("by_name", "By name"), ("by_index", "By index")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.chapter_digit_mode_changed.emit(m))
+            digit_row.addWidget(btn)
+            self.digit_mode_buttons[mode] = btn
+        digit_row.addStretch()
+        self.digit_autoplay_buttons = {}
+        for val, label in [(True, "Auto-play"), (False, "Jump only")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self.chapter_digit_autoplay_changed.emit(v))
+            digit_row.addWidget(btn)
+            self.digit_autoplay_buttons[val] = btn
+        short_layout.addLayout(digit_row)
         short_layout.addStretch()
         self.tabs.addTab(shortcuts_tab, "Controls")
 

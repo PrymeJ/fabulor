@@ -230,3 +230,15 @@ class Config:
 
     def set_balance(self, value):
         self.settings.setValue("balance", float(value))
+
+    def get_chapter_digit_mode(self):
+        return self.settings.value("chapter_digit_mode", "by_name")
+
+    def set_chapter_digit_mode(self, mode):
+        self.settings.setValue("chapter_digit_mode", mode)
+
+    def get_chapter_digit_autoplay(self):
+        return self.settings.value("chapter_digit_autoplay", "true") == "true"
+
+    def set_chapter_digit_autoplay(self, enabled):
+        self.settings.setValue("chapter_digit_autoplay", str(enabled).lower())

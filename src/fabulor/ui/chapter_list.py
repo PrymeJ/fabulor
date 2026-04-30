@@ -22,6 +22,7 @@ class ChapterList(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.player = None
+        self.config = None
         self.setWindowFlags(Qt.Widget)
         self.setVerticalScrollMode(QListWidget.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -71,6 +72,9 @@ class ChapterList(QListWidget):
 
     def set_player(self, player):
         self.player = player
+
+    def set_config(self, config):
+        self.config = config
 
     def populate(self, total_duration=0, speed=1.0, list_width=0):
         if not self.player:
@@ -225,15 +229,37 @@ class ChapterList(QListWidget):
             self._digit_timer.start()  # restart — fires 800ms after last digit
 
     def _commit_digit_jump(self):
-        target = int(self._digit_buffer) - 1  # user types 1-based, list is 0-based
+        typed = self._digit_buffer
         self._digit_buffer = ""
         if not self.player:
             return
         chapters = self.player.chapter_list or []
-        if not (0 <= target < len(chapters)):
-            return
+        mode = self.config.get_chapter_digit_mode() if self.config else "by_name"
+
+        if mode == "by_index":
+            target = int(typed) - 1
+            if not (0 <= target < len(chapters)):
+                return
+        else:
+            # Search chapter titles for a word-boundary match of the typed number.
+            # "6" matches "Chapter 6" but not "Chapter 16" or "Chapter 60".
+            import re
+            pattern = re.compile(r'(?<!\d)' + re.escape(typed) + r'(?!\d)')
+            target = next(
+                (i for i, c in enumerate(chapters)
+                 if pattern.search(c.get('title', ''))),
+                None
+            )
+            if target is None:
+                return
+
         self.setCurrentRow(target)
         self.scroll_to_active(target)
+
+        if self.config and self.config.get_chapter_digit_autoplay():
+            item = self.item(target)
+            if item:
+                self._activate_item(item, force_play=True)
 
     def _activate_item(self, item, force_play=False):
         if not self.player:
