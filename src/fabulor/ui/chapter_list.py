@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect, QPushButton
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtGui import QMouseEvent, QKeyEvent
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
@@ -129,7 +129,7 @@ class ChapterList(QListWidget):
 
         self._apply_height(self._visible_rows)
         self.raise_()
-        self.setFocus()
+        QTimer.singleShot(0, self.setFocus)
 
         self._anim.stop()
         self._anim.setDuration(FADE_IN_MS)
@@ -194,26 +194,37 @@ class ChapterList(QListWidget):
             super().mousePressEvent(event)
             return
 
+        if event.button() == Qt.LeftButton:
+            self._activate_item(item, force_play=False)
+        elif event.button() == Qt.RightButton:
+            self._activate_item(item, force_play=True)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        if key in (Qt.Key_Up, Qt.Key_Down):
+            super().keyPressEvent(event)  # default selection movement
+        elif key in (Qt.Key_Left, Qt.Key_Right) and self._can_expand:
+            self._toggle_expand()
+        elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            item = self.currentItem()
+            if item:
+                self._activate_item(item, force_play=(key == Qt.Key_Space))
+        elif key == Qt.Key_Escape:
+            self.fade_out()
+
+    def _activate_item(self, item, force_play=False):
         if not self.player:
             return
-
         idx = item.data(Qt.UserRole)
         chapters = self.player.chapter_list or []
         if not (0 <= idx < len(chapters)):
             return
-
         old_pos = self.player.time_pos or 0.0
         self.player.chapter = idx
         actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
-
-        if event.button() == Qt.LeftButton:
-            self.fade_out()
-            self.chapter_changed.emit(actual_title)
-            self.chapter_selected.emit(actual_title, old_pos, False)
-        elif event.button() == Qt.RightButton:
-            self.fade_out()
-            self.chapter_changed.emit(actual_title)
-            self.chapter_selected.emit(actual_title, old_pos, True)
+        self.fade_out()
+        self.chapter_changed.emit(actual_title)
+        self.chapter_selected.emit(actual_title, old_pos, force_play)
 
     def _elide_text(self, text, width):
         return self.fontMetrics().elidedText(text, Qt.ElideRight, max(width, 40))
