@@ -69,8 +69,6 @@ class PanelManager:
     def _open_library_flow(self):
         self.library_panel.cancel_preload()
         self.main_window._save_current_progress()
-        _is_animating = True
-        self.library_panel._list_view.setUpdatesEnabled(False)
         if self.sidebar_expanded:
             self._pending_panel_open = "library"
             self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
