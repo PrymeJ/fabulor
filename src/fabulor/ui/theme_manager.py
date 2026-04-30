@@ -104,6 +104,7 @@ class ThemeManager(QObject):
 
         bold_font = QFont()
         bold_font.setBold(True)
+        bold_font.setPixelSize(12)
         metrics = QFontMetrics(bold_font)
 
         themes_to_pack = [
