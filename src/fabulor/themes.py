@@ -32,6 +32,7 @@ text: The default color for most labels and UI text.
 button_text: (Optional) Specific color for text inside buttons. If not provided, it falls back to text_on_light_bg or text.
 progress_text: (Optional) Color for the percentage label that sits on top of the overall progress slider.
 sidebar_text: (Optional) Color for text and buttons inside the sidebar. Falls back to the main text color.
+sidebar_text_hover: (Optional) Color for text and buttons inside the sidebar when hovered. Falls back to accent.
 dropdown_text: (Optional) Color for text inside the chapter dropdown list.
 dropdown_time_text: (Optional) Color for the duration text inside the chapter dropdown list.
 text_on_light_bg: (Optional) Used as a fallback for buttons or specific labels if they are placed over light-colored elements.
@@ -1208,7 +1209,10 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 
 def _resolve_theme(theme_name):
     base = THEMES["The Color Purple"].copy()
-    base.update(THEMES.get(theme_name, {}))
+    if isinstance(theme_name, dict):
+        base.update(theme_name)
+    else:
+        base.update(THEMES.get(theme_name, {}))
     return base
 
 

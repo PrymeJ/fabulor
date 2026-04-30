@@ -55,9 +55,14 @@ class ThemeManager(QObject):
         self._theme_fade_anim = None
         self.theme_widgets = {} # theme_name -> QPushButton
         self.interval_widgets = {} # minutes -> QPushButton
+        self.cover_art_mode_widgets = {} # mode -> QPushButton
         self._packed_themes_cache = None
         self._packed_themes_limit = None
         self._active_display_theme = self._current_theme_name
+
+        # Cover-art derived theme (dict or None)
+        self._cover_theme: dict | None = None
+        self._cover_theme_active = False  # True when cover theme is currently displayed
 
         # Rotation Timer
         self.rotation_timer = QTimer()
@@ -67,7 +72,10 @@ class ThemeManager(QObject):
         self._save_on_fade = False
 
     def get_current_theme(self) -> dict:
-        return THEMES.get(self._active_display_theme or self._current_theme_name, 
+        if self._cover_theme_active and self._cover_theme:
+            from ..themes import _resolve_theme
+            return _resolve_theme(self._cover_theme)
+        return THEMES.get(self._active_display_theme or self._current_theme_name,
                       THEMES["The Color Purple"])
     
     def initialize_fade_overlay(self):
@@ -131,9 +139,13 @@ class ThemeManager(QObject):
         return rows
 
     def _rotate_theme(self):
+        mode = self.config.get_cover_art_theme_mode()
+        if mode == "exclusive" and self._cover_theme:
+            return  # cover theme owns the display in exclusive mode
         if len(self.selected_themes) > 1:
             pool = [t for t in self.selected_themes if t != self._current_theme_name]
             self._current_theme_name = random.choice(pool)
+            self._cover_theme_active = False  # pool rotation temporarily supersedes cover theme
             self._on_theme_changed(self._current_theme_name, save=False)
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
@@ -159,6 +171,19 @@ class ThemeManager(QObject):
 
         self._active_display_theme = theme_name
 
+        if not hasattr(self, '_fade_anim'):
+            # Called before initialize_fade_overlay (e.g. on startup cover load) — apply silently
+            self._apply_stylesheets(theme_name, hover=hover)
+            if hasattr(self.main_window, '_update_speed_grid_styling'):
+                self.main_window._update_speed_grid_styling(theme_name)
+            if isinstance(theme_name, dict):
+                from ..themes import _resolve_theme
+                self.theme_applied.emit(_resolve_theme(theme_name))
+            else:
+                self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
+            self.update_theme_list_visuals()
+            return
+
         # Clear any in-progress animation
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
@@ -180,8 +205,13 @@ class ThemeManager(QObject):
                 self._cached_theme_pixmap = self.main_window.grab()
 
         self._apply_stylesheets(theme_name, hover=hover)
-        self.main_window._update_speed_grid_styling(theme_name)
-        self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
+        if hasattr(self.main_window, '_update_speed_grid_styling'):
+            self.main_window._update_speed_grid_styling(theme_name)
+        if isinstance(theme_name, dict):
+            from ..themes import _resolve_theme
+            self.theme_applied.emit(_resolve_theme(theme_name))
+        else:
+            self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
         self.update_theme_list_visuals()
 
     def _apply_stylesheets(self, theme_name, hover=False):
@@ -274,18 +304,63 @@ class ThemeManager(QObject):
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
     def _on_theme_unhovered(self):
-
         fade = int(self.config.get_theme_fade_duration() * 0.5)
-        self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade, hover=False)
+        if self._cover_theme_active and self._cover_theme:
+            self._on_theme_changed(self._cover_theme, save=False, fade_ms=fade, hover=False)
+        else:
+            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade, hover=False)
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
             is_active_display = (name == self._current_theme_name)
-            
+
             btn.setProperty("selected", is_selected) # For selected in pool
             btn.setProperty("active_display", is_active_display) # For currently displayed
             # Trigger style refresh for property change
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    # ── Cover-art theme ─────────────────────────────────────────────────────
+
+    def apply_cover_theme(self, pixmap):
+        """Build a theme dict from the cover pixmap and apply it if the mode calls for it."""
+        from .cover_theme import build_cover_theme
+        mode = self.config.get_cover_art_theme_mode()
+        if mode == "off":
+            return
+        theme_dict = build_cover_theme(pixmap)
+        if not theme_dict:
+            return
+        self._cover_theme = theme_dict
+        self._cover_theme_active = True
+        self._on_theme_changed(theme_dict, save=False)
+
+    def clear_cover_theme(self):
+        """Revert to the pool theme (called when no book is loaded)."""
+        if not self._cover_theme_active:
+            return
+        self._cover_theme = None
+        self._cover_theme_active = False
+        self._on_theme_changed(self._current_theme_name, save=False)
+
+    def set_cover_art_mode(self, mode: str):
+        """Switch cover art mode ('off', 'with_pool', 'exclusive') and reapply."""
+        self.config.set_cover_art_theme_mode(mode)
+        self.update_cover_art_mode_visuals()
+        if mode == "off":
+            if self._cover_theme_active:
+                self.clear_cover_theme()
+        else:
+            # If a cover theme was already extracted, apply it now
+            if self._cover_theme:
+                self._cover_theme_active = True
+                self._on_theme_changed(self._cover_theme, save=False)
+
+    def update_cover_art_mode_visuals(self):
+        current = self.config.get_cover_art_theme_mode()
+        for mode, btn in self.cover_art_mode_widgets.items():
+            btn.setProperty("selected", mode == current)
             btn.style().unpolish(btn)
             btn.style().polish(btn)

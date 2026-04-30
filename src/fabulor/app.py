@@ -81,6 +81,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.current_cover_pixmap = QPixmap()
+        self._pending_cover_pixmap = None
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.current_file = ""
@@ -800,40 +801,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.theme_manager.theme_widgets = {}
 
-        # During __init__, widget width is not yet accurate. We use a sensible 
-        # minimum floor (230) to ensure the bin-packer has enough room to function.
         limit = max(230, self.settings_panel.width() - 20)
         for row_items in self.theme_manager.get_packed_themes(limit=limit):
             row_layout = QHBoxLayout()
             row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setAlignment(Qt.AlignLeft)
-
-            total_btn_width = sum(item['width'] for item in row_items)
-            gaps = len(row_items) - 1
-            base_spacing = 0
-            remaining = limit - total_btn_width - (base_spacing * gaps)
-            extra_per_gap = max(0, remaining // gaps) if gaps > 0 else 0
-
-            """ BIN PACKING DEBUG PRINT
-            print(f"Row: {[i['name'] for i in row_items]}")
-            print(f"  total_btn_width={total_btn_width}, gaps={gaps}, remaining={remaining}, extra={extra_per_gap}, final_spacing={base_spacing + extra_per_gap}")
-            """
-
-            if gaps > 0:
-                row_layout.setSpacing(base_spacing + extra_per_gap)
-            else:
-                row_layout.setSpacing(0)
+            row_layout.setSpacing(0)
 
             for item in row_items:
                 btn = ThemeItem(item['name'])
-                btn.setFixedWidth(item['width'])
+                btn.setMinimumWidth(item['width'])
                 btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
                 btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
                 btn.hovered.connect(self.theme_manager._on_theme_hovered)
                 self.theme_manager.theme_widgets[item['name']] = btn
-                row_layout.addWidget(btn)
+                row_layout.addWidget(btn, item['width'])
 
-            if gaps == 0:
+            if len(row_items) == 1:
                 row_layout.addStretch()
 
             themes_layout.addLayout(row_layout)
@@ -882,10 +865,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         interval_row.addStretch()
         themes_layout.addLayout(interval_row)
 
+        # Cover Art Theme
+        cover_row = QHBoxLayout()
+        cover_row.setSpacing(10)
+        cover_row.setContentsMargins(0, 10, 0, 0)
+        cover_label = QLabel("Cover art")
+        cover_label.setObjectName("theme_hint")
+        cover_row.addWidget(cover_label)
+        self.theme_manager.cover_art_mode_widgets = {}
+        for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
+            btn = QPushButton(label)
+            btn.setObjectName("theme_interval_btn")
+            btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
+            self.theme_manager.cover_art_mode_widgets[mode] = btn
+            cover_row.addWidget(btn)
+        cover_row.addStretch()
+        themes_layout.addLayout(cover_row)
+
         themes_layout.addStretch()
         self.tabs.addTab(themes_tab, "Themes")
         self.theme_manager.update_theme_list_visuals()
         self.theme_manager.update_interval_visuals()
+        self.theme_manager.update_cover_art_mode_visuals()
 
         # --- TAB 2: APPEARANCE ---
         appearance_tab = QWidget()
@@ -1810,6 +1811,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.cover_art_label.hide()
             self.metadata_label.show()
             self.metadata_label.setText("No book selected")
+            self.theme_manager.clear_cover_theme()
             return
 
         pixmap = self.player.extract_cover(file_path)
@@ -1819,6 +1821,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.cover_art_label.show()
             self.metadata_label.hide()
             self._update_cover_art_scaling()
+            # Defer cover theme until any open panel has dismissed
+            if self.panel_manager and self.panel_manager.is_any_panel_visible():
+                self._pending_cover_pixmap = pixmap
+            else:
+                self.theme_manager.apply_cover_theme(pixmap)
+                self._pending_cover_pixmap = None
         else:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
@@ -1827,6 +1835,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.metadata_label.setText(f"{book.author} - {book.title}")
             else:
                 self.metadata_label.setText("Unknown book")
+            self._pending_cover_pixmap = None
+            self.theme_manager.clear_cover_theme()
 
     def _update_cover_art_scaling(self):
         """Scales the current cover pixmap to FIT the available space."""

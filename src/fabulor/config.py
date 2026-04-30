@@ -242,3 +242,10 @@ class Config:
 
     def set_chapter_digit_autoplay(self, enabled):
         self.settings.setValue("chapter_digit_autoplay", str(enabled).lower())
+
+    def get_cover_art_theme_mode(self) -> str:
+        """Returns 'off', 'with_pool', or 'exclusive'."""
+        return self.settings.value("cover_art_theme_mode", "off")
+
+    def set_cover_art_theme_mode(self, mode: str):
+        self.settings.setValue("cover_art_theme_mode", mode)

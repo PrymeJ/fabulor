@@ -178,8 +178,7 @@ class SpeedControlsPanel(QWidget):
         self.update_visuals()
 
     def update_visuals(self, theme_name=None):
-        name = theme_name or self.theme_manager._current_theme_name
-        t = THEMES.get(name, THEMES["The Color Purple"])
+        t = self.theme_manager.get_current_theme()
         accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 

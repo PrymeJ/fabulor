@@ -152,9 +152,7 @@ class SleepTimerPanel(QWidget):
         self.update_panel_styling()
 
     def update_panel_styling(self):
-        t_name = self.theme_manager._current_theme_name
-        from ..themes import THEMES
-        t = THEMES.get(t_name, THEMES["The Color Purple"])
+        t = self.theme_manager.get_current_theme()
         accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
         default_fade = self.config.get_sleep_fade_duration()

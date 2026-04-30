@@ -233,6 +233,10 @@ class PanelManager:
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
+        mw = self.main_window
+        if getattr(mw, '_pending_cover_pixmap', None):
+            mw.theme_manager.apply_cover_theme(mw._pending_cover_pixmap)
+            mw._pending_cover_pixmap = None
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""
