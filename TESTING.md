@@ -40,9 +40,25 @@
 - [x] Book time: Total/Remaining toggle (Fixed width, right, persists)
 - [x] Chapter time: Elapsed (Fixed width, left)
 - [x] Chapter time: Total/Remaining toggle (Fixed width, right, synced with book toggle)
-- [x] Chapter name opens drop-up
+- [x] Chapter name opens drop-up (click or press c)
+- [x] Chapter name click closes drop-up when open
 - [x] Chapter names in drop-up responsive
-- [x] Chapter names in drop-up geometry || newlines after the last chapter, width, test slide up
+- [x] Chapter names in drop-up geometry — 5 rows max, flush to window width, no overflow
+- [x] Chapter list: left click seeks (respects pause state)
+- [x] Chapter list: right click seeks + forces play
+- [x] Chapter list: Enter/Return seeks (respects pause state)
+- [x] Chapter list: Space seeks + forces play
+- [x] Chapter list: Escape dismisses
+- [x] Chapter list: Up/Down arrow moves selection
+- [x] Chapter list: Left/Right arrow expands/collapses when > 5 chapters
+- [x] Chapter list: expand arrow button visible only when > 5 chapters
+- [x] Chapter list: expand arrow resets to collapsed state on close
+- [x] Chapter list: digit keys jump to chapter (by name or by index, configurable)
+- [x] Chapter list: fade in/out animation
+- [x] Chapter list: chapter duration reflects current playback speed
+- [x] Chapter list: clicking outside dismisses (cover art click does not also play/pause)
+- [x] Chapter list: undo triggered on chapter jump > 60s * speed
+- [x] Prev button right click seeks to 00:00:00 with undo
 - [] Right click on chapter names toggles remaining/total time || not implemented
 - [x] Toolbar buttons displayed and responsive
 - [x] Art displayed when present
@@ -251,6 +267,8 @@
 - [x] Show Remaining Time toggle restored
 - [x] Chapter Scroll mode restored
 - [x] Chapter Hints toggle restored
+- [x] Chapter digit jump mode restored (by name / by index)
+- [x] Chapter digit autoplay setting restored (Auto-play / Jump only)
 
 ## Appearance & UX
 
