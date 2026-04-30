@@ -180,7 +180,7 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "sidebar_text":             _hex(*accent_light),
         "sidebar_text_hover":       _hex(*sec_accent_light),
         "sidebar_opacity":          0.85,
-        "panel_opacity_hover":      1.00,
+        "panel_opacity_hover":      0.92,
         # Panels / settings
         "settings_tab_hover_bg":    _hex(*sec_accent),
         "settings_tab_hover_opacity": 0.85,

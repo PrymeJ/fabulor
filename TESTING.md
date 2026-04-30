@@ -302,6 +302,19 @@
 - [x] Hover preview reverts on dismiss
 - [x] All clicks on buttons dismisses and performs
 
+## Cover art based theme
+
+- [] Off mode: label dimmed, left-click → With pool, right-click → activate + With pool
+- [] With pool: label bold, left-click → Off + deactivate if active, right-click → activate
+- [] Active state: underline on Cover art based theme label when cover theme is displayed
+- [] Underline moves to pool theme on right-click of any pool entry
+- [] Disabled (greyed) when With pool selected but no cover loaded
+- [] Switching to Exclusive hides pool block, keeps mode button selected
+- [] Switching back from Exclusive restores pool block
+- [] Change now button includes cover theme as a candidate in With pool mode
+- [] panel_opacity_hover visible (not fully opaque) in panels when cover theme active
+- [] No cover + Exclusive: silently uses pool, no mode revert
+
 ## Each theme here
 
 - [ ] Alzabo

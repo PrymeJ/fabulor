@@ -823,17 +823,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pool_header.setObjectName("settings_header")
         pool_layout.addWidget(pool_header)
 
-        # Cover art entry — first row of pool, visible in with_pool/exclusive, greyed out when no cover
+        # Cover art based theme entry — always present, state reflects mode and cover availability
         cover_pool_row = QHBoxLayout()
         cover_pool_row.setContentsMargins(0, 0, 0, 0)
         cover_pool_row.setSpacing(0)
-        cover_pool_btn = ThemeItem("Cover art")
+        cover_pool_btn = ThemeItem("Cover art based theme")
         cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         cover_pool_btn.clicked.connect(lambda: self.theme_manager._on_cover_pool_btn_clicked())
+        cover_pool_btn.rightClicked.connect(lambda: self.theme_manager._on_cover_pool_btn_right_clicked())
         cover_pool_btn.hovered.connect(lambda _: self.theme_manager._on_cover_pool_btn_hovered())
         self.theme_manager.cover_pool_btn = cover_pool_btn
         cover_pool_row.addWidget(cover_pool_btn)
-        cover_pool_row.addStretch()
         pool_layout.addLayout(cover_pool_row)
 
         self.theme_manager.theme_widgets = {}

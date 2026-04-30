@@ -294,18 +294,14 @@ class ThemeManager(QObject):
         self.update_interval_visuals()
     def _on_theme_right_clicked(self, theme_name):
         """Selects a theme and immediately activates it."""
-        # 1. Ensure it's in the selected pool
         if theme_name not in self.selected_themes:
             self.selected_themes.append(theme_name)
-            self.config.set_theme(",".join(self.selected_themes)) # Save updated pool
-        
-        # 2. Make it the currently active theme for display and session
+            self.config.set_theme(",".join(self.selected_themes))
         self._current_theme_name = theme_name
-        
-        # 3. Apply the theme visually (this also sets _active_display_theme)
+        self._cover_theme_active = False
         self._on_theme_changed(theme_name, save=False)
         self.update_theme_list_visuals()
-        self.update_interval_visuals() 
+        self.update_interval_visuals()
 
     def update_interval_visuals(self):
         current_interval = self.config.get_theme_rotation_interval()
@@ -394,15 +390,34 @@ class ThemeManager(QObject):
             return
         mode = self.config.get_cover_art_theme_mode()
         has_cover = self._cover_theme is not None
-        btn.setVisible(mode != "off")
-        btn.setEnabled(has_cover)
+        in_pool = (mode == "with_pool")
+        btn.setEnabled(mode == "off" or has_cover)  # always clickable in Off; needs cover in With pool
+        btn.setProperty("selected", in_pool)
         btn.setProperty("active_display", self._cover_theme_active)
         btn.style().unpolish(btn)
         btn.style().polish(btn)
 
     def _on_cover_pool_btn_clicked(self):
+        mode = self.config.get_cover_art_theme_mode()
+        if mode == "off":
+            # Add to pool: switch to With pool mode
+            self.set_cover_art_mode("with_pool")
+        else:
+            # Remove from pool: deactivate if active, switch back to Off
+            if self._cover_theme_active:
+                self._cover_theme_active = False
+                self._on_theme_changed(self._current_theme_name, save=False)
+            self.set_cover_art_mode("off")
+
+    def _on_cover_pool_btn_right_clicked(self):
+        mode = self.config.get_cover_art_theme_mode()
         if not self._cover_theme:
             return
+        # Ensure it's in the pool
+        if mode == "off":
+            self.config.set_cover_art_theme_mode("with_pool")
+            self.update_cover_art_mode_visuals()
+        # Activate the cover theme
         self._cover_theme_active = True
         self._on_theme_changed(self._cover_theme, save=False)
         self._update_cover_pool_btn()

@@ -1738,7 +1738,6 @@ def get_settings_stylesheet(theme_name="default"):
         QPushButton#theme_item {{ font-weight: normal; }}
         QPushButton#theme_item:disabled {{
             color: {panel_dimmed_color};
-            opacity: 0.4;
         }}
         QPushButton#theme_interval_btn {{ font-weight: bold; }}
         QPushButton#theme_item[selected="true"],
