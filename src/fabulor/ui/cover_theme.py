@@ -118,14 +118,17 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
     bg_main    = _shift_sv(dr, dg, db, j(0.45), j(0.15))
     bg_sidebar = _shift_sv(dr, dg, db, j(0.50), j(0.12))
     bg_lib     = _shift_sv(dr, dg, db, j(0.45), j(0.11))
-    lib_row1   = _shift_sv(dr, dg, db, j(0.40), j(0.14))
-    lib_row2   = _shift_sv(dr, dg, db, j(0.40), j(0.10))
+    lib_row1   = _shift_sv(dr, dg, db, j(0.50), j(0.18))
+    lib_row2   = _shift_sv(dr, dg, db, j(0.50), j(0.13))
     lib_grid   = _shift_sv(dr, dg, db, j(0.45), j(0.09))
     bg_drop    = _shift_sv(dr, dg, db, j(0.35), j(0.22))
 
     accent       = _shift_sv(dr, dg, db, j(0.75), j(0.85))
     accent_light = _shift_sv(dr, dg, db, j(0.55), j(0.95))
     accent_dark  = _shift_sv(dr, dg, db, j(0.80), j(0.45))
+
+    lib_hover    = _shift_sv(dr, dg, db, j(0.65), j(0.45))   # dominant hue, mid-dark for library hover
+    chap_fill    = _shift_sv(dr, dg, db, j(0.60), j(0.55))   # dominant hue, slightly lighter for chapter bar
 
     text        = _shift_sv(dr, dg, db, j(0.20), j(0.90))
     text_dim    = _shift_sv(dr, dg, db, j(0.25), j(0.70))
@@ -149,8 +152,8 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "library_row_one":          _hex(*lib_row1),
         "library_row_two":          _hex(*lib_row2),
         # Library items
-        "library_item_hover_color": _hex(*sec_accent),
-        "library_item_hover_alpha": 0.40,
+        "library_item_hover_color": _hex(*lib_hover),
+        "library_item_hover_alpha": 0.50,
         "library_title":            _hex(*text),
         "library_author":           _hex(*text_dim),
         "library_narrator":         _hex(*text_dimmer),
@@ -158,7 +161,7 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "library_total":            _hex(*text_dim),
         "library_percentage":       _hex(*text_dimmer),
         "library_slider_bg":        _hex(*slider_bg),
-        "library_slider_fill":      _hex(*sec_accent),     # secondary on fill
+        "library_slider_fill":      _hex(*chap_fill),
         "library_input_bg":         _hex(*bg_drop),
         "library_input_text":       _hex(*text),
         # Core colors
@@ -170,7 +173,7 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "slider_overall_bg":        _hex(*slider_bg),
         "slider_overall_fill":      _hex(*accent),
         "slider_chapter_bg":        _hex(*_shift_sv(dr, dg, db, j(0.50), j(0.22))),
-        "slider_chapter_fill":      _hex(*sec_accent_light),
+        "slider_chapter_fill":      _hex(*chap_fill),
         "slider_vol_bg":            _hex(*slider_bg),
         "slider_vol_fill":          _hex(*accent),
         # Sidebar

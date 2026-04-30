@@ -803,7 +803,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         cover_row.setSpacing(4)
         cover_row.setContentsMargins(0, 0, 0, 0)
         self.theme_manager.cover_art_mode_widgets = {}
-        for mode, label in [("exclusive", "Exclusive"), ("with_pool", "With pool"), ("off", "Off")]:
+        for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
             btn = QPushButton(label)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
@@ -812,10 +812,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         cover_row.addStretch()
         themes_layout.addLayout(cover_row)
 
+        # Pool + controls container (hidden when Exclusive is active)
+        self.theme_manager.pool_container = QWidget()
+        pool_layout = QVBoxLayout(self.theme_manager.pool_container)
+        pool_layout.setContentsMargins(0, 0, 0, 0)
+        pool_layout.setSpacing(0)
+
         # Theme pool
         pool_header = QLabel("Theme pool")
         pool_header.setObjectName("settings_header")
-        themes_layout.addWidget(pool_header)
+        pool_layout.addWidget(pool_header)
+
+        # Cover art entry — first row of pool, visible in with_pool/exclusive, greyed out when no cover
+        cover_pool_row = QHBoxLayout()
+        cover_pool_row.setContentsMargins(0, 0, 0, 0)
+        cover_pool_row.setSpacing(0)
+        cover_pool_btn = ThemeItem("Cover art")
+        cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        cover_pool_btn.clicked.connect(lambda: self.theme_manager._on_cover_pool_btn_clicked())
+        cover_pool_btn.hovered.connect(lambda _: self.theme_manager._on_cover_pool_btn_hovered())
+        self.theme_manager.cover_pool_btn = cover_pool_btn
+        cover_pool_row.addWidget(cover_pool_btn)
+        cover_pool_row.addStretch()
+        pool_layout.addLayout(cover_pool_row)
 
         self.theme_manager.theme_widgets = {}
 
@@ -828,6 +847,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             for item in row_items:
                 btn = ThemeItem(item['name'])
                 btn.setMinimumWidth(item['width'])
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
                 btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
                 btn.hovered.connect(self.theme_manager._on_theme_hovered)
@@ -837,7 +857,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if len(row_items) == 1:
                 row_layout.addStretch()
 
-            themes_layout.addLayout(row_layout)
+            pool_layout.addLayout(row_layout)
 
         themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
 
@@ -852,7 +872,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.remove_all_btn.setFixedWidth(80)
         self.change_now_btn = QPushButton("Change now")
         self.change_now_btn.setObjectName("theme_change_now")
-        self.change_now_btn.setFixedWidth(80)
 
         self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
         self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
@@ -862,7 +881,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         bulk_layout.addWidget(self.remove_all_btn)
         bulk_layout.addWidget(self.change_now_btn)
         bulk_layout.addStretch()
-        themes_layout.addLayout(bulk_layout)
+        pool_layout.addLayout(bulk_layout)
 
         # Interval Selection
         interval_row = QHBoxLayout()
@@ -882,8 +901,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.theme_manager.interval_widgets[mins] = lbl
             interval_row.addWidget(lbl)
         interval_row.addStretch()
-        themes_layout.addLayout(interval_row)
+        pool_layout.addLayout(interval_row)
 
+        themes_layout.addWidget(self.theme_manager.pool_container)
         themes_layout.addStretch()
         self.tabs.addTab(themes_tab, "Themes")
         self.theme_manager.update_theme_list_visuals()

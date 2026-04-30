@@ -67,6 +67,11 @@ Properties:
 gradient_[prefix]_start: Hex color for the start of the gradient.
 gradient_[prefix]_end: Hex color for the end of the gradient.
 gradient_[prefix]_angle: Integer angle in degrees (e.g., 115 or 135).
+
+COVER ART BASED THEME COLORS
+These keys are generated dynamically by build_cover_theme() in cover_theme.py and are not set in static theme dicts.
+lib_hover: Background color for library item hover, derived from the dominant cover hue (mid-dark). Used as library_item_hover_color.
+chap_fill: Fill color for the chapter progress bar and library slider, derived from the dominant cover hue (slightly lighter than lib_hover). Used as slider_chapter_fill and library_slider_fill.
 """
 
 THEMES = {
@@ -1728,9 +1733,13 @@ def get_settings_stylesheet(theme_name="default"):
             border: none;
             text-align: center;
             font-size: 12px;
-            padding: 1px 0px;
+            padding: 4px 0px;
         }}
         QPushButton#theme_item {{ font-weight: normal; }}
+        QPushButton#theme_item:disabled {{
+            color: {panel_dimmed_color};
+            opacity: 0.4;
+        }}
         QPushButton#theme_interval_btn {{ font-weight: bold; }}
         QPushButton#theme_item[selected="true"],
         QPushButton#theme_interval_btn[selected="true"] {{
@@ -1761,7 +1770,7 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t['text']};
             border: 1px solid {t['accent_dark']};
             font-size: 11px;
-            padding: 4px;
+            padding: 4px 8px;
             border-radius: 4px;
             font-weight: bold;
         }}

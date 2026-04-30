@@ -8,6 +8,10 @@ from ..themes import (
     get_stats_stylesheet, THEMES
 )
 
+_THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
+_PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
+
+
 class ThemeComboBox(QComboBox):
     """Custom QComboBox that provides signals for popup visibility events."""
     aboutToShowPopup = Signal()
@@ -56,6 +60,8 @@ class ThemeManager(QObject):
         self.theme_widgets = {} # theme_name -> QPushButton
         self.interval_widgets = {} # minutes -> QPushButton
         self.cover_art_mode_widgets = {} # mode -> QPushButton
+        self.pool_container = None # QWidget hidden when exclusive mode is active
+        self.cover_pool_btn = None # ThemeItem for cover art entry in the pool first row
         self._packed_themes_cache = None
         self._packed_themes_limit = None
         self._active_display_theme = self._current_theme_name
@@ -143,11 +149,20 @@ class ThemeManager(QObject):
         mode = self.config.get_cover_art_theme_mode()
         if mode == "exclusive" and self._cover_theme:
             return  # cover theme owns the display in exclusive mode
-        if len(self.selected_themes) > 1:
-            pool = [t for t in self.selected_themes if t != self._current_theme_name]
-            self._current_theme_name = random.choice(pool)
-            self._cover_theme_active = False  # pool rotation temporarily supersedes cover theme
-            self._on_theme_changed(self._current_theme_name, save=False)
+        candidates = list(self.selected_themes)
+        if mode == "with_pool" and self._cover_theme:
+            candidates.append(None)  # None represents the cover theme slot
+        if len(candidates) > 1:
+            current = None if self._cover_theme_active else self._current_theme_name
+            pool = [c for c in candidates if c != current]
+            chosen = random.choice(pool)
+            if chosen is None:
+                self._cover_theme_active = True
+                self._on_theme_changed(self._cover_theme, save=False)
+            else:
+                self._current_theme_name = chosen
+                self._cover_theme_active = False
+                self._on_theme_changed(chosen, save=False)
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
         """Update the appearance with a subtle fade transition."""
@@ -156,10 +171,10 @@ class ThemeManager(QObject):
             fade_ms = self.config.get_theme_fade_duration()
         
         if not hover:
-            fade_ms = 200
+            fade_ms = _THEME_SWITCH_FADE_MS
 
         # Only guard if both the theme and hover state match
-        if (getattr(self, "_active_display_theme", None) == theme_name 
+        if (getattr(self, "_active_display_theme", None) == theme_name
                 and self._is_hover_active == hover):
             return
 
@@ -167,7 +182,7 @@ class ThemeManager(QObject):
 
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
-            QTimer.singleShot(150, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover))
+            QTimer.singleShot(_PANEL_ANIM_GUARD_MS, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover))
             return
 
         self._active_display_theme = theme_name
@@ -315,13 +330,13 @@ class ThemeManager(QObject):
         """Dim unselected themes and highlight selected ones."""
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
-            is_active_display = (name == self._current_theme_name)
+            is_active_display = (name == self._current_theme_name) and not self._cover_theme_active
 
-            btn.setProperty("selected", is_selected) # For selected in pool
-            btn.setProperty("active_display", is_active_display) # For currently displayed
-            # Trigger style refresh for property change
+            btn.setProperty("selected", is_selected)
+            btn.setProperty("active_display", is_active_display)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+        self._update_cover_pool_btn()
 
     # ── Cover-art theme ─────────────────────────────────────────────────────
 
@@ -337,14 +352,14 @@ class ThemeManager(QObject):
         self._cover_theme = theme_dict
         self._cover_theme_active = True
         self._on_theme_changed(theme_dict, save=False)
+        self._update_cover_pool_btn()
 
     def clear_cover_theme(self):
-        """Revert to the pool theme (called when no book is loaded)."""
-        if not self._cover_theme_active:
-            return
+        """Revert to the pool theme. _cover_theme stays None so cover_pool_btn greys out."""
         self._cover_theme = None
         self._cover_theme_active = False
         self._on_theme_changed(self._current_theme_name, save=False)
+        self._update_cover_pool_btn()
 
     def set_cover_art_mode(self, mode: str):
         """Switch cover art mode ('off', 'with_pool', 'exclusive') and reapply."""
@@ -353,9 +368,13 @@ class ThemeManager(QObject):
         if mode == "off":
             if self._cover_theme_active:
                 self.clear_cover_theme()
+            else:
+                self._on_theme_changed(self._current_theme_name, save=False)
         else:
-            # If a cover theme was already extracted, apply it now
-            if self._cover_theme:
+            pixmap = getattr(self.main_window, 'current_cover_pixmap', None)
+            if self._cover_theme is None and pixmap and not pixmap.isNull():
+                self.apply_cover_theme(pixmap)
+            elif self._cover_theme:
                 self._cover_theme_active = True
                 self._on_theme_changed(self._cover_theme, save=False)
 
@@ -365,3 +384,31 @@ class ThemeManager(QObject):
             btn.setProperty("selected", mode == current)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+        if self.pool_container is not None:
+            self.pool_container.setVisible(current != "exclusive")
+        self._update_cover_pool_btn()
+
+    def _update_cover_pool_btn(self):
+        btn = self.cover_pool_btn
+        if btn is None:
+            return
+        mode = self.config.get_cover_art_theme_mode()
+        has_cover = self._cover_theme is not None
+        btn.setVisible(mode != "off")
+        btn.setEnabled(has_cover)
+        btn.setProperty("active_display", self._cover_theme_active)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+
+    def _on_cover_pool_btn_clicked(self):
+        if not self._cover_theme:
+            return
+        self._cover_theme_active = True
+        self._on_theme_changed(self._cover_theme, save=False)
+        self._update_cover_pool_btn()
+
+    def _on_cover_pool_btn_hovered(self):
+        if not self._cover_theme:
+            return
+        fade = int(self.config.get_theme_fade_duration() * 0.5)
+        self._on_theme_changed(self._cover_theme, save=False, fade_ms=fade, hover=True)
