@@ -1314,6 +1314,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._save_current_progress() # Save state of the book we are leaving
+        self._pre_switch_slider_value = self.progress_slider.value()
         self.progress_slider.set_markers([])
         self._last_saved_pct = -1
         self.current_file = path
@@ -1343,6 +1344,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_position_start = self.config.get_last_position(self.current_file)
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
+        pre = getattr(self, '_pre_switch_slider_value', None)
+        if pre is not None:
+            self._pre_switch_slider_value = None
+            self.progress_slider.animate_to(self.progress_slider.value(), old_value=pre)
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
@@ -1531,9 +1536,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _sync_progress_sliders(self, pos, dur, speed):
         if dur is not None and dur > 0:
             # Update overall progress
+            slider_animating = (hasattr(self.progress_slider, '_flow_anim')
+                                and self.progress_slider._flow_anim.state()
+                                == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                self.progress_slider.setValue(int((pos / dur) * 1000))
+                if not slider_animating:
+                    self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
                     remaining = (dur - pos) / speed

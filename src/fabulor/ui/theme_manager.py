@@ -1,7 +1,7 @@
 import random
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QPoint, QObject
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics, QRegion
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
@@ -97,6 +97,16 @@ class ThemeManager(QObject):
         self._fade_anim.setStartValue(1.0)
         self._fade_anim.setEndValue(0.0)
         self._fade_anim.finished.connect(self._on_fade_finished)
+
+    def _apply_fade_mask(self):
+        """Punch holes in the fade overlay for widgets that should not crossfade."""
+        mw = self.main_window
+        region = QRegion(mw.rect())
+        for attr in ('progress_slider', 'progress_percentage_label'):
+            w = getattr(mw, attr, None)
+            if w and w.isVisible():
+                region -= QRegion(w.rect().translated(w.mapTo(mw, QPoint(0, 0))))
+        self._fade_overlay.setMask(region)
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()
@@ -208,6 +218,7 @@ class ThemeManager(QObject):
             pix = self.main_window.grab()
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
+            self._apply_fade_mask()
             self._fade_overlay.show()
             self._fade_overlay.raise_()
 

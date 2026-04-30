@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
-from PySide6.QtCore import Qt, Signal, Property, QTimer
+from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter
 
 class ClickSlider(QWidget):
@@ -62,6 +62,39 @@ class ClickSlider(QWidget):
             self._value = val
             self.valueChanged.emit(val)
             self.update()
+
+    # --- animated value property for QPropertyAnimation ---
+    def _get_animated_value(self):
+        return self._value
+
+    def _set_animated_value(self, val):
+        self.setValue(val)
+
+    animatedValue = Property(int, _get_animated_value, _set_animated_value)
+
+    def animate_to(self, target, old_value=None):
+        """Animate the slider from old_value (or current) to target.
+
+        Duration scales with distance so large jumps feel fast and small ones feel slow.
+        Range: 200ms (tiny move) to 600ms (full-range jump).
+        """
+        if not hasattr(self, '_flow_anim'):
+            self._flow_anim = QPropertyAnimation(self, b"animatedValue")
+            self._flow_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+        start = old_value if old_value is not None else self._value
+        span = self._maximum - self._minimum
+        distance = abs(target - start) / max(1, span)
+        duration = int(200 + distance * 400)
+
+        if self._flow_anim.state() == QPropertyAnimation.State.Running:
+            self._flow_anim.stop()
+
+        self._value = start
+        self._flow_anim.setStartValue(start)
+        self._flow_anim.setEndValue(target)
+        self._flow_anim.setDuration(duration)
+        self._flow_anim.start()
 
     def _val_from_x(self, x):
         if self.snap_to_center:
