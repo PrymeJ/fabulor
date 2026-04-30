@@ -60,6 +60,12 @@ class ChapterList(QListWidget):
         # Drive the button's opacity from the same animation — no separate timer
         self._anim.valueChanged.connect(self._sync_btn_opacity)
 
+        self._digit_buffer = ""
+        self._digit_timer = QTimer(self)
+        self._digit_timer.setSingleShot(True)
+        self._digit_timer.setInterval(800)
+        self._digit_timer.timeout.connect(self._commit_digit_jump)
+
     def _sync_btn_opacity(self, value):
         self._btn_opacity.setOpacity(value)
 
@@ -203,15 +209,31 @@ class ChapterList(QListWidget):
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         if key in (Qt.Key_Up, Qt.Key_Down):
-            super().keyPressEvent(event)  # default selection movement
+            super().keyPressEvent(event)
         elif key in (Qt.Key_Left, Qt.Key_Right) and self._can_expand:
             self._toggle_expand()
         elif key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
             item = self.currentItem()
             if item:
                 self._activate_item(item, force_play=(key == Qt.Key_Space))
-        elif key == Qt.Key_Escape:
+        elif key in (Qt.Key.Key_Escape, Qt.Key.Key_C):
+            self._digit_timer.stop()
+            self._digit_buffer = ""
             self.fade_out()
+        elif Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+            self._digit_buffer += event.text()
+            self._digit_timer.start()  # restart — fires 800ms after last digit
+
+    def _commit_digit_jump(self):
+        target = int(self._digit_buffer) - 1  # user types 1-based, list is 0-based
+        self._digit_buffer = ""
+        if not self.player:
+            return
+        chapters = self.player.chapter_list or []
+        if not (0 <= target < len(chapters)):
+            return
+        self.setCurrentRow(target)
+        self.scroll_to_active(target)
 
     def _activate_item(self, item, force_play=False):
         if not self.player:

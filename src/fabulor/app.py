@@ -1681,6 +1681,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if hasattr(self, 'speed_button'):
             self.speed_button.setText(f"{value:.2f}x")
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_C and getattr(self, '_chapter_label_clickable', False):
+            self._show_chapter_dropdown()
+        else:
+            super().keyPressEvent(event)
+
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
         for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
