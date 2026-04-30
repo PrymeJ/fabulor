@@ -102,7 +102,11 @@ class ThemeManager(QObject):
         """Punch holes in the fade overlay for widgets that should not crossfade."""
         mw = self.main_window
         region = QRegion(mw.rect())
-        for attr in ('progress_slider', 'progress_percentage_label'):
+        snap_attrs = (
+            'progress_slider', 'progress_percentage_label',
+            'chapter_progress_slider',
+        )
+        for attr in snap_attrs:
             w = getattr(mw, attr, None)
             if w and w.isVisible():
                 region -= QRegion(w.rect().translated(w.mapTo(mw, QPoint(0, 0))))
@@ -218,7 +222,10 @@ class ThemeManager(QObject):
             pix = self.main_window.grab()
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
-            self._apply_fade_mask()
+            if isinstance(theme_name, dict) and not hover:
+                self._apply_fade_mask()
+            else:
+                self._fade_overlay.clearMask()
             self._fade_overlay.show()
             self._fade_overlay.raise_()
 

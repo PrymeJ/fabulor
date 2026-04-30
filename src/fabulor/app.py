@@ -1315,6 +1315,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._save_current_progress() # Save state of the book we are leaving
         self._pre_switch_slider_value = self.progress_slider.value()
+        self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
         self.progress_slider.set_markers([])
         self._last_saved_pct = -1
         self.current_file = path
@@ -1348,6 +1349,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if pre is not None:
             self._pre_switch_slider_value = None
             self.progress_slider.animate_to(self.progress_slider.value(), old_value=pre)
+        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
+        if pre_chap is not None:
+            self._pre_switch_chap_slider_value = None
+            self.chapter_progress_slider.animate_to(self.chapter_progress_slider.value(), old_value=pre_chap)
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
@@ -1559,7 +1564,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             start = chap_list[curr_chap].get('time', 0)
             end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
             chap_dur = end - start
-            
+            chap_animating = (hasattr(self.chapter_progress_slider, '_flow_anim')
+                              and self.chapter_progress_slider._flow_anim.state()
+                              == QPropertyAnimation.State.Running)
             if not self.is_chapter_slider_dragging:
                 c_elapsed = max(0, pos - start)
                 self.chap_elapsed_label.setText(self.player.format_time(c_elapsed / speed))
@@ -1568,7 +1575,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
-                if chap_dur > 0:
+                if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
 
