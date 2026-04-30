@@ -106,11 +106,9 @@ class LibraryPanel(QFrame):
     # ── Theme ────────────────────────────────────────────────────────────────
 
     def _resolve_theme_colors(self):
-        from ..themes import THEMES
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
-            t = THEMES.get(main_win.theme_manager._current_theme_name, THEMES["The Color Purple"])
-            self._current_theme = t
+            self._current_theme = main_win.theme_manager.get_current_theme()
 
     def update_progress_bar_theme(self) -> None:
         self._resolve_theme_colors()
