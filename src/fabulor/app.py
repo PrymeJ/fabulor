@@ -1350,17 +1350,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
             self._pre_switch_slider_value = None
-            if new_progress > 0:
-                self.progress_slider.animate_to(self.progress_slider.value(), old_value=pre)
+            new_val = 0 if new_progress == 0 else self.progress_slider.value()
+            if pre != new_val:
+                self.progress_slider.animate_to(new_val, old_value=pre)
             else:
-                self.progress_slider.setValue(0)
+                self.progress_slider.setValue(new_val)
         pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
         if pre_chap is not None:
             self._pre_switch_chap_slider_value = None
-            if new_progress > 0:
-                self.chapter_progress_slider.animate_to(self.chapter_progress_slider.value(), old_value=pre_chap)
+            new_chap_val = 0 if new_progress == 0 else self.chapter_progress_slider.value()
+            if pre_chap != new_chap_val:
+                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
-                self.chapter_progress_slider.setValue(0)
+                self.chapter_progress_slider.setValue(new_chap_val)
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration
