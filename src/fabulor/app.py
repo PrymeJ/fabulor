@@ -793,11 +793,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         themes_tab = QWidget()
         themes_layout = QVBoxLayout(themes_tab)
         themes_layout.setContentsMargins(10, 10, 10, 10)
-        
-        theme_hint = QLabel("Select multiple to rotate randomly")
-        theme_hint.setObjectName("theme_hint")
-        theme_hint.setStyleSheet("margin-bottom: 4px;")
-        themes_layout.addWidget(theme_hint)
+
+        # Cover art based theme
+        cover_header = QLabel("Cover art based theme")
+        cover_header.setObjectName("settings_header")
+        themes_layout.addWidget(cover_header)
+
+        cover_row = QHBoxLayout()
+        cover_row.setSpacing(4)
+        cover_row.setContentsMargins(0, 0, 0, 0)
+        self.theme_manager.cover_art_mode_widgets = {}
+        for mode, label in [("exclusive", "Exclusive"), ("with_pool", "With pool"), ("off", "Off")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
+            self.theme_manager.cover_art_mode_widgets[mode] = btn
+            cover_row.addWidget(btn)
+        cover_row.addStretch()
+        themes_layout.addLayout(cover_row)
+
+        # Theme pool
+        pool_header = QLabel("Theme pool")
+        pool_header.setObjectName("settings_header")
+        themes_layout.addWidget(pool_header)
 
         self.theme_manager.theme_widgets = {}
 
@@ -820,9 +838,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 row_layout.addStretch()
 
             themes_layout.addLayout(row_layout)
-            
+
         themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
-        
+
         # Add/Remove All Buttons
         bulk_layout = QHBoxLayout()
         bulk_layout.setSpacing(10)
@@ -835,11 +853,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.change_now_btn = QPushButton("Change now")
         self.change_now_btn.setObjectName("theme_change_now")
         self.change_now_btn.setFixedWidth(80)
-        
+
         self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
         self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
         self.change_now_btn.clicked.connect(self.theme_manager._rotate_theme)
-        
+
         bulk_layout.addWidget(self.add_all_btn)
         bulk_layout.addWidget(self.remove_all_btn)
         bulk_layout.addWidget(self.change_now_btn)
@@ -850,37 +868,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         interval_row = QHBoxLayout()
         interval_row.setSpacing(10)
         interval_row.setContentsMargins(0, 10, 0, 0)
-        
+
         interval_label = QLabel("Interval (min)")
         interval_label.setObjectName("theme_hint")
         interval_row.addWidget(interval_label)
 
-        intervals = [(2, "2"), (5, "5"), (10, "10"), (15, "15"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
-        for mins, label in intervals:
-            btn = QPushButton(label)
-            btn.setObjectName("theme_interval_btn")
-            btn.clicked.connect(lambda _, m=mins: self.theme_manager.set_rotation_interval(m))
-            self.theme_manager.interval_widgets[mins] = btn
-            interval_row.addWidget(btn)
+        intervals = [(2, "2"), (5, "5"), (10, "10"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
+        for mins, text in intervals:
+            lbl = QLabel(text)
+            lbl.setObjectName("theme_interval_label")
+            lbl.setCursor(Qt.PointingHandCursor)
+            lbl.mousePressEvent = lambda _, m=mins: self.theme_manager.set_rotation_interval(m)
+            self.theme_manager.interval_widgets[mins] = lbl
+            interval_row.addWidget(lbl)
         interval_row.addStretch()
         themes_layout.addLayout(interval_row)
-
-        # Cover Art Theme
-        cover_row = QHBoxLayout()
-        cover_row.setSpacing(10)
-        cover_row.setContentsMargins(0, 10, 0, 0)
-        cover_label = QLabel("Cover art")
-        cover_label.setObjectName("theme_hint")
-        cover_row.addWidget(cover_label)
-        self.theme_manager.cover_art_mode_widgets = {}
-        for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
-            btn = QPushButton(label)
-            btn.setObjectName("theme_interval_btn")
-            btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
-            self.theme_manager.cover_art_mode_widgets[mode] = btn
-            cover_row.addWidget(btn)
-        cover_row.addStretch()
-        themes_layout.addLayout(cover_row)
 
         themes_layout.addStretch()
         self.tabs.addTab(themes_tab, "Themes")

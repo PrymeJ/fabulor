@@ -749,27 +749,7 @@ THEMES = {
         "settings_tab_hover_opacity": 0.9,
         "settings_tab_hover_text":    "#0B0A0A",
     },
-    "Rebma": {
-        "bg_deep": "#2D4A2D", # Deep mossy earth
-        "bg_main": "#4A704A", # Lush garden green
-        "slider_overall_bg": "#5A805A",
-        "slider_overall_fill": "#90C090", # Blooming rose accent
-        "slider_chapter_bg": "#4A704A",
-        "slider_chapter_fill": "#80B080",
-        "slider_vol_bg": "#2D4A2D",
-        "slider_vol_fill": "#90C090",
-        "accent": "#90C090",
-        "accent_light": "#A8D0A8",
-        "accent_dark": "#6A906A",
-        "bg_sidebar": "#2D4A2D",
-        "bg_dropdown": "#4A704A",
-        "curr_chap_highlight": "#C59EC5",
-        "sidebar_text_hover": "#A8D0A8",
-        "sidebar_opacity": 0.75,
-        "panel_opacity_hover": 0.92,
-        "text": "#F8F0F7", # Soft cream text
-        "panel_theme_names_dimmed": "#E6E9CD", # Use 6-digit hex to avoid ARGB/RGBA confusion
-    },
+
     "Red Rising": { # Tones of red, Martian aesthetic
         "bg_deep":      "#2b0000",
         "bg_main":      "#4a0000",
@@ -1764,6 +1744,15 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         QPushButton#theme_item[active_display="true"] {{
             text-decoration: underline;
+            font-weight: bold;
+        }}
+        QLabel#theme_interval_label {{
+            color: {panel_dimmed_color};
+            font-size: 12px;
+            padding: 1px 0px;
+        }}
+        QLabel#theme_interval_label[selected="true"] {{
+            color: {t['accent']};
             font-weight: bold;
         }}
         QPushButton#theme_add_all, QPushButton#theme_remove_all,
