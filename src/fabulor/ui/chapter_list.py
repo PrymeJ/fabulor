@@ -159,6 +159,7 @@ class ChapterList(QListWidget):
         self._expand_btn.setText("▼" if self._expanded else "▲")
         rows = min(self.count(), self._max_rows_available) if self._expanded else self._visible_rows
         self._apply_height(rows)
+        QTimer.singleShot(0, self.setFocus)
 
     def fade_out(self):
         self._anim.stop()
