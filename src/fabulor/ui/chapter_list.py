@@ -41,7 +41,7 @@ class ChapterList(QListWidget):
         self._expanded = False
         self._anchor_bottom = 0
         self._h_overhead = 0
-        self._TOP_MARGIN = 42
+        self._TOP_MARGIN = 66
         self._can_expand = False
 
         # Detached button — sibling widget in the parent window, not inside the list.
