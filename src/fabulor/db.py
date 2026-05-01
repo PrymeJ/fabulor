@@ -91,6 +91,16 @@ class LibraryDB:
                     UNIQUE(book_path, tag)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS book_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_path TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_time DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_book_path ON book_events (book_path)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_event_type ON book_events (event_type)")
 
 
     # --- Scan Locations CRUD ---
