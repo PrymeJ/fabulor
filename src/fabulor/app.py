@@ -1583,7 +1583,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # of when mpv's internal chapter property settles after a seek.
         curr_chap = 0
         for i, chap in enumerate(chap_list):
-            if chap.get('time', 0) <= pos + 0.5:
+            if chap.get('time', 0) <= pos + 0.35:
                 curr_chap = i
         if curr_chap < len(chap_list):
             # Update chapter progress
