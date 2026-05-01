@@ -1216,7 +1216,8 @@ THEMES = {
     "gradient_bg_angle": 135,
     "gradient_accent_start": "#E87A3A",
     "gradient_accent_end": "#C06A2A",
-    "gradient_accent_angle": 45
+    "gradient_accent_angle": 45,
+    "bg_image"             : "img/sunspear.png"
 },
 "Highgarden": {
     "bg_deep": "#1A2A1A",
@@ -1270,7 +1271,8 @@ THEMES = {
     "gradient_bg_angle": 135,
     "gradient_slider_fill_start": "#7AAA4C",
     "gradient_slider_fill_end": "#9ACA6C",
-    "gradient_slider_fill_angle": 90
+    "gradient_slider_fill_angle": 90,
+    "bg_image":                 "img/highgarden.png",
 },
 "Pyke": {
     "bg_deep": "#141A1E",
@@ -1322,6 +1324,7 @@ THEMES = {
     "gradient_bg_start": "#141A1E",
     "gradient_bg_end": "#2A3A42",
     "gradient_bg_angle": 115,
+    "bg_image":                 "img/pyke.png",
 },
 "Storm's End": {
     "bg_deep": "#0A0A0A",
@@ -1419,6 +1422,7 @@ THEMES = {
     "curr_chap_highlight": "#A2C8DC",
     "sidebar_opacity": 0.85,
     "panel_opacity_hover": 0.92,
+    "bg_image"           : "img/theyrie.png",
 }
 
 
