@@ -117,6 +117,9 @@ class Player(QObject):
             print(f"Metadata extraction error: {e}")
         return pixmap
     
+    @property
+    def is_initialized(self): return bool(self.instance)
+
     # Playback Control Proxies
     @property
     def pause(self): return self.instance.pause if self.instance else True

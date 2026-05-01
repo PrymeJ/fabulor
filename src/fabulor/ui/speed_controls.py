@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from ..themes import THEMES
+from mpv import ShutdownError
 
 class SpeedControlsPanel(QWidget):
     """Handles UI and logic for playback speed, skip intervals, and smart rewind."""
@@ -153,7 +154,10 @@ class SpeedControlsPanel(QWidget):
     def set_speed(self, value, current_file=None, save=True):
         """Applies speed to engine, config, and signals UI change."""
         if self.player:
-            self.player.speed = value
+            try:
+                self.player.speed = value
+            except (ShutdownError, AttributeError, SystemError):
+                return
             if save and current_file:
                 self.config.set_book_speed(current_file, value)
             self.speed_changed.emit(value)

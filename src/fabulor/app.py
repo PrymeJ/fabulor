@@ -1252,14 +1252,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _save_current_progress(self):
         """Saves the current playback position to both DB and Config."""
-        if self.current_file and self.player.instance:
+        if self.current_file and self.player.is_initialized:
             pos = self.player.time_pos
             if pos is not None:
                 self.db.update_progress(self.current_file, pos)
                 self.config.set_last_position(self.current_file, pos)
 
     def _get_current_position(self) -> float:
-        return self.player.time_pos or 0.0
+        try:
+            return self.player.time_pos or 0.0
+        except (ShutdownError, AttributeError, SystemError):
+            return 0.0
 
     def _open_session(self):
         
@@ -1390,11 +1393,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")        
 
     def _on_file_loaded_populate_chapters(self):
-        dur = self.player.duration
-        if dur and self.player.chapter_list:
-            self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
-            self._refresh_notches()
-        self._update_chapter_label_clickability()
+        try:
+            dur = self.player.duration
+            if dur and self.player.chapter_list:
+                self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
+                self._refresh_notches()
+            self._update_chapter_label_clickability()
+        except (ShutdownError, AttributeError, SystemError):
+            return
 
     def _update_chapter_label_clickability(self):
         """Enable the chapter label as a clickable link only when there are 2+ chapters."""
@@ -1500,72 +1506,71 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     and mpv_pos is not None):
                 if mpv_pos > self._session_furthest_position:
                     self._session_furthest_position = mpv_pos
-        except ShutdownError:
-            return
+            is_eof = self.player.eof_reached
 
-        is_eof = self.player.eof_reached
-
-        # Handle the early return carefully:
-        # If we are at EOF, we want to continue to update the UI even if pos is None.
-        if not self.current_file:
-            self.play_pause_button.setText("Play")
-            return
-
-        if is_eof and dur is None:
-            book = self.db.get_book(self.current_file)
-            dur = book.duration if book and book.duration else 0.0
-
-        # If we aren't at EOF and don't have a position, we can't update —
-        # unless we're paused and have a cached position from before the seek.
-        if not is_eof and mpv_pos is None:
-            if is_paused and self._paused_time is not None:
-                pass  # fall through using _paused_time below
-            else:
+            # Handle the early return carefully:
+            # If we are at EOF, we want to continue to update the UI even if pos is None.
+            if not self.current_file:
                 self.play_pause_button.setText("Play")
                 return
-        if dur is None or dur <= 0:
-            self.play_pause_button.setText("Play")
-            return
 
-        # Logic for synthesized state at EOF vs normal playback
-        if is_eof:
-            pos = dur
-            self.play_pause_button.setText("Restart")
-            if not self._eof_event_written and self._current_book is not None: #Temporary
-                self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
-                self._eof_event_written = True #Temporary
-                if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
-                    self.stats_panel.refresh_overall()
-            self.stats_panel.refresh_overall()     #Temporary
-            self._paused_time = None
-            self.progress_slider.setValue(1000)
-            self.current_time_label.setText(self.player.format_time(pos / speed))
-            if self.show_remaining_time:
-                self.total_time_label.setText("-00:00:00")
-                self.chap_duration_label.setText("-00:00:00")
-            else:
-                self.total_time_label.setText(self.player.format_time(dur / speed))
-            return
-        else:
-            if is_paused:
-                if mpv_pos is not None:
-                    m_pos = mpv_pos
-                    if self._paused_time is None or self.player.is_seeking or abs(m_pos - self._paused_time) > 1.0:
-                        self._paused_time = m_pos
-                        self.player.is_seeking = False
-                # if mpv_pos is None we're mid-seek; keep _paused_time as-is
-                pos = self._paused_time
-            else:
+            if is_eof and dur is None:
+                book = self.db.get_book(self.current_file)
+                dur = book.duration if book and book.duration else 0.0
+
+            # If we aren't at EOF and don't have a position, we can't update —
+            # unless we're paused and have a cached position from before the seek.
+            if not is_eof and mpv_pos is None:
+                if is_paused and self._paused_time is not None:
+                    pass  # fall through using _paused_time below
+                else:
+                    self.play_pause_button.setText("Play")
+                    return
+            if dur is None or dur <= 0:
+                self.play_pause_button.setText("Play")
+                return
+
+            # Logic for synthesized state at EOF vs normal playback
+            if is_eof:
+                pos = dur
+                self.play_pause_button.setText("Restart")
+                if not self._eof_event_written and self._current_book is not None: #Temporary
+                    self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
+                    self._eof_event_written = True #Temporary
+                    if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
+                        self.stats_panel.refresh_overall()
+                self.stats_panel.refresh_overall()     #Temporary
                 self._paused_time = None
-                pos = mpv_pos
-            self.play_pause_button.setText("Play" if is_paused else "Pause")
+                self.progress_slider.setValue(1000)
+                self.current_time_label.setText(self.player.format_time(pos / speed))
+                if self.show_remaining_time:
+                    self.total_time_label.setText("-00:00:00")
+                    self.chap_duration_label.setText("-00:00:00")
+                else:
+                    self.total_time_label.setText(self.player.format_time(dur / speed))
+                return
+            else:
+                if is_paused:
+                    if mpv_pos is not None:
+                        m_pos = mpv_pos
+                        if self._paused_time is None or self.player.is_seeking or abs(m_pos - self._paused_time) > 1.0:
+                            self._paused_time = m_pos
+                            self.player.is_seeking = False
+                    # if mpv_pos is None we're mid-seek; keep _paused_time as-is
+                    pos = self._paused_time
+                else:
+                    self._paused_time = None
+                    pos = mpv_pos
+                self.play_pause_button.setText("Play" if is_paused else "Pause")
 
-        # Delegate into focused helpers to reduce cognitive complexity
-        self._sync_playback_state(current_time, pos, dur)
-        self._sync_ui_render()
-        self._sync_progress_sliders(pos, dur, speed)
-        self._sync_chapter_ui(pos, dur, speed)
-        self._sync_persistence(pos, dur)
+            # Delegate into focused helpers to reduce cognitive complexity
+            self._sync_playback_state(current_time, pos, dur)
+            self._sync_ui_render()
+            self._sync_progress_sliders(pos, dur, speed)
+            self._sync_chapter_ui(pos, dur, speed)
+            self._sync_persistence(pos, dur)
+        except (ShutdownError, AttributeError, SystemError):
+            return
 
     def _sync_playback_state(self, current_time, pos, dur):
         # Delegate Sleep Timer Logic
@@ -1651,24 +1656,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_slider_released(self):
 
         if self.player and self.player.duration:
-            old_pos = self.player.time_pos
-            new_pos = (self.progress_slider.value() / 1000) * self.player.duration
-            speed = self.player.speed or 1.0
-            if abs(new_pos - old_pos) > 60 * speed:
-                self._trigger_undo(old_pos)
-            self.player.time_pos = new_pos
-            if self._session_furthest_position is not None:
-                if new_pos > self._session_furthest_position:
-                    self._post_seek_pending_position = new_pos
-                    self._post_seek_credit_timer.start()
-                else:
-                    self._post_seek_pending_position = None
-                    self._post_seek_credit_timer.stop()
-            self.player.is_seeking = True
-            # Immediately sync for library reactivity
-            self.config.set_last_position(self.current_file, new_pos)
-            if self.library_panel.isVisible():
-                self.library_panel.update_current_book_progress()
+            try:
+                old_pos = self.player.time_pos
+                new_pos = (self.progress_slider.value() / 1000) * self.player.duration
+                speed = self.player.speed or 1.0
+                if abs(new_pos - old_pos) > 60 * speed:
+                    self._trigger_undo(old_pos)
+                self.player.time_pos = new_pos
+                if self._session_furthest_position is not None:
+                    if new_pos > self._session_furthest_position:
+                        self._post_seek_pending_position = new_pos
+                        self._post_seek_credit_timer.start()
+                    else:
+                        self._post_seek_pending_position = None
+                        self._post_seek_credit_timer.stop()
+                self.player.is_seeking = True
+                # Immediately sync for library reactivity
+                self.config.set_last_position(self.current_file, new_pos)
+                if self.library_panel.isVisible():
+                    self.library_panel.update_current_book_progress()
+            except (ShutdownError, AttributeError, SystemError):
+                pass
 
         self.is_slider_dragging = False
 
@@ -1678,26 +1686,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._hide_popups()
-        old_pos = self.player.time_pos or 0.0
-        # Calculate new position and add a tiny nudge (0.1s) to ensure 
-        # we land inside the intended chapter boundary.
-        new_pos = min(self.player.duration, (ratio * self.player.duration) + 0.1)
-        speed = self.player.speed or 1.0
-        
-        if abs(new_pos - old_pos) > 60 * speed:
-            self._trigger_undo(old_pos)
-            
-        self.player.time_pos = new_pos
-        self.player.is_seeking = True
+        try:
+            old_pos = self.player.time_pos or 0.0
+            # Calculate new position and add a tiny nudge (0.1s) to ensure
+            # we land inside the intended chapter boundary.
+            new_pos = min(self.player.duration, (ratio * self.player.duration) + 0.1)
+            speed = self.player.speed or 1.0
 
-        if self.player.pause:
-            if self.current_file:
-                self.db.update_last_played(self.current_file)
-            self.player.pause = False
-            if self._session_start is None:
-                self._open_session()
-            else:
-                self._session_pause_timer.stop()
+            if abs(new_pos - old_pos) > 60 * speed:
+                self._trigger_undo(old_pos)
+
+            self.player.time_pos = new_pos
+            self.player.is_seeking = True
+
+            if self.player.pause:
+                if self.current_file:
+                    self.db.update_last_played(self.current_file)
+                self.player.pause = False
+                if self._session_start is None:
+                    self._open_session()
+                else:
+                    self._session_pause_timer.stop()
+        except (ShutdownError, AttributeError, SystemError):
+            return
 
     def _on_chap_slider_pressed(self):
         self.is_chapter_slider_dragging = True
@@ -1705,28 +1716,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_chap_slider_released(self):
 
         if self.player and self.player.duration:
-            old_pos = self.player.time_pos
-            
-            # Delegate chapter seek math to Player
-            self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
-            
-            # Check for undo trigger after player has updated its position
-            speed = self.player.speed or 1.0
-            if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
-                self._trigger_undo(old_pos)
-            new_pos = self.player.time_pos or 0.0
-            if self._session_furthest_position is not None:
-                if new_pos > self._session_furthest_position:
-                    self._post_seek_pending_position = new_pos
-                    self._post_seek_credit_timer.start()
-                else:
-                    self._post_seek_pending_position = None
-                    self._post_seek_credit_timer.stop()
+            try:
+                old_pos = self.player.time_pos
 
-            # Immediately sync for library reactivity
-            self.config.set_last_position(self.current_file, self.player.time_pos or 0)
-            if self.library_panel.isVisible():
-                self.library_panel.update_current_book_progress()
+                # Delegate chapter seek math to Player
+                self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
+
+                # Check for undo trigger after player has updated its position
+                speed = self.player.speed or 1.0
+                if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
+                    self._trigger_undo(old_pos)
+                new_pos = self.player.time_pos or 0.0
+                if self._session_furthest_position is not None:
+                    if new_pos > self._session_furthest_position:
+                        self._post_seek_pending_position = new_pos
+                        self._post_seek_credit_timer.start()
+                    else:
+                        self._post_seek_pending_position = None
+                        self._post_seek_credit_timer.stop()
+
+                # Immediately sync for library reactivity
+                self.config.set_last_position(self.current_file, self.player.time_pos or 0)
+                if self.library_panel.isVisible():
+                    self.library_panel.update_current_book_progress()
+            except (ShutdownError, AttributeError, SystemError):
+                pass
 
         self.is_chapter_slider_dragging = False
 

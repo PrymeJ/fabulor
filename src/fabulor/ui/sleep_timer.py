@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, QRegularExpression, Signal
 from PySide6.QtGui import QRegularExpressionValidator, QColor
 from .title_bar import RightClickButton
+from mpv import ShutdownError
 
 class SleepTimerPanel(QWidget):
     timer_started = Signal()
@@ -116,7 +117,10 @@ class SleepTimerPanel(QWidget):
     def set_sleep_timer(self, duration_minutes=None, mode=None):
         self.disable_sleep_timer()
         if self.player:
-            self.player.pause = False
+            try:
+                self.player.pause = False
+            except (ShutdownError, AttributeError, SystemError):
+                pass
 
         if duration_minutes is not None:
             self._total_timer_duration = duration_minutes * 60
@@ -188,7 +192,10 @@ class SleepTimerPanel(QWidget):
             if remaining_seconds <= 0 or is_eof:
                 self.disable_sleep_timer()
                 if self.player:
-                    self.player.pause = True
+                    try:
+                        self.player.pause = True
+                    except (ShutdownError, AttributeError, SystemError):
+                        pass
             else:
                 display_text = f"[{self.player.format_time(remaining_seconds)}]"
                 # Volume Fade Logic
@@ -208,16 +215,25 @@ class SleepTimerPanel(QWidget):
                     if player_pos >= next_chap_start - 0.5 or is_eof:
                         self.disable_sleep_timer()
                         if self.player:
-                            self.player.pause = True
+                            try:
+                                self.player.pause = True
+                            except (ShutdownError, AttributeError, SystemError):
+                                pass
                 elif curr_chap == len(chaps) - 1 and (player_pos >= player_dur - 0.5 or is_eof):
                     self.disable_sleep_timer()
                     if self.player:
-                        self.player.pause = True
+                        try:
+                            self.player.pause = True
+                        except (ShutdownError, AttributeError, SystemError):
+                            pass
         elif self._sleep_mode == 'end_of_book':
             display_text = "[book]"
             if not is_paused and (player_pos >= player_dur - 0.5 or is_eof):
                 self.disable_sleep_timer()
                 if self.player:
-                    self.player.pause = True
+                    try:
+                        self.player.pause = True
+                    except (ShutdownError, AttributeError, SystemError):
+                        pass
 
         self.display_text_updated.emit(display_text)
