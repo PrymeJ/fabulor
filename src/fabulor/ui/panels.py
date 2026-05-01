@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QAbstractAnimation, QEasingCurve, QTimer
 
 class PanelManager:
     def __init__(self, main_window):
@@ -28,8 +28,8 @@ class PanelManager:
         self.speed_panel_animation = main_window.speed_panel_animation
         self.sleep_panel_animation = main_window.sleep_panel_animation
         self.stats_panel_animation = main_window.stats_panel_animation
-        self.book_detail_panel = None
-        self.book_detail_panel_animation = None
+        self.book_detail_panel: Optional["BookDetailPanel"] = None
+        self.book_detail_panel_animation: Optional[QPropertyAnimation] = None
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -41,7 +41,7 @@ class PanelManager:
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
-        if self.sidebar_animation.state() == QPropertyAnimation.Running:
+        if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
             return
             
         sidebar_y = 32 + 24 
@@ -92,8 +92,10 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_shown(self):
-        try: self.library_panel_animation.finished.disconnect(self._on_library_shown)
-        except: pass
+        try:
+            self.library_panel_animation.finished.disconnect(self._on_library_shown)
+        except RuntimeError:
+            pass
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.refresh()
@@ -199,7 +201,7 @@ class PanelManager:
         self._pending_panel_open = None
 
     def _close_library_flow(self):
-        if self.library_panel_animation.state() == QPropertyAnimation.Running:
+        if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.library_panel.width()
         sidebar_y = 32
@@ -219,8 +221,10 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_hidden(self):
-        try: self.library_panel_animation.finished.disconnect(self._on_library_hidden)
-        except: pass
+        try:
+            self.library_panel_animation.finished.disconnect(self._on_library_hidden)
+        except RuntimeError:
+            pass
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
@@ -231,7 +235,7 @@ class PanelManager:
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""
-        if self.speed_panel_animation.state() == QPropertyAnimation.Running:
+        if self.speed_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.speed_panel.width()
         sidebar_y = 56
@@ -247,8 +251,10 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_speed_hidden(self):
-        try: self.speed_panel_animation.finished.disconnect(self._on_speed_hidden)
-        except: pass
+        try:
+            self.speed_panel_animation.finished.disconnect(self._on_speed_hidden)
+        except RuntimeError:
+            pass
         self.speed_panel.hide()
 
     def _open_stats_flow(self):
@@ -308,7 +314,7 @@ class PanelManager:
 
     def _close_sleep_flow(self):
         """Slides the sleep panel back out."""
-        if self.sleep_panel_animation.state() == QPropertyAnimation.Running:
+        if self.sleep_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.sleep_panel.width()
         sidebar_y = 56
@@ -323,12 +329,14 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_sleep_hidden(self):
-        try: self.sleep_panel_animation.finished.disconnect(self._on_sleep_hidden)
-        except: pass
+        try:
+            self.sleep_panel_animation.finished.disconnect(self._on_sleep_hidden)
+        except RuntimeError:
+            pass
         self.sleep_panel.hide()
         
     def _close_stats_flow(self):
-        if self.stats_panel_animation.state() == QPropertyAnimation.Running:
+        if self.stats_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.stats_panel.width()
         sidebar_y = 56
@@ -345,8 +353,10 @@ class PanelManager:
             self.blur_effect.setBlurRadius(0)
 
     def _on_stats_hidden(self):
-        try: self.stats_panel_animation.finished.disconnect(self._on_stats_hidden)
-        except: pass
+        try:
+            self.stats_panel_animation.finished.disconnect(self._on_stats_hidden)
+        except RuntimeError:
+            pass
         self.stats_panel.hide()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats'):
@@ -367,7 +377,7 @@ class PanelManager:
         self.book_detail_panel_animation.start()
 
     def _close_book_detail_flow(self):
-        if self.book_detail_panel_animation.state() == QPropertyAnimation.Running:
+        if self.book_detail_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.main_window.width()
         sidebar_y = 56
@@ -387,7 +397,7 @@ class PanelManager:
         """Slides the settings panel back out."""
         if hasattr(self.main_window, 'theme_manager'):
             self.main_window.theme_manager._on_theme_unhovered()
-        if self.settings_panel_animation.state() == QPropertyAnimation.Running:
+        if self.settings_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.settings_panel.width()
         sidebar_y = 56
@@ -423,7 +433,7 @@ class PanelManager:
         ]
         if self.book_detail_panel_animation:
             animations.append(self.book_detail_panel_animation)
-        return any(anim.state() == QPropertyAnimation.Running for anim in animations)
+        return any(anim.state() == QAbstractAnimation.State.Running for anim in animations)
 
     def is_any_panel_visible(self):
         """Returns True if the sidebar or any configuration panel is currently open."""
@@ -508,7 +518,7 @@ class PanelManager:
         self.stats_panel.setFixedHeight(500)
 
         # Update Speed Panel position if not animating
-        if self.speed_panel_animation.state() != QPropertyAnimation.Running:
+        if self.speed_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.speed_panel.isVisible() else -panel_w
             self.speed_panel.move(x, sidebar_y)
 
@@ -517,28 +527,28 @@ class PanelManager:
         self.sidebar.move(sidebar_x, sidebar_y)
             
         # Update Library Panel position if not animating
-        if self.library_panel_animation.state() != QPropertyAnimation.Running:
+        if self.library_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.library_panel.isVisible() else -window_w
             self.library_panel.move(x, library_y)
             
         # Update Settings Panel position if not animating
-        if self.settings_panel_animation.state() != QPropertyAnimation.Running:
+        if self.settings_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.settings_panel.isVisible() else -panel_w
             self.settings_panel.move(x, sidebar_y)
 
         # Update Sleep Panel position if not animating
-        if self.sleep_panel_animation.state() != QPropertyAnimation.Running:
+        if self.sleep_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.sleep_panel.isVisible() else -panel_w
             self.sleep_panel.move(x, sidebar_y)
 
         # Update Stats Panel position if not animating
-        if self.stats_panel_animation.state() != QPropertyAnimation.Running:
+        if self.stats_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.stats_panel.isVisible() else -panel_w
             self.stats_panel.move(x, sidebar_y)
 
         # Update Book Detail Panel position if not animating
         if self.book_detail_panel and self.book_detail_panel_animation and \
-                self.book_detail_panel_animation.state() != QPropertyAnimation.Running:
+                self.book_detail_panel_animation.state() != QAbstractAnimation.State.Running:
             if self.book_detail_panel.isVisible():
                 self.book_detail_panel.setFixedWidth(self.main_window.width())
                 self.book_detail_panel.move(0, sidebar_y)

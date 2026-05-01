@@ -152,7 +152,7 @@ class ScannerWorker(QObject):
                                 tag_year = self._parse_year(m.tags[ytag])
                                 if tag_year:
                                     break
-            except:
+            except Exception:
                 continue
 
         # Thumbnail Caching
@@ -184,7 +184,7 @@ class ScannerWorker(QObject):
                     img = img.scaled(226, 344, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     if img.save(str(thumb_path), "JPEG"):
                         cover_path = str(thumb_path)
-            except:
+            except Exception:
                 pass
 
         # Fallback Logic: If tags are missing, parse the main folder name
