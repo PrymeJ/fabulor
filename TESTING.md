@@ -7,6 +7,15 @@
 - [x] EOF restarts on next play
 - [x] Speed button left click opens menu
 - [x] Previous chapter grace period
+- [ ] Rewind to beginning of chapter 1 while paused: chapter slider goes to 0, times show 00:00
+- [ ] Prev/next while paused: chapter slider snaps to start of new chapter immediately
+- [ ] Prev/next while playing: chapter slider snaps to start of new chapter immediately
+- [ ] Prev/next pressed rapidly while playing: no stuck slider state
+- [ ] Chapter Navigation: Right-click on progress bar snaps to closest notch correctly
+- [ ] Chapter Navigation: Digit key 'By name' jump respects word boundaries (e.g., "6" finds "Chapter 6" not "Chapter 16")
+- [ ] Chapter Navigation: Digit key 'By index' jump uses 1-based indexing correctly
+- [ ] Chapter Navigation: 800ms debounce allows for multi-digit entry (e.g., "1" then "2" for chapter 12)
+- [ ] Chapter Navigation: Auto-play setting respected after digit jump
 - [x] End of the file Play button turns into Restart
 - [x] End of the file logic correct
 - [x] Speed button left click opens menu
@@ -16,6 +25,24 @@
 - [x] Mouse wheel scroll over speed button adjusts speed
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
+
+## Flow animation (book switch)
+
+- [ ] Switching from a book with progress to another with progress: both sliders animate smoothly
+- [ ] Switching from progress → zero progress: both sliders animate down to 0
+- [ ] Switching from zero progress → progress: both sliders animate up from 0
+- [ ] Switching between two zero-progress books: both sliders snap to 0 (no animation)
+- [ ] Animation speed feels proportional — large jump is fast, small jump is slow
+- [ ] UI timer does not fight animation (no jitter during the move)
+- [ ] Normal playback resumes correctly after animation completes
+- [ ] Panel Interaction: Cover art theme update is deferred if a panel (Library/Settings) is open during book switch
+
+## Cover art theme fade
+
+- [ ] Switching book while cover art theme active: progress sliders snap instantly, no morph
+- [ ] Theme hover previews: full-window crossfade, no holes or exposed areas
+- [ ] Manual theme switch (right-click): full-window crossfade, no holes
+- [ ] Theme rotation: full-window crossfade, no holes
 
 ## Sliders
 
