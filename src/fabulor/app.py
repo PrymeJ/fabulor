@@ -129,9 +129,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.quote_timer = QTimer()
         
         self.ui_timer.timeout.connect(self._update_ui_sync)
-        self.player.chapter_changed.connect(self._update_chapter_label_from_index)
-        self.player.file_loaded.connect(self._on_file_ready)
-        self.player.file_loaded.connect(self._on_file_loaded_populate_chapters)
+        self.player.chapter_changed.connect(self._update_chapter_label_from_index, Qt.ConnectionType.QueuedConnection)
+        self.player.file_loaded.connect(self._on_file_ready, Qt.ConnectionType.QueuedConnection)
+        self.player.file_loaded.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
