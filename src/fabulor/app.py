@@ -1578,11 +1578,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chap_list = self.player.chapter_list or []
         if not chap_list:
             return
-        # Derive the chapter index from pos rather than the live mpv property,
-        # so the UI stays consistent while mpv is mid-seek (paused rewind).
+        # Always derive chapter from pos so the UI stays consistent regardless
+        # of when mpv's internal chapter property settles after a seek.
         curr_chap = 0
         for i, chap in enumerate(chap_list):
-            if chap.get('time', 0) <= pos:
+            if chap.get('time', 0) <= pos + 0.5:
                 curr_chap = i
         if curr_chap < len(chap_list):
             # Update chapter progress
