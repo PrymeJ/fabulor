@@ -1558,7 +1558,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _sync_progress_sliders(self, pos, dur, speed):
         if dur is not None and dur > 0:
-            # Update overall progress
+            # Guard: skip setValue while flow animation is running so the timer
+            # doesn't fight the animation. Preserve this check on any refactor.
             slider_animating = (hasattr(self.progress_slider, '_flow_anim')
                                 and self.progress_slider._flow_anim.state()
                                 == QPropertyAnimation.State.Running)
@@ -1589,6 +1590,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             start = chap_list[curr_chap].get('time', 0)
             end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
             chap_dur = end - start
+            # Guard: skip setValue while flow animation is running so the timer
+            # doesn't fight the animation. Preserve this check on any refactor.
             chap_animating = (hasattr(self.chapter_progress_slider, '_flow_anim')
                               and self.chapter_progress_slider._flow_anim.state()
                               == QPropertyAnimation.State.Running)
