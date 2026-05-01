@@ -102,6 +102,8 @@ class Player(QObject):
 
         try:
             audio = mutagen.File(target_file)
+            if audio is None:
+                return pixmap
             if audio and audio.tags:
                 if 'covr' in audio.tags:
                     data = audio.tags['covr'][0]

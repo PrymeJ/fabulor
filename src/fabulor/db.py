@@ -57,7 +57,9 @@ class LibraryDB:
                     cover_path TEXT,
                     year INTEGER,
                     date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    last_played DATETIME
+                    last_played DATETIME,
+                    started_at DATETIME,
+                    finished_at DATETIME
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_last_played ON books (last_played)")
@@ -77,6 +79,7 @@ class LibraryDB:
                     book_path TEXT NOT NULL,
                     book_title TEXT,
                     book_author TEXT,
+                    book_duration REAL,
                     session_start TEXT NOT NULL,
                     session_end TEXT NOT NULL,
                     position_start REAL,
@@ -622,14 +625,18 @@ class LibraryDB:
         return {'current': current, 'longest': longest}
     
     def update_book_metadata(self, path: str, title: str, author: str,
-                          narrator: str, year: str) -> None:
-        with self._get_conn() as conn:
-            conn.execute(
-                """UPDATE books
-                SET title=?, author=?, narrator=?, year=?
-                WHERE path=?""",
-                (title or None, author or None, narrator or None, int(year) if year and year.strip().isdigit() else None, path)
-            )
+                          narrator: str, year: str) -> bool:
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    """UPDATE books
+                    SET title=?, author=?, narrator=?, year=?
+                    WHERE path=?""",
+                    (title or None, author or None, narrator or None, int(year) if year and year.strip().isdigit() else None, path)
+                )
+            return True
+        except Exception:
+            return False
 
     def get_book_tags(self, book_path: str) -> list[str]:
         with self._get_conn() as conn:

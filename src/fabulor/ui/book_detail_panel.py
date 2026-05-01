@@ -285,12 +285,12 @@ class BookDetailPanel(QWidget):
         author = self._meta_author.text().strip()
         narrator = self._meta_narrator.text().strip()
         year = self._meta_year.text().strip()
-        self.db.update_book_metadata(self._book_path, title, author, narrator, year)
-        self._book_data.update({
-            'title': title, 'author': author,
-            'narrator': narrator, 'year': year
-        })
-        self._sync_header_from_fields()
+        if self.db.update_book_metadata(self._book_path, title, author, narrator, year):
+            self._book_data.update({
+                'title': title, 'author': author,
+                'narrator': narrator, 'year': year
+            })
+            self._sync_header_from_fields()
 
     def _sync_header_from_fields(self):
         self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))

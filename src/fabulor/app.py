@@ -1285,19 +1285,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             
             # Write to DB off main thread
             def _write():
-                self.db.write_session(
-                    book_path=book.path,
-                    book_title=book.title,
-                    book_author=book.author,
-                    book_duration=book.duration,
-                    session_start=start,
-                    session_end=now,
-                    position_start=pos_start,
-                    position_end=pos_end,
-                    furthest_position=furthest,
-                )
-                if not self.db.get_book_started_at(book.path):
-                    self.db.set_started_at(book.path, start)
+                try:
+                    self.db.write_session(
+                        book_path=book.path,
+                        book_title=book.title,
+                        book_author=book.author,
+                        book_duration=book.duration,
+                        session_start=start,
+                        session_end=now,
+                        position_start=pos_start,
+                        position_end=pos_end,
+                        furthest_position=furthest,
+                    )
+                    if not self.db.get_book_started_at(book.path):
+                        self.db.set_started_at(book.path, start)
+                except Exception:
+                    pass
             
             threading.Thread(target=_write, daemon=True).start()
 
