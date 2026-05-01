@@ -164,7 +164,7 @@ class ChapterList(QListWidget):
         if not self._can_expand:
             self._expand_btn.hide()
             return
-        self._expand_btn.move(self.width() - EXPAND_BTN_W, self.y() - EXPAND_BTN_H)
+        self._expand_btn.move(self.width() - EXPAND_BTN_W, self._anchor_bottom - self.height() - EXPAND_BTN_H)
         self._expand_btn.raise_()
         self._expand_btn.show()
 

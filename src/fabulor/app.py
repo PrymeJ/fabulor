@@ -2177,8 +2177,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.undo_anim.finished.disconnect(self.undo_overlay.hide)
             self._undo_slide_out_connected = False
 
-        self.undo_anim.setStartValue(self.undo_overlay.pos())
-        self.undo_anim.setEndValue(QPoint(width, self.undo_overlay.y()))
+        overlay_w = 32
+        y_pos = 56
+        self.undo_anim.setStartValue(QPoint(width - overlay_w, y_pos))
+        self.undo_anim.setEndValue(QPoint(width, y_pos))
         self.undo_anim.finished.connect(self.undo_overlay.hide)
         self._undo_slide_out_connected = True
         self.undo_anim.start()
