@@ -25,7 +25,6 @@ class SettingsController:
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
-        #print(f"[SettingsController] _update_naming_pattern called with: {pattern}")
         self.config.set_naming_pattern(pattern)
         self.library.reparse_db(pattern)
         self._update_pattern_visuals()
@@ -33,7 +32,6 @@ class SettingsController:
         current_file = self.player.get_current_file()
         if current_file:
             self.player.load_cover_art(current_file)
-        #self._debug_settings_state()
 
     def _update_pattern_visuals(self):
         """Updates the highlight/dim state of naming pattern buttons."""
@@ -41,21 +39,17 @@ class SettingsController:
         self.visuals.set_naming_pattern_selection(current)
 
     def _update_scroll_mode(self, mode):
-        #print(f"[SettingsController] _update_scroll_mode called with: {mode}")
         self.config.set_scroll_mode(mode)
         self._update_scroll_mode_visuals()
-        #self._debug_settings_state()
 
     def _update_scroll_mode_visuals(self):
         current = self.config.get_scroll_mode()
         self.visuals.set_scroll_selection(current)
 
     def _update_hints_mode(self, enabled):
-        #print(f"[SettingsController] _update_hints_mode called with: {enabled}")
         """Changes the chapter hint visibility setting."""
         self.config.set_chapter_hints_enabled(enabled)
         self._update_hints_visuals()
-        #self._debug_settings_state()
 
     def _update_hints_visuals(self):
         """Updates the highlight state of hint toggle buttons."""
@@ -72,21 +66,17 @@ class SettingsController:
         self.visuals.set_notches_selection(enabled)
 
     def _update_undo_mode(self, val):
-        #print(f"[SettingsController] _update_undo_mode called with: {val}")
         self.config.set_undo_duration(val)
         self._update_undo_visuals()
-        #self._debug_settings_state()
 
     def _update_undo_visuals(self):
         current = self.config.get_undo_duration()
         self.visuals.set_undo_selection(current)
 
     def _update_fade_mode(self, ms):
-        #print(f"[SettingsController] _update_fade_mode called with: {ms}")
         """Changes the theme hover fade duration."""
         self.config.set_theme_fade_duration(ms)
         self._update_fade_visuals()
-        #self._debug_settings_state()
 
     def _update_fade_visuals(self):
         """Updates the highlight state of fade buttons."""
@@ -94,11 +84,9 @@ class SettingsController:
         self.visuals.set_fade_selection(current)
 
     def _update_blur_mode(self, enabled):
-        #print(f"[SettingsController] _update_blur_mode called with: {enabled}")
         """Changes the blur setting."""
         self.config.set_blur_enabled(enabled)
         self._update_blur_visuals()
-        #self._debug_settings_state()
 
     def _update_blur_visuals(self):
         enabled = self.config.get_blur_enabled()
@@ -144,10 +132,3 @@ class SettingsController:
 
     def _validate_smart_rewind_settings(self):
         self.panels.validate_speed_panel_settings()
-
-    # def _debug_settings_state(self):
-    #     print("[Settings] scroll:", self.config.get_scroll_mode())
-    #     print("[Settings] hints:", self.config.get_chapter_hints_enabled())
-    #     print("[Settings] undo:", self.config.get_undo_duration())
-    #     print("[Settings] fade:", self.config.get_theme_fade_duration())
-    #     print("[Settings] blur:", self.config.get_blur_enabled())

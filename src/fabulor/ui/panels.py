@@ -1,12 +1,6 @@
-from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout, QApplication
+from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit
 from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QGuiApplication
-
-# Import necessary components from fabulor
-from ..config import Config
-from ..themes import THEMES # Needed for _update_speed_grid_styling if it remains in MainWindow
-from ..ui.theme_manager import ThemeComboBox # Needed for dropdowns in panel setup
 
 class PanelManager:
     def __init__(self, main_window):
@@ -33,7 +27,6 @@ class PanelManager:
         self.settings_panel_animation = main_window.settings_panel_animation
         self.speed_panel_animation = main_window.speed_panel_animation
         self.sleep_panel_animation = main_window.sleep_panel_animation
-        self.stats_panel = main_window.stats_panel
         self.stats_panel_animation = main_window.stats_panel_animation
         self.book_detail_panel = None
         self.book_detail_panel_animation = None

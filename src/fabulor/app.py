@@ -1,6 +1,4 @@
 import os
-import math
-import random
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
