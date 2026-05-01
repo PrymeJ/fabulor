@@ -551,14 +551,15 @@ THEMES = {
         "accent":              "#FDA605",
         "accent_light":        "#D60808",
         "accent_dark":         "#A37B14",
-        "bg_sidebar":          "#230903",
+        "bg_sidebar":          "#461004",
         "bg_dropdown":         "#451208",
-        "curr_chap_highlight": "#E3B23C", # chapter dropdown selection
+        "curr_chap_highlight": "#8C0C0C", # chapter dropdown selection
         "sidebar_text_hover": "#D60808",
-        "sidebar_opacity":     0.6,
-        "panel_opacity_hover": 0.9,
+        "sidebar_opacity":     0.8,
+        "panel_opacity_hover": 0.92,
         "panel_theme_names_dimmed": "#F47272",
-        "text":                "#F9F7F3",
+        "text":                "#E4ED5F",
+        "bg_image":               "img/hearmeroar.png",
     },
     "Horrorshow": {
         "bg_deep": "#84500B", 
@@ -1159,7 +1160,8 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#000000",
         "text":                "#F8F9FA", # Light text for general labels
-        "text_on_light_bg":    "#111111", 
+        "text_on_light_bg":    "#111111",
+        "bg_image":                 "img/winterfell.png",
     }
 }
 
