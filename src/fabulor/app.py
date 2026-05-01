@@ -1,6 +1,7 @@
 import os
 import math
 import random
+import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
@@ -1275,21 +1276,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         now = datetime.now()
         elapsed = (now - self._session_start).total_seconds()
+        
+        # Capture state before clearing
         if elapsed >= 60 and self._current_book is not None:
-            current_pos = self._get_current_position()
-            self.db.write_session(
-                book_path=self._current_book.path,
-                book_title=self._current_book.title,
-                book_author=self._current_book.author,
-                book_duration=self._current_book.duration,
-                session_start=self._session_start,
-                session_end=now,
-                position_start=self._session_position_start,
-                position_end=current_pos,
-                furthest_position=self._session_furthest_position,
-            )
-            if not self.db.get_book_started_at(self._current_book.path):
-                self.db.set_started_at(self._current_book.path, self._session_start)
+            book = self._current_book
+            start = self._session_start
+            pos_start = self._session_position_start
+            pos_end = self._get_current_position()
+            furthest = self._session_furthest_position
+            
+            # Write to DB off main thread
+            def _write():
+                self.db.write_session(
+                    book_path=book.path,
+                    book_title=book.title,
+                    book_author=book.author,
+                    book_duration=book.duration,
+                    session_start=start,
+                    session_end=now,
+                    position_start=pos_start,
+                    position_end=pos_end,
+                    furthest_position=furthest,
+                )
+                if not self.db.get_book_started_at(book.path):
+                    self.db.set_started_at(book.path, start)
+            
+            threading.Thread(target=_write, daemon=True).start()
+
         self._session_start = None
         self._session_position_start = None
         self._session_furthest_position = None
@@ -1329,22 +1342,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
         self._update_ui_sync() # Force UI update
 
+    import time
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         if not os.path.exists(self.current_file):
              self.status_banner.setText("Error: File missing!")
              self.status_banner.show()
              return
+        t0 = time.perf_counter()
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
+        print(f"  ||| get_book #1: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
+    
         # Close any existing session before opening a new one
         self._close_session()
         self._current_book = self.db.get_book(self.current_file)
         self._open_session()
+        print(f"  open_session: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
+    
         self._restore_position()
+        print(f"  restore_position: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
+    
         self._session_position_start = self.config.get_last_position(self.current_file)
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
+        print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
+    
         book_data = self.db.get_book(self.current_file)
         new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
@@ -1363,6 +1386,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
                 self.chapter_progress_slider.setValue(new_chap_val)
+        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")        
 
     def _on_file_loaded_populate_chapters(self):
         dur = self.player.duration

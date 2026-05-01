@@ -213,7 +213,7 @@ class PanelManager:
 
         # Set animation guard
         self.library_panel._is_animating = True
-        self.library_panel._list_view.setUpdatesEnabled(False)
+        self.library_panel._list_view.setUpdatesEnabled(True)
 
         self.library_panel_animation.setStartValue(QPoint(0, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
