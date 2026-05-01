@@ -521,6 +521,7 @@ class LibraryPanel(QFrame):
         if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
             self._preload_timer.stop()
             # leave _preload_queue intact so start_idle_preload can resume
+        self._active_workers.clear()
 
     def preload_complete(self) -> bool:
         return not getattr(self, '_preload_queue', None)

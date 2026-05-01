@@ -116,6 +116,9 @@ class PanelManager:
         last_row  = last.row() if last.isValid() else first_row + 20
         
         self._reveal_rows = list(range(first_row, last_row + 1))
+        if hasattr(self, '_reveal_timer') and self._reveal_timer is not None:
+            self._reveal_timer.stop()
+            self._reveal_timer.timeout.disconnect()
         self._reveal_timer = QTimer(self)
         self._reveal_timer.setInterval(16)  # ~60fps, one row per frame
         self._reveal_timer.timeout.connect(lambda: self._reveal_next_row(view))
