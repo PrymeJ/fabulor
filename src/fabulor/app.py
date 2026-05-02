@@ -1343,7 +1343,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.load_book(path)
         self._load_cover_art(path)
         self.library_controller._check_library_status()
-        self.panel_manager.hide_all_panels()
+        self._pending_panel_hide = True
 
     import time
     def _on_file_ready(self):
@@ -1371,7 +1371,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_ui_sync()
         print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
     
-        book_data = self.db.get_book(self.current_file)
+        book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
@@ -1389,7 +1389,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
                 self.chapter_progress_slider.setValue(new_chap_val)
-        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")        
+        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")
+        if getattr(self, '_pending_panel_hide', False):
+            self._pending_panel_hide = False
+            self.panel_manager.hide_all_panels()        
 
     def _on_file_loaded_populate_chapters(self):
         try:
