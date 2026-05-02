@@ -31,6 +31,10 @@ class ClickSlider(QWidget):
         self._reveal_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._notch_easing = QEasingCurve(QEasingCurve.Type.OutCubic)
 
+        self._flow_anim = QPropertyAnimation(self, b"animatedValue")
+        self._flow_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._flow_anim.finished.connect(self._start_reveal, Qt.UniqueConnection)
+
     @Property(QColor)
     def bg_color(self): return self._bg_color
     @bg_color.setter
@@ -87,8 +91,7 @@ class ClickSlider(QWidget):
 
         # If the flow animation is currently running, hide notches and wait.
         # Otherwise, reveal them immediately.
-        is_animating = (hasattr(self, '_flow_anim') and
-                       self._flow_anim.state() == QPropertyAnimation.State.Running)
+        is_animating = self._flow_anim.state() == QPropertyAnimation.State.Running
 
         if is_animating:
             self._revealed_count = 0.0
@@ -138,10 +141,6 @@ class ClickSlider(QWidget):
         Duration scales with distance so large jumps feel fast and small ones feel slow.
         Range: 200ms (tiny move) to 600ms (full-range jump).
         """
-        if not hasattr(self, '_flow_anim'):
-            self._flow_anim = QPropertyAnimation(self, b"animatedValue")
-            self._flow_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
-
         start = old_value if old_value is not None else self._value
         span = self._maximum - self._minimum
         distance = abs(target - start) / max(1, span)
@@ -158,7 +157,6 @@ class ClickSlider(QWidget):
         self._flow_anim.setStartValue(start)
         self._flow_anim.setEndValue(target)
         self._flow_anim.setDuration(duration)
-        self._flow_anim.finished.connect(self._start_reveal, Qt.UniqueConnection)
         self._flow_anim.start()
 
     def _val_from_x(self, x):
