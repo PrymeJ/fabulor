@@ -27,7 +27,8 @@ class ClickSlider(QWidget):
         self._revealed_count = 0.0
         self._reveal_from_left = True
         self._reveal_anim = QPropertyAnimation(self, b"revealedCount")
-        self._reveal_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._notch_easing = QEasingCurve(QEasingCurve.Type.OutCubic)
 
     @Property(QColor)
     def bg_color(self): return self._bg_color
@@ -208,11 +209,11 @@ class ClickSlider(QWidget):
                 else:
                     order = m_len - 1 - i
 
-                # Calculate individual notch opacity based on reveal progress
-                # If revealedCount is 1.5, notch #1 is full, notch #2 is at 50% opacity.
-                opacity_ratio = max(0.0, min(1.0, self._revealed_count - (order - 1)))
-                if opacity_ratio <= 0:
+                # Organic individual notch fade-in using easing curve
+                progress = max(0.0, min(1.0, self._revealed_count - (order - 1)))
+                if progress <= 0:
                     continue
+                opacity_ratio = self._notch_easing.valueForProgress(progress)
 
                 x = int(ratio * self.width())
                 c = QColor(self._notch_color)
