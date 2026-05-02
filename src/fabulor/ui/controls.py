@@ -24,7 +24,7 @@ class ClickSlider(QWidget):
         self._notch_opacity = 100
 
         # Reveal animation state
-        self._revealed_count = 0
+        self._revealed_count = 0.0
         self._reveal_from_left = True
         self._reveal_anim = QPropertyAnimation(self, b"revealedCount")
         self._reveal_anim.setEasingCurve(QEasingCurve.Type.Linear)
@@ -49,13 +49,13 @@ class ClickSlider(QWidget):
     @notch_opacity.setter
     def notch_opacity(self, val): self._notch_opacity = val; self.update()
 
-    @Property(int)
+    @Property(float)
     def revealedCount(self):
         return self._revealed_count
 
     @revealedCount.setter
     def revealedCount(self, v):
-        self._revealed_count = v
+        self._revealed_count = float(v)
         self.update()
 
     def minimum(self): return self._minimum
@@ -70,7 +70,7 @@ class ClickSlider(QWidget):
     def set_markers(self, ratios):
         if not ratios:
             self._markers = []
-            self._revealed_count = 0
+            self._revealed_count = 0.0
             self.update()
             return
 
@@ -82,16 +82,23 @@ class ClickSlider(QWidget):
                        self._flow_anim.state() == QPropertyAnimation.State.Running)
         
         if is_animating:
-            self._revealed_count = 0
+            self._revealed_count = 0.0
         else:
             self._start_reveal()
 
     def _start_reveal(self):
-        if not self._markers: return
+        num_notches = max(0, len(self._markers) - 2)
+        if num_notches == 0:
+            self._revealed_count = 0.0
+            self.update()
+            return
+
         self._reveal_anim.stop()
-        self._reveal_anim.setStartValue(0)
-        self._reveal_anim.setEndValue(len(self._markers))
-        dur = max(200, min(800, len(self._markers) * 25)) # 25ms per notch
+        self._reveal_anim.setStartValue(0.0)
+        self._reveal_anim.setEndValue(float(num_notches))
+        
+        # 40ms per notch provides a smooth, visible fade-in sequence
+        dur = max(300, min(1200, num_notches * 40))
         self._reveal_anim.setDuration(dur)
         self._reveal_anim.start()
 
@@ -195,15 +202,21 @@ class ClickSlider(QWidget):
                 if i == 0 or i == m_len - 1:
                     continue
                 
-                # Reveal Logic
+                # Determine the reveal sequence order based on flow direction
                 if self._reveal_from_left:
-                    if i > self._revealed_count: continue
+                    order = i
                 else:
-                    if i < (m_len - self._revealed_count): continue
+                    order = m_len - 1 - i
+
+                # Calculate individual notch opacity based on reveal progress
+                # If revealedCount is 1.5, notch #1 is full, notch #2 is at 50% opacity.
+                opacity_ratio = max(0.0, min(1.0, self._revealed_count - (order - 1)))
+                if opacity_ratio <= 0:
+                    continue
 
                 x = int(ratio * self.width())
                 c = QColor(self._notch_color)
-                c.setAlpha(self._notch_opacity)
+                c.setAlpha(int(self._notch_opacity * opacity_ratio))
                 p.setPen(c)
                 if i % 2 == 1:
                     p.drawLine(x, mid_y, x, self.height()) # Center to Bottom
