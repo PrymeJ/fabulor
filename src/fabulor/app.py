@@ -1394,7 +1394,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     
         # Close any existing session before opening a new one
         self._close_session()
-        self._current_book = self.db.get_book(self.current_file)
         self._open_session()
         print(f"  open_session: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
     
