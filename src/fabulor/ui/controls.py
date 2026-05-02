@@ -23,6 +23,12 @@ class ClickSlider(QWidget):
         self._notch_color = QColor("#FFFFFF")
         self._notch_opacity = 100
 
+        # Reveal animation state
+        self._revealed_count = 0
+        self._reveal_from_left = True
+        self._reveal_anim = QPropertyAnimation(self, b"revealedCount")
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.Linear)
+
     @Property(QColor)
     def bg_color(self): return self._bg_color
     @bg_color.setter
@@ -43,6 +49,15 @@ class ClickSlider(QWidget):
     @notch_opacity.setter
     def notch_opacity(self, val): self._notch_opacity = val; self.update()
 
+    @Property(int)
+    def revealedCount(self):
+        return self._revealed_count
+
+    @revealedCount.setter
+    def revealedCount(self, v):
+        self._revealed_count = v
+        self.update()
+
     def minimum(self): return self._minimum
     def maximum(self): return self._maximum
 
@@ -53,8 +68,32 @@ class ClickSlider(QWidget):
     def value(self): return self._value
 
     def set_markers(self, ratios):
+        if not ratios:
+            self._markers = []
+            self._revealed_count = 0
+            self.update()
+            return
+
         self._markers = ratios
-        self.update()
+        
+        # If the flow animation is currently running, hide notches and wait.
+        # Otherwise, reveal them immediately.
+        is_animating = (hasattr(self, '_flow_anim') and 
+                       self._flow_anim.state() == QPropertyAnimation.State.Running)
+        
+        if is_animating:
+            self._revealed_count = 0
+        else:
+            self._start_reveal()
+
+    def _start_reveal(self):
+        if not self._markers: return
+        self._reveal_anim.stop()
+        self._reveal_anim.setStartValue(0)
+        self._reveal_anim.setEndValue(len(self._markers))
+        dur = max(200, min(800, len(self._markers) * 25)) # 25ms per notch
+        self._reveal_anim.setDuration(dur)
+        self._reveal_anim.start()
 
     def setValue(self, val):
         val = max(self._minimum, min(self._maximum, val))
@@ -87,6 +126,10 @@ class ClickSlider(QWidget):
         distance = abs(target - start) / max(1, span)
         duration = int(200 + distance * 400)
 
+        # Direction detection: If target is smaller than start, flow is Left.
+        # Request says: Flow Left -> Appear from Left. Flow Right -> Appear from Right.
+        self._reveal_from_left = (target < start)
+
         if self._flow_anim.state() == QPropertyAnimation.State.Running:
             self._flow_anim.stop()
 
@@ -94,6 +137,7 @@ class ClickSlider(QWidget):
         self._flow_anim.setStartValue(start)
         self._flow_anim.setEndValue(target)
         self._flow_anim.setDuration(duration)
+        self._flow_anim.finished.connect(self._start_reveal, Qt.UniqueConnection)
         self._flow_anim.start()
 
     def _val_from_x(self, x):
@@ -146,9 +190,17 @@ class ClickSlider(QWidget):
             mid_y = self.height() // 2
             # Draw subtle markers for internal chapter boundaries
             # Skip first (0) and last (len-1) as requested
+            m_len = len(self._markers)
             for i, ratio in enumerate(self._markers):
-                if i == 0 or i == len(self._markers) - 1:
+                if i == 0 or i == m_len - 1:
                     continue
+                
+                # Reveal Logic
+                if self._reveal_from_left:
+                    if i > self._revealed_count: continue
+                else:
+                    if i < (m_len - self._revealed_count): continue
+
                 x = int(ratio * self.width())
                 c = QColor(self._notch_color)
                 c.setAlpha(self._notch_opacity)
