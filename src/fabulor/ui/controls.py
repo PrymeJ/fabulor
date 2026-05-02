@@ -74,8 +74,9 @@ class ClickSlider(QWidget):
         self._maximum = max_
 
     def value(self): return self._value
+    def markers(self): return self._markers
 
-    def set_markers(self, ratios):
+    def set_markers(self, ratios, skip_animation=False):
         if not ratios:
             self._markers = []
             self._revealed_count = 0.0
@@ -83,25 +84,25 @@ class ClickSlider(QWidget):
             return
 
         self._markers = ratios
-        
+
         # If the flow animation is currently running, hide notches and wait.
         # Otherwise, reveal them immediately.
-        is_animating = (hasattr(self, '_flow_anim') and 
+        is_animating = (hasattr(self, '_flow_anim') and
                        self._flow_anim.state() == QPropertyAnimation.State.Running)
-        
+
         if is_animating:
             self._revealed_count = 0.0
         else:
-            self._start_reveal()
+            self._start_reveal(skip_animation=skip_animation)
 
-    def _start_reveal(self):
+    def _start_reveal(self, skip_animation=False):
         num_notches = max(0, len(self._markers) - 2)
         if num_notches == 0:
             self._revealed_count = 0.0
             self.update()
             return
 
-        if not self._animations_enabled:
+        if not self._animations_enabled or skip_animation:
             self._revealed_count = float(num_notches)
             self.update()
             return

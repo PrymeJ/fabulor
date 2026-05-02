@@ -60,7 +60,7 @@ class SettingsController:
     def _update_notches_mode(self, enabled):
         self.config.set_chapter_notches_enabled(enabled)
         self._update_notches_visuals()
-        self.ui_callbacks.refresh_notches()
+        self.ui_callbacks.refresh_notches(skip_animation=True)
 
     def _update_notches_visuals(self):
         enabled = self.config.get_chapter_notches_enabled()
@@ -69,7 +69,7 @@ class SettingsController:
     def _update_notch_animation_mode(self, enabled):
         self.config.set_chapter_notch_animation_enabled(enabled)
         self._update_notch_animation_visuals()
-        self.ui_callbacks.refresh_notches()
+        self.ui_callbacks.refresh_notches(skip_animation=True)
 
     def _update_notch_animation_visuals(self):
         enabled = self.config.get_chapter_notch_animation_enabled()

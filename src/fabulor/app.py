@@ -324,7 +324,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
             def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
             def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
-            def refresh_notches(self): self._main._refresh_notches()
+            def refresh_notches(self, skip_animation=False): self._main._refresh_notches(skip_animation=skip_animation)
             def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
 
         class LibraryInterface:
@@ -1014,6 +1014,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.notches_anim_header_label = QLabel("Animation")
         self.notches_anim_header_label.setObjectName("settings_header")
+        self.notches_anim_header_label.setVisible(False)
         notches_header_row.addWidget(self.notches_anim_header_label)
         app_layout.addLayout(notches_header_row)
 
@@ -1031,6 +1032,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for mode in ["On", "Off"]:
             btn = QPushButton(mode)
             btn.setObjectName("pattern_button")
+            btn.setVisible(False)
             btn.clicked.connect(lambda _, m=mode: self.notch_animation_mode_changed.emit(m == "On"))
             notches_row.addWidget(btn)
             self.notch_animation_buttons[mode] = btn
@@ -1376,7 +1378,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.load_book(path)
         self._load_cover_art(path)
         self.library_controller._check_library_status()
-        self.panel_manager.hide_all_panels()
+        self._pending_panel_hide = True
 
     import time
     def _on_file_ready(self):
@@ -1404,7 +1406,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_ui_sync()
         print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
     
-        book_data = self.db.get_book(self.current_file)
+        book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
@@ -1422,7 +1424,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
                 self.chapter_progress_slider.setValue(new_chap_val)
-        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")        
+        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")
+        if getattr(self, '_pending_panel_hide', False):
+            self._pending_panel_hide = False
+            self.panel_manager.hide_all_panels()
 
     def _on_file_loaded_populate_chapters(self):
         try:
@@ -1444,20 +1449,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self._chapter_label_clickable = clickable
 
-    def _refresh_notches(self):
+    def _refresh_notches(self, skip_animation=False):
         """Updates the progress bar with chapter markers if enabled in settings."""
         if not self.current_file or not self.player or not self.player.chapter_list:
             self.progress_slider.set_markers([])
             return
-        
-        # Set animation preference before calling set_markers
+
         self.progress_slider.animationsEnabled = self.config.get_chapter_notch_animation_enabled()
 
         if self.config.get_chapter_notches_enabled():
             dur = self.player.duration
             if dur:
                 ratios = [c.get('time', 0) / dur for c in self.player.chapter_list]
-                self.progress_slider.set_markers(ratios)
+                self.progress_slider.set_markers(ratios, skip_animation=skip_animation)
         else:
             self.progress_slider.set_markers([])
 
