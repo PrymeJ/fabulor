@@ -55,7 +55,7 @@
 - [x] Chapter progress bar draggable
 - [x] Chapter progress bar updates the percentage
 - [x] Chapter progress bar updates book progress bar
-- [x] Chapter notches functional
+- [x] Chapter notches functional along with their settings, only animate when a book is loaded
 - [x] Volume slider functional
 - [x] Volume slider draggable
 
