@@ -69,6 +69,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     scroll_mode_changed = Signal(str)
     hints_mode_changed = Signal(bool)
     notches_mode_changed = Signal(bool)
+    notch_animation_mode_changed = Signal(bool)
     undo_mode_changed = Signal(int)
     fade_mode_changed = Signal(int)
     blur_mode_changed = Signal(bool)
@@ -216,6 +217,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
 
+        def set_notch_animation_selection(enabled):
+            if not hasattr(self, 'notch_animation_buttons'): return
+            for mode, btn in self.notch_animation_buttons.items():
+                is_selected = (mode == "On" if enabled else mode == "Off")
+                btn.setProperty("selected", "true" if is_selected else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
         def set_undo_selection(current):
             if not hasattr(self, 'speed_panel'): return
             for val, btn in self.speed_panel.undo_buttons.items():
@@ -247,6 +256,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 btn.setProperty("selected", "true" if is_selected else "false")
                 btn.style().unpolish(btn)
                 btn.style().polish(btn)
+            
+            # Hide animation settings when notches are off
+            if hasattr(self, 'notches_anim_header_label'):
+                self.notches_anim_header_label.setVisible(enabled)
+            if hasattr(self, 'notch_animation_buttons'):
+                for btn in self.notch_animation_buttons.values():
+                    btn.setVisible(enabled)
 
         def set_hover_fade_selection(mode):
             if not hasattr(self, 'hover_fade_buttons'): return
@@ -280,6 +296,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def set_fade_selection(self, ms): set_fade_selection(ms)
             def set_blur_selection(self, enabled): set_blur_selection(enabled)
             def set_notches_selection(self, enabled): set_notches_selection(enabled)
+            def set_notch_animation_selection(self, enabled): set_notch_animation_selection(enabled)
             def set_hover_fade_selection(self, enabled): set_hover_fade_selection(enabled)
             def set_digit_mode_selection(self, mode): set_digit_mode_selection(mode)
             def set_digit_autoplay_selection(self, enabled): set_digit_autoplay_selection(enabled)
@@ -989,9 +1006,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         hints_row.addStretch()
         app_layout.addLayout(hints_row)
 
-        notches_header = QLabel("Chapter notches")
-        notches_header.setObjectName("settings_header")
-        app_layout.addWidget(notches_header)
+        notches_header_row = QHBoxLayout()
+        notches_label = QLabel("Chapter notches")
+        notches_label.setObjectName("settings_header")
+        notches_header_row.addWidget(notches_label)
+        notches_header_row.addStretch()
+
+        self.notches_anim_header_label = QLabel("Animation")
+        self.notches_anim_header_label.setObjectName("settings_header")
+        notches_header_row.addWidget(self.notches_anim_header_label)
+        app_layout.addLayout(notches_header_row)
 
         notches_row = QHBoxLayout()
         self.notches_buttons = {}
@@ -1002,6 +1026,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             notches_row.addWidget(btn)
             self.notches_buttons[mode] = btn
         notches_row.addStretch()
+
+        self.notch_animation_buttons = {}
+        for mode in ["On", "Off"]:
+            btn = QPushButton(mode)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, m=mode: self.notch_animation_mode_changed.emit(m == "On"))
+            notches_row.addWidget(btn)
+            self.notch_animation_buttons[mode] = btn
+            
         app_layout.addLayout(notches_row)
 
         app_layout.addStretch()
@@ -1343,7 +1376,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.load_book(path)
         self._load_cover_art(path)
         self.library_controller._check_library_status()
-        self._pending_panel_hide = True
+        self.panel_manager.hide_all_panels()
 
     import time
     def _on_file_ready(self):
@@ -1371,7 +1404,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_ui_sync()
         print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
     
-        book_data = self._current_book
+        book_data = self.db.get_book(self.current_file)
         new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
@@ -1389,10 +1422,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
                 self.chapter_progress_slider.setValue(new_chap_val)
-        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")
-        if getattr(self, '_pending_panel_hide', False):
-            self._pending_panel_hide = False
-            self.panel_manager.hide_all_panels()        
+        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")        
 
     def _on_file_loaded_populate_chapters(self):
         try:
@@ -1420,6 +1450,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.progress_slider.set_markers([])
             return
         
+        # Set animation preference before calling set_markers
+        self.progress_slider.animationsEnabled = self.config.get_chapter_notch_animation_enabled()
+
         if self.config.get_chapter_notches_enabled():
             dur = self.player.duration
             if dur:

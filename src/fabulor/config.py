@@ -177,6 +177,12 @@ class Config:
     def set_chapter_notches_enabled(self, enabled):
         self.settings.setValue("chapter_notches_enabled", str(enabled).lower())
 
+    def get_chapter_notch_animation_enabled(self):
+        return self.settings.value("chapter_notch_animation_enabled", "true") == "true"
+
+    def set_chapter_notch_animation_enabled(self, enabled):
+        self.settings.setValue("chapter_notch_animation_enabled", str(enabled).lower())
+
     def get_undo_duration(self):
         return self._safe_int("undo_duration", 3)
 

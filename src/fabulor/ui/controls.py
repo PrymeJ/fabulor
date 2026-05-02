@@ -22,6 +22,7 @@ class ClickSlider(QWidget):
         self._fill_color = QColor("#C8A2C8")
         self._notch_color = QColor("#FFFFFF")
         self._notch_opacity = 100
+        self._animations_enabled = True
 
         # Reveal animation state
         self._revealed_count = 0.0
@@ -49,6 +50,12 @@ class ClickSlider(QWidget):
     def notch_opacity(self): return self._notch_opacity
     @notch_opacity.setter
     def notch_opacity(self, val): self._notch_opacity = val; self.update()
+
+    @Property(bool)
+    def animationsEnabled(self): return self._animations_enabled
+    @animationsEnabled.setter
+    def animationsEnabled(self, val):
+        self._animations_enabled = val
 
     @Property(float)
     def revealedCount(self):
@@ -91,6 +98,11 @@ class ClickSlider(QWidget):
         num_notches = max(0, len(self._markers) - 2)
         if num_notches == 0:
             self._revealed_count = 0.0
+            self.update()
+            return
+
+        if not self._animations_enabled:
+            self._revealed_count = float(num_notches)
             self.update()
             return
 
