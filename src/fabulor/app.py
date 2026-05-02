@@ -1344,7 +1344,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._load_cover_art(path)
         self.library_controller._check_library_status()
         self.panel_manager.hide_all_panels()
-        self._update_ui_sync() # Force UI update
 
     import time
     def _on_file_ready(self):
