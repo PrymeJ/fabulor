@@ -544,6 +544,7 @@ THEMES = {
         "bg_main":      "#451208",
         "slider_overall_bg":   "#741A06",
         "slider_overall_fill": "#FDA605",
+        "progress_text":       "#FCDE99",
         "slider_chapter_bg":   "#741A06",
         "slider_chapter_fill": "#D60808",
         "slider_vol_bg":       "#230903",
@@ -1144,7 +1145,8 @@ THEMES = {
         "bg_deep":      "#212529",
         "bg_main":      "#343A40",
         "slider_overall_bg":   "#495057",
-        "slider_overall_fill": "#E9ECEF",
+        "slider_overall_fill": "#9be4e5",
+        "progress_text": "#EEEEEE",
         "slider_chapter_bg":   "#343A40",
         "slider_chapter_fill": "#CED4DA",
         "slider_vol_bg":       "#212529",
@@ -1159,9 +1161,13 @@ THEMES = {
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#000000",
-        "text":                "#F8F9FA", # Light text for general labels
+        "text":                "#ddfbfb", # Light text for general labels
         "text_on_light_bg":    "#111111",
         "bg_image":                 "img/winterfell.png",
+        "gradient_bg_start": "#343A40",
+        "gradient_bg_end": "#9be4e5",
+        "gradient_bg_angle": 180,
+        "gradient_bg_split": 0.82,
     },
 
 "Sunspear": {
@@ -1555,6 +1561,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
     start = t.get(f"gradient_{prefix}_start")
     end = t.get(f"gradient_{prefix}_end")
     angle = t.get(f"gradient_{prefix}_angle", 0)
+    split = t.get(f"gradient_{prefix}_split")
 
     if start and end:
         # Convert angle (0=Top-to-Bottom, 90=Left-to-Right) to Qt coordinates
@@ -1564,12 +1571,22 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
         x2 = 0.5 + 0.5 * math.sin(rad)
         y2 = 0.5 + 0.5 * math.cos(rad)
         
+        stops = []
         if opacity < 1.0:
             s_rgb = _hex_to_rgb(start)
             e_rgb = _hex_to_rgb(end)
-            return (f"qlineargradient(spread:pad, x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, "
-                    f"stop:0 rgba({s_rgb}, {opacity}), stop:1 rgba({e_rgb}, {opacity}))")
-        return f"qlineargradient(spread:pad, x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, stop:0 {start}, stop:1 {end})"
+            stops.append(f"stop:0 rgba({s_rgb}, {opacity})")
+            if split is not None:
+                stops.append(f"stop:{split} rgba({s_rgb}, {opacity})")
+            stops.append(f"stop:1 rgba({e_rgb}, {opacity})")
+        else:
+            stops.append(f"stop:0 {start}")
+            if split is not None:
+                stops.append(f"stop:{split} {start}")
+            stops.append(f"stop:1 {end}")
+        
+        stops_str = ", ".join(stops)
+        return f"qlineargradient(spread:pad, x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, {stops_str})"
     
     if opacity < 1.0:
         return f"rgba({_hex_to_rgb(fallback_color)}, {opacity})"
