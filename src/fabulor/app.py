@@ -112,6 +112,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_start: datetime | None = None
         self._session_position_start: float | None = None
         self._session_furthest_position: float | None = None
+        self._session_pause_end: datetime | None = None
         self._post_seek_pending_position: float | None = None
 
         self._session_pause_timer = QTimer(self)
@@ -1300,19 +1301,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return 0.0
 
     def _open_session(self):
-        
         self._session_start = datetime.now()
         self._session_position_start = self._get_current_position()
         self._session_furthest_position = self._session_position_start
+        book = self._current_book
+        dur = book.duration if book else 0
+        pct = (self._session_position_start / dur * 100) if dur else 0
+        s = int(self._session_position_start)
+        pos_str = f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+        print(f"[open_session] book='{book.title if book else '?'}' clock={self._session_start.strftime('%H:%M:%S')} pos={pos_str} ({pct:.1f}%)")
 
     def _close_session(self):
+        _t0 = time.perf_counter()
         self._session_pause_timer.stop()
         self._post_seek_credit_timer.stop()
+        _t1 = time.perf_counter()
+        print(f"  [close_session] timers stop: {(_t1-_t0)*1000:.2f}ms")
         if self._session_start is None:
+            print("  [close_session] early return (no session)")
             return
-        now = datetime.now()
+        now = self._session_pause_end or datetime.now()
         elapsed = (now - self._session_start).total_seconds()
-        
+        _t2 = time.perf_counter()
+        print(f"  [close_session] pre-branch setup: {(_t2-_t1)*1000:.2f}ms")
+
         # Capture state before clearing
         if elapsed >= 60 and self._current_book is not None:
             book = self._current_book
@@ -1320,7 +1332,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             pos_start = self._session_position_start
             pos_end = self._get_current_position()
             furthest = self._session_furthest_position
-            
+            dur = book.duration if book else 0
+            pct_end = (pos_end / dur * 100) if dur else 0
+            s_start = int(pos_start)
+            s_end = int(pos_end)
+            pos_start_str = f"{s_start//3600:02d}:{(s_start%3600)//60:02d}:{s_start%60:02d}"
+            pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
+            print(f"[close_session] book='{book.title}' clock={now.strftime('%H:%M:%S')} pos_start={pos_start_str} pos_end={pos_end_str} ({pct_end:.1f}%) elapsed={elapsed:.0f}s")
+            _t3 = time.perf_counter()
+            print(f"  [close_session] capture state: {(_t3-_t2)*1000:.2f}ms")
+
             # Write to DB off main thread
             def _write():
                 try:
@@ -1339,13 +1360,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.db.set_started_at(book.path, start)
                 except Exception:
                     pass
-            
+
             threading.Thread(target=_write, daemon=True).start()
+            _t4 = time.perf_counter()
+            print(f"  [close_session] Thread().start(): {(_t4-_t3)*1000:.2f}ms")
+        else:
+            _t4 = time.perf_counter()
+            print(f"  [close_session] skipped write (elapsed={elapsed:.1f}s)")
 
         self._session_start = None
         self._session_position_start = None
         self._session_furthest_position = None
+        self._session_pause_end = None
         self._post_seek_pending_position = None
+        _t5 = time.perf_counter()
+        print(f"  [close_session] clear state: {(_t5-_t4)*1000:.2f}ms")
+        print(f"  [close_session] TOTAL: {(_t5-_t0)*1000:.2f}ms")
 
     def _on_seek_credit_earned(self):
         if self._post_seek_pending_position is not None:
@@ -1375,6 +1405,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.set_is_playing(False)
         self.db.update_last_played(path)
         self.config.set_last_book(path)
+        self._close_session()
+        self._session_start = None
+        self._session_position_start = None
+        self._session_furthest_position = None
         self.player.load_book(path)
         self._load_cover_art(path)
         self.library_controller._check_library_status()
@@ -1392,15 +1426,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._current_book = self.db.get_book(self.current_file)
         print(f"  ||| get_book #1: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
     
-        # Close any existing session before opening a new one
-        self._close_session()
-        self._open_session()
-        print(f"  open_session: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
-    
         self._restore_position()
         print(f"  restore_position: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
-    
-        self._session_position_start = self.config.get_last_position(self.current_file)
+
         # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
         print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
@@ -2065,6 +2093,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             else:
                 # Pausing: Record when we stopped
                 self._last_pause_timestamp = time.time()
+                self._session_pause_end = datetime.now()
                 self._save_current_progress()
                 self.player.pause = True
                 self.library_panel.set_is_playing(False)
