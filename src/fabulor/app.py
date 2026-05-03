@@ -1163,6 +1163,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager._close_book_detail_flow
         )
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
+        self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
@@ -1242,6 +1243,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if auto_hide:
             QTimer.singleShot(3000, self.status_banner.hide)
+
+    def _on_book_metadata_saved(self, path: str, title: str, author: str):
+        self.library_panel._book_model.update_book_metadata(path, title, author)
+        if self.stats_panel.isVisible():
+            self.stats_panel.refresh_all()
 
     def _update_metadata_ui(self, text=None, show_metadata=None, show_go_to_lib=None):
         if text is not None:
@@ -1630,8 +1636,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if not self._eof_event_written and self._current_book is not None: #Temporary
                     self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
                     self._eof_event_written = True #Temporary
+                    self._close_session()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
-                        self.stats_panel.refresh_overall()
+                        self.stats_panel.refresh_all()
                 self.stats_panel.refresh_overall()     #Temporary
                 self._paused_time = None
                 self.progress_slider.setValue(1000)

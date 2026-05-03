@@ -596,6 +596,15 @@ class BookModel(QAbstractListModel):
         self._apply_filter_and_sort()
         self.endResetModel()
 
+    def update_book_metadata(self, path: str, title: str, author: str) -> None:
+        for book in self._books:
+            if book.path == path:
+                book.title = title
+                book.author = author
+                break
+        self._apply_filter_and_sort()
+        self._emit_for_path(path)
+
     def update_cover(self, path: str, pixmap: QPixmap) -> None:
         self._covers[path] = pixmap
         self._emit_for_path(path)

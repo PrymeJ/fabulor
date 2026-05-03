@@ -15,6 +15,7 @@ from .flow_layout import FlowLayout
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
+    metadata_saved = Signal(str, str, str)  # path, title, author
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -292,6 +293,7 @@ class BookDetailPanel(QWidget):
                 'narrator': narrator, 'year': year
             })
             self._sync_header_from_fields()
+            self.metadata_saved.emit(self._book_path, title, author)
 
     def _sync_header_from_fields(self):
         self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))

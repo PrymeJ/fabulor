@@ -287,8 +287,8 @@ class LibraryDB:
             rows = conn.execute("""
                 SELECT
                     ls.book_path,
-                    ls.book_title,
-                    ls.book_author,
+                    COALESCE(b.title, ls.book_title) as book_title,
+                    COALESCE(b.author, ls.book_author) as book_author,
                     ls.book_duration,
                     SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as clock_seconds,
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
@@ -419,18 +419,20 @@ class LibraryDB:
             """).fetchone()
 
             longest = conn.execute("""
-                SELECT book_title,
-                    COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400) as seconds
-                FROM listening_sessions
+                SELECT COALESCE(b.title, ls.book_title) as book_title,
+                    COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds
+                FROM listening_sessions ls
+                LEFT JOIN books b ON ls.book_path = b.path
                 ORDER BY seconds DESC
                 LIMIT 1
             """).fetchone()
 
             top = conn.execute("""
-                SELECT book_title,
-                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
-                FROM listening_sessions
-                GROUP BY book_path
+                SELECT COALESCE(b.title, ls.book_title) as book_title,
+                    SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as seconds
+                FROM listening_sessions ls
+                LEFT JOIN books b ON ls.book_path = b.path
+                GROUP BY ls.book_path
                 ORDER BY seconds DESC
                 LIMIT 1
             """).fetchone()
@@ -489,8 +491,8 @@ class LibraryDB:
             rows = conn.execute("""
                 SELECT
                     ls.book_path,
-                    ls.book_title,
-                    ls.book_author,
+                    COALESCE(b.title, ls.book_title) as book_title,
+                    COALESCE(b.author, ls.book_author) as book_author,
                     ls.book_duration,
                     SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as clock_seconds,
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,

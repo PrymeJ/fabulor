@@ -512,6 +512,24 @@ class StatsPanel(QWidget):
         scroll.setWidget(self._day_rows_widget)
         outer.addWidget(scroll, stretch=1)
 
+        self._day_finished_section = QWidget()
+        self._day_finished_section.setObjectName("stats_finished_section")
+        finished_outer = QVBoxLayout(self._day_finished_section)
+        finished_outer.setContentsMargins(4, 4, 4, 4)
+        finished_outer.setSpacing(4)
+
+        finished_header = QLabel("Finished today")
+        finished_header.setObjectName("stats_section_header")
+        finished_outer.addWidget(finished_header)
+
+        self._day_finished_row = QHBoxLayout()
+        self._day_finished_row.setSpacing(2)
+        self._day_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        finished_outer.addLayout(self._day_finished_row)
+
+        outer.addWidget(self._day_finished_section)
+        self._day_finished_section.hide()
+
         return widget
 
     def _day_prev(self):
@@ -532,11 +550,16 @@ class StatsPanel(QWidget):
             item = self._day_rows_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        while self._day_finished_row.count() > 0:
+            item = self._day_finished_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         if not self._active_days:
             self._day_label.setText("No activity yet")
             self._day_total_label.setText("")
             self._day_prev_btn.setEnabled(False)
             self._day_next_btn.setEnabled(False)
+            self._day_finished_section.hide()
             return
 
         self._current_day_index = min(self._current_day_index, len(self._active_days) - 1)
@@ -560,6 +583,17 @@ class StatsPanel(QWidget):
             self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
 
         self._day_total_label.setText(self._format_duration(total_seconds))
+
+        day_start = self.config.get_day_start_hour()
+        finished = self.db.get_finished_in_period('day', date_str, day_start)
+        if finished:
+            for f in finished:
+                thumb = FinishedBookThumb(f, self._assets_dir)
+                thumb.clicked.connect(self._on_book_row_clicked)
+                self._day_finished_row.addWidget(thumb)
+            self._day_finished_section.show()
+        else:
+            self._day_finished_section.hide()
 
     def _build_weekly_tab(self) -> QWidget:
         widget = QWidget()
