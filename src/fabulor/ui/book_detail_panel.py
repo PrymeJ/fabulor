@@ -14,6 +14,7 @@ from .flow_layout import FlowLayout
 
 class BookDetailPanel(QWidget):
     close_requested = Signal()
+    history_deleted = Signal()
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -414,6 +415,7 @@ class BookDetailPanel(QWidget):
             if self._book_path:
                 self.db.delete_book_stats(self._book_path)
                 self._refresh_stats()
+                self.history_deleted.emit()
 
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor

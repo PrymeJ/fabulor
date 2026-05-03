@@ -528,6 +528,10 @@ class StatsPanel(QWidget):
         self._active_days = self.db.get_active_periods(
             'day', self.config.get_day_start_hour()
         )
+        while self._day_rows_layout.count() > 1:
+            item = self._day_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         if not self._active_days:
             self._day_label.setText("No activity yet")
             self._day_total_label.setText("")
@@ -546,15 +550,7 @@ class StatsPanel(QWidget):
         self._day_prev_btn.setEnabled(self._current_day_index < len(self._active_days) - 1)
         self._day_next_btn.setEnabled(self._current_day_index > 0)
     
-        # Fetch and display rows
         rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
-
-        # Clear existing rows (keep the stretch at the end)
-        while self._day_rows_layout.count() > 1:
-            item = self._day_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         total_seconds = 0.0
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         for row in rows:
@@ -647,6 +643,10 @@ class StatsPanel(QWidget):
     def _refresh_weekly(self):
         from datetime import datetime, timedelta
         self._active_weeks = self.db.get_active_periods('week', self.config.get_day_start_hour())
+        while self._week_rows_layout.count() > 1:
+            item = self._week_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         if not self._active_weeks:
             self._week_label.setText("No activity yet")
             self._week_total_label.setText("")
@@ -669,12 +669,6 @@ class StatsPanel(QWidget):
         day_start = self.config.get_day_start_hour()
         rows = self.db.get_books_listened_in_period('week', week_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
-
-        while self._week_rows_layout.count() > 1:
-            item = self._week_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         total_seconds = 0.0
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
@@ -782,6 +776,10 @@ class StatsPanel(QWidget):
     def _refresh_monthly(self):
         from datetime import datetime
         self._active_months = self.db.get_active_periods('month', self.config.get_day_start_hour())
+        while self._month_rows_layout.count() > 1:
+            item = self._month_rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         if not self._active_months:
             self._month_label.setText("No activity yet")
             self._month_total_label.setText("")
@@ -802,12 +800,6 @@ class StatsPanel(QWidget):
         day_start = self.config.get_day_start_hour()
         rows = self.db.get_books_listened_in_period('month', month_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
-
-        while self._month_rows_layout.count() > 1:
-            item = self._month_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
         total_seconds = 0.0
         for row in rows:
             total_seconds += row.get("clock_seconds") or 0.0
@@ -886,10 +878,16 @@ class StatsPanel(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.db.reset_stats()
-            self.refresh_overall()
-            self._refresh_daily()
-            self._refresh_weekly()
-            self._refresh_monthly()
+            self.refresh_all()
+            bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
+            if bdp and bdp.isVisible():
+                bdp._refresh_stats()
+
+    def refresh_all(self):
+        self.refresh_overall()
+        self._refresh_daily()
+        self._refresh_weekly()
+        self._refresh_monthly()
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager

@@ -67,12 +67,6 @@ class LibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_author ON books (author)")
             conn.execute("PRAGMA foreign_keys = ON")
 
-            # Migration: add started_at to pre-existing databases
-            try:
-                conn.execute("ALTER TABLE books ADD COLUMN started_at DATETIME")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS listening_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,7 +78,8 @@ class LibraryDB:
                     session_end TEXT NOT NULL,
                     position_start REAL,
                     position_end REAL,
-                    furthest_position REAL
+                    furthest_position REAL,
+                    listened_seconds REAL
                 )
             """)
             conn.execute("""
@@ -260,7 +255,8 @@ class LibraryDB:
     # --- Session Recording ---
 
     def write_session(self, book_path, book_title, book_author, book_duration,
-                      session_start, session_end, position_start, position_end, furthest_position):
+                      session_start, session_end, position_start, position_end,
+                      furthest_position, listened_seconds):
         """Inserts one listening session row."""
         with self._get_conn() as conn:
             with conn:
@@ -268,8 +264,9 @@ class LibraryDB:
                     INSERT INTO listening_sessions
                         (book_path, book_title, book_author, book_duration,
                          session_start, session_end,
-                         position_start, position_end, furthest_position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         position_start, position_end, furthest_position,
+                         listened_seconds)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     str(book_path) if book_path else None,
                     book_title,
@@ -280,6 +277,7 @@ class LibraryDB:
                     position_start,
                     position_end,
                     furthest_position,
+                    listened_seconds,
                 ))
 
     def get_daily_book_breakdown(self, date_str: str, day_start_hour: int) -> list[dict]:
@@ -292,7 +290,7 @@ class LibraryDB:
                     ls.book_title,
                     ls.book_author,
                     ls.book_duration,
-                    SUM((julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as clock_seconds,
+                    SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as clock_seconds,
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
@@ -361,7 +359,7 @@ class LibraryDB:
                 "  strftime(?, datetime(session_start, ?)) AS period,"
                 "  book_path,"
                 "  book_title,"
-                "  SUM((julianday(session_end) - julianday(session_start)) * 86400) AS seconds"
+                "  SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) AS seconds"
                 " FROM listening_sessions"
                 " GROUP BY period, book_path"
                 " ORDER BY period DESC, seconds DESC",
@@ -374,7 +372,7 @@ class LibraryDB:
             agg = conn.execute("""
                 SELECT
                     MAX(furthest_position) as furthest_position,
-                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as total_seconds,
+                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as total_seconds,
                     COUNT(*) as session_count,
                     MIN(session_start) as first_session,
                     MAX(session_end) as last_session
@@ -385,7 +383,7 @@ class LibraryDB:
             per_day = conn.execute("""
                 SELECT
                     strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
-                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
                 FROM listening_sessions
                 WHERE book_path = ?
                 GROUP BY date
@@ -415,14 +413,14 @@ class LibraryDB:
                 SELECT
                     COUNT(*) as total_sessions,
                     COUNT(DISTINCT book_path) as books_started,
-                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as total_seconds,
-                    AVG((julianday(session_end) - julianday(session_start)) * 86400) as avg_seconds
+                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as total_seconds,
+                    AVG(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as avg_seconds
                 FROM listening_sessions
             """).fetchone()
 
             longest = conn.execute("""
                 SELECT book_title,
-                    (julianday(session_end) - julianday(session_start)) * 86400 as seconds
+                    COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400) as seconds
                 FROM listening_sessions
                 ORDER BY seconds DESC
                 LIMIT 1
@@ -430,7 +428,7 @@ class LibraryDB:
 
             top = conn.execute("""
                 SELECT book_title,
-                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
                 FROM listening_sessions
                 GROUP BY book_path
                 ORDER BY seconds DESC
@@ -460,7 +458,7 @@ class LibraryDB:
             rows = conn.execute("""
                 SELECT
                     strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
-                    SUM((julianday(session_end) - julianday(session_start)) * 86400) as seconds
+                    SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
                 FROM listening_sessions
                 WHERE datetime(session_start, ?) >= datetime('now', ?)
                 GROUP BY date
@@ -494,7 +492,7 @@ class LibraryDB:
                     ls.book_title,
                     ls.book_author,
                     ls.book_duration,
-                    SUM((julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as clock_seconds,
+                    SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as clock_seconds,
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
