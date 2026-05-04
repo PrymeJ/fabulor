@@ -10,6 +10,34 @@ from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
 from PySide6.QtWidgets import QAbstractScrollArea
 
 
+def _elide(text: str, font, max_px: int) -> str:
+    from PySide6.QtGui import QFontMetrics
+    return QFontMetrics(font).elidedText(text, Qt.TextElideMode.ElideRight, max_px)
+
+
+class ElidedLabel(QLabel):
+    """QLabel that elides text to a fixed pixel budget set at construction."""
+    def __init__(self, text: str, max_px: int = 120, parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self._max_px = max_px
+        self.setWordWrap(False)
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setMinimumWidth(0)
+        super().setText(text)  # show full text until font is known; updateElision called after setFont
+
+    def setFont(self, font):
+        super().setFont(font)
+        self._apply()
+
+    def _apply(self):
+        super().setText(_elide(self._full_text, self.font(), self._max_px))
+
+    def setText(self, text: str):
+        self._full_text = text
+        self._apply()
+
+
 class BarChartWidget(QWidget):
     
     date_clicked = Signal(str)
@@ -131,16 +159,17 @@ def _dim_effect():
 class BookDayRow(QWidget):
     clicked = Signal(dict)
 
-    def __init__(self, row_data: dict, assets_dir: str, parent=None):
+    def __init__(self, row_data: dict, assets_dir: str, index: int = 0, parent=None):
         super().__init__(parent)
         self._row_data = row_data
-        self.setObjectName("stats_book_day_row")
+        self.setObjectName("stats_book_day_row_alt" if index % 2 else "stats_book_day_row")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         deleted = row_data.get("book_path") is None
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(4, 2, 21, 2)
+        layout.setSpacing(6)
 
         # Cover thumbnail 48x48
         cover_label = QLabel()
@@ -173,28 +202,26 @@ class BookDayRow(QWidget):
             cover_label.setGraphicsEffect(_dim_effect())
         layout.addWidget(cover_label)
 
-        # Text block — title, author, progress bar
+        # Text block — title (row 0), author (row 1)
         text_block = QVBoxLayout()
         text_block.setSpacing(2)
+        text_block.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         is_finished = bool(row_data.get("is_finished", 0))
 
-        title_lbl = QLabel(row_data.get("book_title", "Unknown"))
+        title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=88)
         if deleted:
             title_lbl.setObjectName("stats_book_title_deleted")
         elif is_finished:
             title_lbl.setObjectName("stats_book_title_finished")
         else:
             title_lbl.setObjectName("stats_book_title")
-        title_lbl.setFixedWidth(105)
         f_title = title_lbl.font()
         f_title.setPointSize(f_title.pointSize() - 2)
         title_lbl.setFont(f_title)
-        title_lbl.setWordWrap(False)
 
-        author_lbl = QLabel(row_data.get("book_author", ""))
+        author_lbl = ElidedLabel(row_data.get("book_author", ""), max_px=88)
         author_lbl.setObjectName("stats_book_author")
-        author_lbl.setFixedWidth(90)
         f_author = author_lbl.font()
         f_author.setPointSize(f_author.pointSize() - 2)
         author_lbl.setFont(f_author)
@@ -204,16 +231,18 @@ class BookDayRow(QWidget):
 
         layout.addLayout(text_block, stretch=1)
 
-        # Right side — stats (matching rows of the text block)
-        time_block = QVBoxLayout()
+        # Right side — fixed-width container so scroll bar can't compress it
+        time_container = QWidget()
+        time_container.setFixedWidth(98)
+        time_block = QVBoxLayout(time_container)
+        time_block.setContentsMargins(0, 0, 0, 0)
         time_block.setSpacing(2)
-        time_block.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        time_block.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         clock_seconds = row_data.get("clock_seconds") or 0.0
         clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
         clock_lbl.setObjectName("stats_time_label")
         clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        clock_lbl.setFixedWidth(72)
         f_clock = clock_lbl.font()
         f_clock.setPointSize(f_clock.pointSize() - 2)
         clock_lbl.setFont(f_clock)
@@ -226,7 +255,6 @@ class BookDayRow(QWidget):
         prog_lbl = QLabel("")
         prog_lbl.setObjectName("stats_book_time_label")
         prog_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        prog_lbl.setFixedWidth(72)
         f_prog = prog_lbl.font()
         f_prog.setPointSize(f_prog.pointSize() - 2)
         prog_lbl.setFont(f_prog)
@@ -236,13 +264,13 @@ class BookDayRow(QWidget):
             pct_end = min(100.0, pos_end / duration * 100)
             delta = pct_end - pct_start
             delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
-            prog_lbl.setText(f"{pct_start:.1f}·{pct_end:.1f} {delta_str}")
+            prog_lbl.setText(f"{pct_start:.1f}% · {pct_end:.1f}% | {delta_str}")
             if delta < 0:
                 prog_lbl.setObjectName("stats_book_time_label_dim")
 
         time_block.addWidget(prog_lbl)
 
-        layout.addLayout(time_block)
+        layout.addWidget(time_container)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -611,8 +639,8 @@ class StatsPanel(QWidget):
 
         self._day_rows_widget = QWidget()
         self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
-        self._day_rows_layout.setContentsMargins(4, 4, 4, 4)
-        self._day_rows_layout.setSpacing(4)
+        self._day_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._day_rows_layout.setSpacing(2)
         self._day_rows_layout.addStretch()
 
         scroll.setWidget(self._day_rows_widget)
@@ -676,9 +704,9 @@ class StatsPanel(QWidget):
         rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
         total_seconds = 0.0
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
-        for row in rows:
+        for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir)
+            book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
 
@@ -734,8 +762,8 @@ class StatsPanel(QWidget):
 
         self._week_rows_widget = QWidget()
         self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
-        self._week_rows_layout.setContentsMargins(4, 4, 4, 4)
-        self._week_rows_layout.setSpacing(4)
+        self._week_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._week_rows_layout.setSpacing(2)
         self._week_rows_layout.addStretch()
 
         scroll.setWidget(self._week_rows_widget)
@@ -799,9 +827,9 @@ class StatsPanel(QWidget):
         rows = self.db.get_books_listened_in_period('week', week_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         total_seconds = 0.0
-        for row in rows:
+        for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir)
+            book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._week_rows_layout.insertWidget(self._week_rows_layout.count() - 1, book_row)
 
@@ -856,8 +884,8 @@ class StatsPanel(QWidget):
 
         self._month_rows_widget = QWidget()
         self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
-        self._month_rows_layout.setContentsMargins(4, 4, 4, 4)
-        self._month_rows_layout.setSpacing(4)
+        self._month_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._month_rows_layout.setSpacing(2)
         self._month_rows_layout.addStretch()
 
         scroll.setWidget(self._month_rows_widget)
@@ -919,9 +947,9 @@ class StatsPanel(QWidget):
         rows = self.db.get_books_listened_in_period('month', month_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         total_seconds = 0.0
-        for row in rows:
+        for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir)
+            book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._month_rows_layout.insertWidget(self._month_rows_layout.count() - 1, book_row)
 

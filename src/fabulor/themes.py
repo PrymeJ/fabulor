@@ -2396,6 +2396,9 @@ def get_stats_stylesheet(theme_name="default"):
         QLabel#stats_book_time_label_dim {{
             color: rgba({_hex_to_rgb(t['text'])}, 0.45);
         }}
+        QWidget#stats_book_day_row:hover, QWidget#stats_book_day_row_alt:hover {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.12);
+        }}
         QLabel#stats_value_label {{
             color: {t['text']};
             font-weight: bold;
