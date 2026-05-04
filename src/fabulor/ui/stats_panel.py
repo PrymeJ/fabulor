@@ -265,7 +265,7 @@ class FinishedBookThumb(QWidget):
     def __init__(self, row_data: dict, assets_dir: str, parent=None):
         super().__init__(parent)
         self._row_data = row_data
-        self.setFixedSize(48, 48)
+        self.setFixedSize(47, 47)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -273,7 +273,7 @@ class FinishedBookThumb(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         cover_label = QLabel()
-        cover_label.setFixedSize(48, 48)
+        cover_label.setFixedSize(47, 47)
         cover_label.setScaledContents(False)
         cover_path = row_data.get("cover_path")
         pixmap = QPixmap()
@@ -289,7 +289,7 @@ class FinishedBookThumb(QWidget):
             x = (pixmap.width() - side) // 2
             y = (pixmap.height() - side) // 2
             cropped = pixmap.copy(x, y, side, side)
-            scaled = cropped.scaled(48, 48, Qt.AspectRatioMode.IgnoreAspectRatio, 
+            scaled = cropped.scaled(47, 47, Qt.AspectRatioMode.IgnoreAspectRatio,
                                     Qt.TransformationMode.SmoothTransformation)
             cover_label.setPixmap(scaled)
 
@@ -308,7 +308,7 @@ class FinishedScrollRow(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidgetResizable(True)
-        self.setFixedHeight(52)
+        self.setFixedHeight(51)
         self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
 
@@ -400,8 +400,9 @@ class StatsPanel(QWidget):
         outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._finished_section = QWidget()
+        self._finished_section.setObjectName("stats_finished_section")
         finished_layout = QVBoxLayout(self._finished_section)
-        finished_layout.setContentsMargins(0, 8, 0, 0)
+        finished_layout.setContentsMargins(4, 4, 4, 4)
         finished_layout.setSpacing(4)
 
         finished_header = QLabel("Recently finished")
@@ -413,8 +414,6 @@ class StatsPanel(QWidget):
 
         outer.addWidget(self._finished_section)
         self._finished_section.hide()
-
-        outer.addStretch()
         return widget
 
     def on_theme_changed(self, theme: dict):
