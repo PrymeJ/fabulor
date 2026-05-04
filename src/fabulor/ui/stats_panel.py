@@ -363,7 +363,23 @@ class StatsPanel(QWidget):
     def _build_overall_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Scrollable content area (bar chart + stats grid)
+        scroll = QScrollArea()
+        scroll.setObjectName("stats_scroll_area")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(10, 10, 10, 10)
+        scroll_layout.setSpacing(8)
+
+        self._bar_chart = BarChartWidget()
+        self._bar_chart.date_clicked.connect(self._on_bar_date_clicked)
+        scroll_layout.addWidget(self._bar_chart)
 
         grid_container = QWidget()
         grid = QGridLayout(grid_container)
@@ -392,12 +408,10 @@ class StatsPanel(QWidget):
             grid.addWidget(val_lbl, i, 1, Qt.AlignmentFlag.AlignLeft)
             self._overall_value_labels.append(val_lbl)
 
-        self._bar_chart = BarChartWidget()
-        self._bar_chart.date_clicked.connect(self._on_bar_date_clicked)
-
-        outer.addWidget(self._bar_chart)
-        outer.addSpacing(16)
-        outer.addWidget(grid_container, 0, Qt.AlignmentFlag.AlignHCenter)
+        scroll_layout.addWidget(grid_container)
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        outer.addWidget(scroll, stretch=1)
 
         self._finished_section = QWidget()
         self._finished_section.setObjectName("stats_finished_section")
