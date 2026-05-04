@@ -202,14 +202,17 @@ class BookDayRow(QWidget):
             cover_label.setGraphicsEffect(_dim_effect())
         layout.addWidget(cover_label)
 
-        # Text block — title (row 0), author (row 1)
-        text_block = QVBoxLayout()
-        text_block.setSpacing(2)
-        text_block.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        # Content block — Row-based layout to allow different widths for time and percentages
+        content_block = QVBoxLayout()
+        content_block.setSpacing(2)
+        content_block.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         is_finished = bool(row_data.get("is_finished", 0))
 
-        title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=88)
+        # Row 0: Title and Clock Time
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=136)
         if deleted:
             title_lbl.setObjectName("stats_book_title_deleted")
         elif is_finished:
@@ -220,33 +223,27 @@ class BookDayRow(QWidget):
         f_title.setPointSize(f_title.pointSize() - 2)
         title_lbl.setFont(f_title)
 
+        clock_seconds = row_data.get("clock_seconds") or 0.0
+        clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
+        clock_lbl.setObjectName("stats_time_label")
+        clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        clock_lbl.setFixedWidth(50)
+        f_clock = clock_lbl.font()
+        f_clock.setPointSize(f_clock.pointSize() - 2)
+        clock_lbl.setFont(f_clock)
+
+        title_row.addWidget(title_lbl, stretch=1)
+        title_row.addWidget(clock_lbl)
+        content_block.addLayout(title_row)
+
+        # Row 1: Author and Percentages
+        author_row = QHBoxLayout()
+        author_row.setContentsMargins(0, 0, 0, 0)
         author_lbl = ElidedLabel(row_data.get("book_author", ""), max_px=88)
         author_lbl.setObjectName("stats_book_author")
         f_author = author_lbl.font()
         f_author.setPointSize(f_author.pointSize() - 2)
         author_lbl.setFont(f_author)
-
-        text_block.addWidget(title_lbl)
-        text_block.addWidget(author_lbl)
-
-        layout.addLayout(text_block, stretch=1)
-
-        # Right side — fixed-width container so scroll bar can't compress it
-        time_container = QWidget()
-        time_container.setFixedWidth(98)
-        time_block = QVBoxLayout(time_container)
-        time_block.setContentsMargins(0, 0, 0, 0)
-        time_block.setSpacing(2)
-        time_block.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-
-        clock_seconds = row_data.get("clock_seconds") or 0.0
-        clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
-        clock_lbl.setObjectName("stats_time_label")
-        clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        f_clock = clock_lbl.font()
-        f_clock.setPointSize(f_clock.pointSize() - 2)
-        clock_lbl.setFont(f_clock)
-        time_block.addWidget(clock_lbl)
 
         duration = row_data.get("book_duration")
         pos_start = row_data.get("period_position_start")
@@ -254,7 +251,8 @@ class BookDayRow(QWidget):
 
         prog_lbl = QLabel("")
         prog_lbl.setObjectName("stats_book_time_label")
-        prog_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        prog_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        prog_lbl.setFixedWidth(98)
         f_prog = prog_lbl.font()
         f_prog.setPointSize(f_prog.pointSize() - 2)
         prog_lbl.setFont(f_prog)
@@ -268,9 +266,11 @@ class BookDayRow(QWidget):
             if delta < 0:
                 prog_lbl.setObjectName("stats_book_time_label_dim")
 
-        time_block.addWidget(prog_lbl)
+        author_row.addWidget(author_lbl, stretch=1)
+        author_row.addWidget(prog_lbl)
+        content_block.addLayout(author_row)
 
-        layout.addWidget(time_container)
+        layout.addLayout(content_block, stretch=1)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
