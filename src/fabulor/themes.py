@@ -1619,7 +1619,7 @@ def get_base_stylesheet(theme_name="default"):
             background-color: {t['bg_deep']};
             color: {t['text']};
             border: 1px solid {t['accent']};
-            font-size: 10px;
+            font-size: 11px;
         }}
         QWidget#status_banner {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});

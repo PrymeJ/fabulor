@@ -420,20 +420,21 @@ class LibraryDB:
 
             longest = conn.execute("""
                 SELECT COALESCE(b.title, ls.book_title) as book_title,
-                    COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds
+                    COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds,
+                    ls.session_start
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_path = b.path
                 ORDER BY seconds DESC
                 LIMIT 1
             """).fetchone()
 
-            top = conn.execute("""
+            last = conn.execute("""
                 SELECT COALESCE(b.title, ls.book_title) as book_title,
-                    SUM(COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400)) as seconds
+                    COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds,
+                    ls.session_start
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_path = b.path
-                GROUP BY ls.book_path
-                ORDER BY seconds DESC
+                ORDER BY ls.session_start DESC
                 LIMIT 1
             """).fetchone()
 
@@ -449,8 +450,10 @@ class LibraryDB:
             'books_finished': finished['n'] or 0,
             'longest_session_title': longest['book_title'] if longest else None,
             'longest_session_seconds': longest['seconds'] if longest else 0.0,
-            'most_listened_title': top['book_title'] if top else None,
-            'most_listened_seconds': top['seconds'] if top else 0.0,
+            'longest_session_start': longest['session_start'] if longest else None,
+            'last_session_title': last['book_title'] if last else None,
+            'last_session_seconds': last['seconds'] if last else 0.0,
+            'last_session_start': last['session_start'] if last else None,
         }
 
     def get_last_n_days(self, n: int = 7, day_start_hour: int = 0) -> list[dict]:

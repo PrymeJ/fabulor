@@ -451,11 +451,11 @@ class StatsPanel(QWidget):
             ("Listening time",  "—"),
             ("Books started",   "—"),
             ("Sessions",        "—"),
-            ("Most listened",   "—"),
             ("Longest session", "—"),
+            ("Last session",    "—"),
             ("Average session", "—"),
-            ("Current streak", "—"),
-            ("Longest streak", "—"),
+            ("Current streak",  "—"),
+            ("Longest streak",  "—"),
         ]
 
         self._overall_value_labels = []
@@ -495,25 +495,45 @@ class StatsPanel(QWidget):
         if hasattr(self, '_bar_chart'):
             self._bar_chart.set_accent_color(self._accent_color)
 
+    def _set_session_label(self, label, seconds, title, session_start_iso):
+        if not title:
+            label.setText("—")
+            label.setToolTip("")
+            return
+        dur = self._format_duration(seconds)
+        max_title_w = 18
+        display_title = title if len(title) <= max_title_w else title[:max_title_w - 1] + "…"
+        label.setText(f"{dur} · {display_title}")
+        if session_start_iso:
+            try:
+                dt = datetime.fromisoformat(session_start_iso)
+                label.setToolTip(dt.strftime("%b %d, %Y  %H:%M"))
+            except ValueError:
+                label.setToolTip("")
+        else:
+            label.setToolTip("")
+
     def refresh_overall(self):
         day_start = self.config.get_day_start_hour()
         stats = self.db.get_overall_stats(day_start)
         self._overall_value_labels[0].setText(self._format_duration(stats['total_seconds']))
         self._overall_value_labels[1].setText(str(stats['books_started']))
         self._overall_value_labels[2].setText(str(stats['total_sessions']))
-        if stats['most_listened_title']:
-            duration = self._format_duration(stats['most_listened_seconds'])
-            self._overall_value_labels[3].setText(f"{stats['most_listened_title']}  ({duration})")
-        else:
-            self._overall_value_labels[3].setText("—")
         days = self.db.get_last_n_days(7, day_start)
         self._bar_chart.set_data(days)
-        # Longest session
-        if stats['longest_session_title']:
-            dur = self._format_duration(stats['longest_session_seconds'])
-            self._overall_value_labels[4].setText(f"{stats['longest_session_title']}  ({dur})")
-        else:
-            self._overall_value_labels[4].setText("—")
+
+        self._set_session_label(
+            self._overall_value_labels[3],
+            stats['longest_session_seconds'],
+            stats['longest_session_title'],
+            stats['longest_session_start'],
+        )
+        self._set_session_label(
+            self._overall_value_labels[4],
+            stats['last_session_seconds'],
+            stats['last_session_title'],
+            stats['last_session_start'],
+        )
 
         # Avg session
         self._overall_value_labels[5].setText(
