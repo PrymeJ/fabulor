@@ -322,22 +322,28 @@ class FinishedScrollRow(QWidget):
         self._scroll.setWidget(self._container)
 
         overlay_style = (
-            "background: rgba(0,0,0,200); color: rgba(255,255,255,255); font-size: 8px;"
-            "border-radius: 2px;"
+            "QPushButton {"
+            "  background: rgba(0,0,0,170); color: rgba(255,255,255,140);"
+            "  font-size: 7px; border: none; border-radius: 2px;"
+            "  padding: 0px; margin: 0px;"
+            "}"
+            "QPushButton:hover { background: rgba(0,0,0,200); color: rgba(255,255,255,200); }"
         )
 
         self._hovered = False
 
-        self._left_arrow = QLabel("◀", self)
-        self._left_arrow.setFixedSize(8, 51)
-        self._left_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._left_arrow = QPushButton("◀", self)
+        self._left_arrow.setFixedSize(10, 51)
         self._left_arrow.setStyleSheet(overlay_style)
+        self._left_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._left_arrow.clicked.connect(lambda: self._scroll_by(-51))
         self._left_arrow.hide()
 
-        self._right_arrow = QLabel("▶", self)
-        self._right_arrow.setFixedSize(8, 51)
-        self._right_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._right_arrow = QPushButton("▶", self)
+        self._right_arrow.setFixedSize(10, 51)
         self._right_arrow.setStyleSheet(overlay_style)
+        self._right_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._right_arrow.clicked.connect(lambda: self._scroll_by(51))
         self._right_arrow.hide()
 
         bar = self._scroll.horizontalScrollBar()
@@ -348,7 +354,7 @@ class FinishedScrollRow(QWidget):
         super().resizeEvent(event)
         self._scroll.setGeometry(0, 0, self.width(), self.height())
         self._left_arrow.move(0, 0)
-        self._right_arrow.move(self.width() - 8, 0)
+        self._right_arrow.move(self.width() - 10, 0)
 
     def enterEvent(self, event):
         self._hovered = True
@@ -378,6 +384,10 @@ class FinishedScrollRow(QWidget):
         # Defer arrow update until layout has settled
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._update_arrows)
+
+    def _scroll_by(self, delta: int):
+        bar = self._scroll.horizontalScrollBar()
+        bar.setValue(bar.value() + delta)
 
     def wheelEvent(self, event):
         bar = self._scroll.horizontalScrollBar()
