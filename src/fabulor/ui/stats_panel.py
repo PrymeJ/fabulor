@@ -594,6 +594,17 @@ class StatsPanel(QWidget):
         layout.addStretch()
         return widget
 
+    def _build_time_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        label = QLabel("Listening time distribution coming soon...")
+        label.setObjectName("stats_placeholder_label")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        layout.addStretch()
+        return widget
+
     def _build_daily_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
@@ -965,12 +976,14 @@ class StatsPanel(QWidget):
     def _on_tab_changed(self, index: int):
         if self.tabs.tabText(index) == "Overall":
             self.refresh_overall()
-        elif self.tabs.tabText(index) == "Daily":
+        elif self.tabs.tabText(index) == "Day":
             self._refresh_daily()
-        elif self.tabs.tabText(index) == "Weekly":
+        elif self.tabs.tabText(index) == "Week":
             self._refresh_weekly()
-        elif self.tabs.tabText(index) == "Monthly":
+        elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
+        elif self.tabs.tabText(index) == "Time":
+            pass # Placeholder for future logic
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -980,11 +993,12 @@ class StatsPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
-        self.tabs.addTab(self._build_daily_tab(), "Daily")
-        self.tabs.addTab(self._build_weekly_tab(), "Weekly")
-        self.tabs.addTab(self._build_monthly_tab(), "Monthly")
+        self.tabs.addTab(self._build_daily_tab(), "Day")
+        self.tabs.addTab(self._build_weekly_tab(), "Week")
+        self.tabs.addTab(self._build_monthly_tab(), "Month")
+        self.tabs.addTab(self._build_time_tab(), "Time")
 
-        self.tabs.addTab(self._build_options_tab(), "Options")
+        self.tabs.addTab(self._build_options_tab(), "O")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -1000,7 +1014,7 @@ class StatsPanel(QWidget):
             self._current_day_index = 0
         # Switch to Daily tab
         for i in range(self.tabs.count()):
-            if self.tabs.tabText(i) == "Daily":
+            if self.tabs.tabText(i) == "Day":
                 self.tabs.setCurrentIndex(i)
                 break
     # _on_tab_changed fires automatically, which calls _refresh_daily
@@ -1030,12 +1044,14 @@ class StatsPanel(QWidget):
         name = self.tabs.tabText(self.tabs.currentIndex())
         if name == "Overall":
             self.refresh_overall()
-        elif name == "Daily":
+        elif name == "Day":
             self._refresh_daily()
-        elif name == "Weekly":
+        elif name == "Week":
             self._refresh_weekly()
-        elif name == "Monthly":
+        elif name == "Month":
             self._refresh_monthly()
+        elif name == "Time":
+            pass
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager
