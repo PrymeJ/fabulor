@@ -412,6 +412,138 @@ class FinishedScrollRow(QWidget):
         bar.setValue(bar.value() - event.angleDelta().y() // 2)
 
 
+class HourlyHeatmap(QWidget):
+    """24-column heatmap: rows = days (newest on top), columns = hours 0–23.
+    Cell size is computed dynamically from widget width so all 24 fit.
+    Cell intensity encodes minutes listened; hover shows books + minutes.
+    """
+
+    GAP = 2
+    LABEL_W = 28       # left gutter for date labels
+    HOUR_LABEL_H = 14  # bottom gutter for hour axis
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._accent = QColor("#9B59B6")
+        self._dates: list[str] = []   # newest first
+        self._cells: dict = {}        # (date, hour) -> {seconds, books}
+        self.setMouseTracking(True)
+        self._hovered: tuple | None = None
+
+    def set_accent_color(self, color: QColor):
+        self._accent = color
+        self.update()
+
+    def set_data(self, rows: list[dict]):
+        seen: dict[str, bool] = {}
+        for r in rows:
+            seen[r['date']] = True
+        self._dates = list(reversed(list(seen.keys())))  # newest first
+        self._cells = {(r['date'], r['hour']): r for r in rows}
+        self.updateGeometry()
+        self.update()
+
+    def _cell_size(self) -> int:
+        available = self.width() - self.LABEL_W
+        return max(4, (available - self.GAP * 23) // 24)
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize as _QSize
+        cell = self._cell_size() if self._dates else 8
+        n = len(self._dates)
+        h = self.HOUR_LABEL_H + n * (cell + self.GAP)
+        w = self.LABEL_W + 24 * (cell + self.GAP)
+        return _QSize(w, h)
+
+    def paintEvent(self, event):
+        if not self._dates:
+            return
+        cell = self._cell_size()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        faint = QColor(self._accent)
+        faint.setAlpha(30)
+
+        text_color = self.palette().text().color()
+        font = QFont()
+        font.setPointSize(7)
+        painter.setFont(font)
+
+        for row_i, date_str in enumerate(self._dates):
+            y = row_i * (cell + self.GAP)
+
+            try:
+                d = date.fromisoformat(date_str)
+                label = d.strftime('%b %d')
+            except ValueError:
+                label = date_str
+            painter.setPen(text_color)
+            painter.drawText(QRect(0, y, self.LABEL_W - 3, cell),
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
+
+            for hour in range(24):
+                x = self.LABEL_W + hour * (cell + self.GAP)
+                c = self._cells.get((date_str, hour))
+
+                if c:
+                    minutes = c['seconds'] / 60.0
+                    intensity = min(1.0, minutes / 60.0)
+                    color = QColor(self._accent)
+                    color.setAlpha(int(40 + intensity * 215))
+                else:
+                    color = QColor(faint)
+
+                if self._hovered == (date_str, hour) and c:
+                    color = color.lighter(140)
+
+                painter.fillRect(x, y, cell, cell, color)
+
+        y_axis = len(self._dates) * (cell + self.GAP)
+        painter.setPen(text_color)
+        for hour in range(0, 24, 3):
+            x = self.LABEL_W + hour * (cell + self.GAP)
+            painter.drawText(QRect(x, y_axis, cell * 3, self.HOUR_LABEL_H),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             str(hour))
+
+        painter.end()
+
+    def mouseMoveEvent(self, event):
+        hit = self._hit_test(event.pos())
+        if hit != self._hovered:
+            self._hovered = hit
+            self.update()
+        if hit and hit in self._cells:
+            c = self._cells[hit]
+            lines = [f"{hit[0]}  {hit[1]:02d}:00"]
+            for b in sorted(c['books'], key=lambda x: -x['minutes']):
+                lines.append(f"{b['title']} — {b['minutes']}m")
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.showText(event.globalPosition().toPoint(), "\n".join(lines), self)
+        else:
+            from PySide6.QtWidgets import QToolTip
+            QToolTip.hideText()
+
+    def resizeEvent(self, event):
+        self.update()
+
+    def leaveEvent(self, event):
+        self._hovered = None
+        self.update()
+
+    def _hit_test(self, pos) -> tuple | None:
+        x, y = pos.x(), pos.y()
+        if x < self.LABEL_W:
+            return None
+        cell = self._cell_size()
+        col = (x - self.LABEL_W) // (cell + self.GAP)
+        row = y // (cell + self.GAP)
+        if 0 <= col < 24 and 0 <= row < len(self._dates):
+            return (self._dates[row], col)
+        return None
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -512,6 +644,8 @@ class StatsPanel(QWidget):
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
         if hasattr(self, '_bar_chart'):
             self._bar_chart.set_accent_color(self._accent_color)
+        if hasattr(self, '_heatmap'):
+            self._heatmap.set_accent_color(self._accent_color)
         if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
             self.tabs.setTabIcon(5, self._make_settings_icon(theme))
 
@@ -615,13 +749,27 @@ class StatsPanel(QWidget):
 
     def _build_time_tab(self) -> QWidget:
         widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        label = QLabel("Listening time distribution coming soon...")
-        label.setObjectName("stats_placeholder_label")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
-        layout.addStretch()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("stats_scroll_area")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        scroll_content = QWidget()
+        inner = QVBoxLayout(scroll_content)
+        inner.setContentsMargins(8, 8, 8, 8)
+        inner.setSpacing(0)
+
+        self._heatmap = HourlyHeatmap()
+        self._heatmap.set_accent_color(self._accent_color)
+        inner.addWidget(self._heatmap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        inner.addStretch()
+
+        scroll.setWidget(scroll_content)
+        outer.addWidget(scroll)
         return widget
 
     def _build_daily_tab(self) -> QWidget:
@@ -1002,7 +1150,7 @@ class StatsPanel(QWidget):
         elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
         elif self.tabs.tabText(index) == "Time":
-            pass # Placeholder for future logic
+            self._refresh_time()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1055,11 +1203,19 @@ class StatsPanel(QWidget):
             if bdp and bdp.isVisible():
                 bdp._refresh_stats()
 
+    def _refresh_time(self):
+        rows = self.db.get_hourly_heatmap(
+            n_days=10,
+            day_start_hour=self.config.get_day_start_hour()
+        )
+        self._heatmap.set_data(rows)
+
     def refresh_all(self):
         self.refresh_overall()
         self._refresh_daily()
         self._refresh_weekly()
         self._refresh_monthly()
+        self._refresh_time()
 
     def refresh_current_tab(self):
         name = self.tabs.tabText(self.tabs.currentIndex())
@@ -1072,7 +1228,7 @@ class StatsPanel(QWidget):
         elif name == "Month":
             self._refresh_monthly()
         elif name == "Time":
-            pass
+            self._refresh_time()
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager

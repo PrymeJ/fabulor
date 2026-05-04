@@ -693,6 +693,51 @@ class LibraryDB:
                 (book_path, tag)
             )
 
+    def get_hourly_heatmap(self, n_days: int = 7, day_start_hour: int = 0) -> list[dict]:
+        """Returns per-(date, hour) listening data for the last n_days active days.
+
+        Each row: {date, hour, seconds, books: [{title, minutes}]}
+        Only dates with any activity are included. Hours with no activity are
+        omitted — the widget fills them as empty cells.
+        """
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
+                    CAST(strftime('%H', datetime(session_start, ?)) AS INTEGER) as hour,
+                    COALESCE(book_title, book_path) as title,
+                    SUM(COALESCE(listened_seconds,
+                        (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
+                FROM listening_sessions
+                WHERE date IN (
+                    SELECT DISTINCT strftime('%Y-%m-%d', datetime(session_start, ?))
+                    FROM listening_sessions
+                    ORDER BY strftime('%Y-%m-%d', datetime(session_start, ?)) DESC
+                    LIMIT ?
+                )
+                GROUP BY date, hour, title
+                ORDER BY date ASC, hour ASC
+            """, (offset, offset, offset, offset, n_days)).fetchall()
+
+        # Aggregate into {(date, hour): {seconds, books}}
+        from collections import defaultdict
+        cells: dict = defaultdict(lambda: {'seconds': 0.0, 'books': []})
+        for r in rows:
+            key = (r['date'], r['hour'])
+            cells[key]['seconds'] += r['seconds']
+            cells[key]['books'].append({'title': r['title'], 'minutes': round(r['seconds'] / 60)})
+
+        result = []
+        for (date, hour), data in sorted(cells.items()):
+            result.append({
+                'date': date,
+                'hour': hour,
+                'seconds': data['seconds'],
+                'books': data['books'],
+            })
+        return result
+
     def get_tag_suggestions(self, prefix: str, book_path: str) -> list[str]:
         with self._get_conn() as conn:
             rows = conn.execute(
