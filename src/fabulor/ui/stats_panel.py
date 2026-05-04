@@ -300,24 +300,71 @@ class FinishedBookThumb(QWidget):
             self.clicked.emit(self._row_data)
 
 
-class FinishedScrollRow(QScrollArea):
-    """Horizontally scrollable row of FinishedBookThumb widgets with mouse-wheel support."""
+class FinishedScrollRow(QWidget):
+    """Horizontally scrollable row of FinishedBookThumb widgets with edge scroll indicators."""
     def __init__(self, assets_dir: str, parent=None):
         super().__init__(parent)
         self._assets_dir = assets_dir
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setWidgetResizable(True)
         self.setFixedHeight(51)
-        self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
-        self.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        self._scroll = QScrollArea(self)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+        self._scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
         self._container = QWidget()
         self._layout = QHBoxLayout(self._container)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
         self._layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.setWidget(self._container)
+        self._scroll.setWidget(self._container)
+
+        overlay_style = (
+            "background: rgba(0,0,0,200); color: rgba(255,255,255,255); font-size: 8px;"
+            "border-radius: 2px;"
+        )
+
+        self._hovered = False
+
+        self._left_arrow = QLabel("◀", self)
+        self._left_arrow.setFixedSize(8, 51)
+        self._left_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._left_arrow.setStyleSheet(overlay_style)
+        self._left_arrow.hide()
+
+        self._right_arrow = QLabel("▶", self)
+        self._right_arrow.setFixedSize(8, 51)
+        self._right_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._right_arrow.setStyleSheet(overlay_style)
+        self._right_arrow.hide()
+
+        bar = self._scroll.horizontalScrollBar()
+        bar.valueChanged.connect(self._update_arrows)
+        bar.rangeChanged.connect(self._update_arrows)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._scroll.setGeometry(0, 0, self.width(), self.height())
+        self._left_arrow.move(0, 0)
+        self._right_arrow.move(self.width() - 8, 0)
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._update_arrows()
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._left_arrow.hide()
+        self._right_arrow.hide()
+
+    def _update_arrows(self, *_):
+        if not self._hovered:
+            return
+        bar = self._scroll.horizontalScrollBar()
+        self._left_arrow.setVisible(bar.value() > bar.minimum())
+        self._right_arrow.setVisible(bar.value() < bar.maximum())
 
     def set_items(self, rows: list[dict], click_callback):
         while self._layout.count() > 0:
@@ -328,9 +375,12 @@ class FinishedScrollRow(QScrollArea):
             thumb = FinishedBookThumb(row, self._assets_dir)
             thumb.clicked.connect(click_callback)
             self._layout.addWidget(thumb)
+        # Defer arrow update until layout has settled
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self._update_arrows)
 
     def wheelEvent(self, event):
-        bar = self.horizontalScrollBar()
+        bar = self._scroll.horizontalScrollBar()
         bar.setValue(bar.value() - event.angleDelta().y() // 2)
 
 
