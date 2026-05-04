@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QRect, Signal
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
+from PySide6.QtWidgets import QAbstractScrollArea
 
 
 class BarChartWidget(QWidget):
@@ -299,6 +300,40 @@ class FinishedBookThumb(QWidget):
             self.clicked.emit(self._row_data)
 
 
+class FinishedScrollRow(QScrollArea):
+    """Horizontally scrollable row of FinishedBookThumb widgets with mouse-wheel support."""
+    def __init__(self, assets_dir: str, parent=None):
+        super().__init__(parent)
+        self._assets_dir = assets_dir
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWidgetResizable(True)
+        self.setFixedHeight(52)
+        self.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        self._container = QWidget()
+        self._layout = QHBoxLayout(self._container)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(4)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.setWidget(self._container)
+
+    def set_items(self, rows: list[dict], click_callback):
+        while self._layout.count() > 0:
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for row in rows:
+            thumb = FinishedBookThumb(row, self._assets_dir)
+            thumb.clicked.connect(click_callback)
+            self._layout.addWidget(thumb)
+
+    def wheelEvent(self, event):
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() - event.angleDelta().y() // 2)
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -373,10 +408,8 @@ class StatsPanel(QWidget):
         finished_header.setObjectName("stats_section_header")
         finished_layout.addWidget(finished_header)
 
-        self._finished_thumbs_row = QHBoxLayout()
-        self._finished_thumbs_row.setSpacing(2)
-        self._finished_thumbs_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        finished_layout.addLayout(self._finished_thumbs_row)
+        self._finished_scroll_row = FinishedScrollRow(self._assets_dir)
+        finished_layout.addWidget(self._finished_scroll_row)
 
         outer.addWidget(self._finished_section)
         self._finished_section.hide()
@@ -415,18 +448,9 @@ class StatsPanel(QWidget):
         )
 
         # Recently finished books
-        finished = self.db.get_recently_finished(limit=5)
-
-        while self._finished_thumbs_row.count() > 0:
-            item = self._finished_thumbs_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+        finished = self.db.get_recently_finished(limit=20)
+        self._finished_scroll_row.set_items(finished, self._on_book_row_clicked)
         if finished:
-            for f in finished[:5]:  # cap at 5 thumbs
-                thumb = FinishedBookThumb(f, self._assets_dir)
-                thumb.clicked.connect(self._on_book_row_clicked)
-                self._finished_thumbs_row.addWidget(thumb)
             self._finished_section.show()
         else:
             self._finished_section.hide()
@@ -522,10 +546,8 @@ class StatsPanel(QWidget):
         finished_header.setObjectName("stats_section_header")
         finished_outer.addWidget(finished_header)
 
-        self._day_finished_row = QHBoxLayout()
-        self._day_finished_row.setSpacing(2)
-        self._day_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        finished_outer.addLayout(self._day_finished_row)
+        self._day_finished_scroll = FinishedScrollRow(self._assets_dir)
+        finished_outer.addWidget(self._day_finished_scroll)
 
         outer.addWidget(self._day_finished_section)
         self._day_finished_section.hide()
@@ -548,10 +570,6 @@ class StatsPanel(QWidget):
         )
         while self._day_rows_layout.count() > 1:
             item = self._day_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        while self._day_finished_row.count() > 0:
-            item = self._day_finished_row.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         if not self._active_days:
@@ -586,11 +604,8 @@ class StatsPanel(QWidget):
 
         day_start = self.config.get_day_start_hour()
         finished = self.db.get_finished_in_period('day', date_str, day_start)
+        self._day_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
-            for f in finished:
-                thumb = FinishedBookThumb(f, self._assets_dir)
-                thumb.clicked.connect(self._on_book_row_clicked)
-                self._day_finished_row.addWidget(thumb)
             self._day_finished_section.show()
         else:
             self._day_finished_section.hide()
@@ -654,10 +669,8 @@ class StatsPanel(QWidget):
         finished_header.setObjectName("stats_section_header")
         finished_outer.addWidget(finished_header)
 
-        self._week_finished_row = QHBoxLayout()
-        self._week_finished_row.setSpacing(2)
-        self._week_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        finished_outer.addLayout(self._week_finished_row)
+        self._week_finished_scroll = FinishedScrollRow(self._assets_dir)
+        finished_outer.addWidget(self._week_finished_scroll)
 
         outer.addWidget(self._week_finished_section)
         self._week_finished_section.hide()
@@ -713,17 +726,8 @@ class StatsPanel(QWidget):
         self._week_total_label.setText(self._format_duration(total_seconds))
 
         finished = self.db.get_finished_in_period('week', week_str, day_start)
-
-        while self._week_finished_row.count() > 0:
-            item = self._week_finished_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+        self._week_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
-            for f in finished:
-                thumb = FinishedBookThumb(f, self._assets_dir)
-                thumb.clicked.connect(self._on_book_row_clicked)
-                self._week_finished_row.addWidget(thumb)
             self._week_finished_section.show()
         else:
             self._week_finished_section.hide()
@@ -787,10 +791,8 @@ class StatsPanel(QWidget):
         finished_header.setObjectName("stats_section_header")
         finished_outer.addWidget(finished_header)
 
-        self._month_finished_row = QHBoxLayout()
-        self._month_finished_row.setSpacing(2)
-        self._month_finished_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        finished_outer.addLayout(self._month_finished_row)
+        self._month_finished_scroll = FinishedScrollRow(self._assets_dir)
+        finished_outer.addWidget(self._month_finished_scroll)
 
         outer.addWidget(self._month_finished_section)
         self._month_finished_section.hide()
@@ -844,17 +846,8 @@ class StatsPanel(QWidget):
         self._month_total_label.setText(self._format_duration(total_seconds))
 
         finished = self.db.get_finished_in_period('month', month_str, day_start)
-
-        while self._month_finished_row.count() > 0:
-            item = self._month_finished_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+        self._month_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
-            for f in finished:
-                thumb = FinishedBookThumb(f, self._assets_dir)
-                thumb.clicked.connect(self._on_book_row_clicked)
-                self._month_finished_row.addWidget(thumb)
             self._month_finished_section.show()
         else:
             self._month_finished_section.hide()
