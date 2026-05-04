@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage
+from PySide6.QtCore import Qt, QRect, Signal, QSize
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon
 from PySide6.QtWidgets import QAbstractScrollArea
 
 
@@ -998,7 +998,10 @@ class StatsPanel(QWidget):
         self.tabs.addTab(self._build_monthly_tab(), "Month")
         self.tabs.addTab(self._build_time_tab(), "Time")
 
-        self.tabs.addTab(self._build_options_tab(), "O")
+        # Replace "O" text with settings icon
+        settings_icon = QIcon(os.path.join(self._assets_dir, "settings.png"))
+        self.tabs.addTab(self._build_options_tab(), settings_icon, "")
+        self.tabs.setIconSize(QSize(13, 13))
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
