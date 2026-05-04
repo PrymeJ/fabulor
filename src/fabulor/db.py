@@ -561,9 +561,9 @@ class LibraryDB:
         with self._get_conn() as conn:
             with conn:
                 conn.execute("""
-                    INSERT INTO book_events (book_path, event_type)
-                    VALUES (?, ?)
-                """, (book_path, event_type))
+                    INSERT INTO book_events (book_path, event_type, event_time)
+                    VALUES (?, ?, ?)
+                """, (book_path, event_type, datetime.now().isoformat()))
 
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
