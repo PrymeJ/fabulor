@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import date
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -511,6 +512,24 @@ class StatsPanel(QWidget):
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
         if hasattr(self, '_bar_chart'):
             self._bar_chart.set_accent_color(self._accent_color)
+        if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
+            self.tabs.setTabIcon(5, self._make_settings_icon(theme))
+
+    def _make_settings_icon(self, theme: dict) -> QIcon:
+        color = QColor(theme.get("text", "#ffffff"))
+        with open(self._settings_svg_path, 'r') as f:
+            svg_data = f.read()
+        svg_data = re.sub(r'fill="[^"]*"', f'fill="{color.name()}"', svg_data)
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray
+        renderer = QSvgRenderer(QByteArray(svg_data.encode()))
+        size = self.tabs.iconSize()
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
 
     def _set_session_label(self, label, seconds, title, session_start_iso):
         if not title:
@@ -998,9 +1017,8 @@ class StatsPanel(QWidget):
         self.tabs.addTab(self._build_monthly_tab(), "Month")
         self.tabs.addTab(self._build_time_tab(), "Time")
 
-        # Replace "O" text with settings icon
-        settings_icon = QIcon(os.path.join(self._assets_dir, "settings.png"))
-        self.tabs.addTab(self._build_options_tab(), settings_icon, "")
+        self._settings_svg_path = os.path.join(self._assets_dir, "settings.svg")
+        self.tabs.addTab(self._build_options_tab(), QIcon(), "")
         self.tabs.setIconSize(QSize(13, 13))
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
