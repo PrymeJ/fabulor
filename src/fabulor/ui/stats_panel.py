@@ -413,99 +413,100 @@ class FinishedScrollRow(QWidget):
 
 
 class HourlyHeatmap(QWidget):
-    """24-column heatmap: rows = days (newest on top), columns = hours 0–23.
-    Cell size is computed dynamically from widget width so all 24 fit.
-    Cell intensity encodes minutes listened; hover shows books + minutes.
+    """Heatmap: columns = days (newest left), rows = hours 0–23 top to bottom.
+    Always shows N_DAYS columns including empty days.
+    Hour labels (00:00, 03:00 …) on the left; date labels rotated -90° along the top.
     """
 
-    GAP = 2
-    LABEL_W = 28       # left gutter for date labels
-    HOUR_LABEL_H = 14  # bottom gutter for hour axis
+    N_DAYS = 14
+    GAP = 1
+    CELL = 14
+    HOUR_LABEL_W = 30   # wide enough for "00:00"
+    DATE_LABEL_H = 30   # tall enough for rotated short date
 
     def __init__(self, parent=None):
+        
         super().__init__(parent)
         self._accent = QColor("#9B59B6")
-        self._dates: list[str] = []   # newest first
+        self._dates: list[str] = []
         self._cells: dict = {}        # (date, hour) -> {seconds, books}
         self.setMouseTracking(True)
         self._hovered: tuple | None = None
+        self._update_size()
+
+    def _update_size(self):
+        w = self.HOUR_LABEL_W + self.N_DAYS * (self.CELL + self.GAP)
+        h = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP)
+        self.setFixedSize(w, h)
 
     def set_accent_color(self, color: QColor):
         self._accent = color
         self.update()
 
-    def set_data(self, rows: list[dict]):
-        seen: dict[str, bool] = {}
-        for r in rows:
-            seen[r['date']] = True
-        self._dates = list(reversed(list(seen.keys())))  # newest first
+    def set_data(self, rows: list[dict], today: date):
+        from datetime import timedelta
+        self._dates = [
+            (today - timedelta(days=i)).isoformat()
+            for i in range(self.N_DAYS)
+        ]
         self._cells = {(r['date'], r['hour']): r for r in rows}
-        self.updateGeometry()
         self.update()
 
-    def _cell_size(self) -> int:
-        available = self.width() - self.LABEL_W
-        return max(4, (available - self.GAP * 23) // 24)
-
-    def sizeHint(self):
-        from PySide6.QtCore import QSize as _QSize
-        cell = self._cell_size() if self._dates else 8
-        n = len(self._dates)
-        h = self.HOUR_LABEL_H + n * (cell + self.GAP)
-        w = self.LABEL_W + 24 * (cell + self.GAP)
-        return _QSize(w, h)
-
     def paintEvent(self, event):
-        if not self._dates:
-            return
-        cell = self._cell_size()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
         faint = QColor(self._accent)
         faint.setAlpha(30)
-
         text_color = self.palette().text().color()
         font = QFont()
-        font.setPointSize(7)
+        font.setPointSize(8)
         painter.setFont(font)
 
-        for row_i, date_str in enumerate(self._dates):
-            y = row_i * (cell + self.GAP)
-
+        # Date labels — rotated -90° so they read bottom-to-top, centered over each column
+        for col_i, date_str in enumerate(self._dates):
+            cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             try:
                 d = date.fromisoformat(date_str)
                 label = d.strftime('%b %d')
             except ValueError:
                 label = date_str
+            painter.save()
             painter.setPen(text_color)
-            painter.drawText(QRect(0, y, self.LABEL_W - 3, cell),
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
+            painter.translate(cx, self.DATE_LABEL_H - 2)
+            painter.rotate(-90)
+            painter.drawText(
+                QRect(0, -self.CELL // 2, self.DATE_LABEL_H - 2, self.CELL),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label
+            )
+            painter.restore()
 
+        # Hour labels on the left — every 3 hours as "00:00"
+        for hour in range(0, 24, 3):
+            y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
+            painter.setPen(text_color)
+            painter.drawText(
+                QRect(0, y, self.HOUR_LABEL_W - 3, self.CELL),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{hour:02d}:00"
+            )
+
+        # Cells
+        for col_i, date_str in enumerate(self._dates):
+            x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
             for hour in range(24):
-                x = self.LABEL_W + hour * (cell + self.GAP)
+                y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
                 c = self._cells.get((date_str, hour))
-
                 if c:
-                    minutes = c['seconds'] / 60.0
-                    intensity = min(1.0, minutes / 60.0)
+                    intensity = min(1.0, c['seconds'] / 3600.0)
                     color = QColor(self._accent)
                     color.setAlpha(int(40 + intensity * 215))
                 else:
                     color = QColor(faint)
-
                 if self._hovered == (date_str, hour) and c:
                     color = color.lighter(140)
-
-                painter.fillRect(x, y, cell, cell, color)
-
-        y_axis = len(self._dates) * (cell + self.GAP)
-        painter.setPen(text_color)
-        for hour in range(0, 24, 3):
-            x = self.LABEL_W + hour * (cell + self.GAP)
-            painter.drawText(QRect(x, y_axis, cell * 3, self.HOUR_LABEL_H),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                             str(hour))
+                painter.fillRect(x, y, self.CELL, self.CELL, color)
 
         painter.end()
 
@@ -525,22 +526,18 @@ class HourlyHeatmap(QWidget):
             from PySide6.QtWidgets import QToolTip
             QToolTip.hideText()
 
-    def resizeEvent(self, event):
-        self.update()
-
     def leaveEvent(self, event):
         self._hovered = None
         self.update()
 
     def _hit_test(self, pos) -> tuple | None:
         x, y = pos.x(), pos.y()
-        if x < self.LABEL_W:
+        if x < self.HOUR_LABEL_W or y < self.DATE_LABEL_H:
             return None
-        cell = self._cell_size()
-        col = (x - self.LABEL_W) // (cell + self.GAP)
-        row = y // (cell + self.GAP)
-        if 0 <= col < 24 and 0 <= row < len(self._dates):
-            return (self._dates[row], col)
+        col = (x - self.HOUR_LABEL_W) // (self.CELL + self.GAP)
+        row = (y - self.DATE_LABEL_H) // (self.CELL + self.GAP)
+        if 0 <= col < self.N_DAYS and 0 <= row < 24:
+            return (self._dates[col], row)
         return None
 
 
@@ -1204,11 +1201,14 @@ class StatsPanel(QWidget):
                 bdp._refresh_stats()
 
     def _refresh_time(self):
+        day_start = self.config.get_day_start_hour()
         rows = self.db.get_hourly_heatmap(
-            n_days=10,
-            day_start_hour=self.config.get_day_start_hour()
+            n_days=14,
+            day_start_hour=day_start
         )
-        self._heatmap.set_data(rows)
+        from datetime import timedelta
+        today = (datetime.now() - timedelta(hours=day_start)).date()
+        self._heatmap.set_data(rows, today)
 
     def refresh_all(self):
         self.refresh_overall()
