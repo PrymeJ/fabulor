@@ -213,45 +213,34 @@ class BookDayRow(QWidget):
         clock_lbl = QLabel(StatsPanel._format_duration(clock_seconds))
         clock_lbl.setObjectName("stats_time_label")
         clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        clock_lbl.setFixedWidth(72)
         f_clock = clock_lbl.font()
         f_clock.setPointSize(f_clock.pointSize() - 2)
         clock_lbl.setFont(f_clock)
         time_block.addWidget(clock_lbl)
 
-        book_seconds = row_data.get("book_seconds_advanced") or 0.0
         duration = row_data.get("book_duration")
-        furthest = row_data.get("furthest_position") or 0.0
+        pos_start = row_data.get("period_position_start")
+        pos_end = row_data.get("period_position_end")
 
-        book_row2 = QHBoxLayout()
-        book_row2.setSpacing(4)
-        book_row2.setContentsMargins(0, 0, 0, 0)
+        prog_lbl = QLabel("")
+        prog_lbl.setObjectName("stats_book_time_label")
+        prog_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        prog_lbl.setFixedWidth(72)
+        f_prog = prog_lbl.font()
+        f_prog.setPointSize(f_prog.pointSize() - 2)
+        prog_lbl.setFont(f_prog)
 
-        book_lbl = QLabel(StatsPanel._format_duration(book_seconds))
-        book_lbl.setObjectName("stats_book_time_label")
-        book_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-        f_book = book_lbl.font()
-        f_book.setPointSize(f_book.pointSize() - 2)
-        book_lbl.setFont(f_book)
-        book_row2.addWidget(book_lbl)
+        if duration and duration > 0 and pos_start is not None and pos_end is not None:
+            pct_start = min(100.0, pos_start / duration * 100)
+            pct_end = min(100.0, pos_end / duration * 100)
+            delta = pct_end - pct_start
+            delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
+            prog_lbl.setText(f"{pct_start:.1f}·{pct_end:.1f} {delta_str}")
+            if delta < 0:
+                prog_lbl.setObjectName("stats_book_time_label_dim")
 
-        if duration and duration > 0:
-            pct = min(100, int((furthest / duration) * 100))
-            sep_lbl = QLabel("·")
-            sep_lbl.setObjectName("stats_book_time_label")
-            f_sep = sep_lbl.font()
-            f_sep.setPointSize(f_sep.pointSize() - 2)
-            sep_lbl.setFont(f_sep)
-            book_row2.addWidget(sep_lbl)
-
-            pct_lbl = QLabel(f"{pct}%")
-            pct_lbl.setObjectName("stats_book_time_label")
-            pct_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-            f_pct = pct_lbl.font()
-            f_pct.setPointSize(f_pct.pointSize() - 2)
-            pct_lbl.setFont(f_pct)
-            book_row2.addWidget(pct_lbl)
-
-        time_block.addLayout(book_row2)
+        time_block.addWidget(prog_lbl)
 
         layout.addLayout(time_block)
 
@@ -1008,6 +997,17 @@ class StatsPanel(QWidget):
         self._refresh_daily()
         self._refresh_weekly()
         self._refresh_monthly()
+
+    def refresh_current_tab(self):
+        name = self.tabs.tabText(self.tabs.currentIndex())
+        if name == "Overall":
+            self.refresh_overall()
+        elif name == "Daily":
+            self._refresh_daily()
+        elif name == "Weekly":
+            self._refresh_weekly()
+        elif name == "Monthly":
+            self._refresh_monthly()
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager

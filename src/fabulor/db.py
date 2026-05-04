@@ -294,14 +294,22 @@ class LibraryDB:
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
-                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished
+                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
+                    (SELECT ls2.position_start FROM listening_sessions ls2
+                     WHERE ls2.book_path = ls.book_path
+                     AND strftime('%Y-%m-%d', datetime(ls2.session_start, ?)) = ?
+                     ORDER BY ls2.session_start ASC LIMIT 1) as period_position_start,
+                    (SELECT ls2.position_end FROM listening_sessions ls2
+                     WHERE ls2.book_path = ls.book_path
+                     AND strftime('%Y-%m-%d', datetime(ls2.session_start, ?)) = ?
+                     ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_path = b.path
                 LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
                 WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_path
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
-            """, (offset, date_str)).fetchall()
+            """, (offset, date_str, offset, date_str, offset, date_str)).fetchall()
         return [dict(r) for r in rows]
 
     def set_started_at(self, book_path: str, started_at: datetime):
@@ -501,14 +509,22 @@ class LibraryDB:
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
-                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished
+                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
+                    (SELECT ls2.position_start FROM listening_sessions ls2
+                     WHERE ls2.book_path = ls.book_path
+                     AND strftime(?, datetime(ls2.session_start, ?)) = ?
+                     ORDER BY ls2.session_start ASC LIMIT 1) as period_position_start,
+                    (SELECT ls2.position_end FROM listening_sessions ls2
+                     WHERE ls2.book_path = ls.book_path
+                     AND strftime(?, datetime(ls2.session_start, ?)) = ?
+                     ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_path = b.path
                 LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
                 WHERE strftime(?, datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_path
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
-            """, (fmt, offset, period_label)).fetchall()
+            """, (fmt, offset, period_label, fmt, offset, period_label, fmt, offset, period_label)).fetchall()
         return [dict(r) for r in rows]
 
     def get_finished_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:

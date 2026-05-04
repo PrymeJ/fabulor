@@ -65,6 +65,7 @@ class BrowserInterface:
 
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
+    session_written = Signal()
     naming_pattern_changed = Signal(str)
     scroll_mode_changed = Signal(str)
     hints_mode_changed = Signal(bool)
@@ -1164,6 +1165,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
+        self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
@@ -1248,6 +1250,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel._book_model.update_book_metadata(path, title, author)
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_all()
+
+    def _on_session_written(self):
+        if self.stats_panel.isVisible():
+            self.stats_panel.refresh_current_tab()
 
     def _update_metadata_ui(self, text=None, show_metadata=None, show_go_to_lib=None):
         if text is not None:
@@ -1390,6 +1396,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     )
                     if not self.db.get_book_started_at(book.path):
                         self.db.set_started_at(book.path, start)
+                    self.session_written.emit()
                 except Exception:
                     pass
 
