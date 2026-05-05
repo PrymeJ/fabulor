@@ -423,6 +423,7 @@ class HourlyHeatmap(QWidget):
     CELL = 14
     HOUR_LABEL_W = 32   # wide enough for "00:00" at 11pt
     DATE_LABEL_H = 44   # tall enough for rotated "May 05" at 11pt
+    TOTAL_LABEL_H = 44  # bottom gutter for rotated total-minutes label
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -436,7 +437,7 @@ class HourlyHeatmap(QWidget):
 
     def _update_size(self):
         w = self.HOUR_LABEL_W + self.N_DAYS * (self.CELL + self.GAP)
-        h = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP)
+        h = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP) + self.TOTAL_LABEL_H
         self.setFixedSize(w, h)
 
     def set_accent_color(self, color: QColor):
@@ -459,11 +460,24 @@ class HourlyHeatmap(QWidget):
 
         faint = QColor(self._accent)
         faint.setAlpha(30)
+        faint_dim = QColor(self._accent)
+        faint_dim.setAlpha(12)  # empty-day cells are dimmer still
+
         font = QFont()
         font.setPointSize(11)
         painter.setFont(font)
 
-        # Date labels — rotated -90° so they read bottom-to-top, centered over each column
+        grid_bottom = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP)
+
+        # Precompute per-column totals to decide dimming and footer label
+        col_totals = {}  # date_str -> total seconds
+        for date_str in self._dates:
+            col_totals[date_str] = sum(
+                self._cells[(date_str, h)]['seconds']
+                for h in range(24) if (date_str, h) in self._cells
+            )
+
+        # Date labels — rotated -90°, dimmed for empty days
         for col_i, date_str in enumerate(self._dates):
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             try:
@@ -471,8 +485,12 @@ class HourlyHeatmap(QWidget):
                 label = d.strftime('%b %d')
             except ValueError:
                 label = date_str
+            has_data = col_totals[date_str] > 0
+            label_pen = QColor(self._label_color)
+            if not has_data:
+                label_pen.setAlpha(60)
             painter.save()
-            painter.setPen(self._label_color)
+            painter.setPen(label_pen)
             painter.translate(cx + 2, self.DATE_LABEL_H - 1)
             painter.rotate(-90)
             painter.drawText(
@@ -495,6 +513,7 @@ class HourlyHeatmap(QWidget):
         # Cells
         for col_i, date_str in enumerate(self._dates):
             x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
+            has_data = col_totals[date_str] > 0
             for hour in range(24):
                 y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
                 c = self._cells.get((date_str, hour))
@@ -503,10 +522,32 @@ class HourlyHeatmap(QWidget):
                     color = QColor(self._accent)
                     color.setAlpha(int(40 + intensity * 215))
                 else:
-                    color = QColor(faint)
+                    color = QColor(faint if has_data else faint_dim)
                 if self._hovered == (date_str, hour) and c:
                     color = color.lighter(140)
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
+
+        # Total-minutes footer — rotated -90°, below the grid, hovered column only
+        hovered_date = self._hovered[0] if self._hovered else None
+        if hovered_date and col_totals.get(hovered_date, 0) > 0:
+            col_i = self._dates.index(hovered_date)
+            total_min = int(col_totals[hovered_date] / 60)
+            label = f"{total_min}m"
+            cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
+            footer_font = QFont()
+            footer_font.setPointSize(13)
+            painter.setFont(footer_font)
+            painter.save()
+            painter.setPen(self._label_color)
+            # Translate to bottom of the footer zone, rotate so text reads bottom-to-top
+            painter.translate(cx + 2, grid_bottom + self.TOTAL_LABEL_H)
+            painter.rotate(-90)
+            painter.drawText(
+                QRect(0, -self.CELL // 2, self.TOTAL_LABEL_H - 2, self.CELL),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label
+            )
+            painter.restore()
 
         painter.end()
 
@@ -517,7 +558,12 @@ class HourlyHeatmap(QWidget):
             self.update()
         if hit and hit in self._cells:
             c = self._cells[hit]
-            lines = [f"{hit[0]}  {hit[1]:02d}:00"]
+            try:
+                friendly_date = date.fromisoformat(hit[0]).strftime('%b %-d')
+            except ValueError:
+                friendly_date = hit[0]
+            total_min = round(c['seconds'] / 60)
+            lines = [f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"]
             for b in sorted(c['books'], key=lambda x: -x['minutes']):
                 lines.append(f"{b['title']} — {b['minutes']}m")
             from PySide6.QtWidgets import QToolTip
@@ -749,26 +795,13 @@ class StatsPanel(QWidget):
         widget.setObjectName("stats_time_tab")
         widget.setAttribute(Qt.WA_StyledBackground, True)
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setObjectName("stats_scroll_area")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        scroll_content = QWidget()
-        inner = QVBoxLayout(scroll_content)
-        inner.setContentsMargins(8, 8, 8, 8)
-        inner.setSpacing(0)
 
         self._heatmap = HourlyHeatmap()
         self._heatmap.set_accent_color(self._accent_color)
-        inner.addWidget(self._heatmap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        inner.addStretch()
-
-        scroll.setWidget(scroll_content)
-        outer.addWidget(scroll)
+        outer.addWidget(self._heatmap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        outer.addStretch()
         return widget
 
     def _build_daily_tab(self) -> QWidget:
