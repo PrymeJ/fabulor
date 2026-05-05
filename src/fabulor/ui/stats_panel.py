@@ -593,11 +593,21 @@ class HourlyHeatmap(QWidget):
                 friendly_date = hit[0]
             total_min = round(c['seconds'] / 60)
             header = f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"
+            
+            limit = 9
+            sorted_books = sorted(c['books'], key=lambda x: -x['minutes'])
+            display_books = sorted_books[:limit]
+            truncated_count = len(sorted_books) - limit
+
             rows_html = "".join(
                 f"<tr><td style='padding-right:15px'>{b['title']}</td>"
                 f"<td align='right'>{b['minutes']}m</td></tr>"
-                for b in sorted(c['books'], key=lambda x: -x['minutes'])[:10]
+                for b in display_books
             )
+            more_color = f"rgba({self._label_color.red()}, {self._label_color.green()}, {self._label_color.blue()}, 0.5)"
+            if truncated_count > 0:
+                rows_html += f"<tr><td colspan='2' style='font-style: italic; color: {more_color}; padding-top: 2px;'>… and {truncated_count} more</td></tr>"
+
             html = (
                 f"<html><body style='font-size:12px'>"
                 f"<table border='0' cellspacing='0' cellpadding='0'>"
@@ -616,7 +626,7 @@ class HourlyHeatmap(QWidget):
             # Estimate dimensions to handle flipping logic
             # We use a 160px width budget to fit comfortably in the 300px window
             tt_w = 160
-            tt_h = 40 + (min(len(c['books']), 10) * 18) # Base + per-book height
+            tt_h = 40 + (len(display_books) * 18) + (18 if truncated_count > 0 else 0)
             
             # Horizontal flip: if on the right side, show to the left of the cursor
             if local_pos.x() > win.width() * 0.6:
