@@ -2296,10 +2296,15 @@ def get_stats_stylesheet(theme_name="default"):
             margin-top: 10px;
             color: {t['accent_light']};
         }}
+        QLabel#stats_day_label {{
+            font-size: 15px;
+            font-weight: bold;
+            color: {t['accent']};
+        }}
         QLabel#stats_day_total {{
             font-weight: bold;
-            font-size: 14px;
-            margin-top: 10px;
+            font-size: 15px;
+            margin-top: 0px;
             color: {t['accent_light']};
         }}
         QPushButton {{
