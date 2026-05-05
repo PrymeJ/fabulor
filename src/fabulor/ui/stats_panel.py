@@ -599,10 +599,11 @@ class HourlyHeatmap(QWidget):
                 for b in sorted(c['books'], key=lambda x: -x['minutes'])
             )
             html = (
-                f"<html><body style='font-size:12px'>"
-                f"<b style='font-size:12px'>{header}</b>"
-                f"<hr style='margin:3px 0'/>"
-                f"<table>{rows_html}</table>"
+                f"<html><body style='font-size:13px'>"
+                f"<table border='0' cellspacing='0' cellpadding='0'>"
+                f"<tr><td colspan='2' align='center'><b>{header}</b></td></tr>"
+                f"<tr><td colspan='2'><hr style='margin:3px 0'/></td></tr>"
+                f"{rows_html}</table>"
                 f"</body></html>"
             )
             from PySide6.QtWidgets import QToolTip
