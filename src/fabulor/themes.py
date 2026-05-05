@@ -2345,9 +2345,6 @@ def get_stats_stylesheet(theme_name="default"):
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
             color: {tab_hover_text};
         }}
-        QTabBar::tab:last {{
-            padding-right: 0px;
-        }}
         QTabWidget QWidget {{
             background: transparent;
         }}

@@ -1321,10 +1321,7 @@ class StatsPanel(QWidget):
         self.tabs.addTab(self._build_daily_tab(), "Day")
         self.tabs.addTab(self._build_weekly_tab(), "Week")
         self.tabs.addTab(self._build_monthly_tab(), "Month")
-
-        self._settings_svg_path = os.path.join(self._assets_dir, "settings.svg")
-        self.tabs.addTab(self._build_options_tab(), QIcon(), "")
-        self.tabs.setIconSize(QSize(13, 13))
+        self.tabs.addTab(self._build_options_tab(), "⚙")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
