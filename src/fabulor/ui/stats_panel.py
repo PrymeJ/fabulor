@@ -1305,7 +1305,7 @@ class StatsPanel(QWidget):
             self._refresh_weekly()
         elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
-        elif self.tabs.tabText(index) == "Hour":
+        elif self.tabs.tabText(index) == "Timeline":
             self._refresh_time()
             self._heatmap.animate_reveal()
 
