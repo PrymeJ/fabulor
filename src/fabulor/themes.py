@@ -2330,6 +2330,7 @@ def get_stats_stylesheet(theme_name="default"):
             background: {t['bg_deep']};
             color: rgba({text_rgb}, 0.9);
             padding: 3px 7px;
+            min-height: 20px;
             font-size: 12px;
             font-weight: bold;
             border-top-left-radius: 2px;
@@ -2343,6 +2344,9 @@ def get_stats_stylesheet(theme_name="default"):
         QTabBar::tab:hover:!selected {{
             background: rgba({_hex_to_rgb(tab_hover_bg)}, {tab_hover_opacity});
             color: {tab_hover_text};
+        }}
+        QTabWidget#stats_tabs QTabBar::tab:last {{
+            padding-bottom: 5px;
         }}
         QTabWidget QWidget {{
             background: transparent;
@@ -2415,6 +2419,22 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QPushButton#stats_nav_btn:disabled {{
             color: rgba({_hex_to_rgb(t['accent_dark'])}, .90);
+        }}
+        QPushButton#stats_reset_btn {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            padding: 4px;
+            border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#stats_reset_btn:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#stats_reset_btn:pressed {{
+            background: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}       
         QScrollBar:vertical {{
             width: 8px;

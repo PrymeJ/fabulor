@@ -3,12 +3,19 @@ import re
 from datetime import date
 from datetime import datetime
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QGridLayout, QSpinBox, QScrollArea, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTabBar, QLabel,
+    QGridLayout, QSpinBox, QScrollArea, QPushButton, QAbstractScrollArea
 )
 from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
-from PySide6.QtWidgets import QAbstractScrollArea
+
+
+class _SquareLastTab(QTabBar):
+    def tabSizeHint(self, index: int) -> QSize:
+        s = super().tabSizeHint(index)
+        if index == self.count() - 1 and not self.tabText(index):
+            return QSize(s.height(), s.height())
+        return s
 
 
 def _elide(text: str, font, max_px: int) -> str:
@@ -1315,14 +1322,17 @@ class StatsPanel(QWidget):
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
-        self.tabs.tabBar().setExpanding(True)
+        self.tabs.setTabBar(_SquareLastTab())
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
-        self.tabs.insertTab(1, self._build_time_tab(), "Timeline") # Insert Hour tab at index 1
+        self.tabs.insertTab(1, self._build_time_tab(), "Timeline")
         self.tabs.addTab(self._build_daily_tab(), "Day")
         self.tabs.addTab(self._build_weekly_tab(), "Week")
         self.tabs.addTab(self._build_monthly_tab(), "Month")
-        self.tabs.addTab(self._build_options_tab(), "⚙")
+
+        self._settings_svg_path = os.path.join(self._assets_dir, "settings.svg")
+        self.tabs.addTab(self._build_options_tab(), QIcon(), "")
+        self.tabs.setIconSize(QSize(13, 13))
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
