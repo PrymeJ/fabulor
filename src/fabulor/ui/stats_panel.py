@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize
+from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon
 from PySide6.QtWidgets import QAbstractScrollArea
 
@@ -594,20 +594,46 @@ class HourlyHeatmap(QWidget):
             total_min = round(c['seconds'] / 60)
             header = f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"
             rows_html = "".join(
-                f"<tr><td style='padding-right:12px'>{b['title']}</td>"
+                f"<tr><td style='padding-right:15px'>{b['title']}</td>"
                 f"<td align='right'>{b['minutes']}m</td></tr>"
                 for b in sorted(c['books'], key=lambda x: -x['minutes'])
             )
             html = (
-                f"<html><body style='font-size:13px'>"
+                f"<html><body style='font-size:12px'>"
                 f"<table border='0' cellspacing='0' cellpadding='0'>"
                 f"<tr><td colspan='2' align='center'><b>{header}</b></td></tr>"
                 f"<tr><td colspan='2'><hr style='margin:3px 0'/></td></tr>"
                 f"{rows_html}</table>"
                 f"</body></html>"
             )
+
+            # Determine tooltip position
+            global_pos = event.globalPosition().toPoint()
+            win = self.window()
+            # local_pos is relative to the main window (300px wide)
+            local_pos = win.mapFromGlobal(global_pos)
+
+            # Estimate dimensions to handle flipping logic
+            # We use a 160px width budget to fit comfortably in the 300px window
+            tt_w = 160
+            tt_h = 40 + (len(c['books']) * 18) # Base + per-book height
+            
+            # Horizontal flip: if on the right side, show to the left of the cursor
+            if local_pos.x() > win.width() * 0.6:
+                off_x = -(tt_w + 10)
+            else:
+                off_x = 15
+
+            # Vertical flip: if in the bottom half (near the footer labels), show above
+            if local_pos.y() > win.height() * 0.6:
+                off_y = -(tt_h + 10)
+            else:
+                off_y = 15
+
+            show_pos = global_pos + QPoint(off_x, off_y)
+
             from PySide6.QtWidgets import QToolTip
-            QToolTip.showText(event.globalPosition().toPoint(), html, self)
+            QToolTip.showText(show_pos, html, self)
         else:
             from PySide6.QtWidgets import QToolTip
             QToolTip.hideText()
