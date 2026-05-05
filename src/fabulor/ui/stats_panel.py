@@ -1315,9 +1315,10 @@ class StatsPanel(QWidget):
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
+        self.tabs.tabBar().setExpanding(True)
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
-        self.tabs.insertTab(1, self._build_time_tab(), "Hour") # Insert Hour tab at index 1
+        self.tabs.insertTab(1, self._build_time_tab(), "Timeline") # Insert Hour tab at index 1
         self.tabs.addTab(self._build_daily_tab(), "Day")
         self.tabs.addTab(self._build_weekly_tab(), "Week")
         self.tabs.addTab(self._build_monthly_tab(), "Month")

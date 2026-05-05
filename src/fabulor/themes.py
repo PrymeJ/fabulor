@@ -2329,13 +2329,12 @@ def get_stats_stylesheet(theme_name="default"):
         QTabBar::tab {{
             background: {t['bg_deep']};
             color: rgba({text_rgb}, 0.9);
-            padding: 3px 7px 3px 8px;
+            padding: 3px 7px;
             font-size: 12px;
             font-weight: bold;
             border-top-left-radius: 2px;
             border-top-right-radius: 2px;
-            margin-right: 0px;
-            margin-left: 2px;
+            margin: 0px 1px;
         }}
         QTabBar::tab:selected {{
             background: {t['accent']};
