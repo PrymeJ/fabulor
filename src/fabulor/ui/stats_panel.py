@@ -435,10 +435,19 @@ class HourlyHeatmap(QWidget):
         self._hovered: tuple | None = None
         self._footer_alpha: float = 0.0
         self._footer_date: str | None = None  # column the fade is tracking
+        self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
+
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        # Animation for footer label
         self._fade_anim = QPropertyAnimation(self, b"footer_alpha")
         self._fade_anim.setDuration(180)
         self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        # Animation for grid reveal wave
+        self._reveal_anim = QPropertyAnimation(self, b"reveal_progress")
+        self._reveal_anim.setDuration(1000)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.Linear)
+
         self._update_size()
 
     def _update_size(self):
@@ -453,8 +462,23 @@ class HourlyHeatmap(QWidget):
         self._footer_alpha = v
         self.update()
 
+    def get_reveal_progress(self) -> float:
+        return self._reveal_progress
+
+    def set_reveal_progress(self, v: float):
+        self._reveal_progress = v
+        self.update()
+
+    def animate_reveal(self):
+        """Triggers the staggered 'Mexico wave' color animation."""
+        self._reveal_anim.stop()
+        self._reveal_anim.setStartValue(0.0)
+        self._reveal_anim.setEndValue(1.0)
+        self._reveal_anim.start()
+
     from PySide6.QtCore import Property as _Property
     footer_alpha = _Property(float, get_footer_alpha, set_footer_alpha)
+    reveal_progress = _Property(float, get_reveal_progress, set_reveal_progress)
 
     def set_accent_color(self, color: QColor):
         self._accent = color
@@ -531,15 +555,31 @@ class HourlyHeatmap(QWidget):
         for col_i, date_str in enumerate(self._dates):
             x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
             has_data = self._col_totals.get(date_str, 0) > 0
+            
+            # Horizontal stagger: wave moves across columns (takes ~30% of animation)
+            h_delay = (col_i / (self.N_DAYS - 1)) * 0.3
+
             for hour in range(24):
                 y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
+                
+                # Vertical stagger: flips direction every column (takes ~70% of animation)
+                eff_row = hour if col_i % 2 == 0 else (23 - hour)
+                v_delay = (eff_row / 23) * 0.7
+                
+                delay = h_delay + v_delay
+                # Multiply by 15 to make the "reveal front" narrow and punchy
+                anim_alpha = max(0.0, min(1.0, (self._reveal_progress - delay) * 15))
+
                 c = self._cells.get((date_str, hour))
                 if c:
                     intensity = min(1.0, c['seconds'] / 3600.0)
                     color = QColor(self._accent)
-                    color.setAlpha(int(40 + intensity * 215))
+                    color.setAlpha(int((40 + intensity * 215) * anim_alpha))
                 else:
                     color = QColor(faint if has_data else faint_dim)
+                    base_a = 30 if has_data else 12
+                    color.setAlpha(int(base_a * anim_alpha))
+
                 if self._hovered == (date_str, hour) and c:
                     color = color.lighter(140)
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
@@ -1267,6 +1307,7 @@ class StatsPanel(QWidget):
             self._refresh_monthly()
         elif self.tabs.tabText(index) == "Time":
             self._refresh_time()
+            self._heatmap.animate_reveal()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
