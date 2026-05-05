@@ -556,15 +556,15 @@ class HourlyHeatmap(QWidget):
             x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
             has_data = self._col_totals.get(date_str, 0) > 0
             
-            # Horizontal stagger: wave moves across columns (takes ~30% of animation)
-            h_delay = (col_i / (self.N_DAYS - 1)) * 0.3
+            # Horizontal stagger: wave moves across columns (takes ~25% of animation)
+            h_delay = (col_i / (self.N_DAYS - 1)) * 0.25
 
             for hour in range(24):
                 y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
                 
-                # Vertical stagger: flips direction every column (takes ~70% of animation)
+                # Vertical stagger: flips direction every column (takes ~65% of animation)
                 eff_row = hour if col_i % 2 == 0 else (23 - hour)
-                v_delay = (eff_row / 23) * 0.7
+                v_delay = (eff_row / 23) * 0.65
                 
                 delay = h_delay + v_delay
                 # Multiply by 15 to make the "reveal front" narrow and punchy
@@ -795,7 +795,7 @@ class StatsPanel(QWidget):
         finished_layout.setSpacing(4)
 
         finished_header = QLabel("Recently finished")
-        finished_header.setObjectName("stats_section_header")
+        finished_header.setObjectName("settings_header")
         finished_layout.addWidget(finished_header)
 
         self._finished_scroll_row = FinishedScrollRow(self._assets_dir)
@@ -985,7 +985,7 @@ class StatsPanel(QWidget):
         finished_outer.setSpacing(4)
 
         finished_header = QLabel("Finished today")
-        finished_header.setObjectName("stats_section_header")
+        finished_header.setObjectName("settings_header")
         finished_outer.addWidget(finished_header)
 
         self._day_finished_scroll = FinishedScrollRow(self._assets_dir)
@@ -1109,7 +1109,7 @@ class StatsPanel(QWidget):
         finished_outer.setSpacing(4)
 
         finished_header = QLabel("Finished this week")
-        finished_header.setObjectName("stats_section_header")
+        finished_header.setObjectName("settings_header")
         finished_outer.addWidget(finished_header)
 
         self._week_finished_scroll = FinishedScrollRow(self._assets_dir)
@@ -1232,7 +1232,7 @@ class StatsPanel(QWidget):
         finished_outer.setSpacing(4)
 
         finished_header = QLabel("Finished this month")
-        finished_header.setObjectName("stats_section_header")
+        finished_header.setObjectName("settings_header")
         finished_outer.addWidget(finished_header)
 
         self._month_finished_scroll = FinishedScrollRow(self._assets_dir)
