@@ -2296,6 +2296,12 @@ def get_stats_stylesheet(theme_name="default"):
             margin-top: 10px;
             color: {t['accent_light']};
         }}
+        QLabel#stats_day_total {{
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
+            color: {t['accent_light']};
+        }}
         QPushButton {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
