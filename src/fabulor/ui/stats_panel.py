@@ -1305,7 +1305,7 @@ class StatsPanel(QWidget):
             self._refresh_weekly()
         elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
-        elif self.tabs.tabText(index) == "Time":
+        elif self.tabs.tabText(index) == "Hour":
             self._refresh_time()
             self._heatmap.animate_reveal()
 
@@ -1317,10 +1317,10 @@ class StatsPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
 
         self.tabs.addTab(self._build_overall_tab(), "Overall")
+        self.tabs.insertTab(1, self._build_time_tab(), "Hour") # Insert Hour tab at index 1
         self.tabs.addTab(self._build_daily_tab(), "Day")
         self.tabs.addTab(self._build_weekly_tab(), "Week")
         self.tabs.addTab(self._build_monthly_tab(), "Month")
-        self.tabs.addTab(self._build_time_tab(), "Time")
 
         self._settings_svg_path = os.path.join(self._assets_dir, "settings.svg")
         self.tabs.addTab(self._build_options_tab(), QIcon(), "")
@@ -1381,7 +1381,7 @@ class StatsPanel(QWidget):
             self._refresh_weekly()
         elif name == "Month":
             self._refresh_monthly()
-        elif name == "Time":
+        elif name == "Hour":
             self._refresh_time()
 
     def set_panel_manager(self, panel_manager):
