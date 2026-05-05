@@ -2346,8 +2346,8 @@ def get_stats_stylesheet(theme_name="default"):
             color: {tab_hover_text};
         }}
         QTabWidget#stats_tabs QTabBar::tab:last {{
-            padding-top: 0px;
-            padding-bottom: -1px;
+            padding-top: -2px;
+            padding-bottom: 0px;
         }}
         QTabWidget QWidget {{
             background: transparent;
