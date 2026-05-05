@@ -1321,7 +1321,8 @@ class StatsPanel(QWidget):
         self.tabs.addTab(self._build_daily_tab(), "Day")
         self.tabs.addTab(self._build_weekly_tab(), "Week")
         self.tabs.addTab(self._build_monthly_tab(), "Month")
-        self.tabs.addTab(self._build_options_tab(), "P")
+        self.tabs.addTab(self._build_options_tab(), "⚙️")
+        #self.tabs.addTab(self._build_options_tab(), "⚙")
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
