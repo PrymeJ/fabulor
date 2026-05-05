@@ -596,7 +596,7 @@ class HourlyHeatmap(QWidget):
             rows_html = "".join(
                 f"<tr><td style='padding-right:15px'>{b['title']}</td>"
                 f"<td align='right'>{b['minutes']}m</td></tr>"
-                for b in sorted(c['books'], key=lambda x: -x['minutes'])
+                for b in sorted(c['books'], key=lambda x: -x['minutes'])[:10]
             )
             html = (
                 f"<html><body style='font-size:12px'>"
@@ -616,7 +616,7 @@ class HourlyHeatmap(QWidget):
             # Estimate dimensions to handle flipping logic
             # We use a 160px width budget to fit comfortably in the 300px window
             tt_w = 160
-            tt_h = 40 + (len(c['books']) * 18) # Base + per-book height
+            tt_h = 40 + (min(len(c['books']), 10) * 18) # Base + per-book height
             
             # Horizontal flip: if on the right side, show to the left of the cursor
             if local_pos.x() > win.width() * 0.6:
