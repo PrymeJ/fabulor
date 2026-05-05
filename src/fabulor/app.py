@@ -922,6 +922,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         interval_row.addStretch()
         pool_layout.addLayout(interval_row)
 
+        self.theme_manager.pool_container.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
         themes_layout.addWidget(self.theme_manager.pool_container)
         themes_layout.addStretch()
         self.tabs.addTab(themes_tab, "Themes")

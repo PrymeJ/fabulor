@@ -9,6 +9,7 @@ from ..themes import (
 )
 
 _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
+_SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
 
 
@@ -182,10 +183,7 @@ class ThemeManager(QObject):
         """Update the appearance with a subtle fade transition."""
         
         if fade_ms is None:
-            fade_ms = self.config.get_theme_fade_duration()
-        
-        if not hover:
-            fade_ms = _THEME_SWITCH_FADE_MS
+            fade_ms = _THEME_SWITCH_FADE_MS if not hover else self.config.get_theme_fade_duration()
 
         # Only guard if both the theme and hover state match
         if (getattr(self, "_active_display_theme", None) == theme_name
@@ -334,11 +332,10 @@ class ThemeManager(QObject):
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
     def _on_theme_unhovered(self):
-        fade = int(self.config.get_theme_fade_duration() * 0.5)
         if self._cover_theme_active and self._cover_theme:
-            self._on_theme_changed(self._cover_theme, save=False, fade_ms=fade, hover=False)
+            self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS, hover=False)
         else:
-            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=fade, hover=False)
+            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS, hover=False)
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
