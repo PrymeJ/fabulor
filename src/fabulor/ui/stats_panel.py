@@ -6,8 +6,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon
+from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
 from PySide6.QtWidgets import QAbstractScrollArea
 
 
@@ -468,6 +468,15 @@ class HourlyHeatmap(QWidget):
             for i in range(self.N_DAYS)
         ]
         self._cells = {(r['date'], r['hour']): r for r in rows}
+        
+        # Precompute per-column totals for responsive hit-testing and fade logic
+        self._col_totals = {}
+        for date_str in self._dates:
+            self._col_totals[date_str] = sum(
+                self._cells[(date_str, h)]['seconds']
+                for h in range(24) if (date_str, h) in self._cells
+            )
+            
         self.update()
 
     def paintEvent(self, event):
@@ -485,14 +494,6 @@ class HourlyHeatmap(QWidget):
 
         grid_bottom = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP)
 
-        # Precompute per-column totals to decide dimming and footer label
-        col_totals = {}  # date_str -> total seconds
-        for date_str in self._dates:
-            col_totals[date_str] = sum(
-                self._cells[(date_str, h)]['seconds']
-                for h in range(24) if (date_str, h) in self._cells
-            )
-
         # Date labels — rotated -90°, dimmed for empty days
         for col_i, date_str in enumerate(self._dates):
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
@@ -501,7 +502,7 @@ class HourlyHeatmap(QWidget):
                 label = d.strftime('%b %d')
             except ValueError:
                 label = date_str
-            has_data = col_totals[date_str] > 0
+            has_data = self._col_totals.get(date_str, 0) > 0
             label_pen = QColor(self._label_color)
             if not has_data:
                 label_pen.setAlpha(60)
@@ -529,7 +530,7 @@ class HourlyHeatmap(QWidget):
         # Cells
         for col_i, date_str in enumerate(self._dates):
             x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
-            has_data = col_totals[date_str] > 0
+            has_data = self._col_totals.get(date_str, 0) > 0
             for hour in range(24):
                 y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
                 c = self._cells.get((date_str, hour))
@@ -544,9 +545,9 @@ class HourlyHeatmap(QWidget):
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
 
         # Total-minutes footer — rotated -90°, below the grid, fades in/out on column hover
-        if self._footer_date and self._footer_alpha > 0 and col_totals.get(self._footer_date, 0) > 0:
+        if self._footer_date and self._footer_alpha > 0 and self._col_totals.get(self._footer_date, 0) > 0:
             col_i = self._dates.index(self._footer_date)
-            total_min = int(col_totals[self._footer_date] / 60)
+            total_min = int(self._col_totals[self._footer_date] / 60)
             label = f"{total_min}m"
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             footer_font = QFont()
@@ -579,12 +580,16 @@ class HourlyHeatmap(QWidget):
             self._hovered = hit
             self.update()
             new_date = hit[0] if hit else None
-            if new_date != self._footer_date:
-                self._footer_date = new_date
-                self._fade_to(1.0 if new_date else 0.0)
-            elif new_date is None:
+            # Only update the active footer date if the new target has listening data to show.
+            # Otherwise, we just trigger a fade out of the current label.
+            if new_date and self._col_totals.get(new_date, 0) > 0:
+                if new_date != self._footer_date:
+                    self._footer_date = new_date
+                self._fade_to(1.0)
+            else:
                 self._fade_to(0.0)
-        if hit and hit in self._cells:
+        # Only show tooltip if hovering over a valid hour cell
+        if hit and 0 <= hit[1] < 24 and hit in self._cells:
             c = self._cells[hit]
             try:
                 d = date.fromisoformat(hit[0])
@@ -650,18 +655,17 @@ class HourlyHeatmap(QWidget):
 
     def leaveEvent(self, event):
         self._hovered = None
-        self._footer_date = None
         self._fade_to(0.0)
         self.update()
 
     def _hit_test(self, pos) -> tuple | None:
         x, y = pos.x(), pos.y()
-        if x < self.HOUR_LABEL_W or y < self.DATE_LABEL_H:
+        if x < self.HOUR_LABEL_W:
             return None
         col = (x - self.HOUR_LABEL_W) // (self.CELL + self.GAP)
-        row = (y - self.DATE_LABEL_H) // (self.CELL + self.GAP)
-        if 0 <= col < self.N_DAYS and 0 <= row < 24:
-            return (self._dates[col], row)
+        if 0 <= col < self.N_DAYS:
+             row = (y - self.DATE_LABEL_H) // (self.CELL + self.GAP)
+             return (self._dates[col], row)
         return None
 
 
@@ -913,7 +917,7 @@ class StatsPanel(QWidget):
         header_layout.addWidget(self._day_next_btn)
         outer.addWidget(header)
 
-        # Total time for the day
+        # Total time for the day (restored to top position)
         self._day_total_label = QLabel("")
         self._day_total_label.setObjectName("stats_day_total")
         self._day_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1038,6 +1042,7 @@ class StatsPanel(QWidget):
         header_layout.addWidget(self._week_next_btn)
         outer.addWidget(header)
 
+        # Total time for the week
         self._week_total_label = QLabel("")
         self._week_total_label.setObjectName("stats_day_total")
         self._week_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1160,6 +1165,7 @@ class StatsPanel(QWidget):
         header_layout.addWidget(self._month_next_btn)
         outer.addWidget(header)
 
+        # Total time for the month
         self._month_total_label = QLabel("")
         self._month_total_label.setObjectName("stats_day_total")
         self._month_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
