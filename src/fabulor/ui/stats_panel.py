@@ -433,12 +433,28 @@ class HourlyHeatmap(QWidget):
         self._cells: dict = {}        # (date, hour) -> {seconds, books}
         self.setMouseTracking(True)
         self._hovered: tuple | None = None
+        self._footer_alpha: float = 0.0
+        self._footer_date: str | None = None  # column the fade is tracking
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        self._fade_anim = QPropertyAnimation(self, b"footer_alpha")
+        self._fade_anim.setDuration(180)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._update_size()
 
     def _update_size(self):
         w = self.HOUR_LABEL_W + self.N_DAYS * (self.CELL + self.GAP)
         h = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP) + self.TOTAL_LABEL_H
         self.setFixedSize(w, h)
+
+    def get_footer_alpha(self) -> float:
+        return self._footer_alpha
+
+    def set_footer_alpha(self, v: float):
+        self._footer_alpha = v
+        self.update()
+
+    from PySide6.QtCore import Property as _Property
+    footer_alpha = _Property(float, get_footer_alpha, set_footer_alpha)
 
     def set_accent_color(self, color: QColor):
         self._accent = color
@@ -527,19 +543,19 @@ class HourlyHeatmap(QWidget):
                     color = color.lighter(140)
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
 
-        # Total-minutes footer — rotated -90°, below the grid, hovered column only
-        hovered_date = self._hovered[0] if self._hovered else None
-        if hovered_date and col_totals.get(hovered_date, 0) > 0:
-            col_i = self._dates.index(hovered_date)
-            total_min = int(col_totals[hovered_date] / 60)
+        # Total-minutes footer — rotated -90°, below the grid, fades in/out on column hover
+        if self._footer_date and self._footer_alpha > 0 and col_totals.get(self._footer_date, 0) > 0:
+            col_i = self._dates.index(self._footer_date)
+            total_min = int(col_totals[self._footer_date] / 60)
             label = f"{total_min}m"
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             footer_font = QFont()
             footer_font.setPointSize(13)
             painter.setFont(footer_font)
+            pen_color = QColor(self._label_color)
+            pen_color.setAlphaF(self._footer_alpha)
             painter.save()
-            painter.setPen(self._label_color)
-            # Translate to bottom of the footer zone, rotate so text reads bottom-to-top
+            painter.setPen(pen_color)
             painter.translate(cx + 2, grid_bottom + self.TOTAL_LABEL_H)
             painter.rotate(-90)
             painter.drawText(
@@ -551,29 +567,54 @@ class HourlyHeatmap(QWidget):
 
         painter.end()
 
+    def _fade_to(self, target: float):
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(self._footer_alpha)
+        self._fade_anim.setEndValue(target)
+        self._fade_anim.start()
+
     def mouseMoveEvent(self, event):
         hit = self._hit_test(event.pos())
         if hit != self._hovered:
             self._hovered = hit
             self.update()
+            new_date = hit[0] if hit else None
+            if new_date != self._footer_date:
+                self._footer_date = new_date
+                self._fade_to(1.0 if new_date else 0.0)
+            elif new_date is None:
+                self._fade_to(0.0)
         if hit and hit in self._cells:
             c = self._cells[hit]
             try:
-                friendly_date = date.fromisoformat(hit[0]).strftime('%b %-d')
+                d = date.fromisoformat(hit[0])
+                friendly_date = f"{d.strftime('%b')} {d.day}"
             except ValueError:
                 friendly_date = hit[0]
             total_min = round(c['seconds'] / 60)
-            lines = [f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"]
-            for b in sorted(c['books'], key=lambda x: -x['minutes']):
-                lines.append(f"{b['title']} — {b['minutes']}m")
+            header = f"{friendly_date} {hit[1]:02d}:00 · {total_min} min"
+            rows_html = "".join(
+                f"<tr><td style='padding-right:12px'>{b['title']}</td>"
+                f"<td align='right'>{b['minutes']}m</td></tr>"
+                for b in sorted(c['books'], key=lambda x: -x['minutes'])
+            )
+            html = (
+                f"<html><body style='font-size:12px'>"
+                f"<b style='font-size:12px'>{header}</b>"
+                f"<hr style='margin:3px 0'/>"
+                f"<table>{rows_html}</table>"
+                f"</body></html>"
+            )
             from PySide6.QtWidgets import QToolTip
-            QToolTip.showText(event.globalPosition().toPoint(), "\n".join(lines), self)
+            QToolTip.showText(event.globalPosition().toPoint(), html, self)
         else:
             from PySide6.QtWidgets import QToolTip
             QToolTip.hideText()
 
     def leaveEvent(self, event):
         self._hovered = None
+        self._footer_date = None
+        self._fade_to(0.0)
         self.update()
 
     def _hit_test(self, pos) -> tuple | None:
