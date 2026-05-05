@@ -693,48 +693,74 @@ class LibraryDB:
                 (book_path, tag)
             )
 
-    def get_hourly_heatmap(self, n_days: int = 7, day_start_hour: int = 0) -> list[dict]:
-        """Returns per-(date, hour) listening data for the last n_days active days.
+    def get_hourly_heatmap(self, n_days: int = 14) -> list[dict]:
+        """Returns per-(date, hour) listening data for the last n_days calendar days.
 
+        Uses real wall-clock time with no day-start offset so hours are accurate.
         Each row: {date, hour, seconds, books: [{title, minutes}]}
-        Only dates with any activity are included. Hours with no activity are
-        omitted — the widget fills them as empty cells.
+        Sessions that span multiple hours are split so no cell exceeds 3600s.
+        Hours with no activity are omitted — the widget fills them as empty cells.
         """
-        offset = f'-{day_start_hour} hours'
+        from collections import defaultdict
+        from datetime import datetime as dt, timedelta
+
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
-                    strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
-                    CAST(strftime('%H', datetime(session_start, ?)) AS INTEGER) as hour,
                     COALESCE(book_title, book_path) as title,
-                    SUM(COALESCE(listened_seconds,
-                        (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
+                    session_start,
+                    session_end,
+                    COALESCE(listened_seconds,
+                        (julianday(session_end) - julianday(session_start)) * 86400) as seconds
                 FROM listening_sessions
-                WHERE date IN (
-                    SELECT DISTINCT strftime('%Y-%m-%d', datetime(session_start, ?))
+                WHERE strftime('%Y-%m-%d', session_start) IN (
+                    SELECT DISTINCT strftime('%Y-%m-%d', session_start)
                     FROM listening_sessions
-                    ORDER BY strftime('%Y-%m-%d', datetime(session_start, ?)) DESC
+                    ORDER BY strftime('%Y-%m-%d', session_start) DESC
                     LIMIT ?
                 )
-                GROUP BY date, hour, title
-                ORDER BY date ASC, hour ASC
-            """, (offset, offset, offset, offset, n_days)).fetchall()
+                ORDER BY session_start ASC
+            """, (n_days,)).fetchall()
 
-        # Aggregate into {(date, hour): {seconds, books}}
-        from collections import defaultdict
-        cells: dict = defaultdict(lambda: {'seconds': 0.0, 'books': []})
+        # Split each session across the clock hours it spans
+        cells: dict = defaultdict(lambda: {'seconds': 0.0, 'books': defaultdict(float)})
         for r in rows:
-            key = (r['date'], r['hour'])
-            cells[key]['seconds'] += r['seconds']
-            cells[key]['books'].append({'title': r['title'], 'minutes': round(r['seconds'] / 60)})
+            try:
+                t_start = dt.fromisoformat(r['session_start'])
+                t_end = dt.fromisoformat(r['session_end'])
+            except ValueError:
+                continue
+            total_wall = (t_end - t_start).total_seconds()
+            if total_wall <= 0:
+                continue
+            listened = float(r['seconds'])
+            title = r['title']
+
+            # Walk hour boundaries from t_start to t_end
+            cursor = t_start
+            while cursor < t_end:
+                hour_end = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                slice_end = min(hour_end, t_end)
+                wall_slice = (slice_end - cursor).total_seconds()
+                # Proportion of total wall time in this slice → same proportion of listened_seconds
+                slice_listened = listened * (wall_slice / total_wall)
+                date_str = cursor.strftime('%Y-%m-%d')
+                hour = cursor.hour
+                cells[(date_str, hour)]['seconds'] += slice_listened
+                cells[(date_str, hour)]['books'][title] += slice_listened
+                cursor = slice_end
 
         result = []
-        for (date, hour), data in sorted(cells.items()):
+        for (date_str, hour), data in sorted(cells.items()):
+            books = [
+                {'title': t, 'minutes': max(1, round(s / 60))}
+                for t, s in sorted(data['books'].items(), key=lambda x: -x[1])
+            ]
             result.append({
-                'date': date,
+                'date': date_str,
                 'hour': hour,
-                'seconds': data['seconds'],
-                'books': data['books'],
+                'seconds': min(data['seconds'], 3600.0),
+                'books': books,
             })
         return result
 

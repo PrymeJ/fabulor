@@ -2351,6 +2351,12 @@ def get_stats_stylesheet(theme_name="default"):
         QTabWidget QWidget {{
             background: transparent;
         }}
+        QWidget#stats_time_tab {{
+            background: {t['bg_main']};
+        }}
+        QWidget#stats_time_tab QWidget {{
+            background: transparent;
+        }}
         QScrollArea {{
             background: transparent;
             border: none;

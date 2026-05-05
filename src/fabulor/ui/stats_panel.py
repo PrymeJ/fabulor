@@ -421,13 +421,13 @@ class HourlyHeatmap(QWidget):
     N_DAYS = 14
     GAP = 1
     CELL = 14
-    HOUR_LABEL_W = 30   # wide enough for "00:00"
-    DATE_LABEL_H = 30   # tall enough for rotated short date
+    HOUR_LABEL_W = 32   # wide enough for "00:00" at 11pt
+    DATE_LABEL_H = 44   # tall enough for rotated "May 05" at 11pt
 
     def __init__(self, parent=None):
-        
         super().__init__(parent)
         self._accent = QColor("#9B59B6")
+        self._label_color = QColor("#9B59B6")
         self._dates: list[str] = []
         self._cells: dict = {}        # (date, hour) -> {seconds, books}
         self.setMouseTracking(True)
@@ -441,6 +441,7 @@ class HourlyHeatmap(QWidget):
 
     def set_accent_color(self, color: QColor):
         self._accent = color
+        self._label_color = color
         self.update()
 
     def set_data(self, rows: list[dict], today: date):
@@ -458,9 +459,8 @@ class HourlyHeatmap(QWidget):
 
         faint = QColor(self._accent)
         faint.setAlpha(30)
-        text_color = self.palette().text().color()
         font = QFont()
-        font.setPointSize(8)
+        font.setPointSize(11)
         painter.setFont(font)
 
         # Date labels — rotated -90° so they read bottom-to-top, centered over each column
@@ -472,8 +472,8 @@ class HourlyHeatmap(QWidget):
             except ValueError:
                 label = date_str
             painter.save()
-            painter.setPen(text_color)
-            painter.translate(cx, self.DATE_LABEL_H - 2)
+            painter.setPen(self._label_color)
+            painter.translate(cx + 2, self.DATE_LABEL_H - 1)
             painter.rotate(-90)
             painter.drawText(
                 QRect(0, -self.CELL // 2, self.DATE_LABEL_H - 2, self.CELL),
@@ -484,8 +484,8 @@ class HourlyHeatmap(QWidget):
 
         # Hour labels on the left — every 3 hours as "00:00"
         for hour in range(0, 24, 3):
-            y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
-            painter.setPen(text_color)
+            y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP) + 1
+            painter.setPen(self._label_color)
             painter.drawText(
                 QRect(0, y, self.HOUR_LABEL_W - 3, self.CELL),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -746,6 +746,8 @@ class StatsPanel(QWidget):
 
     def _build_time_tab(self) -> QWidget:
         widget = QWidget()
+        widget.setObjectName("stats_time_tab")
+        widget.setAttribute(Qt.WA_StyledBackground, True)
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -1201,14 +1203,8 @@ class StatsPanel(QWidget):
                 bdp._refresh_stats()
 
     def _refresh_time(self):
-        day_start = self.config.get_day_start_hour()
-        rows = self.db.get_hourly_heatmap(
-            n_days=14,
-            day_start_hour=day_start
-        )
-        from datetime import timedelta
-        today = (datetime.now() - timedelta(hours=day_start)).date()
-        self._heatmap.set_data(rows, today)
+        rows = self.db.get_hourly_heatmap(n_days=14)
+        self._heatmap.set_data(rows, datetime.now().date())
 
     def refresh_all(self):
         self.refresh_overall()
