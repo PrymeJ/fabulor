@@ -253,32 +253,54 @@
 ## Book Detail Panel
 
 ### Navigation
-- [ ] Opens from Daily/Weekly/Monthly row click with slide-in from right
-- [ ] Opens from Overall finished thumbnail click
-- [ ] Back button slides panel out to the right and returns to stats
-- [ ] Panel is full window width, fully covers stats panel (no bleed-through)
+- [ ] Opens from library right-click with slide-in from right
+- [ ] Opens from Stats panel row click
+- [ ] Close button slides panel out and returns to previous view
+- [ ] Panel is full window width, fully covers other panels (no bleed-through)
+- [ ] Clicking anywhere outside the panel does not close it (guard in mousePressEvent)
 - [ ] Theme applied correctly on first open (no system color fallback)
-- [ ] Accent color updates on theme change
+- [ ] Bar colors update on theme change (curr_chap_highlight / library_slider_bg)
 
 ### Header
 - [ ] Cover displays at correct aspect ratio, max 120×120
 - [ ] App icon placeholder shown when no cover available
-- [ ] Title, author shown always
-- [ ] Narrator and year shown only when present, hidden when absent
-- [ ] Deleted book (book_path NULL) handled gracefully
+- [ ] Title and author always shown
+- [ ] Narrator and year shown only when present; hidden fields retain layout space (no shift)
+- [ ] Duration label shown when duration available; hidden otherwise
+- [ ] Duration toggles between wall-clock and speed-adjusted on click (only when speed ≠ 1.0)
+- [ ] Duration resets to wall-clock when a new book is loaded
+
+### Inline metadata editing
+- [ ] Clicking any header field enters edit mode (all four fields become editable)
+- [ ] Narrator and year fields appear with placeholders even when previously hidden
+- [ ] Save label appears only when at least one field differs from original value
+- [ ] Save label disappears if edits are reverted back to original values
+- [ ] Enter in any field saves and shows "Saved" for 1 second
+- [ ] Clicking Save saves and shows "Saved" for 1 second
+- [ ] Clicking outside the fields reverts all edits, hides Save
+- [ ] Clicking another tab reverts all edits
+- [ ] Closing the panel reverts all edits
+- [ ] Save updates library and stats panel correctly
 
 ### Stats tab
-- [ ] Furthest position progress bar shows correct percentage and remaining time
-- [ ] Furthest position fetches duration from DB when not in book_data
-- [ ] Total listened, sessions, started date display correctly
-- [ ] Finished shows "—" when never finished
-- [ ] Finished shows date when finished once
-- [ ] Finished shows "Nx — last [date]" when finished more than once
-- [ ] Day-by-day bar chart renders with correct data and accent color
-- [ ] Delete listening history prompts confirmation, clears data, refreshes panel
+- [ ] Furthest position: label + themed bar + percentage on one line, aligned with grid rows below
+- [ ] Remaining: own row, speed-aware ("Xh Ym at 2x" when speed ≠ 1.0)
+- [ ] Total listened, sessions, last session, started, finished display correctly
+- [ ] Last session shows date, 24h time, and duration of most recent session
+- [ ] Finished shows "—" / date / "Nx — last [date]" correctly
+- [ ] Listening history header styled bold accent_light
+- [ ] Listening history shows sessions newest-first
+- [ ] Each session row: timestamp range (May 6  03:08 – 03:21) + bar + percentage
+- [ ] Bar shows correct position slice within the book
+- [ ] Bar and furthest position bar use theme colors (no system color fallback)
+- [ ] No scrollbar visible on session list
 
-### Metadata tab
-- [ ] Placeholder shown (implementation pending)
+### Tags tab
+- [ ] Tag chips display all assigned tags
+- [ ] Add tag field with autocomplete works; Enter and + button both add
+- [ ] Remove (✕) button removes tag correctly
+- [ ] Max 5 tags enforced (input flashes red on reject)
+- [ ] Delete listening history button prompts confirmation, clears data, refreshes stats tab
 
 ## Saving states
 
