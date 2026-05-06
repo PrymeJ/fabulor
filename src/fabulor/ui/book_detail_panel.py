@@ -74,6 +74,10 @@ class BookDetailPanel(QWidget):
         self._author_label   = make_field("book_detail_author")
         self._narrator_label = make_field("book_detail_narrator", placeholder="Narrator")
         self._year_label     = make_field("book_detail_year",     placeholder="Year")
+        for _f in (self._narrator_label, self._year_label):
+            _sp = _f.sizePolicy()
+            _sp.setRetainSizeWhenHidden(True)
+            _f.setSizePolicy(_sp)
 
         self._duration_label = _ClickableLabel()
         self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
