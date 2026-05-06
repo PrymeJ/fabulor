@@ -2282,6 +2282,22 @@ def get_stats_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-radius: 0px;
         }}
+        QLabel#book_detail_save_label {{
+            color: {t['accent']};
+            font-size: 12px;
+        }}
+        QLineEdit#book_detail_title,
+        QLineEdit#book_detail_author,
+        QLineEdit#book_detail_narrator,
+        QLineEdit#book_detail_year {{
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 0px;
+            padding: 0px;
+            margin: 0px;
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+        }}
         QWidget#stats_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};

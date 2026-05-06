@@ -1945,7 +1945,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
+        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel, self.book_detail_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return
         self._hide_popups()

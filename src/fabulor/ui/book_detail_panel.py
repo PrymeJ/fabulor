@@ -4,8 +4,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QApplication
 
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
@@ -33,6 +34,7 @@ class BookDetailPanel(QWidget):
         self._book_data: dict = {}
         self._theme: dict = {}
         self._duration_show_adjusted: bool = False
+        self._editing: bool = False
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -59,37 +61,65 @@ class BookDetailPanel(QWidget):
         meta_block = QVBoxLayout()
         meta_block.setSpacing(2)
 
-        self._title_label = QLabel()
-        self._title_label.setObjectName("book_detail_title")
-        self._title_label.setWordWrap(True)
+        def make_field(obj_name, placeholder=''):
+            edit = QLineEdit()
+            edit.setObjectName(obj_name)
+            edit.setPlaceholderText(placeholder)
+            edit.setFrame(False)
+            edit.setReadOnly(True)
+            edit.textChanged.connect(self._check_dirty)
+            return edit
 
-        self._author_label = QLabel()
-        self._author_label.setObjectName("book_detail_author")
-
-        self._narrator_label = QLabel()
-        self._narrator_label.setObjectName("book_detail_narrator")
-
-        self._year_label = QLabel()
-        self._year_label.setObjectName("book_detail_year")
+        self._title_label    = make_field("book_detail_title")
+        self._author_label   = make_field("book_detail_author")
+        self._narrator_label = make_field("book_detail_narrator", placeholder="Narrator")
+        self._year_label     = make_field("book_detail_year",     placeholder="Year")
 
         self._duration_label = _ClickableLabel()
         self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._duration_label.clicked.connect(self._toggle_duration)
 
+        self._save_label = _ClickableLabel("Save")
+        self._save_label.setObjectName("book_detail_save_label")
+        self._save_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._save_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._save_label.clicked.connect(self._on_inline_save)
+        self._save_label.setVisible(False)
+
+        dur_save_row = QHBoxLayout()
+        dur_save_row.setContentsMargins(0, 0, 0, 0)
+        dur_save_row.setSpacing(0)
+        dur_save_row.addWidget(self._duration_label)
+        dur_save_row.addStretch()
+        dur_save_row.addWidget(self._save_label)
+
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
         meta_block.addWidget(self._narrator_label)
         meta_block.addWidget(self._year_label)
-        meta_block.addWidget(self._duration_label)
+        meta_block.addLayout(dur_save_row)
         meta_block.addStretch()
 
+        # Make fields clickable to enter edit mode
+        for field in (self._title_label, self._author_label,
+                      self._narrator_label, self._year_label):
+            field.mousePressEvent = lambda e, f=field: self._on_field_click(e, f)
+
         header_layout.addLayout(meta_block, stretch=1)
+
+        # Right column: close button + save label below it
+        right_col = QVBoxLayout()
+        right_col.setSpacing(4)
+        right_col.setContentsMargins(0, 0, 0, 0)
 
         self._close_btn = QPushButton("✕")
         self._close_btn.setObjectName("book_detail_close_btn")
         self._close_btn.setFixedSize(15, 15)
-        self._close_btn.clicked.connect(self.close_requested.emit)
-        header_layout.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        self._close_btn.clicked.connect(self._on_close_clicked)
+        right_col.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        right_col.addStretch()
+        header_layout.addLayout(right_col)
 
         layout.addWidget(header)
 
@@ -97,7 +127,10 @@ class BookDetailPanel(QWidget):
         self.tabs.setObjectName("stats_tabs")
         self.tabs.addTab(self._build_stats_tab(), "Stats")
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
+
+        QApplication.instance().installEventFilter(self)
 
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
@@ -322,10 +355,11 @@ class BookDetailPanel(QWidget):
         self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
         narrator = self._book_data.get('narrator', '')
         self._narrator_label.setText(narrator)
-        self._narrator_label.setVisible(bool(narrator))
         year = self._book_data.get('year')
         self._year_label.setText(str(year) if year else '')
-        self._year_label.setVisible(bool(year))
+        if not self._editing:
+            self._narrator_label.setVisible(bool(narrator))
+            self._year_label.setVisible(bool(year))
 
     def load_book(self, book_data: dict, tab: str = 'stats'):
         self._book_path = book_data.get('path') or book_data.get('book_path')
@@ -358,16 +392,9 @@ class BookDetailPanel(QWidget):
             self._cover_label.setPixmap(scaled)
             self._cover_label.setFixedSize(scaled.width(), scaled.height())
 
-        self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
-        self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
-
-        narrator = self._book_data.get('narrator', '')
-        self._narrator_label.setText(narrator if narrator else '')
-        self._narrator_label.setVisible(bool(narrator))
-
-        year = self._book_data.get('year')
-        self._year_label.setText(str(year) if year else '')
-        self._year_label.setVisible(bool(year))
+        self._editing = False
+        self._exit_edit_mode(save=False)
+        self._sync_header_from_fields()
 
         self._duration_show_adjusted = False
         self._update_duration_label()
@@ -405,6 +432,104 @@ class BookDetailPanel(QWidget):
             return
         self._duration_show_adjusted = not self._duration_show_adjusted
         self._update_duration_label()
+
+    def eventFilter(self, obj, event):
+        if self._editing and event.type() == QEvent.Type.MouseButtonPress:
+            from PySide6.QtCore import QRect
+            gpos = event.globalPosition().toPoint()
+
+            def hits(w):
+                return w.isVisible() and QRect(
+                    w.mapToGlobal(w.rect().topLeft()),
+                    w.mapToGlobal(w.rect().bottomRight())
+                ).contains(gpos)
+
+            safe = (self._title_label, self._author_label,
+                    self._narrator_label, self._year_label, self._save_label,
+                    self._close_btn)
+            if not any(hits(w) for w in safe):
+                self._exit_edit_mode(save=False)
+        return super().eventFilter(obj, event)
+
+    def _on_tab_changed(self):
+        if self._editing:
+            self._exit_edit_mode(save=False)
+
+    def _on_field_click(self, event, field):
+        QLineEdit.mousePressEvent(field, event)
+        self._enter_edit_mode()
+
+    def _enter_edit_mode(self):
+        if self._editing:
+            return
+        self._editing = True
+        self._orig_title    = self._title_label.text()
+        self._orig_author   = self._author_label.text()
+        self._orig_narrator = self._narrator_label.text()
+        self._orig_year     = self._year_label.text()
+        self._narrator_label.setVisible(True)
+        self._year_label.setVisible(True)
+        for field in (self._title_label, self._author_label,
+                      self._narrator_label, self._year_label):
+            field.setReadOnly(False)
+        self._save_label.setVisible(False)
+        self._title_label.setFocus()
+
+    def _check_dirty(self):
+        if not self._editing:
+            return
+        dirty = (
+            self._title_label.text()    != self._orig_title    or
+            self._author_label.text()   != self._orig_author   or
+            self._narrator_label.text() != self._orig_narrator or
+            self._year_label.text()     != self._orig_year
+        )
+        if dirty:
+            self._save_label.setText("Save")
+            self._save_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._save_label.setVisible(dirty)
+
+    def _exit_edit_mode(self, save: bool):
+        if not self._editing:
+            return
+        self._editing = False
+        for field in (self._title_label, self._author_label,
+                      self._narrator_label, self._year_label):
+            field.setReadOnly(True)
+        if save:
+            self._commit_inline_save()
+        else:
+            self._sync_header_from_fields()
+            self._save_label.setVisible(False)
+        narrator = self._book_data.get('narrator', '')
+        year = self._book_data.get('year')
+        self._narrator_label.setVisible(bool(narrator))
+        self._year_label.setVisible(bool(year))
+
+    def _on_inline_save(self):
+        self._exit_edit_mode(save=True)
+
+    def _commit_inline_save(self):
+        title    = self._title_label.text().strip()
+        author   = self._author_label.text().strip()
+        narrator = self._narrator_label.text().strip()
+        year     = self._year_label.text().strip()
+        if self.db.update_book_metadata(self._book_path, title, author, narrator, year):
+            self._book_data.update({
+                'title': title, 'author': author,
+                'narrator': narrator, 'year': year
+            })
+            self.metadata_saved.emit(self._book_path, title, author)
+        self._sync_header_from_fields()
+        self._save_label.setText("Saved")
+        self._save_label.setCursor(Qt.CursorShape.ArrowCursor)
+        self._save_label.setVisible(True)
+        QTimer.singleShot(1000, lambda: self._save_label.setVisible(False))
+
+    def _on_close_clicked(self):
+        if self._editing:
+            self._exit_edit_mode(save=False)
+        self.close_requested.emit()
 
     def _refresh_stats(self):
         if not self._book_path:
