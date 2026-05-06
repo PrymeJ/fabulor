@@ -19,6 +19,7 @@ class AudioSettingsTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 10)
 
         # --- Normalization ---
         norm_header = QLabel("Speech compression (Normalization)")

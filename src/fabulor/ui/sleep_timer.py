@@ -27,6 +27,7 @@ class SleepTimerPanel(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 10)
         
         sleep_header = QLabel("Sleep timer")
         sleep_header.setObjectName("settings_header")

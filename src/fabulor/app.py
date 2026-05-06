@@ -811,7 +811,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 1: THEMES ---
         themes_tab = QWidget()
         themes_layout = QVBoxLayout(themes_tab)
-        themes_layout.setContentsMargins(10, 10, 10, 10)
+        themes_layout.setContentsMargins(10, 0, 10, 10)
 
         # Cover art based theme
         cover_header = QLabel("Cover art based theme")
@@ -933,6 +933,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 2: APPEARANCE ---
         appearance_tab = QWidget()
         app_layout = QVBoxLayout(appearance_tab)
+        app_layout.setContentsMargins(10, 0, 10, 10)
 
         fade_header = QLabel("Theme hover (ms)")
         fade_header.setObjectName("settings_header")
@@ -1050,6 +1051,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 3: LIBRARY ---
         library_tab = QWidget()
         lib_layout = QVBoxLayout(library_tab)
+        lib_layout.setContentsMargins(10, 0, 10, 10)
         pattern_header = QLabel("Naming pattern")
         pattern_header.setObjectName("settings_header")
         lib_layout.addWidget(pattern_header)
@@ -1109,7 +1111,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # --- TAB 4: SHORTCUTS ---
         shortcuts_tab = QWidget()
         short_layout = QVBoxLayout(shortcuts_tab)
-        short_layout.setContentsMargins(10, 10, 10, 10)
+        short_layout.setContentsMargins(10, 0, 10, 10)
         short_layout.setSpacing(6)
 
         digit_header = QLabel("Chapter number keys")

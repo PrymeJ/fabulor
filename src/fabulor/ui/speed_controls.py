@@ -35,6 +35,7 @@ class SpeedControlsPanel(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 10)
         
         speed_header = QLabel("Playback speed")
         speed_header.setObjectName("settings_header")
