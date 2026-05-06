@@ -278,10 +278,22 @@ class _RangeBar(QWidget):
         painter.fillRect(0, 0, w, h, self._bg)
 
         if self._duration > 0:
-            x1 = int((self._start / self._duration) * w)
-            x2 = int((self._end / self._duration) * w)
-            x2 = min(x2, w)
-            painter.fillRect(x1, 0, x2 - x1, h, self._accent)
+            # Calculate pixel positions as floats first to maintain precision
+            x1_float = (self._start / self._duration) * w
+            x2_float = (self._end / self._duration) * w
+
+            # Ensure x2_float doesn't exceed widget width
+            x2_float = min(x2_float, float(w))
+
+            # Calculate the width of the filled portion
+            fill_width_float = x2_float - x1_float
+
+            # Apply the 1px minimum width rule if there's any progress
+            if fill_width_float > 0 and fill_width_float < 1:
+                fill_width = 1
+            else:
+                fill_width = int(fill_width_float) # Convert to int for drawing
+            painter.fillRect(int(x1_float), 0, fill_width, h, self._accent)
 
         outline = QColor(self._accent)
         outline.setAlpha(120)
