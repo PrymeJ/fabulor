@@ -210,7 +210,7 @@ class SessionListWidget(QScrollArea):
             secs = 0.0
 
         ts_label = QLabel(ts_text)
-        ts_label.setObjectName("stats_key_label")
+        ts_label.setObjectName("stats_session_label")
         hbox.addWidget(ts_label)
 
         pos_start = s.get('position_start') or 0.0
@@ -254,6 +254,7 @@ class _RangeBar(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        from PySide6.QtGui import QPen
         painter = QPainter(self)
         w, h = self.width(), self.height()
 
@@ -265,6 +266,12 @@ class _RangeBar(QWidget):
             x2 = max(x2, x1 + 4)
             x2 = min(x2, w)
             painter.fillRect(x1, 0, x2 - x1, h, self._accent)
+
+        outline = QColor(self._accent)
+        outline.setAlpha(120)
+        painter.setPen(QPen(outline, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, w - 1, h - 1)
 
         painter.end()
 

@@ -2417,6 +2417,10 @@ def get_stats_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             font-size: 12px;
         }}
+        QLabel#stats_session_label {{
+            color: {t['accent_light']};
+            font-size: 13px;
+        }}
         QLabel#stats_book_title_finished {{
             color: {finished_color};
         }}

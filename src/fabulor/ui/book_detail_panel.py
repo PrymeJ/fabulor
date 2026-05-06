@@ -11,6 +11,15 @@ from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 
 
+class _ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
@@ -23,6 +32,7 @@ class BookDetailPanel(QWidget):
         self._book_path: str | None = None
         self._book_data: dict = {}
         self._theme: dict = {}
+        self._duration_show_adjusted: bool = False
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -62,10 +72,15 @@ class BookDetailPanel(QWidget):
         self._year_label = QLabel()
         self._year_label.setObjectName("book_detail_year")
 
+        self._duration_label = _ClickableLabel()
+        self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._duration_label.clicked.connect(self._toggle_duration)
+
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
         meta_block.addWidget(self._narrator_label)
         meta_block.addWidget(self._year_label)
+        meta_block.addWidget(self._duration_label)
         meta_block.addStretch()
 
         header_layout.addLayout(meta_block, stretch=1)
@@ -354,6 +369,9 @@ class BookDetailPanel(QWidget):
         self._year_label.setText(str(year) if year else '')
         self._year_label.setVisible(bool(year))
 
+        self._duration_show_adjusted = False
+        self._update_duration_label()
+
         self._meta_title.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
         self._meta_author.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
         self._meta_narrator.setText(self._book_data.get('narrator', '') or '')
@@ -366,6 +384,27 @@ class BookDetailPanel(QWidget):
                 break
 
         self._refresh_stats()
+
+    def _update_duration_label(self):
+        duration = self._book_data.get('duration') or 0.0
+        if not duration:
+            self._duration_label.setVisible(False)
+            return
+        speed = self.config.get_book_speed(self._book_path) or 1.0
+        if self._duration_show_adjusted and speed != 1.0:
+            text = f"{self._fmt(duration / speed)} at {speed:g}x"
+        else:
+            text = self._fmt(duration)
+        self._duration_label.setText(text)
+        self._duration_label.setVisible(True)
+
+    def _toggle_duration(self):
+        duration = self._book_data.get('duration') or 0.0
+        speed = self.config.get_book_speed(self._book_path) or 1.0
+        if not duration or speed == 1.0:
+            return
+        self._duration_show_adjusted = not self._duration_show_adjusted
+        self._update_duration_label()
 
     def _refresh_stats(self):
         if not self._book_path:
