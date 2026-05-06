@@ -211,20 +211,34 @@ class SessionListWidget(QScrollArea):
 
         ts_label = QLabel(ts_text)
         ts_label.setObjectName("stats_session_label")
-        ts_label.setFixedWidth(148)
+        ts_label.setFixedWidth(110)
         hbox.addWidget(ts_label)
 
         pos_start = s.get('position_start') or 0.0
         pos_end = s.get('position_end') or 0.0
+
+        if duration > 0:
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+            raw_delta = (pos_end - pos_start) / duration * 100
+            delta = min(100.0, max(-100.0, raw_delta))
+            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            delta_label = QLabel(delta_str)
+            pct = min(100, round((pos_end / duration) * 100))
+            pct_label = QLabel(f"{fmt_pct(pct)}")
+        else:
+            delta_label = QLabel("")
+            pct_label = QLabel("")
+
+        delta_label.setObjectName("stats_value_label")
+        delta_label.setFixedWidth(42)
+        delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hbox.addWidget(delta_label)
+
         bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg)
         bar.setFixedHeight(6)
         hbox.addWidget(bar, stretch=1)
 
-        if duration > 0:
-            pct = min(100, round((pos_end / duration) * 100))
-            pct_label = QLabel(f"{pct}%")
-        else:
-            pct_label = QLabel("")
         pct_label.setObjectName("stats_value_label")
         pct_label.setFixedWidth(36)
         pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -266,7 +280,6 @@ class _RangeBar(QWidget):
         if self._duration > 0:
             x1 = int((self._start / self._duration) * w)
             x2 = int((self._end / self._duration) * w)
-            x2 = max(x2, x1 + 4)
             x2 = min(x2, w)
             painter.fillRect(x1, 0, x2 - x1, h, self._accent)
 
