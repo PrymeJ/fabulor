@@ -583,28 +583,7 @@ THEMES = {
         "panel_theme_names_dimmed": "#FEC074",
         "text": "#F1E7C2", # Pale lemon text
     },
-    "Ithaca": {
-        "bg_deep": "#1A2F44", # Stormy Aegean depths
-        "bg_main": "#2F4A66", # Sea mist blue
-        "slider_overall_bg": "#3F5A77",
-        "slider_overall_fill": "#4682B4", # Steel blue horizon accent
-        "slider_chapter_bg": "#2F4A66",
-        "slider_chapter_fill": "#3A6FAF",
-        "slider_vol_bg": "#1A2F44",
-        "slider_vol_fill": "#4682B4",
-        "accent": "#4682B4",
-        "accent_light": "#5A94D0",
-        "accent_dark": "#2F5A8F",
-        "bg_sidebar": "#1A2F44",
-        "bg_dropdown": "#2F4A66",
-        "curr_chap_highlight": "#4682B4",
-        "sidebar_text_hover": "#5A94D0",
-        "sidebar_opacity": 0.73,
-        "panel_opacity_hover": 0.92,
-        "panel_theme_names_dimmed": "#EEECF9",
-        "text": "#D7E8EE", # Cool seafoam text
-    },
-    "Jade City": { # New theme, tones of jade
+    "Jade City": { 
         "bg_deep":      "#002E22",
         "bg_main":      "#003D2E",
         "slider_overall_bg":   "#004D3B",
@@ -929,27 +908,6 @@ THEMES = {
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
         "text":                   "#FFF2E0"
-    },
-    "Symir": {
-        "bg_deep":                "#0A1C1A",
-        "bg_main":                "#0F2E2A",
-        "slider_overall_bg":      "#1A4A44",
-        "slider_overall_fill":    "#2FAA9A",
-        "slider_chapter_bg":      "#1A4A44",
-        "slider_chapter_fill":    "#4CCCB8",
-        "slider_vol_bg":          "#0F2E2A",
-        "slider_vol_fill":        "#2FAA9A",
-        "accent":                 "#2FAA9A",
-        "accent_light":           "#4CCCB8",
-        "accent_dark":            "#1A6E62",
-        "bg_sidebar":             "#0A1C1A",
-        "bg_dropdown":            "#1A4A44",
-        "curr_chap_highlight":    "#4CCCB8",
-        "sidebar_text_hover":     "#4CCCB8",
-        "sidebar_opacity":        0.84,
-        "panel_opacity_hover":    0.91,
-        "panel_theme_names_dimmed": "#C5DCE1",
-        "text":                   "#D9F0EC"
     },
     "The Color Purple": {
         "bg_deep":      "#0D001A",  # title bar, darkest
