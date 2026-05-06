@@ -211,6 +211,7 @@ class SessionListWidget(QScrollArea):
 
         ts_label = QLabel(ts_text)
         ts_label.setObjectName("stats_session_label")
+        ts_label.setFixedWidth(148)
         hbox.addWidget(ts_label)
 
         pos_start = s.get('position_start') or 0.0
@@ -225,6 +226,8 @@ class SessionListWidget(QScrollArea):
         else:
             pct_label = QLabel("")
         pct_label.setObjectName("stats_value_label")
+        pct_label.setFixedWidth(36)
+        pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(pct_label)
 
         return row
