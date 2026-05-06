@@ -68,6 +68,7 @@ class BookDetailPanel(QWidget):
             edit.setFrame(False)
             edit.setReadOnly(True)
             edit.textChanged.connect(self._check_dirty)
+            edit.returnPressed.connect(self._on_inline_save)
             return edit
 
         self._title_label    = make_field("book_detail_title")
@@ -82,6 +83,7 @@ class BookDetailPanel(QWidget):
         self._duration_label = _ClickableLabel()
         self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._duration_label.clicked.connect(self._toggle_duration)
+        self._duration_label.setContentsMargins(2, 0, 0, 0)
 
         self._save_label = _ClickableLabel("Save")
         self._save_label.setObjectName("book_detail_save_label")
@@ -206,41 +208,6 @@ class BookDetailPanel(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(10)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(6)
-
-        def make_field(label_text):
-            lbl = QLabel(label_text)
-            lbl.setObjectName("stats_key_label")
-            field = QLineEdit()
-            field.setObjectName("metadata_field")
-            return lbl, field
-
-        title_lbl, self._meta_title = make_field("Title")
-        author_lbl, self._meta_author = make_field("Author")
-        narrator_lbl, self._meta_narrator = make_field("Narrator")
-        year_lbl, self._meta_year = make_field("Year")
-
-        grid.addWidget(title_lbl,           0, 0)
-        grid.addWidget(self._meta_title,    1, 0)
-        grid.addWidget(author_lbl,          0, 1)
-        grid.addWidget(self._meta_author,   1, 1)
-        grid.addWidget(narrator_lbl,        2, 0)
-        grid.addWidget(self._meta_narrator, 3, 0)
-        grid.addWidget(year_lbl,            2, 1)
-        grid.addWidget(self._meta_year,     3, 1)
-
-        outer.addLayout(grid)
-
-        save_btn = QPushButton("Save")
-        save_btn.setObjectName("stats_nav_btn")
-        save_btn.clicked.connect(self._on_save_metadata)
-        outer.addWidget(save_btn)
-
-        tag_header = QLabel("Tags")
-        tag_header.setObjectName("stats_key_label")
-        outer.addWidget(tag_header)
 
         self._tag_chip_container = QWidget()
         self._tag_chip_layout = FlowLayout(self._tag_chip_container)
@@ -339,21 +306,6 @@ class BookDetailPanel(QWidget):
             self.db.remove_book_tag(self._book_path, tag)
             self._rebuild_tag_chips()
 
-    def _on_save_metadata(self):
-        if not self._book_path:
-            return
-        title = self._meta_title.text().strip()
-        author = self._meta_author.text().strip()
-        narrator = self._meta_narrator.text().strip()
-        year = self._meta_year.text().strip()
-        if self.db.update_book_metadata(self._book_path, title, author, narrator, year):
-            self._book_data.update({
-                'title': title, 'author': author,
-                'narrator': narrator, 'year': year
-            })
-            self._sync_header_from_fields()
-            self.metadata_saved.emit(self._book_path, title, author)
-
     def _sync_header_from_fields(self):
         self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
         self._author_label.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
@@ -403,10 +355,6 @@ class BookDetailPanel(QWidget):
         self._duration_show_adjusted = False
         self._update_duration_label()
 
-        self._meta_title.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))
-        self._meta_author.setText(self._book_data.get('author') or self._book_data.get('book_author', ''))
-        self._meta_narrator.setText(self._book_data.get('narrator', '') or '')
-        self._meta_year.setText(str(self._book_data.get('year')) if self._book_data.get('year') else '')
         self._rebuild_tag_chips()
 
         for i in range(self.tabs.count()):

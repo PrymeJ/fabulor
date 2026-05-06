@@ -2284,7 +2284,6 @@ def get_stats_stylesheet(theme_name="default"):
         }}
         QLabel#book_detail_save_label {{
             color: {t['accent']};
-            font-size: 12px;
         }}
         QLineEdit#book_detail_title,
         QLineEdit#book_detail_author,
