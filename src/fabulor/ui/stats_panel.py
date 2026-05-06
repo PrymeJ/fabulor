@@ -220,7 +220,7 @@ class SessionListWidget(QScrollArea):
         hbox.addWidget(bar, stretch=1)
 
         if duration > 0:
-            pct = int((pos_end / duration) * 100)
+            pct = min(100, round((pos_end / duration) * 100))
             pct_label = QLabel(f"{pct}%")
         else:
             pct_label = QLabel("")

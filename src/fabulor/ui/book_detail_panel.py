@@ -498,7 +498,7 @@ class BookDetailPanel(QWidget):
 
         furthest = stats['furthest_position']
         if duration and duration > 0:
-            pct = min(100, int((furthest / duration) * 100))
+            pct = min(100, round((furthest / duration) * 100))
             self._furthest_bar.update_range(0, furthest, duration)
             self._furthest_pct_label.setText(f"{pct}%")
             remaining = max(0, duration - furthest)
