@@ -368,24 +368,24 @@ class PanelManager:
 
     def _start_book_detail_entry(self):
         panel_w = self.main_window.width()
-        sidebar_y = 56
+        book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel.setFixedWidth(panel_w)
-        self.book_detail_panel.setFixedHeight(self.main_window.height() - sidebar_y)
-        self.book_detail_panel.move(panel_w, sidebar_y)
+        self.book_detail_panel.setFixedHeight(self.main_window.height() - book_detail_panel_y)
+        self.book_detail_panel.move(panel_w, book_detail_panel_y)
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
 
-        self.book_detail_panel_animation.setStartValue(QPoint(panel_w, sidebar_y))
-        self.book_detail_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.book_detail_panel_animation.setStartValue(QPoint(panel_w, book_detail_panel_y))
+        self.book_detail_panel_animation.setEndValue(QPoint(0, book_detail_panel_y))
         self.book_detail_panel_animation.start()
 
     def _close_book_detail_flow(self):
         if self.book_detail_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.main_window.width()
-        sidebar_y = 56
-        self.book_detail_panel_animation.setStartValue(QPoint(0, sidebar_y))
-        self.book_detail_panel_animation.setEndValue(QPoint(panel_w, sidebar_y))
+        book_detail_panel_y = 32 # Position under the titlebar
+        self.book_detail_panel_animation.setStartValue(QPoint(0, book_detail_panel_y))
+        self.book_detail_panel_animation.setEndValue(QPoint(panel_w, book_detail_panel_y))
         self.book_detail_panel_animation.finished.connect(self._on_book_detail_hidden)
         self.book_detail_panel_animation.start()
 
