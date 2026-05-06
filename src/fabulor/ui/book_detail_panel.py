@@ -192,9 +192,9 @@ class BookDetailPanel(QWidget):
         grid.setColumnStretch(1, 1)
         outer.addWidget(grid_widget)
 
-        history_header = QLabel("Listening history")
-        history_header.setObjectName("stats_history_header")
-        outer.addWidget(history_header)
+        self._history_header = QLabel("Listening history")
+        self._history_header.setObjectName("stats_history_header")
+        outer.addWidget(self._history_header)
 
         self._session_list = SessionListWidget()
         outer.addWidget(self._session_list)
@@ -239,10 +239,10 @@ class BookDetailPanel(QWidget):
 
         outer.addStretch()
 
-        delete_btn = QPushButton("Delete listening history")
-        delete_btn.setObjectName("stats_reset_btn")
-        delete_btn.clicked.connect(self._on_delete_book_stats)
-        outer.addWidget(delete_btn)
+        self._delete_history_btn = QPushButton("Delete listening history")
+        self._delete_history_btn.setObjectName("stats_reset_btn")
+        self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
+        outer.addWidget(self._delete_history_btn)
 
         return widget
 
@@ -517,6 +517,11 @@ class BookDetailPanel(QWidget):
         self._stat_labels[2].setText(str(stats['session_count']))
 
         sessions = self.db.get_book_sessions(self._book_path)
+
+        has_history = bool(sessions)
+        self._history_header.setVisible(has_history)
+        self._session_list.setVisible(has_history)
+        self._delete_history_btn.setVisible(has_history)
 
         if sessions:
             newest = sessions[0]
