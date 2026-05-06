@@ -150,6 +150,125 @@ class BarChartWidget(QWidget):
         return f"{m}m"
 
 
+class SessionListWidget(QScrollArea):
+    """Scrollable list of individual listening sessions with a partial-range bar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._accent = QColor("#9B59B6")
+        self._bg = QColor("#3A1A50")
+        self._container = QWidget()
+        self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(6)
+        self._layout.addStretch()
+        self.setWidget(self._container)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(240)
+
+    def set_colors(self, accent: QColor, bg: QColor):
+        self._accent = accent
+        self._bg = bg
+        for i in range(self._layout.count() - 1):
+            item = self._layout.itemAt(i)
+            if item and item.widget():
+                bar = item.widget().findChild(_RangeBar)
+                if bar:
+                    bar.set_colors(accent, bg)
+
+    def set_data(self, sessions: list[dict], duration: float):
+        while self._layout.count() > 1:
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for s in sessions:
+            row = self._make_row(s, duration)
+            self._layout.insertWidget(self._layout.count() - 1, row)
+
+    def _make_row(self, s: dict, duration: float) -> QWidget:
+        row = QWidget()
+        hbox = QHBoxLayout(row)
+        hbox.setContentsMargins(0, 2, 0, 2)
+        hbox.setSpacing(8)
+
+        try:
+            from datetime import timedelta
+            dt_start = datetime.fromisoformat(s['session_start'])
+            secs = s.get('listened_seconds') or 0.0
+            dt_end = dt_start + timedelta(seconds=secs)
+            ts_text = (
+                f"{dt_start.strftime('%b')} {dt_start.day}"
+                f"  {dt_start.strftime('%H:%M')} – {dt_end.strftime('%H:%M')}"
+            )
+        except Exception:
+            ts_text = s.get('session_start', '—')
+            secs = 0.0
+
+        ts_label = QLabel(ts_text)
+        ts_label.setObjectName("stats_key_label")
+        hbox.addWidget(ts_label)
+
+        pos_start = s.get('position_start') or 0.0
+        pos_end = s.get('position_end') or 0.0
+        bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg)
+        bar.setFixedHeight(6)
+        hbox.addWidget(bar, stretch=1)
+
+        if duration > 0:
+            pct = int((pos_end / duration) * 100)
+            pct_label = QLabel(f"{pct}%")
+        else:
+            pct_label = QLabel("")
+        pct_label.setObjectName("stats_value_label")
+        hbox.addWidget(pct_label)
+
+        return row
+
+
+class _RangeBar(QWidget):
+    """Flat bar showing which portion of a book was covered in a session."""
+
+    def __init__(self, pos_start: float, pos_end: float, duration: float,
+                 accent: QColor, bg: QColor, parent=None):
+        super().__init__(parent)
+        self._start = pos_start
+        self._end = pos_end
+        self._duration = duration
+        self._accent = accent
+        self._bg = bg
+
+    def update_range(self, pos_start: float, pos_end: float, duration: float):
+        self._start = pos_start
+        self._end = pos_end
+        self._duration = duration
+        self.update()
+
+    def set_colors(self, accent: QColor, bg: QColor):
+        self._accent = accent
+        self._bg = bg
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        w, h = self.width(), self.height()
+
+        painter.fillRect(0, 0, w, h, self._bg)
+
+        if self._duration > 0:
+            x1 = int((self._start / self._duration) * w)
+            x2 = int((self._end / self._duration) * w)
+            x2 = max(x2, x1 + 4)
+            x2 = min(x2, w)
+            painter.fillRect(x1, 0, x2 - x1, h, self._accent)
+
+        painter.end()
+
+
 def _dim_effect():
     from PySide6.QtWidgets import QGraphicsOpacityEffect
     effect = QGraphicsOpacityEffect()

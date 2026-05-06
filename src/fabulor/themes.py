@@ -2307,6 +2307,12 @@ def get_stats_stylesheet(theme_name="default"):
             margin-top: 0px;
             color: {t['accent_light']};
         }}
+        QLabel#stats_history_header {{
+            font-weight: bold;
+            font-size: 15px;
+            margin-top: 0px;
+            color: {t['accent_light']};
+        }}
         QPushButton {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};

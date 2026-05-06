@@ -2,13 +2,12 @@ import os
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
-    QPushButton, QScrollArea, QProgressBar, QGridLayout,
-    QLineEdit, QCompleter
+    QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel
 from PySide6.QtGui import QPixmap
 
-from .stats_panel import BarChartWidget
+from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 
 
@@ -23,6 +22,7 @@ class BookDetailPanel(QWidget):
         self.config = config
         self._book_path: str | None = None
         self._book_data: dict = {}
+        self._theme: dict = {}
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -81,7 +81,7 @@ class BookDetailPanel(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
         self.tabs.addTab(self._build_stats_tab(), "Stats")
-        self.tabs.addTab(self._build_metadata_tab(), "Metadata")
+        self.tabs.addTab(self._build_metadata_tab(), "Tags")
         layout.addWidget(self.tabs, stretch=1)
 
     def _build_stats_tab(self) -> QWidget:
@@ -90,31 +90,37 @@ class BookDetailPanel(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(8)
 
-        self._furthest_label = QLabel("Furthest position")
-        self._furthest_label.setObjectName("stats_key_label")
-        outer.addWidget(self._furthest_label)
-
-        self._furthest_bar = QProgressBar()
-        self._furthest_bar.setObjectName("stats_progress_bar")
-        self._furthest_bar.setRange(0, 100)
-        self._furthest_bar.setValue(0)
-        self._furthest_bar.setFixedHeight(6)
-        self._furthest_bar.setTextVisible(False)
-        outer.addWidget(self._furthest_bar)
-
-        self._furthest_pct_label = QLabel("")
-        self._furthest_pct_label.setObjectName("stats_value_label")
-        outer.addWidget(self._furthest_pct_label)
-
+        from PySide6.QtGui import QColor
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
+        # Row 0: Furthest position | [bar stretches col 1] | pct
+        fp_key = QLabel("Furthest position")
+        fp_key.setObjectName("stats_key_label")
+        self._furthest_pct_label = QLabel("")
+        self._furthest_pct_label.setObjectName("stats_value_label")
+
+        fp_bar_row = QHBoxLayout()
+        fp_bar_row.setContentsMargins(0, 0, 0, 0)
+        fp_bar_row.setSpacing(0)
+        self._furthest_bar = _RangeBar(0, 0, 1, QColor("#888"), QColor("#333"))
+        self._furthest_bar.setFixedHeight(6)
+        fp_bar_row.addWidget(self._furthest_bar)
+        fp_bar_container = QWidget()
+        fp_bar_container.setLayout(fp_bar_row)
+
+        grid.addWidget(fp_key,               0, 0, Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(fp_bar_container,     0, 1)
+        grid.addWidget(self._furthest_pct_label, 0, 2, Qt.AlignmentFlag.AlignLeft)
+
         stat_rows = [
+            ("Remaining",      "—"),
             ("Total listened", "—"),
             ("Sessions",       "—"),
+            ("Last session",   "—"),
             ("Started",        "—"),
             ("Finished",       "—"),
         ]
@@ -125,26 +131,21 @@ class BookDetailPanel(QWidget):
             k.setObjectName("stats_key_label")
             v = QLabel(default)
             v.setObjectName("stats_value_label")
-            grid.addWidget(k, i, 0, Qt.AlignmentFlag.AlignLeft)
-            grid.addWidget(v, i, 1, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(k, i + 1, 0, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(v, i + 1, 1, 1, 2, Qt.AlignmentFlag.AlignLeft)
             self._stat_labels.append(v)
 
+        grid.setColumnStretch(1, 1)
         outer.addWidget(grid_widget)
 
-        chart_header = QLabel("Listening history")
-        chart_header.setObjectName("stats_key_label")
-        outer.addWidget(chart_header)
+        history_header = QLabel("Listening history")
+        history_header.setObjectName("stats_history_header")
+        outer.addWidget(history_header)
 
-        self._book_chart = BarChartWidget()
-        outer.addWidget(self._book_chart)
+        self._session_list = SessionListWidget()
+        outer.addWidget(self._session_list)
 
         outer.addStretch()
-
-        delete_btn = QPushButton("Delete listening history")
-        delete_btn.setObjectName("stats_reset_btn")
-        delete_btn.clicked.connect(self._on_delete_book_stats)
-        outer.addWidget(delete_btn)
-
         return widget
 
     def _build_metadata_tab(self) -> QWidget:
@@ -218,6 +219,12 @@ class BookDetailPanel(QWidget):
         outer.addLayout(tag_input_row)
 
         outer.addStretch()
+
+        delete_btn = QPushButton("Delete listening history")
+        delete_btn.setObjectName("stats_reset_btn")
+        delete_btn.clicked.connect(self._on_delete_book_stats)
+        outer.addWidget(delete_btn)
+
         return widget
 
     def _rebuild_tag_chips(self):
@@ -371,39 +378,62 @@ class BookDetailPanel(QWidget):
             if book:
                 duration = book.duration
 
+        speed = self.config.get_book_speed(self._book_path) or 1.0
+
         furthest = stats['furthest_position']
         if duration and duration > 0:
             pct = min(100, int((furthest / duration) * 100))
-            self._furthest_bar.setValue(pct)
+            self._furthest_bar.update_range(0, furthest, duration)
+            self._furthest_pct_label.setText(f"{pct}%")
             remaining = max(0, duration - furthest)
-            self._furthest_pct_label.setText(
-                f"{pct}%  —  {self._fmt(remaining)} remaining"
-            )
+            if speed != 1.0:
+                self._stat_labels[0].setText(
+                    f"{self._fmt(remaining / speed)} at {speed:g}x"
+                )
+            else:
+                self._stat_labels[0].setText(self._fmt(remaining))
         else:
-            self._furthest_bar.setValue(0)
+            self._furthest_bar.update_range(0, 0, 1)
             self._furthest_pct_label.setText("—")
+            self._stat_labels[0].setText("—")
 
-        self._stat_labels[0].setText(self._fmt(stats['total_seconds']))
-        self._stat_labels[1].setText(str(stats['session_count']))
+        self._stat_labels[1].setText(self._fmt(stats['total_seconds']))
+        self._stat_labels[2].setText(str(stats['session_count']))
+
+        sessions = self.db.get_book_sessions(self._book_path)
+
+        if sessions:
+            newest = sessions[0]
+            try:
+                ld = datetime.fromisoformat(newest['session_start'])
+                secs = newest.get('listened_seconds') or 0.0
+                self._stat_labels[3].setText(
+                    f"{ld.strftime('%b')} {ld.day}  {ld.strftime('%H:%M')}  · {self._fmt(secs)}"
+                )
+            except Exception:
+                self._stat_labels[3].setText("—")
+        else:
+            self._stat_labels[3].setText("—")
 
         if stats['first_session']:
             d = datetime.fromisoformat(stats['first_session'])
-            self._stat_labels[2].setText(f"{d.strftime('%b')} {d.day}, {d.year}")
+            self._stat_labels[4].setText(f"{d.strftime('%b')} {d.day}, {d.year}")
         else:
-            self._stat_labels[2].setText("—")
+            self._stat_labels[4].setText("—")
 
         if stats['finished_count'] == 0:
-            self._stat_labels[3].setText("—")
+            self._stat_labels[5].setText("—")
         elif stats['finished_count'] == 1:
             d = datetime.fromisoformat(stats['last_finished'])
-            self._stat_labels[3].setText(f"{d.strftime('%b')} {d.day}, {d.year}")
+            self._stat_labels[5].setText(f"{d.strftime('%b')} {d.day}, {d.year}")
         else:
             d = datetime.fromisoformat(stats['last_finished'])
-            self._stat_labels[3].setText(
+            self._stat_labels[5].setText(
                 f"{stats['finished_count']}× — last {d.strftime('%b')} {d.day}, {d.year}"
             )
 
-        self._book_chart.set_data(stats['per_day'])
+        self._session_list.set_data(sessions, duration or 0.0)
+        self._apply_bar_colors()
 
     def _on_delete_book_stats(self):
         from PySide6.QtWidgets import QMessageBox
@@ -419,10 +449,17 @@ class BookDetailPanel(QWidget):
                 self._refresh_stats()
                 self.history_deleted.emit()
 
+    def _apply_bar_colors(self):
+        from PySide6.QtGui import QColor
+        accent = QColor(self._theme.get('curr_chap_highlight', '#888888'))
+        bg = QColor(self._theme.get('library_slider_bg', '#333333'))
+        self._session_list.set_colors(accent, bg)
+        self._furthest_bar.set_colors(accent, bg)
+
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor
-        color = QColor(theme.get('accent', '#9B59B6'))
-        self._book_chart.set_accent_color(color)
+        self._theme = theme
+        self._apply_bar_colors()
 
     @staticmethod
     def _fmt(seconds: float) -> str:

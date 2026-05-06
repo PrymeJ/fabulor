@@ -592,6 +592,23 @@ class LibraryDB:
                 conn.execute("DELETE FROM book_events")
                 conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
 
+    def get_book_sessions(self, book_path: str) -> list[dict]:
+        """Returns individual sessions for a book, newest first."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT
+                    session_start,
+                    COALESCE(listened_seconds,
+                        (julianday(session_end) - julianday(session_start)) * 86400
+                    ) as listened_seconds,
+                    position_start,
+                    position_end
+                FROM listening_sessions
+                WHERE book_path = ?
+                ORDER BY session_start DESC
+            """, (book_path,)).fetchall()
+        return [dict(r) for r in rows]
+
     def delete_book_stats(self, book_path: str):
         """Deletes all session and event rows for a specific book path."""
         with self._get_conn() as conn:
