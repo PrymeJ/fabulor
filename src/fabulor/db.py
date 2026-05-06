@@ -22,6 +22,7 @@ class LibraryDB:
     @contextmanager
     def _get_conn(self):
         conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.row_factory = sqlite3.Row
         try:
             yield conn
@@ -82,6 +83,7 @@ class LibraryDB:
                     listened_seconds REAL
                 )
             """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_path_start ON listening_sessions (book_path, session_start)")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS book_tags (
                     book_path TEXT NOT NULL,
