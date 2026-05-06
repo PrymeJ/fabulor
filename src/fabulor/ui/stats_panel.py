@@ -388,8 +388,10 @@ class BookDayRow(QWidget):
             pct_start = min(100.0, pos_start / duration * 100)
             pct_end = min(100.0, pos_end / duration * 100)
             delta = pct_end - pct_start
-            delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
-            prog_lbl.setText(f"{pct_start:.1f}% · {pct_end:.1f}% | {delta_str}")
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            prog_lbl.setText(f"{fmt_pct(pct_start)} · {fmt_pct(pct_end)} | {delta_str}")
             if delta < 0:
                 prog_lbl.setObjectName("stats_book_time_label_dim")
 
