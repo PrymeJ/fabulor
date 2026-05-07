@@ -5,8 +5,11 @@ Misnamed — orchestrates all panel visual updates, not just speed grid.
 Rename to `_refresh_panel_visuals` when refactoring SettingsController.
 
 ### Stats page sluggishness on Weekly and Monthly tabs
-Both BookDayRow and FinishedBookThumb load from disk synchronously in __init__. pixmap.load() with SmoothTransformation scaling is the culprit, and it compounds with each row added.
-The fix is to defer cover loading out of __init__ using the existing CoverLoader pattern.
+RESOLVED: BookDayRow and FinishedBookThumb now load covers asynchronously via CoverLoaderWorker, with placeholder fallback and _cover_cache hit check.
+
+### CoverLoaderWorker constructor in stats_panel.py
+BookDayRow and FinishedBookThumb construct CoverLoaderWorker using an anonymous type (`type('_BD', (), {...})`) to satisfy the Book dataclass signature, passing None as the player instance (safe — run() doesn't use it).
+This is fragile. When the path→ID migration happens, either give CoverLoaderWorker a simpler constructor overload, or extract a separate lightweight worker for non-library cover loads.
 
 ---
 
