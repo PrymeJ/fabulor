@@ -48,8 +48,25 @@ def _parse_year_range(text: str):
     if not m:
         return None
     if m.group(1):
-        return (int(m.group(1)), int(m.group(2)))
-    return (int(m.group(4)), int(m.group(3)))
+        lo, hi = int(m.group(1)), int(m.group(2))
+    else:
+        lo, hi = int(m.group(4)), int(m.group(3))
+    return (lo, hi) if lo <= hi else None  # invalidate impossible ranges
+
+def _is_incomplete_year_filter(text: str) -> bool:
+    """True while the user is still typing a year filter — no red yet."""
+    import re
+    # Single operator alone or with digits: <, >, <2010, >2010
+    if re.fullmatch(r'[<>]\d*', text):
+        return True
+    # Range in progress: operator+digits+DIFFERENT operator+incomplete digits
+    # >2010< or >2010<20 — but NOT >2010> (same operator = never valid)
+    m = re.fullmatch(r'([<>])(\d+)([<>])(\d*)', text)
+    if m and m.group(1) != m.group(3):
+        # Only incomplete if the range isn't yet parseable as complete+invalid
+        # i.e. second number has fewer than 4 digits (still being typed)
+        return len(m.group(4)) < 4
+    return False
 
 FONT_SIZES = {
     "1 per row": {
@@ -442,8 +459,12 @@ class LibraryPanel(QFrame):
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
-        if self._book_model.filter_empty:
-            self.search_field.setStyleSheet("border: 1px solid red;")
+        no_match = self._book_model.filter_empty
+        incomplete = _is_incomplete_year_filter(text.lower().strip())
+        if no_match and not incomplete:
+            self.search_field.setStyleSheet(
+                "background-color: rgba(120, 0, 0, 0.6);"
+            )
         else:
             self.search_field.setStyleSheet("")
         QTimer.singleShot(0, self._load_visible_covers)
@@ -543,6 +564,12 @@ class LibraryPanel(QFrame):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if self._book_model.filter_empty:
+            self.search_field.blockSignals(True)
+            self.search_field.clear()
+            self.search_field.setStyleSheet("")
+            self.search_field.blockSignals(False)
+            self._book_model.filter_books("")
         QTimer.singleShot(0, self._load_visible_covers)
         self._progress_timer.start()
 
@@ -708,7 +735,7 @@ class BookModel(QAbstractListModel):
                     if text in b.title.lower()
                     or text in (b.author or "").lower()
                     or text in (b.narrator or "").lower()
-                    or (b.year is not None and text in str(b.year))
+                    or (b.year is not None and len(text) == 4 and text.isdigit() and text == str(b.year))
                 ]
                 self._filter_no_match = not matched
                 books = matched if matched else list(self._books)
