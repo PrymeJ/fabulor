@@ -102,7 +102,7 @@ class BookDetailPanel(QWidget):
         self._duration_label = _ClickableLabel()
         self._duration_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._duration_label.clicked.connect(self._toggle_duration)
-        self._duration_label.setContentsMargins(2, 0, 0, 0)
+        self._duration_label.setContentsMargins(3, 0, 0, 0)
 
         self._save_label = _ClickableLabel("Save")
         self._save_label.setObjectName("book_detail_save_label")
