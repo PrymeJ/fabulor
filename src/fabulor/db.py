@@ -685,7 +685,7 @@ class LibraryDB:
         return [r[0] for r in rows]
 
     def add_book_tag(self, book_path: str, tag: str) -> bool:
-        """Returns False if tag already exists or limit reached."""
+        """Returns False if tag already exists on this book, per-book limit reached, or global tag limit reached."""
         tag = tag.strip().lower()
         if not tag:
             return False
@@ -696,6 +696,16 @@ class LibraryDB:
             ).fetchone()[0]
             if count >= 5:
                 return False
+            # Only enforce global limit for new tags not already in use
+            is_new_tag = conn.execute(
+                "SELECT COUNT(*) FROM book_tags WHERE tag=?", (tag,)
+            ).fetchone()[0] == 0
+            if is_new_tag:
+                global_count = conn.execute(
+                    "SELECT COUNT(DISTINCT tag) FROM book_tags"
+                ).fetchone()[0]
+                if global_count >= 50:
+                    return False
             try:
                 conn.execute(
                     "INSERT INTO book_tags (book_path, tag) VALUES (?, ?)",
@@ -782,6 +792,50 @@ class LibraryDB:
                 'books': books,
             })
         return result
+
+    def get_all_tags(self) -> list[dict]:
+        """Returns all unique tags with book count, sorted alphabetically."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT tag, COUNT(*) as count FROM book_tags GROUP BY tag ORDER BY tag"
+            ).fetchall()
+        return [{'tag': r[0], 'count': r[1]} for r in rows]
+
+    def get_books_by_tag(self, tag: str) -> list[dict]:
+        """Returns books that have the given tag, with path, title, author, cover_path."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT b.path, b.title, b.author, b.cover_path
+                FROM books b
+                JOIN book_tags t ON b.path = t.book_path
+                WHERE t.tag = ?
+                ORDER BY b.title""",
+                (tag,)
+            ).fetchall()
+        return [{'path': r[0], 'title': r[1], 'author': r[2], 'cover_path': r[3]} for r in rows]
+
+    def rename_tag(self, old_tag: str, new_tag: str) -> bool:
+        """Renames a tag across all books. Returns False if new_tag already exists."""
+        new_tag = new_tag.strip().lower()
+        if not new_tag or new_tag == old_tag:
+            return False
+        with self._get_conn() as conn:
+            existing = conn.execute(
+                "SELECT COUNT(*) FROM book_tags WHERE tag=?", (new_tag,)
+            ).fetchone()[0]
+            if existing:
+                return False
+            conn.execute("UPDATE book_tags SET tag=? WHERE tag=?", (new_tag, old_tag))
+        return True
+
+    def delete_tag(self, tag: str) -> None:
+        """Removes a tag from all books."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM book_tags WHERE tag=?", (tag,))
+
+    def get_unique_tag_count(self) -> int:
+        with self._get_conn() as conn:
+            return conn.execute("SELECT COUNT(DISTINCT tag) FROM book_tags").fetchone()[0]
 
     def get_tag_suggestions(self, prefix: str, book_path: str) -> list[str]:
         with self._get_conn() as conn:

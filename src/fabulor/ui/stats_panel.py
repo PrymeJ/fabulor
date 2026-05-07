@@ -1047,9 +1047,20 @@ class StatsPanel(QWidget):
         self._overall_value_labels[7].setText(f"{streaks['longest']} days")
 
     def _build_options_tab(self) -> QWidget:
+        from .tag_manager import TagManagerWidget
+
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        tags_label = QLabel("Tags")
+        tags_label.setObjectName("settings_header")
+        layout.addWidget(tags_label)
+
+        self._tag_manager = TagManagerWidget(self.db, self._assets_dir)
+        self._tag_manager.tag_changed.connect(self._on_tag_changed)
+        layout.addWidget(self._tag_manager, stretch=1)
 
         pref_row = QHBoxLayout()
         day_label = QLabel("Day starts at")
@@ -1069,8 +1080,13 @@ class StatsPanel(QWidget):
         reset_btn.clicked.connect(self._on_reset_stats)
         layout.addWidget(reset_btn)
 
-        layout.addStretch()
         return widget
+
+    def _on_tag_changed(self):
+        # Refresh book detail panel tag chips if it's open
+        bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
+        if bdp and bdp.isVisible():
+            bdp._rebuild_tag_chips()
 
     def _build_time_tab(self) -> QWidget:
         widget = QWidget()
@@ -1468,6 +1484,9 @@ class StatsPanel(QWidget):
         elif self.tabs.tabText(index) == "Timeline":
             self._refresh_time()
             self._heatmap.animate_reveal()
+        elif self.tabs.tabText(index) == "⚙":
+            if hasattr(self, '_tag_manager'):
+                self._tag_manager.refresh()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)

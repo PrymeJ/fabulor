@@ -2405,6 +2405,12 @@ def get_stats_stylesheet(theme_name="default"):
         QScrollBar::sub-page:vertical {{
             background: none;
         }}
+        QWidget#tag_manager_row {{
+            border-radius: 4px;
+        }}
+        QWidget#tag_manager_row:hover {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.15);
+        }}
     """
 
 
