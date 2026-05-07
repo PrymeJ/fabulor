@@ -5,11 +5,30 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QPainter, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
+
+
+class _ElidingLineEdit(QLineEdit):
+    """QLineEdit that elides text on the right when read-only."""
+
+    def paintEvent(self, event):
+        if not self.isReadOnly():
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        # 2 is Qt's hardcoded internal horizontal text margin for QLineEdit.
+        rect = self.rect().adjusted(3, 0, -2, 0)
+        fm = QFontMetrics(self.font())
+        elided = fm.elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        painter.setFont(self.font())
+        painter.setPen(self.palette().text().color())
+        painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided)
+        painter.end()
 
 
 class _ClickableLabel(QLabel):
@@ -62,7 +81,7 @@ class BookDetailPanel(QWidget):
         meta_block.setSpacing(2)
 
         def make_field(obj_name, placeholder=''):
-            edit = QLineEdit()
+            edit = _ElidingLineEdit()
             edit.setObjectName(obj_name)
             edit.setPlaceholderText(placeholder)
             edit.setFrame(False)
