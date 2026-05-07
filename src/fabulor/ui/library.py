@@ -432,6 +432,7 @@ class LibraryPanel(QFrame):
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
+        QTimer.singleShot(0, self._load_visible_covers)
 
     # ── Live progress ────────────────────────────────────────────────────────
 
