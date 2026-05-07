@@ -44,6 +44,7 @@ class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
     metadata_saved = Signal(str, str, str)  # path, title, author
+    tags_changed = Signal()
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -328,6 +329,7 @@ class BookDetailPanel(QWidget):
         if added:
             self._tag_input.clear()
             self._rebuild_tag_chips()
+            self.tags_changed.emit()
         else:
             self._tag_input.setStyleSheet("border: 1px solid red;")
             from PySide6.QtCore import QTimer
@@ -337,6 +339,7 @@ class BookDetailPanel(QWidget):
         if self._book_path:
             self.db.remove_book_tag(self._book_path, tag)
             self._rebuild_tag_chips()
+            self.tags_changed.emit()
 
     def _sync_header_from_fields(self):
         self._title_label.setText(self._book_data.get('title') or self._book_data.get('book_title', ''))

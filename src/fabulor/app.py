@@ -1168,6 +1168,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
+        self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())

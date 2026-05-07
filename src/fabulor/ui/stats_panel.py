@@ -1083,7 +1083,8 @@ class StatsPanel(QWidget):
         return widget
 
     def _on_tag_changed(self):
-        # Refresh book detail panel tag chips if it's open
+        if hasattr(self, '_tag_manager'):
+            self._tag_manager.refresh()
         bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
         if bdp and bdp.isVisible():
             bdp._rebuild_tag_chips()
