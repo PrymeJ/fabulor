@@ -347,6 +347,7 @@ class BookDetailPanel(QWidget):
             return
         added = self.db.add_book_tag(self._book_path, tag)
         if added:
+            self._tag_completer_model.setStringList([])
             self._tag_input.clear()
             self._rebuild_tag_chips()
             self.tags_changed.emit()
