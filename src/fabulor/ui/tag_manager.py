@@ -294,8 +294,12 @@ class TagManagerWidget(QWidget):
     def _on_book_removed(self, path: str):
         if self._current_tag:
             self.db.remove_book_tag(path, self._current_tag)
-            # Update count label
             remaining = self.db.get_books_by_tag(self._current_tag)
+            if not remaining:
+                self.db.delete_tag(self._current_tag)
+                self.tag_changed.emit()
+                self._show_list()
+                return
             tag = self._current_tag
             self._book_count_label.setText(
                 f"{len(remaining)} book{'s' if len(remaining) != 1 else ''} tagged \"{tag}\""
