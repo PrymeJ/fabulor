@@ -1333,7 +1333,11 @@ class BookDelegate(QStyledItemDelegate):
                 if pw > 0 and ph > 0:
                     cell_ratio  = rect.width()  / rect.height()  if rect.height()  > 0 else 1.0
                     cover_ratio = pw / ph
-                    if cell_ratio > 0 and abs(cover_ratio - cell_ratio) / cell_ratio < 0.08:
+                    ratio_diff = abs(cover_ratio - cell_ratio) / cell_ratio if cell_ratio > 0 else 1.0
+                    if ratio_diff < 0.02:
+                        # Near-identical ratio — stretch to fill exactly, distortion imperceptible
+                        painter.drawPixmap(rect, cover, cover.rect())
+                    elif ratio_diff < 0.08:
                         # Close enough — crop to fill (KeepAspectRatioByExpanding)
                         scale = max(rect.width() / pw, rect.height() / ph)
                         sw = int(pw * scale)
