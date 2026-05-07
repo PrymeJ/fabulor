@@ -7,8 +7,8 @@ Rename to `_refresh_panel_visuals` when refactoring SettingsController.
 ### Stats page sluggishness on Weekly and Monthly tabs
 RESOLVED: BookDayRow and FinishedBookThumb now load covers asynchronously via CoverLoaderWorker, with placeholder fallback and _cover_cache hit check.
 
-### CoverLoaderWorker constructor in stats_panel.py
-BookDayRow and FinishedBookThumb construct CoverLoaderWorker using an anonymous type (`type('_BD', (), {...})`) to satisfy the Book dataclass signature, passing None as the player instance (safe — run() doesn't use it).
+### CoverLoaderWorker constructor in stats_panel.py and tag_manager.py
+BookDayRow, FinishedBookThumb, and _TagBookThumb all construct CoverLoaderWorker using an anonymous type (`type('_BD'/'_FT'/'_TT', (), {...})`) to satisfy the Book dataclass signature, passing None as the player instance (safe — run() doesn't use it).
 This is fragile. When the path→ID migration happens, either give CoverLoaderWorker a simpler constructor overload, or extract a separate lightweight worker for non-library cover loads.
 
 ---
