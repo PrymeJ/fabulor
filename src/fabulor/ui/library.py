@@ -41,6 +41,16 @@ PRELOAD_BATCH_SIZE  = 3    # covers dispatched per tick
 
 _cover_cache: dict = {}  # module-level singleton {path: QPixmap}, shared by BookModel and idle preloader
 
+def _parse_year_range(text: str):
+    """Parse '>NNNN<NNNN' or '<NNNN>NNNN' into (min, max). Returns None if not a range."""
+    import re
+    m = re.fullmatch(r'>(\d+)<(\d+)|<(\d+)>(\d+)', text)
+    if not m:
+        return None
+    if m.group(1):
+        return (int(m.group(1)), int(m.group(2)))
+    return (int(m.group(4)), int(m.group(3)))
+
 FONT_SIZES = {
     "1 per row": {
         "title":      (14, True),   # (px, bold)
@@ -200,7 +210,7 @@ class LibraryPanel(QFrame):
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search  #tag  >year  <year")
+        self.search_field.setPlaceholderText("search  #tag  >year  <year  >y<y")
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
@@ -567,6 +577,7 @@ class BookModel(QAbstractListModel):
         self._sort_field: str = "title"
         self._sort_direction: str = "ascending"
         self.filter_empty: bool = False
+        self._filter_no_match: bool = False
 
     # ── QAbstractListModel interface ────────────────────────────────────────
 
@@ -651,7 +662,7 @@ class BookModel(QAbstractListModel):
         self._apply_filter_and_sort()
         self.endResetModel()
         # True if filter is active and produced no results (# alone is not a real filter)
-        self.filter_empty = bool(text) and text != '#' and len(self._filtered) == 0
+        self.filter_empty = self._filter_no_match
 
     # ── Internal ────────────────────────────────────────────────────────────
 
@@ -660,6 +671,7 @@ class BookModel(QAbstractListModel):
         if text:
             if text == '#':
                 books = list(self._books)
+                self._filter_no_match = False
             elif text.startswith('#'):
                 tag = text[1:]
                 if self._db:
@@ -671,22 +683,37 @@ class BookModel(QAbstractListModel):
                     tagged = {r[0] for r in rows}
                 else:
                     tagged = set()
-                books = [b for b in self._books if b.path in tagged] or list(self._books)
+                matched = [b for b in self._books if b.path in tagged]
+                self._filter_no_match = not matched
+                books = matched if matched else list(self._books)
+            elif _parse_year_range(text) is not None:
+                year_min, year_max = _parse_year_range(text)
+                matched = [b for b in self._books
+                           if b.year is not None and year_min <= b.year <= year_max]
+                self._filter_no_match = False
+                books = matched if matched else list(self._books)
             elif text.startswith('>') and text[1:].isdigit():
                 year_min = int(text[1:])
-                books = [b for b in self._books if b.year is not None and b.year >= year_min] or list(self._books)
+                matched = [b for b in self._books if b.year is not None and b.year >= year_min]
+                self._filter_no_match = False
+                books = matched if matched else list(self._books)
             elif text.startswith('<') and text[1:].isdigit():
                 year_max = int(text[1:])
-                books = [b for b in self._books if b.year is not None and b.year <= year_max] or list(self._books)
+                matched = [b for b in self._books if b.year is not None and b.year <= year_max]
+                self._filter_no_match = False
+                books = matched if matched else list(self._books)
             else:
-                books = [
+                matched = [
                     b for b in self._books
                     if text in b.title.lower()
                     or text in (b.author or "").lower()
                     or text in (b.narrator or "").lower()
                     or (b.year is not None and text in str(b.year))
-                ] or list(self._books)
+                ]
+                self._filter_no_match = not matched
+                books = matched if matched else list(self._books)
         else:
+            self._filter_no_match = False
             books = list(self._books)
 
         # Filter "Recent" to only show books that have progress
