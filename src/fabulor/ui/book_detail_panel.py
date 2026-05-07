@@ -258,12 +258,15 @@ class BookDetailPanel(QWidget):
 
 
         self._tag_chip_container = QWidget()
-        self._tag_chip_layout = FlowLayout(self._tag_chip_container)
+        self._tag_chip_layout = FlowLayout(self._tag_chip_container, h_spacing=8, v_spacing=8)
         outer.addWidget(self._tag_chip_container)
 
-        tag_input_row = QHBoxLayout()
+        self._tag_input_widget = QWidget()
+        tag_input_row = QHBoxLayout(self._tag_input_widget)
+        tag_input_row.setContentsMargins(0, 0, 0, 0)
+        tag_input_row.setSpacing(6)
         self._tag_input = QLineEdit()
-        self._tag_input.setObjectName("metadata_field")
+        self._tag_input.setObjectName("tag_add_field")
         self._tag_input.setPlaceholderText("Add tag…")
         self._tag_input.setMaxLength(25)
         self._tag_input.returnPressed.connect(self._on_add_tag)
@@ -277,13 +280,13 @@ class BookDetailPanel(QWidget):
         self._tag_input.textChanged.connect(self._on_tag_input_changed)
 
         add_tag_btn = QPushButton("+")
-        add_tag_btn.setObjectName("book_detail_close_btn")
-        add_tag_btn.setFixedSize(28, 28)
+        add_tag_btn.setObjectName("tag_add_btn")
+        add_tag_btn.setFixedSize(32, 32)
         add_tag_btn.clicked.connect(self._on_add_tag)
 
         tag_input_row.addWidget(self._tag_input)
         tag_input_row.addWidget(add_tag_btn)
-        outer.addLayout(tag_input_row)
+        outer.addWidget(self._tag_input_widget)
 
         outer.addStretch()
         return widget
@@ -298,24 +301,27 @@ class BookDetailPanel(QWidget):
         for tag in tags:
             chip = QWidget()
             chip.setObjectName("tag_chip")
+            chip.setAttribute(Qt.WA_StyledBackground, True)
             row = QHBoxLayout(chip)
-            row.setContentsMargins(6, 2, 4, 2)
-            row.setSpacing(4)
+            row.setContentsMargins(10, 5, 7, 5)
+            row.setSpacing(6)
             lbl = QLabel(tag)
             lbl.setObjectName("tag_chip_label")
             x_btn = QPushButton("✕")
             x_btn.setObjectName("tag_chip_remove_btn")
-            x_btn.setFixedSize(16, 16)
+            x_btn.setFixedSize(18, 18)
             x_btn.clicked.connect(lambda checked, t=tag: self._on_remove_tag(t))
             row.addWidget(lbl)
             row.addWidget(x_btn)
             self._tag_chip_layout.addWidget(chip)
 
+        self._tag_input_widget.setVisible(len(tags) < 5)
+
         # Update container height so the outer VBoxLayout knows how much space to allocate.
-        row_h = 28
-        v_gap = 6
+        row_h = 36
+        v_gap = 8
         n = len(tags)
-        rows = max(1, n)  # at least one row height so the area is visible
+        rows = max(1, n)
         self._tag_chip_container.setMinimumHeight(rows * row_h + (rows - 1) * v_gap if n else row_h)
 
         self._rebuild_tag_display(tags)

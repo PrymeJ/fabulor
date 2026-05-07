@@ -2416,6 +2416,70 @@ def get_stats_stylesheet(theme_name="default"):
         QWidget#tag_manager_row:hover {{
             background-color: rgba({_hex_to_rgb(t['accent'])}, 0.15);
         }}
+        QWidget#tag_manager_row QLabel#tag_chip_label {{
+            color: {t['text']};
+            font-size: 13px;
+        }}
+        QPushButton#stats_nav_btn {{
+            background: transparent;
+            color: {t['accent_light']};
+            border: none;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#stats_nav_btn:hover {{
+            color: {t['text']};
+        }}
+        QWidget#tag_chip {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.12);
+            border: 1px solid rgba({_hex_to_rgb(t['accent'])}, 0.40);
+            border-radius: 0px;
+        }}
+        QWidget#tag_chip QLabel#tag_chip_label {{
+            color: {t['accent_light']};
+            font-size: 14px;
+            background: transparent;
+            border: none;
+        }}
+        QWidget#tag_chip QPushButton#tag_chip_remove_btn {{
+            background: transparent;
+            color: rgba({_hex_to_rgb(t['accent_light'])}, 0.60);
+            border: none;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QWidget#tag_chip QPushButton#tag_chip_remove_btn:hover {{
+            color: {t['text']};
+        }}
+        QLineEdit#tag_add_field {{
+            background-color: rgba({_hex_to_rgb(t['bg_dropdown'])}, 0.6);
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+            font-size: 13px;
+            border: 1px solid {t['accent_dark']};
+            border-radius: 6px;
+            padding: 4px 8px;
+        }}
+        QLineEdit#tag_add_field:focus {{
+            border: 1px solid {t['accent']};
+        }}
+        QPushButton#tag_add_btn {{
+            background-color: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border: none;
+            border-radius: 6px;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#tag_add_btn:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton#tag_add_btn:pressed {{
+            background-color: {t['accent_dark']};
+        }}
     """
 
 

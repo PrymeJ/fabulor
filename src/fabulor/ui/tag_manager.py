@@ -217,6 +217,7 @@ class TagManagerWidget(QWidget):
     def _make_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
         row.setObjectName("tag_manager_row")
+        row.setAttribute(Qt.WA_StyledBackground, True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         hbox = QHBoxLayout(row)
         hbox.setContentsMargins(4, 3, 4, 3)
