@@ -3,8 +3,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QLineEdit, QGridLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QPixmap, QColor
+from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool
+from PySide6.QtGui import QPixmap, QImage, QColor
+from .cover_loader import CoverLoaderWorker
+from .library import _cover_cache
 
 
 class _TagBookThumb(QWidget):
@@ -27,18 +29,42 @@ class _TagBookThumb(QWidget):
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
-        pixmap = QPixmap()
+        placeholder = QPixmap()
+        placeholder.load(os.path.join(assets_dir, 'fabulor.ico'))
+        if not placeholder.isNull():
+            self._cover.setPixmap(placeholder.scaled(
+                80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            ))
+
+        self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
         if cover_path and os.path.exists(cover_path):
-            pixmap.load(cover_path)
-        if pixmap.isNull():
-            pixmap.load(os.path.join(assets_dir, 'fabulor.ico'))
-        if not pixmap.isNull():
-            scaled = pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-            self._cover.setPixmap(scaled)
+            if cover_path in _cover_cache:
+                self._apply_cover(_cover_cache[cover_path])
+            else:
+                worker = CoverLoaderWorker(
+                    type('_TT', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    None,
+                )
+                worker.signals.cover_loaded.connect(
+                    self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
+                )
+                QThreadPool.globalInstance().start(worker)
 
         layout.addWidget(self._cover)
+
+    def _on_cover_loaded(self, path, image):
+        if image.isNull():
+            return
+        self._apply_cover(QPixmap.fromImage(image))
+
+    def _apply_cover(self, pixmap):
+        scaled = pixmap.scaled(
+            80, 80,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._cover.setPixmap(scaled)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
