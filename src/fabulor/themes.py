@@ -2237,7 +2237,7 @@ def get_stats_stylesheet(theme_name="default"):
         QLabel#stats_history_header {{
             font-weight: bold;
             font-size: 15px;
-            margin-top: 0px;
+            margin-top: 5px;
             color: {t['accent_light']};
         }}
         QPushButton {{

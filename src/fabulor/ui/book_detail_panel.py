@@ -254,7 +254,7 @@ class BookDetailPanel(QWidget):
         widget = QWidget()
         outer = QVBoxLayout(widget)
         outer.setContentsMargins(10, 10, 10, 10)
-        outer.setSpacing(10)
+        outer.setSpacing(8)
 
 
         self._tag_chip_container = QWidget()
@@ -317,12 +317,14 @@ class BookDetailPanel(QWidget):
 
         self._tag_input_widget.setVisible(len(tags) < 5)
 
-        # Update container height so the outer VBoxLayout knows how much space to allocate.
+        # Worst-case height: every chip on its own row (long tags).
+        # FlowLayout will use less space if chips fit side by side.
         row_h = 36
         v_gap = 8
         n = len(tags)
-        rows = max(1, n)
-        self._tag_chip_container.setMinimumHeight(rows * row_h + (rows - 1) * v_gap if n else row_h)
+        self._tag_chip_container.setMinimumHeight(
+            n * row_h + max(0, n - 1) * v_gap if n else 0
+        )
 
         self._rebuild_tag_display(tags)
 
