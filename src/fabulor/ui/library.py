@@ -227,7 +227,7 @@ class LibraryPanel(QFrame):
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search  #tag  >year  <year  >y<y")
+        self.search_field.setPlaceholderText("search #tag")
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
