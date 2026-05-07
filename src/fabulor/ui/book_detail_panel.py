@@ -259,6 +259,7 @@ class BookDetailPanel(QWidget):
 
         self._tag_chip_container = QWidget()
         self._tag_chip_layout = FlowLayout(self._tag_chip_container, h_spacing=8, v_spacing=8)
+        self._tag_chip_layout.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._tag_chip_container)
 
         self._tag_input_widget = QWidget()
