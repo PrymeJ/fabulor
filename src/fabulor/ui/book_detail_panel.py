@@ -273,12 +273,13 @@ class BookDetailPanel(QWidget):
         self._tag_input.returnPressed.connect(self._on_add_tag)
 
         self._tag_completer_model = QStringListModel()
-        completer = QCompleter(self._tag_completer_model, self._tag_input)
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        completer.activated.connect(self._on_tag_completer_activated)
-        self._tag_input.setCompleter(completer)
+        self._tag_completer = QCompleter(self._tag_completer_model, self._tag_input)
+        self._tag_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._tag_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._tag_completer.activated.connect(self._on_tag_completer_activated)
+        self._tag_input.setCompleter(self._tag_completer)
         self._tag_input.textChanged.connect(self._on_tag_input_changed)
+        self._style_completer_popup()
 
         add_tag_btn = QPushButton("+")
         add_tag_btn.setObjectName("tag_add_btn")
@@ -341,6 +342,7 @@ class BookDetailPanel(QWidget):
         if text and self._book_path:
             suggestions = self.db.get_tag_suggestions(text, self._book_path)
             self._tag_completer_model.setStringList(suggestions)
+            self._style_completer_popup()
         else:
             self._tag_completer_model.setStringList([])
 
@@ -645,10 +647,57 @@ class BookDetailPanel(QWidget):
         self._history_session_list.set_colors(accent, bg)
         self._furthest_bar.set_colors(accent, bg)
 
+    def _style_completer_popup(self):
+        t = self._theme
+        bg = t.get('bg_dropdown', '#2A3A4A')
+        fg = t.get('text', '#FFFFFF')
+        accent = t.get('accent', '#5A8A9F')
+        accent_dark = t.get('accent_dark', '#3A6A7F')
+        popup = self._tag_completer.popup()
+        if popup is None:
+            return
+        popup.setStyleSheet(f"""
+            QAbstractItemView {{
+                background-color: {bg};
+                color: {fg};
+                border: 1px solid {accent};
+                border-radius: 4px;
+                outline: none;
+                font-size: 13px;
+                padding: 2px;
+            }}
+            QAbstractItemView::item {{
+                min-height: 24px;
+                padding: 2px 6px;
+            }}
+            QAbstractItemView::item:selected {{
+                background-color: {accent};
+                color: {fg};
+            }}
+            QAbstractItemView::item:hover:!selected {{
+                background-color: {accent_dark};
+            }}
+            QScrollBar:vertical {{
+                width: 6px;
+                background: {bg};
+                border: none;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {accent};
+                min-height: 16px;
+                border-radius: 3px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor
         self._theme = theme
         self._apply_bar_colors()
+        self._style_completer_popup()
 
     @staticmethod
     def _fmt(seconds: float) -> str:
