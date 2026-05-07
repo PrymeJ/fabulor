@@ -194,7 +194,7 @@ class SessionListWidget(QScrollArea):
         row = QWidget()
         hbox = QHBoxLayout(row)
         hbox.setContentsMargins(0, 2, 0, 2)
-        hbox.setSpacing(8)
+        hbox.setSpacing(4)
 
         try:
             from datetime import timedelta
@@ -203,7 +203,7 @@ class SessionListWidget(QScrollArea):
             dt_end = dt_start + timedelta(seconds=secs)
             ts_text = (
                 f"{dt_start.strftime('%b')} {dt_start.day}"
-                f"  {dt_start.strftime('%H:%M')} – {dt_end.strftime('%H:%M')}"
+                f" {dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
             )
         except Exception:
             ts_text = s.get('session_start', '—')
@@ -211,7 +211,7 @@ class SessionListWidget(QScrollArea):
 
         ts_label = QLabel(ts_text)
         ts_label.setObjectName("stats_session_label")
-        ts_label.setFixedWidth(110)
+        ts_label.setFixedWidth(96)
         hbox.addWidget(ts_label)
 
         pos_start = s.get('position_start') or 0.0
@@ -231,7 +231,7 @@ class SessionListWidget(QScrollArea):
             pct_label = QLabel("")
 
         delta_label.setObjectName("stats_value_label")
-        delta_label.setFixedWidth(42)
+        delta_label.setFixedWidth(36)
         delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(delta_label)
 
@@ -240,7 +240,7 @@ class SessionListWidget(QScrollArea):
         hbox.addWidget(bar, stretch=1)
 
         pct_label.setObjectName("stats_value_label")
-        pct_label.setFixedWidth(36)
+        pct_label.setFixedWidth(32)
         pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(pct_label)
 
