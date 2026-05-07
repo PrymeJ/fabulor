@@ -211,7 +211,7 @@ class SessionListWidget(QScrollArea):
 
         ts_label = QLabel(ts_text)
         ts_label.setObjectName("stats_session_label")
-        ts_label.setFixedWidth(96)
+        ts_label.setFixedWidth(92)
         hbox.addWidget(ts_label)
 
         pos_start = s.get('position_start') or 0.0
@@ -234,6 +234,7 @@ class SessionListWidget(QScrollArea):
         delta_label.setFixedWidth(36)
         delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(delta_label)
+        hbox.addSpacing(6)
 
         bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg)
         bar.setFixedHeight(6)
