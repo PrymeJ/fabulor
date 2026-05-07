@@ -329,6 +329,9 @@ class BookDetailPanel(QWidget):
         if not self._editing:
             self._narrator_label.setVisible(bool(narrator))
             self._year_label.setVisible(bool(year))
+            for field in (self._title_label, self._author_label,
+                          self._narrator_label, self._year_label):
+                field.setCursorPosition(0)
 
     def load_book(self, book_data: dict, tab: str = 'stats'):
         self._book_path = book_data.get('path') or book_data.get('book_path')
@@ -437,6 +440,7 @@ class BookDetailPanel(QWidget):
         for field in (self._title_label, self._author_label,
                       self._narrator_label, self._year_label):
             field.setReadOnly(False)
+            field.setCursorPosition(0)
         self._save_label.setVisible(False)
         self._title_label.setFocus()
 
