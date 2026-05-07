@@ -6,9 +6,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent
+from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
 from PySide6.QtWidgets import QAbstractScrollArea
+from .cover_loader import CoverLoaderWorker
+from .library import _cover_cache
 
 
 def _elide(text: str, font, max_px: int) -> str:
@@ -332,27 +334,31 @@ class BookDayRow(QWidget):
         cover_label.setFixedSize(48, 48)
         cover_label.setAlignment(Qt.AlignCenter)
         cover_path = row_data.get("cover_path")
-        pixmap = QPixmap()
+
+        icon_path = os.path.join(assets_dir, "fabulor.ico")
+        placeholder = QPixmap()
+        placeholder.load(icon_path)
+        if not placeholder.isNull():
+            cover_label.setPixmap(placeholder.scaled(
+                48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            ))
+
+        self._cover_label = cover_label
+        self._deleted = deleted
+        self._assets_dir = assets_dir
+
         if cover_path and os.path.exists(cover_path):
-            pixmap.load(cover_path)
-        if pixmap.isNull():
-            icon_path = os.path.join(assets_dir, "fabulor.ico")
-            pixmap.load(icon_path)
-
-        if not pixmap.isNull():
-            if deleted:
-                # Convert to grayscale
-                image = pixmap.toImage()
-                gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
-                pixmap = QPixmap.fromImage(gray)
-
-            # Scale with KeepAspectRatioByExpanding to fill the 48x48 square
-            scaled = pixmap.scaled(
-                48, 48,
-                Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation
-            )
-            cover_label.setPixmap(scaled)
+            if cover_path in _cover_cache:
+                self._apply_cover(_cover_cache[cover_path])
+            else:
+                worker = CoverLoaderWorker(
+                    type('_BD', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    None,
+                )
+                worker.signals.cover_loaded.connect(
+                    self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
+                )
+                QThreadPool.globalInstance().start(worker)
 
         if deleted:
             cover_label.setGraphicsEffect(_dim_effect())
@@ -430,6 +436,22 @@ class BookDayRow(QWidget):
 
         layout.addLayout(content_block, stretch=1)
 
+    def _on_cover_loaded(self, path, image):
+        if image.isNull():
+            return
+        self._apply_cover(QPixmap.fromImage(image))
+
+    def _apply_cover(self, pixmap):
+        if self._deleted:
+            gray = pixmap.toImage().convertToFormat(QImage.Format.Format_Grayscale8)
+            pixmap = QPixmap.fromImage(gray)
+        scaled = pixmap.scaled(
+            48, 48,
+            Qt.KeepAspectRatioByExpanding,
+            Qt.SmoothTransformation,
+        )
+        self._cover_label.setPixmap(scaled)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._row_data)
@@ -451,24 +473,48 @@ class FinishedBookThumb(QWidget):
         cover_label.setFixedSize(47, 47)
         cover_label.setScaledContents(False)
         cover_path = row_data.get("cover_path")
-        pixmap = QPixmap()
-        if cover_path and os.path.exists(cover_path):
-            pixmap.load(cover_path)
-        if pixmap.isNull():
-            icon_path = os.path.join(assets_dir, "fabulor.ico")
-            pixmap.load(icon_path)
 
-        if not pixmap.isNull():
-            # Crop to center square
-            side = min(pixmap.width(), pixmap.height())
-            x = (pixmap.width() - side) // 2
-            y = (pixmap.height() - side) // 2
-            cropped = pixmap.copy(x, y, side, side)
-            scaled = cropped.scaled(47, 47, Qt.AspectRatioMode.IgnoreAspectRatio,
-                                    Qt.TransformationMode.SmoothTransformation)
-            cover_label.setPixmap(scaled)
+        icon_path = os.path.join(assets_dir, "fabulor.ico")
+        placeholder = QPixmap()
+        placeholder.load(icon_path)
+        if not placeholder.isNull():
+            cover_label.setPixmap(placeholder.scaled(
+                47, 47, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation
+            ))
+
+        self._cover_label = cover_label
+
+        if cover_path and os.path.exists(cover_path):
+            if cover_path in _cover_cache:
+                self._apply_cover(_cover_cache[cover_path])
+            else:
+                worker = CoverLoaderWorker(
+                    type('_FT', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    None,
+                )
+                worker.signals.cover_loaded.connect(
+                    self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
+                )
+                QThreadPool.globalInstance().start(worker)
 
         layout.addWidget(cover_label)
+
+    def _on_cover_loaded(self, path, image):
+        if image.isNull():
+            return
+        self._apply_cover(QPixmap.fromImage(image))
+
+    def _apply_cover(self, pixmap):
+        side = min(pixmap.width(), pixmap.height())
+        x = (pixmap.width() - side) // 2
+        y = (pixmap.height() - side) // 2
+        cropped = pixmap.copy(x, y, side, side)
+        scaled = cropped.scaled(
+            47, 47,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._cover_label.setPixmap(scaled)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
