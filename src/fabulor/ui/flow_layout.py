@@ -39,7 +39,10 @@ class FlowLayout(QLayout):
         return Qt.Orientation(0)
 
     def hasHeightForWidth(self):
-        return False
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
 
     def setGeometry(self, rect):
         super().setGeometry(rect)

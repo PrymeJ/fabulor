@@ -319,15 +319,6 @@ class BookDetailPanel(QWidget):
 
         self._tag_input_widget.setVisible(len(tags) < 5)
 
-        # Worst-case height: every chip on its own row (long tags).
-        # FlowLayout will use less space if chips fit side by side.
-        row_h = 36
-        v_gap = 8
-        n = len(tags)
-        self._tag_chip_container.setMinimumHeight(
-            n * row_h + max(0, n - 1) * v_gap if n else 0
-        )
-
         self._rebuild_tag_display(tags)
 
     def _rebuild_tag_display(self, tags: list[str]):
