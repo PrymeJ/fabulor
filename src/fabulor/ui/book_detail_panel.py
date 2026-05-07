@@ -162,6 +162,7 @@ class BookDetailPanel(QWidget):
         self.tabs.addTab(self._build_stats_tab(), "Stats")
         self.tabs.addTab(self._build_history_tab(), "History")
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
+        self.tabs.addTab(QWidget(), "Cover")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
 
@@ -241,6 +242,12 @@ class BookDetailPanel(QWidget):
         outer.addWidget(self._history_session_list)
 
         outer.addStretch()
+
+        self._delete_history_btn = QPushButton("Delete listening history")
+        self._delete_history_btn.setObjectName("stats_reset_btn")
+        self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
+        outer.addWidget(self._delete_history_btn)
+
         return widget
 
     def _build_metadata_tab(self) -> QWidget:
@@ -279,12 +286,6 @@ class BookDetailPanel(QWidget):
         outer.addLayout(tag_input_row)
 
         outer.addStretch()
-
-        self._delete_history_btn = QPushButton("Delete listening history")
-        self._delete_history_btn.setObjectName("stats_reset_btn")
-        self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
-        outer.addWidget(self._delete_history_btn)
-
         return widget
 
     def _rebuild_tag_chips(self):
