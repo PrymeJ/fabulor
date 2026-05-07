@@ -325,7 +325,7 @@ class BookDetailPanel(QWidget):
         if not tags:
             self._tag_display_label.hide()
             return
-        self._tag_display_label.setText("  ".join(f"● {t}" for t in tags))
+        self._tag_display_label.setText("  ".join(f"● {t.replace(' ', ' ')}" for t in tags))
         self._tag_display_label.show()
 
     def _on_tag_input_changed(self, text: str):
