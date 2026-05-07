@@ -119,7 +119,7 @@ class LibraryPanel(QFrame):
     # ── Model / view setup ───────────────────────────────────────────────────
 
     def _setup_model_view(self):
-        self._book_model = BookModel(parent=self)
+        self._book_model = BookModel(db=self.db, parent=self)
         self._delegate   = BookDelegate(
             theme=self._current_theme,
             parent=self,
@@ -200,7 +200,7 @@ class LibraryPanel(QFrame):
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
-        self.search_field.setPlaceholderText("search #tag")
+        self.search_field.setPlaceholderText("search  #tag  >year  <year")
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
@@ -432,6 +432,10 @@ class LibraryPanel(QFrame):
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
+        if self._book_model.filter_empty:
+            self.search_field.setStyleSheet("border: 1px solid red;")
+        else:
+            self.search_field.setStyleSheet("")
         QTimer.singleShot(0, self._load_visible_covers)
 
     # ── Live progress ────────────────────────────────────────────────────────
@@ -549,8 +553,9 @@ ROLE_LIVE_DUR = Qt.UserRole + 5
 
 class BookModel(QAbstractListModel):
 
-    def __init__(self, parent=None):
+    def __init__(self, db=None, parent=None):
         super().__init__(parent)
+        self._db = db
         self._books: list[Book] = []
         self._filtered: list[Book] = []
         self._covers = _cover_cache  # shared singleton — preloader writes here before model exists
@@ -561,6 +566,7 @@ class BookModel(QAbstractListModel):
         self._filter_text: str = ""
         self._sort_field: str = "title"
         self._sort_direction: str = "ascending"
+        self.filter_empty: bool = False
 
     # ── QAbstractListModel interface ────────────────────────────────────────
 
@@ -644,18 +650,42 @@ class BookModel(QAbstractListModel):
         self.beginResetModel()
         self._apply_filter_and_sort()
         self.endResetModel()
+        # True if filter is active and produced no results (# alone is not a real filter)
+        self.filter_empty = bool(text) and text != '#' and len(self._filtered) == 0
 
     # ── Internal ────────────────────────────────────────────────────────────
 
     def _apply_filter_and_sort(self) -> None:
         text = self._filter_text
         if text:
-            books = [
-                b for b in self._books
-                if text in b.title.lower()
-                or text in (b.author or "").lower()
-                or text in (b.narrator or "").lower()
-            ]
+            if text == '#':
+                books = list(self._books)
+            elif text.startswith('#'):
+                tag = text[1:]
+                if self._db:
+                    with self._db._get_conn() as conn:
+                        rows = conn.execute(
+                            "SELECT DISTINCT book_path FROM book_tags WHERE tag LIKE ?",
+                            (f"{tag}%",)
+                        ).fetchall()
+                    tagged = {r[0] for r in rows}
+                else:
+                    tagged = set()
+                books = [b for b in self._books if b.path in tagged] or list(self._books)
+            elif text.startswith('>') and text[1:].isdigit():
+                year_min = int(text[1:])
+                books = [b for b in self._books if b.year is not None and b.year >= year_min] or list(self._books)
+            elif text.startswith('<') and text[1:].isdigit():
+                year_max = int(text[1:])
+                books = [b for b in self._books if b.year is not None and b.year <= year_max] or list(self._books)
+            else:
+                books = [
+                    b for b in self._books
+                    if text in b.title.lower()
+                    or text in (b.author or "").lower()
+                    or text in (b.narrator or "").lower()
+                    or (b.year is not None and text in str(b.year))
+                ] or list(self._books)
         else:
             books = list(self._books)
 
