@@ -6,7 +6,7 @@ from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex,
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
-from PySide6.QtGui import QPixmap, QColor, QFont
+from PySide6.QtGui import QPixmap, QImage, QColor, QFont
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -430,9 +430,10 @@ class LibraryPanel(QFrame):
         worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w), Qt.ConnectionType.QueuedConnection)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_cover_loaded(self, path, pixmap):
-        if pixmap.isNull():
+    def _on_cover_loaded(self, path, image):
+        if image.isNull():
             return
+        pixmap = QPixmap.fromImage(image)
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
         _cover_cache[path] = pixmap  # write to cache directly
@@ -548,9 +549,10 @@ class LibraryPanel(QFrame):
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)
 
-    def _on_preload_cover_loaded(self, path, pixmap):
-        if pixmap.isNull():
+    def _on_preload_cover_loaded(self, path, image):
+        if image.isNull():
             return
+        pixmap = QPixmap.fromImage(image)
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
         _cover_cache[path] = pixmap

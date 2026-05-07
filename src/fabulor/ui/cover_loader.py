@@ -1,8 +1,8 @@
 from PySide6.QtCore import QObject, Signal, QRunnable, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage
 
 class CoverLoaderSignals(QObject):
-    cover_loaded = Signal(str, QPixmap) # Emits book_path, pixmap
+    cover_loaded = Signal(str, QImage) # Emits book_path, image
     finished = Signal()
 
 class CoverLoaderWorker(QRunnable):
@@ -22,9 +22,9 @@ class CoverLoaderWorker(QRunnable):
         book_path = self.book_data.path
         cover_source_path = self.book_data.cover_path
 
-        pixmap = QPixmap()
+        image = QImage()
         if cover_source_path:
-            pixmap.load(cover_source_path)
-        
-        self.cover_loaded.emit(book_path, pixmap)
+            image.load(cover_source_path)
+
+        self.cover_loaded.emit(book_path, image)
         self.finished.emit()
