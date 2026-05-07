@@ -102,6 +102,9 @@ class LibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_book_path ON book_events (book_path)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_event_type ON book_events (event_type)")
 
+            # Migrate: truncate tags over 25 chars
+            conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
+
 
     # --- Scan Locations CRUD ---
 

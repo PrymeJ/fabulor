@@ -70,7 +70,7 @@ class BookDetailPanel(QWidget):
         header = QWidget()
         header.setObjectName("book_detail_header")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(10, 10, 10, 10)
+        header_layout.setContentsMargins(10, 10, 10, 4)
         header_layout.setSpacing(12)
 
         self._cover_label = QLabel()
@@ -148,6 +148,14 @@ class BookDetailPanel(QWidget):
         header_layout.addLayout(right_col)
 
         layout.addWidget(header)
+
+        self._tag_display_label = QLabel()
+        self._tag_display_label.setObjectName("tag_display_chip")
+        self._tag_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._tag_display_label.setWordWrap(True)
+        self._tag_display_label.setContentsMargins(8, 2, 8, 2)
+        self._tag_display_label.hide()
+        layout.addWidget(self._tag_display_label)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
@@ -250,7 +258,7 @@ class BookDetailPanel(QWidget):
         self._tag_input = QLineEdit()
         self._tag_input.setObjectName("metadata_field")
         self._tag_input.setPlaceholderText("Add tag…")
-        self._tag_input.setMaxLength(30)
+        self._tag_input.setMaxLength(25)
         self._tag_input.returnPressed.connect(self._on_add_tag)
 
         self._tag_completer_model = QStringListModel()
@@ -308,6 +316,15 @@ class BookDetailPanel(QWidget):
         n = len(tags)
         rows = max(1, n)  # at least one row height so the area is visible
         self._tag_chip_container.setMinimumHeight(rows * row_h + (rows - 1) * v_gap if n else row_h)
+
+        self._rebuild_tag_display(tags)
+
+    def _rebuild_tag_display(self, tags: list[str]):
+        if not tags:
+            self._tag_display_label.hide()
+            return
+        self._tag_display_label.setText("  ".join(f"● {t}" for t in tags))
+        self._tag_display_label.show()
 
     def _on_tag_input_changed(self, text: str):
         text = text.strip()
