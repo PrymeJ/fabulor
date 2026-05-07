@@ -2330,7 +2330,8 @@ def get_stats_stylesheet(theme_name="default"):
             selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             border: 1px solid {t['accent']};
             border-radius: 4px;
-            padding: 2px;
+            padding: 1px 2px;
+            max-height: 22px;
         }}
         QSpinBox::up-button, QSpinBox::down-button {{
             width: 16px;
