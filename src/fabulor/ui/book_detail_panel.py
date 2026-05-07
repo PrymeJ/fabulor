@@ -132,6 +132,7 @@ class BookDetailPanel(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
         self.tabs.addTab(self._build_stats_tab(), "Stats")
+        self.tabs.addTab(self._build_history_tab(), "History")
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
@@ -192,12 +193,24 @@ class BookDetailPanel(QWidget):
         grid.setColumnStretch(1, 1)
         outer.addWidget(grid_widget)
 
-        self._history_header = QLabel("Listening history")
+        self._history_header = QLabel("Recent history")
         self._history_header.setObjectName("stats_history_header")
         outer.addWidget(self._history_header)
 
         self._session_list = SessionListWidget()
         outer.addWidget(self._session_list)
+
+        outer.addStretch()
+        return widget
+
+    def _build_history_tab(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        self._history_session_list = SessionListWidget()
+        outer.addWidget(self._history_session_list)
 
         outer.addStretch()
         return widget
@@ -554,6 +567,7 @@ class BookDetailPanel(QWidget):
             )
 
         self._session_list.set_data(sessions, duration or 0.0)
+        self._history_session_list.set_data(sessions, duration or 0.0)
         self._apply_bar_colors()
 
     def _on_delete_book_stats(self):
@@ -575,6 +589,7 @@ class BookDetailPanel(QWidget):
         accent = QColor(self._theme.get('curr_chap_highlight', '#888888'))
         bg = QColor(self._theme.get('library_slider_bg', '#333333'))
         self._session_list.set_colors(accent, bg)
+        self._history_session_list.set_colors(accent, bg)
         self._furthest_bar.set_colors(accent, bg)
 
     def on_theme_changed(self, theme: dict):
