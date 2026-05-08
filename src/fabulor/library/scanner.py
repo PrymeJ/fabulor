@@ -61,6 +61,10 @@ class ScannerWorker(QObject):
 
             try:
                 metadata = self._extract_metadata(book_dir, audio_exts)
+                if metadata is None:
+                    processed += 1
+                    self.progress.emit(processed, total)
+                    continue
                 db.upsert_book(metadata)
             except Exception as e:
                 print(f"Error scanning {book_dir}: {e}")
@@ -92,23 +96,29 @@ class ScannerWorker(QObject):
         return None
 
     def _extract_metadata(self, book_dir, extensions):
+        try:
+            all_files = [f for f in book_dir.iterdir() if f.is_file()]
+        except PermissionError:
+            return None
+
         duration = 0.0
         narrator = ""
         tag_title = None
         tag_author = None
         tag_year = None
         cover_path = ""
-        
-        # Look for cover images
+
         cover_names = {'cover', 'folder', 'front', 'art'}
-        for f in book_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in {'.jpg', '.jpeg', '.png'}:
+        for f in all_files:
+            if f.suffix.lower() in {'.jpg', '.jpeg', '.png'}:
                 if f.stem.lower() in cover_names:
                     cover_path = str(f)
                     break
-        
-        audio_files = sorted([f for f in book_dir.iterdir() if f.suffix.lower() in extensions])
+
+        audio_files = sorted([f for f in all_files if f.suffix.lower() in extensions])
         for idx, af in enumerate(audio_files):
+            if not self._is_running:
+                break
             try:
                 m = mutagen.File(af)
                 if m and m.info:
