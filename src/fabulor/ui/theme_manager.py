@@ -80,11 +80,11 @@ class ThemeManager(QObject):
         self._save_on_fade = False
 
     def get_current_theme(self) -> dict:
-        if self._cover_theme_active and self._cover_theme:
+        active = self._active_display_theme or self._current_theme_name
+        if isinstance(active, dict):
             from ..themes import _resolve_theme
-            return _resolve_theme(self._cover_theme)
-        return THEMES.get(self._active_display_theme or self._current_theme_name,
-                      THEMES["The Color Purple"])
+            return _resolve_theme(active)
+        return THEMES.get(active, THEMES["The Color Purple"])
     
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
@@ -157,7 +157,11 @@ class ThemeManager(QObject):
         if self.main_window.panel_manager and self.main_window.panel_manager.is_any_panel_visible():
             self._pending_rotation = True
             return
+        self._do_rotate()
+
+    def _do_rotate(self):
         self._pending_rotation = False
+        mode = self.config.get_cover_art_theme_mode()
         candidates = list(self.selected_themes)
         if mode == "with_pool" and self._cover_theme:
             candidates.append(None)
