@@ -72,6 +72,7 @@ class ThemeManager(QObject):
         self._cover_theme_active = False  # True when cover theme is currently displayed
 
         # Rotation Timer
+        self._pending_rotation = False
         self.rotation_timer = QTimer()
         self.rotation_timer.timeout.connect(self._rotate_theme)
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
