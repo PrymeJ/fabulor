@@ -1461,6 +1461,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     import time
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
+        print(f"[on_file_ready] time_pos={self.player.time_pos}, duration={self.player.duration}")
         if not os.path.exists(self.current_file):
              self.status_banner.setText("Error: File missing!")
              self.status_banner.show()
@@ -1537,21 +1538,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.progress_slider.set_markers([])
 
     def _restore_position(self):
-        """Seeks to the saved position from config."""
-        # Crash recovery/Sync: Ensure DB is up to date with the last known config position
+        QTimer.singleShot(0, lambda: self.player.set_volume_from_slider(self.volume_slider.value()))
         config_pos = self.config.get_last_position(self.current_file)
         if config_pos > 0:
             self.db.update_progress(self.current_file, config_pos)
-
         book_data = self.db.get_book(self.current_file)
-        if book_data:
-            progress = book_data.progress
-            if progress > 0:
-                self.player.time_pos = progress
-                self.player.is_seeking = True
-        
-        self.player.set_volume_from_slider(self.volume_slider.value())
-        
+        if book_data and book_data.progress > 0:
+            self.player.is_seeking = True
+            self.player.time_pos = book_data.progress
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)

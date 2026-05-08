@@ -143,6 +143,8 @@ class Player(QObject):
     @property
     def duration(self): return self.instance.duration if self.instance else None
     @property
+    def seekable(self): return bool(self.instance.seekable) if self.instance else False
+    @property
     def chapter(self): return self.instance.chapter if self.instance else None
     @chapter.setter
     def chapter(self, value): 
