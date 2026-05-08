@@ -13,6 +13,22 @@ This is fragile. When the path→ID migration happens, either give CoverLoaderWo
 
 ---
 
+## Book Switch Sequence — Known Remaining Issues
+
+### Cover cache miss still hits mutagen
+`_start_cover_load_async` only avoids mutagen when `cover_path` is in `_cover_cache`. When `cover_path` is present but not cached, a `CoverLoaderWorker` is dispatched correctly. When `cover_path` is None, falls back to `_load_cover_art` → `player.extract_cover()` → mutagen. The main page never independently populates `_cover_cache`; it only hits the cache if the library panel has already loaded that book's cover in the same session. Resolving this requires either: (a) storing cover thumbnails on disk during scan, or (b) a separate main-page cache populated on first load.
+
+### Panel close delay on book switch
+`hide_all_panels()` fires immediately when a book is selected, but `player.load_book()` is called on the same thread directly after. mpv initialization on the main thread competes with the slide-out compositor, causing a small stutter on slower book loads. Moving `load_book` after the panel animation finishes requires deferring all book-switch logic and creates signal ordering complexity. Accepted as-is for now.
+
+### Position restore fragility
+`_restore_position` re-reads from DB after `config_pos` sync. If `_current_book` (set at the top of `_on_file_ready`) was read before the sync, its `progress` value may be stale. The current workaround is a fresh `db.get_book()` call inside `_restore_position`. This is a second DB read on the file-ready path. Could be eliminated by moving the config sync earlier (before `db.get_book` in `_on_file_ready`), but requires care — `_current_book` is used by the slider animation logic immediately after.
+
+### mpv `loadfile start=` option does not work
+Tested with `instance.loadfile(path, start=str(int(seconds)))` and `f"+{int(seconds)}"`. mpv reports `time_pos=0.0` after `file-loaded` fires regardless. python-mpv's `loadfile` encodes options correctly (`key=value` string) but the seek either doesn't apply or is overridden. If this ever works in a future python-mpv/mpv version, `time_pos` assignment in `_restore_position` can be replaced entirely.
+
+---
+
 ## Library Panel — Open/Close Performance (UNRESOLVED — do not touch without full test plan)
 
 Current state (at commit e0ec581): everything works correctly. No performance fixes applied.
