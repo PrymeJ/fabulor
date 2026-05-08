@@ -1,3 +1,4 @@
+import os
 from PySide6.QtCore import QObject, Signal, QRunnable, Slot
 from PySide6.QtGui import QImage
 
@@ -23,7 +24,7 @@ class CoverLoaderWorker(QRunnable):
         cover_source_path = self.book_data.cover_path
 
         image = QImage()
-        if cover_source_path:
+        if cover_source_path and os.path.exists(cover_source_path):
             image.load(cover_source_path)
 
         self.cover_loaded.emit(book_path, image)
