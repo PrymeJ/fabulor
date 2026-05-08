@@ -100,8 +100,6 @@ class ThemeManager(QObject):
         self._fade_anim.setEndValue(0.0)
         self._fade_anim.finished.connect(self._on_fade_finished)
 
-    def _apply_fade_mask(self):
-        self._fade_overlay.clearMask()
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()
@@ -229,10 +227,7 @@ class ThemeManager(QObject):
             pix = self.main_window.grab()
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
-            if isinstance(theme_name, dict) and not hover:
-                self._apply_fade_mask()
-            else:
-                self._fade_overlay.clearMask()
+            self._fade_overlay.clearMask()
             self._fade_overlay.show()
             self._fade_overlay.raise_()
 
