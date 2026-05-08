@@ -2011,11 +2011,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_anim.setEndValue(0.0)
         self.preview_anim.start()
 
+    def _apply_main_cover(self, pixmap):
+        self.current_cover_pixmap = pixmap
+        self.cover_art_label.show()
+        self.metadata_label.hide()
+        self._update_cover_art_scaling()
+        if self.panel_manager and self.panel_manager.is_any_panel_visible():
+            self._pending_cover_pixmap = pixmap
+        else:
+            self.theme_manager.apply_cover_theme(pixmap)
+            self._pending_cover_pixmap = None
+
     def _load_cover_art(self, file_path):
-        """Extracts and displays cover art from the file tags."""
-        # Get book metadata for fallback display
         book = self.db.get_book(file_path) if file_path else None
-        
         if not file_path:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
@@ -2023,28 +2031,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.metadata_label.setText("No book selected")
             self.theme_manager.clear_cover_theme()
             return
+        from .ui.library import _cover_cache
+        cached = _cover_cache.get(file_path)
 
+        if cached is not None:
+            self._apply_main_cover(cached)
+            return
         pixmap = self.player.extract_cover(file_path)
-
         if not pixmap.isNull():
-            self.current_cover_pixmap = pixmap
-            self.cover_art_label.show()
-            self.metadata_label.hide()
-            self._update_cover_art_scaling()
-            # Defer cover theme until any open panel has dismissed
-            if self.panel_manager and self.panel_manager.is_any_panel_visible():
-                self._pending_cover_pixmap = pixmap
-            else:
-                self.theme_manager.apply_cover_theme(pixmap)
-                self._pending_cover_pixmap = None
+            self._apply_main_cover(pixmap)
         else:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
             self.metadata_label.show()
-            if book:
-                self.metadata_label.setText(f"{book.author} - {book.title}")
-            else:
-                self.metadata_label.setText("Unknown book")
+            self.metadata_label.setText(
+                f"{book.author} - {book.title}" if book else "Unknown book"
+            )
             self._pending_cover_pixmap = None
             self.theme_manager.clear_cover_theme()
 

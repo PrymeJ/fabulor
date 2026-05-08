@@ -449,6 +449,7 @@ class LibraryPanel(QFrame):
         direction = "ascending" if self._sort_ascending else "descending"
         self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_ascending(self._sort_ascending)
+        QTimer.singleShot(0, self._load_visible_covers)
 
     def _on_sort_changed(self):
         sort_key  = self.sort_combo.currentData()
@@ -457,6 +458,7 @@ class LibraryPanel(QFrame):
         self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
         self._last_filter_mode = sort_key
+        QTimer.singleShot(0, self._load_visible_covers)
 
     def _on_search_changed(self, text):
         self._book_model.filter_books(text.lower().strip())
