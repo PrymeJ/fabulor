@@ -39,11 +39,11 @@ class _TagBookThumb(QWidget):
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
         if cover_path and os.path.exists(cover_path):
-            if cover_path in _cover_cache:
-                self._apply_cover(_cover_cache[cover_path])
+            if book['path'] in _cover_cache:
+                self._apply_cover(_cover_cache[book['path']])
             else:
                 worker = CoverLoaderWorker(
-                    type('_TT', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    type('_TT', (), {'path': book['path'], 'cover_path': cover_path})(),
                     None,
                 )
                 worker.signals.cover_loaded.connect(
