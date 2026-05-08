@@ -61,6 +61,10 @@ class BookDetailPanel(QWidget):
             os.path.join(os.path.dirname(__file__), "..", "assets")
         )
         self._build_ui()
+        self._tag_suggest_timer = QTimer(self)
+        self._tag_suggest_timer.setSingleShot(True)
+        self._tag_suggest_timer.setInterval(200)
+        self._tag_suggest_timer.timeout.connect(self._do_tag_suggestions)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -329,7 +333,10 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.show()
 
     def _on_tag_input_changed(self, text: str):
-        text = text.strip()
+        self._tag_suggest_timer.start()  # restarts if already running
+
+    def _do_tag_suggestions(self):
+        text = self._tag_input.text().strip()
         if text and self._book_path:
             suggestions = self.db.get_tag_suggestions(text, self._book_path)
             self._tag_completer_model.setStringList(suggestions)
