@@ -181,6 +181,36 @@ class LibraryDB:
             with conn:
                 conn.execute(query, cleaned)
 
+    def upsert_books_batch(self, book_data_list):
+        if not book_data_list:
+            return
+        query = """
+            INSERT INTO books (path, folder_name_raw, title, author, narrator, duration, progress, cover_path, year)
+            VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path, :year)
+            ON CONFLICT(path) DO UPDATE SET
+                folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
+                title=excluded.title,
+                author=excluded.author,
+                narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
+                duration=excluded.duration,
+                progress=COALESCE(excluded.progress, books.progress),
+                cover_path=excluded.cover_path,
+                year=COALESCE(excluded.year, books.year)
+        """
+        cleaned_list = [
+            {k: (v.strip() if isinstance(v, str) else v) for k, v in {
+                "path": d.get("path"), "folder_name_raw": d.get("folder_name_raw"),
+                "title": d.get("title"), "author": d.get("author"),
+                "narrator": d.get("narrator"), "duration": d.get("duration"),
+                "progress": d.get("progress"), "cover_path": d.get("cover_path"),
+                "year": d.get("year"),
+            }.items()}
+            for d in book_data_list
+        ]
+        with self._get_conn() as conn:
+            with conn:
+                conn.executemany(query, cleaned_list)
+
     def get_book(self, path):
         """Retrieves a single book's metadata by its path."""
         with self._get_conn() as conn:

@@ -50,9 +50,15 @@ class ScannerWorker(QObject):
         known_paths = {b.path for b in db.get_all_books()}
 
         # Phase 2: Metadata Extraction
+        pending = []
+
         for book_dir in book_dirs:
-            if not self._is_running: break
-            
+            if not self._is_running:
+                if pending:
+                    db.upsert_books_batch(pending)
+                    pending = []
+                break
+
             book_path = str(book_dir)
             if not self.force_refresh and book_path in known_paths:
                 processed += 1
@@ -65,13 +71,16 @@ class ScannerWorker(QObject):
                     processed += 1
                     self.progress.emit(processed, total)
                     continue
-                db.upsert_book(metadata)
+                pending.append(metadata)
             except Exception as e:
                 print(f"Error scanning {book_dir}: {e}")
-            
+
             processed += 1
             self.progress.emit(processed, total)
-            
+
+        if pending:
+            db.upsert_books_batch(pending)
+
         self.finished.emit(processed)
 
     @staticmethod
