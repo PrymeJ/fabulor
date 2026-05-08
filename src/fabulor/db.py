@@ -321,6 +321,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
+                    b.id AS book_id,
                     ls.book_path,
                     COALESCE(b.title, ls.book_title) as book_title,
                     COALESCE(b.author, ls.book_author) as book_author,
@@ -536,6 +537,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
+                    b.id AS book_id,
                     ls.book_path,
                     COALESCE(b.title, ls.book_title) as book_title,
                     COALESCE(b.author, ls.book_author) as book_author,
@@ -577,6 +579,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
+                    b.id AS book_id,
                     be.book_path,
                     be.event_time,
                     b.cover_path,
@@ -596,6 +599,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
+                    b.id AS book_id,
                     be.book_path,
                     MAX(be.event_time) as event_time,
                     b.cover_path,
@@ -838,14 +842,14 @@ class LibraryDB:
         """Returns books that have the given tag, with path, title, author, cover_path."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                """SELECT b.path, b.title, b.author, b.cover_path
+                """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path
                 FROM books b
                 JOIN book_tags t ON b.path = t.book_path
                 WHERE t.tag = ?
                 ORDER BY b.title""",
                 (tag,)
             ).fetchall()
-        return [{'path': r[0], 'title': r[1], 'author': r[2], 'cover_path': r[3]} for r in rows]
+        return [dict(r) for r in rows]
 
     def rename_tag(self, old_tag: str, new_tag: str) -> bool:
         """Renames a tag across all books. Returns False if new_tag already exists."""
