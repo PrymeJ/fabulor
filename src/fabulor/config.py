@@ -85,7 +85,7 @@ class Config:
         self.settings.setValue(f"speed_{file_path}", speed)
 
     def get_day_start_hour(self):
-        return int(self.settings.value("day_start_hour", 0))
+        return self._safe_int("day_start_hour", 0)
     
     def set_day_start_hour(self, hour: int):
         self.settings.setValue("day_start_hour", hour)
