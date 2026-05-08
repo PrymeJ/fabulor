@@ -333,6 +333,7 @@ class BookDayRow(QWidget):
         cover_label = QLabel()
         cover_label.setFixedSize(48, 48)
         cover_label.setAlignment(Qt.AlignCenter)
+        book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
         icon_path = os.path.join(assets_dir, "fabulor.ico")
@@ -347,12 +348,12 @@ class BookDayRow(QWidget):
         self._deleted = deleted
         self._assets_dir = assets_dir
 
-        if cover_path and os.path.exists(cover_path):
-            if cover_path in _cover_cache:
-                self._apply_cover(_cover_cache[cover_path])
+        if book_path and cover_path and os.path.exists(cover_path):
+            if book_path in _cover_cache:
+                self._apply_cover(_cover_cache[book_path])
             else:
                 worker = CoverLoaderWorker(
-                    type('_BD', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    type('_BD', (), {'path': book_path, 'cover_path': cover_path})(),
                     None,
                 )
                 worker.signals.cover_loaded.connect(
@@ -472,6 +473,7 @@ class FinishedBookThumb(QWidget):
         cover_label = QLabel()
         cover_label.setFixedSize(47, 47)
         cover_label.setScaledContents(False)
+        book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
         icon_path = os.path.join(assets_dir, "fabulor.ico")
@@ -484,12 +486,12 @@ class FinishedBookThumb(QWidget):
 
         self._cover_label = cover_label
 
-        if cover_path and os.path.exists(cover_path):
-            if cover_path in _cover_cache:
-                self._apply_cover(_cover_cache[cover_path])
+        if book_path and cover_path and os.path.exists(cover_path):
+            if book_path in _cover_cache:
+                self._apply_cover(_cover_cache[book_path])
             else:
                 worker = CoverLoaderWorker(
-                    type('_FT', (), {'path': cover_path, 'cover_path': cover_path})(),
+                    type('_FT', (), {'path': book_path, 'cover_path': cover_path})(),
                     None,
                 )
                 worker.signals.cover_loaded.connect(
