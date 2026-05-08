@@ -550,6 +550,11 @@ class LibraryPanel(QFrame):
             worker._book_path = book.path
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)
+            self._active_workers.add(worker)
+            worker.signals.finished.connect(
+                lambda w=worker: self._active_workers.discard(w),
+                Qt.ConnectionType.QueuedConnection
+            )
 
     def _on_preload_cover_loaded(self, path, image):
         if image.isNull():
@@ -818,7 +823,7 @@ class BookDelegate(QStyledItemDelegate):
         self._playing_path = ""
         self._is_playing = False
         self._pulse_phase = 0.0
-        self._pulse_timer = QTimer()
+        self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(40)
         self._pulse_timer.timeout.connect(self._advance_pulse)
         # Scroll state for 1-per-row and 2-per-row
@@ -826,14 +831,14 @@ class BookDelegate(QStyledItemDelegate):
         self._scroll_state: dict    = {}
         self._scroll_hovered_path   = ""
         self._scroll_field_rects: dict = {}  # path → {field: (x, y, w, h, full_text_w)}
-        self._scroll_timer = QTimer()
+        self._scroll_timer = QTimer(self)
         self._scroll_timer.setInterval(40)
         self._scroll_timer.timeout.connect(self._advance_scroll)
         # Hover fade state — List mode only, user-toggleable
         self._hover_fade_mode = "Off"   # "Slow", "Normal", "Fast", "Off"
         self._list_hovered_path = ""
         self._hover_fade: dict = {}     # path → current alpha (0–255)
-        self._hover_fade_timer = QTimer()
+        self._hover_fade_timer = QTimer(self)
         self._hover_fade_timer.setInterval(16)  # ~60fps
         self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
         

@@ -2395,6 +2395,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def closeEvent(self, event):
         self.ui_timer.stop()
         self.quote_timer.stop()
+        self._undo_timer.stop()
         if self.player:
             self.config.set_volume(self.volume_slider.value())
             if self.current_file:
