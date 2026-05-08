@@ -15,8 +15,8 @@ This is fragile. When the path→ID migration happens, either give CoverLoaderWo
 
 ## Book Switch Sequence — Known Remaining Issues
 
-### Cover cache miss still hits mutagen
-`_start_cover_load_async` only avoids mutagen when `cover_path` is in `_cover_cache`. When `cover_path` is present but not cached, a `CoverLoaderWorker` is dispatched correctly. When `cover_path` is None, falls back to `_load_cover_art` → `player.extract_cover()` → mutagen. The main page never independently populates `_cover_cache`; it only hits the cache if the library panel has already loaded that book's cover in the same session. Resolving this requires either: (a) storing cover thumbnails on disk during scan, or (b) a separate main-page cache populated on first load.
+### Cover cache — cold start still hits mutagen
+`_load_cover_art` checks `_cover_cache.get(file_path)` before calling mutagen. Cache is keyed by audiobook path and populated by the library panel's `CoverLoaderWorker`. On a warm session (library opened at least once), cache hits are instant. On cold start (library never opened this session), cache is empty and mutagen runs as before. Resolving cold-start requires either: (a) storing cover thumbnails on disk during scan, or (b) populating the cache independently on first book load.
 
 ### Panel close delay on book switch
 `hide_all_panels()` fires immediately when a book is selected, but `player.load_book()` is called on the same thread directly after. mpv initialization on the main thread competes with the slide-out compositor, causing a small stutter on slower book loads. Moving `load_book` after the panel animation finishes requires deferring all book-switch logic and creates signal ordering complexity. Accepted as-is for now.
