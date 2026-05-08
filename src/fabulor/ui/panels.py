@@ -10,6 +10,7 @@ class PanelManager:
         # State variables
         self.sidebar_expanded = False
         self._pending_panel_open = None
+        self._sidebar_panel_signal_connected = False
         
         # Widgets (references passed from MainWindow)
         self.sidebar = main_window.sidebar
@@ -67,11 +68,9 @@ class PanelManager:
         self.main_window._save_current_progress()
         if self.sidebar_expanded:
             self._pending_panel_open = "library"
-            try:
-                self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-            except RuntimeError:
-                pass
-            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
             self._toggle_sidebar()
         else:
             self._start_library_entry()
@@ -146,11 +145,9 @@ class PanelManager:
         """Hides sidebar first, then shows settings panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "settings"
-            try:
-                self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-            except RuntimeError:
-                pass
-            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
             self._toggle_sidebar()
         else:
             self._start_settings_entry()
@@ -179,11 +176,9 @@ class PanelManager:
         self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "speed"
-            try:
-                self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-            except RuntimeError:
-                pass
-            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
             self._toggle_sidebar()
         else:
             self._start_speed_entry()
@@ -208,10 +203,9 @@ class PanelManager:
 
     def _on_sidebar_closed_for_panel(self):
         """Handler for sidebar animation finishing when a panel needs to open."""
-        try:
+        if self._sidebar_panel_signal_connected:
             self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-        except RuntimeError:
-            pass # Already disconnected or not connected, fine.
+            self._sidebar_panel_signal_connected = False
 
         if self._pending_panel_open == "library": self._start_library_entry()
         elif self._pending_panel_open == "settings": self._start_settings_entry()
@@ -288,11 +282,9 @@ class PanelManager:
         self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "stats"
-            try:
-                self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-            except RuntimeError:
-                pass
-            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
             self._toggle_sidebar()
         else:
             self._start_stats_entry()
@@ -322,11 +314,9 @@ class PanelManager:
         """Hides sidebar first, then shows sleep panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "sleep"
-            try:
-                self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
-            except RuntimeError:
-                pass
-            self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
             self._toggle_sidebar()
         else:
             self._start_sleep_entry()
