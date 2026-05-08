@@ -8,15 +8,14 @@ class CoverLoaderSignals(QObject):
 
 class CoverLoaderWorker(QRunnable):
     """Worker to load covers using QThreadPool to avoid thread exhaustion."""
-    def __init__(self, book_data, player_instance, parent=None):
+    def __init__(self, book_data, parent=None):
         super().__init__()
         self.signals = CoverLoaderSignals()
         # Proxy the signals for easier access
         self.cover_loaded = self.signals.cover_loaded
         self.finished = self.signals.finished
-        
+
         self.book_data = book_data
-        self.player_instance = player_instance
 
     @Slot()
     def run(self):

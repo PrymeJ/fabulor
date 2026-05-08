@@ -44,7 +44,6 @@ class _TagBookThumb(QWidget):
             else:
                 worker = CoverLoaderWorker(
                     type('_TT', (), {'path': book['path'], 'cover_path': cover_path})(),
-                    None,
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection

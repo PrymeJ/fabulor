@@ -423,7 +423,7 @@ class LibraryPanel(QFrame):
 
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
-        worker = CoverLoaderWorker(book, self.player_instance)
+        worker = CoverLoaderWorker(book)
         worker._book_path = book.path
         self._active_workers.add(worker)
         worker.signals.cover_loaded.connect(self._on_cover_loaded, Qt.ConnectionType.QueuedConnection)
@@ -546,7 +546,7 @@ class LibraryPanel(QFrame):
             book = self._preload_queue.pop(0)
             if book.path in _cover_cache:
                 continue
-            worker = CoverLoaderWorker(book, self.player_instance)
+            worker = CoverLoaderWorker(book)
             worker._book_path = book.path
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)
