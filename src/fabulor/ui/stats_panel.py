@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool
+from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker
@@ -928,6 +928,9 @@ class StatsPanel(QWidget):
         self._current_week_index: int = 0
         self._active_months: list[str] = []
         self._current_month_index: int = 0
+        self._cached_active_days = None
+        self._cached_active_weeks = None
+        self._cached_active_months = None
         self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
@@ -1232,9 +1235,9 @@ class StatsPanel(QWidget):
             self._refresh_daily()
 
     def _refresh_daily(self):
-        self._active_days = self.db.get_active_periods(
-            'day', self.config.get_day_start_hour()
-        )
+        if self._cached_active_days is None:
+            self._cached_active_days = self.db.get_active_periods('day', self.config.get_day_start_hour())
+        self._active_days = self._cached_active_days
         while self._day_rows_layout.count() > 1:
             item = self._day_rows_layout.takeAt(0)
             if item.widget():
@@ -1357,7 +1360,9 @@ class StatsPanel(QWidget):
 
     def _refresh_weekly(self):
         from datetime import datetime, timedelta
-        self._active_weeks = self.db.get_active_periods('week', self.config.get_day_start_hour())
+        if self._cached_active_weeks is None:
+            self._cached_active_weeks = self.db.get_active_periods('week', self.config.get_day_start_hour())
+        self._active_weeks = self._cached_active_weeks
         while self._week_rows_layout.count() > 1:
             item = self._week_rows_layout.takeAt(0)
             if item.widget():
@@ -1480,7 +1485,9 @@ class StatsPanel(QWidget):
 
     def _refresh_monthly(self):
         from datetime import datetime
-        self._active_months = self.db.get_active_periods('month', self.config.get_day_start_hour())
+        if self._cached_active_months is None:
+            self._cached_active_months = self.db.get_active_periods('month', self.config.get_day_start_hour())
+        self._active_months = self._cached_active_months
         while self._month_rows_layout.count() > 1:
             item = self._month_rows_layout.takeAt(0)
             if item.widget():
@@ -1531,7 +1538,7 @@ class StatsPanel(QWidget):
         elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
         elif self.tabs.tabText(index) == "Timeline":
-            self._refresh_time()
+            QTimer.singleShot(0, self._refresh_time)
             self._heatmap.animate_reveal()
         elif self.tabs.tabText(index) == "⚙":
             if hasattr(self, '_tag_manager'):
@@ -1590,7 +1597,13 @@ class StatsPanel(QWidget):
         rows = self.db.get_hourly_heatmap(n_days=14)
         self._heatmap.set_data(rows, datetime.now().date())
 
+    def _invalidate_period_cache(self):
+        self._cached_active_days = None
+        self._cached_active_weeks = None
+        self._cached_active_months = None
+
     def refresh_all(self):
+        self._invalidate_period_cache()
         self.refresh_overall()
         self._refresh_daily()
         self._refresh_weekly()
@@ -1598,6 +1611,7 @@ class StatsPanel(QWidget):
         self._refresh_time()
 
     def refresh_current_tab(self):
+        self._invalidate_period_cache()
         name = self.tabs.tabText(self.tabs.currentIndex())
         if name == "Overall":
             self.refresh_overall()
