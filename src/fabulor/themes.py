@@ -646,7 +646,7 @@ THEMES = {
         "settings_tab_hover_opacity": 0.9,
         "settings_tab_hover_text":    "#0B0A0A",
     },
-    "Starless Sea": {
+    "Galatea": {
     "bg_deep": "#0A1228",
     "bg_main": "#101A38",
     "bg_sidebar": "#0A1228",
