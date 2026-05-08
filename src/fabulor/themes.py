@@ -446,7 +446,8 @@ THEMES = {
         "sidebar_text_hover":     "#6CFFB0",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
-        "text":                   "#D0FFD0"
+        "text":                   "#D0FFD0",
+        "panel_theme_names_dimmed": "#1AA652",
     },
     "Eyes of Ibad": {
         "bg_deep":                "#0A1128",
@@ -599,7 +600,8 @@ THEMES = {
         "sidebar_text_hover":     "#C2D6D9",
         "sidebar_opacity":        0.82,
         "panel_opacity_hover":    0.9,
-        "text":                   "#F0F3F0"
+        "text":                   "#F0F3F0",
+        "panel_theme_names_dimmed": "#6F868A",
     },
     "Oranges Are Not the Only Fruit": { # Test long name
         "bg_deep":      "#2C3E50",
@@ -619,7 +621,7 @@ THEMES = {
         "sidebar_text_hover": "#F05948",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
-        "panel_theme_names_dimmed": "#8CF1F8FF",
+        "panel_theme_names_dimmed": "#8CF1F8",
         "text":                "#ECF0F1", # Light text
     },
     "Razorgirl": {
@@ -712,7 +714,7 @@ THEMES = {
         "sidebar_text_hover": "#ff6666",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
-        "panel_theme_names_dimmed": "#FFFFFFFF",
+        "panel_theme_names_dimmed": "#FFFFFF",
         "text":                "#ffcccc",
         "button_text":         "#000000",
         "progress_text":       "#f88a8a", # Contrast against bright red fill
@@ -865,7 +867,8 @@ THEMES = {
         "sidebar_text_hover":     "#F0BC6C",
         "sidebar_opacity":        0.84,
         "panel_opacity_hover":    0.91,
-        "text":                   "#FFF2E0"
+        "text":                   "#FFF2E0",
+        "panel_theme_names_dimmed": "#B87E3A",
     },
     "The Color Purple": {
         "bg_deep":      "#0D001A",  # title bar, darkest
@@ -886,6 +889,7 @@ THEMES = {
         "sidebar_opacity": 0.6,
         "panel_opacity_hover": 0.9,
         "text":         "#EF94E9",  # all labels and button text
+        "panel_theme_names_dimmed": "#6B2FAD",
     },
     "The Overlook": {
         "bg_deep":                "#2E1E14",
@@ -927,7 +931,8 @@ THEMES = {
         "sidebar_text_hover":     "#D8D0B4",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
-        "text":                   "#F0ECDC"
+        "text":                   "#F0ECDC",
+        "panel_theme_names_dimmed": "#8A8268",
     },
         "Unknown Kadath": {
         "bg_deep":                "#1A1824",
