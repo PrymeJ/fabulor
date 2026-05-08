@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit
-from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QAbstractAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer
 
 class PanelManager:
     def __init__(self, main_window):
@@ -30,6 +30,8 @@ class PanelManager:
         self.stats_panel_animation = main_window.stats_panel_animation
         self.book_detail_panel: Optional["BookDetailPanel"] = None
         self.book_detail_panel_animation: Optional[QPropertyAnimation] = None
+
+        self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -439,6 +441,10 @@ class PanelManager:
             pass
         self.settings_panel.hide()
         self._notify_panel_closed()
+
+    def _on_sidebar_hidden(self):
+        if not self.sidebar_expanded:
+            self._notify_panel_closed()
 
     def _notify_panel_closed(self):
         if self.is_any_panel_visible():
