@@ -233,8 +233,13 @@ class PanelManager:
         self.library_panel.hide()
         mw = self.main_window
         if getattr(mw, '_pending_cover_pixmap', None):
-            mw.theme_manager.apply_cover_theme(mw._pending_cover_pixmap)
+            pixmap = mw._pending_cover_pixmap
             mw._pending_cover_pixmap = None
+            slider = getattr(mw, 'progress_slider', None)
+            if slider and hasattr(slider, 'when_animations_done'):
+                slider.when_animations_done(lambda: mw.theme_manager.apply_cover_theme(pixmap))
+            else:
+                mw.theme_manager.apply_cover_theme(pixmap)
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""

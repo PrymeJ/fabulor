@@ -135,6 +135,21 @@ class ClickSlider(QWidget):
 
     animatedValue = Property(int, _get_animated_value, _set_animated_value)
 
+    def when_animations_done(self, callback):
+        """Call callback once both _flow_anim and _reveal_anim have finished."""
+        if self._flow_anim.state() == QPropertyAnimation.State.Running:
+            def _after_flow():
+                self._flow_anim.finished.disconnect(_after_flow)
+                self.when_animations_done(callback)
+            self._flow_anim.finished.connect(_after_flow)
+        elif self._reveal_anim.state() == QPropertyAnimation.State.Running:
+            def _after_reveal():
+                self._reveal_anim.finished.disconnect(_after_reveal)
+                callback()
+            self._reveal_anim.finished.connect(_after_reveal)
+        else:
+            callback()
+
     def animate_to(self, target, old_value=None):
         """Animate the slider from old_value (or current) to target.
 
