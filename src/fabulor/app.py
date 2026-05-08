@@ -1442,7 +1442,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._save_current_progress() # Save state of the book we are leaving
         self._pre_switch_slider_value = self.progress_slider.value()
         self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
+        self.current_chapter_label.setText("") # Explicitly clear chapter label on book switch
         self.progress_slider.set_markers([])
+        self.chapter_list_widget.clear()
         self._last_saved_pct = -1
         self.current_file = path
         self.library_panel.set_playing_path(path)
@@ -1507,6 +1509,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
+            else:
+                self.chapter_list_widget.clear()
+                self.progress_slider.set_markers([])
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
