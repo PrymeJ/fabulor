@@ -1,4 +1,28 @@
+## Scanner
+
+### `_is_running` is an unsynchronized flag — deferred
+`ScannerWorker.stop()` ([scanner.py:22](src/fabulor/library/scanner.py#L22)) writes `_is_running = False` from the main thread; `run_scan()` reads it in a loop on the worker thread ([scanner.py:38](src/fabulor/library/scanner.py#L38), [56](src/fabulor/library/scanner.py#L56), [129](src/fabulor/library/scanner.py#L129)) with no lock or memory barrier. Technically a data race; `threading.Event` would be correct. Benign under CPython's GIL in practice. Address when scanner interface is next refactored.
+
+---
+
+## Sleep Timer
+
+### State not persisted across restarts
+`config.get_sleep_duration()` and `config.get_sleep_mode()` exist and are written by `SleepTimerPanel.set_sleep_timer()` ([sleep_timer.py:130–137](src/fabulor/ui/sleep_timer.py#L130-L137)), but nothing reads them on startup. `SleepTimerPanel.__init__` always starts with `_sleep_timer_end_time = None` and `_sleep_mode = None`. Whether to restore sleep timer state across restarts is a product decision. Address when sleep timer feature is next touched.
+
+---
+
+## Panel Animation — Deferred Fixes
+
+### `library_panel_animation.finished` duplicate connection risk — `_start_library_entry` and `_close_library_flow`
+`_start_library_entry` ([panels.py:86](src/fabulor/ui/panels.py#L86)) connects `finished` → `_on_library_shown` with no guard against the animation already running. `_close_library_flow` ([panels.py:223](src/fabulor/ui/panels.py#L223)) does the same for `_on_library_hidden`. If either is called twice before the animation completes, a second connection accumulates; the self-disconnect in `_on_library_shown`/`_on_library_hidden` only clears one copy per firing. Most paths are guarded (`_close_library_flow` checks `Running` at line 212; the sidebar path serialises through `_on_sidebar_closed_for_panel`), so the race is low frequency but real. Fix when panel animation code is next touched: add the disconnect-before-connect pattern matching the other animation handlers.
+
+---
+
 ## Known Architectural Debt
+
+### Book switch state split on DB failure — `_on_book_selected_from_library`
+`_on_book_selected_from_library` ([app.py:1449–1458](src/fabulor/app.py#L1449-L1458)) sets `current_file = path`, then fires `db.update_last_played`, `config.set_last_book`, and `player.load_book` as four sequential side effects with no rollback. If `db.update_last_played` raises (disk full, locked DB), `current_file` already points at the new book but mpv is still playing the old one. Subsequent `_update_ui_sync` ticks write position data for the new path keyed against the old mpv session. Fix requires either: (a) a transaction wrapper that rolls back `current_file` and config on failure, or (b) delaying `current_file` assignment until after all DB writes succeed. Not a common failure mode — DB operations would need to be failing for this to trigger.
 
 ### _update_speed_grid_styling in settings_controller.py
 Misnamed — orchestrates all panel visual updates, not just speed grid.
