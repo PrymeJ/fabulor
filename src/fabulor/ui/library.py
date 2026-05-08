@@ -559,7 +559,8 @@ class LibraryPanel(QFrame):
         pixmap.setDevicePixelRatio(dpr)
         _cover_cache[path] = pixmap
         # If the model is showing this book, notify it
-        self._book_model.notify_cover_cached(path)
+        if not getattr(self, '_is_animating', False):
+            self._book_model.notify_cover_cached(path)
 
     def cancel_preload(self):
         if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
