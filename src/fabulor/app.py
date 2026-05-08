@@ -107,6 +107,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Temporary
         self._eof_event_written: bool = False
+        self._eof_dur_fetched: bool = False
 
         # Session recording
         self._current_book = None
@@ -1211,6 +1212,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_book_removed(self):
         """Helper for controller when the currently playing folder is removed from library."""
         self.current_file = ""
+        self._current_book = None
+        self._close_session()
         if self.player:
             self.player.terminate()
         self.progress_slider.set_markers([])
@@ -1446,6 +1449,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
         self._last_saved_pct = -1
+        self._eof_dur_fetched = False
         self.current_file = path
         self.library_panel.set_playing_path(path)
         self.library_panel.set_is_playing(False)
@@ -1624,8 +1628,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
 
             if is_eof and dur is None:
-                book = self.db.get_book(self.current_file)
-                dur = book.duration if book and book.duration else 0.0
+                if not self._eof_dur_fetched:
+                    book = self.db.get_book(self.current_file)
+                    dur = book.duration if book and book.duration else 0.0
+                    self._eof_dur_fetched = True
 
             # If we aren't at EOF and don't have a position, we can't update —
             # unless we're paused and have a cached position from before the seek.
@@ -2116,6 +2122,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         
         if self.player.eof_reached or self.play_pause_button.text() == "Restart":
+            if not os.path.exists(self.current_file):
+                self.status_banner.setText("Error: File missing!")
+                self.status_banner.show()
+                return
             self._close_session()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
