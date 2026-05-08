@@ -100,6 +100,10 @@ class ThemeManager(QObject):
         self._fade_anim.setEndValue(0.0)
         self._fade_anim.finished.connect(self._on_fade_finished)
 
+    def abort_theme_fade(self):
+        if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
+            self._fade_overlay.hide()
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()

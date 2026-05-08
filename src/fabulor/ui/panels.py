@@ -60,6 +60,7 @@ class PanelManager:
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
+        self._abort_theme_fade()
         self.library_panel.cancel_preload()
         self.main_window._save_current_progress()
         if self.sidebar_expanded:
@@ -135,6 +136,7 @@ class PanelManager:
         view.update(view.visualRect(idx))
 
     def _open_settings_flow(self):
+        self._abort_theme_fade()
         """Hides sidebar first, then shows settings panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "settings"
@@ -164,6 +166,7 @@ class PanelManager:
             self.blur_effect.setBlurRadius(0)
 
     def _open_speed_flow(self):
+        self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "speed"
             self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
@@ -268,6 +271,7 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _open_stats_flow(self):
+        self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "stats"
             self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
@@ -296,6 +300,7 @@ class PanelManager:
             self.blur_effect.setBlurRadius(0)
 
     def _open_sleep_flow(self):
+        self._abort_theme_fade()
         """Hides sidebar first, then shows sleep panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "sleep"
@@ -372,6 +377,7 @@ class PanelManager:
         self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats'):
+        self._abort_theme_fade()
         self.main_window.book_detail_panel.load_book(book_data, tab=tab)
         self._start_book_detail_entry()
 
@@ -440,6 +446,11 @@ class PanelManager:
         tm = getattr(self.main_window, 'theme_manager', None)
         if tm:
             tm._fire_pending_rotation()
+
+    def _abort_theme_fade(self):
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm:
+            tm.abort_theme_fade()
 
     def _any_panel_animating(self):
         """Returns True if any sliding panel or blur animation is currently running."""
