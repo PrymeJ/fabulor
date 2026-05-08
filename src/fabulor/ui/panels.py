@@ -240,6 +240,7 @@ class PanelManager:
                 slider.when_animations_done(lambda: mw.theme_manager.apply_cover_theme(pixmap))
             else:
                 mw.theme_manager.apply_cover_theme(pixmap)
+        self._notify_panel_closed()
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""
@@ -264,6 +265,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.speed_panel.hide()
+        self._notify_panel_closed()
 
     def _open_stats_flow(self):
         if self.sidebar_expanded:
@@ -342,7 +344,8 @@ class PanelManager:
         except RuntimeError:
             pass
         self.sleep_panel.hide()
-        
+        self._notify_panel_closed()
+
     def _close_stats_flow(self):
         if self.stats_panel_animation.state() == QAbstractAnimation.State.Running:
             return
@@ -366,6 +369,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.stats_panel.hide()
+        self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats'):
         self.main_window.book_detail_panel.load_book(book_data, tab=tab)
@@ -400,6 +404,7 @@ class PanelManager:
         except:
             pass
         self.book_detail_panel.hide()
+        self._notify_panel_closed()
 
     def _close_settings_flow(self):
         """Slides the settings panel back out."""
@@ -427,6 +432,14 @@ class PanelManager:
         except:
             pass
         self.settings_panel.hide()
+        self._notify_panel_closed()
+
+    def _notify_panel_closed(self):
+        if self.is_any_panel_visible():
+            return
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm:
+            tm._fire_pending_rotation()
 
     def _any_panel_animating(self):
         """Returns True if any sliding panel or blur animation is currently running."""

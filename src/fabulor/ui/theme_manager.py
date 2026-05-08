@@ -152,10 +152,14 @@ class ThemeManager(QObject):
     def _rotate_theme(self):
         mode = self.config.get_cover_art_theme_mode()
         if mode == "exclusive" and self._cover_theme:
-            return  # cover theme owns the display in exclusive mode
+            return
+        if self.main_window.panel_manager and self.main_window.panel_manager.is_any_panel_visible():
+            self._pending_rotation = True
+            return
+        self._pending_rotation = False
         candidates = list(self.selected_themes)
         if mode == "with_pool" and self._cover_theme:
-            candidates.append(None)  # None represents the cover theme slot
+            candidates.append(None)
         if len(candidates) > 1:
             current = None if self._cover_theme_active else self._current_theme_name
             pool = [c for c in candidates if c != current]
@@ -167,6 +171,17 @@ class ThemeManager(QObject):
                 self._current_theme_name = chosen
                 self._cover_theme_active = False
                 self._on_theme_changed(chosen, save=False)
+            self._restart_rotation_timer()
+
+    def _restart_rotation_timer(self):
+        interval = self.config.get_theme_rotation_interval()
+        if interval > 0:
+            self.rotation_timer.start(interval * 60 * 1000)
+
+    def _fire_pending_rotation(self):
+        if self._pending_rotation:
+            self._pending_rotation = False
+            QTimer.singleShot(3000, self._rotate_theme)
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
         """Update the appearance with a subtle fade transition."""
@@ -305,6 +320,7 @@ class ThemeManager(QObject):
         self._current_theme_name = theme_name
         self._cover_theme_active = False
         self._on_theme_changed(theme_name, save=False)
+        self._restart_rotation_timer()
         self.update_theme_list_visuals()
         self.update_interval_visuals()
 
