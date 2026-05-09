@@ -1,4 +1,27 @@
 
+## Stats Panel — First-visit flash on Day/Week/Month tabs
+
+### Symptom
+On first visit to each of Day, Week, Month tabs after app start, content flashes garbled for a split second then renders correctly. Happens exactly once per tab per session — second visit is clean. Overall tab (no `BookDayRow` widgets) is unaffected.
+
+### What was tried and failed
+- **DPR fix on thumbnails** — wrong diagnosis, covers are not the cause
+- **`setFixedHeight` on `BookDayRow`** — wrong diagnosis
+- **`addStretch()` → `setAlignment(AlignTop)`** — wrong diagnosis; also changed `insertWidget`/clear loop as collateral
+- **`setUpdatesEnabled(False)` + `QTimer.singleShot(0)` re-enable** — wrong diagnosis
+- **Pre-populating all tabs before `show()`** — wrong diagnosis
+- **`ElidedLabel.showEvent` override** — no change
+- **Disabling elision entirely** — no change; elision is not the cause
+- **`ensurePolished()` on each row after insert** — no change
+- **`QTimer.singleShot(0, window().update() + processEvents())`** — no change
+
+### What is known
+- The flash is the entire row content (text + layout), not just thumbnails
+- It is not a DPR, cover loading, layout stretch, or stylesheet timing issue (all ruled out)
+- Root cause undiagnosed. Do not re-attempt the above.
+
+---
+
 ## Sleep Timer
 
 ### State not persisted across restarts
