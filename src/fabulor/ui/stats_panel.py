@@ -1234,6 +1234,11 @@ class StatsPanel(QWidget):
             self._current_day_index -= 1
             self._refresh_daily()
 
+    def _add_row_safely(self, layout, widget):
+        widget.setVisible(False)
+        layout.insertWidget(layout.count() - 1, widget)
+        widget.setVisible(True)
+
     def _refresh_daily(self):
         if self._cached_active_days is None:
             self._cached_active_days = self.db.get_active_periods('day', self.config.get_day_start_hour())
@@ -1264,13 +1269,15 @@ class StatsPanel(QWidget):
         rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
         total_seconds = 0.0
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+        self._day_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
-            book_row.setVisible(False)
-            self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
-            book_row.setVisible(True)
+            self._add_row_safely(self._day_rows_layout, book_row)
+        self._day_rows_widget.setUpdatesEnabled(True)
+        self._day_rows_layout.invalidate()
+        self._day_rows_widget.updateGeometry()
 
         self._day_total_label.setText(self._format_duration(total_seconds))
 
@@ -1392,13 +1399,15 @@ class StatsPanel(QWidget):
         rows = self.db.get_books_listened_in_period('week', week_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         total_seconds = 0.0
+        self._week_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
-            book_row.setVisible(False)
-            self._week_rows_layout.insertWidget(self._week_rows_layout.count() - 1, book_row)
-            book_row.setVisible(True)
+            self._add_row_safely(self._week_rows_layout, book_row)
+        self._week_rows_widget.setUpdatesEnabled(True)
+        self._week_rows_layout.invalidate()
+        self._week_rows_widget.updateGeometry()
 
         self._week_total_label.setText(self._format_duration(total_seconds))
 
@@ -1517,13 +1526,15 @@ class StatsPanel(QWidget):
         rows = self.db.get_books_listened_in_period('month', month_str, day_start)
         rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
         total_seconds = 0.0
+        self._month_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
-            book_row.setVisible(False)
-            self._month_rows_layout.insertWidget(self._month_rows_layout.count() - 1, book_row)
-            book_row.setVisible(True)
+            self._add_row_safely(self._month_rows_layout, book_row)
+        self._month_rows_widget.setUpdatesEnabled(True)
+        self._month_rows_layout.invalidate()
+        self._month_rows_widget.updateGeometry()
 
         self._month_total_label.setText(self._format_duration(total_seconds))
 
