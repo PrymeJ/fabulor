@@ -270,7 +270,7 @@ class LibraryPanel(QFrame):
         book = index.data(ROLE_BOOK)
         prev_path = getattr(self, '_hovered_book_path', None)
         self._hovered_book_path = book.path if book else None
-        self._book_model.set_hovered(self._hovered_book_path)
+        self._book_model.set_hovered(book.id if book else None)
         if book:
             self._delegate.on_hover_enter(book.path)
             self._delegate.on_list_hover_enter(book.path)
@@ -484,14 +484,14 @@ class LibraryPanel(QFrame):
         if not self.player_instance:
             return
 
-        path = getattr(self.window(), 'current_file', None)
         pos = self.player_instance.time_pos or 0.0
         dur = self.player_instance.duration  or 0.0
 
-        if not path or dur <= 0:
+        book = getattr(self.window(), '_current_book', None)
+        if not book or dur <= 0:
             return
 
-        self._book_model.update_playing_progress(path, pos, dur)
+        self._book_model.update_playing_progress(book.id, pos, dur)
 
     def set_playing_path(self, path: str) -> None:
         self._delegate.set_playing_path(path)
@@ -629,20 +629,19 @@ class BookModel(QAbstractListModel):
         if not index.isValid() or not (0 <= index.row() < len(self._filtered)):
             return None
         book = self._filtered[index.row()]
-        path = book.path
 
         if role == ROLE_BOOK:
             return book
         if role == ROLE_COVER:
             return self._covers.get(book.id)
         if role == ROLE_HOVERED:
-            return self._hovered_path == path
+            return self._hovered_path == book.id
         if role == ROLE_SHOW_REM:
-            return self._show_remaining.get(path, True)
+            return self._show_remaining.get(book.id, True)
         if role == ROLE_LIVE_POS:
-            return self._live_pos.get(path, book.progress or 0.0)
+            return self._live_pos.get(book.id, book.progress or 0.0)
         if role == ROLE_LIVE_DUR:
-            return self._live_dur.get(path, book.duration or 0.0)
+            return self._live_dur.get(book.id, book.duration or 0.0)
         if role == Qt.DisplayRole:
             return book.title
         return None
@@ -671,22 +670,22 @@ class BookModel(QAbstractListModel):
     def notify_cover_cached(self, book_id: int) -> None:
         self._emit_for_id(book_id)
 
-    def update_playing_progress(self, path: str, position: float, duration: float) -> None:
-        self._live_pos[path] = position if position > MIN_PROGRESS else 0.0
-        self._live_dur[path] = duration
-        self._emit_for_path(path)
+    def update_playing_progress(self, book_id: int, position: float, duration: float) -> None:
+        self._live_pos[book_id] = position if position > MIN_PROGRESS else 0.0
+        self._live_dur[book_id] = duration
+        self._emit_for_id(book_id)
 
-    def toggle_show_remaining(self, path: str) -> None:
-        self._show_remaining[path] = not self._show_remaining.get(path, True)
-        self._emit_for_path(path)
+    def toggle_show_remaining(self, book_id: int) -> None:
+        self._show_remaining[book_id] = not self._show_remaining.get(book_id, True)
+        self._emit_for_id(book_id)
 
-    def set_hovered(self, path: Optional[str]) -> None:
+    def set_hovered(self, book_id: Optional[int]) -> None:
         previous = self._hovered_path
-        self._hovered_path = path
-        if previous:
-            self._emit_for_path(previous)
-        if path:
-            self._emit_for_path(path)
+        self._hovered_path = book_id
+        if previous is not None:
+            self._emit_for_id(previous)
+        if book_id is not None:
+            self._emit_for_id(book_id)
 
     # ── Sort / filter ───────────────────────────────────────────────────────
 
@@ -1114,7 +1113,7 @@ class BookDelegate(QStyledItemDelegate):
         hit = self._time_label_rect(option, index)
         if hit and hit.contains(event.pos()):
             if event.type() == _QEvent.Type.MouseButtonRelease:
-                model.toggle_show_remaining(book.path)
+                model.toggle_show_remaining(book.id)
                 self.last_event_was_toggle = True
             return True
         return False
