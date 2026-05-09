@@ -1,3 +1,4 @@
+import threading
 import os
 import re
 import hashlib
@@ -15,11 +16,12 @@ class ScannerWorker(QObject):
     def __init__(self, db_path, force_refresh=False):
         super().__init__()
         self.db_path = db_path
-        self._is_running = True
+        self._running = threading.Event()
+        self._running.set()
         self.force_refresh = force_refresh
 
     def stop(self):
-        self._is_running = False
+        self._running.clear()
 
     def run_scan(self):
         db = LibraryDB(self.db_path)
@@ -35,7 +37,7 @@ class ScannerWorker(QObject):
             
             try:
                 for entry in root.iterdir():
-                    if not self._is_running: return
+                    if not self._running.is_set(): return
                     if entry.is_dir():
                         # Check for audio files inside
                         if any(f.suffix.lower() in audio_exts for f in entry.iterdir() if f.is_file()):
@@ -53,7 +55,7 @@ class ScannerWorker(QObject):
         pending = []
 
         for book_dir in book_dirs:
-            if not self._is_running:
+            if not self._running.is_set():
                 if pending:
                     db.upsert_books_batch(pending)
                     pending = []
@@ -126,7 +128,7 @@ class ScannerWorker(QObject):
 
         audio_files = sorted([f for f in all_files if f.suffix.lower() in extensions])
         for idx, af in enumerate(audio_files):
-            if not self._is_running:
+            if not self._running.is_set():
                 break
             try:
                 m = mutagen.File(af)
