@@ -43,7 +43,7 @@ class _ClickableLabel(QLabel):
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
-    metadata_saved = Signal(str, str, str)  # path, title, author
+    metadata_saved = Signal(int, str, str)  # book_id, title, author
     tags_changed = Signal()
 
     def __init__(self, db, config, parent=None):
@@ -391,6 +391,7 @@ class BookDetailPanel(QWidget):
             if full:
                 self._book_data = {
                     'path': full.path,
+                    'id': full.id,
                     'title': full.title,
                     'author': full.author,
                     'narrator': full.narrator or '',
@@ -538,7 +539,7 @@ class BookDetailPanel(QWidget):
                 'title': title, 'author': author,
                 'narrator': narrator, 'year': year
             })
-            self.metadata_saved.emit(self._book_path, title, author)
+            self.metadata_saved.emit(self._book_data.get('id'), title, author)
         self._sync_header_from_fields()
         self._save_label.setText("Saved")
         self._save_label.setCursor(Qt.CursorShape.ArrowCursor)

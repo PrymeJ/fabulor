@@ -654,18 +654,18 @@ class BookModel(QAbstractListModel):
         self._apply_filter_and_sort()
         self.endResetModel()
 
-    def update_book_metadata(self, path: str, title: str, author: str) -> None:
+    def update_book_metadata(self, book_id: int, title: str, author: str) -> None:
         for book in self._books:
-            if book.path == path:
+            if book.id == book_id:
                 book.title = title
                 book.author = author
                 break
         self._apply_filter_and_sort()
-        self._emit_for_path(path)
+        self._emit_for_id(book_id)
 
-    def update_cover(self, path: str, pixmap: QPixmap) -> None:
-        self._covers[path] = pixmap
-        self._emit_for_path(path)
+    def update_cover(self, book_id: int, pixmap: QPixmap) -> None:
+        self._covers[book_id] = pixmap
+        self._emit_for_id(book_id)
 
     def notify_cover_cached(self, book_id: int) -> None:
         self._emit_for_id(book_id)
@@ -791,13 +791,6 @@ class BookModel(QAbstractListModel):
         else:
             books.sort(key=sort_key, reverse=reverse)
         self._filtered = books
-
-    def _emit_for_path(self, path: str) -> None:
-        for row, book in enumerate(self._filtered):
-            if book.path == path:
-                idx = self.index(row)
-                self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
-                return
 
     def _emit_for_id(self, book_id: int) -> None:
         for row, book in enumerate(self._filtered):
