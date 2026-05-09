@@ -349,11 +349,12 @@ class BookDayRow(QWidget):
         self._assets_dir = assets_dir
 
         if book_path and cover_path and os.path.exists(cover_path):
-            if book_path in _cover_cache:
-                self._apply_cover(_cover_cache[book_path])
+            book_id = row_data.get("book_id")
+            if _cover_cache.get(book_id):
+                self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
-                    type('_BD', (), {'path': book_path, 'cover_path': cover_path})(),
+                    type('_BD', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -436,7 +437,7 @@ class BookDayRow(QWidget):
 
         layout.addLayout(content_block, stretch=1)
 
-    def _on_cover_loaded(self, path, image):
+    def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
         self._apply_cover(QPixmap.fromImage(image))
@@ -486,11 +487,12 @@ class FinishedBookThumb(QWidget):
         self._cover_label = cover_label
 
         if book_path and cover_path and os.path.exists(cover_path):
-            if book_path in _cover_cache:
-                self._apply_cover(_cover_cache[book_path])
+            book_id = row_data.get("book_id")
+            if _cover_cache.get(book_id):
+                self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
-                    type('_FT', (), {'path': book_path, 'cover_path': cover_path})(),
+                    type('_FT', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -499,7 +501,7 @@ class FinishedBookThumb(QWidget):
 
         layout.addWidget(cover_label)
 
-    def _on_cover_loaded(self, path, image):
+    def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
         self._apply_cover(QPixmap.fromImage(image))

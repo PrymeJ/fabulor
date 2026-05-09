@@ -39,7 +39,7 @@ MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
 PRELOAD_INTERVAL_MS = 50   # ms between preload timer ticks
 PRELOAD_BATCH_SIZE  = 3    # covers dispatched per tick
 
-_cover_cache: dict = {}  # module-level singleton {path: QPixmap}, shared by BookModel and idle preloader
+_cover_cache: dict = {}  # module-level singleton {book_id (int): QPixmap}, shared by BookModel and idle preloader
 
 def _parse_year_range(text: str):
     """Parse '>NNNN<NNNN' or '<NNNN>NNNN' into (min, max). Returns None if not a range."""
@@ -403,7 +403,7 @@ class LibraryPanel(QFrame):
         last_row = lo
         first_row = max(0, first_row - 5)
         last_row  = min(row_count - 1, last_row + 5)
-        in_flight = {getattr(w, '_book_path', None) for w in self._active_workers}
+        in_flight = {getattr(w, '_book_id', None) for w in self._active_workers}
         dispatched = 0
         skipped_cached = 0
         skipped_flight = 0
@@ -412,10 +412,10 @@ class LibraryPanel(QFrame):
             book  = index.data(ROLE_BOOK)
             if not book:
                 continue
-            if self._book_model._covers.get(book.path):
+            if _cover_cache.get(book.id):
                 skipped_cached += 1
                 continue
-            if book.path in in_flight:
+            if book.id in in_flight:
                 skipped_flight += 1
                 continue
             self._trigger_cover_load(book)
@@ -424,21 +424,21 @@ class LibraryPanel(QFrame):
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
         worker = CoverLoaderWorker(book)
-        worker._book_path = book.path
+        worker._book_id = book.id
         self._active_workers.add(worker)
         worker.signals.cover_loaded.connect(self._on_cover_loaded, Qt.ConnectionType.QueuedConnection)
         worker.signals.finished.connect(lambda w=worker: self._active_workers.discard(w), Qt.ConnectionType.QueuedConnection)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_cover_loaded(self, path, image):
+    def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
         pixmap = QPixmap.fromImage(image)
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
-        _cover_cache[path] = pixmap  # write to cache directly
+        _cover_cache[book_id] = pixmap  # write to cache directly
         if not getattr(self, '_is_animating', False):
-            self._book_model.notify_cover_cached(path)  # emit dataChanged only if not sliding
+            self._book_model.notify_cover_cached(book_id)  # emit dataChanged only if not sliding
 
     # ── Sort / filter ────────────────────────────────────────────────────────
 
@@ -523,7 +523,7 @@ class LibraryPanel(QFrame):
             sort_key  = SORT_KEY_MAP.get(self.config.get_library_sort_key(), "title")
             ascending = self.config.get_library_sort_ascending()
             books = self.db.get_all_books(sort_by=sort_key, order="ASC" if ascending else "DESC")
-            self._preload_queue = [b for b in books if b.path not in _cover_cache]
+            self._preload_queue = [b for b in books if b.id not in _cover_cache]
 
         if not self._preload_queue:
             return
@@ -544,10 +544,10 @@ class LibraryPanel(QFrame):
             if not self._preload_queue:
                 break
             book = self._preload_queue.pop(0)
-            if book.path in _cover_cache:
+            if book.id in _cover_cache:
                 continue
             worker = CoverLoaderWorker(book)
-            worker._book_path = book.path
+            worker._book_id = book.id
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)
             self._active_workers.add(worker)
@@ -556,16 +556,16 @@ class LibraryPanel(QFrame):
                 Qt.ConnectionType.QueuedConnection
             )
 
-    def _on_preload_cover_loaded(self, path, image):
+    def _on_preload_cover_loaded(self, book_id, image):
         if image.isNull():
             return
         pixmap = QPixmap.fromImage(image)
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
-        _cover_cache[path] = pixmap
+        _cover_cache[book_id] = pixmap
         # If the model is showing this book, notify it
         if not getattr(self, '_is_animating', False):
-            self._book_model.notify_cover_cached(path)
+            self._book_model.notify_cover_cached(book_id)
 
     def cancel_preload(self):
         if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
@@ -634,7 +634,7 @@ class BookModel(QAbstractListModel):
         if role == ROLE_BOOK:
             return book
         if role == ROLE_COVER:
-            return self._covers.get(path)
+            return self._covers.get(book.id)
         if role == ROLE_HOVERED:
             return self._hovered_path == path
         if role == ROLE_SHOW_REM:
@@ -668,8 +668,8 @@ class BookModel(QAbstractListModel):
         self._covers[path] = pixmap
         self._emit_for_path(path)
 
-    def notify_cover_cached(self, path: str) -> None:
-        self._emit_for_path(path)
+    def notify_cover_cached(self, book_id: int) -> None:
+        self._emit_for_id(book_id)
 
     def update_playing_progress(self, path: str, position: float, duration: float) -> None:
         self._live_pos[path] = position if position > MIN_PROGRESS else 0.0
@@ -796,6 +796,13 @@ class BookModel(QAbstractListModel):
     def _emit_for_path(self, path: str) -> None:
         for row, book in enumerate(self._filtered):
             if book.path == path:
+                idx = self.index(row)
+                self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
+                return
+
+    def _emit_for_id(self, book_id: int) -> None:
+        for row, book in enumerate(self._filtered):
+            if book.id == book_id:
                 idx = self.index(row)
                 self.dataChanged.emit(idx, idx, [Qt.DisplayRole])
                 return

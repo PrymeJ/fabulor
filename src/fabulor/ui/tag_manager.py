@@ -39,11 +39,12 @@ class _TagBookThumb(QWidget):
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
         if cover_path and os.path.exists(cover_path):
-            if book['path'] in _cover_cache:
-                self._apply_cover(_cover_cache[book['path']])
+            book_id = book.get('book_id')
+            if _cover_cache.get(book_id):
+                self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
-                    type('_TT', (), {'path': book['path'], 'cover_path': cover_path})(),
+                    type('_TT', (), {'path': book['path'], 'cover_path': cover_path, 'id': book_id})(),
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -52,7 +53,7 @@ class _TagBookThumb(QWidget):
 
         layout.addWidget(self._cover)
 
-    def _on_cover_loaded(self, path, image):
+    def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
         self._apply_cover(QPixmap.fromImage(image))

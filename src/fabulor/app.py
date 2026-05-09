@@ -2043,7 +2043,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.theme_manager.clear_cover_theme()
             return
         from .ui.library import _cover_cache
-        cached = _cover_cache.get(file_path)
+        cached = _cover_cache.get(book.id) if book else None
 
         if cached is not None:
             self._apply_main_cover(cached)
