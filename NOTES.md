@@ -1,9 +1,3 @@
-## Scanner
-
-### `_is_running` is an unsynchronized flag — deferred
-`ScannerWorker.stop()` ([scanner.py:22](src/fabulor/library/scanner.py#L22)) writes `_is_running = False` from the main thread; `run_scan()` reads it in a loop on the worker thread ([scanner.py:38](src/fabulor/library/scanner.py#L38), [56](src/fabulor/library/scanner.py#L56), [129](src/fabulor/library/scanner.py#L129)) with no lock or memory barrier. Technically a data race; `threading.Event` would be correct. Benign under CPython's GIL in practice. Address when scanner interface is next refactored.
-
----
 
 ## Sleep Timer
 
@@ -23,10 +17,6 @@
 
 ### Book switch state split on DB failure — `_on_book_selected_from_library`
 `_on_book_selected_from_library` ([app.py:1449–1458](src/fabulor/app.py#L1449-L1458)) sets `current_file = path`, then fires `db.update_last_played`, `config.set_last_book`, and `player.load_book` as four sequential side effects with no rollback. If `db.update_last_played` raises (disk full, locked DB), `current_file` already points at the new book but mpv is still playing the old one. Subsequent `_update_ui_sync` ticks write position data for the new path keyed against the old mpv session. Fix requires either: (a) a transaction wrapper that rolls back `current_file` and config on failure, or (b) delaying `current_file` assignment until after all DB writes succeed. Not a common failure mode — DB operations would need to be failing for this to trigger.
-
-### _update_speed_grid_styling in settings_controller.py
-Misnamed — orchestrates all panel visual updates, not just speed grid.
-Rename to `_refresh_panel_visuals` when refactoring SettingsController.
 
 ### Stats page sluggishness on Weekly and Monthly tabs
 RESOLVED: BookDayRow and FinishedBookThumb now load covers asynchronously via CoverLoaderWorker, with placeholder fallback and _cover_cache hit check.
