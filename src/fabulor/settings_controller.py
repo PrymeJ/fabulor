@@ -21,7 +21,7 @@ class SettingsController:
         main.hover_fade_changed.connect(self._update_hover_fade)
         main.chapter_digit_mode_changed.connect(self._update_chapter_digit_mode)
         main.chapter_digit_autoplay_changed.connect(self._update_chapter_digit_autoplay)
-        main._update_speed_grid_styling = self.sync_all_settings_visuals
+        main._refresh_panel_visuals = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
     def _update_naming_pattern(self, pattern):

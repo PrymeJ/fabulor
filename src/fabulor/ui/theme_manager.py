@@ -213,8 +213,8 @@ class ThemeManager(QObject):
         if not hasattr(self, '_fade_anim'):
             # Called before initialize_fade_overlay (e.g. on startup cover load) — apply silently
             self._apply_stylesheets(theme_name, hover=hover)
-            if hasattr(self.main_window, '_update_speed_grid_styling'):
-                self.main_window._update_speed_grid_styling(theme_name)
+            if hasattr(self.main_window, '_refresh_panel_visuals'):
+                self.main_window._refresh_panel_visuals(theme_name)
             if isinstance(theme_name, dict):
                 from ..themes import _resolve_theme
                 self.theme_applied.emit(_resolve_theme(theme_name))
