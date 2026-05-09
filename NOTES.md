@@ -1,8 +1,11 @@
 
-## Stats Panel — First-visit flash on Day/Week/Month tabs
+## Stats Panel — First-visit flash on Day/Week/Month tabs — RESOLVED
 
-### Symptom
-On first visit to each of Day, Week, Month tabs after app start, content flashes garbled for a split second then renders correctly. Happens exactly once per tab per session — second visit is clean. Overall tab (no `BookDayRow` widgets) is unaffected.
+### Fix
+`setVisible(False)` before `insertWidget`, then `setVisible(True)` immediately after, for each `BookDayRow` in all three refresh methods. Forces Qt to fully realize the widget before it is first painted. Applied to `_refresh_daily`, `_refresh_weekly`, `_refresh_monthly`.
+
+### Symptom (was)
+On first visit to each of Day, Week, Month tabs after app start, content flashed garbled for a split second then rendered correctly. Happened exactly once per tab per session — second visit was clean. Overall tab (no `BookDayRow` widgets) unaffected.
 
 ### What was tried and failed
 - **DPR fix on thumbnails** — wrong diagnosis, covers are not the cause
@@ -14,6 +17,7 @@ On first visit to each of Day, Week, Month tabs after app start, content flashes
 - **Disabling elision entirely** — no change; elision is not the cause
 - **`ensurePolished()` on each row after insert** — no change
 - **`QTimer.singleShot(0, window().update() + processEvents())`** — no change
+- **`setVisible(False)` → insert → `setVisible(True)` on each row** — **THIS WORKED** (see fix above)
 
 ### What is known
 - The flash is the entire row content (text + layout), not just thumbnails

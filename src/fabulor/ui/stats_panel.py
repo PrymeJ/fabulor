@@ -1268,7 +1268,9 @@ class StatsPanel(QWidget):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
+            book_row.setVisible(False)
             self._day_rows_layout.insertWidget(self._day_rows_layout.count() - 1, book_row)
+            book_row.setVisible(True)
 
         self._day_total_label.setText(self._format_duration(total_seconds))
 
@@ -1394,7 +1396,9 @@ class StatsPanel(QWidget):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
+            book_row.setVisible(False)
             self._week_rows_layout.insertWidget(self._week_rows_layout.count() - 1, book_row)
+            book_row.setVisible(True)
 
         self._week_total_label.setText(self._format_duration(total_seconds))
 
@@ -1517,7 +1521,9 @@ class StatsPanel(QWidget):
             total_seconds += row.get("clock_seconds") or 0.0
             book_row = BookDayRow(row, self._assets_dir, index=i)
             book_row.clicked.connect(self._on_book_row_clicked)
+            book_row.setVisible(False)
             self._month_rows_layout.insertWidget(self._month_rows_layout.count() - 1, book_row)
+            book_row.setVisible(True)
 
         self._month_total_label.setText(self._format_duration(total_seconds))
 
