@@ -172,7 +172,7 @@ class ThemeManager(QObject):
             return
         self._do_rotate()
 
-    def _do_rotate(self):
+    def _do_rotate(self, user_initiated=False):
         self._pending_rotation = False
         mode = self.config.get_cover_art_theme_mode()
         candidates = list(self.selected_themes)
@@ -184,11 +184,11 @@ class ThemeManager(QObject):
             chosen = random.choice(pool)
             if chosen is None:
                 self._cover_theme_active = True
-                self._on_theme_changed(self._cover_theme, save=False, user_initiated=False)
+                self._on_theme_changed(self._cover_theme, save=False, user_initiated=user_initiated)
             else:
                 self._current_theme_name = chosen
                 self._cover_theme_active = False
-                self._on_theme_changed(chosen, save=False, user_initiated=False)
+                self._on_theme_changed(chosen, save=False, user_initiated=user_initiated)
             self._restart_rotation_timer()
 
     def _restart_rotation_timer(self):
@@ -397,7 +397,7 @@ class ThemeManager(QObject):
 
     # ── Cover-art theme ─────────────────────────────────────────────────────
 
-    def apply_cover_theme(self, pixmap):
+    def apply_cover_theme(self, pixmap, user_initiated=False):
         """Build a theme dict from the cover pixmap and apply it if the mode calls for it."""
         from .cover_theme import build_cover_theme
         mode = self.config.get_cover_art_theme_mode()
@@ -408,7 +408,7 @@ class ThemeManager(QObject):
             return
         self._cover_theme = theme_dict
         self._cover_theme_active = True
-        self._on_theme_changed(theme_dict, save=False, user_initiated=False)
+        self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated)
         self._update_cover_pool_btn()
 
     def clear_cover_theme(self):
@@ -430,7 +430,7 @@ class ThemeManager(QObject):
         else:
             pixmap = getattr(self.main_window, 'current_cover_pixmap', None)
             if self._cover_theme is None and pixmap and not pixmap.isNull():
-                self.apply_cover_theme(pixmap)
+                self.apply_cover_theme(pixmap, user_initiated=True)
             elif self._cover_theme:
                 self._cover_theme_active = True
                 self._on_theme_changed(self._cover_theme, save=False)

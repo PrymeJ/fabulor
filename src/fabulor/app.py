@@ -898,7 +898,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
         self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
-        self.change_now_btn.clicked.connect(self.theme_manager._do_rotate)
+        self.change_now_btn.clicked.connect(lambda: self.theme_manager._do_rotate(user_initiated=True))
 
         bulk_layout.addWidget(self.add_all_btn)
         bulk_layout.addWidget(self.remove_all_btn)
