@@ -138,3 +138,29 @@ Replaced QPropertyAnimation on pos with opacity. Other panels slide fine, so thi
 - [ ] Close by selecting a book → check for ghost/stutter
 - [ ] Open in List mode → check for ghost/skeleton
 - [ ] Open in Grid modes → check content visible during slide
+
+--- 
+
+## Theme Transition — Long-term Plan
+
+### Current state (as of 2026-05-10)
+Overlay fade works correctly when no panels are open. When panels are open, automatic theme changes (cover theme, rotation) snap instantly. Settings panel hover preview animates correctly via overlay. The `user_initiated` flag distinguishes automatic from user-driven theme changes.
+
+### Known remaining limitation
+The overlay approach is fundamentally incompatible with any panel being open during a theme change — a frozen pixmap over an actively changing UI produces ghosts and dissolution artifacts. The current workaround (snap when panels are open) is acceptable for normal use.
+
+### Long-term correct solution: per-element Q_PROPERTY color animation
+Replace the overlay entirely with `QPropertyAnimation` on color properties of each widget. All custom-painted widgets are already instrumented (see session 2026-05-10). The remaining work is the QSS-driven majority:
+
+**Why QPalette won't work:** Theme dicts have up to 30 semantic color keys across 50 themes. QPalette has a fixed role set that does not map onto this structure cleanly.
+
+**What's required:** Convert QSS-driven widgets to use programmatic color assignment (via palette or stored attributes + custom painting) for color only, keeping QSS for structural styling (geometry, borders, fonts, hover/pressed states). Scope is wide — every button, label, background across all panels and tabs.
+
+**When to do it:** After the UI is feature-complete and stable. This is a polish-pass architectural change. Do it as a dedicated session with no feature work mixed in.
+
+**Widgets still needing instrumentation (THEME_ANIM_TODO):**
+- `app.py`: `MainWindow`, `TitleBar`, `ChapterList`, `SpeedControlsPanel`, `AudioSettingsTab`, `SleepTimerPanel`, `StatsPanel`, `BookDetailPanel`, `status_banner`, `sidebar`, `vol_container`
+- `chapter_list.py`: `ChapterList`
+- `library.py`: `LibraryPanel`
+- `stats_panel.py`: `ElidedLabel`, `SessionListWidget`, `BookDayRow`, `FinishedBookThumb`, `FinishedScrollRow`, `StatsPanel`
+- `book_detail_panel.py`: `BookDetailPanel`, `_ClickableLabel`
