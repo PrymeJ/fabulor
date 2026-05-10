@@ -238,13 +238,15 @@ class ThemeManager(QObject):
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
 
-        # Automatic theme changes (cover art, rotation) snap instantly when the settings
-        # panel is open — avoids the overlay dissolving the panel on dismissal, while still
-        # allowing deliberate theme previews inside settings to animate normally.
+        # Automatic theme changes (cover art, rotation) snap instantly when the Themes tab
+        # is active — avoids the overlay dissolving the tab's live preview widgets. Other
+        # tabs are already tamed (no custom-painted widgets), so the overlay runs normally.
         pm = getattr(self.main_window, 'panel_manager', None)
-        if (not user_initiated and fade_ms > 0
-                and hasattr(self.main_window, 'settings_panel')
-                and self.main_window.settings_panel.isVisible()):
+        tabs = getattr(self.main_window, 'tabs', None)
+        themes_tab_active = (tabs is not None and tabs.currentIndex() == 0
+                             and hasattr(self.main_window, 'settings_panel')
+                             and self.main_window.settings_panel.isVisible())
+        if not user_initiated and fade_ms > 0 and themes_tab_active:
             fade_ms = 0
 
         if fade_ms > 0:
