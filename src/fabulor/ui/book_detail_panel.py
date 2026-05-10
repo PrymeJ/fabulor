@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property
-from PySide6.QtGui import QColor, QPainter, QFontMetrics
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from .stats_panel import SessionListWidget, _RangeBar
