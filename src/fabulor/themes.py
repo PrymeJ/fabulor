@@ -3138,3 +3138,54 @@ def get_sidebar_stylesheet(theme_name="default"):
             margin-bottom: 10px;
         }}
     """
+
+
+def get_cover_panel_stylesheet(theme_name="default"):
+    t = _resolve_theme(theme_name)
+    accent       = t.get('accent', '#5A8A9F')
+    accent_dark  = t.get('accent_dark', '#3A6A7F')
+    text         = t.get('text', '#FFFFFF')
+    warning      = t.get('warning_color', '#FF6B6B')
+
+    return f"""
+        QFrame#CoverThumbnail {{
+            background: transparent;
+            border: 2px solid transparent;
+        }}
+        QFrame#CoverThumbnailActive {{
+            background: transparent;
+            border: 2px solid {accent};
+        }}
+        QPushButton#FitModeButton {{
+            background-color: transparent;
+            color: {text};
+            border: 1px solid {accent_dark};
+            border-radius: 3px;
+            padding: 4px 8px;
+            font-size: 12px;
+        }}
+        QPushButton#FitModeButton:checked {{
+            background-color: {accent};
+            color: {text};
+            border: 1px solid {accent};
+        }}
+        QPushButton#FitModeButton:hover:!checked {{
+            background-color: {accent_dark};
+        }}
+        QPushButton#CoverAddButton {{
+            background-color: transparent;
+            color: {accent};
+            border: 1px dashed {accent_dark};
+            border-radius: 3px;
+            font-size: 18px;
+            font-weight: bold;
+        }}
+        QPushButton#CoverAddButton:hover {{
+            background-color: {accent_dark};
+            color: {text};
+        }}
+        QLabel#CoverErrorLabel {{
+            color: {warning};
+            font-size: 11px;
+        }}
+    """

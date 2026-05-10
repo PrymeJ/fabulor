@@ -102,6 +102,21 @@ class LibraryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_book_path ON book_events (book_path)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_event_type ON book_events (event_type)")
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS book_covers (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_path   TEXT NOT NULL,
+                    file_path   TEXT NOT NULL,
+                    is_locked   INTEGER NOT NULL DEFAULT 0,
+                    is_active   INTEGER NOT NULL DEFAULT 0,
+                    fit_mode    TEXT NOT NULL DEFAULT 'fit',
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    added_at    TEXT NOT NULL,
+                    FOREIGN KEY (book_path) REFERENCES books(path) ON DELETE CASCADE
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_book_covers_book_path ON book_covers(book_path)")
+
             # Migrate: truncate tags over 25 chars
             conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
 
@@ -886,3 +901,69 @@ class LibraryDB:
                 (f"{prefix.lower()}%", book_path)
             ).fetchall()
         return [r[0] for r in rows]
+
+    # --- Book Covers ---
+
+    def get_active_cover(self, book_path: str) -> dict | None:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT id, file_path, fit_mode FROM book_covers "
+                "WHERE book_path = ? AND is_active = 1 LIMIT 1",
+                (book_path,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_active_cover_path(self, book_path: str) -> str | None:
+        cover = self.get_active_cover(book_path)
+        return cover['file_path'] if cover else None
+
+    def get_covers_for_book(self, book_path: str) -> list[dict]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, file_path, is_locked, is_active, fit_mode, sort_order "
+                "FROM book_covers WHERE book_path = ? ORDER BY sort_order",
+                (book_path,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def upsert_cover(self, book_path: str, file_path: str, is_locked: bool,
+                     is_active: bool, fit_mode: str, sort_order: int) -> int:
+        from datetime import datetime, timezone
+        added_at = datetime.now(timezone.utc).isoformat()
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "INSERT INTO book_covers "
+                "(book_path, file_path, is_locked, is_active, fit_mode, sort_order, added_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (book_path, file_path, int(is_locked), int(is_active), fit_mode, sort_order, added_at)
+            )
+            return cursor.lastrowid
+
+    def set_active_cover(self, book_path: str, cover_id: int) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE book_covers SET is_active = 0 WHERE book_path = ?",
+                (book_path,)
+            )
+            conn.execute(
+                "UPDATE book_covers SET is_active = 1 WHERE id = ?",
+                (cover_id,)
+            )
+
+    def set_fit_mode(self, cover_id: int, fit_mode: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE book_covers SET fit_mode = ? WHERE id = ?",
+                (fit_mode, cover_id)
+            )
+
+    def delete_cover(self, cover_id: int) -> None:
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM book_covers WHERE id = ?", (cover_id,))
+
+    def count_covers_for_book(self, book_path: str) -> int:
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM book_covers WHERE book_path = ?",
+                (book_path,)
+            ).fetchone()[0]

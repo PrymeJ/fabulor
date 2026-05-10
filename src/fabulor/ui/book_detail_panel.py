@@ -62,6 +62,7 @@ class BookDetailPanel(QWidget):
     history_deleted = Signal()
     metadata_saved = Signal(int, str, str)  # book_id, title, author
     tags_changed = Signal()
+    active_cover_changed = Signal(str)  # file_path of new active cover
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -178,12 +179,16 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.hide()
         layout.addWidget(self._tag_display_label)
 
+        from .cover_panel import CoverPanel
+        self._cover_panel = CoverPanel(db=self.db, parent=self)
+        self._cover_panel.active_cover_changed.connect(self.active_cover_changed)
+
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
         self.tabs.addTab(self._build_stats_tab(), "Stats")
         self.tabs.addTab(self._build_history_tab(), "History")
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
-        self.tabs.addTab(QWidget(), "Cover")
+        self.tabs.addTab(self._cover_panel, "Cover")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
 
@@ -418,7 +423,7 @@ class BookDetailPanel(QWidget):
                 }
 
         pixmap = QPixmap()
-        cover_path = self._book_data.get('cover_path')
+        cover_path = self.db.get_active_cover_path(self._book_path)
         if cover_path and os.path.exists(cover_path):
             pixmap.load(cover_path)
         if pixmap.isNull():
@@ -446,6 +451,7 @@ class BookDetailPanel(QWidget):
                 self.tabs.setCurrentIndex(i)
                 break
 
+        self._cover_panel.load_book(self._book_path)
         self._refresh_stats()
 
     def _update_duration_label(self):
@@ -715,6 +721,7 @@ class BookDetailPanel(QWidget):
         self._theme = theme
         self._apply_bar_colors()
         self._style_completer_popup()
+        self._cover_panel.on_theme_changed(theme)
 
     @staticmethod
     def _fmt(seconds: float) -> str:

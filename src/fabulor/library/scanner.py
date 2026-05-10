@@ -68,7 +68,7 @@ class ScannerWorker(QObject):
                 continue
 
             try:
-                metadata = self._extract_metadata(book_dir, audio_exts)
+                metadata = self._extract_metadata(book_dir, audio_exts, db)
                 if metadata is None:
                     processed += 1
                     self.progress.emit(processed, total)
@@ -106,7 +106,7 @@ class ScannerWorker(QObject):
                 return y
         return None
 
-    def _extract_metadata(self, book_dir, extensions):
+    def _extract_metadata(self, book_dir, extensions, db):
         try:
             all_files = [f for f in book_dir.iterdir() if f.is_file()]
         except PermissionError:
@@ -221,8 +221,23 @@ class ScannerWorker(QObject):
             title = tag_title or folder_title
             author = tag_author or folder_author
 
+        # Upsert into book_covers as locked slot 0 if not already present
+        if cover_path:
+            book_dir_str = str(book_dir)
+            existing = db.get_covers_for_book(book_dir_str)
+            locked_exists = any(c['is_locked'] for c in existing)
+            if not locked_exists:
+                db.upsert_cover(
+                    book_path=book_dir_str,
+                    file_path=cover_path,
+                    is_locked=True,
+                    is_active=True,
+                    fit_mode='fit',
+                    sort_order=0
+                )
+
         return {
-            "path": str(book_dir), 
+            "path": str(book_dir),
             "folder_name_raw": book_dir.name,
             "title": title, "author": author,
             "narrator": narrator, "duration": duration, "cover_path": cover_path,

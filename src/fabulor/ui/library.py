@@ -424,7 +424,8 @@ class LibraryPanel(QFrame):
 
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
-        worker = CoverLoaderWorker(book)
+        active_path = self.db.get_active_cover_path(book.path) if self.db else None
+        worker = CoverLoaderWorker(book, active_cover_path=active_path)
         worker._book_id = book.id
         self._active_workers.add(worker)
         worker.signals.cover_loaded.connect(self._on_cover_loaded, Qt.ConnectionType.QueuedConnection)
