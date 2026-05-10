@@ -429,6 +429,7 @@ class PanelManager:
         """Slides the settings panel back out."""
         if hasattr(self.main_window, 'theme_manager'):
             self.main_window.theme_manager._on_theme_unhovered()
+            self.main_window.theme_manager.snap_theme_forward()
         if self.settings_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.settings_panel.width()
