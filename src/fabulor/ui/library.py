@@ -1,8 +1,9 @@
+# THEME_ANIM_TODO: LibraryPanel, BookDelegate
 import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView,
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
@@ -866,6 +867,81 @@ class BookDelegate(QStyledItemDelegate):
         self._color_pct      = qc(theme.get('library_percentage', '#888888'))
         self._alt_row_color  = self._row_two
         self._color_accent   = qc(theme.get('accent', '#ffffff'))
+
+    @Property(QColor)
+    def pg_bg(self): return QColor(self._pg_bg)
+    @pg_bg.setter
+    def pg_bg(self, color): self._pg_bg = color; self.parent().update()
+
+    @Property(QColor)
+    def pg_fill(self): return QColor(self._pg_fill)
+    @pg_fill.setter
+    def pg_fill(self, color): self._pg_fill = color; self.parent().update()
+
+    @Property(QColor)
+    def hover_bg_color(self): return self._hover_bg_color
+    @hover_bg_color.setter
+    def hover_bg_color(self, color): self._hover_bg_color = color; self.parent().update()
+
+    @Property(QColor)
+    def bg_library(self): return self._bg_library
+    @bg_library.setter
+    def bg_library(self, color): self._bg_library = color; self.parent().update()
+
+    @Property(QColor)
+    def grid_bg(self): return self._grid_bg
+    @grid_bg.setter
+    def grid_bg(self, color): self._grid_bg = color; self.parent().update()
+
+    @Property(QColor)
+    def row_one(self): return self._row_one
+    @row_one.setter
+    def row_one(self, color): self._row_one = color; self.parent().update()
+
+    @Property(QColor)
+    def row_two(self): return self._row_two
+    @row_two.setter
+    def row_two(self, color): self._row_two = color; self.parent().update()
+
+    @Property(QColor)
+    def color_title(self): return self._color_title
+    @color_title.setter
+    def color_title(self, color): self._color_title = color; self.parent().update()
+
+    @Property(QColor)
+    def color_author(self): return self._color_author
+    @color_author.setter
+    def color_author(self, color): self._color_author = color; self.parent().update()
+
+    @Property(QColor)
+    def color_narrator(self): return self._color_narrator
+    @color_narrator.setter
+    def color_narrator(self, color): self._color_narrator = color; self.parent().update()
+
+    @Property(QColor)
+    def color_elapsed(self): return self._color_elapsed
+    @color_elapsed.setter
+    def color_elapsed(self, color): self._color_elapsed = color; self.parent().update()
+
+    @Property(QColor)
+    def color_total(self): return self._color_total
+    @color_total.setter
+    def color_total(self, color): self._color_total = color; self.parent().update()
+
+    @Property(QColor)
+    def color_pct(self): return self._color_pct
+    @color_pct.setter
+    def color_pct(self, color): self._color_pct = color; self.parent().update()
+
+    @Property(QColor)
+    def alt_row_color(self): return self._alt_row_color
+    @alt_row_color.setter
+    def alt_row_color(self, color): self._alt_row_color = color; self.parent().update()
+
+    @Property(QColor)
+    def color_accent(self): return self._color_accent
+    @color_accent.setter
+    def color_accent(self, color): self._color_accent = color; self.parent().update()
 
     def update_theme(self, theme: dict) -> None:
         self._apply_theme(theme)

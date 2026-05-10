@@ -1,3 +1,4 @@
+# THEME_ANIM_TODO: ChapterList
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect, QPushButton
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QMouseEvent, QKeyEvent

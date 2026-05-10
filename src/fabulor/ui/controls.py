@@ -262,6 +262,7 @@ class ScrollingLabel(QLabel):
         self._direction = -1  # -1 for left, 1 for right
         self._pause_ticks = 0
         self._timer = QTimer(self)
+        self._text_color = QColor()
         self._timer.timeout.connect(self._update_scroll)
         self._timer.setInterval(120)
         self.setCursor(Qt.PointingHandCursor)
@@ -273,6 +274,18 @@ class ScrollingLabel(QLabel):
         if mode in intervals:
             self._timer.setInterval(intervals[mode])
         self._update_scrolling_state()
+        self.update()
+
+    @Property(QColor)
+    def text_color(self):
+        return self._text_color
+
+    @text_color.setter
+    def text_color(self, color: QColor):
+        self._text_color = color
+        palette = self.palette()
+        palette.setColor(self.foregroundRole(), color)
+        self.setPalette(palette)
         self.update()
 
     def setText(self, text):

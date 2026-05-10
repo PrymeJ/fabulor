@@ -141,7 +141,8 @@ class PanelManager:
         view.update(view.visualRect(idx))
 
     def _open_settings_flow(self):
-        self._abort_theme_fade()
+        #self._abort_theme_fade()
+        self.main_window.theme_manager.snap_theme_forward()
         """Hides sidebar first, then shows settings panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "settings"

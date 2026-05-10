@@ -1,3 +1,6 @@
+# THEME_ANIM_TODO: MainWindow, TitleBar, ChapterList, SpeedControlsPanel, 
+# AudioSettingsTab, SleepTimerPanel, StatsPanel, BookDetailPanel, 
+# status_banner, sidebar, vol_container
 import os
 import threading
 from datetime import datetime

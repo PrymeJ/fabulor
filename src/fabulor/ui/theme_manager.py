@@ -110,6 +110,17 @@ class ThemeManager(QObject):
         if self._save_on_fade:
             self._cached_theme_pixmap = self.main_window.grab()
 
+    def snap_theme_forward(self):
+        if not hasattr(self, '_fade_anim'):
+            return
+        if self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
+        if hasattr(self, '_fade_overlay') and self._fade_overlay.isVisible():
+            self._fade_overlay.hide()
+            self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
+            if hasattr(self.main_window, '_refresh_panel_visuals'):
+                self.main_window._refresh_panel_visuals(self._active_display_theme)
+
     def get_packed_themes(self, limit=230, spacing=0, padding=0):
         if self._packed_themes_cache is not None and self._packed_themes_limit == limit:
             return self._packed_themes_cache
@@ -173,11 +184,11 @@ class ThemeManager(QObject):
             chosen = random.choice(pool)
             if chosen is None:
                 self._cover_theme_active = True
-                self._on_theme_changed(self._cover_theme, save=False)
+                self._on_theme_changed(self._cover_theme, save=False, user_initiated=False)
             else:
                 self._current_theme_name = chosen
                 self._cover_theme_active = False
-                self._on_theme_changed(chosen, save=False)
+                self._on_theme_changed(chosen, save=False, user_initiated=False)
             self._restart_rotation_timer()
 
     def _restart_rotation_timer(self):
@@ -190,7 +201,7 @@ class ThemeManager(QObject):
             self._pending_rotation = False
             QTimer.singleShot(3000, self._rotate_theme)
 
-    def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False):
+    def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True):
         """Update the appearance with a subtle fade transition."""
         
         if fade_ms is None:
@@ -205,7 +216,7 @@ class ThemeManager(QObject):
 
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
-            QTimer.singleShot(_PANEL_ANIM_GUARD_MS, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover))
+            QTimer.singleShot(_PANEL_ANIM_GUARD_MS, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated))
             return
 
         self._active_display_theme = theme_name
@@ -227,11 +238,35 @@ class ThemeManager(QObject):
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
 
+        # Automatic theme changes (cover art, rotation) snap instantly when the settings
+        # panel is open — avoids the overlay dissolving the panel on dismissal, while still
+        # allowing deliberate theme previews inside settings to animate normally.
+        pm = getattr(self.main_window, 'panel_manager', None)
+        if (not user_initiated and fade_ms > 0
+                and hasattr(self.main_window, 'settings_panel')
+                and self.main_window.settings_panel.isVisible()):
+            fade_ms = 0
+
         if fade_ms > 0:
             pix = self.main_window.grab()
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
-            self._fade_overlay.clearMask()
+
+            if pm and pm.is_any_panel_visible():
+                from PySide6.QtGui import QRegion
+                mask = QRegion(self.main_window.rect())
+                panels = ['library_panel', 'speed_panel',
+                          'sleep_panel', 'stats_panel', 'book_detail_panel']
+                for attr in panels:
+                    p = getattr(pm, attr, None)
+                    if p and p.isVisible():
+                        mask -= QRegion(p.geometry())
+                if pm.sidebar_expanded:
+                    mask -= QRegion(pm.sidebar.geometry())
+                self._fade_overlay.setMask(mask)
+            else:
+                self._fade_overlay.clearMask()
+
             self._fade_overlay.show()
             self._fade_overlay.raise_()
 
@@ -371,7 +406,7 @@ class ThemeManager(QObject):
             return
         self._cover_theme = theme_dict
         self._cover_theme_active = True
-        self._on_theme_changed(theme_dict, save=False)
+        self._on_theme_changed(theme_dict, save=False, user_initiated=False)
         self._update_cover_pool_btn()
 
     def clear_cover_theme(self):

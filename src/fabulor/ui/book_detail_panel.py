@@ -1,11 +1,12 @@
+# THEME_ANIM_TODO: BookDetailPanel, _ClickableLabel
 import os
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent
-from PySide6.QtGui import QPixmap, QPainter, QFontMetrics
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property
+from PySide6.QtGui import QColor, QPainter, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 from .stats_panel import SessionListWidget, _RangeBar
@@ -14,6 +15,22 @@ from .flow_layout import FlowLayout
 
 class _ElidingLineEdit(QLineEdit):
     """QLineEdit that elides text on the right when read-only."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._text_color = QColor()
+
+    @Property(QColor)
+    def text_color(self):
+        return self._text_color
+
+    @text_color.setter
+    def text_color(self, color: QColor):
+        self._text_color = color
+        palette = self.palette()
+        palette.setColor(self.foregroundRole(), color)
+        self.setPalette(palette)
+        self.update()
 
     def paintEvent(self, event):
         if not self.isReadOnly():

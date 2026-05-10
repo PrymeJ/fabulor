@@ -1,3 +1,5 @@
+# THEME_ANIM_TODO: ElidedLabel, SessionListWidget, BookDayRow, 
+# FinishedBookThumb, FinishedScrollRow, StatsPanel
 import os
 import re
 from datetime import date
@@ -6,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker
@@ -261,6 +263,24 @@ class _RangeBar(QWidget):
         self._duration = duration
         self._accent = accent
         self._bg = bg
+
+    @Property(QColor)
+    def accent_color(self):
+        return self._accent_color
+
+    @accent_color.setter
+    def accent_color(self, color: QColor):
+        self._accent_color = color
+        self.update()
+
+    @Property(QColor)
+    def bg_color(self):
+        return self._bg
+
+    @bg_color.setter
+    def bg_color(self, color: QColor):
+        self._bg = color
+        self.update()
 
     def update_range(self, pos_start: float, pos_end: float, duration: float):
         self._start = pos_start
@@ -684,6 +704,24 @@ class HourlyHeatmap(QWidget):
     from PySide6.QtCore import Property as _Property
     footer_alpha = _Property(float, get_footer_alpha, set_footer_alpha)
     reveal_progress = _Property(float, get_reveal_progress, set_reveal_progress)
+
+    @Property(QColor)
+    def accent_color(self):
+        return self._accent
+
+    @accent_color.setter
+    def accent_color(self, color: QColor):
+        self._accent = color
+        self.update()
+
+    @Property(QColor)
+    def label_color(self):
+        return self._label_color
+
+    @label_color.setter
+    def label_color(self, color: QColor):
+        self._label_color = color
+        self.update()
 
     def set_accent_color(self, color: QColor):
         self._accent = color
