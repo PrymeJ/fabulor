@@ -172,6 +172,7 @@ THEMES = {
         "bg_main":      "#001B2E", # Navy blue background
         "slider_overall_bg":   "#003547",
         "slider_overall_fill": "#39FF14", # Vibrant green accent
+        "progress_text": "#E1F4BE",
         "slider_chapter_bg":   "#002A38",
         "slider_chapter_fill": "#3CA4E0",
         "slider_vol_bg":       "#3CA4E0",
