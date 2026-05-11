@@ -26,6 +26,7 @@ library_input_text: Text color for sort/view dropdowns and the search field in t
 settings_tab_hover_bg: Background color for unselected tabs when hovered. Falls back to accent.
 settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Falls back to 0.85.
 settings_tab_hover_text: Text color for unselected tabs when hovered. Falls back to text.
+cover_preview_bg: Background color for book cover previews in the library. Falls back to bg_deep, then #000000.
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
@@ -118,7 +119,7 @@ THEMES = {
         "panel_opacity_hover":    1.00,
         "notch_color":            "#3DE8EB",
         "notch_opacity":          110,
-        "cover_preview_bg"      :"#94D7E7",
+        "cover_preview_bg"      :"#07576B",
     },
     "Anomander": { # Black & White with Deep Amber Progress Text
         "bg_deep":      "#000000",
@@ -3155,11 +3156,9 @@ def get_cover_panel_stylesheet(theme_name="default"):
         }}
         QFrame#CoverThumbnail {{
             background: transparent;
-            border: 2px solid transparent;
         }}
         QFrame#CoverThumbnailActive {{
             background: transparent;
-            border: 2px solid {accent};
         }}
         QPushButton#FitModeButton {{
             background-color: transparent;

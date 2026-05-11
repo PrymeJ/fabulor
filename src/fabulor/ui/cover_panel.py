@@ -59,7 +59,7 @@ class CoverThumbnail(QFrame):
     def set_active(self, active: bool):
         self._is_active = active
         self.setObjectName("CoverThumbnailActive" if active else "CoverThumbnail")
-        self.update()
+        self.repaint()
 
     def set_accent(self, color: str):
         self._accent = QColor(color)
@@ -69,15 +69,19 @@ class CoverThumbnail(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw cover image (already pre-scaled in _load_pixmap)
+        # Clip image to interior — keeps it contained inside the border zone
+        inner = self.rect().adjusted(1, 1, -1, -1)
+        painter.save()
+        painter.setClipRect(inner)
         if not self._pixmap.isNull():
-            x = (_THUMB_SIZE - self._pixmap.width()) // 2
-            y = (_THUMB_SIZE - self._pixmap.height()) // 2
+            x = inner.x() + (inner.width()  - self._pixmap.width())  // 2
+            y = inner.y() + (inner.height() - self._pixmap.height()) // 2
             painter.drawPixmap(x, y, self._pixmap)
         else:
-            painter.fillRect(self.rect(), QColor("#2A2A2A"))
+            painter.fillRect(inner, QColor("#2A2A2A"))
+        painter.restore()
 
-        # Active outline — 2px accent border
+        # Active outline — 2px accent border drawn on top of image
         if self._is_active:
             pen = QPen(self._accent, 2)
             painter.setPen(pen)
@@ -156,6 +160,7 @@ class CoverPanel(QWidget):
         self._thumbnails  = {}       # cover_id → CoverThumbnail
         self._selected    = None     # currently previewed cover dict
         self._accent      = "#5A8A9F"
+        self._preview_bg  = QColor("#000000")
 
         self._build_ui()
 
@@ -177,10 +182,13 @@ class CoverPanel(QWidget):
     def on_theme_changed(self, theme: dict):
         from ..themes import get_cover_panel_stylesheet
         self._accent = theme.get('accent', '#5A8A9F')
+        bg_str = theme.get('cover_preview_bg', theme.get('bg_deep', '#000000'))
+        self._preview_bg = QColor(bg_str)
         self.setStyleSheet(get_cover_panel_stylesheet(theme))
         for thumb in self._thumbnails.values():
             thumb.set_accent(self._accent)
         self._sync_fit_button_styles()
+        self._render_preview()
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -332,7 +340,7 @@ class CoverPanel(QWidget):
             fitted = src.scaled(w, 32767, Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation)
             result = QPixmap(w, h)
-            result.fill(Qt.GlobalColor.black)
+            result.fill(self._preview_bg)
             painter = QPainter(result)
             painter.drawPixmap(0, 0, fitted)
             painter.end()
@@ -344,11 +352,11 @@ class CoverPanel(QWidget):
             y = (scaled.height() - h) // 2
             result = scaled.copy(x, y, w, h)
 
-        else:  # fit (default)
+        else:  # fit (and unrecognised modes)
             fitted = src.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation)
             result = QPixmap(w, h)
-            result.fill(Qt.GlobalColor.black)
+            result.fill(self._preview_bg)
             painter = QPainter(result)
             x = (w - fitted.width())  // 2
             y = (h - fitted.height()) // 2
@@ -399,11 +407,9 @@ class CoverPanel(QWidget):
         for c in self._covers:
             c['is_active'] = int(c['id'] == cover_id)
         self._update_active_outlines()
-        # Update selected preview to reflect new active state
-        if self._selected and self._selected['id'] == cover_id:
-            self._selected['is_active'] = 1
         active = next((c for c in self._covers if c['is_active']), None)
         if active:
+            self._select_cover(active)
             self.active_cover_changed.emit(active['file_path'])
 
     def _on_thumb_delete(self, cover_id: int):
