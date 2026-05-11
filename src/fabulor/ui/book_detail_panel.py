@@ -96,7 +96,8 @@ class BookDetailPanel(QWidget):
         header_layout.setSpacing(12)
 
         self._cover_label = QLabel()
-        self._cover_label.setMaximumSize(120, 120)
+        self._cover_label.setFixedWidth(80)
+        self._cover_label.setMaximumHeight(120)
         self._cover_label.setScaledContents(False)
         header_layout.addWidget(self._cover_label)
 
@@ -431,12 +432,12 @@ class BookDetailPanel(QWidget):
             pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
         if not pixmap.isNull():
             scaled = pixmap.scaled(
-                120, 120,
+                80, 120,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
             self._cover_label.setPixmap(scaled)
-            self._cover_label.setFixedSize(scaled.width(), scaled.height())
+            self._cover_label.setFixedHeight(scaled.height())
 
         self._editing = False
         self._exit_edit_mode(save=False)
@@ -463,12 +464,12 @@ class BookDetailPanel(QWidget):
             pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
         if not pixmap.isNull():
             scaled = pixmap.scaled(
-                120, 120,
+                80, 120,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             self._cover_label.setPixmap(scaled)
-            self._cover_label.setFixedSize(scaled.width(), scaled.height())
+            self._cover_label.setFixedHeight(scaled.height())
 
     def _update_duration_label(self):
         duration = self._book_data.get('duration') or 0.0

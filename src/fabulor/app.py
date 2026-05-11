@@ -86,6 +86,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.current_cover_pixmap = QPixmap()
         self._pending_cover_pixmap = None
+        self._cover_fit_mode = 'fit'
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self.current_file = ""
@@ -2046,6 +2047,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.metadata_label.setText("No book selected")
             self.theme_manager.clear_cover_theme()
             return
+        active = self.db.get_active_cover(file_path)
+        self._cover_fit_mode = active['fit_mode'] if active else 'fit'
         from .ui.library import _cover_cache
         cached = _cover_cache.get(book.id) if book else None
 
@@ -2071,6 +2074,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.library_panel.refresh_book_cover(book_path)
         if book_path == self.current_file:
+            active = self.db.get_active_cover(book_path)
+            self._cover_fit_mode = active['fit_mode'] if active else 'fit'
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 from .ui.library import _cover_cache
@@ -2080,19 +2085,34 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._apply_main_cover(pixmap)
 
     def _update_cover_art_scaling(self):
-        """Scales the current cover pixmap to FIT the available space."""
+        """Scales the current cover pixmap to the available space, respecting fit mode."""
         if not self.current_cover_pixmap.isNull() and self.cover_art_label.isVisible():
-            # Fit logic: Use label width but cap it to keep aspect ratio
-            # all pixels visible = KeepAspectRatio
             target_w = self.cover_art_label.width()
             target_h = self.cover_art_label.height()
-            
-            scaled = self.current_cover_pixmap.scaled(
-                target_w, target_h,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.cover_art_label.setPixmap(scaled)
+            src = self.current_cover_pixmap
+            fit = getattr(self, '_cover_fit_mode', 'fit')
+
+            if fit == 'stretch':
+                result = src.scaled(target_w, target_h,
+                                    Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            elif fit == 'crop':
+                s = src.scaled(target_w, target_h,
+                               Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                x = (s.width()  - target_w) // 2
+                y = (s.height() - target_h) // 2
+                result = s.copy(x, y, target_w, target_h)
+            elif fit == 'tile':
+                from PySide6.QtGui import QPainter
+                result = QPixmap(target_w, target_h)
+                result.fill(Qt.GlobalColor.black)
+                painter = QPainter(result)
+                painter.drawTiledPixmap(0, 0, target_w, target_h, src)
+                painter.end()
+            else:  # 'fit'
+                result = src.scaled(target_w, target_h,
+                                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+            self.cover_art_label.setPixmap(result)
 
     def showEvent(self, event):
         """Triggers scaling once the window is rendered to prevent hidden art on startup."""
