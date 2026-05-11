@@ -222,9 +222,9 @@ class CoverPanel(QWidget):
         right_col.setSpacing(6)
 
         self._preview_label = QLabel()
-        self._preview_label.setObjectName("CoverPreviewLabel")
+        self._preview_label.setObjectName("CoverPreview")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setFixedHeight(240)
+        self._preview_label.setFixedHeight(266)
         self._preview_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -236,7 +236,7 @@ class CoverPanel(QWidget):
         self._fit_group.setExclusive(True)
         self._fit_buttons = {}
         for label, key in (("Fit", "fit"), ("Stretch", "stretch"),
-                           ("Tile", "tile"), ("Crop", "crop")):
+                           ("Top", "top"), ("Crop", "crop")):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setObjectName("FitModeButton")
@@ -327,11 +327,14 @@ class CoverPanel(QWidget):
             result = src.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation)
 
-        elif fit_mode == 'tile':
+        elif fit_mode == 'top':
+            # Scale to fit width, anchor image to top edge
+            fitted = src.scaled(w, 32767, Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
             result = QPixmap(w, h)
             result.fill(Qt.GlobalColor.black)
             painter = QPainter(result)
-            painter.drawTiledPixmap(0, 0, w, h, src)
+            painter.drawPixmap(0, 0, fitted)
             painter.end()
 
         elif fit_mode == 'crop':

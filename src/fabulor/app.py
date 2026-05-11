@@ -2101,12 +2101,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 x = (s.width()  - target_w) // 2
                 y = (s.height() - target_h) // 2
                 result = s.copy(x, y, target_w, target_h)
-            elif fit == 'tile':
+            elif fit == 'top':
                 from PySide6.QtGui import QPainter
+                fitted = src.scaled(target_w, 32767,
+                                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 result = QPixmap(target_w, target_h)
                 result.fill(Qt.GlobalColor.black)
                 painter = QPainter(result)
-                painter.drawTiledPixmap(0, 0, target_w, target_h, src)
+                painter.drawPixmap(0, 0, fitted)
                 painter.end()
             else:  # 'fit'
                 result = src.scaled(target_w, target_h,
