@@ -371,6 +371,10 @@ class CoverPanel(QWidget):
                     c['fit_mode'] = fit_key
                     break
         self._render_preview()
+        # If the selected cover is the active one, propagate to main window
+        active = next((c for c in self._covers if c['is_active']), None)
+        if active and self._selected and active['id'] == self._selected['id']:
+            self.active_cover_changed.emit(active['file_path'])
 
     def _sync_fit_button_styles(self):
         for btn in self._fit_buttons.values():

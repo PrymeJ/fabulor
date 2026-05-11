@@ -182,6 +182,7 @@ class BookDetailPanel(QWidget):
         from .cover_panel import CoverPanel
         self._cover_panel = CoverPanel(db=self.db, parent=self)
         self._cover_panel.active_cover_changed.connect(self.active_cover_changed)
+        self._cover_panel.active_cover_changed.connect(self._refresh_header_cover)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
@@ -453,6 +454,21 @@ class BookDetailPanel(QWidget):
 
         self._cover_panel.load_book(self._book_path)
         self._refresh_stats()
+
+    def _refresh_header_cover(self, file_path: str):
+        pixmap = QPixmap()
+        if file_path and os.path.exists(file_path):
+            pixmap.load(file_path)
+        if pixmap.isNull():
+            pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(
+                120, 120,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self._cover_label.setPixmap(scaled)
+            self._cover_label.setFixedSize(scaled.width(), scaled.height())
 
     def _update_duration_label(self):
         duration = self._book_data.get('duration') or 0.0
