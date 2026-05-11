@@ -16,7 +16,7 @@ def _book_hash(book_path: str) -> str:
     return hashlib.md5(book_path.encode()).hexdigest()
 
 
-_OVERLAY_HEIGHT = 24
+_OVERLAY_HEIGHT = 17
 _THUMB_SIZE = 72
 
 
