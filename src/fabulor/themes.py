@@ -118,6 +118,7 @@ THEMES = {
         "panel_opacity_hover":    1.00,
         "notch_color":            "#3DE8EB",
         "notch_opacity":          110,
+        "cover_preview_bg"      :"#94D7E7",
     },
     "Anomander": { # Black & White with Deep Amber Progress Text
         "bg_deep":      "#000000",
@@ -3142,12 +3143,16 @@ def get_sidebar_stylesheet(theme_name="default"):
 
 def get_cover_panel_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
-    accent       = t.get('accent', '#5A8A9F')
-    accent_dark  = t.get('accent_dark', '#3A6A7F')
-    text         = t.get('text', '#FFFFFF')
-    warning      = t.get('warning_color', '#FF6B6B')
+    accent            = t.get('accent', '#5A8A9F')
+    accent_dark       = t.get('accent_dark', '#3A6A7F')
+    text              = t.get('text', '#FFFFFF')
+    warning           = t.get('warning_color', '#FF6B6B')
+    cover_preview_bg  = t.get('cover_preview_bg', t.get('bg_deep', '#000000'))
 
     return f"""
+        QLabel#CoverPreview {{
+            background-color: {cover_preview_bg};
+        }}
         QFrame#CoverThumbnail {{
             background: transparent;
             border: 2px solid transparent;
