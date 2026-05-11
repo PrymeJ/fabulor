@@ -200,14 +200,14 @@ class CoverPanel(QWidget):
         # ── Left column ──
         self._left_col = QWidget()
         self._left_col.setFixedWidth(_THUMB_SIZE)
+        self._left_col.setFixedHeight(0)   # updated explicitly after each thumb change
         self._thumb_layout = QVBoxLayout(self._left_col)
         self._thumb_layout.setContentsMargins(0, 0, 0, 0)
         self._thumb_layout.setSpacing(6)
-        self._thumb_layout.addStretch()
 
         self._add_btn = QPushButton("+")
         self._add_btn.setObjectName("CoverAddButton")
-        self._add_btn.setFixedSize(_THUMB_SIZE, 36)
+        self._add_btn.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         self._add_btn.clicked.connect(self._on_add_cover)
 
         self._error_label = QLabel()
@@ -218,7 +218,7 @@ class CoverPanel(QWidget):
 
         left_wrapper = QVBoxLayout()
         left_wrapper.setContentsMargins(0, 0, 0, 0)
-        left_wrapper.setSpacing(4)
+        left_wrapper.setSpacing(6)      # same gap as between thumbs
         left_wrapper.addWidget(self._left_col)
         left_wrapper.addWidget(self._add_btn)
         left_wrapper.addWidget(self._error_label)
@@ -265,15 +265,17 @@ class CoverPanel(QWidget):
 
     # ── Thumbnail management ──────────────────────────────────────────────────
 
+    def _update_left_col_height(self):
+        n = len(self._thumbnails)
+        h = n * _THUMB_SIZE + max(n - 1, 0) * 6
+        self._left_col.setFixedHeight(h)
+
     def _rebuild_thumbnails(self):
-        # Remove old widgets
         for thumb in self._thumbnails.values():
             self._thumb_layout.removeWidget(thumb)
             thumb.deleteLater()
         self._thumbnails.clear()
 
-        # Insert thumbs before the trailing stretch (last item)
-        stretch_idx = self._thumb_layout.count() - 1
         for cover in self._covers:
             thumb = CoverThumbnail(
                 cover_id=cover['id'],
@@ -287,9 +289,9 @@ class CoverPanel(QWidget):
             thumb.clicked_set_active.connect(self._on_thumb_set_active)
             thumb.clicked_delete.connect(self._on_thumb_delete)
             self._thumbnails[cover['id']] = thumb
-            self._thumb_layout.insertWidget(stretch_idx, thumb)
-            stretch_idx += 1
+            self._thumb_layout.addWidget(thumb)
 
+        self._update_left_col_height()
         user_count = sum(1 for c in self._covers if not c['is_locked'])
         self._add_btn.setVisible(user_count < 3)
 
@@ -428,6 +430,7 @@ class CoverPanel(QWidget):
         if thumb:
             self._thumb_layout.removeWidget(thumb)
             thumb.deleteLater()
+        self._update_left_col_height()
 
         # Promote locked cover if the deleted one was active
         if was_active:
@@ -509,7 +512,6 @@ class CoverPanel(QWidget):
         }
         self._covers.append(new_cover)
 
-        stretch_idx = self._thumb_layout.count() - 1
         thumb = CoverThumbnail(
             cover_id=cover_id,
             file_path=dest_path,
@@ -522,7 +524,8 @@ class CoverPanel(QWidget):
         thumb.clicked_set_active.connect(self._on_thumb_set_active)
         thumb.clicked_delete.connect(self._on_thumb_delete)
         self._thumbnails[cover_id] = thumb
-        self._thumb_layout.insertWidget(stretch_idx, thumb)
+        self._thumb_layout.addWidget(thumb)
+        self._update_left_col_height()
 
         user_count = sum(1 for c in self._covers if not c['is_locked'])
         self._add_btn.setVisible(user_count < 3)

@@ -3177,10 +3177,10 @@ def get_cover_panel_stylesheet(theme_name="default"):
             background-color: {accent_dark};
         }}
         QPushButton#CoverAddButton {{
-            background-color: transparent;
+            background-color: #2A2A2A;
             color: {accent};
             border: 1px dashed {accent_dark};
-            border-radius: 3px;
+            border-radius: 0px;
             font-size: 18px;
             font-weight: bold;
         }}
