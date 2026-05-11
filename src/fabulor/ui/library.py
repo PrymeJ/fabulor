@@ -442,6 +442,14 @@ class LibraryPanel(QFrame):
         if not getattr(self, '_is_animating', False):
             self._book_model.notify_cover_cached(book_id)  # emit dataChanged only if not sliding
 
+    def refresh_book_cover(self, book_path: str) -> None:
+        """Evict stale cache entry and reload cover for a single book by path."""
+        book = self.db.get_book(book_path)
+        if book is None:
+            return
+        _cover_cache.pop(book.id, None)
+        self._trigger_cover_load(book)
+
     # ── Sort / filter ────────────────────────────────────────────────────────
 
     def _toggle_sort_direction(self):

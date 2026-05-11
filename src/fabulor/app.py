@@ -1173,6 +1173,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
+        self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
@@ -2063,6 +2064,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             )
             self._pending_cover_pixmap = None
             self.theme_manager.clear_cover_theme()
+
+    def _on_active_cover_changed(self, file_path: str) -> None:
+        book_path = self.book_detail_panel._book_path
+        if not book_path:
+            return
+        self.library_panel.refresh_book_cover(book_path)
+        if book_path == self.current_file:
+            pixmap = QPixmap(file_path)
+            if not pixmap.isNull():
+                from .ui.library import _cover_cache
+                book = self.db.get_book(book_path)
+                if book:
+                    _cover_cache.pop(book.id, None)
+                self._apply_main_cover(pixmap)
 
     def _update_cover_art_scaling(self):
         """Scales the current cover pixmap to FIT the available space."""
