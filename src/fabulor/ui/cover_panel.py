@@ -46,7 +46,13 @@ class CoverThumbnail(QFrame):
 
     def _load_pixmap(self):
         try:
-            self._pixmap.load(self._file_path)
+            raw = QPixmap(self._file_path)
+            if not raw.isNull():
+                self._pixmap = raw.scaled(
+                    _THUMB_SIZE, _THUMB_SIZE,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
         except Exception:
             pass
 
@@ -63,16 +69,11 @@ class CoverThumbnail(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw cover image
+        # Draw cover image (already pre-scaled in _load_pixmap)
         if not self._pixmap.isNull():
-            scaled = self._pixmap.scaled(
-                _THUMB_SIZE, _THUMB_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            x = (_THUMB_SIZE - scaled.width()) // 2
-            y = (_THUMB_SIZE - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
+            x = (_THUMB_SIZE - self._pixmap.width()) // 2
+            y = (_THUMB_SIZE - self._pixmap.height()) // 2
+            painter.drawPixmap(x, y, self._pixmap)
         else:
             painter.fillRect(self.rect(), QColor("#2A2A2A"))
 

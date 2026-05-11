@@ -435,6 +435,12 @@ class LibraryPanel(QFrame):
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
+        if image.width() > 226 or image.height() > 344:
+            image = image.scaled(
+                226, 344,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         pixmap = QPixmap.fromImage(image)
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         pixmap.setDevicePixelRatio(dpr)
