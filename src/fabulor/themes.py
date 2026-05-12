@@ -3148,7 +3148,7 @@ def get_cover_panel_stylesheet(theme_name="default"):
     accent_dark       = t.get('accent_dark', '#3A6A7F')
     text              = t.get('text', '#FFFFFF')
     warning           = t.get('warning_color', '#FF6B6B')
-    cover_preview_bg  = t.get('cover_preview_bg', t.get('bg_deep', '#000000'))
+    cover_preview_bg  = t.get('cover_preview_bg', 'transparent')
 
     return f"""
         QLabel#CoverPreview {{
