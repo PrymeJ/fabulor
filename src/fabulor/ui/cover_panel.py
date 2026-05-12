@@ -348,21 +348,34 @@ class CoverPanel(QWidget):
                                 Qt.TransformationMode.SmoothTransformation)
 
         elif fit_mode == 'top':
-            # Scale to fit width, anchor image to top edge
-            fitted = src.scaled(w, 32767, Qt.AspectRatioMode.KeepAspectRatio,
+            # Player shows a square crop anchored to top — mirror that in preview
+            sq = w
+            fitted = src.scaled(sq, 32767, Qt.AspectRatioMode.KeepAspectRatio,
                                 Qt.TransformationMode.SmoothTransformation)
+            square = QPixmap(sq, sq)
+            square.fill(self._preview_bg)
+            p = QPainter(square)
+            p.drawPixmap(0, 0, fitted)
+            p.end()
             result = QPixmap(w, h)
             result.fill(self._preview_bg)
             painter = QPainter(result)
-            painter.drawPixmap(0, 0, fitted)
+            painter.drawPixmap(0, (h - sq) // 2, square)
             painter.end()
 
         elif fit_mode == 'crop':
-            scaled = src.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                Qt.TransformationMode.SmoothTransformation)
-            x = (scaled.width()  - w) // 2
-            y = (scaled.height() - h) // 2
-            result = scaled.copy(x, y, w, h)
+            # Player shows a square center-crop — mirror that in preview
+            sq = w
+            expanded = src.scaled(sq, sq, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                  Qt.TransformationMode.SmoothTransformation)
+            cx = (expanded.width()  - sq) // 2
+            cy = (expanded.height() - sq) // 2
+            square = expanded.copy(cx, cy, sq, sq)
+            result = QPixmap(w, h)
+            result.fill(self._preview_bg)
+            painter = QPainter(result)
+            painter.drawPixmap(0, (h - sq) // 2, square)
+            painter.end()
 
         else:  # fit (and unrecognised modes)
             fitted = src.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
