@@ -376,8 +376,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager.initialize_fade_overlay()
 
     def _setup_ui(self):
-        self.setMinimumWidth(300)
-        self.resize(300, 450)
+        self.setFixedSize(300, 564)
 
         # Initialize Sleep Timer Panel early to allow connections in build methods
         self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self)
@@ -536,7 +535,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cover_art_label = QLabel()
         self.cover_art_label.setAlignment(Qt.AlignBottom | Qt.AlignHCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.cover_art_label.setMinimumSize(280, 280)
+        self.cover_art_label.setMinimumSize(0, 0)
         self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
         self.visual_layout.addWidget(self.cover_art_label)
 
