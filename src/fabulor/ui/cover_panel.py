@@ -504,9 +504,9 @@ class CoverPanel(QWidget):
             self._show_error("Could not read image.")
             return
 
-        # Determine next slot index (1–3)
+        # Determine next slot index (1–4 for user covers)
         used_slots = {c['sort_order'] for c in self._covers if not c['is_locked']}
-        slot_index = next(i for i in range(1, 4) if i not in used_slots)
+        slot_index = next(i for i in range(1, 5) if i not in used_slots)
 
         book_hash = _book_hash(self._book_path)
 

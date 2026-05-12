@@ -2079,8 +2079,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if book:
                 _cover_cache.pop(book.id, None)
             if not file_path:
-                # All covers removed — clear the player display
-                self._load_cover_art(self.current_file)
+                # All covers removed — clear display without metadata fallback
+                self.current_cover_pixmap = QPixmap()
+                self.cover_art_label.setPixmap(QPixmap())
+                self.cover_art_label.hide()
+                self.metadata_label.hide()
+                self.theme_manager.clear_cover_theme()
                 return
             active = self.db.get_active_cover(book_path)
             self._cover_fit_mode = active['fit_mode'] if active else 'fit'
