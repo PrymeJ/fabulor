@@ -65,6 +65,12 @@ Scanner sets `cover_path = str(af)` (audio file) when no external image exists b
 ### Cover cache — cold start still hits mutagen
 `_load_cover_art` checks `_cover_cache.get(file_path)` before calling mutagen. Cache is keyed by audiobook path and populated by the library panel's `CoverLoaderWorker`. On a warm session (library opened at least once), cache hits are instant. On cold start (library never opened this session), cache is empty and mutagen runs as before. Resolving cold-start requires either: (a) storing cover thumbnails on disk during scan, or (b) populating the cache independently on first book load.
 
+### library_controller must not hide metadata_label when a book is loaded
+`apply_library_state` ([library_controller.py:126](src/fabulor/library_controller.py#L126)) previously called `update_metadata(None, show_metadata=False)` unconditionally when `has_book=True`. This hid the "author - title" fallback set by `_load_cover_art` for no-cover books. Fixed by removing `show_metadata=False` from that call — `_load_cover_art` is now the sole owner of `metadata_label` visibility when a book is playing. Do not restore the `show_metadata=False` there.
+
+### `book_covers` pre-migration books show scanner thumbnail, not active cover
+The library preloader ([library.py:565](src/fabulor/ui/library.py#L565)) creates `CoverLoaderWorker(book)` without `active_cover_path`. For books that have a `book.cover_path` (scanner thumbnail) but no `book_covers` entry, the preloader caches the scanner thumbnail. `_load_cover_art` then hits the cache and shows that thumbnail — bypassing `book_covers` entirely. This is intentional for pre-migration books. When the `book_covers` table is fully populated (all books rescanned), this fallback becomes irrelevant.
+
 ### Panel close delay on book switch
 `hide_all_panels()` fires immediately when a book is selected, but `player.load_book()` is called on the same thread directly after. mpv initialization on the main thread competes with the slide-out compositor, causing a small stutter on slower book loads. Moving `load_book` after the panel animation finishes requires deferring all book-switch logic and creates signal ordering complexity. Accepted as-is for now.
 
