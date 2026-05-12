@@ -2049,6 +2049,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         active = self.db.get_active_cover(file_path)
         self._cover_fit_mode = active['fit_mode'] if active else 'fit'
+
+        # If there is no cover source at all, show author/title immediately
+        active_path   = active['file_path'] if active else None
+        fallback_path = book.cover_path if book else None
+        if not active_path and not fallback_path:
+            self.current_cover_pixmap = QPixmap()
+            self.cover_art_label.hide()
+            self.metadata_label.show()
+            self.metadata_label.setText(
+                f"{book.author} - {book.title}" if book else "Unknown book"
+            )
+            self._pending_cover_pixmap = None
+            self.theme_manager.clear_cover_theme()
+            return
+
         from .ui.library import _cover_cache
         cached = _cover_cache.get(book.id) if book else None
 
@@ -2079,12 +2094,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if book:
                 _cover_cache.pop(book.id, None)
             if not file_path:
-                # All covers removed — clear display without metadata fallback
-                self.current_cover_pixmap = QPixmap()
-                self.cover_art_label.setPixmap(QPixmap())
-                self.cover_art_label.hide()
-                self.metadata_label.hide()
-                self.theme_manager.clear_cover_theme()
+                # All covers removed — same fallback as a book with no cover
+                self._load_cover_art(self.current_file)
                 return
             active = self.db.get_active_cover(book_path)
             self._cover_fit_mode = active['fit_mode'] if active else 'fit'

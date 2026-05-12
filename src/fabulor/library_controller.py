@@ -123,7 +123,9 @@ class LibraryController(QObject):
             if not state["has_book"]:
                 self.ui.update_metadata("No book selected.", show_metadata=True, show_go_to_lib=True)
             else:
-                self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
+                # Leave metadata_label visibility to _load_cover_art — it controls
+                # whether to show "author - title" when no cover exists.
+                self.ui.update_metadata(None, show_go_to_lib=False)
 
     def handle_background_tasks(self, state, manual=False, force_refresh=False):
         """Triggers scans based on current mode and location status."""
