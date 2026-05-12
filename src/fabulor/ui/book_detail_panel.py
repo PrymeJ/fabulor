@@ -177,7 +177,7 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._tag_display_label.setWordWrap(True)
         self._tag_display_label.setContentsMargins(8, 2, 8, 2)
-        self._tag_display_label.hide()
+        self._tag_display_label.setFixedHeight(38)  # two tag lines reserved always
         layout.addWidget(self._tag_display_label)
 
         from .cover_panel import CoverPanel
@@ -351,10 +351,9 @@ class BookDetailPanel(QWidget):
 
     def _rebuild_tag_display(self, tags: list[str]):
         if not tags:
-            self._tag_display_label.hide()
-            return
-        self._tag_display_label.setText("  ".join(f"● {t.replace(' ', ' ')}" for t in tags))
-        self._tag_display_label.show()
+            self._tag_display_label.setText("")
+        else:
+            self._tag_display_label.setText("  ".join(f"● {t.replace(' ', ' ')}" for t in tags))
 
     def _on_tag_input_changed(self, text: str):
         self._tag_suggest_timer.start()  # restarts if already running
