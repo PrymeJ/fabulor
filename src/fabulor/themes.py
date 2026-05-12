@@ -3165,7 +3165,7 @@ def get_cover_panel_stylesheet(theme_name="default"):
             color: {text};
             border: 1px solid {accent_dark};
             border-radius: 3px;
-            padding: 4px 8px;
+            padding: 4px 8px 6px 8px;
             font-size: 12px;
         }}
         QPushButton#FitModeButton:checked {{

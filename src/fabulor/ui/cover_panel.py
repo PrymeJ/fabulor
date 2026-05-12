@@ -93,8 +93,8 @@ class CoverThumbnail(QFrame):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
 
-        # Hover overlay — bottom strip
-        if self._hovered and self._overlay_enabled:
+        # Hover overlay — suppressed when nothing is actionable
+        if self._hovered and self._overlay_enabled and not (self._is_locked and self._is_active):
             overlay_rect = self.rect().adjusted(0, _THUMB_SIZE - _OVERLAY_HEIGHT, 0, 0)
             overlay_color = QColor(0, 0, 0, 160)
             painter.fillRect(overlay_rect, overlay_color)
@@ -237,10 +237,7 @@ class CoverPanel(QWidget):
         self._preview_label = QLabel()
         self._preview_label.setObjectName("CoverPreview")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setFixedHeight(266)
-        self._preview_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        self._preview_label.setFixedSize(208, 266)
 
         # Fit mode buttons
         fit_row = QHBoxLayout()
@@ -254,6 +251,7 @@ class CoverPanel(QWidget):
             btn.setCheckable(True)
             btn.setObjectName("FitModeButton")
             btn.setProperty("fitKey", key)
+            btn.setFixedHeight(34)
             self._fit_group.addButton(btn)
             self._fit_buttons[key] = btn
             fit_row.addWidget(btn)
@@ -332,8 +330,8 @@ class CoverPanel(QWidget):
 
         file_path = self._selected.get('file_path', '')
         fit_mode  = self._selected.get('fit_mode', 'fit')
-        w = self._preview_label.width() or 240
-        h = self._preview_label.height() or 240
+        w = self._preview_label.width()
+        h = self._preview_label.height()
 
         src = QPixmap()
         try:
@@ -378,10 +376,6 @@ class CoverPanel(QWidget):
             painter.end()
 
         self._preview_label.setPixmap(result)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._render_preview()
 
     # ── Fit mode ─────────────────────────────────────────────────────────────
 
