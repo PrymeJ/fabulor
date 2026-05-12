@@ -121,7 +121,7 @@ THEMES = {
         "notch_opacity":          110,
         "cover_preview_bg"      :"#07576B",
     },
-    "Anomander": { # Black & White with Deep Amber Progress Text
+    "Anomander": {
         "bg_deep":      "#000000",
         "bg_main":      "#000000",
         "slider_overall_bg":   "#1A1A1A",
@@ -149,10 +149,10 @@ THEMES = {
         "settings_tab_hover_text":    "#000000",
     },
     "Blood Meridian": {
-        "bg_deep": "#2F1A0F", # Dried blood brown
-        "bg_main": "#4A2F1F", # Sun-bleached rust
+        "bg_deep": "#2F1A0F",
+        "bg_main": "#4A2F1F",
         "slider_overall_bg": "#5A3F2F",
-        "slider_overall_fill": "#8B0000", # Crimson violence accent
+        "slider_overall_fill": "#8B0000",
         "slider_chapter_bg": "#4A2F1F",
         "slider_chapter_fill": "#7A0000",
         "slider_vol_bg": "#2F1A0F",
@@ -169,11 +169,11 @@ THEMES = {
         "panel_theme_names_dimmed": "#E47575",
         "text": "#F5E6D3", # Bone cream text
     },
-    "Blue Moranth": { # Navy/Green theme
+    "Blue Moranth": {
         "bg_deep":      "#001219",
-        "bg_main":      "#001B2E", # Navy blue background
+        "bg_main":      "#001B2E",
         "slider_overall_bg":   "#003547",
-        "slider_overall_fill": "#39FF14", # Vibrant green accent
+        "slider_overall_fill": "#39FF14",
         "progress_text": "#E1F4BE",
         "slider_chapter_bg":   "#002A38",
         "slider_chapter_fill": "#3CA4E0",
@@ -231,10 +231,10 @@ THEMES = {
         "text":                   "#FFF5EC"
     },
     "Brave New World": {
-        "bg_deep": "#3A2F5F", # Sterile purple
-        "bg_main": "#5A4A7F", # Controlled indigo
+        "bg_deep": "#3A2F5F",
+        "bg_main": "#5A4A7F",
         "slider_overall_bg": "#6A5A8F",
-        "slider_overall_fill": "#77B2CC", # Cool blue accent
+        "slider_overall_fill": "#77B2CC",
         "slider_chapter_bg": "#5A4A7F",
         "slider_chapter_fill": "#5A9BBF",
         "slider_vol_bg": "#3A2F5F",
@@ -411,10 +411,10 @@ THEMES = {
         "gradient_accent_angle": 45
     },
     "Earthsea": {
-        "bg_deep": "#1A2A44", # Deep ocean indigo
-        "bg_main": "#2B4A6A", # Stormy sea blue
+        "bg_deep": "#1A2A44",
+        "bg_main": "#2B4A6A",
         "slider_overall_bg": "#3A5A7A",
-        "slider_overall_fill": "#4A90A7", # Volcanic teal accent
+        "slider_overall_fill": "#4A90A7",
         "slider_chapter_bg": "#2B4A6A",
         "slider_chapter_fill": "#3A7A90",
         "slider_vol_bg": "#1A2A44",
@@ -429,7 +429,7 @@ THEMES = {
         "sidebar_opacity": 0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#D2ECF1",
-        "text": "#B9D7E2", # Cool light text
+        "text": "#B9D7E2",
     },
     "Emiko": {
         "bg_deep":                "#0A1F0A",
@@ -498,21 +498,21 @@ THEMES = {
         "bg_deep":      "#1a0033",
         "bg_main":      "#2b0052",
         "slider_overall_bg":   "#4B0082",
-        "slider_overall_fill": "#ED37B3", # Red
+        "slider_overall_fill": "#ED37B3",
         "slider_chapter_bg":   "#330066",
-        "slider_chapter_fill": "#FF7F00", # Orange
+        "slider_chapter_fill": "#FF7F00",
         "slider_vol_bg":       "#1a0033",
-        "slider_vol_fill":     "#FFFF00", # Yellow
-        "accent":              "#00FF00", # Green
-        "accent_light":        "#00FFFF", # Cyan
-        "accent_dark":         "#0000FF", # Blue
+        "slider_vol_fill":     "#FFFF00",
+        "accent":              "#00FF00",
+        "accent_light":        "#00FFFF",
+        "accent_dark":         "#0000FF",
         "bg_sidebar":          "#1a0033",
         "bg_dropdown":         "#2b0052",
-        "curr_chap_highlight": "#8B00FF", # Violet
+        "curr_chap_highlight": "#8B00FF",
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
-        "text":                "#CFECEC", # Cyan text
-        "progress_text":       "#FF00FF", # Magenta progress
+        "text":                "#CFECEC",
+        "progress_text":       "#FF00FF",
         "sidebar_text_hover": "#00FFFF",
         "panel_theme_names_dimmed": "#E94F4F",
         "button_text":         "#2b0052",
@@ -535,7 +535,7 @@ THEMES = {
         "accent_dark":         "#A37B14",
         "bg_sidebar":          "#461004",
         "bg_dropdown":         "#451208",
-        "curr_chap_highlight": "#8C0C0C", # chapter dropdown selection
+        "curr_chap_highlight": "#8C0C0C",
         "sidebar_text_hover": "#D60808",
         "sidebar_opacity":     0.8,
         "panel_opacity_hover": 0.92,
@@ -610,7 +610,7 @@ THEMES = {
         "bg_deep":      "#2C3E50",
         "bg_main":      "#34495E",
         "slider_overall_bg":   "#4A627A",
-        "slider_overall_fill": "#E74C3C", # Red accent
+        "slider_overall_fill": "#E74C3C",
         "slider_chapter_bg":   "#34495E",
         "slider_chapter_fill": "#C0392B",
         "slider_vol_bg":       "#2C3E50",
@@ -625,13 +625,13 @@ THEMES = {
         "sidebar_opacity":     0.7,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#8CF1F8",
-        "text":                "#ECF0F1", # Light text
+        "text":                "#ECF0F1",
     },
     "Razorgirl": {
-        "bg_deep": "#0A0F1A", # Void space black
-        "bg_main": "#1A1F2E", # Cyberdeck navy
+        "bg_deep": "#0A0F1A",
+        "bg_main": "#1A1F2E",
         "slider_overall_bg": "#2A344A",
-        "slider_overall_fill": "#00FFFF", # Neon cyan accent
+        "slider_overall_fill": "#00FFFF",
         "slider_chapter_bg": "#1A1F2E",
         "slider_chapter_fill": "#00CCCC",
         "slider_vol_bg": "#0A0F1A",
@@ -699,7 +699,7 @@ THEMES = {
     "sidebar_opacity": 0.85,
     "panel_opacity_hover": 0.92
 },
-    "Red Rising": { # Tones of red, Martian aesthetic
+    "Red Rising": { 
         "bg_deep":      "#2b0000",
         "bg_main":      "#4a0000",
         "slider_overall_bg":   "#1a0000",
@@ -720,7 +720,7 @@ THEMES = {
         "panel_theme_names_dimmed": "#FFFFFF",
         "text":                "#ffcccc",
         "button_text":         "#000000",
-        "progress_text":       "#f88a8a", # Contrast against bright red fill
+        "progress_text":       "#f88a8a", 
     },
     "Rivendell": { 
         "bg_deep":      "#E0E7E9",
@@ -744,7 +744,7 @@ THEMES = {
         "sidebar_opacity":     0.9,
         "panel_opacity_hover": 0.95,
         "text":                "#263238",
-        "panel_theme_names_dimmed": "#2C464C", # Dark text
+        "panel_theme_names_dimmed": "#2C464C",
         "text_on_light_bg":    "#1D3022",
     },
     "Shai-Hulud": {
@@ -959,7 +959,7 @@ THEMES = {
         "text":                   "#F2EFF8"
     },
     "Urras": {
-        "bg_deep":      "#001219", # Old Blue Moranth
+        "bg_deep":      "#001219",
         "bg_main":      "#001B24",
         "slider_overall_bg":   "#003547",
         "slider_overall_fill": "#94D2BD",
@@ -1025,10 +1025,10 @@ THEMES = {
         "sidebar_text_hover": "#F39C12",
     },
     "Waste Lands": {
-        "bg_deep": "#1A1A1A", # Charred black
-        "bg_main": "#2F2F2F", # Dusty ash grey
+        "bg_deep": "#1A1A1A",
+        "bg_main": "#2F2F2F",
         "slider_overall_bg": "#404040",
-        "slider_overall_fill": "#B8860B", # Faded gold accent
+        "slider_overall_fill": "#B8860B",
         "slider_chapter_bg": "#2F2F2F",
         "slider_chapter_fill": "#A67C00",
         "slider_vol_bg": "#1A1A1A",
@@ -1043,7 +1043,7 @@ THEMES = {
         "sidebar_opacity": 0.68,
         "panel_opacity_hover": 0.87,
         "panel_theme_names_dimmed": "#839CA2",
-        "text": "#DCDCDC", # Ghostly light grey text
+        "text": "#DCDCDC",
     },
     "Winterfell": {
         "bg_deep":      "#212529",
@@ -1065,7 +1065,7 @@ THEMES = {
         "sidebar_opacity":     0.6,
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#000000",
-        "text":                "#ddfbfb", # Light text for general labels
+        "text":                "#ddfbfb",
         "text_on_light_bg":    "#111111",
         "bg_image":                 "img/winterfell.png",
         "gradient_bg_start": "#343A40",
