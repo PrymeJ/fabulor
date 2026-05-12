@@ -606,7 +606,7 @@ THEMES = {
         "text":                   "#F0F3F0",
         "panel_theme_names_dimmed": "#6F868A",
     },
-    "Oranges Are Not the Only Fruit": { # Test long name
+    "Not the Only Fruit": {
         "bg_deep":      "#2C3E50",
         "bg_main":      "#34495E",
         "slider_overall_bg":   "#4A627A",
@@ -1837,7 +1837,7 @@ THEMES = {
     "sidebar_opacity": 0.85,
     "panel_opacity_hover": 0.92
 },
-"Vanished Birds": {
+"Violeta": {
     "bg_deep": "#140A1A",
     "bg_main": "#1E1028",
     "bg_sidebar": "#140A1A",
