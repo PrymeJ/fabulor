@@ -2049,9 +2049,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         active = self.db.get_active_cover(file_path)
         self._cover_fit_mode = active['fit_mode'] if active else 'fit'
 
-        # If there is no cover source at all, show author/title immediately
         active_path   = active['file_path'] if active else None
         fallback_path = book.cover_path if book else None
+
+        # No cover source at all → show author/title immediately
         if not active_path and not fallback_path:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
@@ -2063,9 +2064,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.theme_manager.clear_cover_theme()
             return
 
+        # Active cover set in book_covers → load from that path directly.
+        # Skip cache: it may hold the scanner thumbnail (book.cover_path) which is
+        # different from the user-selected active cover.
+        if active_path:
+            pixmap = QPixmap(active_path)
+            if not pixmap.isNull():
+                self._apply_main_cover(pixmap)
+                return
+            # File missing — fall through to legacy path below
+
+        # Legacy path: no book_covers entry, use scanner thumbnail or extract_cover
         from .ui.library import _cover_cache
         cached = _cover_cache.get(book.id) if book else None
-
         if cached is not None:
             self._apply_main_cover(cached)
             return
