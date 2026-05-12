@@ -296,8 +296,7 @@ class CoverPanel(QWidget):
 
         self._update_left_col_height()
         self._update_overlay_enabled()
-        user_count = sum(1 for c in self._covers if not c['is_locked'])
-        self._add_btn.setVisible(user_count < 3)
+        self._add_btn.setVisible(len(self._covers) < 4)
 
     def _update_overlay_enabled(self):
         # Overlay is hidden when the locked cover is alone (nothing to ✓ or ×)
@@ -452,23 +451,35 @@ class CoverPanel(QWidget):
         self._update_left_col_height()
         self._update_overlay_enabled()
 
-        # Promote locked cover if the deleted one was active
+        # Promote a new active cover if the deleted one was active
         if was_active:
-            locked = next((c for c in self._covers if c['is_locked']), None)
-            if locked:
-                self._db.set_active_cover(self._book_path, locked['id'])
-                locked['is_active'] = 1
+            # Prefer locked cover, otherwise first remaining user cover
+            fallback = (
+                next((c for c in self._covers if c['is_locked']), None)
+                or (self._covers[0] if self._covers else None)
+            )
+            if fallback:
+                self._db.set_active_cover(self._book_path, fallback['id'])
+                fallback['is_active'] = 1
                 self._update_active_outlines()
-                self._select_cover(locked)
-                self.active_cover_changed.emit(locked['file_path'])
+                self._select_cover(fallback)
+                self.active_cover_changed.emit(fallback['file_path'])
+            else:
+                # No covers remain — clear everything
+                self._update_active_outlines()
+                self._selected = None
+                self._preview_label.clear()
+                self.active_cover_changed.emit("")
         elif self._selected and self._selected['id'] == cover_id:
-            # Deleted non-active selected → preview active cover
+            # Deleted the previewed (non-active) cover → show active
             active = next((c for c in self._covers if c['is_active']), None)
             if active:
                 self._select_cover(active)
+            else:
+                self._selected = None
+                self._preview_label.clear()
 
-        user_count = sum(1 for c in self._covers if not c['is_locked'])
-        self._add_btn.setVisible(user_count < 3)
+        self._add_btn.setVisible(len(self._covers) < 4)
 
     # ── Add cover ─────────────────────────────────────────────────────────────
 
@@ -548,8 +559,7 @@ class CoverPanel(QWidget):
         self._update_left_col_height()
         self._update_overlay_enabled()
 
-        user_count = sum(1 for c in self._covers if not c['is_locked'])
-        self._add_btn.setVisible(user_count < 3)
+        self._add_btn.setVisible(len(self._covers) < 4)
 
     # ── Error display ─────────────────────────────────────────────────────────
 

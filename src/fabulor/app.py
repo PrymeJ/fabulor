@@ -2074,14 +2074,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.library_panel.refresh_book_cover(book_path)
         if book_path == self.current_file:
+            from .ui.library import _cover_cache
+            book = self.db.get_book(book_path)
+            if book:
+                _cover_cache.pop(book.id, None)
+            if not file_path:
+                # All covers removed — clear the player display
+                self._load_cover_art(self.current_file)
+                return
             active = self.db.get_active_cover(book_path)
             self._cover_fit_mode = active['fit_mode'] if active else 'fit'
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
-                from .ui.library import _cover_cache
-                book = self.db.get_book(book_path)
-                if book:
-                    _cover_cache.pop(book.id, None)
                 self._apply_main_cover(pixmap)
 
     def _update_cover_art_scaling(self):
