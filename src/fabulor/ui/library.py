@@ -562,7 +562,8 @@ class LibraryPanel(QFrame):
             book = self._preload_queue.pop(0)
             if book.id in _cover_cache:
                 continue
-            worker = CoverLoaderWorker(book)
+            active_path = self.db.get_active_cover_path(book.path) if self.db else None
+            worker = CoverLoaderWorker(book, active_cover_path=active_path)
             worker._book_id = book.id
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)

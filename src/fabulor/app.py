@@ -57,6 +57,7 @@ class AppInterface:
         self._main = main
 
     def get_current_file(self): return self._main.current_file
+    def load_cover_art(self, path): self._main._load_cover_art(path)
     def on_book_removed(self): self._main._on_book_removed()
 
 class BrowserInterface:

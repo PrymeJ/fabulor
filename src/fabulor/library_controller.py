@@ -78,11 +78,17 @@ class LibraryController(QObject):
 
     def _on_scan_finished(self, total):
         """Finalizes scan and hides banner."""
-        self.ui.update_status(f"Library updated: {total} books.", 
+        self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
-        
+
         self.ui.refresh_panel(force=True)
         self._refresh_folder_list()
+
+        # Refresh player cover after scan — ensures the active book_covers entry
+        # is used, not a stale cache entry from before the scan.
+        current = self.app.get_current_file()
+        if current:
+            self.app.load_cover_art(current)
 
     def compute_library_state(self):
         """Computes the current logical state of the library."""
