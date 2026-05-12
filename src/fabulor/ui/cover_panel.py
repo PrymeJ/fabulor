@@ -38,6 +38,8 @@ class CoverThumbnail(QFrame):
         self._hovered    = False
         self._pixmap     = QPixmap()
 
+        self._overlay_enabled = True
+
         self.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -60,6 +62,9 @@ class CoverThumbnail(QFrame):
         self._is_active = active
         self.setObjectName("CoverThumbnailActive" if active else "CoverThumbnail")
         self.repaint()
+
+    def set_overlay_enabled(self, enabled: bool):
+        self._overlay_enabled = enabled
 
     def set_accent(self, color: str):
         self._accent = QColor(color)
@@ -89,7 +94,7 @@ class CoverThumbnail(QFrame):
             painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
 
         # Hover overlay — bottom strip
-        if self._hovered:
+        if self._hovered and self._overlay_enabled:
             overlay_rect = self.rect().adjusted(0, _THUMB_SIZE - _OVERLAY_HEIGHT, 0, 0)
             overlay_color = QColor(0, 0, 0, 160)
             painter.fillRect(overlay_rect, overlay_color)
@@ -292,8 +297,15 @@ class CoverPanel(QWidget):
             self._thumb_layout.addWidget(thumb)
 
         self._update_left_col_height()
+        self._update_overlay_enabled()
         user_count = sum(1 for c in self._covers if not c['is_locked'])
         self._add_btn.setVisible(user_count < 3)
+
+    def _update_overlay_enabled(self):
+        # Overlay is hidden when the locked cover is alone (nothing to ✓ or ×)
+        sole_locked = len(self._covers) == 1 and self._covers[0]['is_locked']
+        for cover_id, thumb in self._thumbnails.items():
+            thumb.set_overlay_enabled(not sole_locked)
 
     def _update_active_outlines(self):
         for cover_id, thumb in self._thumbnails.items():
@@ -431,6 +443,7 @@ class CoverPanel(QWidget):
             self._thumb_layout.removeWidget(thumb)
             thumb.deleteLater()
         self._update_left_col_height()
+        self._update_overlay_enabled()
 
         # Promote locked cover if the deleted one was active
         if was_active:
@@ -526,6 +539,7 @@ class CoverPanel(QWidget):
         self._thumbnails[cover_id] = thumb
         self._thumb_layout.addWidget(thumb)
         self._update_left_col_height()
+        self._update_overlay_enabled()
 
         user_count = sum(1 for c in self._covers if not c['is_locked'])
         self._add_btn.setVisible(user_count < 3)
