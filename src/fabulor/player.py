@@ -173,15 +173,13 @@ class Player(QObject):
         print(f"[file_ready] chapter_list: {self.chapter_list[:3] if self.chapter_list else 'empty'}")
 
     def _on_end_file(self, event):
-        print(f"[end-file] full event dict: {event}")
-        raw = event.get('reason', b'unknown') if isinstance(event, dict) else getattr(event, 'reason', b'unknown')
-        reason = raw.decode('utf-8', errors='replace') if isinstance(raw, (bytes, bytearray)) else str(raw)
-        file_error = event.get('file_error', b'') if isinstance(event, dict) else getattr(event, 'file_error', b'')
-        if isinstance(file_error, (bytes, bytearray)):
-            file_error = file_error.decode('utf-8', errors='replace')
-        print(f"[end-file] reason={reason!r} file_error={file_error!r}")
-        if reason not in ('eof', 'stop', 'redirect'):
-            detail = file_error if file_error else reason
+        data = event.data  # MpvEventEndFile struct with integer reason field
+        reason_int = data.reason if data else -1
+        # MpvEventEndFile constants: EOF=0, RESTARTED=1, ABORTED=2, QUIT=3, ERROR=4, REDIRECT=5
+        print(f"[end-file] reason_int={reason_int}")
+        if reason_int == 4:  # ERROR
+            error_str = event.as_dict().get('file_error', b'').decode('utf-8', errors='replace')
+            detail = error_str if error_str else 'unknown error'
             self.load_failed.emit(detail)
 
     def extract_cover(self, file_path):
