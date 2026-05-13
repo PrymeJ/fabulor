@@ -2,7 +2,7 @@ import locale
 import os
 import math
 import tempfile
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 import time
 from PySide6.QtGui import QPixmap
 
@@ -33,6 +33,7 @@ class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
     load_failed = Signal(str)  # reason string from mpv end-file event
+    _playlist_resolved = Signal(str, str)  # play_target, chapters_file ('' if none)
 
     def __init__(self):
         super().__init__()
@@ -121,12 +122,45 @@ class Player(QObject):
         print(f"[load_book] path={path!r}")
         self._ensure_mpv()
         self._eof = False
-        play_target, chapters_file = self._resolve_playlist(path)
-        print(f"[load_book] resolved → {play_target!r}")
-        if chapters_file:
-            self.instance.chapters_file = chapters_file
+        self._start_paused = start_paused
+        self._held_play = None
+        self._play_gated = True
+        self._playlist_resolved.connect(self._on_playlist_resolved)
+
+        player = self
+
+        class _ResolveWorker(QRunnable):
+            def run(self):
+                play_target, chapters_file = player._resolve_playlist(path)
+                print(f"[load_book] resolved → {play_target!r}")
+                player._playlist_resolved.emit(play_target, chapters_file or "")
+
+        QThreadPool.globalInstance().start(_ResolveWorker())
+
+    def _on_playlist_resolved(self, play_target, chapters_file):
+        self._playlist_resolved.disconnect(self._on_playlist_resolved)
+        if not self._play_gated:
+            # Gate already lifted before resolve finished — play immediately.
+            print(f"[load_book] ungated already → {play_target!r}")
+            self.instance.chapters_file = chapters_file or None
+            self.instance.play(play_target)
+            if self._start_paused:
+                self.instance.pause = True
+        else:
+            self._held_play = (play_target, chapters_file)
+            print("[load_book] held — waiting for ungate")
+
+    def ungate_play(self):
+        """Call after panel animation finishes (or immediately for non-library loads)."""
+        self._play_gated = False
+        if self._held_play is None:
+            return
+        play_target, chapters_file = self._held_play
+        self._held_play = None
+        print(f"[load_book] ungated → {play_target!r}")
+        self.instance.chapters_file = chapters_file or None
         self.instance.play(play_target)
-        if start_paused:
+        if self._start_paused:
             self.instance.pause = True
         
 
@@ -136,6 +170,7 @@ class Player(QObject):
 
     def _on_file_loaded(self, event):
         self.file_loaded.emit()
+        print(f"[file_ready] chapter_list: {self.chapter_list[:3] if self.chapter_list else 'empty'}")
 
     def _on_end_file(self, event):
         print(f"[end-file] full event dict: {event}")
@@ -145,7 +180,7 @@ class Player(QObject):
         if isinstance(file_error, (bytes, bytearray)):
             file_error = file_error.decode('utf-8', errors='replace')
         print(f"[end-file] reason={reason!r} file_error={file_error!r}")
-        if reason not in ('eof', 'stop'):
+        if reason not in ('eof', 'stop', 'redirect'):
             detail = file_error if file_error else reason
             self.load_failed.emit(detail)
 

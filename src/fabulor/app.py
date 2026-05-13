@@ -188,7 +188,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         is_valid = any(last_book.startswith(loc if loc.endswith(os.sep) else loc + os.sep) for loc in locations)
         if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
+            self._mpv_ready = True
             self.player.load_book(self.current_file)
+            self.player.ungate_play()
             self.library_panel.set_playing_path(self.current_file)
         self.chapter_list_widget.set_player(self.player)
         self.chapter_list_widget.set_config(self.config)
@@ -1448,32 +1450,45 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager.hide_all_panels()
             return
 
-        self._save_current_progress() # Save state of the book we are leaving
+        import time as _t
+        _t0 = _t.perf_counter()
+        self._save_current_progress()
+        print(f"[book_select] save_progress: {(_t.perf_counter()-_t0)*1000:.1f}ms"); _t0 = _t.perf_counter()
+        self._paused_time = None
+        self._mpv_ready = False
         self._pre_switch_slider_value = self.progress_slider.value()
         self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
-        self.current_chapter_label.setText("") # Explicitly clear chapter label on book switch
+        self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
         self._last_saved_pct = -1
         self._eof_dur_fetched = False
         self.current_file = path
-        self.library_panel.set_playing_path(path)
-        self.library_panel.set_is_playing(False)
-        self.db.update_last_played(path)
-        self.config.set_last_book(path)
+        print(f"[book_select] state_clear: {(_t.perf_counter()-_t0)*1000:.1f}ms"); _t0 = _t.perf_counter()
         self._close_session()
+        print(f"[book_select] close_session+hide: {(_t.perf_counter()-_t0)*1000:.1f}ms")
         self._session_start = None
         self._session_position_start = None
         self._session_furthest_position = None
-        self.player.load_book(path)
-        self._load_cover_art(path)
-        self.library_controller._check_library_status()
-        self._pending_panel_hide = True
+        self.panel_manager.hide_all_panels()
+        QTimer.singleShot(0, lambda: (
+            self.db.update_last_played(path),
+            self.config.set_last_book(path),
+            self.library_panel.set_playing_path(path),
+            self.library_panel.set_is_playing(False),
+            self._load_cover_art(path),
+            self.player.load_book(path),
+        ))
 
     import time
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         print(f"[on_file_ready] time_pos={self.player.time_pos}, duration={self.player.duration}")
+        if getattr(self.library_panel, '_is_animating', False):
+            self._file_ready_deferred = True
+            print("[on_file_ready] deferred — library animating")
+            return
+        self._file_ready_deferred = False
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
             return
@@ -1481,14 +1496,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
         print(f"  ||| get_book #1: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
-    
+
         self._restore_position()
         print(f"  restore_position: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
 
-        # Force a sync immediately so labels don't wait for the next timer tick
         self._update_ui_sync()
         print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
-    
+
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
         pre = getattr(self, '_pre_switch_slider_value', None)
@@ -1499,20 +1513,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.progress_slider.animate_to(new_val, old_value=pre)
             else:
                 self.progress_slider.setValue(new_val)
-        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
-        if pre_chap is not None:
-            self._pre_switch_chap_slider_value = None
-            new_chap_val = 0 if new_progress == 0 else self.chapter_progress_slider.value()
-            if pre_chap != new_chap_val:
-                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
-            else:
-                self.chapter_progress_slider.setValue(new_chap_val)
-        print(f"  slider_anim: {(time.perf_counter()-t0)*1000:.1f}ms")
-        if getattr(self, '_pending_panel_hide', False):
-            self._pending_panel_hide = False
-            self.panel_manager.hide_all_panels()
+        print(f"  slider_done: {(time.perf_counter()-t0)*1000:.1f}ms")
 
     def _on_file_loaded_populate_chapters(self):
+        if getattr(self.library_panel, '_is_animating', False):
+            self._chaps_deferred = True
+            return
+        self._chaps_deferred = False
         try:
             dur = self.player.duration
             if dur and self.player.chapter_list:
@@ -1524,12 +1531,38 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
+        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
+        if pre_chap is not None:
+            self._pre_switch_chap_slider_value = None
+            book_data = getattr(self, '_current_book', None)
+            new_progress = book_data.progress if book_data else 0
+            new_chap_val = 0 if new_progress == 0 else self.chapter_progress_slider.value()
+            if pre_chap != new_chap_val:
+                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+            else:
+                self.chapter_progress_slider.setValue(new_chap_val)
+
+    def _drain_deferred_file_ready(self):
+        if getattr(self, '_file_ready_deferred', False):
+            self._on_file_ready()
+        if getattr(self, '_chaps_deferred', False):
+            self._on_file_loaded_populate_chapters()
+        self._apply_pending_cover_theme()
+
+    def _apply_pending_cover_theme(self):
+        pixmap = getattr(self, '_pending_cover_pixmap', None)
+        if not pixmap:
+            return
+        self._pending_cover_pixmap = None
+        if hasattr(self.progress_slider, 'when_animations_done'):
+            self.progress_slider.when_animations_done(
+                lambda: self.theme_manager.apply_cover_theme(pixmap)
+            )
+        else:
+            self.theme_manager.apply_cover_theme(pixmap)
 
     def _on_load_failed(self, reason):
         """Called when mpv fires end-file with a non-normal reason (error/unknown)."""
-        self._pending_panel_hide = False
-        if self.panel_manager:
-            self.panel_manager.hide_all_panels()
         self._update_status_banner_ui(text=f"Failed to load: {reason}", show_banner=True, auto_hide=True)
 
     def _update_chapter_label_clickability(self):
@@ -1679,13 +1712,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             else:
                 if is_paused:
-                    if mpv_pos is not None:
-                        m_pos = mpv_pos
-                        if self._paused_time is None or self.player.is_seeking or abs(m_pos - self._paused_time) > 1.0:
-                            self._paused_time = m_pos
+                    if mpv_pos is not None and getattr(self, '_mpv_ready', True):
+                        if self._paused_time is None or self.player.is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
+                            self._paused_time = mpv_pos
                             self.player.is_seeking = False
-                    # if mpv_pos is None we're mid-seek; keep _paused_time as-is
+                    # if mpv_pos is None or mpv not yet ready, keep _paused_time as-is
                     pos = self._paused_time
+                    if pos is None:
+                        self.play_pause_button.setText("Play")
+                        return
                 else:
                     self._paused_time = None
                     pos = mpv_pos
@@ -2206,7 +2241,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._close_session()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
+            self._mpv_ready = True
             self.player.load_book(self.current_file, start_paused=False)
+            self.player.ungate_play()
             return
         else:
             was_paused = self.player.pause

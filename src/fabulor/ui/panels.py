@@ -216,7 +216,9 @@ class PanelManager:
         self._pending_panel_open = None
 
     def _close_library_flow(self):
+        print(f"[close_library_flow] state={self.library_panel_animation.state()}")
         if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
+            print("[close_library_flow] already running — skipping")
             return
         panel_w = self.library_panel.width()
         sidebar_y = 32
@@ -229,6 +231,7 @@ class PanelManager:
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.finished.connect(self._on_library_hidden)
         self.library_panel_animation.start()
+        print("[close_library_flow] animation started")
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -236,6 +239,7 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_hidden(self):
+        print("[on_library_hidden] fired")
         try:
             self.library_panel_animation.finished.disconnect(self._on_library_hidden)
         except RuntimeError:
@@ -244,15 +248,15 @@ class PanelManager:
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
         mw = self.main_window
-        if getattr(mw, '_pending_cover_pixmap', None):
-            pixmap = mw._pending_cover_pixmap
-            mw._pending_cover_pixmap = None
-            slider = getattr(mw, 'progress_slider', None)
-            if slider and hasattr(slider, 'when_animations_done'):
-                slider.when_animations_done(lambda: mw.theme_manager.apply_cover_theme(pixmap))
-            else:
-                mw.theme_manager.apply_cover_theme(pixmap)
+        mw._mpv_ready = True
+        player = getattr(mw, 'player', None)
+        if player:
+            player.ungate_play()
         self._notify_panel_closed()
+        if getattr(mw, '_file_ready_deferred', False) or getattr(mw, '_chaps_deferred', False):
+            QTimer.singleShot(50, mw._drain_deferred_file_ready)
+        else:
+            mw._apply_pending_cover_theme()
 
     def _close_speed_flow(self):
         """Slides the speed panel back out."""

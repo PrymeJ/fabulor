@@ -254,8 +254,8 @@ class ThemeManager(QObject):
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
 
+            from PySide6.QtGui import QRegion
             if pm and pm.is_any_panel_visible():
-                from PySide6.QtGui import QRegion
                 mask = QRegion(self.main_window.rect())
                 panels = ['library_panel', 'speed_panel',
                           'sleep_panel', 'stats_panel', 'book_detail_panel']
@@ -268,6 +268,22 @@ class ThemeManager(QObject):
                 self._fade_overlay.setMask(mask)
             else:
                 self._fade_overlay.clearMask()
+            # For cover-art theme transitions, exclude custom-painted widgets that
+            # show correct values immediately — leaving them in the overlay causes
+            # a ghost of the old value morphing over the new one.
+            if isinstance(theme_name, dict):
+                mw = self.main_window
+                from PySide6.QtCore import QPoint
+                exclude = ['progress_slider', 'chapter_progress_slider', 'progress_percentage_label']
+                current_mask = self._fade_overlay.mask()
+                if current_mask.isEmpty():
+                    current_mask = QRegion(self.main_window.rect())
+                for attr in exclude:
+                    w = getattr(mw, attr, None)
+                    if w and w.isVisible():
+                        top_left = w.mapTo(mw, QPoint(0, 0))
+                        current_mask -= QRegion(top_left.x(), top_left.y(), w.width(), w.height())
+                self._fade_overlay.setMask(current_mask)
 
             self._fade_overlay.show()
             self._fade_overlay.raise_()

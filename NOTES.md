@@ -71,8 +71,29 @@ Scanner sets `cover_path = str(af)` (audio file) when no external image exists b
 ### `book_covers` pre-migration books — fallback behavior
 Both the preloader and `_trigger_cover_load` now call `get_active_cover_path(book.path)` before constructing `CoverLoaderWorker`. For books with no `book_covers` entry, `get_active_cover_path` returns `None` and the worker falls back to `book.cover_path` (scanner thumbnail) — same visual result as before, consistently applied. The previous asymmetry (preloader ignoring `book_covers`) was a bug, not intentional. No further action needed; when all books are rescanned the fallback path becomes a no-op.
 
-### Panel close delay on book switch
-`hide_all_panels()` fires immediately when a book is selected, but `player.load_book()` is called on the same thread directly after. mpv initialization on the main thread competes with the slide-out compositor, causing a small stutter on slower book loads. Moving `load_book` after the panel animation finishes requires deferring all book-switch logic and creates signal ordering complexity. Accepted as-is for now.
+### Panel close delay on book switch — RESOLVED (2026-05-13)
+The stutter on book selection was caused by mpv's audio pipeline initialisation (PulseAudio negotiation on background threads) competing with the Qt animation timer at the OS scheduler level — not a main-thread block. Confirmed by timing: every Python step was under 2ms, but the animation still stuttered. Back-button close (no mpv work) was always smooth; this was the diagnostic signal.
+
+**The fix — three-part sequence:**
+
+1. **`_playlist_resolved` worker thread** (`player.py`): `_resolve_playlist` (mutagen reads) moved to `QThreadPool` worker. Result is held in `_held_play` rather than calling `instance.play()` immediately.
+
+2. **Gate/ungate pattern** (`player.py`): `load_book` sets `_play_gated = True`. `_on_playlist_resolved` stores the resolved target in `_held_play` if still gated, or plays immediately if gate already lifted. `ungate_play()` either drains `_held_play` or sets `_play_gated = False` for future resolution. This means `instance.play()` — the call that kicks off PulseAudio init — never fires until after the animation completes.
+
+3. **`_mpv_ready` flag** (`app.py`): `_on_book_selected_from_library` sets `_mpv_ready = False`. The deadzone in `_update_ui_sync` ignores all `mpv_pos` values while `_mpv_ready` is False. `_mpv_ready = True` is set in `_on_library_hidden` (library path) or directly before `ungate_play()` (startup/EOF-restart paths). This prevents the 200ms UI timer from accepting the previous book's stale position during the animation window and writing it to the slider.
+
+**`ungate_play()` call sites:** `_on_library_hidden` (library flow), startup book restore, EOF restart. Any new `load_book` call that bypasses the library panel must also call `_mpv_ready = True` then `ungate_play()` immediately after.
+
+**`_on_file_ready` / `_on_file_loaded_populate_chapters` deferral:** Both check `library_panel._is_animating` and set deferred flags if True. `_on_library_hidden` drains them via `QTimer.singleShot(50, _drain_deferred_file_ready)`. The 50ms is intentional — avoids last-frame compositor hitch.
+
+**What was tried and failed:**
+- Deferring only `_load_cover_art` and `load_book` via `singleShot(0)` — not enough; `instance.play()` still fired one event loop cycle into the animation.
+- `is_seeking` guard on `_sync_progress_sliders` — broke flow animation because `is_seeking` clears before mpv delivers real position.
+- `_seek_target` proximity check — caused 228% progress when `target=None` or book had no saved position.
+- Skipping `_update_ui_sync` when `is_seeking=True` in `_on_file_ready` — broke flow animation because slider value was 0 when `animate_to` was called.
+- Deferred slider animation from deadzone `is_seeking` transition — fired on wrong tick, reading wrong slider value.
+
+**Unobvious:** The stutter root cause is OS scheduler, not Python. Python profiling and timing showed nothing. The diagnostic was: back button (identical slide, no mpv work) was always smooth.
 
 ### Position restore fragility
 `_restore_position` re-reads from DB after `config_pos` sync. If `_current_book` (set at the top of `_on_file_ready`) was read before the sync, its `progress` value may be stale. The current workaround is a fresh `db.get_book()` call inside `_restore_position`. This is a second DB read on the file-ready path. Could be eliminated by moving the config sync earlier (before `db.get_book` in `_on_file_ready`), but requires care — `_current_book` is used by the slider animation logic immediately after.
@@ -82,9 +103,9 @@ Tested with `instance.loadfile(path, start=str(int(seconds)))` and `f"+{int(seco
 
 ---
 
-## Library Panel — Open/Close Performance (UNRESOLVED — do not touch without full test plan)
+## Library Panel — Open/Close Performance (CLOSE STUTTER RESOLVED 2026-05-13 — open performance still has open items)
 
-Current state (at commit e0ec581): everything works correctly. No performance fixes applied.
+Current state: close slide on book selection is smooth. Open performance is unchanged.
 
 ### What was attempted this session and reverted
 
