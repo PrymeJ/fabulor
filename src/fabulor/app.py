@@ -142,6 +142,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.chapter_changed.connect(self._update_chapter_label_from_index, Qt.ConnectionType.QueuedConnection)
         self.player.file_loaded.connect(self._on_file_ready, Qt.ConnectionType.QueuedConnection)
         self.player.file_loaded.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
+        self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
@@ -1474,9 +1475,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Called when mpv confirms the file is loaded and ready."""
         print(f"[on_file_ready] time_pos={self.player.time_pos}, duration={self.player.duration}")
         if not os.path.exists(self.current_file):
-             self.status_banner.setText("Error: File missing!")
-             self.status_banner.show()
-             return
+            self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+            return
         t0 = time.perf_counter()
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
@@ -1524,6 +1524,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
+
+    def _on_load_failed(self, reason):
+        """Called when mpv fires end-file with a non-normal reason (error/unknown)."""
+        self._pending_panel_hide = False
+        if self.panel_manager:
+            self.panel_manager.hide_all_panels()
+        self._update_status_banner_ui(text=f"Failed to load: {reason}", show_banner=True, auto_hide=True)
 
     def _update_chapter_label_clickability(self):
         """Enable the chapter label as a clickable link only when there are 2+ chapters."""

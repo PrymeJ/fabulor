@@ -1,6 +1,7 @@
 import locale
 import os
 import math
+import tempfile
 from PySide6.QtCore import QObject, Signal
 import time
 from PySide6.QtGui import QPixmap
@@ -31,6 +32,7 @@ except ImportError:
 class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
+    load_failed = Signal(str)  # reason string from mpv end-file event
 
     def __init__(self):
         super().__init__()
@@ -63,6 +65,7 @@ class Player(QObject):
             self.instance.observe_property('chapter', self._on_chapter_change)
             self.instance.observe_property('pause', self._on_pause_test)  # ADD
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
+            self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_pause_test(self, name, value):
         if value:
@@ -71,10 +74,58 @@ class Player(QObject):
             if pos is not None and dur is not None and pos >= dur - 1.5:
                 self._eof = True
 
+    _AUDIO_EXTENSIONS = {'.m4b', '.mp3', '.m4a', '.flac'}
+
+    def _resolve_playlist(self, path: str) -> tuple:
+        from pathlib import Path
+        files = sorted(
+            f for f in Path(path).iterdir()
+            if f.is_file() and f.suffix.lower() in self._AUDIO_EXTENSIONS
+        )
+        if not files:
+            return (path, None)
+        if len(files) == 1:
+            return (str(files[0]), None)
+
+        pos_ms = 0
+        lines = [';FFMETADATA1']
+        valid_files = []
+        for f in files:
+            try:
+                m = mutagen.File(f)
+                dur_ms = int((m.info.length if m and m.info else 0) * 1000)
+            except Exception as e:
+                print(f"[resolve_playlist] skipping {f.name}: {e}")
+                continue
+            lines += [
+                '[CHAPTER]',
+                'TIMEBASE=1/1000',
+                f'START={pos_ms}',
+                f'END={pos_ms + dur_ms}',
+                f'title={os.path.splitext(os.path.basename(f))[0]}',
+            ]
+            pos_ms += dur_ms
+            valid_files.append(f)
+
+        if not valid_files:
+            return (path, None)
+
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
+        tmp.write('\n'.join(lines) + '\n')
+        tmp.close()
+
+        uri = 'concat://' + '|'.join(str(f) for f in valid_files)
+        return (uri, tmp.name)
+
     def load_book(self, path, start_paused=True):
+        print(f"[load_book] path={path!r}")
         self._ensure_mpv()
         self._eof = False
-        self.instance.play(path)
+        play_target, chapters_file = self._resolve_playlist(path)
+        print(f"[load_book] resolved → {play_target!r}")
+        if chapters_file:
+            self.instance.chapters_file = chapters_file
+        self.instance.play(play_target)
         if start_paused:
             self.instance.pause = True
         
@@ -85,6 +136,18 @@ class Player(QObject):
 
     def _on_file_loaded(self, event):
         self.file_loaded.emit()
+
+    def _on_end_file(self, event):
+        print(f"[end-file] full event dict: {event}")
+        raw = event.get('reason', b'unknown') if isinstance(event, dict) else getattr(event, 'reason', b'unknown')
+        reason = raw.decode('utf-8', errors='replace') if isinstance(raw, (bytes, bytearray)) else str(raw)
+        file_error = event.get('file_error', b'') if isinstance(event, dict) else getattr(event, 'file_error', b'')
+        if isinstance(file_error, (bytes, bytearray)):
+            file_error = file_error.decode('utf-8', errors='replace')
+        print(f"[end-file] reason={reason!r} file_error={file_error!r}")
+        if reason not in ('eof', 'stop'):
+            detail = file_error if file_error else reason
+            self.load_failed.emit(detail)
 
     def extract_cover(self, file_path):
         """Extracts cover art from file tags."""
