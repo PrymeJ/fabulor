@@ -117,6 +117,18 @@ class LibraryDB:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_book_covers_book_path ON book_covers(book_path)")
 
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS book_files (
+                    book_path TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    cumulative_start_ms INTEGER NOT NULL,
+                    title TEXT,
+                    PRIMARY KEY (book_path, file_path)
+                )
+            """)
+
             # Migrate: truncate tags over 25 chars
             conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
 
@@ -967,3 +979,43 @@ class LibraryDB:
                 "SELECT COUNT(*) FROM book_covers WHERE book_path = ?",
                 (book_path,)
             ).fetchone()[0]
+
+    # --- Book Files ---
+
+    def upsert_book_files(self, book_path: str, files: list[dict]) -> None:
+        """
+        Inserts or replaces per-file records for a multi-file book.
+        Each dict in files must have keys:
+            file_path (str), sort_order (int), duration_ms (int),
+            cumulative_start_ms (int), title (str or None)
+        Deletes existing rows for book_path before inserting,
+        so the table always reflects the current file set.
+        """
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM book_files WHERE book_path = ?", (book_path,)
+            )
+            conn.executemany(
+                """INSERT INTO book_files
+                   (book_path, file_path, sort_order, duration_ms, cumulative_start_ms, title)
+                   VALUES (:book_path, :file_path, :sort_order, :duration_ms, :cumulative_start_ms, :title)""",
+                [{"book_path": book_path, **f} for f in files]
+            )
+
+    def get_book_files(self, book_path: str) -> list[dict]:
+        """
+        Returns per-file records for a multi-file book, ordered by sort_order.
+        Returns empty list if no records exist (single-file or M4B book,
+        or book not yet scanned with this version).
+        Each returned dict has keys:
+            file_path, sort_order, duration_ms, cumulative_start_ms, title
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT file_path, sort_order, duration_ms, cumulative_start_ms, title
+                   FROM book_files
+                   WHERE book_path = ?
+                   ORDER BY sort_order""",
+                (book_path,)
+            ).fetchall()
+        return [dict(row) for row in rows]

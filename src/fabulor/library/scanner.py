@@ -127,6 +127,8 @@ class ScannerWorker(QObject):
                     break
 
         audio_files = sorted([f for f in all_files if f.suffix.lower() in extensions])
+        book_files = []
+        cumulative_start_ms = 0
         for idx, af in enumerate(audio_files):
             if not self._running.is_set():
                 break
@@ -134,6 +136,15 @@ class ScannerWorker(QObject):
                 m = mutagen.File(af)
                 if m and m.info:
                     duration += m.info.length
+                    file_duration_ms = int(m.info.length * 1000)
+                    book_files.append({
+                        'file_path': str(af),
+                        'sort_order': idx,
+                        'duration_ms': file_duration_ms,
+                        'cumulative_start_ms': cumulative_start_ms,
+                        'title': af.stem,
+                    })
+                    cumulative_start_ms += file_duration_ms
 
                 # Eagerly grab narrator from tags of the first track
                 if idx == 0 and hasattr(m, 'tags') and m.tags:
@@ -175,6 +186,9 @@ class ScannerWorker(QObject):
                                     break
             except Exception:
                 continue
+
+        if len(audio_files) > 1 and book_files:
+            db.upsert_book_files(str(book_dir), book_files)
 
         # Thumbnail Caching
         if cover_path:
