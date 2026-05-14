@@ -1653,10 +1653,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_ui_sync(self):
         try:
             # Guard against accessing player before a file is loaded
+            t0 = time.perf_counter()
             mpv_pos = self.player.time_pos if self.current_file else None
+            t1 = time.perf_counter()
             dur = self.player.duration if self.current_file else None
+            t2 = time.perf_counter()
             is_paused = self.player.pause if self.current_file else True
+            t3 = time.perf_counter()
             speed = self.player.speed or 1.0
+            t4 = time.perf_counter()
+            if max(t1-t0, t2-t1, t3-t2, t4-t3) > 0.05:
+                print(f"SLOW: time_pos={t1-t0:.3f}s dur={t2-t1:.3f}s pause={t3-t2:.3f}s speed={t4-t3:.3f}s")
+
             current_time = time.time()
             if (self._session_start is not None
                     and self._post_seek_pending_position is None
@@ -1715,7 +1723,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     if mpv_pos is not None and getattr(self, '_mpv_ready', True):
                         if self._paused_time is None or self.player.is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
                             self._paused_time = mpv_pos
-                            self.player.is_seeking = False
                     # if mpv_pos is None or mpv not yet ready, keep _paused_time as-is
                     pos = self._paused_time
                     if pos is None:
@@ -1723,7 +1730,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         return
                 else:
                     self._paused_time = None
-                    self.player.is_seeking = False
                     pos = mpv_pos
                 self.play_pause_button.setText("Play" if is_paused else "Pause")
 
@@ -1759,7 +1765,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                                 == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                if not slider_animating:
+                if not slider_animating and not self.player.is_seeking:
                     self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
@@ -1797,7 +1803,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
-                if chap_dur > 0 and not chap_animating:
+                if chap_dur > 0 and not chap_animating and not self.player.is_seeking:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
 

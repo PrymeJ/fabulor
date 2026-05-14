@@ -1,4 +1,20 @@
 
+## MP3 seek blocks Qt main thread — RESOLVED (2026-05-14)
+
+**Root cause:** `self.instance.time_pos = value` in python-mpv is synchronous — holds the GIL on the calling thread until libmpv acks the seek. For MP3 streams, libmpv scans backwards through the bitstream to find frame boundaries before acking. Called from slider release handlers on the Qt main thread → 10–30s freeze.
+
+**Fix:**
+- `Player.seek_async(pos)` uses `command_async('seek', pos, 'absolute+exact')` — non-blocking, returns immediately. `absolute+exact` preserves hr-seek precision.
+- `seek_within_chapter` returns the computed `new_pos` so callers never need to read `time_pos` back after a seek.
+- All four hot-path properties (`time_pos`, `duration`, `pause`, `speed`) cached via `observe_property` — reads no longer cross the IPC boundary.
+- `is_seeking` clearance moved into `_on_time_pos_change` observer (fires when mpv delivers the settled position) — removed from the 200ms polling loop where it fired prematurely.
+
+**What is intentionally left on sync path:** `apply_smart_rewind`, skip buttons, chapter nav, book-load position restore. Not slider-driven, not the problem path.
+
+**`_seek_target = None` edge case:** If `seek_async` is called and `_seek_target` is `None` when the observer fires, `is_seeking` still clears (the `_seek_target is None` branch). This is safe — it means no target was set, so any position qualifies as settled. The edge case that previously caused 228% progress was from an earlier implementation that used `_seek_target` in the flow-animation path; that code was removed.
+
+---
+
 ## Stats Panel — First-visit flash on Day/Week/Month tabs — RESOLVED
 
 ### Fix

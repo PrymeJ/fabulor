@@ -45,6 +45,11 @@ class Player(QObject):
         self._last_undo_click_time = 0 # For undo seek logic
         self._base_volume = 100.0 # User's set volume (log scale)
         self._fade_ratio = 1.0   # Sleep timer fade (0.0 to 1.0)
+        self._cached_time_pos: float | None = None
+        self._cached_duration: float | None = None
+        self._cached_pause: bool = True
+        self._cached_speed: float = 1.0
+        self._seek_target: float | None = None
 
     @staticmethod
     def format_time(seconds):
@@ -65,10 +70,28 @@ class Player(QObject):
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
             self.instance.observe_property('pause', self._on_pause_test)  # ADD
+            self.instance.observe_property('time-pos', self._on_time_pos_change)
+            self.instance.observe_property('duration', self._on_duration_change)
+            self.instance.observe_property('speed', self._on_speed_change)
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
             self.instance.event_callback('end-file')(self._on_end_file)
 
+    def _on_time_pos_change(self, name, value):
+        self._cached_time_pos = value
+        if self._is_seeking and value is not None:
+            if self._seek_target is None or abs(value - self._seek_target) < 1.0:
+                self._is_seeking = False
+                self._seek_target = None
+
+    def _on_duration_change(self, name, value):
+        self._cached_duration = value
+
+    def _on_speed_change(self, name, value):
+        if value is not None:
+            self._cached_speed = value
+
     def _on_pause_test(self, name, value):
+        self._cached_pause = value
         if value:
             pos = self.instance.time_pos
             dur = self.instance.duration
@@ -218,13 +241,13 @@ class Player(QObject):
 
     # Playback Control Proxies
     @property
-    def pause(self): return self.instance.pause if self.instance else True
+    def pause(self): return self._cached_pause
     @pause.setter
     def pause(self, value): 
         if self.instance: self.instance.pause = value
 
     @property
-    def time_pos(self): return self.instance.time_pos if self.instance else None
+    def time_pos(self): return self._cached_time_pos
     @time_pos.setter
     def time_pos(self, value):
         if self.instance:
@@ -237,6 +260,7 @@ class Player(QObject):
             self.instance.command_async('seek', pos, 'absolute+exact')
             self._eof = False
             self.is_seeking = True
+            self._seek_target = pos
 
     @property
     def is_seeking(self): return self._is_seeking
@@ -244,7 +268,7 @@ class Player(QObject):
     def is_seeking(self, val): self._is_seeking = val
 
     @property
-    def duration(self): return self.instance.duration if self.instance else None
+    def duration(self): return self._cached_duration
     @property
     def seekable(self): return bool(self.instance.seekable) if self.instance else False
     @property
@@ -261,7 +285,7 @@ class Player(QObject):
     def chapter_list(self): return self.instance.chapter_list if self.instance else []
     
     @property
-    def speed(self): return self.instance.speed if self.instance else 1.0
+    def speed(self): return self._cached_speed
     @speed.setter
     def speed(self, value): 
         if self.instance: self.instance.speed = value
@@ -344,7 +368,6 @@ class Player(QObject):
             return self._paused_time
 
         self._paused_time = None
-        self._is_seeking = False
         return mpv_pos
 
     # Logical Seek helpers
