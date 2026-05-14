@@ -50,6 +50,11 @@ class Player(QObject):
         self._cached_pause: bool = True
         self._cached_speed: float = 1.0
         self._seek_target: float | None = None
+        # Virtual timeline state (multi-file MP3 books)
+        self._virtual_timeline: list | None = None   # list of file dicts from book_files
+        self._file_offset: float = 0.0               # cumulative_start_ms/1000 of current file
+        self._book_duration: float | None = None     # total book duration (sum of all files)
+        self._chapter_list: list | None = None       # Python-built chapter list; None = use mpv's
 
     @staticmethod
     def format_time(seconds):
@@ -111,6 +116,54 @@ class Player(QObject):
         if len(files) == 1:
             return (str(files[0]), None)
 
+        # --- DB fast path (TEMPORARY: inline LibraryDB until self.db is wired in Round 3) ---
+        from .db import LibraryDB as _LibraryDB
+        db_files = _LibraryDB().get_book_files(path)
+        if db_files:
+            print(f"[resolve_playlist] DB fast path hit — {len(db_files)} files, skipping mutagen")
+            timeline = []
+            chapter_list = []
+            total_duration = 0.0
+            for row in db_files:
+                start_s = row['cumulative_start_ms'] / 1000.0
+                dur_s = row['duration_ms'] / 1000.0
+                timeline.append({
+                    'file_path': row['file_path'],
+                    'cumulative_start': start_s,
+                    'duration': dur_s,
+                })
+                chapter_list.append({
+                    'time': start_s,
+                    'title': row['title'] or '',
+                })
+                total_duration = start_s + dur_s
+
+            self._virtual_timeline = timeline
+            self._chapter_list = chapter_list
+            self._book_duration = total_duration
+            self._file_offset = 0.0
+
+            uri = 'concat://' + '|'.join(row['file_path'] for row in db_files)
+
+            lines = [';FFMETADATA1']
+            for row in db_files:
+                start_ms = row['cumulative_start_ms']
+                end_ms = start_ms + row['duration_ms']
+                lines += [
+                    '[CHAPTER]',
+                    'TIMEBASE=1/1000',
+                    f'START={start_ms}',
+                    f'END={end_ms}',
+                    f'title={row["title"] or ""}',
+                ]
+            tmp = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.txt', delete=False, encoding='utf-8'
+            )
+            tmp.write('\n'.join(lines) + '\n')
+            tmp.close()
+            return (uri, tmp.name)
+        # --- end DB fast path ---
+
         pos_ms = 0
         lines = [';FFMETADATA1']
         valid_files = []
@@ -157,6 +210,12 @@ class Player(QObject):
                 play_target, chapters_file = player._resolve_playlist(path)
                 print(f"[load_book] resolved → {play_target!r}")
                 player._playlist_resolved.emit(play_target, chapters_file or "")
+
+        # Reset virtual timeline for new book
+        self._virtual_timeline = None
+        self._file_offset = 0.0
+        self._book_duration = None
+        self._chapter_list = None
 
         QThreadPool.globalInstance().start(_ResolveWorker())
 
@@ -247,7 +306,12 @@ class Player(QObject):
         if self.instance: self.instance.pause = value
 
     @property
-    def time_pos(self): return self._cached_time_pos
+    def time_pos(self):
+        if self._cached_time_pos is None:
+            return None
+        if self._virtual_timeline is not None:
+            return self._file_offset + self._cached_time_pos
+        return self._cached_time_pos
     @time_pos.setter
     def time_pos(self, value):
         if self.instance:
@@ -268,7 +332,10 @@ class Player(QObject):
     def is_seeking(self, val): self._is_seeking = val
 
     @property
-    def duration(self): return self._cached_duration
+    def duration(self):
+        if self._virtual_timeline is not None:
+            return self._book_duration
+        return self._cached_duration
     @property
     def seekable(self): return bool(self.instance.seekable) if self.instance else False
     @property
@@ -282,7 +349,10 @@ class Player(QObject):
     @property
     def chapters(self): return self.instance.chapters if self.instance else 0
     @property
-    def chapter_list(self): return self.instance.chapter_list if self.instance else []
+    def chapter_list(self):
+        if self._chapter_list is not None:
+            return self._chapter_list
+        return self.instance.chapter_list if self.instance else []
     
     @property
     def speed(self): return self._cached_speed
