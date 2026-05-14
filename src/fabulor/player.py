@@ -231,6 +231,13 @@ class Player(QObject):
             self.instance.time_pos = value
             self._eof = False
 
+    def seek_async(self, pos: float) -> None:
+        """Non-blocking seek. Dispatches to libmpv and returns immediately."""
+        if self.instance:
+            self.instance.command_async('seek', pos, 'absolute+exact')
+            self._eof = False
+            self.is_seeking = True
+
     @property
     def is_seeking(self): return self._is_seeking
     @is_seeking.setter
@@ -337,6 +344,7 @@ class Player(QObject):
             return self._paused_time
 
         self._paused_time = None
+        self._is_seeking = False
         return mpv_pos
 
     # Logical Seek helpers
@@ -380,8 +388,8 @@ class Player(QObject):
             if chap_dur > 0:
                 new_chap_pos = fraction * chap_dur
                 new_pos = start + new_chap_pos
-                self.time_pos = new_pos
-                self.is_seeking = True
+                self.seek_async(new_pos)
+                return new_pos
 
     def apply_smart_rewind(self, last_pause_ts: float, wait_min: int, rewind_sec: int):
         """
@@ -421,6 +429,5 @@ class Player(QObject):
     def undo_seek(self):
         """Seeks back to the last saved undo position."""
         if self.instance and self._undo_pos is not None:
-            self.time_pos = self._undo_pos
-            self.is_seeking = True
+            self.seek_async(self._undo_pos)
             self._undo_pos = None # Clear after use

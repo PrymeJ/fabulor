@@ -1723,6 +1723,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         return
                 else:
                     self._paused_time = None
+                    self.player.is_seeking = False
                     pos = mpv_pos
                 self.play_pause_button.setText("Play" if is_paused else "Pause")
 
@@ -1825,7 +1826,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 speed = self.player.speed or 1.0
                 if abs(new_pos - old_pos) > 60 * speed:
                     self._trigger_undo(old_pos)
-                self.player.time_pos = new_pos
+                self.player.seek_async(new_pos)
                 if self._session_furthest_position is not None:
                     if new_pos > self._session_furthest_position:
                         self._post_seek_pending_position = new_pos
@@ -1833,7 +1834,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     else:
                         self._post_seek_pending_position = None
                         self._post_seek_credit_timer.stop()
-                self.player.is_seeking = True
                 # Immediately sync for library reactivity
                 self.config.set_last_position(self.current_file, new_pos)
                 if self.library_panel.isVisible():
@@ -1859,8 +1859,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if abs(new_pos - old_pos) > 60 * speed:
                 self._trigger_undo(old_pos)
 
-            self.player.time_pos = new_pos
-            self.player.is_seeking = True
+            self.player.seek_async(new_pos)
 
             if self.player.pause:
                 if self.current_file:
@@ -1881,15 +1880,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player and self.player.duration:
             try:
                 old_pos = self.player.time_pos
+                new_pos = self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
+                if new_pos is None:
+                    return
 
-                # Delegate chapter seek math to Player
-                self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
-
-                # Check for undo trigger after player has updated its position
                 speed = self.player.speed or 1.0
-                if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
+                if abs(new_pos - old_pos) > 60 * speed:
                     self._trigger_undo(old_pos)
-                new_pos = self.player.time_pos or 0.0
+
                 if self._session_furthest_position is not None:
                     if new_pos > self._session_furthest_position:
                         self._post_seek_pending_position = new_pos
@@ -1898,8 +1896,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self._post_seek_pending_position = None
                         self._post_seek_credit_timer.stop()
 
-                # Immediately sync for library reactivity
-                self.config.set_last_position(self.current_file, self.player.time_pos or 0)
+                self.config.set_last_position(self.current_file, new_pos)
                 if self.library_panel.isVisible():
                     self.library_panel.update_current_book_progress()
             except (ShutdownError, AttributeError, SystemError):
