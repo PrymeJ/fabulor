@@ -92,12 +92,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.is_chapter_slider_dragging = False
         self.current_file = ""
         self.config = Config()
-        self.player = Player()
+        self.db = LibraryDB()
+        self.player = Player(self.db)
         self._prev_chap_title = ""
         self._next_chap_title = ""
         self.theme_manager = ThemeManager(self)
         self._last_pause_timestamp = None
-        self.db = LibraryDB()
         self.scanner = LibraryScanner(self.db.db_path)
         self._undo_pos = None
         self._paused_time = None
@@ -140,8 +140,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         self.ui_timer.timeout.connect(self._update_ui_sync)
         self.player.chapter_changed.connect(self._update_chapter_label_from_index, Qt.ConnectionType.QueuedConnection)
-        self.player.file_loaded.connect(self._on_file_ready, Qt.ConnectionType.QueuedConnection)
-        self.player.file_loaded.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
+        self.player.book_ready.connect(self._on_file_ready, Qt.ConnectionType.QueuedConnection)
+        self.player.book_ready.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
+        self.player.file_switched.connect(self._on_vt_file_switched, Qt.ConnectionType.QueuedConnection)
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
 
         # Initialize Library Controller
@@ -1480,6 +1481,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.player.load_book(path),
         ))
 
+    def _on_vt_file_switched(self):
+        """Lightweight handler for VT file switches. Does not restore position."""
+        self.player.is_seeking = False
+
     import time
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
@@ -1599,7 +1604,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         book_data = self.db.get_book(self.current_file)
         if book_data and book_data.progress > 0:
             self.player.is_seeking = True
-            self.player.time_pos = book_data.progress
+            if self.player._virtual_timeline is not None:
+                self.player.seek_async(book_data.progress)
+            else:
+                self.player.time_pos = book_data.progress
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
@@ -1658,7 +1666,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             t1 = time.perf_counter()
             dur = self.player.duration if self.current_file else None
             t2 = time.perf_counter()
-            is_paused = self.player.pause if self.current_file else True
+            is_paused = (self.player.pause if self.current_file else True) and not self.player._is_vt_file_switch
             t3 = time.perf_counter()
             speed = self.player.speed or 1.0
             t4 = time.perf_counter()
@@ -1809,7 +1817,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:
-            if not self.is_slider_dragging:
+            if not self.is_slider_dragging and getattr(self, '_mpv_ready', True):
                 percent = (pos / dur) * 100
                 # Update config every 0.1% (live cache)
                 new_pct = int(percent * 10)
@@ -2312,25 +2320,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
-            old_pos = self.player.time_pos
-            self.player.previous_chapter()
+            old_pos = self.player.time_pos or 0.0
+            target = self.player.previous_chapter()
             self.player.is_seeking = True
-            
-            speed = self.player.speed or 1.0
-            if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
-                self._trigger_undo(old_pos)
+            if target is not None:
+                speed = self.player.speed or 1.0
+                if abs(target - old_pos) > 60 * speed:
+                    self._trigger_undo(old_pos)
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player:
-            old_pos = self.player.time_pos
-            self.player.next_chapter()
+            old_pos = self.player.time_pos or 0.0
+            target = self.player.next_chapter()
             self.player.is_seeking = True
-
-            speed = self.player.speed or 1.0
-            if abs((self.player.time_pos or 0) - (old_pos or 0)) > 60 * speed:
-                self._trigger_undo(old_pos)
+            if target is not None:
+                speed = self.player.speed or 1.0
+                if abs(target - old_pos) > 60 * speed:
+                    self._trigger_undo(old_pos)
 
     def _on_chapter_list_selected(self, title, old_pos, force_play):
         self.player.is_seeking = True

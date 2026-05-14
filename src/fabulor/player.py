@@ -32,11 +32,14 @@ except ImportError:
 class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
+    file_switched = Signal()
+    book_ready = Signal()
     load_failed = Signal(str)  # reason string from mpv end-file event
     _playlist_resolved = Signal(str, str)  # play_target, chapters_file ('' if none)
 
-    def __init__(self):
+    def __init__(self, db):
         super().__init__()
+        self.db = db
         self.instance = None  # deferred
         self._eof = False
         self._paused_time = None # For UI deadzone logic
@@ -51,10 +54,13 @@ class Player(QObject):
         self._cached_speed: float = 1.0
         self._seek_target: float | None = None
         # Virtual timeline state (multi-file MP3 books)
-        self._virtual_timeline: list | None = None   # list of file dicts from book_files
-        self._file_offset: float = 0.0               # cumulative_start_ms/1000 of current file
-        self._book_duration: float | None = None     # total book duration (sum of all files)
-        self._chapter_list: list | None = None       # Python-built chapter list; None = use mpv's
+        self._virtual_timeline: list | None = None
+        self._file_offset: float = 0.0
+        self._book_duration: float | None = None
+        self._chapter_list: list | None = None
+        self._current_vt_index: int = 0
+        self._pending_local_pos: float | None = None
+        self._is_vt_file_switch: bool = False
 
     @staticmethod
     def format_time(seconds):
@@ -95,13 +101,31 @@ class Player(QObject):
         if value is not None:
             self._cached_speed = value
 
+    def _advance_or_finish(self):
+        """Called when current file/stream reaches its end.
+        For VT books: advance to next file or set _eof if last.
+        For all other books: set _eof."""
+        if self._virtual_timeline is not None:
+            next_idx = self._current_vt_index + 1
+            if next_idx < len(self._virtual_timeline):
+                next_file = self._virtual_timeline[next_idx]
+                self._current_vt_index = next_idx
+                self._file_offset = next_file['cumulative_start']
+                self._is_vt_file_switch = True
+                self._pending_local_pos = None
+                self.instance.play(next_file['file_path'])
+            else:
+                self._eof = True
+        else:
+            self._eof = True
+
     def _on_pause_test(self, name, value):
         self._cached_pause = value
         if value:
             pos = self.instance.time_pos
             dur = self.instance.duration
             if pos is not None and dur is not None and pos >= dur - 1.5:
-                self._eof = True
+                self._advance_or_finish()
 
     _AUDIO_EXTENSIONS = {'.m4b', '.mp3', '.m4a', '.flac'}
 
@@ -116,11 +140,9 @@ class Player(QObject):
         if len(files) == 1:
             return (str(files[0]), None)
 
-        # --- DB fast path (TEMPORARY: inline LibraryDB until self.db is wired in Round 3) ---
-        from .db import LibraryDB as _LibraryDB
-        db_files = _LibraryDB().get_book_files(path)
+        # --- DB fast path ---
+        db_files = self.db.get_book_files(path)
         if db_files:
-            print(f"[resolve_playlist] DB fast path hit — {len(db_files)} files, skipping mutagen")
             timeline = []
             chapter_list = []
             total_duration = 0.0
@@ -137,31 +159,11 @@ class Player(QObject):
                     'title': row['title'] or '',
                 })
                 total_duration = start_s + dur_s
-
             self._virtual_timeline = timeline
             self._chapter_list = chapter_list
             self._book_duration = total_duration
             self._file_offset = 0.0
-
-            uri = 'concat://' + '|'.join(row['file_path'] for row in db_files)
-
-            lines = [';FFMETADATA1']
-            for row in db_files:
-                start_ms = row['cumulative_start_ms']
-                end_ms = start_ms + row['duration_ms']
-                lines += [
-                    '[CHAPTER]',
-                    'TIMEBASE=1/1000',
-                    f'START={start_ms}',
-                    f'END={end_ms}',
-                    f'title={row["title"] or ""}',
-                ]
-            tmp = tempfile.NamedTemporaryFile(
-                mode='w', suffix='.txt', delete=False, encoding='utf-8'
-            )
-            tmp.write('\n'.join(lines) + '\n')
-            tmp.close()
-            return (uri, tmp.name)
+            return (db_files[0]['file_path'], None)
         # --- end DB fast path ---
 
         pos_ms = 0
@@ -211,11 +213,18 @@ class Player(QObject):
                 print(f"[load_book] resolved → {play_target!r}")
                 player._playlist_resolved.emit(play_target, chapters_file or "")
 
-        # Reset virtual timeline for new book
+        # Reset virtual timeline state for new book
         self._virtual_timeline = None
         self._file_offset = 0.0
         self._book_duration = None
         self._chapter_list = None
+        self._current_vt_index = 0
+        self._pending_local_pos = None
+        self._is_vt_file_switch = False
+        # Clear cached mpv state so stale values from previous book can't leak
+        # into saves before the new book's file is loaded.
+        self._cached_time_pos = None
+        self._cached_duration = None
 
         QThreadPool.globalInstance().start(_ResolveWorker())
 
@@ -225,6 +234,9 @@ class Player(QObject):
             # Gate already lifted before resolve finished — play immediately.
             print(f"[load_book] ungated already → {play_target!r}")
             self.instance.chapters_file = chapters_file or None
+            if self._virtual_timeline is not None:
+                # VT book: fire book_ready now (Qt thread, VT data ready)
+                self.book_ready.emit()
             self.instance.play(play_target)
             if self._start_paused:
                 self.instance.pause = True
@@ -241,6 +253,9 @@ class Player(QObject):
         self._held_play = None
         print(f"[load_book] ungated → {play_target!r}")
         self.instance.chapters_file = chapters_file or None
+        if self._virtual_timeline is not None:
+            # VT book: fire book_ready now (Qt thread, VT data ready)
+            self.book_ready.emit()
         self.instance.play(play_target)
         if self._start_paused:
             self.instance.pause = True
@@ -251,7 +266,16 @@ class Player(QObject):
             self.chapter_changed.emit(int(value))
 
     def _on_file_loaded(self, event):
-        self.file_loaded.emit()
+        if self._pending_local_pos is not None:
+            pending = self._pending_local_pos
+            self._pending_local_pos = None
+            self._seek_target = pending
+            self.instance.command_async('seek', pending, 'absolute+exact')
+        if self._virtual_timeline is not None:
+            self._is_vt_file_switch = False
+            self.file_switched.emit()
+        else:
+            self.book_ready.emit()
         print(f"[file_ready] chapter_list: {self.chapter_list[:3] if self.chapter_list else 'empty'}")
 
     def _on_end_file(self, event):
@@ -263,6 +287,8 @@ class Player(QObject):
             error_str = event.as_dict().get('file_error', b'').decode('utf-8', errors='replace')
             detail = error_str if error_str else 'unknown error'
             self.load_failed.emit(detail)
+        if reason_int == 0:
+            self._advance_or_finish()
 
     def extract_cover(self, file_path):
         """Extracts cover art from file tags."""
@@ -318,9 +344,32 @@ class Player(QObject):
             self.instance.time_pos = value
             self._eof = False
 
+    def _resolve_vt_index(self, global_pos: float) -> int:
+        for i in range(len(self._virtual_timeline) - 1, -1, -1):
+            if global_pos >= self._virtual_timeline[i]['cumulative_start']:
+                return i
+        return 0
+
     def seek_async(self, pos: float) -> None:
-        """Non-blocking seek. Dispatches to libmpv and returns immediately."""
-        if self.instance:
+        """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
+        if not self.instance:
+            return
+        if self._virtual_timeline is not None:
+            target_idx = self._resolve_vt_index(pos)
+            target_file = self._virtual_timeline[target_idx]
+            local_pos = pos - target_file['cumulative_start']
+            self._eof = False
+            self.is_seeking = True
+            self._seek_target = pos
+            if target_idx == self._current_vt_index:
+                self.instance.command_async('seek', local_pos, 'absolute+exact')
+            else:
+                self._pending_local_pos = local_pos
+                self._current_vt_index = target_idx
+                self._file_offset = target_file['cumulative_start']
+                self._is_vt_file_switch = True
+                self.instance.play(target_file['file_path'])
+        else:
             self.instance.command_async('seek', pos, 'absolute+exact')
             self._eof = False
             self.is_seeking = True
@@ -347,7 +396,10 @@ class Player(QObject):
             self._eof = False
 
     @property
-    def chapters(self): return self.instance.chapters if self.instance else 0
+    def chapters(self):
+        if self._virtual_timeline is not None:
+            return len(self._chapter_list) if self._chapter_list else 0
+        return self.instance.chapters if self.instance else 0
     @property
     def chapter_list(self):
         if self._chapter_list is not None:
@@ -442,26 +494,58 @@ class Player(QObject):
 
     # Logical Seek helpers
     def previous_chapter(self):
-        curr_time = self.time_pos or 0
-        curr_chap = self.chapter or 0
-        chap_list = self.chapter_list or []
-        chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
-
-        # Dynamic threshold: scale the 2s grace period by playback speed
-        threshold = 2.0 * (self.speed or 1.0)
-        if curr_time < chap_start + threshold:
-            if curr_chap > 0:
-                self.chapter = curr_chap - 1
+        if self._virtual_timeline is not None and self._chapter_list:
+            curr_time = self.time_pos or 0
+            curr_chap = 0
+            for i, chap in enumerate(self._chapter_list):
+                if chap.get('time', 0) <= curr_time + 0.35:
+                    curr_chap = i
+            chap_start = self._chapter_list[curr_chap].get('time', 0)
+            threshold = 2.0 * (self.speed or 1.0)
+            if curr_time < chap_start + threshold:
+                if curr_chap > 0:
+                    target = self._chapter_list[curr_chap - 1].get('time', 0)
+                    self.seek_async(target)
+                    return target
+            else:
+                self.seek_async(chap_start)
+                return chap_start
+            return curr_time
         else:
-            self.time_pos = chap_start
+            curr_time = self.time_pos or 0
+            curr_chap = self.chapter or 0
+            chap_list = self.chapter_list or []
+            chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
+            threshold = 2.0 * (self.speed or 1.0)
+            if curr_time < chap_start + threshold:
+                if curr_chap > 0:
+                    self.chapter = curr_chap - 1
+            else:
+                self.time_pos = chap_start
 
     def next_chapter(self):
-        curr_chap = self.chapter or 0
-        total_chaps = self.chapters or 0
-        if curr_chap < total_chaps - 1:
-            self.chapter = curr_chap + 1
-        elif self.duration:
-            self.time_pos = self.duration
+        if self._virtual_timeline is not None and self._chapter_list:
+            curr_time = self.time_pos or 0
+            curr_chap = 0
+            for i, chap in enumerate(self._chapter_list):
+                if chap.get('time', 0) <= curr_time + 0.35:
+                    curr_chap = i
+            next_chap = curr_chap + 1
+            if next_chap < len(self._chapter_list):
+                target = self._chapter_list[next_chap].get('time', 0)
+                self.seek_async(target)
+                return target
+            else:
+                target = self._book_duration or self.duration or 0
+                self.seek_async(target)
+                return target
+        else:
+            curr_chap = self.chapter or 0
+            total_chaps = self.chapters or 0
+            if curr_chap < total_chaps - 1:
+                self.chapter = curr_chap + 1
+            elif self.duration:
+                self.time_pos = self.duration
 
     def seek_within_chapter(self, fraction: float):
         """
