@@ -1,7 +1,6 @@
 import locale
 import os
 import math
-import tempfile
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 import time
 from PySide6.QtGui import QPixmap
@@ -156,61 +155,31 @@ class Player(QObject):
         if len(files) == 1:
             return (str(files[0]), None)
 
-        # --- DB fast path ---
         db_files = self.db.get_book_files(path)
-        if db_files:
-            timeline = []
-            chapter_list = []
-            total_duration = 0.0
-            for row in db_files:
-                start_s = row['cumulative_start_ms'] / 1000.0
-                dur_s = row['duration_ms'] / 1000.0
-                timeline.append({
-                    'file_path': row['file_path'],
-                    'cumulative_start': start_s,
-                    'duration': dur_s,
-                })
-                chapter_list.append({
-                    'time': start_s,
-                    'title': row['title'] or '',
-                })
-                total_duration = start_s + dur_s
-            self._virtual_timeline = timeline
-            self._chapter_list = chapter_list
-            self._book_duration = total_duration
-            self._file_offset = 0.0
-            return (db_files[0]['file_path'], None)
-        # --- end DB fast path ---
-
-        pos_ms = 0
-        lines = [';FFMETADATA1']
-        valid_files = []
-        for f in files:
-            try:
-                m = mutagen.File(f)
-                dur_ms = int((m.info.length if m and m.info else 0) * 1000)
-            except Exception as e:
-                print(f"[resolve_playlist] skipping {f.name}: {e}")
-                continue
-            lines += [
-                '[CHAPTER]',
-                'TIMEBASE=1/1000',
-                f'START={pos_ms}',
-                f'END={pos_ms + dur_ms}',
-                f'title={os.path.splitext(os.path.basename(f))[0]}',
-            ]
-            pos_ms += dur_ms
-            valid_files.append(f)
-
-        if not valid_files:
+        if not db_files:
             return (path, None)
 
-        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-        tmp.write('\n'.join(lines) + '\n')
-        tmp.close()
-
-        uri = 'concat://' + '|'.join(str(f) for f in valid_files)
-        return (uri, tmp.name)
+        timeline = []
+        chapter_list = []
+        total_duration = 0.0
+        for row in db_files:
+            start_s = row['cumulative_start_ms'] / 1000.0
+            dur_s = row['duration_ms'] / 1000.0
+            timeline.append({
+                'file_path': row['file_path'],
+                'cumulative_start': start_s,
+                'duration': dur_s,
+            })
+            chapter_list.append({
+                'time': start_s,
+                'title': row['title'] or '',
+            })
+            total_duration = start_s + dur_s
+        self._virtual_timeline = timeline
+        self._chapter_list = chapter_list
+        self._book_duration = total_duration
+        self._file_offset = 0.0
+        return (db_files[0]['file_path'], None)
 
     def load_book(self, path, start_paused=True):
         print(f"[load_book] path={path!r}")
