@@ -27,7 +27,9 @@ class TitleBar(QWidget):
             win = self.window()
             if win.panel_manager:
                 win.panel_manager.hide_all_panels()
-            win.windowHandle().startSystemMove()
+            handle = win.windowHandle()
+            if handle:
+                handle.startSystemMove()
 
     def _minimize(self): self.window().showMinimized()
     def _close(self): self.window().close()
