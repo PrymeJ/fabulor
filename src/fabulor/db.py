@@ -878,6 +878,15 @@ class LibraryDB:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_paths_for_tag_prefix(self, prefix: str) -> set[str]:
+        """Returns the set of book paths that have any tag starting with prefix."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT book_path FROM book_tags WHERE tag LIKE ?",
+                (f"{prefix}%",)
+            ).fetchall()
+        return {r[0] for r in rows}
+
     def rename_tag(self, old_tag: str, new_tag: str) -> bool:
         """Renames a tag across all books. Returns False if new_tag already exists."""
         new_tag = new_tag.strip().lower()

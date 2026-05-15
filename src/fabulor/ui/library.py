@@ -732,12 +732,7 @@ class BookModel(QAbstractListModel):
             elif text.startswith('#'):
                 tag = text[1:]
                 if self._db:
-                    with self._db._get_conn() as conn:
-                        rows = conn.execute(
-                            "SELECT DISTINCT book_path FROM book_tags WHERE tag LIKE ?",
-                            (f"{tag}%",)
-                        ).fetchall()
-                    tagged = {r[0] for r in rows}
+                    tagged = self._db.get_paths_for_tag_prefix(tag)
                 else:
                     tagged = set()
                 matched = [b for b in self._books if b.path in tagged]
