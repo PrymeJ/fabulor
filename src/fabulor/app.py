@@ -1967,54 +1967,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             
         self._set_speed(new_speed)
 
-    def _set_sleep_timer(self, duration_minutes=None, mode=None):
-        """Sets the sleep timer based on duration or mode."""
-        self._disable_sleep_timer() # Clear any existing timer
-        if self.player:
-            self.player.pause = False
-
-        if duration_minutes is not None:
-            self._sleep_timer_end_time = time.time() + duration_minutes * 60
-            self._sleep_mode = 'timed'
-            self.config.set_sleep_duration(duration_minutes)
-            self.config.set_sleep_mode('timed')
-            QTimer.singleShot(500, self.disable_sleep_btn.show)
-            self.sleep_trigger_btn.setText("SLEEP") # No brackets
-            self.sleep_cancel_btn.show()
-            self.sleep_pulse_anim.start()
-        elif mode in ['end_of_chapter', 'end_of_book']:
-            self._sleep_mode = mode
-            self.config.set_sleep_mode(mode)
-            QTimer.singleShot(500, self.disable_sleep_btn.show)
-            self.sleep_trigger_btn.setText("SLEEP") # No brackets
-            self.sleep_cancel_btn.show()
-            self.sleep_pulse_anim.start()
-
-        self.panel_manager._close_sleep_flow()
-        self._update_ui_sync() # Force UI update
-
-    def _disable_sleep_timer(self):
-        """Disables the active sleep timer."""
-        self._sleep_timer_end_time = None
-        self._sleep_mode = None
-        self.disable_sleep_btn.hide()
-        self.sleep_trigger_btn.setText("SLEEP")
-        self.sleep_cancel_btn.hide()
-        self.sleep_pulse_anim.stop()
-        self.sleep_opacity_effect.setOpacity(1.0)
-        
-        # Restore original volume level
-        self._on_volume_changed(self.volume_slider.value())
-        
-        self._update_ui_sync() # Force UI update
-
-    def _set_sleep_fade(self, seconds, save=False):
-        self._current_sleep_fade = seconds
-        if save:
-            self.config.set_sleep_fade_duration(seconds)
-        self._update_sleep_panel_styling()
-    
-
     def _on_player_speed_changed(self, value):
         """Slot to sync the main UI speed button text with the player engine."""
         if hasattr(self, 'speed_button'):
