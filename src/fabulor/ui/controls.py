@@ -85,6 +85,7 @@ class ClickSlider(QWidget):
         if not ratios:
             self._markers = []
             self._revealed_count = 0.0
+            self._reveal_anim.stop()
             self.update()
             return
 
