@@ -78,6 +78,7 @@
 - [ ] Switch from M4B book → VT book: VT book resumes at correct file + offset
 - [ ] Switch VT → M4B → VT: all three states correct independently
 - [ ] After switching books, previous book's chapter label does not bleed through
+- [ ] Rapid book switch (VT → any): newly selected book's progress slider shows correct position, not 0% (regression: signal accumulation in load_book could cause handler to run twice, resetting progress)
 
 ## Cover art theme fade
 
