@@ -79,6 +79,8 @@ class ChapterList(QListWidget):
         self.config = config
 
     def populate(self, total_duration=0, speed=1.0, list_width=0):
+        self._digit_buffer = ""
+        self._digit_timer.stop()
         try:
             if not self.player:
                 return
@@ -232,6 +234,7 @@ class ChapterList(QListWidget):
         elif Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
             self._digit_buffer += event.text()
             self._digit_timer.start()  # restart — fires 800ms after last digit
+            event.accept()
 
     def _commit_digit_jump(self):
         try:
@@ -266,7 +269,7 @@ class ChapterList(QListWidget):
                 item = self.item(target)
                 if item:
                     self._activate_item(item, force_play=True)
-        except (ShutdownError, AttributeError, SystemError):
+        except (ShutdownError, AttributeError, SystemError, ValueError):
             return
 
     def _activate_item(self, item, force_play=False):
