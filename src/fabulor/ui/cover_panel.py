@@ -533,6 +533,10 @@ class CoverPanel(QWidget):
             sort_order=slot_index,
         )
 
+        if not cover_id:
+            self._show_error("Failed to save cover.")
+            return
+
         new_cover = {
             'id': cover_id,
             'file_path': dest_path,
