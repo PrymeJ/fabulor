@@ -610,6 +610,12 @@ class LibraryPanel(QFrame):
         self._book_model.set_hovered(None)
         self._rotate_view_mode_labels()
 
+    def evict_cover(self, book_id: int) -> None:
+        _cover_cache.pop(book_id, None)
+
+    def get_cached_cover(self, book_id: int):
+        return _cover_cache.get(book_id)
+
 
 ROLE_BOOK     = Qt.UserRole + 0
 ROLE_COVER    = Qt.UserRole + 1

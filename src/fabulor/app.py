@@ -2139,8 +2139,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # File missing — fall through to legacy path below
 
         # Legacy path: no book_covers entry, use scanner thumbnail or extract_cover
-        from .ui.library import _cover_cache
-        cached = _cover_cache.get(book.id) if book else None
+        cached = self.library_panel.get_cached_cover(book.id) if book else None
         if cached is not None:
             self._apply_main_cover(cached)
             return
@@ -2163,10 +2162,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.library_panel.refresh_book_cover(book_path)
         if book_path == self.current_file:
-            from .ui.library import _cover_cache
             book = self.db.get_book(book_path)
             if book:
-                _cover_cache.pop(book.id, None)
+                self.library_panel.evict_cover(book.id)
             if not file_path:
                 # All covers removed — same fallback as a book with no cover
                 self._load_cover_art(self.current_file)
