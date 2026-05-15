@@ -29,9 +29,8 @@ class PanelManager:
         self.speed_panel_animation = main_window.speed_panel_animation
         self.sleep_panel_animation = main_window.sleep_panel_animation
         self.stats_panel_animation = main_window.stats_panel_animation
-        self.book_detail_panel: Optional["BookDetailPanel"] = None
-        self.book_detail_panel_animation: Optional[QPropertyAnimation] = None
-
+        self.book_detail_panel: "BookDetailPanel | None" = None
+        self.book_detail_panel_animation: QPropertyAnimation | None = None
         self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
 
         # Connect sidebar buttons to panel opening methods
