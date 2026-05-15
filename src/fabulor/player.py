@@ -61,6 +61,7 @@ class Player(QObject):
         self._current_vt_index: int = 0
         self._pending_local_pos: float | None = None
         self._is_vt_file_switch: bool = False
+        self._last_vt_chapter: int = -1
 
     @staticmethod
     def format_time(seconds):
@@ -93,6 +94,15 @@ class Player(QObject):
             if self._seek_target is None or abs(value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
+        if self._virtual_timeline is not None and self._chapter_list and value is not None:
+            global_pos = (value or 0.0) + self._file_offset
+            curr = 0
+            for i, chap in enumerate(self._chapter_list):
+                if chap.get('time', 0) <= global_pos:
+                    curr = i
+            if curr != self._last_vt_chapter:
+                self._last_vt_chapter = curr
+                self.chapter_changed.emit(curr)
         if self._virtual_timeline is None and value is not None and value > 0:
             print(f"[time_pos_change/nonvt] value={value:.3f}")
 
@@ -227,6 +237,7 @@ class Player(QObject):
         self._current_vt_index = 0
         self._pending_local_pos = None
         self._is_vt_file_switch = False
+        self._last_vt_chapter = -1
         # Clear cached mpv state so stale values from previous book can't leak
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
