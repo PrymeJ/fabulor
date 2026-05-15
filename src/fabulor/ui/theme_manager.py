@@ -77,6 +77,11 @@ class ThemeManager(QObject):
         self.rotation_timer.timeout.connect(self._rotate_theme)
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
 
+        # Panel animation guard timer — deduplicated, replaces QTimer.singleShot in _on_theme_changed
+        self._panel_guard_timer = QTimer(self)
+        self._panel_guard_timer.setSingleShot(True)
+        self._panel_guard_timer.setInterval(_PANEL_ANIM_GUARD_MS)
+
         self._save_on_fade = False
 
     def get_current_theme(self) -> dict:
@@ -104,6 +109,7 @@ class ThemeManager(QObject):
         if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
             self._fade_overlay.hide()
+            self._fade_effect.setOpacity(0.0)
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()
@@ -216,7 +222,12 @@ class ThemeManager(QObject):
 
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
-            QTimer.singleShot(_PANEL_ANIM_GUARD_MS, lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated))
+            self._panel_guard_timer.stop()
+            self._panel_guard_timer.timeout.disconnect()
+            self._panel_guard_timer.timeout.connect(
+                lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated)
+            )
+            self._panel_guard_timer.start()
             return
 
         self._active_display_theme = theme_name
