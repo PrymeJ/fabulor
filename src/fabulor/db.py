@@ -139,8 +139,7 @@ class LibraryDB:
         """Adds a new directory to the scan list."""
         try:
             with self._get_conn() as conn:
-                with conn:
-                    conn.execute("INSERT INTO scan_locations (path) VALUES (?)", (str(path),))
+                conn.execute("INSERT INTO scan_locations (path) VALUES (?)", (str(path),))
             return True
         except sqlite3.IntegrityError:
             return False
@@ -154,13 +153,12 @@ class LibraryDB:
     def remove_scan_location(self, path):
         """Removes a directory from the scan list."""
         with self._get_conn() as conn:
-            with conn:
-                # Remove books from this folder first
-                conn.execute(
-                    "DELETE FROM books WHERE path LIKE ?",
-                    (str(path).rstrip("/") + "/%",)
-                )
-                conn.execute("DELETE FROM scan_locations WHERE path = ?", (str(path),))
+            # Remove books from this folder first
+            conn.execute(
+                "DELETE FROM books WHERE path LIKE ?",
+                (str(path).rstrip("/") + "/%",)
+            )
+            conn.execute("DELETE FROM scan_locations WHERE path = ?", (str(path),))
 
     # --- Books CRUD ---
 
@@ -205,8 +203,7 @@ class LibraryDB:
                 year=COALESCE(excluded.year, books.year)
         """
         with self._get_conn() as conn:
-            with conn:
-                conn.execute(query, cleaned)
+            conn.execute(query, cleaned)
 
     def upsert_books_batch(self, book_data_list):
         if not book_data_list:
@@ -235,8 +232,7 @@ class LibraryDB:
             for d in book_data_list
         ]
         with self._get_conn() as conn:
-            with conn:
-                conn.executemany(query, cleaned_list)
+            conn.executemany(query, cleaned_list)
 
     def get_book(self, path):
         """Retrieves a single book's metadata by its path."""
@@ -270,20 +266,18 @@ class LibraryDB:
     def update_last_played(self, path):
         """Updates the last_played timestamp to the current time."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute(
-                    "UPDATE books SET last_played = ? WHERE path = ?",
-                    (datetime.now().isoformat(), str(path))
-                )
+            conn.execute(
+                "UPDATE books SET last_played = ? WHERE path = ?",
+                (datetime.now().isoformat(), str(path))
+            )
 
     def update_progress(self, path, progress):
         """Updates the saved playback position (in seconds)."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute(
-                    "UPDATE books SET progress = ? WHERE path = ?",
-                    (float(progress), str(path))
-                )
+            conn.execute(
+                "UPDATE books SET progress = ? WHERE path = ?",
+                (float(progress), str(path))
+            )
 
     def reparse_library(self, pattern):
         """
@@ -292,9 +286,8 @@ class LibraryDB:
         If folder_name_raw is missing, falls back to the folder's name from its path.
         """
         with self._get_conn() as conn:
-            with conn:
-                rows = conn.execute("SELECT id, path, folder_name_raw FROM books").fetchall()
-                for row in rows:
+            rows = conn.execute("SELECT id, path, folder_name_raw FROM books").fetchall()
+            for row in rows:
                     # Fallback to the directory name from the path if raw string is missing
                     raw = row["folder_name_raw"] or Path(row["path"]).name
                     if not raw:
@@ -321,26 +314,25 @@ class LibraryDB:
                       furthest_position, listened_seconds):
         """Inserts one listening session row."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute("""
-                    INSERT INTO listening_sessions
-                        (book_path, book_title, book_author, book_duration,
-                         session_start, session_end,
-                         position_start, position_end, furthest_position,
-                         listened_seconds)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    str(book_path) if book_path else None,
-                    book_title,
-                    book_author,
-                    book_duration,
-                    session_start.isoformat(),
-                    session_end.isoformat(),
-                    position_start,
-                    position_end,
-                    furthest_position,
-                    listened_seconds,
-                ))
+            conn.execute("""
+                INSERT INTO listening_sessions
+                    (book_path, book_title, book_author, book_duration,
+                     session_start, session_end,
+                     position_start, position_end, furthest_position,
+                     listened_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                str(book_path) if book_path else None,
+                book_title,
+                book_author,
+                book_duration,
+                session_start.isoformat(),
+                session_end.isoformat(),
+                position_start,
+                position_end,
+                furthest_position,
+                listened_seconds,
+            ))
 
     def get_daily_book_breakdown(self, date_str: str, day_start_hour: int) -> list[dict]:
         """Returns per-book listening rows for a given day, with cover from books table via LEFT JOIN."""
@@ -378,11 +370,10 @@ class LibraryDB:
     def set_started_at(self, book_path: str, started_at: datetime):
         """Sets started_at only if it has not been set yet."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute(
-                    "UPDATE books SET started_at = ? WHERE path = ? AND started_at IS NULL",
-                    (started_at.isoformat(), str(book_path))
-                )
+            conn.execute(
+                "UPDATE books SET started_at = ? WHERE path = ? AND started_at IS NULL",
+                (started_at.isoformat(), str(book_path))
+            )
 
     def get_book_started_at(self, book_path: str) -> datetime | None:
         """Returns the started_at datetime for the given path, or None."""
@@ -593,15 +584,9 @@ class LibraryDB:
 
     def get_finished_in_period(self, granularity: str, period_label: str, day_start_hour: int) -> list[dict]:
         """Returns books with a finished event whose event_time falls within the given period."""
-        formats = {
-            'day':   '%Y-%m-%d',
-            'week':  '%Y-W%W',
-            'month': '%Y-%m',
-            'year':  '%Y',
-        }
-        if granularity not in formats:
+        if granularity not in self._GRANULARITY_FORMATS:
             raise ValueError(f"Invalid granularity: {granularity}")
-        fmt = formats[granularity]
+        fmt = self._GRANULARITY_FORMATS[granularity]
         offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
             rows = conn.execute("""
@@ -644,19 +629,17 @@ class LibraryDB:
     #Temporary
     def write_book_event(self, book_path: str, event_type: str):
         with self._get_conn() as conn:
-            with conn:
-                conn.execute("""
-                    INSERT INTO book_events (book_path, event_type, event_time)
-                    VALUES (?, ?, ?)
-                """, (book_path, event_type, datetime.now().isoformat()))
+            conn.execute("""
+                INSERT INTO book_events (book_path, event_type, event_time)
+                VALUES (?, ?, ?)
+            """, (book_path, event_type, datetime.now().isoformat()))
 
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute("DELETE FROM listening_sessions")
-                conn.execute("DELETE FROM book_events")
-                conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
+            conn.execute("DELETE FROM listening_sessions")
+            conn.execute("DELETE FROM book_events")
+            conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
 
     def get_book_sessions(self, book_path: str) -> list[dict]:
         """Returns individual sessions for a book, newest first."""
@@ -678,13 +661,12 @@ class LibraryDB:
     def delete_book_stats(self, book_path: str):
         """Deletes all session and event rows for a specific book path."""
         with self._get_conn() as conn:
-            with conn:
-                conn.execute("DELETE FROM listening_sessions WHERE book_path = ?", (book_path,))
-                conn.execute("DELETE FROM book_events WHERE book_path = ?", (book_path,))
-                conn.execute(
-                    "UPDATE books SET started_at = NULL, finished_at = NULL WHERE path = ?",
-                    (book_path,)
-                )
+            conn.execute("DELETE FROM listening_sessions WHERE book_path = ?", (book_path,))
+            conn.execute("DELETE FROM book_events WHERE book_path = ?", (book_path,))
+            conn.execute(
+                "UPDATE books SET started_at = NULL, finished_at = NULL WHERE path = ?",
+                (book_path,)
+            )
 
     def get_streaks(self, day_start_hour: int) -> dict:
         """Returns current and longest listening streaks in days."""
