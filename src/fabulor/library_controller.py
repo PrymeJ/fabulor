@@ -23,6 +23,7 @@ class LibraryController(QObject):
 
     def _on_remove_folder_clicked(self):
         """Removes the selected folder from the database and updates UI."""
+        self.scanner.stop()
         path = self.browser.get_selected_folder()
         if path:
             self.db.remove_scan_location(path)
