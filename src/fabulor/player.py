@@ -252,6 +252,8 @@ class Player(QObject):
 
     def _on_chapter_change(self, name, value):
         if value is not None:
+            if self._virtual_timeline is not None:
+                return
             self.chapter_changed.emit(int(value))
 
     def _on_file_loaded(self, event):
