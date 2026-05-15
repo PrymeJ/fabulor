@@ -34,6 +34,7 @@ class ClickSlider(QWidget):
         self._flow_anim = QPropertyAnimation(self, b"animatedValue")
         self._flow_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
         self._flow_anim.finished.connect(self._start_reveal, Qt.UniqueConnection)
+        self._when_done_pending = False
 
     @Property(QColor)
     def bg_color(self): return self._bg_color
@@ -137,17 +138,25 @@ class ClickSlider(QWidget):
 
     def when_animations_done(self, callback):
         """Call callback once both _flow_anim and _reveal_anim have finished."""
+        if self._when_done_pending:
+            return
+        self._when_done_pending = True
+
+        def _after_flow():
+            self._flow_anim.finished.disconnect(_after_flow)
+            self.when_animations_done(callback)
+
+        def _after_reveal():
+            self._reveal_anim.finished.disconnect(_after_reveal)
+            self._when_done_pending = False
+            callback()
+
         if self._flow_anim.state() == QPropertyAnimation.State.Running:
-            def _after_flow():
-                self._flow_anim.finished.disconnect(_after_flow)
-                self.when_animations_done(callback)
             self._flow_anim.finished.connect(_after_flow)
         elif self._reveal_anim.state() == QPropertyAnimation.State.Running:
-            def _after_reveal():
-                self._reveal_anim.finished.disconnect(_after_reveal)
-                callback()
             self._reveal_anim.finished.connect(_after_reveal)
         else:
+            self._when_done_pending = False
             callback()
 
     def animate_to(self, target, old_value=None):
