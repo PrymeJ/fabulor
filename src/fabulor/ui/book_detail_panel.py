@@ -194,7 +194,6 @@ class BookDetailPanel(QWidget):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
 
-        QApplication.instance().installEventFilter(self)
 
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
@@ -490,6 +489,16 @@ class BookDetailPanel(QWidget):
             return
         self._duration_show_adjusted = not self._duration_show_adjusted
         self._update_duration_label()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        if self._editing:
+            self._exit_edit_mode(save=False)
+        super().hideEvent(event)
 
     def eventFilter(self, obj, event):
         if self._editing and event.type() == QEvent.Type.MouseButtonPress:
