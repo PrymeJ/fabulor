@@ -182,6 +182,8 @@ class CoverPanel(QWidget):
         if active:
             self._select_cover(active)
         else:
+            self._selected = None
+            self._set_fit_buttons_visible(False)
             self._preview_label.clear()
 
     def on_theme_changed(self, theme: dict):
@@ -258,6 +260,8 @@ class CoverPanel(QWidget):
 
         self._fit_group.buttonClicked.connect(self._on_fit_mode_clicked)
         self._fit_buttons["fit"].setChecked(True)
+        for btn in self._fit_buttons.values():
+            btn.setVisible(False)
 
         right_col.addWidget(self._preview_label)
         right_col.addLayout(fit_row)
@@ -313,8 +317,13 @@ class CoverPanel(QWidget):
 
     # ── Cover selection / preview ─────────────────────────────────────────────
 
+    def _set_fit_buttons_visible(self, visible: bool):
+        for btn in self._fit_buttons.values():
+            btn.setVisible(visible)
+
     def _select_cover(self, cover: dict):
         self._selected = cover
+        self._set_fit_buttons_visible(True)
         self._render_preview()
         # Sync fit mode buttons to this cover's fit_mode
         fit_key = cover.get('fit_mode', 'fit')
@@ -468,6 +477,7 @@ class CoverPanel(QWidget):
                 # No covers remain — clear everything
                 self._update_active_outlines()
                 self._selected = None
+                self._set_fit_buttons_visible(False)
                 self._preview_label.clear()
                 self.active_cover_changed.emit("")
         elif self._selected and self._selected['id'] == cover_id:
@@ -477,6 +487,7 @@ class CoverPanel(QWidget):
                 self._select_cover(active)
             else:
                 self._selected = None
+                self._set_fit_buttons_visible(False)
                 self._preview_label.clear()
 
         self._add_btn.setVisible(len(self._covers) < 4)
