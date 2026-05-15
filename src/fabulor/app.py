@@ -1482,7 +1482,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Lightweight handler for VT file switches. Does not restore position."""
         self.player.is_seeking = False
 
-    import time
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         print(f"[on_file_ready] time_pos={self.player.time_pos}, duration={self.player.duration}")
