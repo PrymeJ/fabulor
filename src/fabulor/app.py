@@ -1513,7 +1513,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pre = getattr(self, '_pre_switch_slider_value', None)
         if pre is not None:
             self._pre_switch_slider_value = None
-            new_val = 0 if new_progress == 0 else self.progress_slider.value()
+            dur = self.player.duration
+            if new_progress == 0 or not dur:
+                new_val = 0
+            else:
+                new_val = int((new_progress / dur) * 1000)
             if pre != new_val:
                 self.progress_slider.animate_to(new_val, old_value=pre)
             else:
