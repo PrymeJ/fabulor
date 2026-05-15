@@ -1655,7 +1655,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.chapter_list_widget.count() == 0:
             return
 
-        active_idx = self.player.chapter or 0
+        pos = self.player.time_pos or 0
+        chapters = self.player.chapter_list or []
+        active_idx = 0
+        for i, ch in enumerate(chapters):
+            if ch.get('time', 0) <= pos + 0.35:
+                active_idx = i
         self.chapter_list_widget.show_above(self.current_chapter_label, self)
 
         # Apply selection and scroll after the widget is shown and laid out
