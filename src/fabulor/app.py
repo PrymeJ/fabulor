@@ -1468,9 +1468,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         print(f"[book_select] state_clear: {(_t.perf_counter()-_t0)*1000:.1f}ms"); _t0 = _t.perf_counter()
         self._close_session()
         print(f"[book_select] close_session+hide: {(_t.perf_counter()-_t0)*1000:.1f}ms")
-        self._session_start = None
-        self._session_position_start = None
-        self._session_furthest_position = None
         self.panel_manager.hide_all_panels()
         QTimer.singleShot(0, lambda: (
             self.db.update_last_played(path),
