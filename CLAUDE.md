@@ -208,7 +208,7 @@ Removed in 2026-05-11 — it was silently overriding cover display on every book
 
 ```
 src/fabulor/
-├── app.py                    # MainWindow wiring — ~2300 lines
+├── app.py                    # MainWindow wiring + module-level SettingsController interface classes (VisualsInterface, PanelInterface, UICallbackInterface, LibraryInterface, PlayerInterface, BrowserInterface) — ~2570 lines
 ├── player.py                 # MPV wrapper, VT, async seek, gate/ungate
 ├── db.py                     # SQLite layer
 ├── config.py                 # QSettings wrapper
@@ -220,7 +220,7 @@ src/fabulor/
 └── ui/
     ├── controls.py           # ClickSlider (animatedValue, when_animations_done), HoverButton
     ├── chapter_list.py       # Chapter list overlay (child widget, not popup)
-    ├── library.py            # BookModel, BookDelegate, LibraryPanel, _cover_cache
+    ├── library.py            # BookModel, BookDelegate, LibraryPanel (owns evict_cover/get_cached_cover — app.py must not access _cover_cache directly), _cover_cache
     ├── cover_loader.py       # CoverLoaderWorker: Signal(int, QImage)
     ├── cover_panel.py        # Cover management panel
     ├── cover_theme.py        # Dominant color extraction
