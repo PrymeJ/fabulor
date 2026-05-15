@@ -482,9 +482,9 @@ class LibraryPanel(QFrame):
         incomplete = _is_incomplete_year_filter(text.lower().strip())
         if no_match and not incomplete:
             main_win = self.parent()
-            theme_name = getattr(getattr(main_win, 'theme_manager', None),
-                                 '_active_display_theme', '')
-            text_color = "#cc0000" if theme_name in ("Hear Me Roar", "Red Rising") else "#ffaaaa"
+            tm = getattr(main_win, 'theme_manager', None)
+            theme = tm.get_current_theme() if tm else {}
+            text_color = theme.get('search_error_text', '#ffaaaa')
             self.search_field.setStyleSheet(
                 f"background-color: rgba(120, 0, 0, 0.6); color: {text_color};"
             )

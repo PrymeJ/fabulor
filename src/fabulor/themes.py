@@ -59,6 +59,7 @@ TRANSPARENCY AND EFFECTS
 sidebar_opacity: A float (0.0 to 1.0) defining how transparent the sidebar is when idle.
 panel_opacity_hover: A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
 bg_image: (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
+search_error_text: (Optional) Text color for the search field when no results are found. Falls back to "#ffaaaa".
 
 DYNAMIC GRADIENTS
 The theme engine supports linear gradients for several components. You can define these by adding the following keys using a specific prefix:
@@ -542,6 +543,7 @@ THEMES = {
         "panel_theme_names_dimmed": "#F47272",
         "text":                "#FDE805",
         "bg_image":               "img/hearmeroar.png",
+        "search_error_text":   "#cc0000",
     },
     "Jade City": { 
         "bg_deep":      "#002E22",
@@ -720,7 +722,8 @@ THEMES = {
         "panel_theme_names_dimmed": "#FFFFFF",
         "text":                "#ffcccc",
         "button_text":         "#000000",
-        "progress_text":       "#f88a8a", 
+        "progress_text":       "#f88a8a",
+        "search_error_text":   "#cc0000",
     },
     "Rivendell": { 
         "bg_deep":      "#E0E7E9",
