@@ -37,6 +37,48 @@
 - [ ] Normal playback resumes correctly after animation completes
 - [ ] Panel Interaction: Cover art theme update is deferred if a panel (Library/Settings) is open during book switch
 
+## Multi-file MP3 books (virtual timeline)
+
+### Basic playback
+- [ ] Multi-file folder plays from the first file on first open
+- [ ] Progress is saved and restored correctly across restarts (resumes at correct file + offset)
+- [ ] Speed-adjusted time labels are correct (elapsed, remaining, chapter elapsed/remaining)
+- [ ] EOF of last file shows Restart button and does not advance further
+
+### Natural advancement
+- [ ] Reaches end of file 1 → automatically advances to file 2 without pressing Play
+- [ ] Advancement continues through all files to the end of the book
+- [ ] Each file transition is seamless — no extra pause or Play-button-required step
+- [ ] No double-advance or quadruple-advance (each file transition happens exactly once)
+
+### Seeking
+- [ ] Progress slider seek within current file works
+- [ ] Progress slider seek backward into a previous file works (correct file loaded, correct offset)
+- [ ] Progress slider seek forward into a next file works
+- [ ] Chapter slider (within-chapter seek) works for all files, not just the first
+- [ ] Rewind (skip button) crossing a file boundary works
+- [ ] Forward (skip button) crossing a file boundary works
+- [ ] Right-click on progress bar snaps to chapter notch correctly (any file)
+
+### Chapter navigation
+- [ ] Chapter list shows all files as chapters (filename as title, correct duration per file)
+- [ ] Currently playing chapter is highlighted correctly in the chapter list when opened
+- [ ] Chapter label at top shows the correct playing file name, updates on file advance
+- [ ] Chapter label updates when skip buttons cross a file boundary
+- [ ] Chapter label updates when slider seek crosses a file boundary
+- [ ] Prev button: goes to start of current file if > grace period in, previous file otherwise
+- [ ] Next button: advances to the next file
+- [ ] Right-click on Prev: seeks to 00:00:00 of the entire book (file 0, offset 0)
+- [ ] Chapter list left click: seeks to correct file + offset for any chapter
+- [ ] Chapter list right click: seeks + forces play
+- [ ] Digit key chapter jump routes correctly for VT books
+
+### Cross-book contamination checks
+- [ ] Switch from VT book mid-playback → M4B book: M4B progress slider shows correct position (not VT book's position)
+- [ ] Switch from M4B book → VT book: VT book resumes at correct file + offset
+- [ ] Switch VT → M4B → VT: all three states correct independently
+- [ ] After switching books, previous book's chapter label does not bleed through
+
 ## Cover art theme fade
 
 - [ ] Switching book while cover art theme active: progress sliders snap instantly, no morph
@@ -301,6 +343,46 @@
 - [ ] Remove (✕) button removes tag correctly
 - [ ] Max 5 tags enforced (input flashes red on reject)
 - [ ] Delete listening history button prompts confirmation, clears data, refreshes stats tab
+
+## Cover Panel
+
+### Opening and loading
+- [ ] Cover panel opens from the Book Detail Panel (correct trigger)
+- [ ] Panel loads thumbnails for the current book's covers from the DB
+- [ ] Scanner-extracted cover (slot 0, locked) appears as the first thumbnail
+- [ ] Active cover is shown with an accent outline
+- [ ] Preview area shows the active cover rendered at correct aspect ratio
+- [ ] Panel shows correct state for a book with no covers (empty thumbnails, blank preview)
+- [ ] Theme colors apply correctly on open (no system color fallback)
+- [ ] Theme change updates panel colors without reopening
+
+### Thumbnail interaction
+- [ ] Hovering a thumbnail shows a preview overlay (no commit yet)
+- [ ] Left-clicking a thumbnail sets it as active and updates the main player cover
+- [ ] Right-clicking (or delete) a non-locked thumbnail removes it
+- [ ] Locked thumbnail (slot 0, scanner cover) cannot be deleted
+- [ ] Active cover outline moves correctly when a new cover is activated
+- [ ] Preview renders with correct fit mode (Fit / Fill / Stretch)
+
+### Fit mode
+- [ ] Fit button: cover letterboxed within preview area, no cropping
+- [ ] Fill button: cover fills preview area, cropped to fit
+- [ ] Stretch button: cover stretched to fill, aspect ratio ignored
+- [ ] Fit mode selection persists per-cover across panel close/reopen
+- [ ] Fit mode change takes effect immediately in preview
+
+### Adding covers
+- [ ] Add cover button opens file dialog (image formats only)
+- [ ] Selected image is added as a new thumbnail and becomes active
+- [ ] Adding a duplicate path does not create a second entry
+- [ ] Error shown for unsupported file types or unreadable images
+- [ ] New cover reflects in the main player cover immediately after add + activate
+
+### Persistence
+- [ ] Active cover persists across app restarts (correct cover shown on next launch)
+- [ ] Cover order (sort_order) is preserved across restarts
+- [ ] Deleting a cover removes it from DB and thumbnail strip; active falls back to next available
+- [ ] Switching to another book and back restores the correct cover state for each book
 
 ## Saving states
 
