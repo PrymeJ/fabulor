@@ -186,6 +186,10 @@ class Player(QObject):
         self._start_paused = start_paused
         self._held_play = None
         self._play_gated = True
+        try:
+            self._playlist_resolved.disconnect(self._on_playlist_resolved)
+        except RuntimeError:
+            pass
         self._playlist_resolved.connect(self._on_playlist_resolved)
 
         player = self
