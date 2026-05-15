@@ -1,4 +1,27 @@
 
+## Multi-file MP3 virtual timeline — RESOLVED (2026-05-15)
+
+**Problem:** Multi-file MP3 folders (N .mp3 files per book) could not be seeked globally, navigated by chapter, or advanced naturally across files. Two earlier implementations were reverted — concat:// blocked on backward seeks; partial VT without signal separation caused quadruple-advance feedback loops.
+
+**Architecture:**
+- `book_files` DB table stores per-file `{file_path, sort_order, duration_ms, cumulative_start_ms}`, populated by the scanner. Player reads this at load time (no mutagen re-scan).
+- `_virtual_timeline` list on Player holds `{file_path, cumulative_start, duration}` entries. Player translates global positions into (file_index, local_offset) and issues `instance.play(target_file)` + `_pending_local_pos` for cross-file seeks.
+- `book_ready` signal fires once per book (before any file for VT; after file-loaded for non-VT). `file_switched` fires per VT file load. This separation eliminates the feedback loop: `_on_file_ready` is not connected to `file_loaded` at all.
+
+**Why book_ready fires from two different places:** VT books need it before any file loads (so position restore sets `_pending_local_pos` on the right file). Non-VT books need it after file-loaded (so `self.player.duration` is valid when the slider animation reads it). This asymmetry is intentional.
+
+**Natural EOF advancement:** `keep_open='always'` means mpv never fires end-file with reason_int=0 (EOF) — it always fires RESTARTED (reason_int=2). All EOF detection goes through `_on_pause_test` near-EOF position check. `_is_vt_file_switch` gates `_on_pause_test` during file-load transient pauses to prevent quadruple-advance.
+
+**Chapter tracking for VT:** `Player.chapter` getter walks `_chapter_list` by global `time_pos`. `_on_time_pos_change` emits `chapter_changed` whenever the global chapter index changes (compared to `_last_vt_chapter`). `ChapterList._activate_item` calls `seek_async(target_time)` for VT books instead of `self.player.chapter = idx`.
+
+**What not to do:**
+- Do not connect `_on_file_ready` to `file_loaded` — this was the root cause of the feedback loop in Round 2.
+- Do not use `self.player.chapter` (mpv local) for VT books anywhere — it reflects per-file chapter index, not global.
+- Do not read `self.progress_slider.value()` in `_on_file_ready` for switch animation — the slider may not have been updated yet (gated on `not slider_animating and not is_seeking`). Always compute from `new_progress / self.player.duration`.
+- `keep_open='always'` makes `_on_end_file` reason_int=0 unreachable — do not add EOF logic there.
+
+---
+
 ## MP3 seek blocks Qt main thread — RESOLVED (2026-05-14)
 
 **Root cause:** `self.instance.time_pos = value` in python-mpv is synchronous — holds the GIL on the calling thread until libmpv acks the seek. For MP3 streams, libmpv scans backwards through the bitstream to find frame boundaries before acking. Called from slider release handlers on the Qt main thread → 10–30s freeze.
