@@ -175,6 +175,18 @@ Replaced QPropertyAnimation on pos with opacity. Other panels slide fine, so thi
 ### What the debug output showed
 - `[FILE_READY] animating=True` and `[POPULATE_CHAPS] animating=True` — mpv fires file-loaded during the 300ms animation on fast SSDs. These callbacks hit the main thread and compete with the compositor.
 - `[UI_SYNC] fired during animation` — 200ms timer fires 1-2 times during animation. Tests showed this is NOT the cause — it fires during smooth animations too.
+
+---
+
+## ChapterList — Deferred Fixes (2026-05-15)
+
+### `fade_out` signal accumulation — DEFERRED
+
+`fade_out` ([chapter_list.py:179](src/fabulor/ui/chapter_list.py#L179)) calls `_disconnect_hide` before connecting `_on_fade_out_finished`, and sets `_hide_connected = True`. If `fade_out` is called twice before the animation completes, the second call disconnects the first connection (via `_disconnect_hide`) and creates a new one. The first animation's `finished` fires with no handler; the second fires correctly. The `_anim.stop()` call resets animation state so the two calls don't compound. **Safe in practice.** The `_hide_connected` flag is semantically stale between `_on_fade_out_finished` returning and the next `_disconnect_hide` call, but this window is never observable — `_disconnect_hide` is only called from `fade_out` and `show_above`, both of which immediately follow with a fresh connect. Defer until chapter list animation is next refactored.
+
+### `_activate_item` accesses `player._virtual_timeline` directly — DEFERRED
+
+`_activate_item` ([chapter_list.py:283](src/fabulor/ui/chapter_list.py#L283)) reads `self.player._virtual_timeline` to decide whether to call `seek_async` or set `self.player.chapter`. This is a coupling violation — `ChapterList` depends on a private Player attribute. The correct fix is a public `Player.is_virtual_timeline` property (or routing all chapter activation through a single Player method that handles both cases internally). Defer until a Player public API review pass. Do not access `_virtual_timeline` from any other UI file in the meantime.
 - Skipping `_update_ui_sync` entirely during animation caused transparent ghost panel. Not viable.
 - `valueChanged` on QPropertyAnimation fires only twice (start/end positions), not per frame — measuring frame gaps via valueChanged is meaningless.
 
