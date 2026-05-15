@@ -201,6 +201,7 @@ Removed in 2026-05-11 — it was silently overriding cover display on every book
   - Sessions not recorded correctly across VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions.
   - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.
   - M4B chapter stuck intermittently — chapter display freezes at a chapter boundary in some M4B books; root cause not yet isolated.
+  - Rapid book switch (VT → any) regression: test that the newly selected book's progress slider shows the correct position and not 0%. Symptom of a double-handler invocation resetting progress; fixed via disconnect-before-connect in `load_book`, but should be part of regression runs.
 
 ---
 
