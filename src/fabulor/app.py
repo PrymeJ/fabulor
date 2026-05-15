@@ -822,7 +822,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.tabs = QTabWidget()
         self.tabs.setObjectName("settings_tabs")
 
-        # --- TAB 1: THEMES ---
+        self._build_themes_tab()
+        self._build_appearance_tab()
+        self._build_library_tab()
+        self._build_audio_tab()
+        self._build_controls_tab()
+
+        settings_layout.addWidget(self.tabs)
+        self.settings_panel.hide()
+        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
+        self.settings_panel_animation.setDuration(300)
+        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _build_themes_tab(self):
         themes_tab = QWidget()
         themes_layout = QVBoxLayout(themes_tab)
         themes_layout.setContentsMargins(10, 0, 10, 10)
@@ -944,7 +956,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager.update_interval_visuals()
         self.theme_manager.update_cover_art_mode_visuals()
 
-        # --- TAB 2: APPEARANCE ---
+    def _build_appearance_tab(self):
         appearance_tab = QWidget()
         app_layout = QVBoxLayout(appearance_tab)
         app_layout.setContentsMargins(10, 0, 10, 10)
@@ -1055,14 +1067,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.clicked.connect(lambda _, m=mode: self.notch_animation_mode_changed.emit(m == "On"))
             notches_row.addWidget(btn)
             self.notch_animation_buttons[mode] = btn
-            
+
         app_layout.addLayout(notches_row)
 
         app_layout.addStretch()
         self.tabs.addTab(appearance_tab, "Look")
         # Visual initialization moved to after SettingsController binding
 
-        # --- TAB 3: LIBRARY ---
+    def _build_library_tab(self):
         library_tab = QWidget()
         lib_layout = QVBoxLayout(library_tab)
         lib_layout.setContentsMargins(10, 0, 10, 10)
@@ -1118,11 +1130,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.tabs.addTab(library_tab, "Library")
         self._update_pattern_visuals()
 
-        # --- TAB 4: AUDIO ---
+    def _build_audio_tab(self):
         self.audio_tab = AudioSettingsTab(self.player, self.config, self)
         self.tabs.addTab(self.audio_tab, "Audio")
 
-        # --- TAB 4: SHORTCUTS ---
+    def _build_controls_tab(self):
+        # TAB 4: SHORTCUTS
         shortcuts_tab = QWidget()
         short_layout = QVBoxLayout(shortcuts_tab)
         short_layout.setContentsMargins(10, 0, 10, 10)
@@ -1151,12 +1164,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         short_layout.addLayout(digit_row)
         short_layout.addStretch()
         self.tabs.addTab(shortcuts_tab, "Controls")
-
-        settings_layout.addWidget(self.tabs)
-        self.settings_panel.hide()
-        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
-        self.settings_panel_animation.setDuration(300)
-        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _build_stats_panel(self):
         self.stats_panel = StatsPanel(self.db, self.config, parent=self)
