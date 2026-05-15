@@ -102,8 +102,6 @@ class Player(QObject):
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
                 self.chapter_changed.emit(curr)
-        if self._virtual_timeline is None and value is not None and value > 0:
-            print(f"[time_pos_change/nonvt] value={value:.3f}")
 
     def _on_duration_change(self, name, value):
         self._cached_duration = value
