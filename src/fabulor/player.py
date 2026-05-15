@@ -90,7 +90,8 @@ class Player(QObject):
     def _on_time_pos_change(self, name, value):
         self._cached_time_pos = value
         if self._is_seeking and value is not None:
-            if self._seek_target is None or abs(value - self._seek_target) < 1.0:
+            global_value = value + (self._file_offset or 0)
+            if self._seek_target is None or abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
         if self._virtual_timeline is not None and self._chapter_list and value is not None:
