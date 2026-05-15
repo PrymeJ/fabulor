@@ -604,5 +604,5 @@ class PanelManager:
                 self.book_detail_panel_animation.state() != QAbstractAnimation.State.Running:
             if self.book_detail_panel.isVisible():
                 self.book_detail_panel.setFixedWidth(self.main_window.width())
-                self.book_detail_panel.move(0, sidebar_y)
-            self.book_detail_panel.setFixedHeight(self.main_window.height() - sidebar_y)
+                self.book_detail_panel.move(0, 32)
+            self.book_detail_panel.setFixedHeight(self.main_window.height() - 32)
