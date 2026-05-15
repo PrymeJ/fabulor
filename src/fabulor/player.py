@@ -408,8 +408,10 @@ class Player(QObject):
     @property
     def speed(self): return self._cached_speed
     @speed.setter
-    def speed(self, value): 
-        if self.instance: self.instance.speed = value
+    def speed(self, value):
+        if self.instance:
+            self.instance.speed = value
+            self._cached_speed = value
 
     @property
     def volume(self): return self.instance.volume if self.instance else 100
