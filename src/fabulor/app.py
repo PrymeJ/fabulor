@@ -68,6 +68,158 @@ class BrowserInterface:
     def pick_folder(self): return self._main._get_new_folder_path()
 
 
+class VisualsInterface:
+    def __init__(self, main):
+        self._main = main
+
+    def set_naming_pattern_selection(self, current):
+        m = self._main
+        if not hasattr(m, 'at_pattern_btn'): return
+        m.at_pattern_btn.setProperty("selected", "true" if current == "Author - Title" else "false")
+        m.ta_pattern_btn.setProperty("selected", "true" if current == "Title - Author" else "false")
+        for btn in [m.at_pattern_btn, m.ta_pattern_btn]:
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_scroll_selection(self, current):
+        m = self._main
+        if not hasattr(m, 'scroll_buttons'): return
+        m.current_chapter_label.set_scroll_mode(current)
+        for mode, btn in m.scroll_buttons.items():
+            btn.setProperty("selected", "true" if mode == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_hints_selection(self, enabled):
+        m = self._main
+        if not hasattr(m, 'hints_buttons'): return
+        for mode, btn in m.hints_buttons.items():
+            is_selected = (mode == "On" if enabled else mode == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_notch_animation_selection(self, enabled):
+        m = self._main
+        if not hasattr(m, 'notch_animation_buttons'): return
+        for mode, btn in m.notch_animation_buttons.items():
+            is_selected = (mode == "On" if enabled else mode == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_undo_selection(self, current):
+        m = self._main
+        if not hasattr(m, 'speed_panel'): return
+        for val, btn in m.speed_panel.undo_buttons.items():
+            btn.setProperty("selected", "true" if val == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_fade_selection(self, current):
+        m = self._main
+        if not hasattr(m, 'fade_buttons'): return
+        for ms, btn in m.fade_buttons.items():
+            btn.setProperty("selected", "true" if ms == current else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_blur_selection(self, enabled):
+        m = self._main
+        if not hasattr(m, 'blur_buttons'): return
+        for state, btn in m.blur_buttons.items():
+            is_selected = (state == "On" if enabled else state == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        if not enabled:
+            m.blur_effect.setBlurRadius(0)
+
+    def set_notches_selection(self, enabled):
+        m = self._main
+        if not hasattr(m, 'notches_buttons'): return
+        for mode, btn in m.notches_buttons.items():
+            is_selected = (mode == "On" if enabled else mode == "Off")
+            btn.setProperty("selected", "true" if is_selected else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+        # Hide animation settings when notches are off
+        if hasattr(m, 'notches_anim_header_label'):
+            m.notches_anim_header_label.setVisible(enabled)
+        if hasattr(m, 'notch_animation_buttons'):
+            for btn in m.notch_animation_buttons.values():
+                btn.setVisible(enabled)
+
+    def set_hover_fade_selection(self, mode):
+        m = self._main
+        if not hasattr(m, 'hover_fade_buttons'): return
+        for md, btn in m.hover_fade_buttons.items():
+            btn.setProperty("selected", "true" if md == mode else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        m.library_panel.set_hover_fade_enabled(mode)
+
+    def set_digit_mode_selection(self, mode):
+        m = self._main
+        if not hasattr(m, 'digit_mode_buttons'): return
+        for md, btn in m.digit_mode_buttons.items():
+            btn.setProperty("selected", "true" if md == mode else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def set_digit_autoplay_selection(self, enabled):
+        m = self._main
+        if not hasattr(m, 'digit_autoplay_buttons'): return
+        for v, btn in m.digit_autoplay_buttons.items():
+            btn.setProperty("selected", "true" if v == enabled else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+
+class PanelInterface:
+    def __init__(self, speed_panel, sleep_panel, audio_tab):
+        self._speed = speed_panel
+        self._sleep = sleep_panel
+        self._audio = audio_tab
+    def validate_speed_panel_settings(self):
+        if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
+    def update_speed_panel_visuals(self, theme_name=None):
+        if self._speed: self._speed.update_visuals(theme_name)
+    def update_sleep_panel_visuals(self):
+        if self._sleep: self._sleep.update_panel_styling()
+    def update_audio_panel_visuals(self):
+        if self._audio: self._audio.update_visuals()
+
+
+class UICallbackInterface:
+    def __init__(self, main):
+        self._main = main
+    def set_folder_list(self, folders): self._main._update_folder_list_widget(folders)
+    def get_selected_folder_path(self): return self._main._get_selected_folder_path()
+    def open_folder_dialog(self): return self._main._get_new_folder_path()
+    def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
+    def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
+    def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
+    def refresh_notches(self, skip_animation=False): self._main._refresh_notches(skip_animation=skip_animation)
+    def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
+
+
+class LibraryInterface:
+    def __init__(self, db, library_panel):
+        self._db = db
+        self._panel = library_panel
+    def reparse_db(self, pattern): self._db.reparse_library(pattern)
+    def refresh_library_panel(self, force=False): self._panel.refresh(force=force)
+
+
+class PlayerInterface:
+    def __init__(self, main):
+        self._main = main
+    def get_current_file(self): return self._main.get_current_file()
+    def load_cover_art(self, path): self._main._load_cover_art(path)
+
+
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     session_written = Signal()
     naming_pattern_changed = Signal(str)
@@ -205,155 +357,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_controller._check_library_status()
         self.ui_timer.start(200)
 
-        # Wire SettingsController with three explicit, minimal interfaces.
-        def set_naming_pattern_selection(current):
-            if not hasattr(self, 'at_pattern_btn'): return
-            self.at_pattern_btn.setProperty("selected", "true" if current == "Author - Title" else "false")
-            self.ta_pattern_btn.setProperty("selected", "true" if current == "Title - Author" else "false")
-            for btn in [self.at_pattern_btn, self.ta_pattern_btn]:
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_scroll_selection(current):
-            if not hasattr(self, 'scroll_buttons'): return
-            self.current_chapter_label.set_scroll_mode(current)
-            for mode, btn in self.scroll_buttons.items():
-                btn.setProperty("selected", "true" if mode == current else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_hints_selection(enabled):
-            if not hasattr(self, 'hints_buttons'): return
-            for mode, btn in self.hints_buttons.items():
-                is_selected = (mode == "On" if enabled else mode == "Off")
-                btn.setProperty("selected", "true" if is_selected else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_notch_animation_selection(enabled):
-            if not hasattr(self, 'notch_animation_buttons'): return
-            for mode, btn in self.notch_animation_buttons.items():
-                is_selected = (mode == "On" if enabled else mode == "Off")
-                btn.setProperty("selected", "true" if is_selected else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_undo_selection(current):
-            if not hasattr(self, 'speed_panel'): return
-            for val, btn in self.speed_panel.undo_buttons.items():
-                btn.setProperty("selected", "true" if val == current else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_fade_selection(current):
-            if not hasattr(self, 'fade_buttons'): return
-            for ms, btn in self.fade_buttons.items():
-                btn.setProperty("selected", "true" if ms == current else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_blur_selection(enabled):
-            if not hasattr(self, 'blur_buttons'): return
-            for state, btn in self.blur_buttons.items():
-                is_selected = (state == "On" if enabled else state == "Off")
-                btn.setProperty("selected", "true" if is_selected else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-            if not enabled:
-                self.blur_effect.setBlurRadius(0)
-
-        def set_notches_selection(enabled):
-            if not hasattr(self, 'notches_buttons'): return
-            for mode, btn in self.notches_buttons.items():
-                is_selected = (mode == "On" if enabled else mode == "Off")
-                btn.setProperty("selected", "true" if is_selected else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-            
-            # Hide animation settings when notches are off
-            if hasattr(self, 'notches_anim_header_label'):
-                self.notches_anim_header_label.setVisible(enabled)
-            if hasattr(self, 'notch_animation_buttons'):
-                for btn in self.notch_animation_buttons.values():
-                    btn.setVisible(enabled)
-
-        def set_hover_fade_selection(mode):
-            if not hasattr(self, 'hover_fade_buttons'): return
-            for m, btn in self.hover_fade_buttons.items():
-                btn.setProperty("selected", "true" if m == mode else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-            self.library_panel.set_hover_fade_enabled(mode)
-
-        def set_digit_mode_selection(mode):
-            if not hasattr(self, 'digit_mode_buttons'): return
-            for m, btn in self.digit_mode_buttons.items():
-                btn.setProperty("selected", "true" if m == mode else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        def set_digit_autoplay_selection(enabled):
-            if not hasattr(self, 'digit_autoplay_buttons'): return
-            for v, btn in self.digit_autoplay_buttons.items():
-                btn.setProperty("selected", "true" if v == enabled else "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-
-        class VisualsInterface:
-            def __init__(self):
-                pass
-            def set_naming_pattern_selection(self, pattern): set_naming_pattern_selection(pattern)
-            def set_scroll_selection(self, mode): set_scroll_selection(mode)
-            def set_hints_selection(self, enabled): set_hints_selection(enabled)
-            def set_undo_selection(self, val): set_undo_selection(val)
-            def set_fade_selection(self, ms): set_fade_selection(ms)
-            def set_blur_selection(self, enabled): set_blur_selection(enabled)
-            def set_notches_selection(self, enabled): set_notches_selection(enabled)
-            def set_notch_animation_selection(self, enabled): set_notch_animation_selection(enabled)
-            def set_hover_fade_selection(self, enabled): set_hover_fade_selection(enabled)
-            def set_digit_mode_selection(self, mode): set_digit_mode_selection(mode)
-            def set_digit_autoplay_selection(self, enabled): set_digit_autoplay_selection(enabled)
-
-        class PanelInterface:
-            def __init__(self, speed_panel, sleep_panel, audio_tab):
-                self._speed = speed_panel
-                self._sleep = sleep_panel
-                self._audio = audio_tab
-            def validate_speed_panel_settings(self):
-                if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
-            def update_speed_panel_visuals(self, theme_name=None):
-                if self._speed: self._speed.update_visuals(theme_name)
-            def update_sleep_panel_visuals(self):
-                if self._sleep: self._sleep.update_panel_styling()
-            def update_audio_panel_visuals(self):
-                if self._audio: self._audio.update_visuals()
-
-        class UICallbackInterface:
-            def __init__(self, main):
-                self._main = main
-            def set_folder_list(self, folders): self._main._update_folder_list_widget(folders)
-            def get_selected_folder_path(self): return self._main._get_selected_folder_path()
-            def open_folder_dialog(self): return self._main._get_new_folder_path()
-            def update_status_banner(self, *a, **kw): self._main._update_status_banner_ui(*a, **kw)
-            def update_metadata(self, *a, **kw): self._main._update_metadata_ui(*a, **kw)
-            def set_chapter_title(self, text): self._main._update_chapter_title_text(text)
-            def refresh_notches(self, skip_animation=False): self._main._refresh_notches(skip_animation=skip_animation)
-            def get_book_quote(self): return self._main.book_quotes if hasattr(self._main, 'book_quotes') else None
-
-        class LibraryInterface:
-            def __init__(self, db, library_panel):
-                self._db = db
-                self._panel = library_panel
-            def reparse_db(self, pattern): self._db.reparse_library(pattern)
-            def refresh_library_panel(self, force=False): self._panel.refresh(force=force)
-
-        class PlayerInterface:
-            def __init__(self, main):
-                self._main = main
-            def get_current_file(self): return self._main.get_current_file()
-            def load_cover_art(self, path): self._main._load_cover_art(path)
-
-        visuals = VisualsInterface()
+        # Wire SettingsController with explicit, minimal interfaces (defined at module level).
+        visuals = VisualsInterface(self)
         panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab)
         ui_callbacks = UICallbackInterface(self)
         library = LibraryInterface(self.db, self.library_panel)
