@@ -183,8 +183,10 @@ class SleepTimerPanel(QWidget):
         self.style().unpolish(self); self.style().polish(self)
 
     def update_timer_state(self, current_time, is_paused, player_pos, player_dur, is_eof):
+        if not self.player:
+            return
         display_text = ""
-        
+
         # Reset fade ratio by default; it will be overwritten below if fading
         self.player.set_fade_ratio(1.0)
 
@@ -192,11 +194,10 @@ class SleepTimerPanel(QWidget):
             remaining_seconds = max(0, int(self._sleep_timer_end_time - current_time))
             if remaining_seconds <= 0 or is_eof:
                 self.disable_sleep_timer()
-                if self.player:
-                    try:
-                        self.player.pause = True
-                    except (ShutdownError, AttributeError, SystemError):
-                        pass
+                try:
+                    self.player.pause = True
+                except (ShutdownError, AttributeError, SystemError):
+                    pass
             else:
                 display_text = f"[{self.player.format_time(remaining_seconds)}]"
                 # Volume Fade Logic
@@ -208,30 +209,35 @@ class SleepTimerPanel(QWidget):
 
         elif self._sleep_mode == 'end_of_chapter':
             display_text = "[chapter]"
-            if not is_paused and self.player.chapter_list and self.player.chapter is not None:
-                curr_chap = self.player.chapter
-                chaps = self.player.chapter_list
-                if curr_chap < len(chaps) - 1:
+            if not is_paused:
+                if not player_dur:
+                    return
+                chaps = self.player.chapter_list or []
+                curr_chap = 0
+                for i, ch in enumerate(chaps):
+                    if ch.get('time', 0) <= player_pos + 0.35:
+                        curr_chap = i
+                if chaps and curr_chap < len(chaps) - 1:
                     next_chap_start = chaps[curr_chap + 1].get('time', player_dur)
                     if player_pos >= next_chap_start - 0.5 or is_eof:
                         self.disable_sleep_timer()
-                        if self.player:
-                            try:
-                                self.player.pause = True
-                            except (ShutdownError, AttributeError, SystemError):
-                                pass
-                elif curr_chap == len(chaps) - 1 and (player_pos >= player_dur - 0.5 or is_eof):
-                    self.disable_sleep_timer()
-                    if self.player:
                         try:
                             self.player.pause = True
                         except (ShutdownError, AttributeError, SystemError):
                             pass
+                elif chaps and curr_chap == len(chaps) - 1 and (player_pos >= player_dur - 0.5 or is_eof):
+                    self.disable_sleep_timer()
+                    try:
+                        self.player.pause = True
+                    except (ShutdownError, AttributeError, SystemError):
+                        pass
         elif self._sleep_mode == 'end_of_book':
             display_text = "[book]"
-            if not is_paused and (player_pos >= player_dur - 0.5 or is_eof):
-                self.disable_sleep_timer()
-                if self.player:
+            if not is_paused:
+                if not player_dur:
+                    return
+                if player_pos >= player_dur - 0.5 or is_eof:
+                    self.disable_sleep_timer()
                     try:
                         self.player.pause = True
                     except (ShutdownError, AttributeError, SystemError):
