@@ -278,3 +278,62 @@ The Settings panel Themes tab was audited and ruled out for per-element color an
 
 ### What works instead
 `user_initiated` flag on `_on_theme_changed` + Themes-tab-active check: automatic theme changes (cover art, rotation) snap instantly when Themes tab is open. User-driven changes (hover preview, right-click, Change Now, mode buttons) animate normally. `snap_theme_forward()` on settings panel close prevents overlay dissolution during slide-out.
+
+---
+
+## Player / VT — Deferred Bug Investigations (2026-05-16)
+
+### M4B chapter label shows previous chapter after seek
+`_sync_chapter_ui` walks `chapter_list` with a `<= pos + 0.35` tolerance, matching the rule in CLAUDE.md. Intermittently the label stays on the previous chapter after a seek lands. Two candidate causes: (a) chapter boundary floats in some M4B files drift beyond 0.35s from their nominal values — the tolerance was set for VT books and may be too tight for M4B chapter metadata; (b) `_cached_time_pos` is stale at the tick that follows a seek when `is_seeking` clears before mpv delivers the settled position. Needs `time_pos`/boundary print instrumentation on an affected book to distinguish. Do not widen the tolerance blindly — it affects all chapter detection.
+
+### Chapter slider position wrong after Prev/Next chapter
+After `previous_chapter()` or `next_chapter()`, the chapter progress slider does not reset to 0. The slider position reflects position within the chapter, computed as `(pos - chap_start) / chap_duration`. The chapter start used in that computation likely lags behind the actual seek target — `_sync_chapter_ui` fires off the 200ms timer, which may tick before mpv delivers the new settled position. Root cause not isolated.
+
+### Prev chapter while paused goes to N-1 instead of restarting N
+Expected: if paused and `pos > threshold` from chapter start, `prev` should restart current chapter. Actual: jumps to N-1. The threshold logic in `previous_chapter()` ([player.py:497](src/fabulor/player.py#L497)) computes `chap_start` and checks `self.time_pos - chap_start > threshold`. If `_cached_time_pos` is not reflecting the true paused position, or if the threshold value is wrong for some books, the check falls through. Investigate threshold value and whether the paused-position read is authoritative.
+
+### Progress slider race on book switch
+Symptom: slider briefly shows 0% before animating to the correct position on book switch. The flow animation in `_on_file_ready` calls `animate_to(target, old_value=_pre_switch_slider_value)`. If `_pre_switch_slider_value` was set correctly but the animation's start value is 0 (because `_update_ui_sync` ran with `is_seeking=True` and forced the slider to 0 during the deadzone window), the animation starts from 0. Guard already exists in `_sync_progress_sliders` (`if slider_animating: return`), but the race is between the deadzone clear and the animation start. Known, pre-existing.
+
+### VT sessions not recorded correctly across file switches
+`_close_session`/`_open_session` wiring does not account for mid-book VT file transitions. When mpv emits `file_switched`, the session layer treats it as a new play event rather than continuation of the same book. Accurate listening time attribution across VT file boundaries requires threading `file_switched` into the session recorder. Known pre-existing issue; address when session recording is next touched.
+
+---
+
+## Stats Panel — Timeline Tab Not Updated After Metadata Edit
+
+`BookDetailPanel` emits `metadata_saved` when an inline field edit is committed. `StatsPanel` has no connection to this signal. The timeline tab's heatmap and the finished-books tab both show book titles — after an inline rename, they still show the old title until the panel is closed and reopened. Fix: connect `metadata_saved` → `stats_panel.refresh_current_tab()` (or a narrower `_refresh_time()` call if only the timeline needs updating). Address when stats panel or book detail panel is next touched.
+
+---
+
+## Cover Panel — Deferred Issues (2026-05-16)
+
+### Duplicate cover detection not implemented
+`_on_add_cover` ([cover_panel.py:497](src/fabulor/ui/cover_panel.py#L497)) copies the selected file into the book's cover directory without checking if an identical image already exists (by content hash or file size + dimensions). A user adding the same image twice creates redundant copies on disk and redundant DB rows. Implement before the cover panel slot limit (4) becomes a user-visible constraint — a duplicate wastes a slot.
+
+### `upsert_cover` delete ordering — file before DB
+On cover deletion, the current implementation deletes the file before the DB row. If the DB delete fails (locked, disk error), the file is gone but the DB still references it — the thumbnail shows a broken image on next open. The correct order is: delete DB row first, then delete file. If the file delete fails, the DB is clean and the orphaned file is harmless (not referenced). Address when cover panel is next touched.
+
+### `_on_thumb_delete` does not check file delete return value
+`_on_thumb_delete` ([cover_panel.py:444](src/fabulor/ui/cover_panel.py#L444)) calls the delete operation but does not inspect whether the file was successfully removed. A silent failure leaves an unreferenced file on disk. At minimum, log the failure. Address alongside the ordering fix above.
+
+---
+
+## Cleanup Deferrals — Pre-existing, Deliberate (2026-05-16)
+
+These items exist in the codebase intentionally and should not be removed without a dedicated cleanup pass.
+
+### Debug prints and timing instrumentation
+`_close_session`, `_on_file_ready`, `_on_book_selected_from_library` contain `print()` calls and timing probes left from VT debugging. Remove in a dedicated cleanup commit — do not remove piecemeal during feature work.
+
+### Temp buttons in status banner
+`next_quote_btn` and `temp_settings_btn` in the status banner are placeholder UI. Their click handlers delegate to panel flows that have permanent entry points elsewhere. Remove when the status banner layout is finalized.
+
+### Temp EOF flags
+`_eof_event_written` and `_eof_dur_fetched` flags, and associated `#Temporary` comments, were added to guard double-write during EOF session close. Review whether they are still necessary after the session recording rewrite for VT. Do not remove blindly — check whether the guard condition is still reachable.
+
+### Temp file accumulation for VT playlist resolution
+`_resolve_playlist` writes `ffmetadata` and `concat` files with `delete=False` (or equivalent) for debugging. These accumulate in `/tmp` across sessions. Switch to `delete=True` or explicit cleanup in a `finally` block when VT is considered stable.
+
+### Config — `balance` key has no bounds validation
+`config.set_balance(value)` writes whatever it receives. The audio tab constrains input to `[-1.0, 1.0]` via the slider, but the config layer has no clamp. A manually edited or corrupted QSettings file can store an out-of-range value that passes silently to mpv's audio filter. Add `max(-1.0, min(1.0, value))` in `set_balance` when config is next touched.
