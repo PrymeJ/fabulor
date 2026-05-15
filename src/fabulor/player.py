@@ -93,6 +93,8 @@ class Player(QObject):
             if self._seek_target is None or abs(value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
+        if self._virtual_timeline is None and value is not None and value > 0:
+            print(f"[time_pos_change/nonvt] value={value:.3f}")
 
     def _on_duration_change(self, name, value):
         self._cached_duration = value
@@ -114,6 +116,8 @@ class Player(QObject):
                 self._is_vt_file_switch = True
                 self._pending_local_pos = None
                 self.instance.play(next_file['file_path'])
+                if self.instance.pause:
+                    self.instance.pause = False
             else:
                 self._eof = True
         else:
@@ -122,6 +126,8 @@ class Player(QObject):
     def _on_pause_test(self, name, value):
         self._cached_pause = value
         if value:
+            if self._is_vt_file_switch:
+                return  # transient pause during file load — ignore
             pos = self.instance.time_pos
             dur = self.instance.duration
             if pos is not None and dur is not None and pos >= dur - 1.5:
@@ -540,10 +546,12 @@ class Player(QObject):
                 self.seek_async(target)
                 return target
         else:
+            print(f"[next_chapter/nonvt] instance.chapter={self.instance.chapter} instance.chapters={self.instance.chapters} _virtual_timeline={self._virtual_timeline is not None}")
             curr_chap = self.chapter or 0
             total_chaps = self.chapters or 0
             if curr_chap < total_chaps - 1:
                 self.chapter = curr_chap + 1
+                print(f"[next_chapter/nonvt] after write: instance.chapter={self.instance.chapter}")
             elif self.duration:
                 self.time_pos = self.duration
 
@@ -555,18 +563,32 @@ class Player(QObject):
         if not self.instance or not self.duration:
             return
 
-        curr_chap = self.chapter or 0
-        chap_list = self.chapter_list or []
-        if chap_list and curr_chap < len(chap_list):
+        if self._virtual_timeline is not None and self._chapter_list:
+            curr_time = self.time_pos or 0
+            curr_chap = 0
+            for i, chap in enumerate(self._chapter_list):
+                if chap.get('time', 0) <= curr_time + 0.35:
+                    curr_chap = i
             dur = self.duration
-            start = chap_list[curr_chap].get('time', 0)
-            end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
+            start = self._chapter_list[curr_chap].get('time', 0)
+            end = self._chapter_list[curr_chap + 1].get('time', dur) if curr_chap + 1 < len(self._chapter_list) else dur
             chap_dur = end - start
             if chap_dur > 0:
-                new_chap_pos = fraction * chap_dur
-                new_pos = start + new_chap_pos
+                new_pos = start + fraction * chap_dur
                 self.seek_async(new_pos)
                 return new_pos
+        else:
+            curr_chap = self.chapter or 0
+            chap_list = self.chapter_list or []
+            if chap_list and curr_chap < len(chap_list):
+                dur = self.duration
+                start = chap_list[curr_chap].get('time', 0)
+                end = chap_list[curr_chap + 1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
+                chap_dur = end - start
+                if chap_dur > 0:
+                    new_pos = start + fraction * chap_dur
+                    self.seek_async(new_pos)
+                    return new_pos
 
     def apply_smart_rewind(self, last_pause_ts: float, wait_min: int, rewind_sec: int):
         """
