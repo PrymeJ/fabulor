@@ -394,7 +394,15 @@ class Player(QObject):
     @property
     def seekable(self): return bool(self.instance.seekable) if self.instance else False
     @property
-    def chapter(self): return self.instance.chapter if self.instance else None
+    def chapter(self):
+        if self._virtual_timeline is not None and self._chapter_list:
+            pos = self.time_pos or 0.0
+            curr = 0
+            for i, chap in enumerate(self._chapter_list):
+                if chap.get('time', 0) <= pos:
+                    curr = i
+            return curr
+        return self.instance.chapter if self.instance else None
     @chapter.setter
     def chapter(self, value): 
         if self.instance:
