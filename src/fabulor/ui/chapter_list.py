@@ -278,7 +278,12 @@ class ChapterList(QListWidget):
             if not (0 <= idx < len(chapters)):
                 return
             old_pos = self.player.time_pos or 0.0
-            self.player.chapter = idx
+            target_time = chapters[idx].get('time', 0.0)
+            # For VT books, route through seek_async (uses global time); for others, use chapter setter (local)
+            if self.player._virtual_timeline is not None:
+                self.player.seek_async(target_time)
+            else:
+                self.player.chapter = idx
             actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
             self.fade_out()
             self.chapter_changed.emit(actual_title)
