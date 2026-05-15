@@ -2291,8 +2291,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             else:
                 skip = self.config.get_skip_duration() * speed
             new_pos = max(0, (old_pos or 0) - skip)
-            self.player.time_pos = new_pos
-            self.player.is_seeking = True
+            self.player.seek_async(new_pos)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -2304,15 +2303,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             else:
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, (old_pos or 0) + skip)
-            self.player.time_pos = new_pos
-            self.player.is_seeking = True
+            self.player.seek_async(new_pos)
 
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
         if self.player and self.current_file:
             old_pos = self.player.time_pos
-            self.player.time_pos = 0
+            self.player.seek_async(0)
             self.player.is_seeking = True
             self._trigger_undo(old_pos)
 
