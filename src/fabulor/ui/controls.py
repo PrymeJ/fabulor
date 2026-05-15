@@ -369,6 +369,14 @@ class ScrollingLabel(QLabel):
                 p.drawText(x, y, text)
         p.end()
 
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_scrolling_state()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
