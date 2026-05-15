@@ -2101,7 +2101,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pending_cover_pixmap = None
 
     def _load_cover_art(self, file_path):
-        book = self.db.get_book(file_path) if file_path else None
         if not file_path:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
@@ -2109,6 +2108,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.metadata_label.setText("No book selected")
             self.theme_manager.clear_cover_theme()
             return
+        book = self.db.get_book(file_path)
         active = self.db.get_active_cover(file_path)
         self._cover_fit_mode = active['fit_mode'] if active else 'fit'
 
