@@ -1619,7 +1619,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self.player._virtual_timeline is not None:
                 self.player.seek_async(book_data.progress)
             else:
-                self.player.time_pos = book_data.progress
+                self.player.seek_async(book_data.progress + 0.35)
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
@@ -2288,6 +2288,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             old_pos = self.player.time_pos or 0.0
             target = self.player.previous_chapter()
             self.player.is_seeking = True
+            self.chapter_progress_slider.setValue(0)
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:
@@ -2300,6 +2301,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             old_pos = self.player.time_pos or 0.0
             target = self.player.next_chapter()
             self.player.is_seeking = True
+            self.chapter_progress_slider.setValue(0)
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:

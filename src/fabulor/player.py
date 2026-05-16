@@ -514,15 +514,24 @@ class Player(QObject):
             return curr_time
         else:
             curr_time = self.time_pos or 0
-            curr_chap = self.chapter or 0
             chap_list = self.chapter_list or []
+            curr_chap = 0
+            for i, chap in enumerate(chap_list):
+                if chap.get('time', 0) <= curr_time + 0.35:
+                    curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
                     self.chapter = curr_chap - 1
             else:
-                self.time_pos = chap_start
+                # Use seek_async (absolute+exact) with +0.35s so we clear both
+                # AAC frame-alignment undershoots AND the ~0.25s float drift
+                # where chapter_list times land short of mpv's actual switch
+                # point. 0.05 was insufficient; 0.35 matches the walk tolerance.
+                target = chap_start + 0.35
+                self.seek_async(target)
+                return target
 
     def next_chapter(self):
         if self._virtual_timeline is not None and self._chapter_list:
