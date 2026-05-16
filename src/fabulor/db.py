@@ -782,19 +782,20 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
-                    COALESCE(book_title, book_path) as title,
-                    session_start,
-                    session_end,
-                    COALESCE(listened_seconds,
-                        (julianday(session_end) - julianday(session_start)) * 86400) as seconds
-                FROM listening_sessions
-                WHERE strftime('%Y-%m-%d', session_start) IN (
+                    COALESCE(b.title, ls.book_title, ls.book_path) as title,
+                    ls.session_start,
+                    ls.session_end,
+                    COALESCE(ls.listened_seconds,
+                        (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds
+                FROM listening_sessions ls
+                LEFT JOIN books b ON ls.book_path = b.path
+                WHERE strftime('%Y-%m-%d', ls.session_start) IN (
                     SELECT DISTINCT strftime('%Y-%m-%d', session_start)
                     FROM listening_sessions
                     ORDER BY strftime('%Y-%m-%d', session_start) DESC
                     LIMIT ?
                 )
-                ORDER BY session_start ASC
+                ORDER BY ls.session_start ASC
             """, (n_days,)).fetchall()
 
         # Split each session across the clock hours it spans
