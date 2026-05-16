@@ -1,8 +1,9 @@
 import locale
-import os
 import math
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
+import os
 import time
+import warnings
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 from PySide6.QtGui import QPixmap
 
 # Stub workaround and libmpv check logic lives here
@@ -189,16 +190,17 @@ class Player(QObject):
         return (db_files[0]['file_path'], None)
 
     def load_book(self, path, start_paused=True):
-        print(f"[load_book] path={path!r}")
         self._ensure_mpv()
         self._eof = False
         self._start_paused = start_paused
         self._held_play = None
         self._play_gated = True
-        try:
-            self._playlist_resolved.disconnect(self._on_playlist_resolved)
-        except RuntimeError:
-            pass
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                self._playlist_resolved.disconnect(self._on_playlist_resolved)
+            except RuntimeError:
+                pass
         self._playlist_resolved.connect(self._on_playlist_resolved)
 
         player = self
@@ -206,7 +208,6 @@ class Player(QObject):
         class _ResolveWorker(QRunnable):
             def run(self):
                 play_target, chapters_file = player._resolve_playlist(path)
-                print(f"[load_book] resolved → {play_target!r}")
                 player._playlist_resolved.emit(play_target, chapters_file or "")
 
         # Reset virtual timeline state for new book
@@ -226,10 +227,14 @@ class Player(QObject):
         QThreadPool.globalInstance().start(_ResolveWorker())
 
     def _on_playlist_resolved(self, play_target, chapters_file):
-        self._playlist_resolved.disconnect(self._on_playlist_resolved)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            try:
+                self._playlist_resolved.disconnect(self._on_playlist_resolved)
+            except RuntimeError:
+                pass
         if not self._play_gated:
             # Gate already lifted before resolve finished — play immediately.
-            print(f"[load_book] ungated already → {play_target!r}")
             self.instance.chapters_file = chapters_file or None
             if self._virtual_timeline is not None:
                 # VT book: fire book_ready now (Qt thread, VT data ready)
@@ -239,7 +244,6 @@ class Player(QObject):
                 self.instance.pause = True
         else:
             self._held_play = (play_target, chapters_file)
-            print("[load_book] held — waiting for ungate")
 
     def ungate_play(self):
         """Call after panel animation finishes (or immediately for non-library loads)."""
@@ -248,7 +252,6 @@ class Player(QObject):
             return
         play_target, chapters_file = self._held_play
         self._held_play = None
-        print(f"[load_book] ungated → {play_target!r}")
         self.instance.chapters_file = chapters_file or None
         if self._virtual_timeline is not None:
             # VT book: fire book_ready now (Qt thread, VT data ready)
@@ -275,13 +278,11 @@ class Player(QObject):
             self.file_switched.emit()
         else:
             self.book_ready.emit()
-        print(f"[file_ready] chapter_list: {self.chapter_list[:3] if self.chapter_list else 'empty'}")
 
     def _on_end_file(self, event):
         data = event.data  # MpvEventEndFile struct with integer reason field
         reason_int = data.reason if data else -1
         # MpvEventEndFile constants: EOF=0, RESTARTED=1, ABORTED=2, QUIT=3, ERROR=4, REDIRECT=5
-        print(f"[end-file] reason_int={reason_int}")
         if reason_int == 4:  # ERROR
             error_str = event.as_dict().get('file_error', b'').decode('utf-8', errors='replace')
             detail = error_str if error_str else 'unknown error'
@@ -511,9 +512,10 @@ class Player(QObject):
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
             threshold = 2.0 * (self.speed or 1.0)
+            print(f"[prev/vt] curr_time={curr_time:.3f} curr_chap={curr_chap} chap_start={chap_start:.3f} threshold={threshold:.3f}")
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
-                    target = self._chapter_list[curr_chap - 1].get('time', 0)
+                    target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
                     self.seek_async(target)
                     return target
             else:
@@ -529,9 +531,12 @@ class Player(QObject):
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             threshold = 2.0 * (self.speed or 1.0)
+            print(f"[prev/nonvt] curr_time={curr_time:.3f} curr_chap={curr_chap} chap_start={chap_start:.3f} threshold={threshold:.3f}")
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
-                    self.chapter = curr_chap - 1
+                    target = chap_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                    self.seek_async(target)
+                    return target
             else:
                 target = chap_start + _CHAPTER_BOUNDARY_EPSILON
                 self.seek_async(target)
@@ -560,12 +565,10 @@ class Player(QObject):
             for i, chap in enumerate(chap_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
-            print(f"[next_chapter/nonvt] curr_chap={curr_chap} total={len(chap_list)} _virtual_timeline={self._virtual_timeline is not None}")
             next_chap = curr_chap + 1
             if next_chap < len(chap_list):
                 target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
                 self.seek_async(target)
-                print(f"[next_chapter/nonvt] seeked to {target}")
             else:
                 target = self._book_duration or self.duration or 0
                 self.seek_async(target)

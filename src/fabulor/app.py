@@ -1496,25 +1496,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
-        print(f"[on_file_ready] time_pos={self.player.time_pos}, duration={self.player.duration}")
         if getattr(self.library_panel, '_is_animating', False):
             self._file_ready_deferred = True
-            print("[on_file_ready] deferred — library animating")
             return
         self._file_ready_deferred = False
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
             return
-        t0 = time.perf_counter()
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
-        print(f"  ||| get_book #1: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
 
         self._restore_position()
-        print(f"  restore_position: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
-
         self._update_ui_sync()
-        print(f"  update_ui_sync: {(time.perf_counter()-t0)*1000:.1f}ms"); t0 = time.perf_counter()
 
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
@@ -1530,7 +1523,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.progress_slider.animate_to(new_val, old_value=pre)
             else:
                 self.progress_slider.setValue(new_val)
-        print(f"  slider_done: {(time.perf_counter()-t0)*1000:.1f}ms")
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
@@ -1678,17 +1670,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_ui_sync(self):
         try:
             # Guard against accessing player before a file is loaded
-            t0 = time.perf_counter()
             mpv_pos = self.player.time_pos if self.current_file else None
-            t1 = time.perf_counter()
             dur = self.player.duration if self.current_file else None
-            t2 = time.perf_counter()
             is_paused = (self.player.pause if self.current_file else True) and not self.player._is_vt_file_switch
-            t3 = time.perf_counter()
             speed = self.player.speed or 1.0
-            t4 = time.perf_counter()
-            if max(t1-t0, t2-t1, t3-t2, t4-t3) > 0.05:
-                print(f"SLOW: time_pos={t1-t0:.3f}s dur={t2-t1:.3f}s pause={t3-t2:.3f}s speed={t4-t3:.3f}s")
 
             current_time = time.time()
             if (self._session_start is not None
