@@ -310,8 +310,17 @@ Fixed at the seek: `_restore_position` now uses `seek_async(book_data.progress +
 
 **Rule: `chapter_changed` signal for non-VT must remain on `_on_chapter_change` (mpv's chapter property), not `_on_time_pos_change`.** VT uses `_on_time_pos_change` because VT chapter times are exact DB values; non-VT chapter times have ~0.25s float drift. The time_pos path cannot distinguish intermediate seek values from settled ones.
 
-### M4B chapter label drift after slider/right-click seek — still intermittent
-After a time-based seek (slider drag, right-click), mpv's `chapter` property can lag one tick before updating. The 200ms timer corrects the chapter slider (via `pos + 0.35` walk in `_sync_chapter_ui`) but the label is only driven by `_on_chapter_change`. Low-frequency. If revisited: a targeted post-seek one-shot check is the safest direction. Do not touch `_on_time_pos_change` for non-VT.
+### M4B chapter label drift after slider/right-click seek — RESOLVED (2026-05-16, session 2)
+
+Root cause: mpv fires `time-pos` observer only once after a seek while paused. That single callback can arrive at an intermediate position and go silent before the seek fully lands — label stays wrong until the next natural `chapter_changed` emit.
+
+Fix applied:
+- `_on_time_pos_change` now includes a non-VT branch that walks `chapter_list` against `value + _CHAPTER_BOUNDARY_EPSILON` and emits `chapter_changed` when the index changes. Tracks via `_last_nonvt_chapter` (reset in load/reset block alongside `_last_vt_chapter`). Handles natural chapter transitions during playback correctly.
+- `seek_async` non-VT now immediately sets `_cached_time_pos = pos` and emits `chapter_changed` with the derived index. This covers the paused-seek case where the `time-pos` observer fires unreliably.
+- `_on_chapter_change` now returns early if `_is_seeking` is True, preventing mpv's async native observer from racing with the `seek_async` emit and overwriting the correct chapter with a stale value.
+- `_is_seeking` is now set to True in `load_book` at file load time, suppressing spurious chapter observer callbacks during initial load before `_restore_position` runs.
+
+**Rule updated:** The earlier rule ("do not use `_on_time_pos_change` for non-VT") is superseded. The non-VT path is now safe because `_on_chapter_change`'s `_is_seeking` guard prevents the race. The previous failures were caused by the race, not by the walk itself.
 
 ### Progress slider race on book switch
 Symptom: slider briefly shows 0% before animating to the correct position on book switch. The flow animation in `_on_file_ready` calls `animate_to(target, old_value=_pre_switch_slider_value)`. If `_pre_switch_slider_value` was set correctly but the animation's start value is 0 (because `_update_ui_sync` ran with `is_seeking=True` and forced the slider to 0 during the deadzone window), the animation starts from 0. Guard already exists in `_sync_progress_sliders` (`if slider_animating: return`), but the race is between the deadzone clear and the animation start. Known, pre-existing.
@@ -321,9 +330,15 @@ Symptom: slider briefly shows 0% before animating to the correct position on boo
 
 ---
 
-## Stats Panel — Timeline Tab Not Updated After Metadata Edit
+## Stats Panel — Timeline Tab Not Updated After Metadata Edit — RESOLVED (2026-05-16)
 
-`BookDetailPanel` emits `metadata_saved` when an inline field edit is committed. `StatsPanel` has no connection to this signal. The timeline tab's heatmap and the finished-books tab both show book titles — after an inline rename, they still show the old title until the panel is closed and reopened. Fix: connect `metadata_saved` → `stats_panel.refresh_current_tab()` (or a narrower `_refresh_time()` call if only the timeline needs updating). Address when stats panel or book detail panel is next touched.
+`get_hourly_heatmap` was reading `book_title` directly from `listening_sessions` (value snapshotted at recording time) instead of joining `books` to get the current title. Fixed: added `LEFT JOIN books b ON ls.book_path = b.path` and changed the select to `COALESCE(b.title, ls.book_title, ls.book_path)`, matching the pattern already used by all other stats queries in `db.py`. Updated title now appears in heatmap tooltips immediately after edit, with no restart needed.
+
+### Deferred — chapter nav undo/restore near boundaries
+
+- **Undo after Next:** Undo button does not appear. Root cause not yet isolated — may be `_undo_pos` not being set on the `seek_async` path.
+- **Undo after Prev:** Undo fires but chapter slider drifts to far right. Undo target is at a chapter boundary; restore lands in wrong chapter for same boundary-drift reasons as the other nav bugs.
+- **apply_smart_rewind and Undo restore:** Still use `time_pos =` assignment in some paths. Not yet audited for boundary drift. Needs testing near chapter starts.
 
 ---
 
