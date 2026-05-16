@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QMouseEvent, QKeyEvent
 from mpv import ShutdownError
+from fabulor.player import _CHAPTER_BOUNDARY_EPSILON
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
@@ -282,11 +283,7 @@ class ChapterList(QListWidget):
                 return
             old_pos = self.player.time_pos or 0.0
             target_time = chapters[idx].get('time', 0.0)
-            # For VT books, route through seek_async (uses global time); for others, use chapter setter (local)
-            if self.player._virtual_timeline is not None:
-                self.player.seek_async(target_time)
-            else:
-                self.player.chapter = idx
+            self.player.seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)
             actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
             self.fade_out()
             self.chapter_changed.emit(actual_title)

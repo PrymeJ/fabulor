@@ -362,10 +362,11 @@ class Player(QObject):
         if value is not None:
             if self._virtual_timeline is not None:
                 return
+            if self._chapter_list is not None:  # cue mode
+                return
             if self._is_seeking:
                 return
             self.chapter_changed.emit(int(value))
-
     def _on_file_loaded(self, event):
         if self._pending_local_pos is not None:
             pending = self._pending_local_pos
