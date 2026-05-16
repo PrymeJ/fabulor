@@ -255,3 +255,10 @@ class Config:
 
     def set_cover_art_theme_mode(self, mode: str):
         self.settings.setValue("cover_art_theme_mode", mode)
+
+    def get_chapter_list_source(self) -> str:
+        """Returns 'embedded' or 'cue'."""
+        return self.settings.value("chapter_list_source", "embedded")
+
+    def set_chapter_list_source(self, source: str):
+        self.settings.setValue("chapter_list_source", source)

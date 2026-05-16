@@ -3,6 +3,7 @@ import math
 import os
 import time
 import warnings
+from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 from PySide6.QtGui import QPixmap
 
@@ -45,9 +46,10 @@ class Player(QObject):
     load_failed = Signal(str)  # reason string from mpv end-file event
     _playlist_resolved = Signal(str, str)  # play_target, chapters_file ('' if none)
 
-    def __init__(self, db):
+    def __init__(self, db, config=None):
         super().__init__()
         self.db = db
+        self.config = config
         self.instance = None  # deferred
         self._eof = False
         self._paused_time = None # For UI deadzone logic
@@ -169,7 +171,6 @@ class Player(QObject):
     _AUDIO_EXTENSIONS = {'.m4b', '.mp3', '.m4a', '.flac'}
 
     def _resolve_playlist(self, path: str) -> tuple:
-        from pathlib import Path
         files = sorted(
             f for f in Path(path).iterdir()
             if f.is_file() and f.suffix.lower() in self._AUDIO_EXTENSIONS
@@ -177,7 +178,17 @@ class Player(QObject):
         if not files:
             return (path, None)
         if len(files) == 1:
-            return (str(files[0]), None)
+            audio_file = files[0]
+            if audio_file.suffix.lower() in ('.m4b', '.m4a'):
+                chapter_source = self._get_chapter_source_setting()
+                if chapter_source == 'cue':
+                    cue_files = [f for f in Path(path).iterdir() if f.suffix.lower() == '.cue']
+                    cue_path = self._select_cue_file(cue_files, path)
+                    if cue_path:
+                        chapters = self._parse_cue(cue_path, audio_file)
+                        if chapters:
+                            self._chapter_list = chapters
+            return (str(audio_file), None)
 
         db_files = self.db.get_book_files(path)
         if not db_files:
@@ -204,6 +215,74 @@ class Player(QObject):
         self._book_duration = total_duration
         self._file_offset = 0.0
         return (db_files[0]['file_path'], None)
+
+    def _get_chapter_source_setting(self) -> str:
+        if self.config is not None:
+            return self.config.get_chapter_list_source()
+        return 'embedded'
+
+    def _select_cue_file(self, cue_files: list, folder_path: str):
+        if not cue_files:
+            return None
+        if len(cue_files) == 1:
+            return cue_files[0]
+        # Multiple CUE files: try to match stem against folder name pattern "Author - Title"
+        folder_name = Path(folder_path).name.lower()
+        parts = folder_name.split(' - ', 1)
+        candidates = [parts[-1].strip()] if len(parts) == 2 else [folder_name]
+        for cue in cue_files:
+            stem = cue.stem.lower()
+            if any(stem == c or stem in c or c in stem for c in candidates):
+                return cue
+        return None
+
+    def _parse_cue(self, cue_path, audio_file) -> list | None:
+        try:
+            text = cue_path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            return None
+
+        chapters = []
+        current_title = ''
+        file_validated = False
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            upper = stripped.upper()
+
+            if upper.startswith('FILE '):
+                # Extract filename between quotes or as bare token
+                if '"' in stripped:
+                    fname = stripped.split('"')[1]
+                else:
+                    fname = stripped.split()[1]
+                if Path(fname).stem.lower() != audio_file.stem.lower():
+                    return None
+                file_validated = True
+                continue
+
+            if upper.startswith('TITLE '):
+                raw = stripped[6:].strip()
+                current_title = raw.strip('"')
+                continue
+
+            if upper.startswith('INDEX 01 '):
+                ts = stripped.split()[-1]  # MM:SS:FF
+                parts = ts.split(':')
+                if len(parts) != 3:
+                    continue
+                try:
+                    mm, ss, ff = int(parts[0]), int(parts[1]), int(parts[2])
+                except ValueError:
+                    continue
+                # FF is CD frames (nominally 0-74, 75fps); be lenient with non-standard values
+                time_s = mm * 60 + ss + ff / 75.0
+                chapters.append({'title': current_title, 'time': time_s})
+                current_title = ''
+
+        if not file_validated or len(chapters) < 2:
+            return None
+        return chapters
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()

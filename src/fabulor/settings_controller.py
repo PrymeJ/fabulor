@@ -21,6 +21,7 @@ class SettingsController:
         main.hover_fade_changed.connect(self._update_hover_fade)
         main.chapter_digit_mode_changed.connect(self._update_chapter_digit_mode)
         main.chapter_digit_autoplay_changed.connect(self._update_chapter_digit_autoplay)
+        main.chapter_list_source_changed.connect(self._update_chapter_list_source)
         main._refresh_panel_visuals = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
@@ -124,6 +125,13 @@ class SettingsController:
     def _update_digit_autoplay_visuals(self):
         self.visuals.set_digit_autoplay_selection(self.config.get_chapter_digit_autoplay())
 
+    def _update_chapter_list_source(self, source):
+        self.config.set_chapter_list_source(source)
+        self._update_chapter_source_visuals()
+
+    def _update_chapter_source_visuals(self):
+        self.visuals.set_chapter_source_selection(self.config.get_chapter_list_source())
+
     def sync_all_settings_visuals(self, theme_name=None):
         """Syncs all settings button states and panel visuals to current config."""
         self._update_pattern_visuals()
@@ -137,6 +145,7 @@ class SettingsController:
         self._update_undo_visuals()
         self._update_digit_mode_visuals()
         self._update_digit_autoplay_visuals()
+        self._update_chapter_source_visuals()
         self.panels.update_speed_panel_visuals(theme_name)
         self.panels.update_sleep_panel_visuals()
         self.panels.update_audio_panel_visuals()

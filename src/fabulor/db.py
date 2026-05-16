@@ -60,7 +60,8 @@ class LibraryDB:
                     date_added DATETIME DEFAULT CURRENT_TIMESTAMP,
                     last_played DATETIME,
                     started_at DATETIME,
-                    finished_at DATETIME
+                    finished_at DATETIME,
+                    chapter_source TEXT DEFAULT 'embedded'
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_last_played ON books (last_played)")

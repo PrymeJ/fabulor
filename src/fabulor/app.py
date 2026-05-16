@@ -176,6 +176,14 @@ class VisualsInterface:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
+    def set_chapter_source_selection(self, source):
+        m = self._main
+        if not hasattr(m, 'chapter_source_buttons'): return
+        for src, btn in m.chapter_source_buttons.items():
+            btn.setProperty("selected", "true" if src == source else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
 
 class PanelInterface:
     def __init__(self, speed_panel, sleep_panel, audio_tab):
@@ -233,6 +241,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     hover_fade_changed = Signal(str)
     chapter_digit_mode_changed = Signal(str)
     chapter_digit_autoplay_changed = Signal(bool)
+    chapter_list_source_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -245,7 +254,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_file = ""
         self.config = Config()
         self.db = LibraryDB()
-        self.player = Player(self.db)
+        self.player = Player(self.db, self.config)
         self._prev_chap_title = ""
         self._next_chap_title = ""
         self.theme_manager = ThemeManager(self)
@@ -1124,6 +1133,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         folder_btns_layout.addWidget(self.remove_folder_btn)
         folder_btns_layout.addWidget(self.refresh_library_btn)
         lib_layout.addLayout(folder_btns_layout)
+
+        lib_layout.addSpacing(10)
+
+        chap_source_header = QLabel("Chapter source")
+        chap_source_header.setObjectName("settings_header")
+        lib_layout.addWidget(chap_source_header)
+
+        chap_source_row = QHBoxLayout()
+        self.chapter_source_buttons = {}
+        for source, label in [("embedded", "Embedded"), ("cue", ".cue")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=source: self.chapter_list_source_changed.emit(s))
+            chap_source_row.addWidget(btn)
+            self.chapter_source_buttons[source] = btn
+        chap_source_row.addStretch()
+        lib_layout.addLayout(chap_source_row)
 
         # Library controller connections are consolidated in __init__
         lib_layout.addStretch()
