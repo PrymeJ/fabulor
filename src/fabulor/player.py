@@ -554,14 +554,21 @@ class Player(QObject):
                 self.seek_async(target)
                 return target
         else:
-            print(f"[next_chapter/nonvt] instance.chapter={self.instance.chapter} instance.chapters={self.instance.chapters} _virtual_timeline={self._virtual_timeline is not None}")
-            curr_chap = self.chapter or 0
-            total_chaps = self.chapters or 0
-            if curr_chap < total_chaps - 1:
-                self.chapter = curr_chap + 1
-                print(f"[next_chapter/nonvt] after write: instance.chapter={self.instance.chapter}")
-            elif self.duration:
-                self.time_pos = self.duration
+            chap_list = self.chapter_list or []
+            curr_time = self.time_pos or 0
+            curr_chap = 0
+            for i, chap in enumerate(chap_list):
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                    curr_chap = i
+            print(f"[next_chapter/nonvt] curr_chap={curr_chap} total={len(chap_list)} _virtual_timeline={self._virtual_timeline is not None}")
+            next_chap = curr_chap + 1
+            if next_chap < len(chap_list):
+                target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                self.seek_async(target)
+                print(f"[next_chapter/nonvt] seeked to {target}")
+            else:
+                target = self._book_duration or self.duration or 0
+                self.seek_async(target)
 
     def seek_within_chapter(self, fraction: float):
         """
