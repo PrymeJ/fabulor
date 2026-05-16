@@ -16,7 +16,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator
 
-from .player import Player
+from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
 from .themes import THEMES
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
@@ -1619,7 +1619,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if self.player._virtual_timeline is not None:
                 self.player.seek_async(book_data.progress)
             else:
-                self.player.seek_async(book_data.progress + 0.35)
+                self.player.seek_async(book_data.progress + _CHAPTER_BOUNDARY_EPSILON)
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
@@ -1808,7 +1808,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # of when mpv's internal chapter property settles after a seek.
         curr_chap = 0
         for i, chap in enumerate(chap_list):
-            if chap.get('time', 0) <= pos + 0.35:
+            if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
                 curr_chap = i
         if curr_chap < len(chap_list):
             # Update chapter progress
@@ -1828,6 +1828,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
+                # No is_seeking gate here — chapter nav uses self.chapter = N
+                # which never sets _seek_target, so _is_seeking clears on the
+                # first time_pos callback regardless of whether the seek is done.
+                # Gating on is_seeking caused the slider to retain stale values
+                # while the time label (ungated) showed 00:00. The slider
+                # self-corrects within one 200ms tick; that is acceptable.
+                # The chap_animating guard (book-switch flow animation) must stay.
                 if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 

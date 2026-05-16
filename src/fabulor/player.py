@@ -28,6 +28,14 @@ try:
 except ImportError:
     mutagen = None
 
+# Tolerance added to time_pos when walking chapter_list to find the current
+# chapter, and as a seek epsilon when targeting a chapter boundary. M4B chapter
+# metadata floats land ~0.25s short of nominal values; seeks undershoot by one
+# AAC frame (~23ms). 0.35s clears both with margin. If a format with worse
+# drift appears, change this one constant — it appears in previous_chapter(),
+# the VT chapter walk in _on_time_pos_change, and _sync_chapter_ui in app.py.
+_CHAPTER_BOUNDARY_EPSILON = 0.35
+
 class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
@@ -499,7 +507,7 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + 0.35:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
             threshold = 2.0 * (self.speed or 1.0)
@@ -517,7 +525,7 @@ class Player(QObject):
             chap_list = self.chapter_list or []
             curr_chap = 0
             for i, chap in enumerate(chap_list):
-                if chap.get('time', 0) <= curr_time + 0.35:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             threshold = 2.0 * (self.speed or 1.0)
@@ -525,11 +533,7 @@ class Player(QObject):
                 if curr_chap > 0:
                     self.chapter = curr_chap - 1
             else:
-                # Use seek_async (absolute+exact) with +0.35s so we clear both
-                # AAC frame-alignment undershoots AND the ~0.25s float drift
-                # where chapter_list times land short of mpv's actual switch
-                # point. 0.05 was insufficient; 0.35 matches the walk tolerance.
-                target = chap_start + 0.35
+                target = chap_start + _CHAPTER_BOUNDARY_EPSILON
                 self.seek_async(target)
                 return target
 
@@ -538,7 +542,7 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + 0.35:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
             next_chap = curr_chap + 1
             if next_chap < len(self._chapter_list):
@@ -571,7 +575,7 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + 0.35:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
             dur = self.duration
             start = self._chapter_list[curr_chap].get('time', 0)
