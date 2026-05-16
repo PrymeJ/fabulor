@@ -104,6 +104,9 @@ class Player(QObject):
             if self._seek_target is None or abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
+        # VT: use self._chapter_list directly — it holds the virtual timeline chapter
+        # data (exact DB times, global positions). self._file_offset translates the
+        # local mpv time_pos into the global VT position.
         if self._virtual_timeline is not None and self._chapter_list and value is not None:
             global_pos = (value or 0.0) + self._file_offset
             curr = 0
@@ -113,13 +116,16 @@ class Player(QObject):
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
                 self.chapter_changed.emit(curr)
+        # Non-VT: self._chapter_list is None — chapter data lives in mpv's native list.
+        # self.chapter_list (property) abstracts over both cases: returns self._chapter_list
+        # for VT books, falls back to self.instance.chapter_list for non-VT. The
+        # inconsistency with the VT branch above is intentional.
         elif self.chapter_list and value is not None:
             curr = 0
             for i, chap in enumerate(self.chapter_list):
                 if chap.get('time', 0) <= value + _CHAPTER_BOUNDARY_EPSILON:
                     curr = i
             if curr != self._last_nonvt_chapter:
-                print(f"[nonvt/chapter_changed] {self._last_nonvt_chapter} -> {curr} at pos={value:.3f}")
                 self._last_nonvt_chapter = curr
                 self.chapter_changed.emit(curr)
 
@@ -394,7 +400,6 @@ class Player(QObject):
                 for i, chap in enumerate(self._chapter_list):
                     if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
                         curr = i
-                print(f"[seek_async/emit] pos={pos:.3f} curr={curr} last={self._last_nonvt_chapter} will_emit={curr != self._last_nonvt_chapter}")
                 if curr != self._last_nonvt_chapter:
                     self._last_nonvt_chapter = curr
                     self.chapter_changed.emit(curr)
