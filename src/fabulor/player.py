@@ -70,6 +70,7 @@ class Player(QObject):
         self._pending_local_pos: float | None = None
         self._is_vt_file_switch: bool = False
         self._last_vt_chapter: int = -1
+        self._last_nonvt_chapter: int = 0
 
     @staticmethod
     def format_time(seconds):
@@ -111,6 +112,15 @@ class Player(QObject):
                     curr = i
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
+                self.chapter_changed.emit(curr)
+        elif self.chapter_list and value is not None:
+            curr = 0
+            for i, chap in enumerate(self.chapter_list):
+                if chap.get('time', 0) <= value + _CHAPTER_BOUNDARY_EPSILON:
+                    curr = i
+            if curr != self._last_nonvt_chapter:
+                print(f"[nonvt/chapter_changed] {self._last_nonvt_chapter} -> {curr} at pos={value:.3f}")
+                self._last_nonvt_chapter = curr
                 self.chapter_changed.emit(curr)
 
     def _on_duration_change(self, name, value):
@@ -219,6 +229,7 @@ class Player(QObject):
         self._pending_local_pos = None
         self._is_vt_file_switch = False
         self._last_vt_chapter = -1
+        self._last_nonvt_chapter = -1
         # Clear cached mpv state so stale values from previous book can't leak
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
@@ -374,6 +385,15 @@ class Player(QObject):
             self._eof = False
             self.is_seeking = True
             self._seek_target = pos
+            self._cached_time_pos = pos
+            if self._chapter_list:
+                curr = 0
+                for i, chap in enumerate(self._chapter_list):
+                    if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
+                        curr = i
+                if curr != self._last_nonvt_chapter:
+                    self._last_nonvt_chapter = curr
+                    self.chapter_changed.emit(curr)
 
     @property
     def is_seeking(self): return self._is_seeking
