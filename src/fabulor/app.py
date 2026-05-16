@@ -1828,7 +1828,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
-                if chap_dur > 0 and not chap_animating and not self.player.is_seeking:
+                if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
 
@@ -2288,7 +2288,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             old_pos = self.player.time_pos or 0.0
             target = self.player.previous_chapter()
             self.player.is_seeking = True
-            self.chapter_progress_slider.setValue(0)
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:
@@ -2301,7 +2300,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             old_pos = self.player.time_pos or 0.0
             target = self.player.next_chapter()
             self.player.is_seeking = True
-            self.chapter_progress_slider.setValue(0)
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:
