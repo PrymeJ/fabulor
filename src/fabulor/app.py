@@ -1372,14 +1372,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_pause_timer.start()
 
     def _close_session(self):
-        _t0 = time.perf_counter()
+
         self._session_pause_timer.stop()
         self._post_seek_credit_timer.stop()
-        _t1 = time.perf_counter()
-        print(f"  [close_session] timers stop: {(_t1-_t0)*1000:.2f}ms")
-        if self._session_start is None:
-            print("  [close_session] early return (no session)")
-            return
+
 
         # Flush any in-progress segment (close while playing, not after pause)
         if self._session_segment_start is not None:
@@ -1389,8 +1385,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         listened = self._session_listened_seconds
         now = datetime.now()
-        _t2 = time.perf_counter()
-        print(f"  [close_session] pre-branch setup: {(_t2-_t1)*1000:.2f}ms")
+
 
         if listened >= 60 and self._current_book is not None:
             book = self._current_book
@@ -1404,9 +1399,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             s_end = int(pos_end)
             pos_start_str = f"{s_start//3600:02d}:{(s_start%3600)//60:02d}:{s_start%60:02d}"
             pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
-            print(f"[close_session] book='{book.title}' clock={now.strftime('%H:%M:%S')} pos_start={pos_start_str} pos_end={pos_end_str} ({pct_end:.1f}%) listened={listened:.0f}s")
-            _t3 = time.perf_counter()
-            print(f"  [close_session] capture state: {(_t3-_t2)*1000:.2f}ms")
+
 
             def _write():
                 try:
@@ -1429,11 +1422,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     pass
 
             threading.Thread(target=_write, daemon=True).start()
-            _t4 = time.perf_counter()
-            print(f"  [close_session] Thread().start(): {(_t4-_t3)*1000:.2f}ms")
-        else:
-            _t4 = time.perf_counter()
-            print(f"  [close_session] skipped write (listened={listened:.1f}s)")
+
 
         self._session_start = None
         self._session_segment_start = None
@@ -1441,9 +1430,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_position_start = None
         self._session_furthest_position = None
         self._post_seek_pending_position = None
-        _t5 = time.perf_counter()
-        print(f"  [close_session] clear state: {(_t5-_t4)*1000:.2f}ms")
-        print(f"  [close_session] TOTAL: {(_t5-_t0)*1000:.2f}ms")
 
     def _on_seek_credit_earned(self):
         if self._post_seek_pending_position is not None:
@@ -1463,10 +1449,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager.hide_all_panels()
             return
 
-        import time as _t
-        _t0 = _t.perf_counter()
         self._save_current_progress()
-        print(f"[book_select] save_progress: {(_t.perf_counter()-_t0)*1000:.1f}ms"); _t0 = _t.perf_counter()
         self._paused_time = None
         self._mpv_ready = False
         self._pre_switch_slider_value = self.progress_slider.value()
@@ -1477,9 +1460,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_saved_pct = -1
         self._eof_dur_fetched = False
         self.current_file = path
-        print(f"[book_select] state_clear: {(_t.perf_counter()-_t0)*1000:.1f}ms"); _t0 = _t.perf_counter()
         self._close_session()
-        print(f"[book_select] close_session+hide: {(_t.perf_counter()-_t0)*1000:.1f}ms")
         self.panel_manager.hide_all_panels()
         QTimer.singleShot(0, lambda: (
             self.db.update_last_played(path),
@@ -1980,6 +1961,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
+        print(f"[label_update] index={index}")
         if not self.player:
             return
         
