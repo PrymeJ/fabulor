@@ -201,6 +201,7 @@ class Player(QObject):
 
     def load_book(self, path, start_paused=True):
         self._ensure_mpv()
+        self._is_seeking = True
         self._eof = False
         self._start_paused = start_paused
         self._held_play = None
@@ -275,6 +276,8 @@ class Player(QObject):
     def _on_chapter_change(self, name, value):
         if value is not None:
             if self._virtual_timeline is not None:
+                return
+            if self._is_seeking:
                 return
             self.chapter_changed.emit(int(value))
 
@@ -391,6 +394,7 @@ class Player(QObject):
                 for i, chap in enumerate(self._chapter_list):
                     if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
                         curr = i
+                print(f"[seek_async/emit] pos={pos:.3f} curr={curr} last={self._last_nonvt_chapter} will_emit={curr != self._last_nonvt_chapter}")
                 if curr != self._last_nonvt_chapter:
                     self._last_nonvt_chapter = curr
                     self.chapter_changed.emit(curr)
@@ -504,8 +508,9 @@ class Player(QObject):
 
     def terminate(self):
         if self.instance:
-            self.instance.terminate()
+            instance = self.instance
             self.instance = None
+            instance.terminate()
 
     def get_stable_position(self):
         """Handles 'deadzone' logic during pause/seek to prevent jitter in UI labels."""
