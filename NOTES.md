@@ -283,14 +283,35 @@ The Settings panel Themes tab was audited and ruled out for per-element color an
 
 ## Player / VT — Deferred Bug Investigations (2026-05-16)
 
-### M4B chapter label shows previous chapter after seek
-`_sync_chapter_ui` walks `chapter_list` with a `<= pos + 0.35` tolerance, matching the rule in CLAUDE.md. Intermittently the label stays on the previous chapter after a seek lands. Two candidate causes: (a) chapter boundary floats in some M4B files drift beyond 0.35s from their nominal values — the tolerance was set for VT books and may be too tight for M4B chapter metadata; (b) `_cached_time_pos` is stale at the tick that follows a seek when `is_seeking` clears before mpv delivers the settled position. Needs `time_pos`/boundary print instrumentation on an affected book to distinguish. Do not widen the tolerance blindly — it affects all chapter detection.
+### Prev chapter while paused goes to N-1 instead of restarting N — RESOLVED (2026-05-16)
 
-### Chapter slider position wrong after Prev/Next chapter
-After `previous_chapter()` or `next_chapter()`, the chapter progress slider does not reset to 0. The slider position reflects position within the chapter, computed as `(pos - chap_start) / chap_duration`. The chapter start used in that computation likely lags behind the actual seek target — `_sync_chapter_ui` fires off the 200ms timer, which may tick before mpv delivers the new settled position. Root cause not isolated.
+Two root causes:
 
-### Prev chapter while paused goes to N-1 instead of restarting N
-Expected: if paused and `pos > threshold` from chapter start, `prev` should restart current chapter. Actual: jumps to N-1. The threshold logic in `previous_chapter()` ([player.py:497](src/fabulor/player.py#L497)) computes `chap_start` and checks `self.time_pos - chap_start > threshold`. If `_cached_time_pos` is not reflecting the true paused position, or if the threshold value is wrong for some books, the check falls through. Investigate threshold value and whether the paused-position read is authoritative.
+1. `previous_chapter()` non-VT was reading `self.chapter or 0` (mpv's async property) to identify the current chapter. When paused this value can lag. Fixed: replace with a walk of `chapter_list` against `time_pos + 0.35`, same as VT and display paths.
+
+2. The "restart current chapter" case used `self.time_pos = chap_start` (default seek). Default seek undershoots by one AAC frame (~23ms). When paused, playback never advances past the boundary to self-correct; mpv kept reporting N-1. When playing, forward playback masked the undershoot in one tick. Fixed: `seek_async(chap_start + 0.35)` — `absolute+exact` seek plus epsilon to clear the ~0.25s float drift window.
+
+### Chapter slider position wrong after Prev/Next chapter — RESOLVED (2026-05-16)
+
+Root cause: time labels in `_sync_chapter_ui` update without an `is_seeking` guard; slider `setValue` was gated on `not is_seeking`. For `self.chapter = N` seeks, `_seek_target` is never set, so `_is_seeking` clears on the first `_on_time_pos_change` callback. Race: timer fires with label showing correct "00:00" but slider retaining the stale near-full value from the previous chapter. A `setValue(0)` call in `handle_prev`/`handle_next` made it worse — it was overwritten before the seek settled.
+
+Fixed: remove `setValue(0)` from both handlers; remove `not self.player.is_seeking` from the chapter slider's `setValue` condition in `_sync_chapter_ui`. Keep the `chap_animating` guard — that is the architecturally protected one. The slider now updates every 200ms unconditionally and self-corrects within one tick.
+
+### M4B chapter label shows previous chapter on book load — RESOLVED (2026-05-16)
+
+Root cause: `_restore_position` non-VT used `self.player.time_pos = book_data.progress` (default seek). One-frame undershoot (~23ms) lands before the chapter boundary when saved position is at chapter N's start. mpv correctly reports N-1 for that position.
+
+Three signal-path approaches failed — **do not retry**:
+- **Timer correction in `_sync_chapter_ui`**: `_update_chapter_label_from_index` (signal path) never updated the tracking index so the correction never fired. Adding tracking there caused N-1→N flash on every book load.
+- **Walk in `_on_time_pos_change` for non-VT**: fires on every audio frame including intermediate seek values. Caused N+2 flashes on Next and a regression cascade (stuck slider, broken label on all seeks).
+- **Walk in `_on_chapter_change` with direct `instance.time_pos` read**: could not reliably get the post-seek position before the chapter callback fired.
+
+Fixed at the seek: `_restore_position` now uses `seek_async(book_data.progress + 0.35)`. Restores 0.35s past the saved position — accepted trade-off, consistent with what `previous_chapter` does for the same reason.
+
+**Rule: `chapter_changed` signal for non-VT must remain on `_on_chapter_change` (mpv's chapter property), not `_on_time_pos_change`.** VT uses `_on_time_pos_change` because VT chapter times are exact DB values; non-VT chapter times have ~0.25s float drift. The time_pos path cannot distinguish intermediate seek values from settled ones.
+
+### M4B chapter label drift after slider/right-click seek — still intermittent
+After a time-based seek (slider drag, right-click), mpv's `chapter` property can lag one tick before updating. The 200ms timer corrects the chapter slider (via `pos + 0.35` walk in `_sync_chapter_ui`) but the label is only driven by `_on_chapter_change`. Low-frequency. If revisited: a targeted post-seek one-shot check is the safest direction. Do not touch `_on_time_pos_change` for non-VT.
 
 ### Progress slider race on book switch
 Symptom: slider briefly shows 0% before animating to the correct position on book switch. The flow animation in `_on_file_ready` calls `animate_to(target, old_value=_pre_switch_slider_value)`. If `_pre_switch_slider_value` was set correctly but the animation's start value is 0 (because `_update_ui_sync` ran with `is_seeking=True` and forced the slider to 0 during the deadzone window), the animation starts from 0. Guard already exists in `_sync_progress_sliders` (`if slider_animating: return`), but the race is between the deadzone clear and the animation start. Known, pre-existing.
