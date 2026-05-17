@@ -283,7 +283,12 @@ class ChapterList(QListWidget):
                 return
             old_pos = self.player.time_pos or 0.0
             target_time = chapters[idx].get('time', 0.0)
-            self.player.seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)
+            if self.player._virtual_timeline is not None or self.player._chapter_list is not None:
+                # VT books and CUE books: seek by time (chapters are our data, not mpv's)
+                self.player.seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)
+            else:
+                # Embedded M4B: let mpv navigate by its own chapter index
+                self.player.chapter = idx
             actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
             self.fade_out()
             self.chapter_changed.emit(actual_title)
