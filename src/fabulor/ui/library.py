@@ -358,7 +358,7 @@ class LibraryPanel(QFrame):
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
             
-        target_title = "A Girl Is a Half-Formed Thing"
+        target_title = "A Brightness Long Ago"
         for b in books:
             if target_title.lower() in b.title.lower():
                 print(f"[DEBUG] FOUND: {b.title}: progress={b.progress}, id={b.id}")
@@ -708,7 +708,7 @@ class BookModel(QAbstractListModel):
 
         self._apply_filter_and_sort()
         self.endResetModel()
-        
+
     # DEAD CODE MARKED FOR DELETION
     # def reload_from_db(self) -> None:
     #     self._books = self._db.get_all_books()

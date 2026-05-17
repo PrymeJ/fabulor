@@ -61,7 +61,8 @@ class LibraryDB:
                     last_played DATETIME,
                     started_at DATETIME,
                     finished_at DATETIME,
-                    chapter_source TEXT DEFAULT 'embedded'
+                    chapter_source TEXT DEFAULT 'embedded',
+                    is_deleted INTEGER NOT NULL DEFAULT 0
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_books_last_played ON books (last_played)")
@@ -130,6 +131,13 @@ class LibraryDB:
                 )
             """)
 
+            # Migrate: add is_deleted column if absent
+            col_names = {row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
+            if "is_deleted" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
+                )
+
             # Migrate: truncate tags over 25 chars
             conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
 
@@ -154,9 +162,8 @@ class LibraryDB:
     def remove_scan_location(self, path):
         """Removes a directory from the scan list."""
         with self._get_conn() as conn:
-            # Remove books from this folder first
             conn.execute(
-                "DELETE FROM books WHERE path LIKE ?",
+                "UPDATE books SET is_deleted = 1 WHERE path LIKE ?",
                 (str(path).rstrip("/") + "/%",)
             )
             conn.execute("DELETE FROM scan_locations WHERE path = ?", (str(path),))
@@ -199,9 +206,10 @@ class LibraryDB:
                 author=excluded.author,
                 narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
                 duration=excluded.duration,
-                progress=COALESCE(excluded.progress, books.progress),
+                progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
-                year=COALESCE(excluded.year, books.year)
+                year=COALESCE(excluded.year, books.year),
+                is_deleted=0
         """
         with self._get_conn() as conn:
             conn.execute(query, cleaned)
@@ -218,9 +226,10 @@ class LibraryDB:
                 author=excluded.author,
                 narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
                 duration=excluded.duration,
-                progress=COALESCE(excluded.progress, books.progress),
+                progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
-                year=COALESCE(excluded.year, books.year)
+                year=COALESCE(excluded.year, books.year),
+                is_deleted=0
         """
         cleaned_list = [
             {k: (v.strip() if isinstance(v, str) else v) for k, v in {
@@ -256,7 +265,7 @@ class LibraryDB:
             raise ValueError(f"Invalid sort order: {order!r}")
         collate = " COLLATE NOCASE" if sort_by in self._TEXT_SORT_COLUMNS else ""
         with self._get_conn() as conn:
-            cursor = conn.execute(f"SELECT * FROM books ORDER BY {sort_by}{collate} {order}")
+            cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 ORDER BY {sort_by}{collate} {order}")
             return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
     def get_book_count(self):
