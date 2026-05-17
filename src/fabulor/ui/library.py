@@ -358,14 +358,6 @@ class LibraryPanel(QFrame):
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
             
-        target_title = "A Brightness Long Ago"
-        for b in books:
-            if target_title.lower() in b.title.lower():
-                print(f"[DEBUG] FOUND: {b.title}: progress={b.progress}, id={b.id}")
-                break
-        else:
-            print(f"[DEBUG] NOT FOUND in books list after refresh")
-
         self._book_model.set_books(books)
 
         def _after_covers(_attempt=0):
@@ -703,17 +695,9 @@ class BookModel(QAbstractListModel):
         # Retain live position only for the currently playing book
         self._live_pos = {k: v for k, v in self._live_pos.items() if k == self._playing_id}
         self._live_dur = {k: v for k, v in self._live_dur.items() if k == self._playing_id}
-        print(f"[DEBUG] set_books reached. Playing ID: {self._playing_id}, "
-              f"Active IDs in _live_pos: {list(self._live_pos.keys())}")
 
         self._apply_filter_and_sort()
         self.endResetModel()
-
-    # DEAD CODE MARKED FOR DELETION
-    # def reload_from_db(self) -> None:
-    #     self._books = self._db.get_all_books()
-    #     self._apply_filter_and_sort()
-    #     self.layoutChanged.emit()
 
     def update_book_metadata(self, book_id: int, title: str, author: str) -> None:
         for book in self._books:
