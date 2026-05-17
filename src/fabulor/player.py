@@ -73,6 +73,7 @@ class Player(QObject):
         self._is_vt_file_switch: bool = False
         self._last_vt_chapter: int = -1
         self._last_nonvt_chapter: int = 0
+        self._held_play: tuple | None = None
 
     @staticmethod
     def format_time(seconds):
@@ -297,7 +298,6 @@ class Player(QObject):
         self._is_seeking = True
         self._eof = False
         self._start_paused = start_paused
-        self._held_play = None
         self._play_gated = True
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
