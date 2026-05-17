@@ -238,7 +238,7 @@ class Player(QObject):
 
     def _parse_cue(self, cue_path, audio_file) -> list | None:
         try:
-            text = cue_path.read_text(encoding='utf-8', errors='replace')
+            text = cue_path.read_text(encoding='utf-8-sig', errors='replace')
         except OSError:
             return None
 
