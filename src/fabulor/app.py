@@ -2053,7 +2053,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = pixmap
         self.cover_art_label.show()
         self.metadata_label.hide()
-        self._update_cover_art_scaling()
+        # Defer scaling so Qt re-layouts cover_art_label before we read its size.
+        # Without this, switching from a no-cover book leaves the label at its
+        # smaller (metadata_label-present) geometry, causing a misplaced/undersized cover.
+        QTimer.singleShot(0, self._update_cover_art_scaling)
         if self.panel_manager and self.panel_manager.is_any_panel_visible():
             self._pending_cover_pixmap = pixmap
         else:
