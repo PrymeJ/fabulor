@@ -185,7 +185,9 @@ class Player(QObject):
                     cue_files = [f for f in Path(path).iterdir() if f.suffix.lower() == '.cue']
                     cue_path = self._select_cue_file(cue_files, path)
                     if cue_path:
-                        chapters = self._parse_cue(cue_path, audio_file)
+                        book = self.db.get_book(path)
+                        file_duration = book.duration if book and book.duration else None
+                        chapters = self._parse_cue(cue_path, audio_file, file_duration)
                         if chapters:
                             self._chapter_list = chapters
             return (str(audio_file), None)
@@ -236,7 +238,7 @@ class Player(QObject):
                 return cue
         return None
 
-    def _parse_cue(self, cue_path, audio_file) -> list | None:
+    def _parse_cue(self, cue_path, audio_file, file_duration: float | None = None) -> list | None:
         try:
             text = cue_path.read_text(encoding='utf-8-sig', errors='replace')
         except OSError:
@@ -281,6 +283,12 @@ class Player(QObject):
                 current_title = ''
 
         if not file_validated or len(chapters) < 2:
+            return None
+        if chapters[0]['time'] != 0.0:
+            return None
+        if any(chapters[i]['time'] <= chapters[i - 1]['time'] for i in range(1, len(chapters))):
+            return None
+        if file_duration is not None and any(chap['time'] >= file_duration for chap in chapters):
             return None
         return chapters
 
