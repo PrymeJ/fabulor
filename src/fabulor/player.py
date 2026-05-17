@@ -687,9 +687,11 @@ class Player(QObject):
             if next_chap < len(chap_list):
                 target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
                 self.seek_async(target)
+                return target
             else:
                 target = self._book_duration or self.duration or 0
                 self.seek_async(target)
+                return target
 
     def seek_within_chapter(self, fraction: float):
         """
