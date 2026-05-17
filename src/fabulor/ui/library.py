@@ -343,13 +343,30 @@ class LibraryPanel(QFrame):
 
     def refresh(self, force=False):
         self._resolve_theme_colors()
-        books = self.db.get_all_books(sort_by="title", order="ASC")
+        # Sync model's filter/sort state from UI without triggering a reset, then
+        # reload books with a layoutChanged so the view keeps its scroll position.
+        sort_key  = self.sort_combo.currentData()
+        ascending = getattr(self, '_sort_ascending', True)
+        self._book_model._filter_text   = self.search_field.text().lower().strip()
+        self._book_model._sort_field    = SORT_KEY_MAP.get(sort_key, "title")
+        self._book_model._sort_direction = "ascending" if ascending else "descending"
+        self.config.set_library_sort_key(sort_key)
+        self.config.set_library_sort_ascending(ascending)
 
+        # Fetch books once and pass them to the model
+        books = self.db.get_all_books()
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
+            
+        target_title = "A Girl Is a Half-Formed Thing"
+        for b in books:
+            if target_title.lower() in b.title.lower():
+                print(f"[DEBUG] FOUND: {b.title}: progress={b.progress}, id={b.id}")
+                break
+        else:
+            print(f"[DEBUG] NOT FOUND in books list after refresh")
 
         self._book_model.set_books(books)
-        self._apply_current_sort_filter()
 
         def _after_covers(_attempt=0):
             first_idx = self._book_model.index(0, 0)
@@ -511,6 +528,13 @@ class LibraryPanel(QFrame):
 
     def set_playing_path(self, path: str) -> None:
         self._delegate.set_playing_path(path)
+        # Sync playing ID to the model to avoid window traversals
+        idx = self._book_model.path_to_index(path)
+        if idx and idx.isValid():
+            book = idx.data(ROLE_BOOK)
+            self._book_model._playing_id = book.id
+        else:
+            self._book_model._playing_id = None
         self._list_view.viewport().update()
 
     def set_is_playing(self, playing: bool) -> None:
@@ -636,6 +660,7 @@ class BookModel(QAbstractListModel):
         self._show_remaining: dict[str, bool] = {}
         self._live_pos: dict[str, float] = {}
         self._live_dur: dict[str, float] = {}
+        self._playing_id: Optional[int] = None
         self._hovered_path: Optional[str] = None
         self._filter_text: str = ""
         self._sort_field: str = "title"
@@ -674,8 +699,21 @@ class BookModel(QAbstractListModel):
     def set_books(self, books: list[Book]) -> None:
         self.beginResetModel()
         self._books = list(books)
+
+        # Retain live position only for the currently playing book
+        self._live_pos = {k: v for k, v in self._live_pos.items() if k == self._playing_id}
+        self._live_dur = {k: v for k, v in self._live_dur.items() if k == self._playing_id}
+        print(f"[DEBUG] set_books reached. Playing ID: {self._playing_id}, "
+              f"Active IDs in _live_pos: {list(self._live_pos.keys())}")
+
         self._apply_filter_and_sort()
         self.endResetModel()
+        
+    # DEAD CODE MARKED FOR DELETION
+    # def reload_from_db(self) -> None:
+    #     self._books = self._db.get_all_books()
+    #     self._apply_filter_and_sort()
+    #     self.layoutChanged.emit()
 
     def update_book_metadata(self, book_id: int, title: str, author: str) -> None:
         for book in self._books:
@@ -694,6 +732,7 @@ class BookModel(QAbstractListModel):
         self._emit_for_id(book_id)
 
     def update_playing_progress(self, book_id: int, position: float, duration: float) -> None:
+        self._playing_id = book_id
         self._live_pos[book_id] = position if position > MIN_PROGRESS else 0.0
         self._live_dur[book_id] = duration
         self._emit_for_id(book_id)
