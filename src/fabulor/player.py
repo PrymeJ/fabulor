@@ -706,8 +706,12 @@ class Player(QObject):
                 self.seek_async(new_pos)
                 return new_pos
         else:
-            curr_chap = self.chapter or 0
+            curr_time = self.time_pos or 0
             chap_list = self.chapter_list or []
+            curr_chap = 0
+            for i, chap in enumerate(chap_list):
+                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                    curr_chap = i
             if chap_list and curr_chap < len(chap_list):
                 dur = self.duration
                 start = chap_list[curr_chap].get('time', 0)
