@@ -630,7 +630,6 @@ class Player(QObject):
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
             threshold = 2.0 * (self.speed or 1.0)
-            print(f"[prev/vt] curr_time={curr_time:.3f} curr_chap={curr_chap} chap_start={chap_start:.3f} threshold={threshold:.3f}")
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
                     target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
@@ -649,7 +648,6 @@ class Player(QObject):
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             threshold = 2.0 * (self.speed or 1.0)
-            print(f"[prev/nonvt] curr_time={curr_time:.3f} curr_chap={curr_chap} chap_start={chap_start:.3f} threshold={threshold:.3f}")
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
                     target = chap_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
