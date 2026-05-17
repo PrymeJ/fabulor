@@ -501,6 +501,8 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT simplify `Player.terminate()` — it must call `wait_for_shutdown()` after `terminate()` to prevent a libmpv teardown crash in `avformat_close_input`. The crash was masked for an unknown period by a debug print and is easy to reintroduce.
 
+## DO NOT pass `0.0` as the `progress` value to `upsert_book` or `upsert_books_batch`. Use `None` if progress is unknown. The scanner does not know a book's saved playback position — it must omit progress entirely (leave it as `None`) so the `COALESCE(NULLIF(..., 0.0), books.progress)` upsert logic can preserve whatever the user left off at. Passing `0.0` is treated as "no progress supplied" by the NULLIF safety net, but that is a net, not a contract — callers must use `None`.
+
 ---
 
-*Last updated: 2026-05-17 — CUE file support, chapter boundary fixes, teardown crash fix, `_on_chapter_change` guard.*
+*Last updated: 2026-05-17 — CUE file support, chapter boundary fixes, teardown crash fix, `_on_chapter_change` guard, scanner progress invariant.*

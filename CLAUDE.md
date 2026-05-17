@@ -51,6 +51,15 @@ CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_
 ### DO NOT simplify `Player.terminate()`
 It must store the instance reference, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. This was masked for an unknown period by a debug print. The sequence is intentional — do not reorder or remove steps.
 
+### DO NOT hard-delete from the `books` table
+`remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
+
+### DO NOT pass `0.0` as `progress` to `upsert_book` or `upsert_books_batch`
+The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
+
+### FIX NEEDED: `BookModel.path_to_index()` walks `self._filtered`, not `self._books`
+`path_to_index()` in `ui/library.py` is called from `LibraryPanel.set_playing_path()` to set `_playing_id` on the model. Because it walks `self._filtered`, a book that is currently filtered out of the view will return `None`, leaving `_playing_id` unset. When `set_books()` next runs, it will prune `_live_pos`/`_live_dur` for that book's ID incorrectly. Fix: change the walk to iterate `self._books` with `enumerate` and return `self.index(row)` where `row` is the position in `_books` — or, simpler, set `_playing_id` directly from the `Book` object in `set_playing_path` without going through `path_to_index` at all.
+
 ---
 
 ## Tech Stack
