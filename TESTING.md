@@ -477,6 +477,27 @@
 - [ ] Shai-Hulud
 - [ ] Shade of the Evening
 - [ ] Shrike
+## CUE file support
+
+- [ ] Set chapter source to ".cue" in Settings → Library
+- [ ] Load an M4B with a valid cue file in the same folder
+- [ ] Verify chapter list shows cue titles (including any extra entries like "Opening Credits", "PART I")
+- [ ] Verify chapter label updates correctly on playback and seek
+- [ ] Verify chapter list clicks navigate to correct position
+- [ ] Verify Prev/Next navigate correctly using cue chapters
+- [ ] Verify chapter slider stays within correct chapter boundaries
+- [ ] Verify notches on progress slider correspond to cue chapters
+- [ ] Set chapter source back to "Embedded" — verify embedded chapters restore correctly
+- [ ] Test with cue file containing BOM (Windows ripper output)
+- [ ] Test with cue file where FILE stem doesn't match audio file — verify silent fallback to embedded
+- [ ] Test with cue file where first timestamp is not 0:00:00 — verify rejection and fallback
+- [ ] Test with non-monotonic timestamps — verify rejection and fallback
+- [ ] Test with timestamp beyond file duration — verify rejection and fallback
+- [ ] Test with only one TRACK entry — verify rejection and fallback
+- [ ] Test with multiple cue files in folder — verify correct file selected by stem match, fallback if no match
+- [ ] Verify app start restores to correct chapter with cue active
+- [ ] Verify Undo after Next shows correctly with cue active
+
 - [ ] Sitting in the Wing Chair
 - [ ] Slow Regard
 - [ ] Symir

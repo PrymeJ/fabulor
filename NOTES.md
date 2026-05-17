@@ -1,4 +1,22 @@
 
+## CUE file support — architectural notes (2026-05-16)
+
+- `_chapter_list` being non-`None` is the flag for cue mode. No separate `_cue_mode` boolean needed — the `chapter_list` property already abstracts over VT/cue/native.
+- `_on_chapter_change` must be suppressed when `_chapter_list` is populated — mpv's native chapter index has no relationship to cue chapter index and will cause offset errors.
+- All chapter navigation must use position-based walks against `_chapter_list` when populated — never `self.chapter` directly.
+- `_virtual_timeline` stays `None` for cue books — do not set it, VT file-switching machinery must not activate.
+- CUE files from Windows rippers (EAC, dBpoweramp) almost always have a UTF-8 BOM — read with `utf-8-sig`, not `utf-8`.
+
+## Player.terminate() must call wait_for_shutdown() (2026-05-16)
+
+Without it, libmpv's internal threads outlive Qt's cleanup, causing a crash in `avformat_close_input`. Was masked for an unknown period by a debug print keeping the thread alive. Easy to regress — do not simplify the teardown sequence.
+
+## Chapter boundary epsilon — named constant (2026-05-16)
+
+`_CHAPTER_BOUNDARY_EPSILON = 0.35` appears in chapter walk, restore, and all boundary seeks. It compensates for mpv's "don't miss a frame" bias (undershoots boundaries by ~23ms) and for float drift in mpv's internal chapter boundary representation. Moving it to write time at save was considered and rejected — the saved position itself can already be on the wrong side of mpv's boundary. The epsilon must live at seek time.
+
+---
+
 ## Multi-file MP3 virtual timeline — RESOLVED (2026-05-15)
 
 **Problem:** Multi-file MP3 folders (N .mp3 files per book) could not be seeked globally, navigated by chapter, or advanced naturally across files. Two earlier implementations were reverted — concat:// blocked on backward seeks; partial VT without signal separation caused quadruple-advance feedback loops.

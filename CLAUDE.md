@@ -39,6 +39,18 @@ display on every book switch — `_load_cover_art` owns `metadata_label` visibil
 call was fighting it. If you think metadata visibility needs to be controlled at the
 `apply_library_state` call site, stop and explain why before touching it.
 
+### DO NOT use `self.chapter = idx` for chapter navigation anywhere
+Always use `seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)` with a position-based walk of `chapter_list`. Native mpv chapter assignment undershoots boundaries and causes drift. This applies in `chapter_list.py`, `player.py`, and anywhere else chapter navigation is triggered. The only exception is embedded M4B chapter list clicks where `_chapter_list is None` and `_virtual_timeline is None` — that path still uses `self.chapter = idx` because mpv owns the chapter boundaries natively.
+
+### DO NOT emit `chapter_changed` from `_on_chapter_change` when `_is_seeking` or `_chapter_list is not None`
+The `_is_seeking` guard prevents mpv's async native observer from racing with `seek_async`'s immediate emit and overwriting the correct chapter with a stale value. The `_chapter_list is not None` guard prevents cue-mode corruption — mpv's native chapter index has no relationship to cue chapter index. Both guards are load-bearing; removing either causes visible chapter label errors.
+
+### DO NOT set `_virtual_timeline` for CUE books
+CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_timeline` remaining `None`. Setting `_virtual_timeline` would activate VT file-switching machinery on a single-file book.
+
+### DO NOT simplify `Player.terminate()`
+It must store the instance reference, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. This was masked for an unknown period by a debug print. The sequence is intentional — do not reorder or remove steps.
+
 ---
 
 ## Tech Stack
@@ -70,6 +82,12 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 
 ### Player
 - Single-file M4B playback with embedded chapter markers
+- CUE file chapter support for single-file M4B/M4A books
+  - Global setting in Settings → Library: "Embedded" (default) | ".cue"
+  - `_resolve_playlist()` detects `.cue` in folder, calls `_parse_cue()` on worker thread
+  - `_parse_cue()` validates: FILE stem match, first timestamp = 0.0, strictly increasing, all within file duration (from DB). Reads with `utf-8-sig` to handle Windows ripper BOM.
+  - On success: `_chapter_list` populated, `_virtual_timeline` stays `None`. On failure: silent fallback to embedded.
+  - `_chapter_list` being non-`None` is the cue-mode flag — no separate boolean needed.
 - Multi-file MP3/M4A/FLAC book support via Virtual Timeline (VT)
   - `_resolve_playlist()` in player.py, run on a QThreadPool worker (async)
   - Reads `book_files` DB table (populated at scan time) to build `_virtual_timeline`, plays the first file directly. If `book_files` is empty (no audio files found), falls back to playing the folder path as-is.
@@ -79,8 +97,11 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - Signals: `book_ready`, `file_switched` (do not reconnect `file_loaded` to `_on_file_ready`)
 - Property caching: `time_pos`, `duration`, `pause`, `speed` cached via observe_property
 - Async seeking: `Player.seek_async(pos)` uses `command_async('seek', pos, 'absolute+exact')`
-  - All UI-driven seeks (slider, chapter, right-click, undo, VT cross-file) use `seek_async`
-  - Smart rewind, skip buttons, chapter nav, position restore remain on sync `time_pos =` path
+  - All UI-driven seeks (slider, chapter, right-click, undo, VT cross-file, chapter nav) use `seek_async`
+  - Smart rewind, skip buttons, position restore remain on sync `time_pos =` path
+  - Chapter navigation always uses position-based walk + `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)` — never `self.chapter = idx`
+- `_CHAPTER_BOUNDARY_EPSILON = 0.35` — compensates for mpv's ~23ms undershoot at chapter boundaries and float drift in mpv's internal boundary representation. Lives at seek time, not save time.
+- Chapter changed signal path: `seek_async` emits `chapter_changed` immediately on seek (optimistic, for paused case). `_on_time_pos_change` has VT and non-VT walk blocks for natural playback transitions. `_on_chapter_change` (mpv native) suppressed when `_is_seeking` or `_chapter_list is not None`.
 - Per-book speed memory, global speed default, volume control
 - Smart rewind on resume
 - Undo (one level, position-at-jump stored, triggered if distance > 60s × speed)
@@ -157,8 +178,9 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - `_SNAPBACK_FADE_MS = 200`, `_THEME_SWITCH_FADE_MS = 750`, `_PANEL_ANIM_GUARD_MS = 700` at top of theme_manager.py
 
 ### Settings Panel
-- Themes tab, Controls tab, Audio tab (WAL + other DB settings)
+- Themes tab, Controls tab, Audio tab (WAL + other DB settings), Library tab
 - Controls tab: chapter digit mode (by_name/by_index), auto-play/jump-only toggle
+- Library tab: naming pattern, folder management, chapter source (Embedded / .cue)
 
 ### Session Recording
 - DB: `listening_sessions`, `book_events` tables. WAL mode. Composite index on `(book_path, session_start)`.
@@ -172,6 +194,18 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 
 ### DO NOT use `self.player.chapter` for chapter display
 Always derive chapter by walking `self.player.chapter_list`, finding last entry where `time <= pos + 0.35`. mpv updates chapter property asynchronously.
+
+### DO NOT use `self.chapter = idx` for chapter navigation
+Always use `seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)` with a position-based walk. Exception: embedded M4B chapter list clicks where `_chapter_list is None` and `_virtual_timeline is None`.
+
+### DO NOT emit `chapter_changed` from `_on_chapter_change` when `_is_seeking` or `_chapter_list is not None`
+`_is_seeking` guard prevents race with `seek_async` emit. `_chapter_list is not None` guard prevents cue-mode index corruption. Both are load-bearing.
+
+### DO NOT set `_virtual_timeline` for CUE books
+CUE mode = `_chapter_list is not None` and `_virtual_timeline is None`. Setting `_virtual_timeline` activates VT file-switching on a single-file book.
+
+### DO NOT simplify `Player.terminate()`
+Must store instance, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv threads crash in `avformat_close_input`.
 
 ### DO NOT connect `_on_file_ready` to `file_loaded`
 Must only connect to `book_ready`. `file_loaded` fires on every mpv file load including VT mid-book switches; causes quadruple-advance feedback loop.
@@ -258,4 +292,4 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 
 ---
 
-*Last updated: 2026-05-15*
+*Last updated: 2026-05-17*

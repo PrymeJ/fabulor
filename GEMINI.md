@@ -491,4 +491,16 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ---
 
-*Last updated: 2026-04-30 — chapter list overlay rewrite complete; Controls tab implemented.*
+## DO NOT use `self.player.chapter = idx` for chapter navigation anywhere. Always use `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)` with a position-based chapter walk. Native mpv chapter assignment undershoots boundaries and causes drift — this was the root cause of multiple navigation bugs.
+
+## DO NOT read `self.chapter` (mpv's native property) to determine the current chapter index in any navigation or display path. Always walk `chapter_list` against `time_pos + _CHAPTER_BOUNDARY_EPSILON`.
+
+## DO NOT emit `chapter_changed` from `_on_chapter_change` when `_is_seeking` is `True` or when `_chapter_list` is not `None` (cue mode). The `_is_seeking` guard prevents the native mpv observer from racing with `seek_async`'s immediate emit and overwriting the correct chapter index with a stale value — this caused visible label errors on every chapter seek. The `_chapter_list` guard prevents cue-mode corruption — mpv's native chapter index has no relationship to cue chapter index. Both conditions are checked together; removing either breaks chapter navigation.
+
+## DO NOT set `_virtual_timeline` for CUE books. CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_timeline` remaining `None`. Setting `_virtual_timeline` would activate VT file-switching machinery on a single-file book.
+
+## DO NOT simplify `Player.terminate()` — it must call `wait_for_shutdown()` after `terminate()` to prevent a libmpv teardown crash in `avformat_close_input`. The crash was masked for an unknown period by a debug print and is easy to reintroduce.
+
+---
+
+*Last updated: 2026-05-17 — CUE file support, chapter boundary fixes, teardown crash fix, `_on_chapter_change` guard.*
