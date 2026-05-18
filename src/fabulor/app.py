@@ -1987,7 +1987,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
-        print(f"[label_update] index={index}")
         if not self.player:
             return
         
