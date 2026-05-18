@@ -1217,6 +1217,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
         self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
+        self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
@@ -1255,6 +1256,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_chapter_title_text(self, text):
         """Update the scrolling label text."""
         self.current_chapter_label.setText(text)
+
+    def _on_book_detail_removed(self) -> None:
+        path = self.book_detail_panel._book_path
+        self.panel_manager._close_book_detail_flow()
+        self.library_panel.refresh(force=True)
+        if path == self.current_file:
+            self._on_book_removed()
 
     def _on_book_removed(self):
         """Helper for controller when the currently playing folder is removed from library."""

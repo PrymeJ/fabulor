@@ -16,7 +16,7 @@ from .flow_layout import FlowLayout
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
 
-def _load_svg_icon(svg_path: str, color: str, size: int) -> QPixmap:
+def _load_svg_icon(svg_path: str, color: str, size: int, opacity: float = 1.0) -> QPixmap:
     from PySide6.QtSvg import QSvgRenderer
     with open(svg_path, "r") as f:
         svg_data = f.read().replace('stroke="#000000"', f'stroke="{color}"')
@@ -24,6 +24,8 @@ def _load_svg_icon(svg_path: str, color: str, size: int) -> QPixmap:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
+    if opacity < 1.0:
+        painter.setOpacity(opacity)
     renderer.render(painter)
     painter.end()
     return pixmap
@@ -90,6 +92,7 @@ class BookDetailPanel(QWidget):
         self._theme: dict = {}
         self._duration_show_adjusted: bool = False
         self._editing: bool = False
+        self._confirming_remove: bool = False
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -152,20 +155,28 @@ class BookDetailPanel(QWidget):
         self._save_label.clicked.connect(self._on_inline_save)
         self._save_label.setVisible(False)
 
+        self._confirm_remove_label = _ClickableLabel("Click to remove from the library")
+        self._confirm_remove_label.setObjectName("book_detail_confirm_remove")
+        self._confirm_remove_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._confirm_remove_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._confirm_remove_label.clicked.connect(self._on_confirm_remove)
+        self._confirm_remove_label.setVisible(False)
+
         self._remove_btn = QToolButton()
         self._remove_btn.setObjectName("remove_book_btn")
         self._remove_btn.setToolTip("")
-        self._remove_btn.setFixedSize(22, 22)
+        self._remove_btn.setFixedSize(24, 24)
         self._remove_btn.clicked.connect(self._on_remove_clicked)
         self._remove_btn.installEventFilter(self)
-        self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
+        self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -3px; padding-right: -3px;}")
 
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
-        dur_save_row.setSpacing(0)
+        dur_save_row.setSpacing(4)
         dur_save_row.addWidget(self._duration_label)
         dur_save_row.addStretch()
         dur_save_row.addWidget(self._save_label)
+        dur_save_row.addWidget(self._confirm_remove_label)
 
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
@@ -480,6 +491,8 @@ class BookDetailPanel(QWidget):
 
         self._cover_panel.load_book(self._book_path)
         self._refresh_stats()
+        excluded = self.db.is_book_excluded(self._book_path)
+        self._remove_btn.setVisible(not excluded)
 
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
@@ -525,6 +538,7 @@ class BookDetailPanel(QWidget):
         QApplication.instance().removeEventFilter(self)
         if self._editing:
             self._exit_edit_mode(save=False)
+        self._cancel_remove()
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
@@ -535,7 +549,7 @@ class BookDetailPanel(QWidget):
                 self._update_remove_btn_icon(hover=False)
             return False
 
-        if self._editing and event.type() == QEvent.Type.MouseButtonPress:
+        if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()
 
@@ -545,11 +559,18 @@ class BookDetailPanel(QWidget):
                     w.mapToGlobal(w.rect().bottomRight())
                 ).contains(gpos)
 
-            safe = (self._title_label, self._author_label,
-                    self._narrator_label, self._year_label, self._save_label,
-                    self._close_btn)
-            if not any(hits(w) for w in safe):
-                self._exit_edit_mode(save=False)
+            if self._confirming_remove:
+                confirm_safe = (self._confirm_remove_label, self._remove_btn)
+                if not any(hits(w) for w in confirm_safe):
+                    self._cancel_remove()
+
+            if self._editing:
+                safe = (self._title_label, self._author_label,
+                        self._narrator_label, self._year_label, self._save_label,
+                        self._close_btn)
+                if not any(hits(w) for w in safe):
+                    self._exit_edit_mode(save=False)
+
         return super().eventFilter(obj, event)
 
     def _on_tab_changed(self):
@@ -631,6 +652,7 @@ class BookDetailPanel(QWidget):
     def _on_close_clicked(self):
         if self._editing:
             self._exit_edit_mode(save=False)
+        self._cancel_remove()
         self.close_requested.emit()
 
     def _refresh_stats(self):
@@ -776,8 +798,13 @@ class BookDetailPanel(QWidget):
         """)
 
     def _update_remove_btn_icon(self, hover: bool = False) -> None:
-        color = "#cc3333" if hover else self._theme.get("accent", self._theme.get("text", "#888888"))
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21)
+        if hover:
+            color = "#cc3333"
+            opacity = 1.0
+        else:
+            color = self._theme.get("accent", "#888888")
+            opacity = 0.60
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21, opacity)
         self._remove_btn.setIcon(QIcon(pixmap))
         self._remove_btn.setContentsMargins(4, 0, 0, 0)
         self._remove_btn.setIconSize(QSize(21, 21))
@@ -785,18 +812,21 @@ class BookDetailPanel(QWidget):
 
 
     def _on_remove_clicked(self) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        title = self._book_data.get('title') or ''
-        reply = QMessageBox.question(
-            self,
-            "Remove from library",
-            f'Remove "{title}" from the library?\n\nYour listening history and progress will be preserved.',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
-            self.db.set_book_excluded(self._book_path, True)
-            self.book_removed.emit()
+        if self._confirming_remove:
+            return
+        self._confirming_remove = True
+        self._duration_label.setVisible(False)
+        self._confirm_remove_label.setVisible(True)
+
+    def _on_confirm_remove(self) -> None:
+        self.db.set_book_excluded(self._book_path, True)
+        self._cancel_remove()
+        self.book_removed.emit()
+
+    def _cancel_remove(self) -> None:
+        self._confirming_remove = False
+        self._confirm_remove_label.setVisible(False)
+        self._duration_label.setVisible(True)
 
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor

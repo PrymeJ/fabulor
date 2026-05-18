@@ -2923,12 +2923,20 @@ def get_stats_stylesheet(theme_name="default"):
         QLabel#book_detail_save_label {{
             color: {t['accent']};
         }}
+        QLabel#book_detail_confirm_remove {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 0px 0px;
+        }}
         QLineEdit#book_detail_title,
         QLineEdit#book_detail_author,
         QLineEdit#book_detail_narrator,
         QLineEdit#book_detail_year {{
             background: transparent;
             border: 1px solid transparent;
+            font-size: 14px;
             border-radius: 0px;
             padding: 0px;
             margin: 0px;

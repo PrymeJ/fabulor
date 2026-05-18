@@ -1010,6 +1010,13 @@ class LibraryDB:
                 [{"book_path": book_path, **f} for f in files]
             )
 
+    def is_book_excluded(self, path: str) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT is_excluded FROM books WHERE path = ?", (path,)
+            ).fetchone()
+            return bool(row and row[0])
+
     def set_book_excluded(self, path: str, excluded: bool) -> None:
         with self._get_conn() as conn:
             conn.execute(
