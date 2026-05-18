@@ -137,6 +137,10 @@ class LibraryDB:
                 conn.execute(
                     "ALTER TABLE books ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0"
                 )
+            if "is_excluded" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0"
+                )
 
             # Migrate: truncate tags over 25 chars
             conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
@@ -209,7 +213,8 @@ class LibraryDB:
                 progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
                 year=COALESCE(excluded.year, books.year),
-                is_deleted=0
+                is_deleted=0,
+                is_excluded=0
         """
         with self._get_conn() as conn:
             conn.execute(query, cleaned)
@@ -229,7 +234,8 @@ class LibraryDB:
                 progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
                 year=COALESCE(excluded.year, books.year),
-                is_deleted=0
+                is_deleted=0,
+                is_excluded=0
         """
         cleaned_list = [
             {k: (v.strip() if isinstance(v, str) else v) for k, v in {
@@ -265,7 +271,7 @@ class LibraryDB:
             raise ValueError(f"Invalid sort order: {order!r}")
         collate = " COLLATE NOCASE" if sort_by in self._TEXT_SORT_COLUMNS else ""
         with self._get_conn() as conn:
-            cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 ORDER BY {sort_by}{collate} {order}")
+            cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 AND is_excluded = 0 ORDER BY {sort_by}{collate} {order}")
             return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
     def get_book_count(self):
@@ -1002,6 +1008,13 @@ class LibraryDB:
                    (book_path, file_path, sort_order, duration_ms, cumulative_start_ms, title)
                    VALUES (:book_path, :file_path, :sort_order, :duration_ms, :cumulative_start_ms, :title)""",
                 [{"book_path": book_path, **f} for f in files]
+            )
+
+    def set_book_excluded(self, path: str, excluded: bool) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE books SET is_excluded = ? WHERE path = ?",
+                (1 if excluded else 0, path)
             )
 
     def get_book_files(self, book_path: str) -> list[dict]:

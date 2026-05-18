@@ -1,16 +1,32 @@
 # THEME_ANIM_TODO: BookDetailPanel, _ClickableLabel
 import os
 from datetime import datetime
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
-    QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter
+    QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property
-from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QByteArray, QSize
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon
 from PySide6.QtWidgets import QApplication
 
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
+
+_ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
+
+
+def _load_svg_icon(svg_path: str, color: str, size: int) -> QPixmap:
+    from PySide6.QtSvg import QSvgRenderer
+    with open(svg_path, "r") as f:
+        svg_data = f.read().replace('stroke="#000000"', f'stroke="{color}"')
+    renderer = QSvgRenderer(QByteArray(svg_data.encode()))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return pixmap
 
 
 class _ElidingLineEdit(QLineEdit):
@@ -63,6 +79,7 @@ class BookDetailPanel(QWidget):
     metadata_saved = Signal(int, str, str)  # book_id, title, author
     tags_changed = Signal()
     active_cover_changed = Signal(str)  # file_path of new active cover
+    book_removed = Signal()
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -135,6 +152,14 @@ class BookDetailPanel(QWidget):
         self._save_label.clicked.connect(self._on_inline_save)
         self._save_label.setVisible(False)
 
+        self._remove_btn = QToolButton()
+        self._remove_btn.setObjectName("remove_book_btn")
+        self._remove_btn.setToolTip("")
+        self._remove_btn.setFixedSize(22, 22)
+        self._remove_btn.clicked.connect(self._on_remove_clicked)
+        self._remove_btn.installEventFilter(self)
+        self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
+
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
         dur_save_row.setSpacing(0)
@@ -168,6 +193,7 @@ class BookDetailPanel(QWidget):
         right_col.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         right_col.addStretch()
+        right_col.addWidget(self._remove_btn, alignment=Qt.AlignmentFlag.AlignRight)
         header_layout.addLayout(right_col)
 
         layout.addWidget(header)
@@ -194,6 +220,7 @@ class BookDetailPanel(QWidget):
         self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs, stretch=1)
 
+        self._update_remove_btn_icon()
 
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
@@ -501,6 +528,13 @@ class BookDetailPanel(QWidget):
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
+        if obj is self._remove_btn:
+            if event.type() == QEvent.Type.Enter:
+                self._update_remove_btn_icon(hover=True)
+            elif event.type() == QEvent.Type.Leave:
+                self._update_remove_btn_icon(hover=False)
+            return False
+
         if self._editing and event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()
@@ -741,11 +775,35 @@ class BookDetailPanel(QWidget):
             }}
         """)
 
+    def _update_remove_btn_icon(self, hover: bool = False) -> None:
+        color = "#cc3333" if hover else self._theme.get("accent", self._theme.get("text", "#888888"))
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21)
+        self._remove_btn.setIcon(QIcon(pixmap))
+        self._remove_btn.setContentsMargins(4, 0, 0, 0)
+        self._remove_btn.setIconSize(QSize(21, 21))
+        
+
+
+    def _on_remove_clicked(self) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        title = self._book_data.get('title') or ''
+        reply = QMessageBox.question(
+            self,
+            "Remove from library",
+            f'Remove "{title}" from the library?\n\nYour listening history and progress will be preserved.',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.db.set_book_excluded(self._book_path, True)
+            self.book_removed.emit()
+
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor
         self._theme = theme
         self._apply_bar_colors()
         self._style_completer_popup()
+        self._update_remove_btn_icon()
         self._cover_panel.on_theme_changed(theme)
 
     @staticmethod
