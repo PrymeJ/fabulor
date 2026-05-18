@@ -419,9 +419,17 @@ Packaging is a separate problem solved per platform when needed:
 
 ## Handling the Books Removed from the Library
 
-When "Remove from Library" gets implemented alongside the library rewrite, deleted_books gets created at the same time, not retrofitted after. 
+**Implemented 2026-05-18 — approach differs from the original design below.**
 
-A deleted_books table will be populated on removal, storing path, title, author, cover_data (cover as BLOB, not path — paths become invalid). Cover data kept for N days or permanently, user preference. When a book is removed from library, a row goes in before the DELETE. Then get_finished_in_period, get_daily_book_breakdown, and all breakdown queries check deleted_books as a second LEFT JOIN fallback when books returns NULL.
+The `books` table now has two independent soft-delete flags:
+- `is_deleted INTEGER NOT NULL DEFAULT 0` — set by `remove_scan_location` when a monitored folder is removed.
+- `is_excluded INTEGER NOT NULL DEFAULT 0` — set by `set_book_excluded` when the user manually removes a book via the trash button in BookDetailPanel.
+
+Both are filtered by `get_all_books`. Stats queries intentionally see all rows regardless of either flag — history and progress are preserved permanently. Both flags reset to 0 on the next rescan (`upsert_book` ON CONFLICT block resets `is_deleted=0, is_excluded=0`), which resurfaces the book.
+
+The `deleted_books` table approach described below was designed before implementation and is now superseded. Do not implement it.
+
+~~When "Remove from Library" gets implemented alongside the library rewrite, deleted_books gets created at the same time, not retrofitted after. A deleted_books table will be populated on removal, storing path, title, author, cover_data (cover as BLOB, not path — paths become invalid). Cover data kept for N days or permanently, user preference. When a book is removed from library, a row goes in before the DELETE. Then get_finished_in_period, get_daily_book_breakdown, and all breakdown queries check deleted_books as a second LEFT JOIN fallback when books returns NULL.~~
 
 ## Known Edge Case
 

@@ -52,7 +52,10 @@ CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_
 It must store the instance reference, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. This was masked for an unknown period by a debug print. The sequence is intentional — do not reorder or remove steps.
 
 ### DO NOT hard-delete from the `books` table
-`remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
+`remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0 AND is_excluded = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
+
+### DO NOT conflate `is_deleted` and `is_excluded`
+They are two independent soft-delete flags on `books`. `is_deleted = 1` is set by `remove_scan_location` (location removed from scan list). `is_excluded = 1` is set by `set_book_excluded` (user explicitly removed a book via the trash button). Both reset to `0` in the `upsert_book`/`upsert_books_batch` ON CONFLICT blocks, so rescanning resurfaces either kind of removed book. Stats queries are intentionally unfenced by both flags — listening history and progress survive removal permanently.
 
 ### DO NOT pass `0.0` as `progress` to `upsert_book` or `upsert_books_batch`
 The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
@@ -242,6 +245,8 @@ Removed in 2026-05-11 — it was silently overriding cover display on every book
 - Screen drag 4K→1080p: cover scaling doesn't update without scroll (needs `QWindow.screenChanged`).
 - MP3 natural sort (2 before 10) — out of scope for v1.
 - Book detail panel background opacity — user wants it opaque eventually. Not in current scope.
+- **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Carry to next session.
+- **Metadata lock feature** — designed but not started. Schema: `is_metadata_locked INTEGER NOT NULL DEFAULT 0` on `books`. UI: lock icon in BookDetailPanel header toggling lock state. Upsert change: skip title/author/narrator/year update in ON CONFLICT block when `books.is_metadata_locked = 1` (CASE expression). Protects manually edited metadata from being overwritten by a rescan.
 - **VT open issues (multi-file MP3):**
   - Sessions not recorded correctly across VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions.
   - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.
@@ -301,4 +306,4 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 
 ---
 
-*Last updated: 2026-05-17*
+*Last updated: 2026-05-18 — is_excluded schema, trash button, inline confirmation, book_removed wiring, metadata lock design (deferred).*
