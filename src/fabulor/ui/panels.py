@@ -215,9 +215,7 @@ class PanelManager:
         self._pending_panel_open = None
 
     def _close_library_flow(self):
-        print(f"[close_library_flow] state={self.library_panel_animation.state()}")
         if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
-            print("[close_library_flow] already running — skipping")
             return
         panel_w = self.library_panel.width()
         sidebar_y = 32
@@ -230,7 +228,6 @@ class PanelManager:
         self.library_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.finished.connect(self._on_library_hidden)
         self.library_panel_animation.start()
-        print("[close_library_flow] animation started")
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -238,7 +235,6 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_hidden(self):
-        print("[on_library_hidden] fired")
         try:
             self.library_panel_animation.finished.disconnect(self._on_library_hidden)
         except RuntimeError:
