@@ -1,5 +1,6 @@
 # THEME_ANIM_TODO: BookDetailPanel, _ClickableLabel
 import os
+import functools
 from datetime import datetime
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -9,15 +10,15 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QByteArray, QSize
 from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon
 from PySide6.QtWidgets import QApplication
+from PySide6.QtSvg import QSvgRenderer
 
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
-
+@functools.lru_cache(maxsize=32)
 def _load_svg_icon(svg_path: str, color: str, size: int, opacity: float = 1.0) -> QPixmap:
-    from PySide6.QtSvg import QSvgRenderer
     with open(svg_path, "r") as f:
         svg_data = f.read().replace('stroke="#000000"', f'stroke="{color}"')
     renderer = QSvgRenderer(QByteArray(svg_data.encode()))
