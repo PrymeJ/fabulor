@@ -2999,7 +2999,7 @@ def get_stats_stylesheet(theme_name="default"):
             background-color: {t['accent']};
             color: {t['text']};
         }}
-        QToolButton#metadata_lock_btn {{
+        QToolButton#metadata_action_btn {{
             background: transparent;
             border: none;
             padding: 0px;

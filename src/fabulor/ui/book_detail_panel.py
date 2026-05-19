@@ -3,6 +3,7 @@ import os
 import functools
 from datetime import datetime
 from pathlib import Path
+from enum import Enum, auto
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
@@ -16,6 +17,13 @@ from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
+
+
+class _MetaActionState(Enum):
+    HIDDEN = auto()
+    DIRTY = auto()
+    LOCKED = auto()
+    UNLOCKED = auto()
 
 @functools.lru_cache(maxsize=32)
 def _load_svg_icon(svg_path: str, color: str, size: int, opacity: float = 1.0) -> QPixmap:
@@ -96,6 +104,8 @@ class BookDetailPanel(QWidget):
         self._editing: bool = False
         self._is_archived: bool = False
         self._confirming_remove: bool = False
+        self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
+        self._unlock_timer: QTimer | None = None
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -151,13 +161,6 @@ class BookDetailPanel(QWidget):
         self._duration_label.clicked.connect(self._toggle_duration)
         self._duration_label.setContentsMargins(3, 0, 0, 0)
 
-        self._save_label = _ClickableLabel("Save")
-        self._save_label.setObjectName("book_detail_save_label")
-        self._save_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._save_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_label.clicked.connect(self._on_inline_save)
-        self._save_label.setVisible(False)
-
         self._confirm_remove_label = _ClickableLabel("Click to remove from the library")
         self._confirm_remove_label.setObjectName("book_detail_confirm_remove")
         self._confirm_remove_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -173,38 +176,26 @@ class BookDetailPanel(QWidget):
         self._remove_btn.installEventFilter(self)
         self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -3px; padding-right: -3px;}")
 
-        # This needs to be defined before _lock_btn, as _lock_btn's eventFilter
-        # might be triggered and try to access _remove_btn.
-        # The _lock_btn is then added to year_row, which is added to meta_block.
-        # The _remove_btn is added to right_col, which is added to header_layout.
-        # The order of adding to layouts does not affect attribute existence.
+        self._meta_action_btn = QToolButton()
+        self._meta_action_btn.setObjectName("metadata_action_btn")
+        self._meta_action_btn.setFixedSize(24, 24)
+        self._meta_action_btn.setVisible(False)
+        self._meta_action_btn.clicked.connect(self._on_meta_action_clicked)
+        self._meta_action_btn.installEventFilter(self)
+        self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
 
-        self._lock_btn = QToolButton()
-        self._lock_btn.setObjectName("metadata_lock_btn")
-        self._lock_btn.setFixedSize(20, 20)
-        self._lock_btn.setVisible(False)
-        self._lock_btn.clicked.connect(self._on_unlock_clicked)
-        self._lock_btn.installEventFilter(self)
-        self._lock_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
-
-        year_row = QHBoxLayout()
-        year_row.setContentsMargins(0, 0, 0, 0)
-        year_row.setSpacing(0)
-        year_row.addWidget(self._year_label)
-        year_row.addStretch()
-        year_row.addWidget(self._lock_btn)
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
         dur_save_row.setSpacing(4)
         dur_save_row.addWidget(self._duration_label)
         dur_save_row.addStretch()
-        dur_save_row.addWidget(self._save_label)
+        dur_save_row.addWidget(self._meta_action_btn)
         dur_save_row.addWidget(self._confirm_remove_label)
 
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
         meta_block.addWidget(self._narrator_label)
-        meta_block.addLayout(year_row)
+        meta_block.addWidget(self._year_label)
         meta_block.addLayout(dur_save_row)
         meta_block.addStretch()
 
@@ -517,7 +508,13 @@ class BookDetailPanel(QWidget):
         excluded = self.db.is_book_excluded(self._book_path)
         self._remove_btn.setVisible(not excluded)
         self._locks = self.db.get_metadata_locks(self._book_path)
-        self._update_lock_icon()
+        self._is_archived = excluded
+        if self._is_archived:
+            self._set_meta_state(_MetaActionState.HIDDEN)
+        elif any(self._locks.values()):
+            self._set_meta_state(_MetaActionState.LOCKED)
+        else:
+            self._set_meta_state(_MetaActionState.HIDDEN)
 
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
@@ -558,25 +555,50 @@ class BookDetailPanel(QWidget):
             Qt.ArrowCursor if is_1x else Qt.PointingHandCursor
         )
 
-    def _update_lock_icon(self, hover: bool = False):
-        is_locked = any(self._locks.values())
-        show = is_locked and not self._is_archived
-        self._lock_btn.setVisible(show)
-        if not show:
-            return
+    def _set_meta_state(self, state: _MetaActionState):
+        """Transitions to the given state and updates button appearance."""
+        if self._unlock_timer is not None:
+            self._unlock_timer.stop()
+            self._unlock_timer = None
 
-        color = self._theme.get("accent", "#888888")
-        opacity = 1.0 if hover else 0.60
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, opacity)
-        self._lock_btn.setIcon(QIcon(pixmap))
-        self._lock_btn.setIconSize(QSize(16, 16))
+        self._meta_state = state
 
-    def _on_unlock_clicked(self):
-        """Clears all metadata locks for the current book."""
-        for key in self._locks:
-            self._locks[key] = False
-        self.db.set_metadata_locks(self._book_path, **self._locks)
-        self._update_lock_icon()
+        if state == _MetaActionState.HIDDEN:
+            self._meta_action_btn.setVisible(False)
+            self._meta_action_btn.setIcon(QIcon())
+        elif state == _MetaActionState.DIRTY:
+            self._meta_action_btn.setVisible(True)
+            color = self._theme.get("accent", "#888888")
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, 0.6)
+            self._meta_action_btn.setIcon(QIcon(pixmap))
+            self._meta_action_btn.setIconSize(QSize(16, 16))
+        elif state == _MetaActionState.LOCKED:
+            self._meta_action_btn.setVisible(True)
+            color = self._theme.get("accent", "#888888")
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, 0.6)
+            self._meta_action_btn.setIcon(QIcon(pixmap))
+            self._meta_action_btn.setIconSize(QSize(16, 16))
+        elif state == _MetaActionState.UNLOCKED:
+            self._meta_action_btn.setVisible(True)
+            color = self._theme.get("accent", "#888888")
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, 0.6)
+            self._meta_action_btn.setIcon(QIcon(pixmap))
+            self._meta_action_btn.setIconSize(QSize(16, 16))
+            self._unlock_timer = QTimer()
+            self._unlock_timer.setSingleShot(True)
+            self._unlock_timer.setInterval(2500)
+            self._unlock_timer.timeout.connect(lambda: self._set_meta_state(_MetaActionState.HIDDEN))
+            self._unlock_timer.start()
+
+    def _on_meta_action_clicked(self):
+        """Handles metadata action button click based on current state."""
+        if self._meta_state == _MetaActionState.DIRTY:
+            self._on_inline_save()
+        elif self._meta_state == _MetaActionState.LOCKED:
+            for key in self._locks:
+                self._locks[key] = False
+            self.db.set_metadata_locks(self._book_path, **self._locks)
+            self._set_meta_state(_MetaActionState.UNLOCKED)
 
     def _toggle_duration(self):
         duration = self._book_data.get('duration') or 0.0
@@ -608,11 +630,11 @@ class BookDetailPanel(QWidget):
                 self._update_remove_btn_icon(hover=False)
             return False
 
-        if obj is self._lock_btn:
+        if obj is self._meta_action_btn:
             if event.type() == QEvent.Type.Enter:
-                self._update_lock_icon(hover=True)
+                self._on_meta_action_hover(hover=True)
             elif event.type() == QEvent.Type.Leave:
-                self._update_lock_icon(hover=False)
+                self._on_meta_action_hover(hover=False)
             return False
 
         if event.type() == QEvent.Type.MouseButtonPress:
@@ -664,6 +686,22 @@ class BookDetailPanel(QWidget):
         self._save_label.setVisible(False)
         self._title_label.setFocus()
 
+    def _on_meta_action_hover(self, hover: bool):
+        """Updates button opacity on hover."""
+        if self._meta_state == _MetaActionState.HIDDEN:
+            return
+        color = self._theme.get("accent", "#888888")
+        opacity = 1.0 if hover else 0.6
+        if self._meta_state == _MetaActionState.DIRTY:
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, opacity)
+        elif self._meta_state == _MetaActionState.LOCKED:
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, opacity)
+        elif self._meta_state == _MetaActionState.UNLOCKED:
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, opacity)
+        else:
+            return
+        self._meta_action_btn.setIcon(QIcon(pixmap))
+
     def _check_dirty(self):
         if not self._editing:
             return
@@ -674,9 +712,12 @@ class BookDetailPanel(QWidget):
             self._year_label.text()     != self._orig_year
         )
         if dirty:
-            self._save_label.setText("Save")
-            self._save_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_label.setVisible(dirty)
+            self._set_meta_state(_MetaActionState.DIRTY)
+        else:
+            if any(self._locks.values()):
+                self._set_meta_state(_MetaActionState.LOCKED)
+            else:
+                self._set_meta_state(_MetaActionState.HIDDEN)
 
     def _exit_edit_mode(self, save: bool):
         if not self._editing:
@@ -689,7 +730,6 @@ class BookDetailPanel(QWidget):
             self._commit_inline_save()
         else:
             self._sync_header_from_fields()
-            self._save_label.setVisible(False)
         narrator = self._book_data.get('narrator', '')
         year = self._book_data.get('year')
         self._narrator_label.setVisible(bool(narrator))
@@ -716,12 +756,11 @@ class BookDetailPanel(QWidget):
                 'narrator': narrator, 'year': int(year_str) if year_str.isdigit() else None
             })
             self.metadata_saved.emit(self._book_data.get('id'), title, author)
-            self._update_lock_icon()
+            if any(self._locks.values()):
+                self._set_meta_state(_MetaActionState.LOCKED)
+            else:
+                self._set_meta_state(_MetaActionState.HIDDEN)
         self._sync_header_from_fields()
-        self._save_label.setText("Saved")
-        self._save_label.setCursor(Qt.CursorShape.ArrowCursor)
-        self._save_label.setVisible(True)
-        QTimer.singleShot(1000, lambda: self._save_label.setVisible(False))
 
     def _on_close_clicked(self):
         if self._editing:
@@ -908,7 +947,7 @@ class BookDetailPanel(QWidget):
         self._apply_bar_colors()
         self._style_completer_popup()
         self._update_remove_btn_icon()
-        self._update_lock_icon()
+        self._set_meta_state(self._meta_state)
         self._cover_panel.on_theme_changed(theme)
 
     @staticmethod
