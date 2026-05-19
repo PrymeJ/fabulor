@@ -188,7 +188,7 @@ class BookDetailPanel(QWidget):
         self._meta_action_btn.setVisible(False)
         self._meta_action_btn.clicked.connect(self._on_meta_action_clicked)
         self._meta_action_btn.installEventFilter(self)
-        self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
+        self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -4px; padding-right: -4px; margin-bottom: -4px; padding-bottom: -4px;}")
 
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
