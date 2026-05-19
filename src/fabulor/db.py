@@ -141,6 +141,22 @@ class LibraryDB:
                 conn.execute(
                     "ALTER TABLE books ADD COLUMN is_excluded INTEGER NOT NULL DEFAULT 0"
                 )
+            if "title_locked" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0"
+                )
+            if "author_locked" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN author_locked INTEGER NOT NULL DEFAULT 0"
+                )
+            if "narrator_locked" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN narrator_locked INTEGER NOT NULL DEFAULT 0"
+                )
+            if "year_locked" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN year_locked INTEGER NOT NULL DEFAULT 0"
+                )
 
             # Migrate: truncate tags over 25 chars
             conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
@@ -278,6 +294,32 @@ class LibraryDB:
         """Returns the total number of books in the library."""
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
+
+    def set_metadata_locks(self, book_path: str, title: bool, author: bool, narrator: bool, year: bool) -> None:
+        """Updates all four metadata lock columns for the given book path."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """UPDATE books 
+                SET title_locked=?, author_locked=?, narrator_locked=?, year_locked=? 
+                WHERE path=?""",
+                (int(title), int(author), int(narrator), int(year), book_path)
+            )
+
+    def get_metadata_locks(self, book_path: str) -> dict:
+        """Returns current lock states for a book. Defaults to all False if not found."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT title_locked, author_locked, narrator_locked, year_locked FROM books WHERE path=?",
+                (book_path,)
+            ).fetchone()
+            if row:
+                return {
+                    'title': bool(row['title_locked']),
+                    'author': bool(row['author_locked']),
+                    'narrator': bool(row['narrator_locked']),
+                    'year': bool(row['year_locked'])
+                }
+            return {'title': False, 'author': False, 'narrator': False, 'year': False}
 
     def update_last_played(self, path):
         """Updates the last_played timestamp to the current time."""

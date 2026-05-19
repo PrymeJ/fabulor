@@ -91,8 +91,10 @@ class BookDetailPanel(QWidget):
         self._book_path: str | None = None
         self._book_data: dict = {}
         self._theme: dict = {}
+        self._locks: dict = {'title': False, 'author': False, 'narrator': False, 'year': False}
         self._duration_show_adjusted: bool = False
         self._editing: bool = False
+        self._is_archived: bool = False
         self._confirming_remove: bool = False
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -171,6 +173,26 @@ class BookDetailPanel(QWidget):
         self._remove_btn.installEventFilter(self)
         self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -3px; padding-right: -3px;}")
 
+        # This needs to be defined before _lock_btn, as _lock_btn's eventFilter
+        # might be triggered and try to access _remove_btn.
+        # The _lock_btn is then added to year_row, which is added to meta_block.
+        # The _remove_btn is added to right_col, which is added to header_layout.
+        # The order of adding to layouts does not affect attribute existence.
+
+        self._lock_btn = QToolButton()
+        self._lock_btn.setObjectName("metadata_lock_btn")
+        self._lock_btn.setFixedSize(20, 20)
+        self._lock_btn.setVisible(False)
+        self._lock_btn.clicked.connect(self._on_unlock_clicked)
+        self._lock_btn.installEventFilter(self)
+        self._lock_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
+
+        year_row = QHBoxLayout()
+        year_row.setContentsMargins(0, 0, 0, 0)
+        year_row.setSpacing(0)
+        year_row.addWidget(self._year_label)
+        year_row.addStretch()
+        year_row.addWidget(self._lock_btn)
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
         dur_save_row.setSpacing(4)
@@ -182,7 +204,7 @@ class BookDetailPanel(QWidget):
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
         meta_block.addWidget(self._narrator_label)
-        meta_block.addWidget(self._year_label)
+        meta_block.addLayout(year_row)
         meta_block.addLayout(dur_save_row)
         meta_block.addStretch()
 
@@ -494,6 +516,8 @@ class BookDetailPanel(QWidget):
         self._refresh_stats()
         excluded = self.db.is_book_excluded(self._book_path)
         self._remove_btn.setVisible(not excluded)
+        self._locks = self.db.get_metadata_locks(self._book_path)
+        self._update_lock_icon()
 
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
@@ -534,6 +558,26 @@ class BookDetailPanel(QWidget):
             Qt.ArrowCursor if is_1x else Qt.PointingHandCursor
         )
 
+    def _update_lock_icon(self, hover: bool = False):
+        is_locked = any(self._locks.values())
+        show = is_locked and not self._is_archived
+        self._lock_btn.setVisible(show)
+        if not show:
+            return
+
+        color = self._theme.get("accent", "#888888")
+        opacity = 1.0 if hover else 0.60
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, opacity)
+        self._lock_btn.setIcon(QIcon(pixmap))
+        self._lock_btn.setIconSize(QSize(16, 16))
+
+    def _on_unlock_clicked(self):
+        """Clears all metadata locks for the current book."""
+        for key in self._locks:
+            self._locks[key] = False
+        self.db.set_metadata_locks(self._book_path, **self._locks)
+        self._update_lock_icon()
+
     def _toggle_duration(self):
         duration = self._book_data.get('duration') or 0.0
         speed = self.config.get_book_speed(self._book_path)
@@ -562,6 +606,13 @@ class BookDetailPanel(QWidget):
                 self._update_remove_btn_icon(hover=True)
             elif event.type() == QEvent.Type.Leave:
                 self._update_remove_btn_icon(hover=False)
+            return False
+
+        if obj is self._lock_btn:
+            if event.type() == QEvent.Type.Enter:
+                self._update_lock_icon(hover=True)
+            elif event.type() == QEvent.Type.Leave:
+                self._update_lock_icon(hover=False)
             return False
 
         if event.type() == QEvent.Type.MouseButtonPress:
@@ -651,13 +702,21 @@ class BookDetailPanel(QWidget):
         title    = self._title_label.text().strip()
         author   = self._author_label.text().strip()
         narrator = self._narrator_label.text().strip()
-        year     = self._year_label.text().strip()
-        if self.db.update_book_metadata(self._book_path, title, author, narrator, year):
+        year_str = self._year_label.text().strip()
+
+        if title != self._orig_title: self._locks['title'] = True
+        if author != self._orig_author: self._locks['author'] = True
+        if narrator != self._orig_narrator: self._locks['narrator'] = True
+        if year_str != self._orig_year: self._locks['year'] = True
+
+        if self.db.update_book_metadata(self._book_path, title, author, narrator, year_str):
+            self.db.set_metadata_locks(self._book_path, **self._locks)
             self._book_data.update({
                 'title': title, 'author': author,
-                'narrator': narrator, 'year': year
+                'narrator': narrator, 'year': int(year_str) if year_str.isdigit() else None
             })
             self.metadata_saved.emit(self._book_data.get('id'), title, author)
+            self._update_lock_icon()
         self._sync_header_from_fields()
         self._save_label.setText("Saved")
         self._save_label.setCursor(Qt.CursorShape.ArrowCursor)
@@ -849,6 +908,7 @@ class BookDetailPanel(QWidget):
         self._apply_bar_colors()
         self._style_completer_popup()
         self._update_remove_btn_icon()
+        self._update_lock_icon()
         self._cover_panel.on_theme_changed(theme)
 
     @staticmethod
