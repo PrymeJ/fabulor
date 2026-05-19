@@ -28,7 +28,12 @@ class _MetaActionState(Enum):
 @functools.lru_cache(maxsize=32)
 def _load_svg_icon(svg_path: str, color: str, size: int, opacity: float = 1.0) -> QPixmap:
     with open(svg_path, "r") as f:
-        svg_data = f.read().replace('stroke="#000000"', f'stroke="{color}"')
+        svg_data = f.read()
+        svg_data = svg_data.replace('stroke="#000000"', f'stroke="{color}"')
+        svg_data = svg_data.replace('fill="#000000"', f'fill="{color}"')
+        # Add a style to set default fill for paths that don't specify it, only if no stroke replacement happened
+        if '<style' not in svg_data and 'stroke=' not in svg_data:
+            svg_data = svg_data.replace('<svg', f'<svg><style>path {{ fill: {color}; }}</style>', 1)
     renderer = QSvgRenderer(QByteArray(svg_data.encode()))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
@@ -189,7 +194,6 @@ class BookDetailPanel(QWidget):
         dur_save_row.setSpacing(4)
         dur_save_row.addWidget(self._duration_label)
         dur_save_row.addStretch()
-        dur_save_row.addWidget(self._meta_action_btn)
         dur_save_row.addWidget(self._confirm_remove_label)
 
         meta_block.addWidget(self._title_label)
@@ -206,7 +210,7 @@ class BookDetailPanel(QWidget):
 
         header_layout.addLayout(meta_block, stretch=1)
 
-        # Right column: close button + save label below it
+        # Right column: close button + meta button at top, trash at bottom
         right_col = QVBoxLayout()
         right_col.setSpacing(4)
         right_col.setContentsMargins(0, 0, 0, 0)
@@ -216,6 +220,7 @@ class BookDetailPanel(QWidget):
         self._close_btn.setFixedSize(15, 15)
         self._close_btn.clicked.connect(self._on_close_clicked)
         right_col.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._meta_action_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
         right_col.addStretch()
         right_col.addWidget(self._remove_btn, alignment=Qt.AlignmentFlag.AlignRight)
@@ -654,7 +659,7 @@ class BookDetailPanel(QWidget):
 
             if self._editing:
                 safe = (self._title_label, self._author_label,
-                        self._narrator_label, self._year_label, self._save_label,
+                        self._narrator_label, self._year_label, self._meta_action_btn,
                         self._close_btn)
                 if not any(hits(w) for w in safe):
                     self._exit_edit_mode(save=False)
@@ -683,7 +688,6 @@ class BookDetailPanel(QWidget):
                       self._narrator_label, self._year_label):
             field.setReadOnly(False)
             field.setCursorPosition(0)
-        self._save_label.setVisible(False)
         self._title_label.setFocus()
 
     def _on_meta_action_hover(self, hover: bool):
