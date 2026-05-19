@@ -697,7 +697,7 @@ class BookDetailPanel(QWidget):
         if self._meta_state == _MetaActionState.HIDDEN:
             return
         color = self._theme.get("accent", "#888888")
-        opacity = 1.0 if hover else 0.6
+        opacity = 1.0 if hover else 0.60
         if self._meta_state == _MetaActionState.DIRTY:
             pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, opacity)
         elif self._meta_state == _MetaActionState.LOCKED:

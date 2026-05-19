@@ -222,13 +222,13 @@ class LibraryDB:
             VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path, :year)
             ON CONFLICT(path) DO UPDATE SET
                 folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
-                title=excluded.title,
-                author=excluded.author,
-                narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
+                title=CASE WHEN books.title_locked THEN books.title ELSE excluded.title END,
+                author=CASE WHEN books.author_locked THEN books.author ELSE excluded.author END,
+                narrator=CASE WHEN books.narrator_locked THEN books.narrator ELSE COALESCE(NULLIF(excluded.narrator, ''), books.narrator) END,
                 duration=excluded.duration,
                 progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
-                year=COALESCE(excluded.year, books.year),
+                year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
                 is_excluded=0
         """
@@ -243,13 +243,13 @@ class LibraryDB:
             VALUES (:path, :folder_name_raw, :title, :author, :narrator, :duration, COALESCE(:progress, 0), :cover_path, :year)
             ON CONFLICT(path) DO UPDATE SET
                 folder_name_raw=COALESCE(excluded.folder_name_raw, books.folder_name_raw),
-                title=excluded.title,
-                author=excluded.author,
-                narrator=COALESCE(NULLIF(excluded.narrator, ''), books.narrator),
+                title=CASE WHEN books.title_locked THEN books.title ELSE excluded.title END,
+                author=CASE WHEN books.author_locked THEN books.author ELSE excluded.author END,
+                narrator=CASE WHEN books.narrator_locked THEN books.narrator ELSE COALESCE(NULLIF(excluded.narrator, ''), books.narrator) END,
                 duration=excluded.duration,
                 progress=COALESCE(NULLIF(excluded.progress, 0.0), books.progress),
                 cover_path=excluded.cover_path,
-                year=COALESCE(excluded.year, books.year),
+                year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
                 is_excluded=0
         """

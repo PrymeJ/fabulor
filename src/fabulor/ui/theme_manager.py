@@ -223,7 +223,10 @@ class ThemeManager(QObject):
         # Guard against theme changes during panel animation to prevent hitches
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
             self._panel_guard_timer.stop()
-            self._panel_guard_timer.timeout.disconnect()
+            try:
+                self._panel_guard_timer.timeout.disconnect()
+            except TypeError:
+                pass
             self._panel_guard_timer.timeout.connect(
                 lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated)
             )
