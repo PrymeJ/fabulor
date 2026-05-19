@@ -1,4 +1,24 @@
 
+## Metadata lock feature (2026-05-19)
+
+Four independent lock columns on `books`: `title_locked`, `author_locked`, `narrator_locked`, `year_locked` (all `INTEGER NOT NULL DEFAULT 0`). Locks are set per-field on save (`_commit_inline_save`), cleared all-at-once on unlock. Persisted to DB via `set_metadata_locks()` and read via `get_metadata_locks()`.
+
+**Upsert protection:** The ON CONFLICT block in both `upsert_book` and `upsert_books_batch` uses `CASE WHEN books.X_locked = 1 THEN excluded.X ELSE updated.X END` for all four fields. This prevents rescans from overwriting user edits. Narrator and year preserve their existing `COALESCE(NULLIF(...), ...)` guards inside the ELSE branch (respecting existing empty-field behavior).
+
+**Rescan resurrection:** Locks reset to 0 in the ON CONFLICT block alongside `is_deleted` and `is_excluded` — rescanning brings back locked metadata unchanged, but allows overwrite on the next rescan if locks aren't re-set.
+
+**UI state machine:** `_MetaActionState` enum (HIDDEN, DIRTY, LOCKED, UNLOCKED) drives the metadata action button exclusively. DIRTY = save icon on keystroke, LOCKED = lock icon after save, UNLOCKED = lock-open icon after unlock click, HIDDEN = no button. Pre-edit state saved in `_enter_edit_mode`, restored on click-outside dismiss. UNLOCKED auto-transitions to HIDDEN after 2.5s via `self._unlock_timer` (QTimer, cancelled at the top of every `_set_meta_state()` call).
+
+## SVG icon rendering caching (2026-05-19)
+
+`_load_svg_icon()` in book_detail_panel.py is cached via `@functools.lru_cache(maxsize=32)` with cache key `(svg_path, color, size, opacity)`. Replaces both `stroke="#000000"` and `fill="#000000"` attributes with the provided color for compatibility. For SVGs with neither attribute (Font Awesome), injects a CSS `<style>path { fill: {color}; }</style>` rule — but only if no stroke replacements happened (to avoid interfering with stroke-only icons like trash).
+
+Theme changes that call `_set_meta_state()` will hit the cache for previously seen (path, color, size, opacity) tuples. This is intentional — icon rendering is deterministic.
+
+## Duration label cursor and toggle (2026-05-19)
+
+Speed comparison uses tolerance `abs(speed - 1.0) < 1e-9` to handle floating-point rounding errors (values like 1.0000000000000053 or 0.9999999999999991 stored in config). When speed is effectively 1x, cursor shows arrow (not hand) and toggle is disabled (no-op on click). Speed sourced from `config.get_book_speed(self._book_path)` with fallback to `config.get_default_speed()` — prevents misleading UI when default speed hasn't been saved yet.
+
 ## Book removal — is_excluded vs is_deleted (2026-05-18)
 
 Two independent soft-delete flags on the `books` table:

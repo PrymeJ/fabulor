@@ -60,8 +60,14 @@ They are two independent soft-delete flags on `books`. `is_deleted = 1` is set b
 ### DO NOT pass `0.0` as `progress` to `upsert_book` or `upsert_books_batch`
 The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
 
-### FIX NEEDED: `BookModel.path_to_index()` walks `self._filtered`, not `self._books`
-`path_to_index()` in `ui/library.py` is called from `LibraryPanel.set_playing_path()` to set `_playing_id` on the model. Because it walks `self._filtered`, a book that is currently filtered out of the view will return `None`, leaving `_playing_id` unset. When `set_books()` next runs, it will prune `_live_pos`/`_live_dur` for that book's ID incorrectly. Fix: change the walk to iterate `self._books` with `enumerate` and return `self.index(row)` where `row` is the position in `_books` — or, simpler, set `_playing_id` directly from the `Book` object in `set_playing_path` without going through `path_to_index` at all.
+### DO NOT keep upsert_book and upsert_books_batch out of sync
+Both methods share identical SQL logic — any schema or ON CONFLICT guard change in one MUST be applied to the other. They differ only in execute vs executemany. The `CASE WHEN books.X_locked = 1` guards for title, author, narrator, year are load-bearing: they prevent rescans from overwriting user-edited metadata. Skipping this sync causes silent data loss on rescans.
+
+### DO NOT remove the CASE WHEN books.X_locked guards from upsert ON CONFLICT
+The guards `CASE WHEN books.title_locked = 1 THEN excluded.title ELSE updated.title END` (and narrator/author/year equivalents) protect user-edited metadata from being overwritten by rescans. They must survive any future refactor.
+
+### DO NOT add separate save/lock widgets to BookDetailPanel
+The metadata action button state is driven exclusively by `_MetaActionState` enum. Do not add `_save_label` or `_lock_btn` widgets — use `_set_meta_state()` to manage appearance.
 
 ---
 
@@ -138,6 +144,13 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 - Header: inline editable title, author, narrator, year fields (QLineEdit styled as labels)
   - `_ElidingLineEdit` with 3px left margin, `setCursorPosition(0)` in read-only mode
   - App-level event filter for click-outside detection
+  - Metadata lock feature: four independent locks (title_locked, author_locked, narrator_locked, year_locked) persist changes across rescans
+  - Unified metadata action button (`_meta_action_btn`, 24×24 QToolButton in right column below close button)
+    - DIRTY state: save icon, click to save changes and set locks
+    - LOCKED state: lock icon, click to unlock all four fields
+    - UNLOCKED state: lock-open icon, auto-hides after 2.5s
+    - HIDDEN state: button invisible when no locks and not editing
+  - Click-outside dismissal: reverts to pre-edit state (LOCKED if locked before, HIDDEN if not)
 - Stats tab: furthest position `_RangeBar`, remaining time (speed-aware), last session row, recent history `SessionListWidget`
 - History tab: full `SessionListWidget` (same data, separate widget)
 - Tags tab: FlowLayout chip display, add field with QCompleter, remove buttons
@@ -146,6 +159,8 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - Completer popup styled directly via `_style_completer_popup()` (lazy init, styled on first keystroke)
 - Header cover: 80×120 fixed-width, updated on active cover or fit mode change
 - Duration label: wall-clock by default, toggles to speed-adjusted on click
+  - Cursor disabled (arrow) and toggle disabled when speed is 1.0x (uses tolerance `abs(speed - 1.0) < 1e-9`)
+  - Sourced from `config.get_book_speed()` with fallback to `config.get_default_speed()`
 
 ### Cover Panel (implemented)
 - Up to 4 user cover slots (sort_order 1–4) + 1 locked scanner cover (sort_order=0)

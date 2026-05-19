@@ -511,6 +511,12 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT pass `0.0` as the `progress` value to `upsert_book` or `upsert_books_batch`. Use `None` if progress is unknown. The scanner does not know a book's saved playback position — it must omit progress entirely (leave it as `None`) so the `COALESCE(NULLIF(..., 0.0), books.progress)` upsert logic can preserve whatever the user left off at. Passing `0.0` is treated as "no progress supplied" by the NULLIF safety net, but that is a net, not a contract — callers must use `None`.
 
+## DO NOT modify `upsert_book` without applying the identical change to `upsert_books_batch`. Both methods must share identical SQL logic — they differ only in execute vs executemany. The `CASE WHEN books.X_locked = 1` guards for title, author, narrator, year are load-bearing: they prevent rescans from overwriting user-edited metadata. Out-of-sync upserts cause silent data loss.
+
+## DO NOT remove the `CASE WHEN books.X_locked = 1` guards from the upsert ON CONFLICT block. These guards protect user-edited metadata from being overwritten by rescans. The pattern `CASE WHEN books.title_locked = 1 THEN excluded.title ELSE updated.title END` must be applied to all four metadata fields (title, author, narrator, year) in both upsert methods.
+
+## DO NOT add columns to the migration block without checking for duplicates. The pattern is `if "col_name" not in col_names: ALTER TABLE`. Duplicate ALTER TABLE statements crash the migration. Check before adding.
+
 ---
 
-*Last updated: 2026-05-17 — CUE file support, chapter boundary fixes, teardown crash fix, `_on_chapter_change` guard, scanner progress invariant.*
+*Last updated: 2026-05-19 — Metadata lock feature, upsert guards for locked fields, migration pattern.*
