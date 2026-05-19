@@ -513,19 +513,33 @@ class BookDetailPanel(QWidget):
         duration = self._book_data.get('duration') or 0.0
         if not duration:
             self._duration_label.setVisible(False)
+            self._duration_label.setCursor(Qt.ArrowCursor)
             return
-        speed = self.config.get_book_speed(self._book_path) or 1.0
-        if self._duration_show_adjusted and speed != 1.0:
-            text = f"{self._fmt(duration / speed)} at {speed:g}x"
+
+        speed = self.config.get_book_speed(self._book_path)
+        if speed is None:
+            speed = self.config.get_default_speed()
+        is_1x = speed is None or abs(speed - 1.0) < 1e-9
+        effective_speed = 1.0 if is_1x else speed
+
+        if self._duration_show_adjusted and not is_1x:
+            text = f"{self._fmt(duration / effective_speed)} at {effective_speed:g}x"
         else:
             text = self._fmt(duration)
+
         self._duration_label.setText(text)
         self._duration_label.setVisible(True)
+        self._duration_label.setCursor(
+            Qt.ArrowCursor if is_1x else Qt.PointingHandCursor
+        )
 
     def _toggle_duration(self):
         duration = self._book_data.get('duration') or 0.0
-        speed = self.config.get_book_speed(self._book_path) or 1.0
-        if not duration or speed == 1.0:
+        speed = self.config.get_book_speed(self._book_path)
+        if speed is None:
+            speed = self.config.get_default_speed()
+        is_1x = speed is None or abs(speed - 1.0) < 1e-9
+        if not duration or is_1x:
             return
         self._duration_show_adjusted = not self._duration_show_adjusted
         self._update_duration_label()
