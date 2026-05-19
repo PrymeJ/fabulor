@@ -110,6 +110,7 @@ class BookDetailPanel(QWidget):
         self._is_archived: bool = False
         self._confirming_remove: bool = False
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
+        self._pre_edit_meta_state: _MetaActionState | None = None
         self._unlock_timer: QTimer | None = None
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -678,6 +679,7 @@ class BookDetailPanel(QWidget):
         if self._editing:
             return
         self._editing = True
+        self._pre_edit_meta_state = self._meta_state
         self._orig_title    = self._title_label.text()
         self._orig_author   = self._author_label.text()
         self._orig_narrator = self._narrator_label.text()
@@ -734,6 +736,8 @@ class BookDetailPanel(QWidget):
             self._commit_inline_save()
         else:
             self._sync_header_from_fields()
+            if self._pre_edit_meta_state is not None:
+                self._set_meta_state(self._pre_edit_meta_state)
         narrator = self._book_data.get('narrator', '')
         year = self._book_data.get('year')
         self._narrator_label.setVisible(bool(narrator))
