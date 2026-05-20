@@ -710,11 +710,13 @@ class BookModel(QAbstractListModel):
         self._apply_filter_and_sort()
         self.endResetModel()
 
-    def update_book_metadata(self, book_id: int, title: str, author: str) -> None:
+    def update_book_metadata(self, book_id: int, title: str, author: str, narrator: str = "", year: object = None) -> None:
         for book in self._books:
             if book.id == book_id:
                 book.title = title
                 book.author = author
+                book.narrator = narrator or None
+                book.year = year
                 break
         self._apply_filter_and_sort()
         self._emit_for_id(book_id)

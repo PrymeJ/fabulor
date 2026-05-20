@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QByteArray, QSize
-from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator
+from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 from PySide6.QtSvg import QSvgRenderer
 
@@ -92,7 +93,7 @@ class _ClickableLabel(QLabel):
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
-    metadata_saved = Signal(int, str, str)  # book_id, title, author
+    metadata_saved = Signal(int, str, str, str, object)  # book_id, title, author, narrator, year (int|None)
     tags_changed = Signal()
     active_cover_changed = Signal(str, str)  # (book_path, cover_path)
     book_removed = Signal()
@@ -157,6 +158,9 @@ class BookDetailPanel(QWidget):
         self._author_label   = make_field("book_detail_author")
         self._narrator_label = make_field("book_detail_narrator", placeholder="Narrator")
         self._year_label     = make_field("book_detail_year",     placeholder="Year")
+        self._year_label.setValidator(
+            QRegularExpressionValidator(QRegularExpression(r'^-?\d*$'))
+        )
         for _f in (self._narrator_label, self._year_label):
             _sp = _f.sizePolicy()
             _sp.setRetainSizeWhenHidden(True)
@@ -760,13 +764,13 @@ class BookDetailPanel(QWidget):
         if narrator != self._orig_narrator: self._locks['narrator'] = True
         if year_str != self._orig_year: self._locks['year'] = True
 
+        year_int = int(year_str) if year_str.isdigit() else None
         if self.db.update_book_metadata(self._book_path, title, author, narrator, year_str):
             self.db.set_metadata_locks(self._book_path, **self._locks)
             self._book_data.update({
-                'title': title, 'author': author,
-                'narrator': narrator, 'year': int(year_str) if year_str.isdigit() else None
+                'title': title, 'author': author, 'narrator': narrator, 'year': year_int
             })
-            self.metadata_saved.emit(self._book_data.get('id'), title, author)
+            self.metadata_saved.emit(self._book_data.get('id'), title, author, narrator, year_int)
             if any(self._locks.values()):
                 self._set_meta_state(_MetaActionState.LOCKED)
             else:

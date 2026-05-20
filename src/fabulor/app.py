@@ -1313,8 +1313,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if auto_hide:
             QTimer.singleShot(3000, self.status_banner.hide)
 
-    def _on_book_metadata_saved(self, book_id: int, title: str, author: str):
-        self.library_panel._book_model.update_book_metadata(book_id, title, author)
+    def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
+        self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_all()
 
