@@ -14,6 +14,7 @@ from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 from PySide6.QtSvg import QSvgRenderer
 
+from .cover_loader import to_grayscale
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 
@@ -484,6 +485,13 @@ class BookDetailPanel(QWidget):
                     'duration': full.duration,
                 }
 
+        _book_dict = self.db.get_book_dict(self._book_path)
+        self._is_archived = (
+            _book_dict is None or
+            bool(_book_dict.get('is_deleted')) or
+            bool(_book_dict.get('is_excluded'))
+        )
+
         pixmap = QPixmap()
         cover_path = self.db.get_active_cover_path(self._book_path)
         if cover_path and os.path.exists(cover_path):
@@ -491,13 +499,7 @@ class BookDetailPanel(QWidget):
         if pixmap.isNull():
             pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                80, 120,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self._cover_label.setPixmap(scaled)
-            self._cover_label.setFixedHeight(scaled.height())
+            self._apply_cover(pixmap)
 
         self._editing = False
         self._exit_edit_mode(save=False)
@@ -515,10 +517,9 @@ class BookDetailPanel(QWidget):
 
         self._cover_panel.load_book(self._book_path)
         self._refresh_stats()
-        excluded = self.db.is_book_excluded(self._book_path)
-        self._remove_btn.setVisible(not excluded)
+        excluded = bool(_book_dict and _book_dict.get('is_excluded'))
+        self._remove_btn.setVisible(not excluded and not self._is_archived)
         self._locks = self.db.get_metadata_locks(self._book_path)
-        self._is_archived = excluded
         if self._is_archived:
             self._set_meta_state(_MetaActionState.HIDDEN)
         elif any(self._locks.values()):
@@ -529,6 +530,17 @@ class BookDetailPanel(QWidget):
     def _on_cover_panel_changed(self, cover_path: str):
         self.active_cover_changed.emit(self._book_path or "", cover_path)
 
+    def _apply_cover(self, pixmap: QPixmap) -> None:
+        if self._is_archived:
+            pixmap = to_grayscale(pixmap)
+        scaled = pixmap.scaled(
+            80, 120,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._cover_label.setPixmap(scaled)
+        self._cover_label.setFixedHeight(scaled.height())
+
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
         if file_path and os.path.exists(file_path):
@@ -536,13 +548,8 @@ class BookDetailPanel(QWidget):
         if pixmap.isNull():
             pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                80, 120,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            self._cover_label.setPixmap(scaled)
-            self._cover_label.setFixedHeight(scaled.height())
+            # TODO: verify _refresh_header_cover scaling matches load_book (setFixedHeight was absent here)
+            self._apply_cover(pixmap)
 
     def _update_duration_label(self):
         duration = self._book_data.get('duration') or 0.0

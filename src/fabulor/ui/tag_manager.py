@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool
 from PySide6.QtGui import QPixmap, QImage, QColor
-from .cover_loader import CoverLoaderWorker
+from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 
 
@@ -15,7 +15,7 @@ class _TagBookThumb(QWidget):
     def __init__(self, book: dict, assets_dir: str, parent=None):
         super().__init__(parent)
         self._path = book['path']
-        self._removed = False
+        self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0))
         self.setFixedSize(80, 80)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(book.get('title', ''))
@@ -62,6 +62,8 @@ class _TagBookThumb(QWidget):
         self._apply_cover(QPixmap.fromImage(image))
 
     def _apply_cover(self, pixmap):
+        if self._is_archived:
+            pixmap = to_grayscale(pixmap)
         scaled = pixmap.scaled(
             80, 80,
             Qt.AspectRatioMode.KeepAspectRatio,

@@ -1,10 +1,20 @@
 import os
 from PySide6.QtCore import QObject, Signal, QRunnable, Slot
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QPixmap
 
 class CoverLoaderSignals(QObject):
     cover_loaded = Signal(int, QImage) # Emits book_id, image
     finished = Signal()
+
+def to_grayscale(pixmap: QPixmap) -> QPixmap:
+    """Utility to convert a QPixmap to grayscale."""
+    if pixmap.isNull():
+        return pixmap
+    # Convert to QImage for transformation
+    image = pixmap.toImage()
+    if image.format() != QImage.Format.Format_Grayscale8:
+        image = image.convertToFormat(QImage.Format.Format_Grayscale8)
+    return QPixmap.fromImage(image)
 
 class CoverLoaderWorker(QRunnable):
     """Worker to load covers using QThreadPool to avoid thread exhaustion."""

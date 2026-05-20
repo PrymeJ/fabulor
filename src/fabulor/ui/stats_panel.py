@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
 from PySide6.QtWidgets import QAbstractScrollArea
-from .cover_loader import CoverLoaderWorker
+from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 
 
@@ -343,7 +343,10 @@ class BookDayRow(QWidget):
         self.setObjectName("stats_book_day_row_alt" if index % 2 else "stats_book_day_row")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        deleted = row_data.get("book_path") is None
+        # A book is archived if its path is missing (location removed) or if it's explicitly excluded
+        self._is_archived = (row_data.get("book_path") is None or 
+                            row_data.get("is_deleted", 0) or 
+                            row_data.get("is_excluded", 0))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 21, 2)
@@ -365,7 +368,6 @@ class BookDayRow(QWidget):
             ))
 
         self._cover_label = cover_label
-        self._deleted = deleted
         self._assets_dir = assets_dir
 
         active_cover_path = row_data.get("active_cover_path")
@@ -384,7 +386,7 @@ class BookDayRow(QWidget):
                 )
                 QThreadPool.globalInstance().start(worker)
 
-        if deleted:
+        if self._is_archived:
             cover_label.setGraphicsEffect(_dim_effect())
         layout.addWidget(cover_label)
 
@@ -399,7 +401,7 @@ class BookDayRow(QWidget):
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=136)
-        if deleted:
+        if self._is_archived:
             title_lbl.setObjectName("stats_book_title_deleted")
         elif is_finished:
             title_lbl.setObjectName("stats_book_title_finished")
@@ -466,9 +468,8 @@ class BookDayRow(QWidget):
         self._apply_cover(QPixmap.fromImage(image))
 
     def _apply_cover(self, pixmap):
-        if self._deleted:
-            gray = pixmap.toImage().convertToFormat(QImage.Format.Format_Grayscale8)
-            pixmap = QPixmap.fromImage(gray)
+        if self._is_archived:
+            pixmap = to_grayscale(pixmap)
         scaled = pixmap.scaled(
             48, 48,
             Qt.KeepAspectRatioByExpanding,
@@ -512,6 +513,9 @@ class FinishedBookThumb(QWidget):
         self._row_data = row_data
         self._assets_dir = assets_dir
         self.setFixedSize(47, 47)
+        self._is_archived = (row_data.get("is_deleted", 0) or 
+                            row_data.get("is_excluded", 0) or 
+                            row_data.get("book_path") is None)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -558,6 +562,8 @@ class FinishedBookThumb(QWidget):
         self._apply_cover(QPixmap.fromImage(image))
 
     def _apply_cover(self, pixmap):
+        if self._is_archived:
+            pixmap = to_grayscale(pixmap)
         side = min(pixmap.width(), pixmap.height())
         x = (pixmap.width() - side) // 2
         y = (pixmap.height() - side) // 2

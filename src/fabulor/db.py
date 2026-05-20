@@ -273,6 +273,11 @@ class LibraryDB:
             row = cursor.fetchone()
             return Book.from_dict(dict(row)) if row else None
 
+    def get_book_dict(self, book_path: str) -> dict | None:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM books WHERE path = ?", (str(book_path),)).fetchone()
+            return dict(row) if row else None
+
     _ALLOWED_SORT_COLUMNS = frozenset({
         "title", "author", "narrator", "duration", "progress",
         "last_played", "date_added", "year", "folder_name_raw",
@@ -407,6 +412,8 @@ class LibraryDB:
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
+                    b.is_deleted,
+                    b.is_excluded,
                     MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
                      WHERE ls2.book_path = ls.book_path
@@ -622,6 +629,8 @@ class LibraryDB:
                     SUM(ls.position_end - ls.position_start) as book_seconds_advanced,
                     MAX(ls.furthest_position) as furthest_position,
                     b.cover_path,
+                    b.is_deleted,
+                    b.is_excluded,
                     MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
                      WHERE ls2.book_path = ls.book_path
@@ -653,6 +662,8 @@ class LibraryDB:
                     be.book_path,
                     be.event_time,
                     b.cover_path,
+                    b.is_deleted,
+                    b.is_excluded,
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
@@ -673,6 +684,8 @@ class LibraryDB:
                     be.book_path,
                     MAX(be.event_time) as event_time,
                     b.cover_path,
+                    b.is_deleted,
+                    b.is_excluded,
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
@@ -910,7 +923,7 @@ class LibraryDB:
         """Returns books that have the given tag, with path, title, author, cover_path."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path
+                """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path, b.is_deleted, b.is_excluded
                 FROM books b
                 JOIN book_tags t ON b.path = t.book_path
                 WHERE t.tag = ?
