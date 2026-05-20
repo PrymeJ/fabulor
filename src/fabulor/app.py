@@ -1219,6 +1219,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
         self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
+        self.book_detail_panel.active_cover_changed.connect(
+            lambda book_path, cover_path: self.stats_panel.on_cover_changed(book_path, cover_path)
+        )
         self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
@@ -2127,8 +2130,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pending_cover_pixmap = None
             self.theme_manager.clear_cover_theme()
 
-    def _on_active_cover_changed(self, file_path: str) -> None:
-        book_path = self.book_detail_panel._book_path
+    def _on_active_cover_changed(self, book_path: str, file_path: str) -> None:
         if not book_path:
             return
         self.library_panel.refresh_book_cover(book_path)

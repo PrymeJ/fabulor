@@ -368,13 +368,16 @@ class BookDayRow(QWidget):
         self._deleted = deleted
         self._assets_dir = assets_dir
 
-        if book_path and cover_path and os.path.exists(cover_path):
+        active_cover_path = row_data.get("active_cover_path")
+        load_path = active_cover_path or cover_path
+        if book_path and load_path and os.path.exists(load_path):
             book_id = row_data.get("book_id")
             if _cover_cache.get(book_id):
                 self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
                     type('_BD', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
+                    active_cover_path=active_cover_path,
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -473,6 +476,23 @@ class BookDayRow(QWidget):
         )
         self._cover_label.setPixmap(scaled)
 
+    def refresh_cover(self, cover_path: str):
+        book_path = self._row_data.get("book_path")
+        book_id = self._row_data.get("book_id")
+        if not book_path or not book_id:
+            return
+        if book_id in _cover_cache:
+            del _cover_cache[book_id]
+        if cover_path and os.path.exists(cover_path):
+            worker = CoverLoaderWorker(
+                type('_BD', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
+                active_cover_path=cover_path,
+            )
+            worker.signals.cover_loaded.connect(
+                self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
+            )
+            QThreadPool.globalInstance().start(worker)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._row_data)
@@ -506,13 +526,16 @@ class FinishedBookThumb(QWidget):
 
         self._cover_label = cover_label
 
-        if book_path and cover_path and os.path.exists(cover_path):
+        active_cover_path = row_data.get("active_cover_path")
+        load_path = active_cover_path or cover_path
+        if book_path and load_path and os.path.exists(load_path):
             book_id = row_data.get("book_id")
             if _cover_cache.get(book_id):
                 self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
                     type('_FT', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
+                    active_cover_path=active_cover_path,
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -537,6 +560,23 @@ class FinishedBookThumb(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
         self._cover_label.setPixmap(scaled)
+
+    def refresh_cover(self, cover_path: str):
+        book_path = self._row_data.get("book_path")
+        book_id = self._row_data.get("book_id")
+        if not book_path or not book_id:
+            return
+        if book_id in _cover_cache:
+            del _cover_cache[book_id]
+        if cover_path and os.path.exists(cover_path):
+            worker = CoverLoaderWorker(
+                type('_FT', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
+                active_cover_path=cover_path,
+            )
+            worker.signals.cover_loaded.connect(
+                self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
+            )
+            QThreadPool.globalInstance().start(worker)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1122,7 +1162,7 @@ class StatsPanel(QWidget):
         )
 
         # Recently finished books
-        finished = self.db.get_recently_finished(limit=20)
+        finished = self._inject_active_covers(self.db.get_recently_finished(limit=20))
         self._finished_scroll_row.set_items(finished, self._on_book_row_clicked)
         if finished:
             self._finished_section.show()
@@ -1306,7 +1346,7 @@ class StatsPanel(QWidget):
     
         rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
         total_seconds = 0.0
-        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+        rows = self._inject_active_covers([r for r in rows if (r.get("clock_seconds") or 0.0) >= 60])
         self._day_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
@@ -1320,7 +1360,7 @@ class StatsPanel(QWidget):
         self._day_total_label.setText(self._format_duration(total_seconds))
 
         day_start = self.config.get_day_start_hour()
-        finished = self.db.get_finished_in_period('day', date_str, day_start)
+        finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
         self._day_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
             self._day_finished_section.show()
@@ -1434,8 +1474,10 @@ class StatsPanel(QWidget):
         self._week_next_btn.setEnabled(self._current_week_index > 0)
 
         day_start = self.config.get_day_start_hour()
-        rows = self.db.get_books_listened_in_period('week', week_str, day_start)
-        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+        rows = self._inject_active_covers(
+            [r for r in self.db.get_books_listened_in_period('week', week_str, day_start)
+             if (r.get("clock_seconds") or 0.0) >= 60]
+        )
         total_seconds = 0.0
         self._week_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
@@ -1449,7 +1491,7 @@ class StatsPanel(QWidget):
 
         self._week_total_label.setText(self._format_duration(total_seconds))
 
-        finished = self.db.get_finished_in_period('week', week_str, day_start)
+        finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
         self._week_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
             self._week_finished_section.show()
@@ -1561,8 +1603,10 @@ class StatsPanel(QWidget):
         self._month_next_btn.setEnabled(self._current_month_index > 0)
 
         day_start = self.config.get_day_start_hour()
-        rows = self.db.get_books_listened_in_period('month', month_str, day_start)
-        rows = [r for r in rows if (r.get("clock_seconds") or 0.0) >= 60]
+        rows = self._inject_active_covers(
+            [r for r in self.db.get_books_listened_in_period('month', month_str, day_start)
+             if (r.get("clock_seconds") or 0.0) >= 60]
+        )
         total_seconds = 0.0
         self._month_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
@@ -1576,7 +1620,7 @@ class StatsPanel(QWidget):
 
         self._month_total_label.setText(self._format_duration(total_seconds))
 
-        finished = self.db.get_finished_in_period('month', month_str, day_start)
+        finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
         self._month_finished_scroll.set_items(finished, self._on_book_row_clicked)
         if finished:
             self._month_finished_section.show()
@@ -1678,6 +1722,50 @@ class StatsPanel(QWidget):
             self._refresh_monthly()
         elif name == "Hour":
             self._refresh_time()
+
+    def _inject_active_covers(self, rows: list[dict]) -> list[dict]:
+        for row in rows:
+            bp = row.get("book_path")
+            if bp:
+                row["active_cover_path"] = self.db.get_active_cover_path(bp)
+        return rows
+
+    def on_cover_changed(self, book_path: str, cover_path: str) -> None:
+        current_tab = self.tabs.tabText(self.tabs.currentIndex())
+        tab_finished = {
+            "Overall": [self._finished_scroll_row],
+            "Day": [self._day_finished_scroll],
+            "Week": [self._week_finished_scroll],
+            "Month": [self._month_finished_scroll],
+        }
+        for scroll_row in tab_finished.get(current_tab, []):
+            for widget in self._iter_finished_thumbs(scroll_row):
+                if widget._row_data.get("book_path") == book_path:
+                    widget.refresh_cover(cover_path)
+        for widget in self._iter_day_rows(current_tab):
+            if widget._row_data.get("book_path") == book_path:
+                widget.refresh_cover(cover_path)
+
+    def _iter_day_rows(self, tab_name: str):
+        layout_map = {
+            "Day": self._day_rows_layout,
+            "Week": getattr(self, '_week_rows_layout', None),
+            "Month": getattr(self, '_month_rows_layout', None),
+        }
+        layout = layout_map.get(tab_name)
+        if layout is None:
+            return
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), BookDayRow):
+                yield item.widget()
+
+    def _iter_finished_thumbs(self, scroll_row):
+        layout = scroll_row._layout
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), FinishedBookThumb):
+                yield item.widget()
 
     def set_panel_manager(self, panel_manager):
         self._panel_manager = panel_manager

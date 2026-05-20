@@ -94,7 +94,7 @@ class BookDetailPanel(QWidget):
     history_deleted = Signal()
     metadata_saved = Signal(int, str, str)  # book_id, title, author
     tags_changed = Signal()
-    active_cover_changed = Signal(str)  # file_path of new active cover
+    active_cover_changed = Signal(str, str)  # (book_path, cover_path)
     book_removed = Signal()
 
     def __init__(self, db, config, parent=None):
@@ -239,7 +239,7 @@ class BookDetailPanel(QWidget):
 
         from .cover_panel import CoverPanel
         self._cover_panel = CoverPanel(db=self.db, parent=self)
-        self._cover_panel.active_cover_changed.connect(self.active_cover_changed)
+        self._cover_panel.active_cover_changed.connect(self._on_cover_panel_changed)
         self._cover_panel.active_cover_changed.connect(self._refresh_header_cover)
 
         self.tabs = QTabWidget()
@@ -521,6 +521,9 @@ class BookDetailPanel(QWidget):
             self._set_meta_state(_MetaActionState.LOCKED)
         else:
             self._set_meta_state(_MetaActionState.HIDDEN)
+
+    def _on_cover_panel_changed(self, cover_path: str):
+        self.active_cover_changed.emit(self._book_path or "", cover_path)
 
     def _refresh_header_cover(self, file_path: str):
         pixmap = QPixmap()
