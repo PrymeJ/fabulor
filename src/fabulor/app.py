@@ -682,6 +682,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_duration_label.setFixedHeight(24)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
+        self.chap_duration_label.setCursor(Qt.PointingHandCursor)
 
         self.current_chapter_label = ScrollingLabel("")
         self.current_chapter_label.setObjectName("chapter_selector")
@@ -720,6 +721,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.total_time_label.setFixedHeight(24)
         self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.total_time_label.mousePressEvent = self._toggle_remaining_time
+        self.total_time_label.setCursor(Qt.PointingHandCursor)
         
         self.sleep_timer_label = QPushButton("")
         self.sleep_timer_label.setObjectName("sleep_timer_display")
