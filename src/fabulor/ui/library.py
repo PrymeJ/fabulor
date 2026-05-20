@@ -1689,13 +1689,20 @@ class BookDelegate(QStyledItemDelegate):
             y = r.bottom() - 4 - 6 - 4 - fm_h
             return QRect(r.right() - 70, r.y() + y - r.y(), 66, fm_h)
         elif self._view_mode in ("2 per row", "3 per row", "Square"):
-            # Approximate overlay height: VPAD(5) + time_row(~16) + 2 + bar(6) + VPAD(5) = ~34px
+            # Approximate overlay height: VPAD(6) + time_row(~16) + 8 + bar(6) + VPAD(6) = ~42px
             r = option.rect
             cover_rect = self._cover_rect(r)
-            oh = 34
+            oh = 42
             overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
-            # Hit zone: the time row at the top of inner (VPAD=5 inset)
-            return QRect(overlay_rect.x(), overlay_rect.y() + 5, overlay_rect.width(), 20)
+            # Hit zone: right portion of the time row only (total/remaining label), HPAD=3 inset
+            HPAD = 3
+            VPAD = 6
+            BAR_H = 6
+            time_h = 16
+            bar_y  = overlay_rect.y() + oh - VPAD - BAR_H
+            time_y = bar_y - 4 - time_h
+            hit_w  = 66
+            return QRect(overlay_rect.right() - HPAD - hit_w, time_y, hit_w, time_h)
         elif self._view_mode == "List":
             r      = option.rect
             fm     = option.fontMetrics
