@@ -517,6 +517,12 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT add columns to the migration block without checking for duplicates. The pattern is `if "col_name" not in col_names: ALTER TABLE`. Duplicate ALTER TABLE statements crash the migration. Check before adding.
 
+## DO NOT modify `_resolve_playback` in `BookDelegate` without preserving the `has_progress` gate on speed application. Speed is applied to `dur_disp` only when `has_progress` is `True`. Books with no progress always display total duration at 1x. Removing this gate causes incorrect duration display in the library view.
+
+## DO NOT connect `CoverPanel.active_cover_changed` directly to `BookDetailPanel.active_cover_changed`. The intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` is required to inject `self._book_path` into the re-emit. `BookDetailPanel.active_cover_changed` is `Signal(str, str)` — `(book_path, cover_path)` — and all connected slots must accept both args.
+
+## DO NOT construct `BookDayRow` or `FinishedBookThumb` without first calling `_inject_active_covers` on the row list. Raw DB rows carry only `cover_path` (scanner thumbnail). `_inject_active_covers` adds `"active_cover_path"` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
+
 ---
 
-*Last updated: 2026-05-19 — Metadata lock feature, upsert guards for locked fields, migration pattern.*
+*Last updated: 2026-05-20 — library duration regression fix, hand cursor on duration toggles, stats panel active cover fix, active_cover_changed signal widened to (book_path, cover_path), auto-select first cover for no-cover books.*

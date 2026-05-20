@@ -1,4 +1,16 @@
 
+## Stats panel cover loading — `_inject_active_covers` performance note (2026-05-20)
+
+`_inject_active_covers` does one `get_active_cover_path` DB query per book, synchronously on the main thread. Acceptable for current list sizes. If the Month view with many books becomes perceptible, batch into a single `WHERE path IN (...)` query and return a dict keyed by path.
+
+## `_iter_day_rows` — unrendered tab safety (2026-05-20)
+
+`_iter_day_rows` uses `getattr(self, '_week_rows_layout', None)` and `getattr(self, '_month_rows_layout', None)`. These attributes may not exist if those tabs have never been rendered (Qt defers tab content until first visit). The method returns silently on `None` — this is intentional. Do not change to a direct attribute access.
+
+## `active_cover_changed` signal widening — call site contract (2026-05-20)
+
+`BookDetailPanel.active_cover_changed` was widened from `Signal(str)` to `Signal(str, str)` — `(book_path, cover_path)`. `CoverPanel.active_cover_changed` remains `Signal(str)`. The intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` bridges them. Any future slot connected to `BookDetailPanel.active_cover_changed` must accept both positional args.
+
 ## Metadata lock feature (2026-05-19)
 
 Four independent lock columns on `books`: `title_locked`, `author_locked`, `narrator_locked`, `year_locked` (all `INTEGER NOT NULL DEFAULT 0`). Locks are set per-field on save (`_commit_inline_save`), cleared all-at-once on unlock. Persisted to DB via `set_metadata_locks()` and read via `get_metadata_locks()`.

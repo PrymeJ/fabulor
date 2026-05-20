@@ -192,6 +192,9 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - DB methods: `get_all_tags`, `get_books_by_tag`, `rename_tag`, `delete_tag`, `get_unique_tag_count`
 - Period cache: `_cached_active_days/weeks/months`, invalidated in `refresh_all`/`refresh_current_tab`
 - `_add_row_safely` helper: hide-before-insert, show-after, wrapped in `setUpdatesEnabled(False/True)` — fixes first-visit flash
+- `_inject_active_covers(rows)` — enriches row dicts with `"active_cover_path"` from `book_covers` before widget construction. Must be called at every `BookDayRow`/`FinishedBookThumb` construction site.
+- `on_cover_changed(book_path, cover_path)` — targeted refresh: walks visible tab's rows via `_iter_day_rows`/`_iter_finished_thumbs`, calls `refresh_cover` on matching widgets only. No tab rebuild.
+- `BookDayRow.refresh_cover` and `FinishedBookThumb.refresh_cover` — evict cache entry, re-trigger worker. On empty `cover_path` (last cover removed), restore placeholder immediately without spawning a worker.
 
 ### Theme System
 - 50+ named themes in themes.py. Per-component stylesheets (never `main_window.setStyleSheet()` globally)
@@ -249,6 +252,15 @@ Both check whether animation is running before setValue. Removing causes jitter 
 ### DO NOT restore `show_metadata=False` to `library_controller.apply_library_state`
 Removed in 2026-05-11 — it was silently overriding cover display on every book switch. `_load_cover_art` owns `metadata_label` visibility.
 
+### DO NOT use `active_cover_changed` on `BookDetailPanel` as a single-arg signal
+It emits `(book_path, cover_path)` — both args required at all call sites. `CoverPanel.active_cover_changed` remains `Signal(str)`; the intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` injects `self._book_path` and re-emits. Do not connect `CoverPanel.active_cover_changed` directly to `BookDetailPanel.active_cover_changed`.
+
+### DO NOT pass raw DB rows directly to `BookDayRow` or `FinishedBookThumb`
+Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows carry only `cover_path` (scanner thumbnail); `_inject_active_covers` adds `active_cover_path` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
+
+### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
+Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
+
 ---
 
 ## Pending / Known Debt
@@ -260,8 +272,7 @@ Removed in 2026-05-11 — it was silently overriding cover display on every book
 - Screen drag 4K→1080p: cover scaling doesn't update without scroll (needs `QWindow.screenChanged`).
 - MP3 natural sort (2 before 10) — out of scope for v1.
 - Book detail panel background opacity — user wants it opaque eventually. Not in current scope.
-- **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Carry to next session.
-- **Metadata lock feature** — designed but not started. Schema: `is_metadata_locked INTEGER NOT NULL DEFAULT 0` on `books`. UI: lock icon in BookDetailPanel header toggling lock state. Upsert change: skip title/author/narrator/year update in ON CONFLICT block when `books.is_metadata_locked = 1` (CASE expression). Protects manually edited metadata from being overwritten by a rescan.
+- **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Cover monochrome, metadata read-only, Cover+Tags tabs hidden — deferred to Session 7.
 - **VT open issues (multi-file MP3):**
   - Sessions not recorded correctly across VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions.
   - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.
@@ -321,4 +332,4 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 
 ---
 
-*Last updated: 2026-05-18 — is_excluded schema, trash button, inline confirmation, book_removed wiring, metadata lock design (deferred).*
+*Last updated: 2026-05-20 — library duration regression fix, hand cursor on duration toggles, stats panel active cover fix, active_cover_changed signal widened to (book_path, cover_path), auto-select first cover for no-cover books.*
