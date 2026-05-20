@@ -492,6 +492,13 @@ class BookDayRow(QWidget):
                 self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
             )
             QThreadPool.globalInstance().start(worker)
+        else:
+            placeholder = QPixmap()
+            placeholder.load(os.path.join(self._assets_dir, "fabulor.ico"))
+            if not placeholder.isNull():
+                self._cover_label.setPixmap(placeholder.scaled(
+                    48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                ))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -503,6 +510,7 @@ class FinishedBookThumb(QWidget):
     def __init__(self, row_data: dict, assets_dir: str, parent=None):
         super().__init__(parent)
         self._row_data = row_data
+        self._assets_dir = assets_dir
         self.setFixedSize(47, 47)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
@@ -577,6 +585,15 @@ class FinishedBookThumb(QWidget):
                 self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
             )
             QThreadPool.globalInstance().start(worker)
+        else:
+            placeholder = QPixmap()
+            placeholder.load(os.path.join(self._assets_dir, "fabulor.ico"))
+            if not placeholder.isNull():
+                self._cover_label.setPixmap(placeholder.scaled(
+                    47, 47,
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                ))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

@@ -38,13 +38,16 @@ class _TagBookThumb(QWidget):
 
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
-        if cover_path and os.path.exists(cover_path):
+        active_cover_path = book.get('active_cover_path')
+        load_path = active_cover_path or cover_path
+        if load_path and os.path.exists(load_path):
             book_id = book.get('book_id')
             if _cover_cache.get(book_id):
                 self._apply_cover(_cover_cache[book_id])
             else:
                 worker = CoverLoaderWorker(
                     type('_TT', (), {'path': book['path'], 'cover_path': cover_path, 'id': book_id})(),
+                    active_cover_path=active_cover_path,
                 )
                 worker.signals.cover_loaded.connect(
                     self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
@@ -159,6 +162,13 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._build_ui()
 
+    def _inject_active_covers(self, books: list[dict]) -> list[dict]:
+        for book in books:
+            bp = book.get('path')
+            if bp:
+                book['active_cover_path'] = self.db.get_active_cover_path(bp)
+        return books
+
     def _build_ui(self):
         self._stack_layout = QVBoxLayout(self)
         self._stack_layout.setContentsMargins(0, 0, 0, 0)
@@ -266,7 +276,7 @@ class TagManagerWidget(QWidget):
         self._tag_name_edit.setText(tag)
         self._rename_status.setText("")
 
-        books = self.db.get_books_by_tag(tag)
+        books = self._inject_active_covers(self.db.get_books_by_tag(tag))
         self._book_count_label.setText(
             f"{len(books)} book{'s' if len(books) != 1 else ''} tagged \"{tag}\""
         )
