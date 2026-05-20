@@ -108,8 +108,10 @@
 - [x] Current chapter corresponds to progress bar position
 - [x] Book time: Elapsed (Fixed width, left)
 - [x] Book time: Total/Remaining toggle (Fixed width, right, persists)
+- [ ] Book time total/remaining label shows hand cursor on hover
 - [x] Chapter time: Elapsed (Fixed width, left)
 - [x] Chapter time: Total/Remaining toggle (Fixed width, right, synced with book toggle)
+- [ ] Chapter time total/remaining label shows hand cursor on hover
 - [x] Chapter name opens drop-up (click or press c)
 - [x] Chapter name click closes drop-up when open
 - [x] Chapter names in drop-up responsive
@@ -148,6 +150,14 @@
 - [x] Sleep clickable
 - [x] Library clickable
 - [x] Clicking on chapter name dismisses
+
+### Soft-delete / path removal regression checks
+- [ ] Removing a scan location marks books as is_deleted=1 (not hard-deleted)
+- [ ] Removed books disappear from library view immediately
+- [ ] Removed books' listening history and progress remain in stats panel
+- [ ] Re-adding the same location resurfaces all books with progress intact
+- [ ] Stats panel refreshes after path removal (rows update without manual tab switch)
+- [ ] Tag manager book grid refreshes after path removal (removed-book thumbs update)
 
 ## Settings panel
 
@@ -224,6 +234,8 @@
 - [x] Right click opens book details panel on stats tab
 - [x] Time label click toggles remaining/total (requires progress > 1s)
 - [x] Toggle does not dismiss panel or open book
+- [ ] Time label shows hand cursor on hover (only when book has progress > 1s)
+- [ ] Books with no progress show total duration at 1x speed regardless of per-book speed setting
 - [x] Hover overlay appears/disappears correctly in grid modes (2/3/Square)
 - [x] Elision on hover works correctly on 1 per view and 2 per view modes
 - [x] List mode hover-expand works for title and author independently
@@ -293,6 +305,23 @@
 - [ ] Day-start hour spinner range 0–23, persists correctly
 - [ ] Reset all stats button prompts confirmation before executing
 
+### Cover display in stats rows
+- [ ] BookDayRow and FinishedBookThumb show the user-selected active cover (not scanner thumbnail)
+- [ ] Cover updates immediately when active cover is changed in Cover Panel (no tab switch required)
+- [ ] Removing the last cover from a book: placeholder icon shown immediately in stats rows
+- [ ] Archived (excluded or location-deleted) books show grayscale cover in all stats rows
+
+### Tag manager (⚙ tab)
+- [ ] Tag list shows all tags with book counts
+- [ ] Clicking a tag chip opens the tag panel with a book grid
+- [ ] Book grid shows user-selected active cover (not scanner thumbnail)
+- [ ] Archived books in the grid show grayscale cover
+- [ ] Removing a book from a tag updates the grid and count immediately
+- [ ] Renaming a tag updates the chip list and panel header
+- [ ] Deleting a tag with confirmation removes it and returns to chip list
+- [ ] After excluding a book: its thumbnail in the tag grid updates to grayscale without reopening the panel
+- [ ] After a library path removal: tag manager grid refreshes to show updated state
+
 ## Book Detail Panel
 
 ### Navigation
@@ -316,6 +345,7 @@
 ### Inline metadata editing
 - [ ] Clicking any header field enters edit mode (all four fields become editable)
 - [ ] Narrator and year fields appear with placeholders even when previously hidden
+- [ ] Year field rejects non-digit characters; minus sign allowed as first character only
 - [ ] Save label appears only when at least one field differs from original value
 - [ ] Save label disappears if edits are reverted back to original values
 - [ ] Enter in any field saves and shows "Saved" for 1 second
@@ -323,7 +353,38 @@
 - [ ] Clicking outside the fields reverts all edits, hides Save
 - [ ] Clicking another tab reverts all edits
 - [ ] Closing the panel reverts all edits
-- [ ] Save updates library and stats panel correctly
+- [ ] Save updates title and author in library panel immediately (no panel close required)
+- [ ] Save updates narrator and year in library panel immediately (no panel close required)
+- [ ] Rescan after save: locked fields are not overwritten; unlocked fields update from metadata
+
+### Metadata lock
+- [ ] Saving a changed field sets a lock on that field (lock icon appears)
+- [ ] Lock icon click unlocks all four fields (lock-open icon, auto-hides after 2.5s)
+- [ ] Locked fields survive a library rescan unchanged
+- [ ] Unlocked fields are overwritten by a rescan as normal
+- [ ] Click-outside while editing reverts to pre-edit state (locked → lock icon, unlocked → hidden)
+- [ ] Archived books: metadata action button is always hidden regardless of lock state
+
+### Book removal (trash button)
+- [ ] Trash button visible for normal (non-excluded) books
+- [ ] Clicking trash shows inline "Click to remove from library" confirmation label
+- [ ] Clicking the confirmation removes the book from the library view and closes the panel
+- [ ] Clicking anywhere else (outside label and button) dismisses the confirmation without removing
+- [ ] Closing the panel while confirming dismisses without removing
+- [ ] After removal: book disappears from library panel immediately
+- [ ] After removal: stats panel active tab refreshes (row counts update)
+- [ ] After removal: tag manager book grid refreshes if the removed book was tagged
+- [ ] Removed book's listening history and progress are preserved (visible in stats for that path)
+- [ ] Re-scanning the removed book's folder resurfaces it in the library
+- [ ] Trash button hidden when book is already excluded (opened from stats history)
+
+### Archived book state (excluded or location-deleted)
+- [ ] Opening an excluded book from stats history: cover shown in grayscale
+- [ ] Opening a location-deleted book from stats history: cover shown in grayscale
+- [ ] Trash button hidden for archived books
+- [ ] Metadata action button hidden for archived books (no lock/save icon)
+- [ ] Stats panel: BookDayRow and FinishedBookThumb show grayscale cover for archived books
+- [ ] Tag manager: _TagBookThumb shows grayscale cover for archived books
 
 ### Stats tab
 - [ ] Furthest position: label + themed bar + percentage on one line, aligned with grid rows below
@@ -378,6 +439,10 @@
 - [ ] Adding a duplicate path does not create a second entry
 - [ ] Error shown for unsupported file types or unreadable images
 - [ ] New cover reflects in the main player cover immediately after add + activate
+- [ ] First cover added to a no-cover book: automatically set as active, shown in preview immediately (no click required)
+- [ ] Books with an embedded locked cover: adding a user cover does NOT auto-select it (normal behavior)
+- [ ] After deleting all user covers from a previously no-cover book: next add auto-selects again
+- [ ] Active cover change propagates immediately to: main player, library panel, book detail header, stats panel rows, tag manager book grid
 
 ### Persistence
 - [ ] Active cover persists across app restarts (correct cover shown on next launch)
@@ -447,6 +512,27 @@
 - [] panel_opacity_hover visible (not fully opaque) in panels when cover theme active
 - [] No cover + Exclusive: silently uses pool, no mode revert
 
+## CUE file support
+
+- [ ] Set chapter source to ".cue" in Settings → Library
+- [ ] Load an M4B with a valid cue file in the same folder
+- [ ] Verify chapter list shows cue titles (including any extra entries like "Opening Credits", "PART I")
+- [ ] Verify chapter label updates correctly on playback and seek
+- [ ] Verify chapter list clicks navigate to correct position
+- [ ] Verify Prev/Next navigate correctly using cue chapters
+- [ ] Verify chapter slider stays within correct chapter boundaries
+- [ ] Verify notches on progress slider correspond to cue chapters
+- [ ] Set chapter source back to "Embedded" — verify embedded chapters restore correctly
+- [ ] Test with cue file containing BOM (Windows ripper output)
+- [ ] Test with cue file where FILE stem doesn't match audio file — verify silent fallback to embedded
+- [ ] Test with cue file where first timestamp is not 0:00:00 — verify rejection and fallback
+- [ ] Test with non-monotonic timestamps — verify rejection and fallback
+- [ ] Test with timestamp beyond file duration — verify rejection and fallback
+- [ ] Test with only one TRACK entry — verify rejection and fallback
+- [ ] Test with multiple cue files in folder — verify correct file selected by stem match, fallback if no match
+- [ ] Verify app start restores to correct chapter with cue active
+- [ ] Verify Undo after Next shows correctly with cue active
+
 ## Each theme here
 
 - [ ] Alzabo
@@ -477,27 +563,6 @@
 - [ ] Shai-Hulud
 - [ ] Shade of the Evening
 - [ ] Shrike
-## CUE file support
-
-- [ ] Set chapter source to ".cue" in Settings → Library
-- [ ] Load an M4B with a valid cue file in the same folder
-- [ ] Verify chapter list shows cue titles (including any extra entries like "Opening Credits", "PART I")
-- [ ] Verify chapter label updates correctly on playback and seek
-- [ ] Verify chapter list clicks navigate to correct position
-- [ ] Verify Prev/Next navigate correctly using cue chapters
-- [ ] Verify chapter slider stays within correct chapter boundaries
-- [ ] Verify notches on progress slider correspond to cue chapters
-- [ ] Set chapter source back to "Embedded" — verify embedded chapters restore correctly
-- [ ] Test with cue file containing BOM (Windows ripper output)
-- [ ] Test with cue file where FILE stem doesn't match audio file — verify silent fallback to embedded
-- [ ] Test with cue file where first timestamp is not 0:00:00 — verify rejection and fallback
-- [ ] Test with non-monotonic timestamps — verify rejection and fallback
-- [ ] Test with timestamp beyond file duration — verify rejection and fallback
-- [ ] Test with only one TRACK entry — verify rejection and fallback
-- [ ] Test with multiple cue files in folder — verify correct file selected by stem match, fallback if no match
-- [ ] Verify app start restores to correct chapter with cue active
-- [ ] Verify Undo after Next shows correctly with cue active
-
 - [ ] Sitting in the Wing Chair
 - [ ] Slow Regard
 - [ ] Symir
