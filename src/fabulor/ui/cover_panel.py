@@ -556,13 +556,20 @@ class CoverPanel(QWidget):
             'fit_mode': 'fit',
             'sort_order': slot_index,
         }
+        had_no_covers = len(self._covers) == 0
         self._covers.append(new_cover)
+
+        is_first_user_cover = had_no_covers
+
+        if is_first_user_cover:
+            self._db.set_active_cover(self._book_path, cover_id)
+            new_cover['is_active'] = 1
 
         thumb = CoverThumbnail(
             cover_id=cover_id,
             file_path=dest_path,
             is_locked=False,
-            is_active=False,
+            is_active=is_first_user_cover,
             accent_color=self._accent,
             parent=self,
         )
@@ -573,6 +580,10 @@ class CoverPanel(QWidget):
         self._thumb_layout.addWidget(thumb)
         self._update_left_col_height()
         self._update_overlay_enabled()
+
+        if is_first_user_cover:
+            self._select_cover(new_cover)
+            self.active_cover_changed.emit(dest_path)
 
         self._add_btn.setVisible(len(self._covers) < 4)
 
