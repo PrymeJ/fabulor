@@ -1,7 +1,7 @@
 # THEME_ANIM_TODO: LibraryPanel, BookDelegate
 import random
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView,
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem,
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
@@ -297,7 +297,18 @@ class LibraryPanel(QFrame):
                     if book:
                         self._delegate.on_hover_move(book.path, pos)
                     self._list_view.update(idx)
+                    opt = QStyleOptionViewItem()
+                    self._delegate.initStyleOption(opt, idx)
+                    opt.rect = self._list_view.visualRect(idx)
+                    hit = self._delegate._time_label_rect(opt, idx)
+                    if hit and hit.contains(pos):
+                        self._list_view.viewport().setCursor(Qt.PointingHandCursor)
+                    else:
+                        self._list_view.viewport().setCursor(Qt.ArrowCursor)
+                else:
+                    self._list_view.viewport().setCursor(Qt.ArrowCursor)
             elif event.type() == QEvent.Type.Leave:
+                self._list_view.viewport().setCursor(Qt.ArrowCursor)
                 self._on_view_left()
         return super().eventFilter(obj, event)
 
