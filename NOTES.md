@@ -1,4 +1,20 @@
 
+## `to_grayscale` and alpha channel (2026-05-20)
+
+`Format_Grayscale8` drops the alpha channel — transparent pixels become black. Affects the placeholder logo cover when displayed for archived books. Fix: composite onto the themed background color before converting. Revisit when the app icon is finalized/vectorized. Lives in `to_grayscale()` in `cover_loader.py`.
+
+## `_is_archived` ordering in `load_book()` (2026-05-20)
+
+`_is_archived` and any flag that gates visual state must be set before any method that reads it is called in `load_book()`. Easy to regress as `load_book` grows — the cover block must always come after the archived detection block. The original implementation had it backwards; that was caught and fixed in session 2 of 05.20.
+
+## `deleteLater()` and layout repaint (2026-05-20)
+
+`deleteLater()` defers widget destruction to the next event loop iteration. If a layout doesn't visually update after a grid rebuild, a `refresh_current_tab()` or equivalent repaint trigger is needed to force Qt to process the deferred deletions and re-render.
+
+## `AppInterface` is not the main `App` object (2026-05-20)
+
+Attributes on the main app (e.g. `stats_panel`) are not accessible via `self.app` in `library_controller.py` — `self.app` is `AppInterface`, a thin proxy. Add a wrapper method to `AppInterface` for any new cross-panel call from the controller. Do not access `self.app.<main_attr>` directly.
+
 ## Stats panel cover loading — `_inject_active_covers` performance note (2026-05-20)
 
 `_inject_active_covers` does one `get_active_cover_path` DB query per book, synchronously on the main thread. Acceptable for current list sizes. If the Month view with many books becomes perceptible, batch into a single `WHERE path IN (...)` query and return a dict keyed by path.

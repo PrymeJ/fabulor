@@ -523,6 +523,10 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT construct `BookDayRow` or `FinishedBookThumb` without first calling `_inject_active_covers` on the row list. Raw DB rows carry only `cover_path` (scanner thumbnail). `_inject_active_covers` adds `"active_cover_path"` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
 
+## When producing a diff that touches `load_book()` or any method with a state-setting block followed by a state-reading block, verify the ordering before submitting. In session 2 of 05.20, `_is_archived` was set after the cover block that reads it — the mechanics were correct but the ordering caused stale grayscale on first open.
+
+## DO NOT use inline `convertToFormat(QImage.Format.Format_Grayscale8)` for grayscale conversion. Always use `to_grayscale()` from `cover_loader.py`. Inline conversion loses the alpha channel and turns transparent pixels black.
+
 ---
 
-*Last updated: 2026-05-20 — library duration regression fix, hand cursor on duration toggles, stats panel active cover fix, active_cover_changed signal widened to (book_path, cover_path), auto-select first cover for no-cover books.*
+*Last updated: 2026-05-20 (session 2) — archived book UI in detail panel and stats widgets, narrator/year library sync fix, year field validator, get_book_dict, tag manager refresh wiring, AppInterface proxy pattern for cross-panel calls.*
