@@ -83,6 +83,8 @@ class LibraryController(QObject):
                              show_banner=None, show_cancel=False, auto_hide=True)
 
         self.ui.refresh_panel(force=True)
+        self.app.refresh_tag_manager()
+        self.app.refresh_stats()
         self._refresh_folder_list()
 
         # Refresh player cover after scan — ensures the active book_covers entry

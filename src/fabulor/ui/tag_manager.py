@@ -240,6 +240,10 @@ class TagManagerWidget(QWidget):
 
         self._stack_layout.addWidget(self._panel_widget)
 
+    def refresh_books(self) -> None:
+        if self._current_tag:
+            self._open_tag(self._current_tag)
+
     def refresh(self):
         """Reload tag list from DB."""
         while self._tag_list_layout.count() > 1:

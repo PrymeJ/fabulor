@@ -59,6 +59,8 @@ class AppInterface:
     def get_current_file(self): return self._main.current_file
     def load_cover_art(self, path): self._main._load_cover_art(path)
     def on_book_removed(self): self._main._on_book_removed()
+    def refresh_tag_manager(self) -> None: self._main.stats_panel._tag_manager.refresh_books()
+    def refresh_stats(self) -> None: self._main.stats_panel.refresh_current_tab()
 
 class BrowserInterface:
     def __init__(self, main):
@@ -1266,6 +1268,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         path = self.book_detail_panel._book_path
         self.panel_manager._close_book_detail_flow()
         self.library_panel.refresh(force=True)
+        self.stats_panel._tag_manager.refresh_books()
+        self.stats_panel.refresh_current_tab()
         if path == self.current_file:
             self._on_book_removed()
 
@@ -2147,6 +2151,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             pixmap = QPixmap(file_path)
             if not pixmap.isNull():
                 self._apply_main_cover(pixmap)
+        self.stats_panel._tag_manager.refresh_books()
 
     def _update_cover_art_scaling(self):
         """Scales the current cover pixmap to the available space, respecting fit mode."""
