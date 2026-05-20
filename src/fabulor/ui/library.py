@@ -1234,8 +1234,8 @@ class BookDelegate(QStyledItemDelegate):
         has_progress = (book.progress or 0.0) > MIN_PROGRESS
         pos = live_pos if live_pos > 0 else (book.progress or 0.0)
         dur = live_dur if live_dur > 0 else (book.duration or 0.0)
-        speed = book.speed or 1.0
-        dur_disp = dur / speed
+        speed = (book.speed or 1.0) if has_progress else 1.0
+        dur_disp = dur / speed if has_progress else dur
         pct = min(1.0, pos / dur) if has_progress and dur > 0 else 0.0
         return pos, dur, dur_disp, pct, has_progress, speed
 
