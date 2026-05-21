@@ -124,7 +124,7 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
     bg_drop    = _shift_sv(dr, dg, db, j(0.35), j(0.22))
 
     accent       = _shift_sv(dr, dg, db, j(0.75), j(0.85))
-    accent_light = _shift_sv(dr, dg, db, j(0.55), j(0.95))
+    accent_light = _shift_sv(dr, dg, db, j(0.60), j(0.90))
     accent_dark  = _shift_sv(dr, dg, db, j(0.80), j(0.45))
 
     lib_hover    = _shift_sv(dr, dg, db, j(0.65), j(0.45))   # dominant hue, mid-dark for library hover
