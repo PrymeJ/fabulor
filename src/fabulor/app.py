@@ -2,6 +2,7 @@
 # AudioSettingsTab, SleepTimerPanel, StatsPanel, BookDetailPanel, 
 # status_banner, sidebar, vol_container
 import os
+import re
 import threading
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -14,7 +15,8 @@ from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QSize, QByteArray
 )
-from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon
+from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
+from PySide6.QtSvg import QSvgRenderer
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
@@ -41,15 +43,27 @@ from .settings_controller import SettingsController
 
 _ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
-def _load_svg_icon(name, color=None):
-    path = os.path.join(_ICONS_DIR, name)
-    if color is None:
-        return QIcon(path)
-    with open(path, "rb") as f:
-        data = f.read().replace(b"white", color.encode())
-    pm = QPixmap()
-    pm.loadFromData(QByteArray(data), "SVG")
-    return QIcon(pm)
+def _load_svg_icon(name, color="white"):
+    try:
+        path = os.path.join(_ICONS_DIR, name)
+        with open(path) as f:
+            data = f.read()
+        data = re.sub(r'fill="(?!none)[^"]*"',         f'fill="{color}"',   data)
+        data = re.sub(r'stroke="(?!none)[^"]*"',       f'stroke="{color}"', data)
+        data = re.sub(r'(fill:)(?!none)[^;}"]*',       rf'\g<1>{color}',     data)
+        data = re.sub(r'(stroke:)(?!none)[^;}"]*',     rf'\g<1>{color}',     data)
+        ba = QByteArray(data.encode())
+        renderer = QSvgRenderer(ba)
+        size = renderer.defaultSize()
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
+    except Exception as e:
+        print(f"Warning: could not load icon {name}: {e}")
+        return QIcon()
 
 class UIInterface:
     def __init__(self, main):
@@ -647,7 +661,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         controls_layout = QHBoxLayout()
         self.prev_button = HoverButton()
         self.prev_button.setObjectName("prev_btn")
-        self.prev_button.setIcon(_load_svg_icon("previous.svg"))
+        _icon = _load_svg_icon("previous.svg")
+        if _icon.isNull():
+            self.prev_button.setText("|<<")
+        else:
+            self.prev_button.setIcon(_icon)
         self.prev_button.setFixedSize(46, 33)
         self.prev_button.setIconSize(QSize(32, 22))
         self.rewind_button = RightClickButton("")
@@ -664,7 +682,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._icon_restart = _load_svg_icon("restart.svg")
         self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg"),  10: _load_svg_icon("rewind_10.svg"),  30: _load_svg_icon("rewind_30.svg")}
         self._icon_forward = {5: _load_svg_icon("forward_5.svg"), 10: _load_svg_icon("forward_10.svg"), 30: _load_svg_icon("forward_30.svg")}
-        self.play_pause_button.setIcon(self._icon_play)
+        if self._icon_play.isNull():
+            self.play_pause_button.setText("Play")
+        else:
+            self.play_pause_button.setIcon(self._icon_play)
         self.play_pause_button.setFixedSize(56, 33)
         self.play_pause_button.setIconSize(QSize(52, 33))
         self.forward_button = RightClickButton("")
@@ -676,7 +697,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.forward_button.setAutoRepeatInterval(150)
         self.next_button = HoverButton()
         self.next_button.setObjectName("next_btn")
-        self.next_button.setIcon(_load_svg_icon("next.svg"))
+        _icon = _load_svg_icon("next.svg")
+        if _icon.isNull():
+            self.next_button.setText(">>|")
+        else:
+            self.next_button.setIcon(_icon)
         self.next_button.setFixedSize(46, 33)
         self.next_button.setIconSize(QSize(32, 22))
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
@@ -685,7 +710,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
-        self._update_skip_icons()
+        self._reload_button_icons(self.theme_manager._current_theme_name)
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.prev_button.clicked.connect(self.handle_prev)
         self.prev_button.rightClicked.connect(self._on_prev_right_click)
@@ -1818,14 +1843,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _set_play_icon(self, state):
         """Set play_pause_button icon. state: 'play', 'pause', or 'restart'."""
         icons = {"play": self._icon_play, "pause": self._icon_pause, "restart": self._icon_restart}
-        self.play_pause_button.setIcon(icons[state])
+        fallback = {"play": "Play", "pause": "Pause", "restart": "Restart"}
+        icon = icons[state]
+        if icon.isNull():
+            self.play_pause_button.setIcon(QIcon())
+            self.play_pause_button.setText(fallback[state])
+        else:
+            self.play_pause_button.setText("")
+            self.play_pause_button.setIcon(icon)
 
     def _update_skip_icons(self):
         skip = self.config.get_skip_duration()
-        self.rewind_button.setIcon(self._icon_rewind.get(skip, self._icon_rewind[10]))
-        self.forward_button.setIcon(self._icon_forward.get(skip, self._icon_forward[10]))
+        rwd = self._icon_rewind.get(skip, self._icon_rewind[10])
+        fwd = self._icon_forward.get(skip, self._icon_forward[10])
+        if rwd.isNull():
+            self.rewind_button.setIcon(QIcon())
+            self.rewind_button.setText("<<")
+        else:
+            self.rewind_button.setText("")
+            self.rewind_button.setIcon(rwd)
+        if fwd.isNull():
+            self.forward_button.setIcon(QIcon())
+            self.forward_button.setText(">>")
+        else:
+            self.forward_button.setText("")
+            self.forward_button.setIcon(fwd)
 
     def _reload_button_icons(self, theme_name):
+        if not hasattr(self, 'play_pause_button'):
+            return
         t = _resolve_theme(theme_name)
         play_color    = t.get('button_play',    t.get('button_text', t.get('text_on_light_bg', t['text'])))
         skip_color    = t.get('button_skip',    play_color)
@@ -1835,8 +1881,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._icon_restart = _load_svg_icon("restart.svg",    play_color)
         self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg",   skip_color), 10: _load_svg_icon("rewind_10.svg",  skip_color), 30: _load_svg_icon("rewind_30.svg",  skip_color)}
         self._icon_forward = {5: _load_svg_icon("forward_5.svg",  skip_color), 10: _load_svg_icon("forward_10.svg", skip_color), 30: _load_svg_icon("forward_30.svg", skip_color)}
-        self.prev_button.setIcon(_load_svg_icon("previous.svg", chapter_color))
-        self.next_button.setIcon(_load_svg_icon("next.svg",     chapter_color))
+        _prev = _load_svg_icon("previous.svg", chapter_color)
+        if _prev.isNull():
+            self.prev_button.setText("|<")
+        else:
+            self.prev_button.setText("")
+            self.prev_button.setIcon(_prev)
+        _next = _load_svg_icon("next.svg", chapter_color)
+        if _next.isNull():
+            self.next_button.setText(">|")
+        else:
+            self.next_button.setText("")
+            self.next_button.setIcon(_next)
         self._update_skip_icons()
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
