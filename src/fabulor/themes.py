@@ -83,7 +83,7 @@ THEMES = {
     "Alzabo": {
         "text":                   "#9CBAD4",
         "accent":                 "#366FF4",
-        "accent_light":           "#7A9BB5",
+        "accent_light":           "#55738A",
         "accent_dark":            "#0A375A",
         "bg_main":                "#1A0570",
         "bg_deep":                "#0A0E82",
@@ -123,8 +123,10 @@ THEMES = {
         "panel_opacity_hover":    1.00,
         "notch_color":            "#3DE8EB",
         "notch_opacity":          110,
-        "cover_preview_bg"      :"#07576B",
-        "button_play"            :"#619ED3"
+        "cover_preview_bg"       :"#07576B",
+        "button_play"            :"#619ED3",
+        "button_chapter"         :"#619ED3",
+        "button_skip"            :"#619ED3"
     },
     "Anomander": {
         "bg_deep":      "#000000",
