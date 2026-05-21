@@ -648,9 +648,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.prev_button = HoverButton()
         self.prev_button.setObjectName("prev_btn")
         self.prev_button.setIcon(_load_svg_icon("previous.svg"))
+        self.prev_button.setFixedSize(46, 33)
         self.prev_button.setIconSize(QSize(32, 22))
         self.rewind_button = RightClickButton("")
         self.rewind_button.setObjectName("rewind_btn")
+        self.rewind_button.setFixedSize(46, 33)
         self.rewind_button.setIconSize(QSize(28, 17))
         self.rewind_button.setAutoRepeat(True)
         self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
@@ -663,9 +665,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg"),  10: _load_svg_icon("rewind_10.svg"),  30: _load_svg_icon("rewind_30.svg")}
         self._icon_forward = {5: _load_svg_icon("forward_5.svg"), 10: _load_svg_icon("forward_10.svg"), 30: _load_svg_icon("forward_30.svg")}
         self.play_pause_button.setIcon(self._icon_play)
+        self.play_pause_button.setFixedSize(56, 33)
         self.play_pause_button.setIconSize(QSize(52, 33))
         self.forward_button = RightClickButton("")
         self.forward_button.setObjectName("forward_btn")
+        self.forward_button.setFixedSize(46, 33)
         self.forward_button.setIconSize(QSize(28, 17))
         self.forward_button.setAutoRepeat(True)
         self.forward_button.setAutoRepeatDelay(500)
@@ -673,6 +677,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.next_button = HoverButton()
         self.next_button.setObjectName("next_btn")
         self.next_button.setIcon(_load_svg_icon("next.svg"))
+        self.next_button.setFixedSize(46, 33)
         self.next_button.setIconSize(QSize(32, 22))
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
