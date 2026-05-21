@@ -129,12 +129,15 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
 
     lib_hover    = _shift_sv(dr, dg, db, j(0.65), j(0.45))   # dominant hue, mid-dark for library hover
     chap_fill    = _shift_sv(dr, dg, db, j(0.60), j(0.55))   # dominant hue, slightly lighter for chapter bar
+    chap_fill_lighter    = _shift_sv(dr, dg, db, j(0.80), j(0.75))   # dominant hue, slightly lighter for chapter bar
+
 
     text        = _shift_sv(dr, dg, db, j(0.20), j(0.90))
-    text_dim    = _shift_sv(dr, dg, db, j(0.25), j(0.70))
-    text_dimmer = _shift_sv(dr, dg, db, j(0.20), j(0.55))
+    text_dim    = _shift_sv(dr, dg, db, j(0.25), j(0.80))
+    text_dimmer = _shift_sv(dr, dg, db, j(0.25), j(0.70))
 
     slider_bg   = _shift_sv(dr, dg, db, j(0.40), j(0.28))
+    slider_bg_lighter   = _shift_sv(dr, dg, db, j(0.50), j(0.38))
 
     # --- Secondary-hue accents (sprinkled on a few elements) ---
     sec_accent       = _shift_sv(sr, sg, sb, j(0.70), j(0.80))
@@ -157,11 +160,11 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "library_title":            _hex(*text),
         "library_author":           _hex(*text_dim),
         "library_narrator":         _hex(*text_dimmer),
-        "library_elapsed":          _hex(*text_dim),
-        "library_total":            _hex(*text_dim),
-        "library_percentage":       _hex(*text_dimmer),
-        "library_slider_bg":        _hex(*slider_bg),
-        "library_slider_fill":      _hex(*chap_fill),
+        "library_elapsed":          _hex(*text),
+        "library_total":            _hex(*text),
+        "library_percentage":       _hex(*text_dim),
+        "library_slider_bg":        _hex(*slider_bg_lighter),
+        "library_slider_fill":      _hex(*chap_fill_lighter),
         "library_input_bg":         _hex(*bg_drop),
         "library_input_text":       _hex(*text),
         # Core colors
@@ -188,7 +191,7 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
         "panel_theme_names_dimmed": _hex(*text_dim),
         # Misc
         "curr_chap_highlight":      _hex(*sec_dark),
-        "dropdown_time_text":       _hex(*text_dim),
+        "dropdown_time_text":       _hex(*text_dimmer),
         "notch_color":              _hex(*sec_accent_light),
         "notch_opacity":            100,
     }
