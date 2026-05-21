@@ -31,6 +31,9 @@ cover_preview_bg: Background color for book cover previews in the library. Falls
 UI TEXT COLORS
 text: The default color for most labels and UI text.
 button_text: (Optional) Specific color for text inside buttons. If not provided, it falls back to text_on_light_bg or text.
+button_play: (Optional) Icon/text color for the play/pause/restart button. Falls back to button_text, then text_on_light_bg, then text.
+button_skip: (Optional) Icon/text color for the rewind and forward skip buttons. Falls back to button_play.
+button_chapter: (Optional) Icon/text color for the previous and next chapter buttons. Falls back to button_play.
 progress_text: (Optional) Color for the percentage label that sits on top of the overall progress slider.
 sidebar_text: (Optional) Color for text and buttons inside the sidebar. Falls back to the main text color.
 sidebar_text_hover: (Optional) Color for text and buttons inside the sidebar when hovered. Falls back to accent.
@@ -121,6 +124,7 @@ THEMES = {
         "notch_color":            "#3DE8EB",
         "notch_opacity":          110,
         "cover_preview_bg"      :"#07576B",
+        "button_play"            :"#619ED3"
     },
     "Anomander": {
         "bg_deep":      "#000000",

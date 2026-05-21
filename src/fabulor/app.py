@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QSize
+    QRegularExpression, Signal, QObject, QSize, QByteArray
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
-from .themes import THEMES
+from .themes import THEMES, _resolve_theme
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
@@ -41,8 +41,15 @@ from .settings_controller import SettingsController
 
 _ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
-def _load_svg_icon(name):
-    return QIcon(os.path.join(_ICONS_DIR, name))
+def _load_svg_icon(name, color=None):
+    path = os.path.join(_ICONS_DIR, name)
+    if color is None:
+        return QIcon(path)
+    with open(path, "rb") as f:
+        data = f.read().replace(b"white", color.encode())
+    pm = QPixmap()
+    pm.loadFromData(QByteArray(data), "SVG")
+    return QIcon(pm)
 
 class UIInterface:
     def __init__(self, main):
@@ -1805,6 +1812,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Set play_pause_button icon. state: 'play', 'pause', or 'restart'."""
         icons = {"play": self._icon_play, "pause": self._icon_pause, "restart": self._icon_restart}
         self.play_pause_button.setIcon(icons[state])
+
+    def _reload_button_icons(self, theme_name):
+        t = _resolve_theme(theme_name)
+        play_color    = t.get('button_play',    t.get('button_text', t.get('text_on_light_bg', t['text'])))
+        skip_color    = t.get('button_skip',    play_color)
+        chapter_color = t.get('button_chapter', play_color)
+        self._icon_play    = _load_svg_icon("play.svg",       play_color)
+        self._icon_pause   = _load_svg_icon("pause.svg",      play_color)
+        self._icon_restart = _load_svg_icon("restart.svg",    play_color)
+        self.rewind_button.setIcon(_load_svg_icon("rewind_10.svg",  skip_color))
+        self.forward_button.setIcon(_load_svg_icon("forward_10.svg", skip_color))
+        self.prev_button.setIcon(_load_svg_icon("previous.svg", chapter_color))
+        self.next_button.setIcon(_load_svg_icon("next.svg",     chapter_color))
+        # Refresh whichever play/pause/restart icon is currently showing
+        if self.current_file and self.player.eof_reached:
+            self._set_play_icon("restart")
+        elif self.current_file and not self.player.pause:
+            self._set_play_icon("pause")
+        else:
+            self._set_play_icon("play")
 
     def _sync_ui_render(self):
         is_eof = self.player.eof_reached

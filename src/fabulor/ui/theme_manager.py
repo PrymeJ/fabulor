@@ -328,6 +328,8 @@ class ThemeManager(QObject):
             mw.title_bar.setStyleSheet(get_title_bar_stylesheet(theme_name))
         if hasattr(mw, 'content_container'):
             mw.content_container.setStyleSheet(get_player_stylesheet(theme_name))
+        if hasattr(mw, '_reload_button_icons'):
+            mw._reload_button_icons(theme_name)
         if not hover and hasattr(mw, 'library_panel'):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
             mw.library_panel.update_progress_bar_theme()
