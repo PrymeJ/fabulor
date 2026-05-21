@@ -12,9 +12,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject
+    QRegularExpression, Signal, QObject, QSize
 )
-from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator
+from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
@@ -38,6 +38,11 @@ from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
 from .settings_controller import SettingsController
+
+_ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
+
+def _load_svg_icon(name):
+    return QIcon(os.path.join(_ICONS_DIR, name))
 
 class UIInterface:
     def __init__(self, main):
@@ -632,22 +637,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         controls_layout = QHBoxLayout()
-        self.prev_button = HoverButton("|<<")
+        self.prev_button = HoverButton()
         self.prev_button.setObjectName("prev_btn")
-        self.rewind_button = RightClickButton("<")
+        self.prev_button.setIcon(_load_svg_icon("previous.svg"))
+        self.prev_button.setIconSize(QSize(48, 33))
+        self.rewind_button = RightClickButton("")
         self.rewind_button.setObjectName("rewind_btn")
+        self.rewind_button.setIcon(_load_svg_icon("rewind_10.svg"))
+        self.rewind_button.setIconSize(QSize(48, 33))
         self.rewind_button.setAutoRepeat(True)
         self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
         self.rewind_button.setAutoRepeatInterval(150) # Skip again every 150ms
-        self.play_pause_button = QPushButton("Play")
+        self.play_pause_button = QPushButton()
         self.play_pause_button.setObjectName("play_pause_btn")
-        self.forward_button = RightClickButton(">")
+        self._icon_play = _load_svg_icon("play.svg")
+        self._icon_pause = _load_svg_icon("pause.svg")
+        self._icon_restart = _load_svg_icon("restart.svg")
+        self.play_pause_button.setIcon(self._icon_play)
+        self.play_pause_button.setIconSize(QSize(48, 33))
+        self.forward_button = RightClickButton("")
         self.forward_button.setObjectName("forward_btn")
+        self.forward_button.setIcon(_load_svg_icon("forward_10.svg"))
+        self.forward_button.setIconSize(QSize(48, 33))
         self.forward_button.setAutoRepeat(True)
         self.forward_button.setAutoRepeatDelay(500)
         self.forward_button.setAutoRepeatInterval(150)
-        self.next_button = HoverButton(">>|")
+        self.next_button = HoverButton()
         self.next_button.setObjectName("next_btn")
+        self.next_button.setIcon(_load_svg_icon("next.svg"))
+        self.next_button.setIconSize(QSize(48, 33))
         for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
                     self.forward_button, self.next_button]:
             btn.setFixedHeight(33)
@@ -1711,7 +1729,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # Handle the early return carefully:
             # If we are at EOF, we want to continue to update the UI even if pos is None.
             if not self.current_file:
-                self.play_pause_button.setText("Play")
+                self._set_play_icon("play")
                 return
 
             if is_eof and dur is None:
@@ -1726,16 +1744,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if is_paused and self._paused_time is not None:
                     pass  # fall through using _paused_time below
                 else:
-                    self.play_pause_button.setText("Play")
+                    self._set_play_icon("play")
                     return
             if dur is None or dur <= 0:
-                self.play_pause_button.setText("Play")
+                self._set_play_icon("play")
                 return
 
             # Logic for synthesized state at EOF vs normal playback
             if is_eof:
                 pos = dur
-                self.play_pause_button.setText("Restart")
+                self._set_play_icon("restart")
                 if not self._eof_event_written and self._current_book is not None: #Temporary
                     self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
                     self._eof_event_written = True #Temporary
@@ -1760,12 +1778,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     # if mpv_pos is None or mpv not yet ready, keep _paused_time as-is
                     pos = self._paused_time
                     if pos is None:
-                        self.play_pause_button.setText("Play")
+                        self._set_play_icon("play")
                         return
                 else:
                     self._paused_time = None
                     pos = mpv_pos
-                self.play_pause_button.setText("Play" if is_paused else "Pause")
+                self._set_play_icon("play" if is_paused else "pause")
 
             # Delegate into focused helpers to reduce cognitive complexity
             self._sync_playback_state(current_time, pos, dur)
@@ -1783,12 +1801,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
              self._update_chapter_label_from_index(self.player.chapter or 0)
 
+    def _set_play_icon(self, state):
+        """Set play_pause_button icon. state: 'play', 'pause', or 'restart'."""
+        icons = {"play": self._icon_play, "pause": self._icon_pause, "restart": self._icon_restart}
+        self.play_pause_button.setIcon(icons[state])
+
     def _sync_ui_render(self):
         is_eof = self.player.eof_reached
         if is_eof and self.current_file:
-            self.play_pause_button.setText("Restart")     
+            self._set_play_icon("restart")
         else:
-            self.play_pause_button.setText("Play" if self.player.pause else "Pause")
+            self._set_play_icon("pause" if not self.player.pause else "play")
 
     def _sync_progress_sliders(self, pos, dur, speed):
         if dur is not None and dur > 0:
