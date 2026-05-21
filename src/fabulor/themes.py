@@ -16,6 +16,7 @@ library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover backgr
 library_title: Text color for book titles in the library view.
 library_author: Text color for book authors in the library view.
 library_narrator: Text color for book narrators in the library view.
+library_year: Text color for the year field in 1-per-row view. Falls back to library_narrator.
 library_slider_bg: Background color for the progress bar groove in library items.
 library_slider_fill: Fill color for the progress bar in library items.
 library_elapsed: Text color for elapsed time labels in library items.

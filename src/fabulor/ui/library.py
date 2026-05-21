@@ -915,9 +915,10 @@ class BookDelegate(QStyledItemDelegate):
         self._color_title    = qc(theme.get('library_title',      '#ffffff'))
         self._color_author   = qc(theme.get('library_author',     '#aaaaaa'))
         self._color_narrator = qc(theme.get('library_narrator',   '#888888'))
-        self._color_elapsed  = qc(theme.get('library_elapsed',    '#aaaaaa'))
-        self._color_total    = qc(theme.get('library_total',      '#aaaaaa'))
-        self._color_pct      = qc(theme.get('library_percentage', '#888888'))
+        self._color_year     = qc(theme.get('library_year', theme.get('library_narrator', '#888888')))
+        self._color_elapsed  = qc(theme.get('library_elapsed',    '#cccccc'))
+        self._color_total    = qc(theme.get('library_total',      '#cccccc'))
+        self._color_pct      = qc(theme.get('library_percentage', '#aaaaaa'))
         self._alt_row_color  = self._row_two
         self._color_accent   = qc(theme.get('accent', '#ffffff'))
 
@@ -1310,7 +1311,7 @@ class BookDelegate(QStyledItemDelegate):
             "title":    self._color_title,
             "author":   self._color_author,
             "narrator": self._color_narrator,
-            "year":     self._color_author,
+            "year":     self._color_year,
         }
         field_rects = {}
         row_text_y = text_y
@@ -1640,12 +1641,13 @@ class BookDelegate(QStyledItemDelegate):
 
             self._set_font(painter, mode=overlay_mode, field="elapsed")
             fm_time = painter.fontMetrics()
-            painter.setPen(QColor(255, 255, 255))
+            painter.setPen(self._color_elapsed)
             painter.drawText(inner.x(), time_y + fm_time.ascent(), elapsed_str)
 
             self._set_font(painter, mode=overlay_mode, field="total")
             fm_total = painter.fontMetrics()
             right_w  = fm_total.horizontalAdvance(right_str)
+            painter.setPen(self._color_total)
             painter.drawText(inner.right() - right_w, time_y + fm_total.ascent(), right_str)
 
             # Bar + percentage on same row, percentage right-aligned
@@ -1658,7 +1660,7 @@ class BookDelegate(QStyledItemDelegate):
             self._draw_progress_bar(painter, bar_rect, pct)
 
             pct_y = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
-            painter.setPen(QColor(255, 255, 255))
+            painter.setPen(self._color_pct)
             painter.drawText(inner.right() - pct_w, pct_y, pct_str)
 
         else:
@@ -1668,7 +1670,7 @@ class BookDelegate(QStyledItemDelegate):
             dur_str   = self._fmt(dur_disp)
             dur_w     = fm_total.horizontalAdvance(dur_str)
             no_prog_y = inner.y() + (inner.height() - fm_total.height()) // 2 + fm_total.ascent() + 2
-            painter.setPen(QColor(255, 255, 255))
+            painter.setPen(self._color_total)
             painter.drawText(inner.right() - dur_w, no_prog_y, dur_str)
 
     def _draw_progress_bar(self, painter, rect: QRect, pct: float):
