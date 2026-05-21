@@ -58,6 +58,7 @@ accent: The primary interaction color. Used for selected tabs, slider handles (i
 accent_light: The color used when hovering over buttons or selecting list items.
 accent_dark: The color used for borders or when a button is actively pressed.
 curr_chap_highlight: The color used to highlight the currently playing chapter within the chapter dropdown list.
+undo_hover: The color used when hovering over the undo button. Fallback: "accent"
 
 TRANSPARENCY AND EFFECTS
 sidebar_opacity: A float (0.0 to 1.0) defining how transparent the sidebar is when idle.
@@ -1983,7 +1984,7 @@ THEMES = {
     "library_row_two": "#342E3C",
     "library_item_hover_color": "#cc50ac",
     "library_item_hover_alpha": 0.22,
-    "library_title": "#F0E8F0",
+    "library_title": "#d2cba6",
     "library_author": "#C8B0C8",
     "library_narrator": "#9A869A",
     "library_slider_bg": "#3A3244",
@@ -1996,15 +1997,18 @@ THEMES = {
     "settings_tab_hover_bg": "#C496B8",
     "settings_tab_hover_opacity": 0.85,
     "settings_tab_hover_text": "#1E1A24",
-    "text": "#E8DCE8",
+    "text": "#c895b6",
     "button_text": "#3a3245",
+    "button_play": "#3a3245",
+    "button_skip": "#3a3245",
+    "button_chapter": "#3a3245",
     "progress_text": "#E8DCE8",
     "sidebar_text": "#E8DCE8",
     "sidebar_text_hover": "#C496B8",
     "dropdown_text": "#E8DCE8",
-    "dropdown_time_text": "#9A869A",
+    "dropdown_time_text": "#e397e3",
     "text_on_light_bg": "#1E1A24",
-    "panel_theme_names_dimmed": "#6A5C6A",
+    "panel_theme_names_dimmed": "#917991",
     "slider_overall_bg": "#3A3244",
     "slider_overall_fill": "#C496B8",
     "slider_chapter_bg": "#3A3244",
@@ -2016,9 +2020,10 @@ THEMES = {
     "accent": "#C496B8",
     "accent_light": "#D8AACC",
     "accent_dark": "#8A6280",
-    "curr_chap_highlight": "#D8AACC",
+    "curr_chap_highlight": "#cc50ac",
     "sidebar_opacity": 0.85,
-    "panel_opacity_hover": 0.92
+    "panel_opacity_hover": 0.92,
+    "undo_hover": "#80175b"
 },
 "Cerulean Sea": {
     "bg_deep": "#181C20",
@@ -2369,7 +2374,7 @@ def get_base_stylesheet(theme_name="default"):
             padding: 0px 4px;
         }}
         QPushButton#undo_overlay:hover {{
-            background-color: {t['accent']};
+            background-color: {t.get('undo_hover', t.get('accent'))};
         }}
     """
 
