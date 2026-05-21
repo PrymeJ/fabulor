@@ -332,4 +332,4 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 
 ---
 
-*Last updated: 2026-05-21 — SVG playback icons with per-theme color baking; button_play/button_skip/button_chapter theme keys; _reload_button_icons wired to ThemeManager; skip icon switching via skip_duration_changed signal.*
+*Last updated: 2026-05-22 — library_year theme key added (1-per-row year field color, falls back to library_narrator); library overlay (2/3-per-row, Square) switched from hardcoded white to library_elapsed/library_total/library_percentage theme colors; cover_theme.py updated with brighter text/text_dim/text_dimmer values, chap_fill_lighter and slider_bg_lighter variants for improved overlay legibility.*
