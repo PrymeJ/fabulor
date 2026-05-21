@@ -1,4 +1,14 @@
 
+## `color:` QSS does not colorize QIcon pixmaps (2026-05-21)
+
+Qt's `color:` CSS property affects text rendering only. It has no effect on `QIcon` pixels — the pixmap is painted as stored. To tint an SVG icon to a theme color, the color must be substituted directly into the SVG source before rendering, not applied via stylesheet.
+
+## PySide6 does not honor `currentColor` in SVGs (2026-05-21)
+
+`QSvgRenderer` does not resolve the CSS `currentColor` keyword against the widget's palette. SVGs that use `currentColor` for fill/stroke will render black (or transparent). Color must be baked into the SVG bytes at load time. The fix: read SVG as text, regex-substitute all `fill="..."` / `stroke="..."` attributes and `fill:` / `stroke:` inline style properties (Inkscape exports the latter), then render to a `QPixmap` sized to `renderer.defaultSize()`.
+
+The `style="..."` pass is not optional — Inkscape SVGs exported with "plain SVG" or without explicit attribute export use inline CSS on the `<path>` element and the attribute-level regex will miss them entirely.
+
 ## `to_grayscale` and alpha channel (2026-05-20)
 
 `Format_Grayscale8` drops the alpha channel — transparent pixels become black. Affects the placeholder logo cover when displayed for archived books. Fix: composite onto the themed background color before converting. Revisit when the app icon is finalized/vectorized. Lives in `to_grayscale()` in `cover_loader.py`.

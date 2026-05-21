@@ -332,4 +332,4 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 
 ---
 
-*Last updated: 2026-05-20 — library duration regression fix, hand cursor on duration toggles, stats panel active cover fix, active_cover_changed signal widened to (book_path, cover_path), auto-select first cover for no-cover books.*
+*Last updated: 2026-05-21 — SVG playback icons with per-theme color baking; button_play/button_skip/button_chapter theme keys; _reload_button_icons wired to ThemeManager; skip icon switching via skip_duration_changed signal.*
