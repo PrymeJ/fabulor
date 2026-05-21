@@ -8,6 +8,7 @@ class SpeedControlsPanel(QWidget):
     """Handles UI and logic for playback speed, skip intervals, and smart rewind."""
     speed_changed = Signal(float)
     close_requested = Signal()
+    skip_duration_changed = Signal(int)
 
     def __init__(self, player, config, theme_manager, parent=None):
         super().__init__(parent)
@@ -169,7 +170,7 @@ class SpeedControlsPanel(QWidget):
         self.config.set_undo_duration(val)
         self.update_visuals()
 
-    def _update_skip_mode(self, val): self.config.set_skip_duration(val); self.update_visuals()
+    def _update_skip_mode(self, val): self.config.set_skip_duration(val); self.update_visuals(); self.skip_duration_changed.emit(val)
     def _update_long_skip_mode(self, val): self.config.set_long_skip_duration(val); self.update_visuals()
     def _update_smart_rewind_mode(self, val): self.config.set_smart_rewind_wait(val); self._validate_smart_rewind_settings(finalize=False)
     def _update_smart_rewind_duration(self, val): self.config.set_smart_rewind_duration(val); self._validate_smart_rewind_settings(finalize=False)

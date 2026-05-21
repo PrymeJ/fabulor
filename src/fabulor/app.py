@@ -501,6 +501,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
         self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
+        self.speed_panel.skip_duration_changed.connect(lambda _: self._update_skip_icons())
         self.speed_panel.close_requested.connect(
             lambda: self.panel_manager._close_speed_flow() if self.panel_manager else None
         )
@@ -650,7 +651,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.prev_button.setIconSize(QSize(32, 22))
         self.rewind_button = RightClickButton("")
         self.rewind_button.setObjectName("rewind_btn")
-        self.rewind_button.setIcon(_load_svg_icon("rewind_10.svg"))
         self.rewind_button.setIconSize(QSize(28, 17))
         self.rewind_button.setAutoRepeat(True)
         self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
@@ -660,11 +660,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._icon_play = _load_svg_icon("play.svg")
         self._icon_pause = _load_svg_icon("pause.svg")
         self._icon_restart = _load_svg_icon("restart.svg")
+        self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg"),  10: _load_svg_icon("rewind_10.svg"),  30: _load_svg_icon("rewind_30.svg")}
+        self._icon_forward = {5: _load_svg_icon("forward_5.svg"), 10: _load_svg_icon("forward_10.svg"), 30: _load_svg_icon("forward_30.svg")}
         self.play_pause_button.setIcon(self._icon_play)
         self.play_pause_button.setIconSize(QSize(52, 33))
         self.forward_button = RightClickButton("")
         self.forward_button.setObjectName("forward_btn")
-        self.forward_button.setIcon(_load_svg_icon("forward_10.svg"))
         self.forward_button.setIconSize(QSize(28, 17))
         self.forward_button.setAutoRepeat(True)
         self.forward_button.setAutoRepeatDelay(500)
@@ -679,6 +680,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             controls_layout.addWidget(btn)
         self.content_layout.addLayout(controls_layout)
 
+        self._update_skip_icons()
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
         self.prev_button.clicked.connect(self.handle_prev)
         self.prev_button.rightClicked.connect(self._on_prev_right_click)
@@ -1813,6 +1815,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         icons = {"play": self._icon_play, "pause": self._icon_pause, "restart": self._icon_restart}
         self.play_pause_button.setIcon(icons[state])
 
+    def _update_skip_icons(self):
+        skip = self.config.get_skip_duration()
+        self.rewind_button.setIcon(self._icon_rewind.get(skip, self._icon_rewind[10]))
+        self.forward_button.setIcon(self._icon_forward.get(skip, self._icon_forward[10]))
+
     def _reload_button_icons(self, theme_name):
         t = _resolve_theme(theme_name)
         play_color    = t.get('button_play',    t.get('button_text', t.get('text_on_light_bg', t['text'])))
@@ -1821,10 +1828,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._icon_play    = _load_svg_icon("play.svg",       play_color)
         self._icon_pause   = _load_svg_icon("pause.svg",      play_color)
         self._icon_restart = _load_svg_icon("restart.svg",    play_color)
-        self.rewind_button.setIcon(_load_svg_icon("rewind_10.svg",  skip_color))
-        self.forward_button.setIcon(_load_svg_icon("forward_10.svg", skip_color))
+        self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg",   skip_color), 10: _load_svg_icon("rewind_10.svg",  skip_color), 30: _load_svg_icon("rewind_30.svg",  skip_color)}
+        self._icon_forward = {5: _load_svg_icon("forward_5.svg",  skip_color), 10: _load_svg_icon("forward_10.svg", skip_color), 30: _load_svg_icon("forward_30.svg", skip_color)}
         self.prev_button.setIcon(_load_svg_icon("previous.svg", chapter_color))
         self.next_button.setIcon(_load_svg_icon("next.svg",     chapter_color))
+        self._update_skip_icons()
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
             self._set_play_icon("restart")
