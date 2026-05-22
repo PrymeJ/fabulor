@@ -1,4 +1,8 @@
 
+## `_cover_cache` shared reference — tag thumbnails use library cache (2026-05-22)
+
+`tag_manager.py` imports `_cover_cache` directly from `library.py` (`from .library import _cover_cache`). It is the same dict object the library panel populates — not a copy. `_TagBookThumb.__init__` checks this cache synchronously: a hit calls `_apply_cover` inline with no worker and no queued signal, so the pixmap is set before the widget is shown. This is why `_rebuild()` is safe to call on remove without cover flicker. If the cache strategy ever changes in `library.py` (eviction policy, key type, etc.), tag thumbnails are directly affected.
+
 ## `color:` QSS does not colorize QIcon pixmaps (2026-05-21)
 
 Qt's `color:` CSS property affects text rendering only. It has no effect on `QIcon` pixels — the pixmap is painted as stored. To tint an SVG icon to a theme color, the color must be substituted directly into the SVG source before rendering, not applied via stylesheet.
