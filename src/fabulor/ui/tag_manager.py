@@ -258,6 +258,9 @@ class TagManagerWidget(QWidget):
             row = self._make_tag_row(tag_data)
             self._tag_list_layout.insertWidget(self._tag_list_layout.count() - 1, row)
 
+        if self._current_tag:
+            self._open_tag(self._current_tag)
+
     def _make_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
         row.setObjectName("tag_manager_row")
