@@ -17,6 +17,7 @@ from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import to_grayscale
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
+from .tag_manager import TAG_COLORS
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
@@ -396,6 +397,7 @@ class BookDetailPanel(QWidget):
                 item.widget().deleteLater()
 
         tags = self.db.get_book_tags(self._book_path)
+        tag_colors = {t: self.db.get_tag_color(t) for t in tags}
         for tag in tags:
             chip = QWidget()
             chip.setObjectName("tag_chip")
@@ -403,6 +405,14 @@ class BookDetailPanel(QWidget):
             row = QHBoxLayout(chip)
             row.setContentsMargins(10, 5, 7, 5)
             row.setSpacing(6)
+            color_hex = TAG_COLORS.get(tag_colors.get(tag)) if tag_colors.get(tag) else None
+            dot = QLabel("●")
+            dot.setObjectName("tag_chip_dot")
+            if color_hex:
+                dot.setStyleSheet(f"color: {color_hex};")
+            else:
+                dot.setObjectName("tag_dot_neutral")
+            row.addWidget(dot)
             lbl = QLabel(tag)
             lbl.setObjectName("tag_chip_label")
             if self._context == 'library':
@@ -422,24 +432,25 @@ class BookDetailPanel(QWidget):
 
     def _rebuild_tag_display(self, tags: list[str]):
         self._tag_display_tags = list(tags)
-        sep = "  "
+        sep = "  "
         if not tags:
             self._tag_display_label.setText("")
             return
+        tag_colors = {t: self.db.get_tag_color(t) for t in tags} if self._book_path else {}
         dot_color  = self._theme.get("accent_light", "#ffffff")
         text_color = self._theme.get("accent_light", "#ffffff")
         if self._context == 'library':
             self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
             parts = [
                 f'<a href="{t}" style="color:{text_color};text-decoration:none;">'  
-                f'<span style="color:{dot_color};">&#9679;</span> {t.replace(chr(32), " ")}</a>'
+                f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span> {t.replace(chr(32), " ")}</a>'
                 for t in tags
             ]
             self._tag_display_label.setText(sep.join(parts))
         else:
             self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
             parts = [
-                f'<span style="color:{dot_color};">&#9679;</span>'  
+                f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span>'  
                 f'<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>'
                 for t in tags
             ]
