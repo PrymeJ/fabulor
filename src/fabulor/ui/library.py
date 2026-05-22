@@ -233,6 +233,13 @@ class LibraryPanel(QFrame):
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
+        _original_focus = self.search_field.focusInEvent
+        def _on_search_focus(event):
+            if self._tag_filter_active:
+                self.search_field.setText("")
+                self._tag_filter_active = False
+            _original_focus(event)
+        self.search_field.focusInEvent = _on_search_focus
 
         self.back_button = QPushButton("Back")
         self.back_button.setFixedHeight(28)
@@ -302,7 +309,8 @@ class LibraryPanel(QFrame):
                     self._delegate.initStyleOption(opt, idx)
                     opt.rect = self._list_view.visualRect(idx)
                     hit = self._delegate._time_label_rect(opt, idx)
-                    if hit and hit.contains(pos):
+                    has_progress = book and (book.progress or 0.0) > MIN_PROGRESS
+                    if hit and hit.contains(pos) and has_progress:
                         self._list_view.viewport().setCursor(Qt.PointingHandCursor)
                     else:
                         self._list_view.viewport().setCursor(Qt.ArrowCursor)
