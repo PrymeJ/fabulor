@@ -16,7 +16,7 @@ class _TagBookThumb(QWidget):
         super().__init__(parent)
         self._path = book['path']
         self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0))
-        self.setFixedSize(80, 80)
+        self.setFixedSize(48, 48)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(book.get('title', ''))
 
@@ -25,16 +25,17 @@ class _TagBookThumb(QWidget):
         layout.setSpacing(0)
 
         self._cover = QLabel()
-        self._cover.setFixedSize(80, 80)
+        self._cover.setFixedSize(48, 48)
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
         placeholder = QPixmap()
         placeholder.load(os.path.join(assets_dir, 'fabulor.ico'))
         if not placeholder.isNull():
-            self._cover.setPixmap(placeholder.scaled(
-                80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-            ))
+            scaled = placeholder.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            x = (scaled.width() - 48) // 2
+            y = (scaled.height() - 48) // 2
+            self._cover.setPixmap(scaled.copy(x, y, 48, 48))
 
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
@@ -64,12 +65,10 @@ class _TagBookThumb(QWidget):
     def _apply_cover(self, pixmap):
         if self._is_archived:
             pixmap = to_grayscale(pixmap)
-        scaled = pixmap.scaled(
-            80, 80,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._cover.setPixmap(scaled)
+        scaled = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+        x = (scaled.width() - 48) // 2
+        y = (scaled.height() - 48) // 2
+        self._cover.setPixmap(scaled.copy(x, y, 48, 48))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -94,7 +93,7 @@ class _TagBookGrid(QScrollArea):
 
         self._books: list[dict] = []
         self._thumbs: dict[str, _TagBookThumb] = {}
-        self._cols = 3
+        self._cols = 5
 
     def set_books(self, books: list[dict]):
         self._books = list(books)
@@ -114,11 +113,6 @@ class _TagBookGrid(QScrollArea):
             self._grid.addWidget(thumb, i // self._cols, i % self._cols)
             self._thumbs[book['path']] = thumb
 
-        # Update height based on rows
-        rows = max(1, (len(self._books) + self._cols - 1) // self._cols)
-        cell = 80 + 4
-        self.setMinimumHeight(min(rows * cell, 4 * cell))
-        self.setMaximumHeight(min(rows * cell, 4 * cell))
 
     def _on_remove(self, path: str):
         if path in self._thumbs:
@@ -135,11 +129,6 @@ class _TagBookGrid(QScrollArea):
                     t = self._thumbs[book['path']]
                     t.show()
                     self._grid.addWidget(t, i // self._cols, i % self._cols)
-            rows = max(1, (len(self._books) + self._cols - 1) // self._cols)
-            cell = 80 + 4
-            h = min(rows * cell, 4 * cell)
-            self.setMinimumHeight(h)
-            self.setMaximumHeight(h)
 
         # Signal upward — parent will handle DB removal
         self.parent_remove(path)
