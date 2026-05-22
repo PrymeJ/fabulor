@@ -1203,8 +1203,8 @@ class StatsPanel(QWidget):
 
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 0, 4, 10)
+        layout.setSpacing(0)
 
         tags_label = QLabel("Tags")
         tags_label.setObjectName("settings_header")

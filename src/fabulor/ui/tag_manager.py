@@ -83,6 +83,7 @@ class _TagBookGrid(QScrollArea):
         self._assets_dir = assets_dir
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
 
         self._container = QWidget()
