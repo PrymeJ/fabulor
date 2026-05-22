@@ -234,13 +234,22 @@
 - [x] Right click opens book details panel on stats tab
 - [x] Time label click toggles remaining/total (requires progress > 1s)
 - [x] Toggle does not dismiss panel or open book
-- [ ] Time label shows hand cursor on hover (only when book has progress > 1s)
+- [x] Time label shows hand cursor on hover (only when book has progress > 1s)
+- [ ] Time label shows arrow cursor on hover when book has no progress
 - [ ] Books with no progress show total duration at 1x speed regardless of per-book speed setting
 - [x] Hover overlay appears/disappears correctly in grid modes (2/3/Square)
 - [x] Elision on hover works correctly on 1 per view and 2 per view modes
 - [x] List mode hover-expand works for title and author independently
 - [x] List mode trailing hover fade toggleable in Settings (Slow/Normal/Fast/Off, default Slow)
 - [x] Hovered row stays lit while pointer is stationary; fades out only on leave
+
+### Tag filter (from Book Detail Panel)
+- [ ] Clicking a header tag chip (library context) dismisses detail panel and opens library filtered to #tag
+- [ ] All view modes show the filtered result correctly (1/2/3-per-row, Square, List)
+- [ ] Clicking into the search field while tag filter active clears it and allows normal typing
+- [ ] Opening library manually (sidebar button) while tag filter is active clears the filter
+- [ ] Opening library via tag chip a second time replaces the previous tag filter
+- [ ] Tag filter does not persist across app restarts
 
 ### Theme
 - [x] Theme switch updates all delegate colors immediately
@@ -405,6 +414,15 @@
 - [ ] Remove (✕) button removes tag correctly
 - [ ] Max 5 tags enforced (input flashes red on reject)
 - [ ] Delete listening history button prompts confirmation, clears data, refreshes stats tab
+
+### Header tag chips (under year field)
+- [ ] Tags shown in header row with correct accent color (● tag format)
+- [ ] Opened from library: tag labels show hand cursor on hover
+- [ ] Opened from library: clicking a tag dismisses panel, opens library filtered to #tag
+- [ ] Opened from library: right-clicking a tag does nothing (no "Copy link location" menu)
+- [ ] Opened from stats: tag labels show no cursor change, clicks do nothing
+- [ ] Header tags re-render with correct colors on theme change while panel is open
+- [ ] Adding or removing a tag on the Tags tab updates the header row immediately
 
 ## Cover Panel
 

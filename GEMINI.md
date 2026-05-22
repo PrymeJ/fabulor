@@ -15,6 +15,9 @@ library_controller.py. It was removed on 2026-05-11 because it was silently over
 cover display on every book switch. _load_cover_art owns metadata_label visibility. If
 you believe this needs to change, say so explicitly and wait for confirmation.
 
+## Always pass context= correctly to open_book_detail and load_book.
+PanelManager.open_book_detail(book_data, tab, context) and BookDetailPanel.load_book(book_data, tab, context) both take a context kwarg. Every call site must pass the correct value: context='library' when opened from the library panel (right-click on a book row), context='' or omitted when opened from stats or any other path. The context flag controls whether tag chips in the header row are clickable (library only). Passing the wrong value silently breaks tag-click behavior.
+
 # Fabulor — Project State
 
 ## Goal
