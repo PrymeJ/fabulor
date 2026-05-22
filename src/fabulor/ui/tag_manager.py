@@ -8,6 +8,18 @@ from PySide6.QtGui import QPixmap, QImage, QColor
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 
+TAG_COLORS = {
+    'coral':     '#E8735A',
+    'peach':     '#F0956A',
+    'amber':     '#E8A84A',
+    'lime':      '#8FC45A',
+    'mint':      '#5AD4A0',
+    'sky':       '#5AAEE8',
+    'lavender':  '#8A78D8',
+    'rose':      '#D865A0',
+    'white':     '#F0F0F0',
+}
+
 
 class _TagBookThumb(QWidget):
     remove_requested = Signal(str)  # book_path
@@ -241,31 +253,49 @@ class TagManagerWidget(QWidget):
 
         tags = self.db.get_all_tags()
         for tag_data in tags:
-            row = self._make_tag_row(tag_data)
-            self._tag_list_layout.insertWidget(self._tag_list_layout.count() - 1, row)
+            row = self._build_tag_row(tag_data)
+            self._tag_list_layout.insertWidget(
+                self._tag_list_layout.count() - 1, row
+            )
 
         if self._current_tag:
             self._open_tag(self._current_tag)
 
-    def _make_tag_row(self, tag_data: dict) -> QWidget:
+    def _build_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
-        row.setObjectName("tag_manager_row")
+        row.setObjectName("tag_list_row")
         row.setAttribute(Qt.WA_StyledBackground, True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
-        hbox = QHBoxLayout(row)
-        hbox.setContentsMargins(4, 3, 4, 3)
-        hbox.setSpacing(6)
+        row.setFixedHeight(36)
 
-        chip = QLabel(tag_data['tag'])
-        chip.setObjectName("tag_chip_label")
-        hbox.addWidget(chip)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(8)
 
-        count = QLabel(f"{tag_data['count']} book{'s' if tag_data['count'] != 1 else ''}")
-        count.setObjectName("stats_key_label")
-        hbox.addWidget(count)
-        hbox.addStretch()
+        dot = QLabel("●")
+        dot.setFixedSize(16, 16)
+        dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        color_key = tag_data.get('color')
+        color_hex = TAG_COLORS.get(color_key) if color_key else None
+        if color_hex:
+            dot.setStyleSheet(f"color: {color_hex};")
+        else:
+            dot.setObjectName("tag_dot_neutral")
+        layout.addWidget(dot)
 
-        row.mousePressEvent = lambda e, t=tag_data['tag']: self._open_tag(t)
+        name = QLabel(tag_data['tag'][:20])
+        name.setObjectName("tag_list_name")
+        layout.addWidget(name, stretch=1)
+
+        badge = QLabel(str(tag_data['count']))
+        badge.setObjectName("tag_count_badge")
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedHeight(20)
+        badge.setMinimumWidth(24)
+        layout.addWidget(badge)
+
+        tag = tag_data['tag']
+        row.mousePressEvent = lambda e: self._open_tag(tag)
         return row
 
     def _open_tag(self, tag: str):
