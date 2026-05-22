@@ -126,22 +126,7 @@ class _TagBookGrid(QScrollArea):
             thumb = self._thumbs.pop(path)
             thumb.deleteLater()
             self._books = [b for b in self._books if b['path'] != path]
-            
-            for r in range(self._grid.rowCount()):
-                self._grid.setRowStretch(r, 0)
-
-            # Reflow remaining thumbs
-            while self._grid.count():
-                item = self._grid.takeAt(0)
-                if item.widget():
-                    item.widget().hide()
-            for i, book in enumerate(self._books):
-                if book['path'] in self._thumbs:
-                    t = self._thumbs[book['path']]
-                    t.show()
-                    self._grid.addWidget(t, i // self._cols, i % self._cols)
-
-            self._grid.setRowStretch(self._grid.rowCount(), 1)
+            self._rebuild()
 
         # Signal upward — parent will handle DB removal
         self.parent_remove(path)
