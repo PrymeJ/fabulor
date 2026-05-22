@@ -366,7 +366,7 @@ class BookDetailPanel(QWidget):
         self._tag_input = QLineEdit()
         self._tag_input.setObjectName("tag_add_field")
         self._tag_input.setPlaceholderText("Add tag…")
-        self._tag_input.setMaxLength(25)
+        self._tag_input.setMaxLength(20)
         self._tag_input.returnPressed.connect(self._on_add_tag)
 
         self._tag_completer_model = QStringListModel()

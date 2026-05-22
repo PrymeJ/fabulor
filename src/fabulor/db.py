@@ -843,6 +843,10 @@ class LibraryDB:
                     "INSERT INTO book_tags (book_path, tag) VALUES (?, ?)",
                     (book_path, tag)
                 )
+                conn.execute(
+                    "INSERT OR IGNORE INTO tags (name) VALUES (?)",
+                    (tag,)
+                )
                 return True
             except Exception:
                 return False  # UNIQUE constraint hit
