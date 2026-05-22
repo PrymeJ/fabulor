@@ -7,7 +7,7 @@ from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex,
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
-from PySide6.QtGui import QPixmap, QImage, QColor, QFont
+from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -1724,7 +1724,11 @@ class BookDelegate(QStyledItemDelegate):
             time_h = 16
             bar_y  = overlay_rect.y() + oh - VPAD - BAR_H
             time_y = bar_y - 4 - time_h
-            hit_w  = 66
+            px, bold = FONT_SIZES.get(self._view_mode, {}).get("total", (12, False))
+            f = QFont(option.font)
+            f.setPixelSize(px)
+            f.setBold(bold)
+            hit_w = QFontMetrics(f).horizontalAdvance("-00h 00m") + 2
             return QRect(overlay_rect.right() - HPAD - hit_w, time_y, hit_w, time_h)
         elif self._view_mode == "List":
             r      = option.rect
