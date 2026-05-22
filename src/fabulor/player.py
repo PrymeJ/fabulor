@@ -604,6 +604,7 @@ class Player(QObject):
             instance = self.instance
             self.instance = None
             instance.terminate()
+            instance.wait_for_shutdown()
 
     def get_stable_position(self):
         """Handles 'deadzone' logic during pause/seek to prevent jitter in UI labels."""
