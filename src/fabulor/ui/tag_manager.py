@@ -213,6 +213,14 @@ class TagManagerWidget(QWidget):
         self._back_btn.clicked.connect(self._show_list)
         top_row.addWidget(self._back_btn)
 
+        self._detail_dot = QLabel("●")
+        self._detail_dot.setFixedSize(20, 20)
+        self._detail_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._detail_dot.setObjectName("tag_dot_neutral")
+        self._detail_dot.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._detail_dot.mousePressEvent = lambda e: self._toggle_color_picker()
+        top_row.addWidget(self._detail_dot)
+
         self._tag_name_edit = QLineEdit()
         self._tag_name_edit.setObjectName("metadata_field")
         self._tag_name_edit.returnPressed.connect(self._on_rename)
@@ -224,6 +232,32 @@ class TagManagerWidget(QWidget):
         top_row.addWidget(self._delete_btn)
 
         panel_layout.addLayout(top_row)
+
+        self._color_picker_row = QWidget()
+        self._color_picker_row.hide()
+        picker_layout = QHBoxLayout(self._color_picker_row)
+        picker_layout.setContentsMargins(10, 4, 10, 4)
+        picker_layout.setSpacing(8)
+
+        neutral_dot = QLabel("●")
+        neutral_dot.setFixedSize(20, 20)
+        neutral_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        neutral_dot.setObjectName("tag_dot_neutral")
+        neutral_dot.setCursor(Qt.CursorShape.PointingHandCursor)
+        neutral_dot.mousePressEvent = lambda e: self._set_tag_color(None)
+        picker_layout.addWidget(neutral_dot)
+
+        for color_key, color_hex in TAG_COLORS.items():
+            dot = QLabel("●")
+            dot.setFixedSize(20, 20)
+            dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dot.setStyleSheet(f"color: {color_hex};")
+            dot.setCursor(Qt.CursorShape.PointingHandCursor)
+            dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
+            picker_layout.addWidget(dot)
+
+        picker_layout.addStretch()
+        panel_layout.addWidget(self._color_picker_row)
 
         self._rename_status = QLabel("")
         self._rename_status.setObjectName("stats_value_label")
@@ -298,10 +332,33 @@ class TagManagerWidget(QWidget):
         row.mousePressEvent = lambda e: self._open_tag(tag)
         return row
 
+    def _toggle_color_picker(self):
+        visible = self._color_picker_row.isVisible()
+        self._color_picker_row.setVisible(not visible)
+
+    def _set_tag_color(self, color_key: str | None):
+        if not self._current_tag:
+            return
+        self.db.set_tag_color(self._current_tag, color_key)
+        self._color_picker_row.hide()
+        self._update_detail_dot(color_key)
+        self.refresh()
+
+    def _update_detail_dot(self, color_key: str | None):
+        color_hex = TAG_COLORS.get(color_key) if color_key else None
+        if color_hex:
+            self._detail_dot.setStyleSheet(f"color: {color_hex};")
+            self._detail_dot.setObjectName("")
+        else:
+            self._detail_dot.setStyleSheet("")
+            self._detail_dot.setObjectName("tag_dot_neutral")
+
     def _open_tag(self, tag: str):
         self._current_tag = tag
         self._tag_name_edit.setText(tag)
         self._rename_status.setText("")
+        color_key = self.db.get_tag_color(tag)
+        self._update_detail_dot(color_key)
 
         books = self._inject_active_covers(self.db.get_books_by_tag(tag))
         self._book_count_label.setText(
