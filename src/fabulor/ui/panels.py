@@ -62,6 +62,7 @@ class PanelManager:
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
+        self.main_window.library_panel.clear_tag_filter_if_active()
         self._abort_theme_fade()
         self.library_panel.cancel_preload()
         self.main_window._save_current_progress()

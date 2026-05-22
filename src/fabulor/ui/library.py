@@ -122,6 +122,7 @@ class LibraryPanel(QFrame):
         self._active_workers = set()
         self._current_theme  = {}
         self._show_start     = None
+        self._tag_filter_active: bool = False
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -544,6 +545,12 @@ class LibraryPanel(QFrame):
 
     def set_search(self, text: str) -> None:
         self.search_field.setText(text)
+        self._tag_filter_active = True
+
+    def clear_tag_filter_if_active(self) -> None:
+        if self._tag_filter_active:
+            self.search_field.setText("")
+            self._tag_filter_active = False
 
     # ── Hide ─────────────────────────────────────────────────────────────────
 

@@ -1086,7 +1086,7 @@ THEMES = {
         "panel_opacity_hover": 0.9,
         "panel_theme_names_dimmed": "#BCB6BB",
         "text":                "#E8BC6C", 
-        "button_text":         "#000000",
+        "button_text":         "#320e0e",
         "progress_text":       "#FCD586",
         "sidebar_text_hover": "#F39C12",
     },

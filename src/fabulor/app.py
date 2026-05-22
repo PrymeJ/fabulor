@@ -1543,8 +1543,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_tag_filter_requested(self, tag: str) -> None:
         self.panel_manager._close_book_detail_flow()
-        self.library_panel.set_search(f"#{tag}")
         self.panel_manager._open_library_flow()
+        self.library_panel.set_search(f"#{tag}")
 
     def _on_library_detail_requested(self, path: str) -> None:
         self.panel_manager.open_book_detail({"path": path}, tab="stats", context='library')
