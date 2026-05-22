@@ -532,12 +532,7 @@ class LibraryPanel(QFrame):
     def set_playing_path(self, path: str) -> None:
         self._delegate.set_playing_path(path)
         # Sync playing ID to the model to avoid window traversals
-        idx = self._book_model.path_to_index(path)
-        if idx and idx.isValid():
-            book = idx.data(ROLE_BOOK)
-            self._book_model._playing_id = book.id
-        else:
-            self._book_model._playing_id = None
+        self._book_model._playing_id = self._book_model._id_for_path(path)
         self._list_view.viewport().update()
 
     def set_is_playing(self, playing: bool) -> None:
@@ -857,6 +852,12 @@ class BookModel(QAbstractListModel):
         for row, book in enumerate(self._filtered):
             if book.path == path:
                 return self.index(row)
+        return None
+
+    def _id_for_path(self, path: str) -> Optional[int]:
+        for book in self._books:
+            if book.path == path:
+                return book.id
         return None
 
 
