@@ -507,7 +507,7 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT set `_virtual_timeline` for CUE books. CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_timeline` remaining `None`. Setting `_virtual_timeline` would activate VT file-switching machinery on a single-file book.
 
-## DO NOT simplify `Player.terminate()` — it must call `wait_for_shutdown()` after `terminate()` to prevent a libmpv teardown crash in `avformat_close_input`. The crash was masked for an unknown period by a debug print and is easy to reintroduce.
+## DO NOT simplify `Player.terminate()` — it must call `wait_for_shutdown()` after `terminate()` to prevent a libmpv teardown crash in `avformat_close_input`. The crash was masked for an unknown period by a debug print and is easy to reintroduce. The full required sequence: store the instance reference, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. All four steps are required and order-dependent. Mirrored from CLAUDE.md — Gemini touches player.py.
 
 ## DO NOT pass `0.0` as the `progress` value to `upsert_book` or `upsert_books_batch`. Use `None` if progress is unknown. The scanner does not know a book's saved playback position — it must omit progress entirely (leave it as `None`) so the `COALESCE(NULLIF(..., 0.0), books.progress)` upsert logic can preserve whatever the user left off at. Passing `0.0` is treated as "no progress supplied" by the NULLIF safety net, but that is a net, not a contract — callers must use `None`.
 

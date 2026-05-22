@@ -273,8 +273,11 @@ Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no
 - MP3 natural sort (2 before 10) — out of scope for v1.
 - Book detail panel background opacity — user wants it opaque eventually. Not in current scope.
 - **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Cover monochrome, metadata read-only, Cover+Tags tabs hidden — deferred to Session 7.
-- **VT open issues (multi-file MP3):**
-  - Sessions not recorded correctly across VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions.
+- **Session recording gaps (fully deferred):**
+  - VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions across VT files.
+  - Sleep timer — sleep feature also prevents session recording during the sleep window. Both gaps deferred until single large MP3 handling is resolved; they share the same root cause area.
+- **`path_to_index()`** is in `library.py` (`LibraryPanel`, not `BookModel`).
+- **VT open issues (multi-file MP3) — fully deferred:**
   - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.
   - M4B chapter stuck intermittently — chapter display freezes at a chapter boundary in some M4B books; root cause not yet isolated.
   - Rapid book switch (VT → any) regression: test that the newly selected book's progress slider shows the correct position and not 0%. Symptom of a double-handler invocation resetting progress; fixed via disconnect-before-connect in `load_book`, but should be part of regression runs.
