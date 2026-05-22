@@ -1107,7 +1107,7 @@ THEMES = {
         "accent":              "#6C757D",
         "accent_light":        "#DEE2E6",
         "accent_dark":         "#343A40",
-        "curr_chap_highlight": "#B4E9DF",
+        "curr_chap_highlight": "#829d98",
         "bg_sidebar":          "#212529",
         "bg_dropdown":         "#343A40",
         "sidebar_text_hover": "#DEE2E6",
@@ -1121,6 +1121,8 @@ THEMES = {
         "gradient_bg_end": "#9be4e5",
         "gradient_bg_angle": 180,
         "gradient_bg_split": 0.82,
+        "button_text":        "#bbbbbb",
+        "button_play":        "#9be4e5",
     },
 
 "Sunspear": {
