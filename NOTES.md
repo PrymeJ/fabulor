@@ -1,4 +1,8 @@
 
+## `terminate()` regression pattern — four-step sequence is atomic (2026-05-22)
+
+`Player.terminate()` lost `wait_for_shutdown()` with no git trace — it was either never committed without it or dropped silently during a refactor. The four-step sequence must be treated as atomic: store the instance reference, clear `self.instance`, call `terminate()`, then call `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. `wait_for_shutdown()` is a python-mpv API method — no custom implementation needed or appropriate. Any "simplification" that removes or reorders these steps will reintroduce the crash, possibly masked again by debug output.
+
 ## `_cover_cache` shared reference — tag thumbnails use library cache (2026-05-22)
 
 `tag_manager.py` imports `_cover_cache` directly from `library.py` (`from .library import _cover_cache`). It is the same dict object the library panel populates — not a copy. `_TagBookThumb.__init__` checks this cache synchronously: a hit calls `_apply_cover` inline with no worker and no queued signal, so the pixmap is set before the widget is shown. This is why `_rebuild()` is safe to call on remove without cover flicker. If the cache strategy ever changes in `library.py` (eviction policy, key type, etc.), tag thumbnails are directly affected.
