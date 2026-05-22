@@ -95,6 +95,7 @@ class _TagBookGrid(QScrollArea):
         self._books: list[dict] = []
         self._thumbs: dict[str, _TagBookThumb] = {}
         self._cols = 5
+        self._grid.setColumnStretch(self._cols, 1)
 
     def set_books(self, books: list[dict]):
         self._books = list(books)
