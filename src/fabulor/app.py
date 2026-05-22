@@ -1282,6 +1282,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             lambda book_path, cover_path: self.stats_panel.on_cover_changed(book_path, cover_path)
         )
         self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
+        self.book_detail_panel.tag_filter_requested.connect(self._on_tag_filter_requested)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
@@ -1540,8 +1541,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 )
         self._post_seek_pending_position = None
 
+    def _on_tag_filter_requested(self, tag: str) -> None:
+        self.panel_manager._close_book_detail_flow()
+        self.library_panel.set_search(f"#{tag}")
+        self.panel_manager._open_library_flow()
+
     def _on_library_detail_requested(self, path: str) -> None:
-        self.panel_manager.open_book_detail({"path": path}, tab="stats")
+        self.panel_manager.open_book_detail({"path": path}, tab="stats", context='library')
 
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""

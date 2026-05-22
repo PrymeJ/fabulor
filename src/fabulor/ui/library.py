@@ -542,6 +542,9 @@ class LibraryPanel(QFrame):
     def set_hover_fade_enabled(self, mode: str) -> None:
         self._delegate.set_hover_fade_enabled(mode)
 
+    def set_search(self, text: str) -> None:
+        self.search_field.setText(text)
+
     # ── Hide ─────────────────────────────────────────────────────────────────
 
     def _rotate_view_mode_labels(self):

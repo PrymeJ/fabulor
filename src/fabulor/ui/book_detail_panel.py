@@ -98,6 +98,7 @@ class BookDetailPanel(QWidget):
     tags_changed = Signal()
     active_cover_changed = Signal(str, str)  # (book_path, cover_path)
     book_removed = Signal()
+    tag_filter_requested = Signal(str)
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -111,6 +112,8 @@ class BookDetailPanel(QWidget):
         self._editing: bool = False
         self._is_archived: bool = False
         self._confirming_remove: bool = False
+        self._context: str = ""
+        self._tag_display_tags: list = []
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
         self._pre_edit_meta_state: _MetaActionState | None = None
         self._unlock_timer: QTimer | None = None
@@ -240,6 +243,9 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.setWordWrap(True)
         self._tag_display_label.setContentsMargins(8, 2, 8, 2)
         self._tag_display_label.setFixedHeight(38)  # two tag lines reserved always
+        self._tag_display_label.setOpenExternalLinks(False)
+        self._tag_display_label.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self._tag_display_label.linkActivated.connect(self.tag_filter_requested)
         layout.addWidget(self._tag_display_label)
 
         from .cover_panel import CoverPanel
@@ -399,6 +405,9 @@ class BookDetailPanel(QWidget):
             row.setSpacing(6)
             lbl = QLabel(tag)
             lbl.setObjectName("tag_chip_label")
+            if self._context == 'library':
+                chip.setCursor(Qt.CursorShape.PointingHandCursor)
+                chip.mousePressEvent = lambda event, t=tag: self.tag_filter_requested.emit(t)
             x_btn = QPushButton("✕")
             x_btn.setObjectName("tag_chip_remove_btn")
             x_btn.setFixedSize(18, 18)
@@ -412,10 +421,29 @@ class BookDetailPanel(QWidget):
         self._rebuild_tag_display(tags)
 
     def _rebuild_tag_display(self, tags: list[str]):
+        self._tag_display_tags = list(tags)
+        sep = "  "
         if not tags:
             self._tag_display_label.setText("")
+            return
+        dot_color  = self._theme.get("accent_light", "#ffffff")
+        text_color = self._theme.get("accent_light", "#ffffff")
+        if self._context == 'library':
+            self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
+            parts = [
+                f'<a href="{t}" style="color:{text_color};text-decoration:none;">'  
+                f'<span style="color:{dot_color};">&#9679;</span> {t.replace(chr(32), " ")}</a>'
+                for t in tags
+            ]
+            self._tag_display_label.setText(sep.join(parts))
         else:
-            self._tag_display_label.setText("  ".join(f"● {t.replace(' ', ' ')}" for t in tags))
+            self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
+            parts = [
+                f'<span style="color:{dot_color};">&#9679;</span>'  
+                f'<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>'
+                for t in tags
+            ]
+            self._tag_display_label.setText(sep.join(parts))
 
     def _on_tag_input_changed(self, text: str):
         self._tag_suggest_timer.start()  # restarts if already running
@@ -468,7 +496,8 @@ class BookDetailPanel(QWidget):
                           self._narrator_label, self._year_label):
                 field.setCursorPosition(0)
 
-    def load_book(self, book_data: dict, tab: str = 'stats'):
+    def load_book(self, book_data: dict, tab: str = 'stats', context: str = ''):
+        self._context = context
         self._book_path = book_data.get('path') or book_data.get('book_path')
         self._book_data = book_data
         if 'duration' not in book_data:
@@ -971,6 +1000,7 @@ class BookDetailPanel(QWidget):
         self._update_remove_btn_icon()
         self._set_meta_state(self._meta_state)
         self._cover_panel.on_theme_changed(theme)
+        self._rebuild_tag_display(self._tag_display_tags)
 
     @staticmethod
     def _fmt(seconds: float) -> str:

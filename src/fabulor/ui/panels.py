@@ -388,9 +388,9 @@ class PanelManager:
         self.stats_panel.hide()
         self._notify_panel_closed()
 
-    def open_book_detail(self, book_data: dict, tab: str = 'stats'):
+    def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
         self._abort_theme_fade()
-        self.main_window.book_detail_panel.load_book(book_data, tab=tab)
+        self.main_window.book_detail_panel.load_book(book_data, tab=tab, context=context)
         self._start_book_detail_entry()
 
     def _start_book_detail_entry(self):
