@@ -94,6 +94,12 @@ class LibraryDB:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS tags (
+                    name TEXT PRIMARY KEY,
+                    color TEXT DEFAULT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS book_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     book_path TEXT NOT NULL,
@@ -158,8 +164,17 @@ class LibraryDB:
                     "ALTER TABLE books ADD COLUMN year_locked INTEGER NOT NULL DEFAULT 0"
                 )
 
-            # Migrate: truncate tags over 25 chars
-            conn.execute("UPDATE book_tags SET tag = SUBSTR(tag, 1, 25) WHERE LENGTH(tag) > 25")
+            # Migrate: populate tags table from existing book_tags, truncate to 20 chars
+            conn.execute("""
+                INSERT OR IGNORE INTO tags (name)
+                SELECT DISTINCT tag FROM book_tags
+            """)
+            conn.execute("""
+                UPDATE book_tags SET tag = SUBSTR(tag, 1, 20) WHERE LENGTH(tag) > 20
+            """)
+            conn.execute("""
+                UPDATE tags SET name = SUBSTR(name, 1, 20) WHERE LENGTH(name) > 20
+            """)
 
 
     # --- Scan Locations CRUD ---
@@ -912,12 +927,33 @@ class LibraryDB:
         return result
 
     def get_all_tags(self) -> list[dict]:
-        """Returns all unique tags with book count, sorted alphabetically."""
+        """Returns all unique tags with book count and color, sorted alphabetically."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT tag, COUNT(*) as count FROM book_tags GROUP BY tag ORDER BY tag"
+                """SELECT bt.tag, COUNT(*) as count, t.color
+                FROM book_tags bt
+                LEFT JOIN tags t ON bt.tag = t.name
+                GROUP BY bt.tag
+                ORDER BY bt.tag"""
             ).fetchall()
-        return [{'tag': r[0], 'count': r[1]} for r in rows]
+        return [{'tag': r[0], 'count': r[1], 'color': r[2]} for r in rows]
+
+    def get_tag_color(self, tag: str) -> str | None:
+        """Returns the color key for a tag, or None if not set."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT color FROM tags WHERE name=?", (tag,)
+            ).fetchone()
+        return row[0] if row else None
+
+    def set_tag_color(self, tag: str, color: str | None) -> None:
+        """Sets the color key for a tag. Pass None to reset to neutral."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO tags (name, color) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET color=excluded.color",
+                (tag, color)
+            )
 
     def get_books_by_tag(self, tag: str) -> list[dict]:
         """Returns books that have the given tag, with path, title, author, cover_path."""
