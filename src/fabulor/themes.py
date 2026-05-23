@@ -951,17 +951,39 @@ THEMES = {
         "slider_chapter_fill":    "#F05632",
         "slider_vol_bg":          "#4A2E1E",
         "slider_vol_fill":        "#B41E37",
+        "bg_library": "#22060e",
+        "progress_text": "#f6eba9",
+        "library_grid_bg": "#22060e",
+        "library_row_one": "#22060e",
+        "library_row_two": "#2f0512",
+        "library_item_hover_color": "#e21685",
+        "library_item_hover_alpha": 0.12,
+        "library_title": "#E9AF1D",
+        "library_author": "#F05632",
+        "library_narrator": "#ba611f",
+        "library_year": "#ba611f",
+        "library_elapsed": "#E9AF1D",
+        "library_total": "#E9AF1D",
+        "library_percentage": "#E9AF1D",
+        "library_slider_bg": "#4d1333",
+        "library_slider_fill": "#f05632",
+        "library_input_bg": "#22060e",
+        "library_input_text": "#F05632",
         "accent":                 "#F05632",
         "accent_light":           "#BB0606",
         "accent_dark":            "#8A5428",
         "bg_sidebar":             "#2E1E14",
         "bg_dropdown":            "#6B4530",
+        "dropdown_text":          "#F05632",
         "curr_chap_highlight":    "#BB0606",
+        "expand_button":          "#210606",
         "sidebar_text_hover":     "#BB0606",
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "panel_theme_names_dimmed": "#F05632",
-        "text":                   "#F8ECD8",
+        "button_text":            "#341a23",
+        "button_play":            "#f6eba9",
+        "text":                   "#ffb692",
         "bg_image":               "img/overlook.png"
     },
     "Tigana": {
@@ -2387,7 +2409,7 @@ def get_base_stylesheet(theme_name="default"):
         QPushButton#chapter_expand_btn {{
             font-size: 10px;
             color: {t.get('dropdown_text', t['text'])};
-            background-color: {t['accent']};
+            background-color: {t.get('expand_button', t['accent'])};
             border: 0px solid {t['bg_deep']};
             border-radius: 0px;
             padding: 0px;
