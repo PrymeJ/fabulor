@@ -849,6 +849,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.settings_trigger_btn = QPushButton("SETTINGS")
         self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
         self.sidebar_layout.addWidget(self.settings_trigger_btn)
+
         self.speed_trigger_btn = QPushButton("PLAYBACK")
         self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
         self.sidebar_layout.addWidget(self.speed_trigger_btn)
@@ -950,7 +951,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager.cover_pool_btn = cover_pool_btn
         cover_pool_row.addWidget(cover_pool_btn)
         pool_layout.addLayout(cover_pool_row)
-
         self.theme_manager.theme_widgets = {}
 
         limit = max(230, self.settings_panel.width() - 20)
@@ -1194,7 +1194,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         folder_btns_layout.addWidget(self.remove_folder_btn)
         folder_btns_layout.addWidget(self.refresh_library_btn)
         lib_layout.addLayout(folder_btns_layout)
-
         lib_layout.addSpacing(10)
 
         chap_source_header = QLabel("Chapter source")
@@ -1477,7 +1476,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._session_pause_timer.stop()
         self._post_seek_credit_timer.stop()
 
-
         # Flush any in-progress segment (close while playing, not after pause)
         if self._session_segment_start is not None:
             segment = (datetime.now() - self._session_segment_start).total_seconds()
@@ -1486,7 +1484,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         listened = self._session_listened_seconds
         now = datetime.now()
-
 
         if listened >= 60 and self._current_book is not None:
             book = self._current_book
@@ -1500,7 +1497,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             s_end = int(pos_end)
             pos_start_str = f"{s_start//3600:02d}:{(s_start%3600)//60:02d}:{s_start%60:02d}"
             pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
-
 
             def _write():
                 try:
@@ -1523,7 +1519,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     pass
 
             threading.Thread(target=_write, daemon=True).start()
-
 
         self._session_start = None
         self._session_segment_start = None
@@ -1972,7 +1967,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
-
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:
             if not self.is_slider_dragging and getattr(self, '_mpv_ready', True):
@@ -1984,7 +1978,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.config.set_last_position(self.current_file, pos)
                     if self.library_panel.isVisible():
                         self.library_panel.update_current_book_progress()
-
 
     def _on_slider_pressed(self):
         self.is_slider_dragging = True
@@ -2655,8 +2648,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._close_session()
         event.accept()
-
-    
 
     def _validate_smart_rewind_settings(self):
         if self.speed_panel:
