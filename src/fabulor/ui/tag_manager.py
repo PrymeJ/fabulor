@@ -329,7 +329,7 @@ class TagManagerWidget(QWidget):
         layout.addWidget(badge)
 
         tag = tag_data['tag']
-        row.mousePressEvent = lambda e: self._open_tag(tag)
+        row.mousePressEvent = lambda e: self._open_tag(tag) if e.button() == Qt.MouseButton.LeftButton else None
         return row
 
     def _toggle_color_picker(self):
