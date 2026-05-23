@@ -410,6 +410,7 @@ class PanelManager:
         sidebar_y = 56
         self.tags_panel.move(-panel_w, sidebar_y)
         self.tags_panel.show()
+        self.tags_panel.refresh()
         self.tags_panel.raise_()
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
@@ -613,13 +614,14 @@ class PanelManager:
         self.library_panel.setFixedWidth(window_w)
         self.library_panel.setFixedHeight(self.main_window.height() - library_y)
 
-        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]:
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel, self.tags_panel]:
             panel.setFixedWidth(panel_w)
 
         self.settings_panel.setFixedHeight(500)
         self.speed_panel.setFixedHeight(500)
         self.sleep_panel.setFixedHeight(500)
         self.stats_panel.setFixedHeight(500)
+        self.tags_panel.setFixedHeight(500)
 
         # Update Speed Panel position if not animating
         if self.speed_panel_animation.state() != QAbstractAnimation.State.Running:
@@ -649,6 +651,11 @@ class PanelManager:
         if self.stats_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.stats_panel.isVisible() else -panel_w
             self.stats_panel.move(x, sidebar_y)
+
+        # Update Tags Panel position if not animating
+        if self.tags_panel_animation.state() != QAbstractAnimation.State.Running:
+            x = 0 if self.tags_panel.isVisible() else -panel_w
+            self.tags_panel.move(x, sidebar_y)
 
         # Update Book Detail Panel position if not animating
         if self.book_detail_panel and self.book_detail_panel_animation and \

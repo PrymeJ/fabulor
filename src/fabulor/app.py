@@ -1289,6 +1289,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
+        self.tags_panel.tag_changed.connect(self.stats_panel._on_tag_changed)
         self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
         self.book_detail_panel.active_cover_changed.connect(
             lambda book_path, cover_path: self.stats_panel.on_cover_changed(book_path, cover_path)
