@@ -596,6 +596,8 @@ class PanelManager:
             self._close_sleep_flow()
         elif self.stats_panel.isVisible():
             self._close_stats_flow()
+        elif self.tags_panel.isVisible():
+            self._close_tags_flow()
         elif self.book_detail_panel and self.book_detail_panel.isVisible():
             self._close_book_detail_flow()
         elif self.main_window.chapter_list_widget.isVisible():
