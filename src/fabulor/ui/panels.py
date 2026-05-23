@@ -547,6 +547,7 @@ class PanelManager:
             self.speed_panel.isVisible(),
             self.sleep_panel.isVisible(),
             self.stats_panel.isVisible(),
+            self.tags_panel.isVisible(),
             self.book_detail_panel.isVisible() if self.book_detail_panel else False,
             self.main_window.chapter_list_widget.isVisible(),
         ])
@@ -568,7 +569,7 @@ class PanelManager:
         if self.stats_panel.isVisible():
             self._close_stats_flow()
         if self.tags_panel.isVisible():
-            self.tags_panel.hide()
+            self._close_tags_flow()
         if self.book_detail_panel and self.book_detail_panel.isVisible():
             self._close_book_detail_flow()
 
