@@ -161,6 +161,7 @@ class TagManagerWidget(QWidget):
         super().__init__(parent)
         self.db = db
         self._assets_dir = assets_dir
+        self.setObjectName("tags_panel")
         self._current_tag: str | None = None
         self._build_ui()
 
@@ -178,6 +179,7 @@ class TagManagerWidget(QWidget):
 
         # ── Tag list view ────────────────────────────────────────────────
         self._list_widget = QWidget()
+        self._list_widget.setObjectName("tag_manager_list")
         list_layout = QVBoxLayout(self._list_widget)
         list_layout.setContentsMargins(0, 0, 0, 0)
         list_layout.setSpacing(0)
@@ -198,6 +200,7 @@ class TagManagerWidget(QWidget):
 
         # ── Tag panel view ───────────────────────────────────────────────
         self._panel_widget = QWidget()
+        self._panel_widget.setObjectName("tag_manager_panel")
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
         panel_layout.setContentsMargins(0, 0, 0, 0)
