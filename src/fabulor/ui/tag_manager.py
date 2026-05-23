@@ -99,6 +99,7 @@ class _TagBookGrid(QScrollArea):
         self.setFrameShape(QScrollArea.Shape.NoFrame)
 
         self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
         self._grid = QGridLayout(self._container)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(4)
@@ -162,6 +163,7 @@ class TagManagerWidget(QWidget):
         self.db = db
         self._assets_dir = assets_dir
         self.setObjectName("tags_panel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._current_tag: str | None = None
         self._build_ui()
 
@@ -181,8 +183,12 @@ class TagManagerWidget(QWidget):
         self._list_widget = QWidget()
         self._list_widget.setObjectName("tag_manager_list")
         list_layout = QVBoxLayout(self._list_widget)
-        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setContentsMargins(10, 0, 10, 10)
         list_layout.setSpacing(0)
+
+        header = QLabel("Tag management")
+        header.setObjectName("settings_header")
+        list_layout.addWidget(header)
 
         self._tag_scroll = QScrollArea()
         self._tag_scroll.setWidgetResizable(True)
@@ -203,7 +209,7 @@ class TagManagerWidget(QWidget):
         self._panel_widget.setObjectName("tag_manager_panel")
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.setContentsMargins(10, 10, 10, 10)
         panel_layout.setSpacing(6)
 
         # Back + tag name (editable) + delete button
@@ -416,8 +422,8 @@ class TagManagerWidget(QWidget):
             self._show_list()
 
     def on_theme_changed(self, theme_name: str) -> None:
-        from ..themes import get_stats_stylesheet
-        self.setStyleSheet(get_stats_stylesheet(theme_name))
+        from ..themes import get_tags_stylesheet
+        self.setStyleSheet(get_tags_stylesheet(theme_name))
 
     def _on_book_removed(self, path: str):
         if self._current_tag:

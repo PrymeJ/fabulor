@@ -3283,6 +3283,143 @@ def get_stats_stylesheet(theme_name="default"):
     """
 
 
+def get_tags_stylesheet(theme_name="default"):
+    """Stylesheet for the standalone TagManagerWidget panel."""
+    t = _resolve_theme(theme_name)
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+
+    return f"""
+        QWidget#tags_panel {{
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border-right: 1px solid {t['accent']};
+            border-radius: 0px;
+        }}
+        QScrollArea,
+        QScrollArea QWidget#qt_scrollarea_viewport {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel {{
+            color: {t['text']};
+        }}
+        QLabel#settings_header {{
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
+            color: {t['accent_light']};
+        }}
+        QWidget#tag_list_row {{
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.4);
+            border-radius: 6px;
+        }}
+        QWidget#tag_list_row:hover {{
+            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.15);
+        }}
+        QLabel#tag_list_name {{
+            color: {t['text']};
+            font-size: 13px;
+        }}
+        QLabel#tag_count_badge {{
+            background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.5);
+            color: {t['accent_light']};
+            border-radius: 4px;
+            font-size: 11px;
+            padding: 1px 4px;
+        }}
+        QLabel#tag_dot_neutral {{
+            color: {t['accent_light']};
+        }}
+        QLineEdit#metadata_field {{
+            background: transparent;
+            border: 1px solid transparent;
+            font-size: 14px;
+            border-radius: 0px;
+            padding: 0px;
+            margin: 0px;
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+        }}
+        QPushButton {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            border-radius: 4px;
+            padding: 6px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            background-color: {t['accent_light']};
+        }}
+        QPushButton:pressed {{
+            background-color: {t['accent_dark']};
+        }}
+        QPushButton#stats_nav_btn {{
+            background: transparent;
+            color: {t['accent_light']};
+            border: none;
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#stats_nav_btn:hover {{
+            color: {t['text']};
+        }}
+        QPushButton#stats_nav_btn:disabled {{
+            color: rgba({_hex_to_rgb(t['accent_dark'])}, .90);
+        }}
+        QPushButton#stats_reset_btn {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            padding: 4px;
+            border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#stats_reset_btn:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#stats_reset_btn:pressed {{
+            background: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QLabel#stats_key_label {{
+            color: {t['accent_light']};
+            font-size: 12px;
+        }}
+        QLabel#stats_value_label {{
+            color: {t['text']};
+            font-weight: bold;
+            font-size: 13px;
+        }}
+        QScrollArea {{
+            background: transparent;
+            border: none;
+        }}
+        QScrollArea QWidget#qt_scrollarea_viewport {{
+            background: transparent;
+        }}
+        QScrollBar:vertical {{
+            width: 8px;
+            background: {t['bg_deep']};
+            border: none;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+    """
+
+
 def get_sidebar_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
     sidebar_style = _get_gradient_style(t, "sidebar", t['bg_sidebar'], t['sidebar_opacity'])
