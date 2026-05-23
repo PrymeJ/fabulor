@@ -332,7 +332,12 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 | `settings_panel`, `speed_panel`, `sleep_panel` | `get_settings_stylesheet()` |
 | `sidebar` | `get_sidebar_stylesheet()` |
 | `stats_panel` | `get_stats_stylesheet()` |
+| `tags_panel` (`TagManagerWidget`) | `get_tags_stylesheet()` |
+
+### `WA_StyledBackground` required for QSS on plain `QWidget` containers
+
+Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color QSS rule **must** call `setAttribute(Qt.WA_StyledBackground, True)`. Without it Qt silently ignores the background rule — the widget appears either fully transparent or painted by the system palette. This applies to every panel root widget and any intermediate container that needs its own background. Child containers that should be transparent must NOT set `WA_StyledBackground` — set it only on the root. Verified on `TagManagerWidget` (2026-05-24).
 
 ---
 
-*Last updated: 2026-05-22 — library_year theme key added (1-per-row year field color, falls back to library_narrator); library overlay (2/3-per-row, Square) switched from hardcoded white to library_elapsed/library_total/library_percentage theme colors; cover_theme.py updated with brighter text/text_dim/text_dimmer values, chap_fill_lighter and slider_bg_lighter variants for improved overlay legibility.*
+*Last updated: 2026-05-24 — library_year theme key added (1-per-row year field color, falls back to library_narrator); library overlay (2/3-per-row, Square) switched from hardcoded white to library_elapsed/library_total/library_percentage theme colors; cover_theme.py updated with brighter text/text_dim/text_dimmer values, chap_fill_lighter and slider_bg_lighter variants for improved overlay legibility.*

@@ -530,6 +530,8 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT use inline `convertToFormat(QImage.Format.Format_Grayscale8)` for grayscale conversion. Always use `to_grayscale()` from `cover_loader.py`. Inline conversion loses the alpha channel and turns transparent pixels black.
 
+## DO NOT add a broad `QWidget { background: transparent; }` rule to any panel stylesheet. It overrides named-widget background rules (including the panel root's semi-transparent fill) and makes the entire panel invisible. Always use specific object-name selectors (`QWidget#foo`) when setting transparency on child containers.
+
 ---
 
-*Last updated: 2026-05-20 (session 2) — archived book UI in detail panel and stats widgets, narrator/year library sync fix, year field validator, get_book_dict, tag manager refresh wiring, AppInterface proxy pattern for cross-panel calls.*
+*Last updated: 2026-05-24 — archived book UI in detail panel and stats widgets, narrator/year library sync fix, year field validator, get_book_dict, tag manager refresh wiring, AppInterface proxy pattern for cross-panel calls.*
