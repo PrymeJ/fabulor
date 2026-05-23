@@ -412,6 +412,10 @@ class TagManagerWidget(QWidget):
             self.tag_changed.emit()
             self._show_list()
 
+    def on_theme_changed(self, theme_name: str) -> None:
+        from ..themes import get_stats_stylesheet
+        self.setStyleSheet(get_stats_stylesheet(theme_name))
+
     def _on_book_removed(self, path: str):
         if self._current_tag:
             self.db.remove_book_tag(path, self._current_tag)

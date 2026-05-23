@@ -471,7 +471,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._build_library_panel()
         self._build_settings_panel()
         self._build_stats_panel()
-        
+        self._build_tags_panel()
+
         self.speed_panel = SpeedControlsPanel(self.player, self.config, self.theme_manager, self)
         self.speed_panel.hide()
         self.speed_panel_animation = QPropertyAnimation(self.speed_panel, b"pos")
@@ -1265,13 +1266,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.stats_panel_animation.setDuration(300)
         self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
+    def _build_tags_panel(self):
         _assets_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "assets"))
         self.tags_panel = TagManagerWidget(self.db, _assets_dir, parent=self)
         self.tags_panel.hide()
         self.tags_panel_animation = QPropertyAnimation(self.tags_panel, b"pos")
         self.tags_panel_animation.setDuration(200)
         self.tags_panel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.tags_panel.setGeometry(self.sleep_panel.geometry())
+        self.theme_manager.theme_applied.connect(self.tags_panel.on_theme_changed)
+        self.tags_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
     def _build_book_detail_panel(self):
         self.book_detail_panel = BookDetailPanel(self.db, self.config, parent=self)
