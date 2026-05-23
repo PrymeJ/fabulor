@@ -35,6 +35,7 @@ from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
+from .ui.tag_manager import TagManagerWidget
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
@@ -862,6 +863,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.stats_trigger_btn.setObjectName("sidebar_stats_btn")
         self.sidebar_layout.addWidget(self.stats_trigger_btn)
 
+        self.tags_trigger_btn = QPushButton("TAGS")
+        self.tags_trigger_btn.setObjectName("sidebar_tags_btn")
+        self.sidebar_layout.addWidget(self.tags_trigger_btn)
+
         self.sleep_cancel_btn = QPushButton("✕", self.sleep_trigger_btn)
         self.sleep_cancel_btn.setFixedSize(16, 16)
         self.sleep_cancel_btn.move(34, 1)
@@ -1259,6 +1264,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
         self.stats_panel_animation.setDuration(300)
         self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        _assets_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "assets"))
+        self.tags_panel = TagManagerWidget(self.db, _assets_dir, parent=self)
+        self.tags_panel.hide()
+        self.tags_panel_animation = QPropertyAnimation(self.tags_panel, b"pos")
+        self.tags_panel_animation.setDuration(200)
+        self.tags_panel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.tags_panel.setGeometry(self.sleep_panel.geometry())
 
     def _build_book_detail_panel(self):
         self.book_detail_panel = BookDetailPanel(self.db, self.config, parent=self)
