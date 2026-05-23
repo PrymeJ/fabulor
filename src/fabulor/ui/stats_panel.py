@@ -1199,20 +1199,10 @@ class StatsPanel(QWidget):
         self._overall_value_labels[7].setText(f"{streaks['longest']} days")
 
     def _build_options_tab(self) -> QWidget:
-        from .tag_manager import TagManagerWidget
-
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(4, 0, 4, 10)
         layout.setSpacing(0)
-
-        tags_label = QLabel("Tags")
-        tags_label.setObjectName("settings_header")
-        layout.addWidget(tags_label)
-
-        self._tag_manager = TagManagerWidget(self.db, self._assets_dir)
-        self._tag_manager.tag_changed.connect(self._on_tag_changed)
-        layout.addWidget(self._tag_manager, stretch=1)
 
         pref_row = QHBoxLayout()
         day_label = QLabel("Day starts at")

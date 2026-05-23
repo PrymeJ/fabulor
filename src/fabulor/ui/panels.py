@@ -29,6 +29,8 @@ class PanelManager:
         self.speed_panel_animation = main_window.speed_panel_animation
         self.sleep_panel_animation = main_window.sleep_panel_animation
         self.stats_panel_animation = main_window.stats_panel_animation
+        self.tags_panel_animation = main_window.tags_panel_animation
+        self.tags_panel = main_window.tags_panel
         self.book_detail_panel: "BookDetailPanel | None" = None
         self.book_detail_panel_animation: QPropertyAnimation | None = None
         self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
@@ -40,6 +42,7 @@ class PanelManager:
         self.main_window.speed_trigger_btn.clicked.connect(self._open_speed_flow)
         self.main_window.sleep_trigger_btn.clicked.connect(self._open_sleep_flow)
         self.main_window.stats_trigger_btn.clicked.connect(self._open_stats_flow)
+        self.main_window.tags_trigger_btn.clicked.connect(self._open_tags_flow)
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -213,6 +216,7 @@ class PanelManager:
         elif self._pending_panel_open == "speed": self._start_speed_entry()
         elif self._pending_panel_open == "sleep": self._start_sleep_entry()
         elif self._pending_panel_open == "stats": self._start_stats_entry()
+        elif self._pending_panel_open == "tags": self._start_tags_entry()
         self._pending_panel_open = None
 
     def _close_library_flow(self):
@@ -389,6 +393,54 @@ class PanelManager:
         self.stats_panel.hide()
         self._notify_panel_closed()
 
+    def _open_tags_flow(self):
+        self._abort_theme_fade()
+        if self.sidebar_expanded:
+            self._pending_panel_open = "tags"
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
+            self._toggle_sidebar()
+        else:
+            self._start_tags_entry()
+
+    def _start_tags_entry(self):
+        mw = self.main_window
+        panel_w = self.tags_panel.width()
+        sidebar_y = 56
+        self.tags_panel.move(-panel_w, sidebar_y)
+        self.tags_panel.show()
+        self.tags_panel.raise_()
+        self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
+        self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        self.tags_panel_animation.start()
+        if mw.config.get_blur_enabled():
+            self.blur_animation.setStartValue(0)
+            self.blur_animation.setEndValue(8)
+            self.blur_animation.start()
+
+    def _close_tags_flow(self):
+        if self.tags_panel_animation.state() == QAbstractAnimation.State.Running:
+            return
+        panel_w = self.tags_panel.width()
+        sidebar_y = 56
+        self.tags_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.tags_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        self.tags_panel_animation.finished.connect(self._on_tags_hidden)
+        self.tags_panel_animation.start()
+        if self.main_window.config.get_blur_enabled():
+            self.blur_animation.setStartValue(self.blur_animation.currentValue() or 8)
+            self.blur_animation.setEndValue(0)
+            self.blur_animation.start()
+
+    def _on_tags_hidden(self):
+        try:
+            self.tags_panel_animation.finished.disconnect(self._on_tags_hidden)
+        except RuntimeError:
+            pass
+        self.tags_panel.hide()
+        self._notify_panel_closed()
+
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
         self._abort_theme_fade()
         self.main_window.book_detail_panel.load_book(book_data, tab=tab, context=context)
@@ -514,6 +566,8 @@ class PanelManager:
             self._close_sleep_flow()
         if self.stats_panel.isVisible():
             self._close_stats_flow()
+        if self.tags_panel.isVisible():
+            self.tags_panel.hide()
         if self.book_detail_panel and self.book_detail_panel.isVisible():
             self._close_book_detail_flow()
 
