@@ -28,6 +28,7 @@ settings_tab_hover_bg: Background color for unselected tabs when hovered. Falls 
 settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Falls back to 0.85.
 settings_tab_hover_text: Text color for unselected tabs when hovered. Falls back to text.
 cover_preview_bg: Background color for book cover previews in the library. Falls back to bg_deep, then #000000.
+expand_button: Button color for the chapter list expand/collapse button. Falls back to accent.
 
 UI TEXT COLORS
 text: The default color for most labels and UI text.
