@@ -316,8 +316,8 @@ class TagManagerWidget(QWidget):
         row.setFixedHeight(36)
 
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(2)
 
         dot = QLabel("●")
         dot.setFixedSize(16, 16)

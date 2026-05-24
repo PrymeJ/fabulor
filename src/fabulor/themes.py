@@ -3348,6 +3348,10 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['text']};
             font-size: 13px;
         }}
+        QLabel#tag_list_name:hover {{
+            color: {t['accent_light']};
+            font-size: 13px;
+        }}
         QLabel#tag_count_badge {{
             background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.5);
             color: {t['accent_light']};
