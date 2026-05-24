@@ -8,6 +8,8 @@ from PySide6.QtGui import QPixmap, QImage, QColor
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 
+MAX_TAG_LENGTH = 20
+
 TAG_COLORS = {
     'coral':     '#E8735A',
     'peach':     '#F0956A',
@@ -233,6 +235,7 @@ class TagManagerWidget(QWidget):
 
         self._tag_name_edit = QLineEdit()
         self._tag_name_edit.setObjectName("metadata_field")
+        self._tag_name_edit.setMaxLength(MAX_TAG_LENGTH)
         self._tag_name_edit.returnPressed.connect(self._on_rename)
         top_row.addWidget(self._tag_name_edit, stretch=1)
 

@@ -17,7 +17,7 @@ from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import to_grayscale
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
-from .tag_manager import TAG_COLORS
+from .tag_manager import TAG_COLORS, MAX_TAG_LENGTH
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
@@ -366,7 +366,7 @@ class BookDetailPanel(QWidget):
         self._tag_input = QLineEdit()
         self._tag_input.setObjectName("tag_add_field")
         self._tag_input.setPlaceholderText("Add tag…")
-        self._tag_input.setMaxLength(20)
+        self._tag_input.setMaxLength(MAX_TAG_LENGTH)
         self._tag_input.returnPressed.connect(self._on_add_tag)
 
         self._tag_completer_model = QStringListModel()

@@ -164,16 +164,10 @@ class LibraryDB:
                     "ALTER TABLE books ADD COLUMN year_locked INTEGER NOT NULL DEFAULT 0"
                 )
 
-            # Migrate: populate tags table from existing book_tags, truncate to 20 chars
+            # Populate tags table from existing book_tags (idempotent, safe to run each startup)
             conn.execute("""
                 INSERT OR IGNORE INTO tags (name)
                 SELECT DISTINCT tag FROM book_tags
-            """)
-            conn.execute("""
-                UPDATE book_tags SET tag = SUBSTR(tag, 1, 20) WHERE LENGTH(tag) > 20
-            """)
-            conn.execute("""
-                UPDATE tags SET name = SUBSTR(name, 1, 20) WHERE LENGTH(name) > 20
             """)
 
 
@@ -818,7 +812,7 @@ class LibraryDB:
 
     def add_book_tag(self, book_path: str, tag: str) -> bool:
         """Returns False if tag already exists on this book, per-book limit reached, or global tag limit reached."""
-        tag = tag.strip().lower()
+        tag = tag.strip().lower()[:20]
         if not tag:
             return False
         with self._get_conn() as conn:
@@ -983,7 +977,7 @@ class LibraryDB:
 
     def rename_tag(self, old_tag: str, new_tag: str) -> bool:
         """Renames a tag across all books. Returns False if new_tag already exists."""
-        new_tag = new_tag.strip().lower()
+        new_tag = new_tag.strip().lower()[:20]
         if not new_tag or new_tag == old_tag:
             return False
         with self._get_conn() as conn:
