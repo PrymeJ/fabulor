@@ -184,7 +184,7 @@ class TagManagerWidget(QWidget):
         self._list_widget.setObjectName("tag_manager_list")
         list_layout = QVBoxLayout(self._list_widget)
         list_layout.setContentsMargins(10, 0, 10, 10)
-        list_layout.setSpacing(0)
+        list_layout.setSpacing(10)
 
         header = QLabel("Tag management")
         header.setObjectName("settings_header")
