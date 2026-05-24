@@ -3377,6 +3377,23 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['text']};
             selection-background-color: {t['accent']};
         }}
+        QLineEdit#tag_name_field {{
+            background: transparent;
+            border: 1px solid transparent;
+            font-size: 14px;
+            border-radius: 0px;
+            padding: 0px;
+            margin: 0px;
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+        }}
+        QLabel#tag_confirm_delete {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 2px 6px;
+        }}
         QPushButton {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
