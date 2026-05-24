@@ -1564,17 +1564,17 @@ THEMES = {
     "library_total": "#6A5A78",
     "library_percentage": "#B85878",
     "library_input_bg": "#2E2842",
-    "library_input_text": "#F0E8F0",
+    "library_input_text": "#e5c4e5",
     "settings_tab_hover_bg": "#C86A8A",
     "settings_tab_hover_opacity": 0.85,
     "settings_tab_hover_text": "#1A1428",
-    "text": "#F0E8F0",
-    "button_text": "#1A1428",
-    "progress_text": "#F0E8F0",
-    "sidebar_text": "#F0E8F0",
+    "text": "#e5c4e5",
+    "button_text": "#291d4b",
+    "progress_text": "#e5c4e5",
+    "sidebar_text": "#e5c4e5",
     "sidebar_text_hover": "#C86A8A",
-    "dropdown_text": "#F0E8F0",
-    "dropdown_time_text": "#8A7898",
+    "dropdown_text": "#e5c4e5",
+    "dropdown_time_text": "#e5c4e5",
     "text_on_light_bg": "#1A1428",
     "panel_theme_names_dimmed": "#6A5A78",
     "slider_overall_bg": "#2E2842",
@@ -1699,27 +1699,27 @@ THEMES = {
     "library_row_one": "#0F1A0F",
     "library_row_two": "#122212",
     "library_item_hover_color": "#2EAA4A",
-    "library_item_hover_alpha": 0.4,
-    "library_title": "#D0F0D8",
-    "library_author": "#8AB89A",
+    "library_item_hover_alpha": 0.18,
+    "library_title": "#ecedac",
+    "library_author": "#96e6aa",
     "library_narrator": "#6A947A",
     "library_slider_bg": "#1A2A1A",
     "library_slider_fill": "#2EAA4A",
-    "library_elapsed": "#8AB89A",
-    "library_total": "#4A624A",
-    "library_percentage": "#2EAA4A",
+    "library_elapsed": "#2EAA4A",
+    "library_total": "#2EAA4A",
+    "library_percentage": "#7ec181",
     "library_input_bg": "#1A2A1A",
-    "library_input_text": "#D0F0D8",
+    "library_input_text": "#b4eec3",
     "settings_tab_hover_bg": "#2EAA4A",
     "settings_tab_hover_opacity": 0.85,
     "settings_tab_hover_text": "#0A0F0A",
     "text": "#D0F0D8",
-    "button_text": "#0A0F0A",
+    "button_text": "#173417",
     "progress_text": "#D0F0D8",
     "sidebar_text": "#D0F0D8",
     "sidebar_text_hover": "#2EAA4A",
-    "dropdown_text": "#D0F0D8",
-    "dropdown_time_text": "#6A947A",
+    "dropdown_text": "#99f9b1",
+    "dropdown_time_text": "#53ef78",
     "text_on_light_bg": "#0A0F0A",
     "panel_theme_names_dimmed": "#4A624A",
     "slider_overall_bg": "#1A2A1A",
@@ -1733,7 +1733,7 @@ THEMES = {
     "accent": "#2EAA4A",
     "accent_light": "#3AC45A",
     "accent_dark": "#1A6A2A",
-    "curr_chap_highlight": "#3AC45A",
+    "curr_chap_highlight": "#27ab45",
     "sidebar_opacity": 0.86,
     "panel_opacity_hover": 0.93
 },
@@ -3316,6 +3316,11 @@ def get_tags_stylesheet(theme_name="default"):
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
         }}
+        QWidget#tag_manager_list,
+        QWidget#tag_manager_panel,
+        QWidget#tag_list_container {{
+            background: transparent;
+        }}
         QScrollArea,
         QScrollArea QWidget#qt_scrollarea_viewport {{
             background: transparent;
@@ -3331,11 +3336,13 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['accent_light']};
         }}
         QWidget#tag_list_row {{
-            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.4);
             border-radius: 6px;
         }}
+        QWidget#tag_list_row:!hover {{
+            background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.6);
+        }}
         QWidget#tag_list_row:hover {{
-            background-color: rgba({_hex_to_rgb(t['accent'])}, 0.15);
+            background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.6);
         }}
         QLabel#tag_list_name {{
             color: {t['text']};

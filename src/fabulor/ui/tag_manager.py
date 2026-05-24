@@ -196,6 +196,7 @@ class TagManagerWidget(QWidget):
         self._tag_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
         self._tag_list_container = QWidget()
+        self._tag_list_container.setObjectName("tag_list_container")
         self._tag_list_layout = QVBoxLayout(self._tag_list_container)
         self._tag_list_layout.setContentsMargins(0, 0, 0, 0)
         self._tag_list_layout.setSpacing(4)
