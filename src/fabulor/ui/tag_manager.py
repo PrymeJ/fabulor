@@ -11,15 +11,15 @@ from .library import _cover_cache
 MAX_TAG_LENGTH = 20
 
 TAG_COLORS = {
-    'coral':     '#E8735A',
-    'peach':     '#F0956A',
-    'amber':     '#E8A84A',
-    'lime':      '#8FC45A',
-    'mint':      '#5AD4A0',
-    'sky':       '#5AAEE8',
-    'lavender':  '#8A78D8',
-    'rose':      '#D865A0',
-    'white':     '#F0F0F0',
+    'coral':      '#E8735A',
+    'peach':      '#F0956A',
+    'lemon':      "#DEE84A",
+    'lime':       '#8FC45A',
+    'mint':       '#5AD4A0',
+    'sky':        '#5AAEE8',
+    'lavender':   '#8A78D8',
+    'rose':       '#D865A0',
+    'white':      '#F0F0F0',
 }
 
 
