@@ -1,12 +1,14 @@
 import os
+from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QLineEdit, QGridLayout, QSizePolicy
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool
-from PySide6.QtGui import QPixmap, QImage, QColor
+from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize
+from PySide6.QtGui import QPixmap, QImage, QColor, QIcon
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
+from .icon_utils import load_themed_icon, ICONS_DIR
 
 MAX_TAG_LENGTH = 20
 
@@ -167,6 +169,9 @@ class TagManagerWidget(QWidget):
         self.setObjectName("tags_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._current_tag: str | None = None
+        self._tag_name_original: str = ""
+        self._confirming_delete: bool = False
+        self._current_theme: dict = {}
         self._build_ui()
 
     def _inject_active_covers(self, books: list[dict]) -> list[dict]:
@@ -215,18 +220,18 @@ class TagManagerWidget(QWidget):
         panel_layout.setContentsMargins(10, 10, 10, 10)
         panel_layout.setSpacing(6)
 
-        # Back + tag name (editable) + delete button
+        # Back + tag name (editable) + save + delete buttons
         top_row = QHBoxLayout()
-        top_row.setSpacing(6)
+        top_row.setSpacing(4)
 
         self._back_btn = QPushButton("‹")
         self._back_btn.setObjectName("stats_nav_btn")
-        self._back_btn.setFixedWidth(28)
+        self._back_btn.setFixedSize(24, 28)
         self._back_btn.clicked.connect(self._show_list)
         top_row.addWidget(self._back_btn)
 
         self._detail_dot = QLabel("●")
-        self._detail_dot.setFixedSize(20, 20)
+        self._detail_dot.setFixedSize(16, 28)
         self._detail_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._detail_dot.setObjectName("tag_dot_neutral")
         self._detail_dot.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -237,12 +242,23 @@ class TagManagerWidget(QWidget):
         self._tag_name_edit.setObjectName("metadata_field")
         self._tag_name_edit.setMaxLength(MAX_TAG_LENGTH)
         self._tag_name_edit.returnPressed.connect(self._on_rename)
+        self._tag_name_edit.textChanged.connect(self._on_tag_name_changed)
         top_row.addWidget(self._tag_name_edit, stretch=1)
 
-        self._delete_btn = QPushButton("Delete tag")
-        self._delete_btn.setObjectName("stats_reset_btn")
-        self._delete_btn.clicked.connect(self._on_delete_tag)
-        top_row.addWidget(self._delete_btn)
+        self._save_btn = QPushButton()
+        self._save_btn.setObjectName("tag_icon_btn")
+        self._save_btn.setFixedSize(28, 28)
+        self._save_btn.setFlat(True)
+        self._save_btn.hide()
+        self._save_btn.clicked.connect(self._on_rename)
+        top_row.addWidget(self._save_btn)
+
+        self._trash_btn = QPushButton()
+        self._trash_btn.setObjectName("tag_icon_btn")
+        self._trash_btn.setFixedSize(28, 28)
+        self._trash_btn.setFlat(True)
+        self._trash_btn.clicked.connect(self._on_delete_tag)
+        top_row.addWidget(self._trash_btn)
 
         panel_layout.addLayout(top_row)
 
@@ -368,6 +384,9 @@ class TagManagerWidget(QWidget):
 
     def _open_tag(self, tag: str):
         self._current_tag = tag
+        self._tag_name_original = tag
+        self._save_btn.hide()
+        self._confirming_delete = False
         self._tag_name_edit.setText(tag)
         self._rename_status.setText("")
         color_key = self.db.get_tag_color(tag)
@@ -410,24 +429,48 @@ class TagManagerWidget(QWidget):
             self._rename_status.setText("Name already in use")
             QTimer.singleShot(1500, lambda: self._rename_status.setText(""))
 
+    def _on_tag_name_changed(self, text: str):
+        if text.strip() != self._tag_name_original:
+            self._save_btn.show()
+        else:
+            self._save_btn.hide()
+
+    def _update_tag_icons(self):
+        t_color = self._current_theme.get("accent", "#888888") if self._current_theme else "#888888"
+        save_px = load_themed_icon("save.svg", t_color, 16, 0.7)
+        self._save_btn.setIcon(QIcon(save_px))
+        self._save_btn.setIconSize(QSize(16, 16))
+        trash_px = load_themed_icon("trash.svg", t_color, 18, 0.7)
+        self._trash_btn.setIcon(QIcon(trash_px))
+        self._trash_btn.setIconSize(QSize(18, 18))
+
     def _on_delete_tag(self):
         if not self._current_tag:
             return
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self, "Delete tag",
-            f"Remove tag \"{self._current_tag}\" from all books? This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        if not self._confirming_delete:
+            self._confirming_delete = True
+            self._rename_status.setText(f"Delete \"{self._current_tag}\"? Press again to confirm.")
+            QTimer.singleShot(3000, self._cancel_delete_confirm)
+        else:
+            self._confirming_delete = False
+            self._rename_status.setText("")
             self.db.delete_tag(self._current_tag)
             self.tag_changed.emit()
             self._show_list()
 
+    def _cancel_delete_confirm(self):
+        if self._confirming_delete:
+            self._confirming_delete = False
+            self._rename_status.setText("")
+
     def on_theme_changed(self, theme_name: str) -> None:
         from ..themes import get_tags_stylesheet
+        self._current_theme_name = theme_name
         self.setStyleSheet(get_tags_stylesheet(theme_name))
+        if hasattr(self, '_save_btn'):
+            from ..themes import _resolve_theme
+            self._current_theme = _resolve_theme(theme_name)
+            self._update_tag_icons()
 
     def _on_book_removed(self, path: str):
         if self._current_tag:
