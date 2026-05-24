@@ -982,8 +982,7 @@ THEMES = {
         "sidebar_opacity":        0.86,
         "panel_opacity_hover":    0.93,
         "panel_theme_names_dimmed": "#F05632",
-        "button_text":            "#341a23",
-        "button_play":            "#f6eba9",
+        "button_text":            "#f6eba9",
         "text":                   "#ffb692",
         "bg_image":               "img/overlook.png"
     },
