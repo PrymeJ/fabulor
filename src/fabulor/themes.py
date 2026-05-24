@@ -3352,6 +3352,11 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             font-size: 13px;
         }}
+        QLabel#book_count_label {{
+            font-size: 14px;
+            font-weight: bold;
+            color: {t['accent']};
+        }}
         QLabel#tag_count_badge {{
             background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.5);
             color: {t['accent_light']};

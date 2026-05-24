@@ -278,7 +278,7 @@ class TagManagerWidget(QWidget):
         panel_layout.addWidget(self._rename_status)
 
         self._book_count_label = QLabel("")
-        self._book_count_label.setObjectName("stats_key_label")
+        self._book_count_label.setObjectName("book_count_label")
         panel_layout.addWidget(self._book_count_label)
 
         self._book_grid = _TagBookGrid(self._assets_dir)
@@ -375,7 +375,7 @@ class TagManagerWidget(QWidget):
 
         books = self._inject_active_covers(self.db.get_books_by_tag(tag))
         self._book_count_label.setText(
-            f"{len(books)} book{'s' if len(books) != 1 else ''} tagged \"{tag}\""
+            f"{len(books)} book{'s' if len(books) != 1 else ''}"
         )
         self._book_grid.set_books(books)
 
