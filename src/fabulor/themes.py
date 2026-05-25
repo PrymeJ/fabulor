@@ -1013,27 +1013,7 @@ THEMES = {
         "text":                   "#F0ECDC",
         "panel_theme_names_dimmed": "#8A8268",
     },
-        "Unknown Kadath": {
-        "bg_deep":                "#1A1824",
-        "bg_main":                "#2A2538",
-        "slider_overall_bg":      "#3D3650",
-        "slider_overall_fill":    "#B8B0D0",
-        "slider_chapter_bg":      "#3D3650",
-        "slider_chapter_fill":    "#D0C8E4",
-        "slider_vol_bg":          "#2A2538",
-        "slider_vol_fill":        "#B8B0D0",
-        "accent":                 "#9A8CB8",
-        "accent_light":           "#B8B0D0",
-        "accent_dark":            "#5E507A",
-        "bg_sidebar":             "#1A1824",
-        "bg_dropdown":            "#3D3650",
-        "curr_chap_highlight":    "#D0C8E4",
-        "sidebar_text_hover":     "#B8B0D0",
-        "sidebar_opacity":        0.84,
-        "panel_opacity_hover":    0.91,
-        "panel_theme_names_dimmed": "#C18EAC",
-        "text":                   "#F2EFF8"
-    },
+
     "Urras": {
         "bg_deep":      "#001219",
         "bg_main":      "#001B24",
