@@ -3,7 +3,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QLineEdit, QGridLayout, QSizePolicy, QStackedLayout
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize, QByteArray
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize, QByteArray, QEvent
 from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
@@ -28,6 +29,8 @@ def _load_icon(name: str, color: str, size: int, opacity: float = 1.0) -> QPixma
         svg = f.read()
     svg = svg.replace('stroke="#000000"', f'stroke="{color}"')
     svg = svg.replace('fill="#000000"', f'fill="{color}"')
+    if '<style' not in svg and 'stroke=' not in svg:
+        svg = svg.replace('<svg', f'<svg><style>path {{ fill: {color}; }}</style>', 1)
     renderer = QSvgRenderer(QByteArray(svg.encode()))
     px = QPixmap(size, size)
     px.fill(Qt.GlobalColor.transparent)
@@ -359,6 +362,10 @@ class TagManagerWidget(QWidget):
 
         self._stack_layout.addWidget(self._panel_widget)
 
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        super().hideEvent(event)
+
     def refresh_books(self) -> None:
         if self._current_tag:
             self._open_tag(self._current_tag)
@@ -498,12 +505,35 @@ class TagManagerWidget(QWidget):
 
         self._list_widget.hide()
         self._panel_widget.show()
+        QApplication.instance().installEventFilter(self)
 
     def _show_list(self):
+        QApplication.instance().removeEventFilter(self)
         self._panel_widget.hide()
         self._list_widget.show()
         self._current_tag = None
         self.refresh()
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            from PySide6.QtCore import QRect
+            gpos = event.globalPosition().toPoint()
+
+            def hits(w):
+                return w.isVisible() and QRect(
+                    w.mapToGlobal(w.rect().topLeft()),
+                    w.mapToGlobal(w.rect().bottomRight())
+                ).contains(gpos)
+
+            safe = (self._tag_name_edit, self._action_btn)
+            if not any(hits(w) for w in safe):
+                self._revert_tag_name()
+        return super().eventFilter(obj, event)
+
+    def _revert_tag_name(self):
+        if self._tag_name_edit.text().strip() != self._tag_name_original:
+            self._tag_name_edit.setText(self._tag_name_original)
+            self._set_action_mode("delete")
 
     def _on_rename(self):
         if not self._current_tag:
@@ -516,6 +546,7 @@ class TagManagerWidget(QWidget):
         success = self.db.rename_tag(self._current_tag, new_name)
         if success:
             self._current_tag = new_name
+            self._tag_name_original = new_name
             books = self.db.get_books_by_tag(new_name)
             self._book_count_label.setText(
                 f"{len(books)} book{'s' if len(books) != 1 else ''}"
