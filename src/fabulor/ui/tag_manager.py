@@ -445,6 +445,8 @@ class TagManagerWidget(QWidget):
         if current is self._color_picker_row:
             self._show_reserved("none")
         else:
+            self._revert_tag_name()
+            self._tag_name_edit.clearFocus()
             self._show_reserved("picker")
 
     def _set_tag_color(self, color_key: str | None):
