@@ -514,12 +514,12 @@ class TagManagerWidget(QWidget):
         self.refresh()
 
     def _on_action_btn_hover(self, hover: bool):
-        if self._action_btn_mode not in ("delete", "save"):
+        if self._confirming_delete or self._action_btn_mode not in ("delete", "save"):
             return
         color = self._current_theme.get("accent", "#888888")
         if self._action_btn_mode == "delete":
             icon_color = "#cc3333" if hover else color
-            px = _load_icon("trash.svg", icon_color, 21, 1.0 if hover else 0.7)
+            px = _load_icon("trash.svg", icon_color, 21, 1.0 if hover else 0.70)
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(21, 21))
         elif self._action_btn_mode == "save":
@@ -573,7 +573,7 @@ class TagManagerWidget(QWidget):
             )
             self._set_action_mode("check")
             self.tag_changed.emit()
-            QTimer.singleShot(1500, lambda: self._set_action_mode("delete"))
+            QTimer.singleShot(2000, lambda: self._set_action_mode("delete"))
         else:
             self._set_action_mode("save_error")
 
@@ -592,13 +592,13 @@ class TagManagerWidget(QWidget):
     def _set_action_mode(self, mode: str):
         self._action_btn_mode = mode
         color = self._current_theme.get("accent", "#888888")
-        self._action_btn.setEnabled(mode in ("delete", "save", "save_error"))
+        self._action_btn.setEnabled(mode in ("delete", "save", "save_error", "check"))
         self._action_btn.setCursor(
             Qt.CursorShape.ArrowCursor if mode in ("save_error", "check")
             else Qt.CursorShape.PointingHandCursor
         )
         if mode == "delete":
-            px = _load_icon("trash.svg", color, 21, 0.7)
+            px = _load_icon("trash.svg", color, 21, 0.70)
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(21, 21))
         elif mode == "save":
@@ -610,7 +610,7 @@ class TagManagerWidget(QWidget):
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(16, 16))
         elif mode == "check":
-            px = _load_icon("check.svg", color, 16, 0.7)
+            px = _load_icon("check.svg", color, 16, 1.0)
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(16, 16))
 
@@ -625,7 +625,9 @@ class TagManagerWidget(QWidget):
         self._show_reserved("confirm")
         self._book_grid.set_locked(True)
         self._confirming_delete = True
-        self._action_btn.setEnabled(False)
+        color = self._current_theme.get("accent", "#888888")
+        px = _load_icon("trash.svg", color, 21, 0.35)
+        self._action_btn.setIcon(QIcon(px))
         self._detail_dot.setCursor(Qt.CursorShape.ArrowCursor)
         self._detail_dot.mousePressEvent = lambda e: self._cancel_delete_confirm()
         self._tag_name_edit.setReadOnly(True)
@@ -648,7 +650,6 @@ class TagManagerWidget(QWidget):
 
     def _cancel_delete_confirm(self):
         self._confirming_delete = False
-        self._action_btn.setEnabled(True)
         self._show_reserved("none")
         self._book_grid.set_locked(False)
         self._detail_dot.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -662,6 +663,7 @@ class TagManagerWidget(QWidget):
         if hasattr(self, '_cancel_timer') and self._cancel_timer:
             self._cancel_timer.stop()
             self._cancel_timer = None
+        self._set_action_mode("delete")
 
     def on_theme_changed(self, theme_name: str) -> None:
         from ..themes import get_tags_stylesheet

@@ -688,10 +688,11 @@ class BookDetailPanel(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self._remove_btn:
-            if event.type() == QEvent.Type.Enter:
-                self._update_remove_btn_icon(hover=True)
-            elif event.type() == QEvent.Type.Leave:
-                self._update_remove_btn_icon(hover=False)
+            if not self._confirming_remove:
+                if event.type() == QEvent.Type.Enter:
+                    self._update_remove_btn_icon(hover=True)
+                elif event.type() == QEvent.Type.Leave:
+                    self._update_remove_btn_icon(hover=False)
             return False
 
         if obj is self._meta_action_btn:
@@ -996,8 +997,10 @@ class BookDetailPanel(QWidget):
         self._confirming_remove = True
         self._duration_label.setVisible(False)
         self._confirm_remove_label.setVisible(True)
-        self._remove_btn.setEnabled(False)
         self._remove_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        color = self._theme.get("accent", "#888888")
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21, 0.35)
+        self._remove_btn.setIcon(QIcon(pixmap))
         if self._remove_cancel_timer:
             self._remove_cancel_timer.stop()
         self._remove_cancel_timer = QTimer(self)
@@ -1014,7 +1017,6 @@ class BookDetailPanel(QWidget):
         self._confirming_remove = False
         self._confirm_remove_label.setVisible(False)
         self._duration_label.setVisible(True)
-        self._remove_btn.setEnabled(True)
         self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         if self._remove_cancel_timer:
             self._remove_cancel_timer.stop()
