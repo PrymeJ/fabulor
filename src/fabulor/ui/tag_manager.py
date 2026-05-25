@@ -441,7 +441,27 @@ class TagManagerWidget(QWidget):
         self.db.set_tag_color(self._current_tag, color_key)
         self._show_reserved("none")
         self._update_detail_dot(color_key)
-        self.refresh()
+        self._update_list_dot(self._current_tag, color_key)
+        self.tag_changed.emit()
+
+    def _update_list_dot(self, tag: str, color_key: str | None):
+        color_hex = TAG_COLORS.get(color_key) if color_key else None
+        for i in range(self._tag_list_layout.count() - 1):
+            item = self._tag_list_layout.itemAt(i)
+            if item and item.widget():
+                row = item.widget()
+                dot = row.findChild(QLabel, "tag_dot_neutral") or row.findChild(QLabel, "tag_dot_colored")
+                name_lbl = row.findChild(QLabel, "tag_list_name")
+                if name_lbl and name_lbl.text() == tag and dot:
+                    if color_hex:
+                        dot.setObjectName("tag_dot_colored")
+                        dot.setStyleSheet(f"color: {color_hex};")
+                    else:
+                        dot.setObjectName("tag_dot_neutral")
+                        dot.setStyleSheet("")
+                    dot.style().unpolish(dot)
+                    dot.style().polish(dot)
+                    break
 
     def _update_detail_dot(self, color_key: str | None):
         color_hex = TAG_COLORS.get(color_key) if color_key else None
