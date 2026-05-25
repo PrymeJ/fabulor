@@ -117,6 +117,12 @@ class _TagBookThumb(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            w = self.parent()
+            while w and not isinstance(w, _TagBookGrid):
+                w = w.parent()
+            if isinstance(w, _TagBookGrid) and w._locked:
+                w.parent_remove(self._path)
+                return
             self.remove_requested.emit(self._path)
 
 
@@ -260,9 +266,7 @@ class TagManagerWidget(QWidget):
 
         # ── Tag panel view ───────────────────────────────────────────────
         self._panel_widget = QWidget()
-        self._panel_widget.mousePressEvent = lambda e: (
-            self._cancel_delete_confirm() if self._confirming_delete else None
-        )
+        self._panel_widget.mousePressEvent = lambda e: self._on_panel_bg_click()
         self._panel_widget.setObjectName("tag_manager_panel")
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
@@ -582,6 +586,14 @@ class TagManagerWidget(QWidget):
         self._revert_tag_name()
         self._tag_name_edit.clearFocus()
 
+    def _on_panel_bg_click(self):
+        if self._confirming_delete:
+            self._cancel_delete_confirm()
+        elif self._reserved_layout.currentWidget() is self._color_picker_row:
+            self._show_reserved("none")
+        elif self._editing:
+            self._dismiss_edit()
+
     def _on_rename(self):
         if not self._current_tag:
             return
@@ -655,6 +667,7 @@ class TagManagerWidget(QWidget):
         color = self._current_theme.get("accent", "#888888")
         px = _load_icon("trash.svg", color, 21, 0.35)
         self._action_btn.setIcon(QIcon(px))
+        self._action_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self._detail_dot.setCursor(Qt.CursorShape.ArrowCursor)
         self._detail_dot.mousePressEvent = lambda e: self._cancel_delete_confirm()
         self._tag_name_edit.setReadOnly(True)
