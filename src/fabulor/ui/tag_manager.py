@@ -1,7 +1,7 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QLineEdit, QGridLayout, QSizePolicy
+    QScrollArea, QLineEdit, QGridLayout, QSizePolicy, QStackedLayout
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QThreadPool, QSize, QByteArray
 from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
@@ -138,6 +138,7 @@ class _TagBookGrid(QScrollArea):
         self._books: list[dict] = []
         self._thumbs: dict[str, _TagBookThumb] = {}
         self._cols = 5
+        self._locked: bool = False
         self._grid.setColumnStretch(self._cols, 1)
 
     def set_books(self, books: list[dict]):
@@ -165,7 +166,13 @@ class _TagBookGrid(QScrollArea):
         self._grid.setRowStretch(self._grid.rowCount(), 1)
 
 
+    def set_locked(self, locked: bool):
+        self._locked = locked
+
     def _on_remove(self, path: str):
+        if self._locked:
+            self.parent_remove(path)
+            return
         if path in self._thumbs:
             thumb = self._thumbs.pop(path)
             thumb.deleteLater()
@@ -197,6 +204,7 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
+        self._cancel_timer: QTimer | None = None
         self._current_theme: dict = {}
         self._action_btn_mode: str = "delete"
         self._build_ui()
@@ -245,6 +253,9 @@ class TagManagerWidget(QWidget):
 
         # ── Tag panel view ───────────────────────────────────────────────
         self._panel_widget = QWidget()
+        self._panel_widget.mousePressEvent = lambda e: (
+            self._cancel_delete_confirm() if self._confirming_delete else None
+        )
         self._panel_widget.setObjectName("tag_manager_panel")
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
@@ -274,6 +285,10 @@ class TagManagerWidget(QWidget):
         self._tag_name_edit.setMaxLength(MAX_TAG_LENGTH)
         self._tag_name_edit.returnPressed.connect(self._on_rename)
         self._tag_name_edit.textChanged.connect(self._on_tag_name_changed)
+        self._tag_name_edit.mousePressEvent = lambda e: (
+            self._show_reserved("none") if self._reserved_layout.currentWidget() is self._color_picker_row else None,
+            QLineEdit.mousePressEvent(self._tag_name_edit, e)
+        )[-1]
         name_row.addWidget(self._tag_name_edit, stretch=1)
 
         self._action_btn = QPushButton()
@@ -285,54 +300,60 @@ class TagManagerWidget(QWidget):
 
         panel_layout.addLayout(name_row)
 
+        self._reserved_row = QWidget()
+        self._reserved_row.setFixedHeight(32)
+        reserved_layout = QStackedLayout(self._reserved_row)
+        reserved_layout.setContentsMargins(0, 0, 0, 0)
+        reserved_layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
+
         self._color_picker_row = QWidget()
-        self._color_picker_row.setFixedHeight(28)
-        self._color_picker_row.hide()
         picker_layout = QHBoxLayout(self._color_picker_row)
         picker_layout.setContentsMargins(10, 4, 10, 4)
         picker_layout.setSpacing(8)
-
         neutral_dot = QLabel("●")
-        neutral_dot.setFixedSize(16, 20)
+        neutral_dot.setFixedSize(20, 20)
         neutral_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         neutral_dot.setObjectName("tag_dot_neutral")
         neutral_dot.setCursor(Qt.CursorShape.PointingHandCursor)
         neutral_dot.mousePressEvent = lambda e: self._set_tag_color(None)
         picker_layout.addWidget(neutral_dot)
-
         for color_key, color_hex in TAG_COLORS.items():
             dot = QLabel("●")
-            dot.setFixedSize(16, 20)
+            dot.setFixedSize(20, 20)
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            dot.setObjectName("tag_dot_colored")
             dot.setStyleSheet(f"color: {color_hex};")
             dot.setCursor(Qt.CursorShape.PointingHandCursor)
             dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
             picker_layout.addWidget(dot)
-
         picker_layout.addStretch()
-        panel_layout.addWidget(self._color_picker_row)
+
+        self._confirm_delete_label = _ClickableLabel("Click to delete the tag")
+        self._confirm_delete_label.setObjectName("tag_confirm_delete")
+        self._confirm_delete_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._confirm_delete_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._confirm_delete_label.clicked.connect(self._on_confirm_delete)
+
+        self._reserved_empty = QWidget()
+
+        reserved_layout.addWidget(self._reserved_empty)
+        reserved_layout.addWidget(self._color_picker_row)
+        reserved_layout.addWidget(self._confirm_delete_label)
+        reserved_layout.setCurrentWidget(self._reserved_empty)
+
+        self._reserved_layout = reserved_layout
+        panel_layout.addWidget(self._reserved_row)
 
         self._rename_status = QLabel("")
         self._rename_status.setObjectName("stats_value_label")
         self._rename_status.setAlignment(Qt.AlignmentFlag.AlignLeft)
         panel_layout.addWidget(self._rename_status)
 
-        self._confirm_delete_label = _ClickableLabel("Click to delete the tag")
-        self._confirm_delete_label.setObjectName("tag_confirm_delete")
-        self._confirm_delete_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._confirm_delete_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._confirm_delete_label.setFixedHeight(28)
-        self._confirm_delete_label.clicked.connect(self._on_confirm_delete)
-        self._confirm_delete_label.setVisible(False)
-        panel_layout.addWidget(self._confirm_delete_label)
-
         self._book_count_label = QLabel("")
         self._book_count_label.setObjectName("book_count_label")
         panel_layout.addWidget(self._book_count_label)
 
         self._book_grid = _TagBookGrid(self._assets_dir)
-        self._book_grid.parent_remove = self._on_book_removed
+        self._book_grid.parent_remove = self._on_grid_remove
         panel_layout.addWidget(self._book_grid)
 
         self._stack_layout.addWidget(self._panel_widget)
@@ -396,15 +417,28 @@ class TagManagerWidget(QWidget):
         row.mousePressEvent = lambda e: self._open_tag(tag) if e.button() == Qt.MouseButton.LeftButton else None
         return row
 
+    def _show_reserved(self, mode: str):
+        if mode == "picker":
+            self._reserved_layout.setCurrentWidget(self._color_picker_row)
+        elif mode == "confirm":
+            self._reserved_layout.setCurrentWidget(self._confirm_delete_label)
+        else:
+            self._reserved_layout.setCurrentWidget(self._reserved_empty)
+
     def _toggle_color_picker(self):
-        visible = self._color_picker_row.isVisible()
-        self._color_picker_row.setVisible(not visible)
+        if self._confirming_delete:
+            return
+        current = self._reserved_layout.currentWidget()
+        if current is self._color_picker_row:
+            self._show_reserved("none")
+        else:
+            self._show_reserved("picker")
 
     def _set_tag_color(self, color_key: str | None):
         if not self._current_tag:
             return
         self.db.set_tag_color(self._current_tag, color_key)
-        self._color_picker_row.hide()
+        self._show_reserved("none")
         self._update_detail_dot(color_key)
         self.refresh()
 
@@ -422,10 +456,14 @@ class TagManagerWidget(QWidget):
     def _open_tag(self, tag: str):
         self._current_tag = tag
         self._tag_name_original = tag
-        self._color_picker_row.hide()
         self._confirming_delete = False
-        self._confirm_delete_label.setVisible(False)
-        self._set_action_mode("delete")
+        self._show_reserved("none")
+        if hasattr(self, '_action_btn'):
+            self._action_btn.setEnabled(True)
+            self._set_action_mode("delete")
+        if hasattr(self, '_cancel_timer') and self._cancel_timer:
+            self._cancel_timer.stop()
+            self._cancel_timer = None
         self._tag_name_edit.setText(tag)
         self._rename_status.setText("")
         color_key = self.db.get_tag_color(tag)
@@ -504,23 +542,35 @@ class TagManagerWidget(QWidget):
     def _on_delete_tag(self):
         if not self._current_tag:
             return
+        if self._confirming_delete:
+            return
+        self._show_reserved("confirm")
+        self._book_grid.set_locked(True)
         self._confirming_delete = True
-        self._confirm_delete_label.setVisible(True)
-        QTimer.singleShot(3000, self._cancel_delete_confirm)
+        self._action_btn.setEnabled(False)
+        if hasattr(self, '_cancel_timer') and self._cancel_timer:
+            self._cancel_timer.stop()
+        self._cancel_timer = QTimer()
+        self._cancel_timer.setSingleShot(True)
+        self._cancel_timer.timeout.connect(self._cancel_delete_confirm)
+        self._cancel_timer.start(7000)
 
     def _on_confirm_delete(self):
         if not self._confirming_delete:
             return
-        self._confirming_delete = False
-        self._confirm_delete_label.setVisible(False)
+        self._cancel_delete_confirm()
         self.db.delete_tag(self._current_tag)
         self.tag_changed.emit()
         self._show_list()
 
     def _cancel_delete_confirm(self):
-        if self._confirming_delete:
-            self._confirming_delete = False
-            self._confirm_delete_label.setVisible(False)
+        self._confirming_delete = False
+        self._action_btn.setEnabled(True)
+        self._show_reserved("none")
+        self._book_grid.set_locked(False)
+        if hasattr(self, '_cancel_timer') and self._cancel_timer:
+            self._cancel_timer.stop()
+            self._cancel_timer = None
 
     def on_theme_changed(self, theme_name: str) -> None:
         from ..themes import get_tags_stylesheet
@@ -530,6 +580,15 @@ class TagManagerWidget(QWidget):
             from ..themes import _resolve_theme
             self._current_theme = _resolve_theme(theme_name)
             self._update_tag_icons()
+
+    def _on_grid_remove(self, path: str):
+        if self._confirming_delete:
+            self._cancel_delete_confirm()
+            return
+        current = self._reserved_layout.currentWidget()
+        if current is self._color_picker_row:
+            self._show_reserved("none")
+        self._on_book_removed(path)
 
     def _on_book_removed(self, path: str):
         if self._current_tag:
