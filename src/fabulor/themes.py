@@ -43,6 +43,8 @@ dropdown_text: (Optional) Color for text inside the chapter dropdown list.
 dropdown_time_text: (Optional) Color for the duration text inside the chapter dropdown list.
 text_on_light_bg: (Optional) Used as a fallback for buttons or specific labels if they are placed over light-colored elements.
 panel_theme_names_dimmed: Specifically used in the Settings panel for theme names that are currently unselected/dimmed.
+tag_list_text: (Optional) Color for text inside the tag list. Falls back to text.
+tag_list_text_hover: (Optional) Color for text inside the tag list when hovered. Falls back to accent_light.
 
 SLIDERS
 slider_overall_bg: Background (groove) color of the main book progress bar.
@@ -129,7 +131,11 @@ THEMES = {
         "cover_preview_bg"          :"#07576B",
         "button_play"               :"#619ED3",
         "button_chapter"            :"#619ED3",
-        "button_skip"               :"#619ED3"
+        "button_skip":               "#619ED3",
+        "tag_list_text":             "#86C6FF",
+        "tag_list_text_hover":       "#FC1543",
+
+
     },
     "Anomander": {
         "bg_deep":                   "#000000",
@@ -1131,7 +1137,7 @@ THEMES = {
         "sidebar_opacity": 0.68,
         "panel_opacity_hover": 0.87,
         "panel_theme_names_dimmed": "#839CA2",
-        "text": "#DCDCDC",
+        "text": "#e8d8b2",
     },
     "Winterfell": {
         "bg_deep":      "#212529",
@@ -1810,13 +1816,13 @@ THEMES = {
     "settings_tab_hover_bg": "#C86A8A",
     "settings_tab_hover_opacity": 0.85,
     "settings_tab_hover_text": "#2A2030",
-    "text": "#F2E8EC",
+    "text": "#edece7",
     "button_text": "#2A2030",
     "progress_text": "#F2E8EC",
     "sidebar_text": "#F2E8EC",
     "sidebar_text_hover": "#C86A8A",
-    "dropdown_text": "#F2E8EC",
-    "dropdown_time_text": "#9A8090",
+    "dropdown_text": "#eeebc6",
+    "dropdown_time_text": "#eeebc6",
     "text_on_light_bg": "#2A2030",
     "panel_theme_names_dimmed": "#9b78a3",
     "slider_overall_bg": "#4A3850",
@@ -1832,7 +1838,8 @@ THEMES = {
     "accent_dark": "#8A3A58",
     "curr_chap_highlight": "#D87A98",
     "sidebar_opacity": 0.85,
-    "panel_opacity_hover": 0.92
+    "panel_opacity_hover": 0.92,
+    "tag_list_text": "#e6b9ca",
 },
 "Cibola Burn": {
     "bg_deep": "#1A0A0A",
@@ -3345,12 +3352,12 @@ def get_tags_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.6);
         }}
         QLabel#tag_list_name {{
-            color: {t['text']};
+            color: {t.get('tag_list_text', t['text'])};
             font-size: 14px;
             padding-left: 0px;
         }}
         QLabel#tag_list_name:hover {{
-            color: {t['accent_light']};
+            color: {t.get('tag_list_text_hover', t['accent_light'])};
             font-size: 13px;
         }}
         QLabel#book_count_label {{
