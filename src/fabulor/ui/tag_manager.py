@@ -266,13 +266,14 @@ class TagManagerWidget(QWidget):
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
         panel_layout.setContentsMargins(10, 10, 10, 0)
-        panel_layout.setSpacing(6)
+        panel_layout.setSpacing(0)
 
         self._back_btn = QPushButton("‹")
         self._back_btn.setObjectName("stats_nav_btn")
         self._back_btn.setFixedSize(24, 25)
         self._back_btn.clicked.connect(self._show_list)
         panel_layout.addWidget(self._back_btn)
+        panel_layout.addSpacing(6)
 
         name_row = QHBoxLayout()
         name_row.setSpacing(0)
@@ -307,6 +308,7 @@ class TagManagerWidget(QWidget):
         name_row.addWidget(self._action_btn)
 
         panel_layout.addLayout(name_row)
+        panel_layout.addSpacing(0)
 
         self._reserved_row = QWidget()
         self._reserved_row.setFixedHeight(21)
@@ -351,10 +353,12 @@ class TagManagerWidget(QWidget):
 
         self._reserved_layout = reserved_layout
         panel_layout.addWidget(self._reserved_row)
+        panel_layout.addSpacing(4)
 
         self._book_count_label = QLabel("")
         self._book_count_label.setObjectName("book_count_label")
         panel_layout.addWidget(self._book_count_label)
+        panel_layout.addSpacing(6)
 
         self._book_grid = _TagBookGrid(self._assets_dir)
         self._book_grid.parent_remove = self._on_grid_remove
