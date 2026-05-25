@@ -171,6 +171,9 @@ class _TagBookGrid(QScrollArea):
 
     def set_locked(self, locked: bool):
         self._locked = locked
+        cursor = Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.PointingHandCursor
+        for thumb in self._thumbs.values():
+            thumb.setCursor(cursor)
 
     def _on_remove(self, path: str):
         if self._locked:
@@ -595,6 +598,11 @@ class TagManagerWidget(QWidget):
         self._book_grid.set_locked(True)
         self._confirming_delete = True
         self._action_btn.setEnabled(False)
+        self._detail_dot.setCursor(Qt.CursorShape.ArrowCursor)
+        self._detail_dot.mousePressEvent = lambda e: self._cancel_delete_confirm()
+        self._tag_name_edit.setReadOnly(True)
+        self._tag_name_edit.setCursor(Qt.CursorShape.ArrowCursor)
+        self._tag_name_edit.mousePressEvent = lambda e: self._cancel_delete_confirm()
         if hasattr(self, '_cancel_timer') and self._cancel_timer:
             self._cancel_timer.stop()
         self._cancel_timer = QTimer()
@@ -615,6 +623,14 @@ class TagManagerWidget(QWidget):
         self._action_btn.setEnabled(True)
         self._show_reserved("none")
         self._book_grid.set_locked(False)
+        self._detail_dot.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._detail_dot.mousePressEvent = lambda e: self._toggle_color_picker()
+        self._tag_name_edit.setReadOnly(False)
+        self._tag_name_edit.setCursor(Qt.CursorShape.IBeamCursor)
+        self._tag_name_edit.mousePressEvent = lambda e: (
+            self._show_reserved("none") if self._reserved_layout.currentWidget() is self._color_picker_row else None,
+            QLineEdit.mousePressEvent(self._tag_name_edit, e)
+        )[-1]
         if hasattr(self, '_cancel_timer') and self._cancel_timer:
             self._cancel_timer.stop()
             self._cancel_timer = None
