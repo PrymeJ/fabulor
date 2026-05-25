@@ -210,6 +210,7 @@ class TagManagerWidget(QWidget):
         self._current_tag: str | None = None
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
+        self._editing: bool = False
         self._cancel_timer: QTimer | None = None
         self._current_theme: dict = {}
         self._action_btn_mode: str = "delete"
@@ -296,6 +297,7 @@ class TagManagerWidget(QWidget):
             self._show_reserved("none") if self._reserved_layout.currentWidget() is self._color_picker_row else None,
             QLineEdit.mousePressEvent(self._tag_name_edit, e)
         )[-1]
+        self._tag_name_edit.installEventFilter(self)
         name_row.addWidget(self._tag_name_edit, stretch=1)
 
         self._action_btn = QPushButton()
@@ -433,10 +435,14 @@ class TagManagerWidget(QWidget):
     def _show_reserved(self, mode: str):
         if mode == "picker":
             self._reserved_layout.setCurrentWidget(self._color_picker_row)
+            if not self._confirming_delete and not self._editing:
+                self._book_grid.set_locked(True)
         elif mode == "confirm":
             self._reserved_layout.setCurrentWidget(self._confirm_delete_label)
         else:
             self._reserved_layout.setCurrentWidget(self._reserved_empty)
+            if not self._confirming_delete and not self._editing:
+                self._book_grid.set_locked(False)
 
     def _toggle_color_picker(self):
         if self._confirming_delete:
@@ -542,6 +548,16 @@ class TagManagerWidget(QWidget):
                 self._on_action_btn_hover(False)
             return False
 
+        if obj is self._tag_name_edit:
+            if event.type() == QEvent.Type.FocusIn:
+                self._editing = True
+                self._book_grid.set_locked(True)
+            elif event.type() == QEvent.Type.FocusOut:
+                self._editing = False
+                if not self._confirming_delete:
+                    self._book_grid.set_locked(False)
+            return False
+
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()
@@ -561,6 +577,10 @@ class TagManagerWidget(QWidget):
         if self._tag_name_edit.text().strip() != self._tag_name_original:
             self._tag_name_edit.setText(self._tag_name_original)
             self._set_action_mode("delete")
+
+    def _dismiss_edit(self):
+        self._revert_tag_name()
+        self._tag_name_edit.clearFocus()
 
     def _on_rename(self):
         if not self._current_tag:
@@ -685,9 +705,13 @@ class TagManagerWidget(QWidget):
         if self._confirming_delete:
             self._cancel_delete_confirm()
             return
+        if self._editing:
+            self._dismiss_edit()
+            return
         current = self._reserved_layout.currentWidget()
         if current is self._color_picker_row:
             self._show_reserved("none")
+            return
         self._on_book_removed(path)
 
     def _on_book_removed(self, path: str):
