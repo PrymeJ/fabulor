@@ -576,9 +576,9 @@ class TagManagerWidget(QWidget):
             else Qt.CursorShape.PointingHandCursor
         )
         if mode == "delete":
-            px = _load_icon("trash.svg", color, 18, 0.7)
+            px = _load_icon("trash.svg", color, 21, 0.7)
             self._action_btn.setIcon(QIcon(px))
-            self._action_btn.setIconSize(QSize(18, 18))
+            self._action_btn.setIconSize(QSize(21, 21))
         elif mode == "save":
             px = _load_icon("save.svg", color, 16, 0.7)
             self._action_btn.setIcon(QIcon(px))

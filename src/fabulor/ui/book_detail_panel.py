@@ -632,19 +632,19 @@ class BookDetailPanel(QWidget):
         elif state == _MetaActionState.DIRTY:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, 0.6)
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
         elif state == _MetaActionState.LOCKED:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, 0.6)
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
         elif state == _MetaActionState.UNLOCKED:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, 0.6)
+            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
             self._unlock_timer = QTimer()
@@ -754,7 +754,7 @@ class BookDetailPanel(QWidget):
         if self._meta_state == _MetaActionState.HIDDEN:
             return
         color = self._theme.get("accent", "#888888")
-        opacity = 1.0 if hover else 0.60
+        opacity = 1.0 if hover else 0.70
         if self._meta_state == _MetaActionState.DIRTY:
             pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, opacity)
         elif self._meta_state == _MetaActionState.LOCKED:
@@ -981,7 +981,7 @@ class BookDetailPanel(QWidget):
             opacity = 1.0
         else:
             color = self._theme.get("accent", "#888888")
-            opacity = 0.60
+            opacity = 0.70
         pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21, opacity)
         self._remove_btn.setIcon(QIcon(pixmap))
         self._remove_btn.setContentsMargins(4, 0, 0, 0)
