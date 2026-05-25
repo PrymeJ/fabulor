@@ -1818,7 +1818,7 @@ THEMES = {
     "dropdown_text": "#F2E8EC",
     "dropdown_time_text": "#9A8090",
     "text_on_light_bg": "#2A2030",
-    "panel_theme_names_dimmed": "#6A5070",
+    "panel_theme_names_dimmed": "#9b78a3",
     "slider_overall_bg": "#4A3850",
     "slider_overall_fill": "#C45A7A",
     "slider_chapter_bg": "#4A3850",
@@ -3389,6 +3389,7 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['accent']};
             border: none;
             padding: 0px;
+            padding-bottom: -2px;
         }}
         QLabel#tag_confirm_delete {{
             font-size: 12px;
