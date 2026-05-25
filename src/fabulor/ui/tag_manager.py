@@ -570,6 +570,11 @@ class TagManagerWidget(QWidget):
     def _set_action_mode(self, mode: str):
         self._action_btn_mode = mode
         color = self._current_theme.get("accent", "#888888")
+        self._action_btn.setEnabled(mode in ("delete", "save", "save_error"))
+        self._action_btn.setCursor(
+            Qt.CursorShape.ArrowCursor if mode in ("save_error", "check")
+            else Qt.CursorShape.PointingHandCursor
+        )
         if mode == "delete":
             px = _load_icon("trash.svg", color, 18, 0.7)
             self._action_btn.setIcon(QIcon(px))
