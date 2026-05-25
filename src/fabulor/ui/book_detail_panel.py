@@ -155,6 +155,7 @@ class BookDetailPanel(QWidget):
             edit.setPlaceholderText(placeholder)
             edit.setFrame(False)
             edit.setReadOnly(True)
+            edit.setCursor(Qt.CursorShape.IBeamCursor)
             edit.textChanged.connect(self._check_dirty)
             edit.returnPressed.connect(self._on_inline_save)
             return edit
@@ -187,6 +188,7 @@ class BookDetailPanel(QWidget):
         self._remove_btn.setObjectName("remove_book_btn")
         self._remove_btn.setToolTip("")
         self._remove_btn.setFixedSize(24, 24)
+        self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_btn.clicked.connect(self._on_remove_clicked)
         self._remove_btn.installEventFilter(self)
         self._remove_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -3px; padding-right: -3px;}")
@@ -195,6 +197,7 @@ class BookDetailPanel(QWidget):
         self._meta_action_btn.setObjectName("metadata_action_btn")
         self._meta_action_btn.setFixedSize(24, 24)
         self._meta_action_btn.setVisible(False)
+        self._meta_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._meta_action_btn.clicked.connect(self._on_meta_action_clicked)
         self._meta_action_btn.installEventFilter(self)
         self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -4px; padding-right: -4px; margin-bottom: -4px; padding-bottom: -4px;}")
