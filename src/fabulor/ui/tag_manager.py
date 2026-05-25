@@ -303,6 +303,7 @@ class TagManagerWidget(QWidget):
         self._action_btn.setFlat(True)
         self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._action_btn.clicked.connect(self._on_action_btn_clicked)
+        self._action_btn.installEventFilter(self)
         name_row.addWidget(self._action_btn)
 
         panel_layout.addLayout(name_row)
@@ -512,7 +513,28 @@ class TagManagerWidget(QWidget):
         self._current_tag = None
         self.refresh()
 
+    def _on_action_btn_hover(self, hover: bool):
+        if self._action_btn_mode not in ("delete", "save"):
+            return
+        color = self._current_theme.get("accent", "#888888")
+        if self._action_btn_mode == "delete":
+            icon_color = "#cc3333" if hover else color
+            px = _load_icon("trash.svg", icon_color, 21, 1.0 if hover else 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(21, 21))
+        elif self._action_btn_mode == "save":
+            px = _load_icon("save.svg", color, 16, 1.0 if hover else 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(16, 16))
+
     def eventFilter(self, obj, event):
+        if obj is self._action_btn:
+            if event.type() == QEvent.Type.Enter:
+                self._on_action_btn_hover(True)
+            elif event.type() == QEvent.Type.Leave:
+                self._on_action_btn_hover(False)
+            return False
+
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()

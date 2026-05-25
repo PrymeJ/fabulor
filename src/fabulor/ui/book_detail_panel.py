@@ -113,6 +113,7 @@ class BookDetailPanel(QWidget):
         self._editing: bool = False
         self._is_archived: bool = False
         self._confirming_remove: bool = False
+        self._remove_cancel_timer: QTimer | None = None
         self._context: str = ""
         self._tag_display_tags: list = []
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
@@ -995,6 +996,14 @@ class BookDetailPanel(QWidget):
         self._confirming_remove = True
         self._duration_label.setVisible(False)
         self._confirm_remove_label.setVisible(True)
+        self._remove_btn.setEnabled(False)
+        self._remove_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        if self._remove_cancel_timer:
+            self._remove_cancel_timer.stop()
+        self._remove_cancel_timer = QTimer(self)
+        self._remove_cancel_timer.setSingleShot(True)
+        self._remove_cancel_timer.timeout.connect(self._cancel_remove)
+        self._remove_cancel_timer.start(7000)
 
     def _on_confirm_remove(self) -> None:
         self.db.set_book_excluded(self._book_path, True)
@@ -1005,6 +1014,12 @@ class BookDetailPanel(QWidget):
         self._confirming_remove = False
         self._confirm_remove_label.setVisible(False)
         self._duration_label.setVisible(True)
+        self._remove_btn.setEnabled(True)
+        self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self._remove_cancel_timer:
+            self._remove_cancel_timer.stop()
+            self._remove_cancel_timer = None
+        self._update_remove_btn_icon()
 
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor
