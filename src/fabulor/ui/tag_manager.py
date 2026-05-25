@@ -301,6 +301,7 @@ class TagManagerWidget(QWidget):
         self._action_btn.setObjectName("tag_icon_btn")
         self._action_btn.setFixedSize(28, 28)
         self._action_btn.setFlat(True)
+        self._action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._action_btn.clicked.connect(self._on_action_btn_clicked)
         name_row.addWidget(self._action_btn)
 
