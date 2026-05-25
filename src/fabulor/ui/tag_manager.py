@@ -375,7 +375,11 @@ class TagManagerWidget(QWidget):
             self._open_tag(self._current_tag)
 
     def refresh(self):
-        """Reload tag list from DB."""
+        """Reload tag list from DB. Always lands on the list view."""
+        self._current_tag = None
+        self._panel_widget.hide()
+        self._list_widget.show()
+
         while self._tag_list_layout.count() > 1:
             item = self._tag_list_layout.takeAt(0)
             if item.widget():
@@ -387,9 +391,6 @@ class TagManagerWidget(QWidget):
             self._tag_list_layout.insertWidget(
                 self._tag_list_layout.count() - 1, row
             )
-
-        if self._current_tag:
-            self._open_tag(self._current_tag)
 
     def _build_tag_row(self, tag_data: dict) -> QWidget:
         row = QWidget()
