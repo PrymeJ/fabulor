@@ -1,4 +1,12 @@
 
+## `QStackedLayout` for mutually exclusive UI slots (2026-05-25)
+
+When multiple widgets need to occupy the same fixed space with only one visible at a time, `QStackedLayout` inside a fixed-height container is the correct pattern. `.show()`/`.hide()` on siblings in a regular layout shifts surrounding content as each sibling collapses; `QStackedLayout` holds the reserved space constant regardless of which page is current. Pattern: create a `QWidget` with `setFixedHeight(N)`, assign a `QStackedLayout` to it, add all candidate pages (including a blank `QWidget` as the "empty" page), default to `setCurrentWidget(empty_page)`, and switch via `setCurrentWidget`. Store the layout reference on `self` for access from other methods.
+
+## `_set_tag_color` — must not call `refresh()` or `_open_tag()` (2026-05-25)
+
+Tag color change requires exactly three operations: DB write (`db.set_tag_color`), detail dot update (`_update_detail_dot`), list row dot update (`_update_list_dot`). `refresh()` rebuilds the entire tag list widget tree and reloads all cover images — correct for tag renames and deletions, but grossly unnecessary for a color change where no count, name, or book membership changes. `_open_tag()` would re-query books and rebuild the book grid. Any future change to `_set_tag_color` must preserve this constraint: patch in-place, do not rebuild.
+
 ## `terminate()` regression pattern — four-step sequence is atomic (2026-05-22)
 
 `Player.terminate()` lost `wait_for_shutdown()` with no git trace — it was either never committed without it or dropped silently during a refactor. The four-step sequence must be treated as atomic: store the instance reference, clear `self.instance`, call `terminate()`, then call `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv's internal threads outlive Qt's cleanup and crash in `avformat_close_input`. `wait_for_shutdown()` is a python-mpv API method — no custom implementation needed or appropriate. Any "simplification" that removes or reorders these steps will reintroduce the crash, possibly masked again by debug output.
