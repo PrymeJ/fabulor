@@ -123,7 +123,7 @@ THEMES = {
         "settings_tab_hover_opacity":  0.9,
         "settings_tab_hover_text":   "#150C79",
         "panel_theme_names_dimmed":  "#CDE1E1",
-        "panel_opacity_hover":         1.00,
+        "panel_opacity_hover":         0.88,
         "notch_color":               "#3DE8EB",
         "notch_opacity":               110,
         "cover_preview_bg"          :"#07576B",
@@ -3346,7 +3346,8 @@ def get_tags_stylesheet(theme_name="default"):
         }}
         QLabel#tag_list_name {{
             color: {t['text']};
-            font-size: 13px;
+            font-size: 14px;
+            padding-left: 0px;
         }}
         QLabel#tag_list_name:hover {{
             color: {t['accent_light']};
@@ -3366,16 +3367,10 @@ def get_tags_stylesheet(theme_name="default"):
         }}
         QLabel#tag_dot_neutral {{
             color: {t['accent_light']};
+            padding-top: 0px;
         }}
-        QLineEdit#metadata_field {{
-            background: transparent;
-            border: 1px solid transparent;
-            font-size: 14px;
-            border-radius: 0px;
-            padding: 0px;
-            margin: 0px;
-            color: {t['text']};
-            selection-background-color: {t['accent']};
+        QLabel#tag_dot_colored {{
+            padding-top: 0px;
         }}
         QLineEdit#tag_name_field {{
             background: transparent;
@@ -3383,9 +3378,17 @@ def get_tags_stylesheet(theme_name="default"):
             font-size: 14px;
             border-radius: 0px;
             padding: 0px;
+            padding-left: -2px;
+            padding-bottom: -1px;
             margin: 0px;
             color: {t['text']};
             selection-background-color: {t['accent']};
+        }}
+        QPushButton#tag_icon_btn {{
+            background: transparent;
+            color: {t['accent']};
+            border: none;
+            padding: 0px;
         }}
         QLabel#tag_confirm_delete {{
             font-size: 12px;
@@ -3455,7 +3458,7 @@ def get_tags_stylesheet(theme_name="default"):
         }}
         QScrollBar:vertical {{
             width: 8px;
-            background: {t['bg_deep']};
+            background: transparent;
             border: none;
             margin: 0px;
         }}

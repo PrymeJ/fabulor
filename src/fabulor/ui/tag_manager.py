@@ -248,19 +248,20 @@ class TagManagerWidget(QWidget):
 
         self._back_btn = QPushButton("‹")
         self._back_btn.setObjectName("stats_nav_btn")
-        self._back_btn.setFixedSize(24, 28)
+        self._back_btn.setFixedSize(24, 25)
         self._back_btn.clicked.connect(self._show_list)
         panel_layout.addWidget(self._back_btn)
 
         name_row = QHBoxLayout()
-        name_row.setSpacing(4)
+        name_row.setSpacing(0)
 
         self._detail_dot = QLabel("●")
-        self._detail_dot.setFixedSize(16, 28)
+        self._detail_dot.setFixedSize(14, 14)
         self._detail_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._detail_dot.setObjectName("tag_dot_neutral")
+        self._detail_dot.setObjectName("tag_dot_neutral_inline")
         self._detail_dot.setCursor(Qt.CursorShape.PointingHandCursor)
         self._detail_dot.mousePressEvent = lambda e: self._toggle_color_picker()
+        name_row.setContentsMargins(4, 0, 0, 0)
         name_row.addWidget(self._detail_dot)
 
         self._tag_name_edit = QLineEdit()
@@ -294,17 +295,18 @@ class TagManagerWidget(QWidget):
         picker_layout.setSpacing(8)
 
         neutral_dot = QLabel("●")
-        neutral_dot.setFixedSize(20, 20)
+        neutral_dot.setFixedSize(16, 20)
         neutral_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        neutral_dot.setObjectName("tag_dot_neutral")
+        neutral_dot.setObjectName("tag_dot_neutral_inline")
         neutral_dot.setCursor(Qt.CursorShape.PointingHandCursor)
         neutral_dot.mousePressEvent = lambda e: self._set_tag_color(None)
         picker_layout.addWidget(neutral_dot)
 
         for color_key, color_hex in TAG_COLORS.items():
             dot = QLabel("●")
-            dot.setFixedSize(20, 20)
+            dot.setFixedSize(16, 20)
             dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            dot.setObjectName("tag_dot_colored_inline")
             dot.setStyleSheet(f"color: {color_hex};")
             dot.setCursor(Qt.CursorShape.PointingHandCursor)
             dot.mousePressEvent = lambda e, k=color_key: self._set_tag_color(k)
@@ -318,7 +320,7 @@ class TagManagerWidget(QWidget):
         self._rename_status.setAlignment(Qt.AlignmentFlag.AlignLeft)
         panel_layout.addWidget(self._rename_status)
 
-        self._confirm_delete_label = _ClickableLabel("Click to confirm deletion")
+        self._confirm_delete_label = _ClickableLabel("Click to delete the tag")
         self._confirm_delete_label.setObjectName("tag_confirm_delete")
         self._confirm_delete_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_delete_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -362,18 +364,19 @@ class TagManagerWidget(QWidget):
         row.setObjectName("tag_list_row")
         row.setAttribute(Qt.WA_StyledBackground, True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.setFixedHeight(36)
+        row.setFixedHeight(31)
 
         layout = QHBoxLayout(row)
-        layout.setContentsMargins(8, 0, 8, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(4, 0, 8, 0)
+        layout.setSpacing(1)
 
         dot = QLabel("●")
-        dot.setFixedSize(16, 16)
+        dot.setFixedSize(14, 20)
         dot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         color_key = tag_data.get('color')
         color_hex = TAG_COLORS.get(color_key) if color_key else None
         if color_hex:
+            dot.setObjectName("tag_dot_colored")
             dot.setStyleSheet(f"color: {color_hex};")
         else:
             dot.setObjectName("tag_dot_neutral")
@@ -409,8 +412,9 @@ class TagManagerWidget(QWidget):
     def _update_detail_dot(self, color_key: str | None):
         color_hex = TAG_COLORS.get(color_key) if color_key else None
         if color_hex:
+            self._detail_dot.setObjectName("tag_dot_colored")
             self._detail_dot.setStyleSheet(f"color: {color_hex};")
-            self._detail_dot.setObjectName("")
+
         else:
             self._detail_dot.setStyleSheet("")
             self._detail_dot.setObjectName("tag_dot_neutral")
@@ -454,7 +458,7 @@ class TagManagerWidget(QWidget):
             self._current_tag = new_name
             books = self.db.get_books_by_tag(new_name)
             self._book_count_label.setText(
-                f"{len(books)} book{'s' if len(books) != 1 else ''} tagged \"{new_name}\""
+                f"{len(books)} book{'s' if len(books) != 1 else ''}"
             )
             self._rename_status.setText("Renamed")
             self.tag_changed.emit()
@@ -474,9 +478,9 @@ class TagManagerWidget(QWidget):
         save_px = _load_icon("save.svg", t_color, 16, 0.7)
         self._save_btn.setIcon(QIcon(save_px))
         self._save_btn.setIconSize(QSize(16, 16))
-        trash_px = _load_icon("trash.svg", t_color, 18, 0.7)
+        trash_px = _load_icon("trash.svg", t_color, 21, 0.7)
         self._trash_btn.setIcon(QIcon(trash_px))
-        self._trash_btn.setIconSize(QSize(18, 18))
+        self._trash_btn.setIconSize(QSize(21, 21))
 
     def _on_delete_tag(self):
         if not self._current_tag:
@@ -519,6 +523,6 @@ class TagManagerWidget(QWidget):
                 return
             tag = self._current_tag
             self._book_count_label.setText(
-                f"{len(remaining)} book{'s' if len(remaining) != 1 else ''} tagged \"{tag}\""
+                f"{len(remaining)} book{'s' if len(remaining) != 1 else ''}"
             )
             self.tag_changed.emit()
