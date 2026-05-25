@@ -347,11 +347,6 @@ class TagManagerWidget(QWidget):
         self._reserved_layout = reserved_layout
         panel_layout.addWidget(self._reserved_row)
 
-        self._rename_status = QLabel("")
-        self._rename_status.setObjectName("stats_value_label")
-        self._rename_status.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        panel_layout.addWidget(self._rename_status)
-
         self._book_count_label = QLabel("")
         self._book_count_label.setObjectName("book_count_label")
         panel_layout.addWidget(self._book_count_label)
@@ -493,7 +488,6 @@ class TagManagerWidget(QWidget):
             self._cancel_timer.stop()
             self._cancel_timer = None
         self._tag_name_edit.setText(tag)
-        self._rename_status.setText("")
         color_key = self.db.get_tag_color(tag)
         self._update_detail_dot(color_key)
 
@@ -551,14 +545,11 @@ class TagManagerWidget(QWidget):
             self._book_count_label.setText(
                 f"{len(books)} book{'s' if len(books) != 1 else ''}"
             )
-            self._rename_status.setText("Renamed")
             self._set_action_mode("check")
             self.tag_changed.emit()
             QTimer.singleShot(1500, lambda: self._set_action_mode("delete"))
-            QTimer.singleShot(1500, lambda: self._rename_status.setText(""))
         else:
-            self._rename_status.setText("Name already in use")
-            QTimer.singleShot(1500, lambda: self._rename_status.setText(""))
+            self._set_action_mode("save_error")
 
     def _on_tag_name_changed(self, text: str):
         if text.strip() != self._tag_name_original:
@@ -569,7 +560,7 @@ class TagManagerWidget(QWidget):
     def _on_action_btn_clicked(self):
         if self._action_btn_mode == "delete":
             self._on_delete_tag()
-        elif self._action_btn_mode == "save":
+        elif self._action_btn_mode in ("save", "save_error"):
             self._on_rename()
 
     def _set_action_mode(self, mode: str):
@@ -581,6 +572,10 @@ class TagManagerWidget(QWidget):
             self._action_btn.setIconSize(QSize(18, 18))
         elif mode == "save":
             px = _load_icon("save.svg", color, 16, 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(16, 16))
+        elif mode == "save_error":
+            px = _load_icon("save.svg", "#E05050", 16, 0.9)
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(16, 16))
         elif mode == "check":
