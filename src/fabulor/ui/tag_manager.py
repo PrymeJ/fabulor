@@ -198,6 +198,7 @@ class TagManagerWidget(QWidget):
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
         self._current_theme: dict = {}
+        self._action_btn_mode: str = "delete"
         self._build_ui()
 
     def _inject_active_covers(self, books: list[dict]) -> list[dict]:
@@ -235,6 +236,10 @@ class TagManagerWidget(QWidget):
         self._tag_list_layout.setSpacing(4)
         self._tag_list_layout.addStretch()
         self._tag_scroll.setWidget(self._tag_list_container)
+        self._tag_list_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred, 
+            QSizePolicy.Policy.Maximum
+        )
         list_layout.addWidget(self._tag_scroll)
         self._stack_layout.addWidget(self._list_widget)
 
@@ -271,24 +276,17 @@ class TagManagerWidget(QWidget):
         self._tag_name_edit.textChanged.connect(self._on_tag_name_changed)
         name_row.addWidget(self._tag_name_edit, stretch=1)
 
-        self._save_btn = QPushButton()
-        self._save_btn.setObjectName("tag_icon_btn")
-        self._save_btn.setFixedSize(28, 28)
-        self._save_btn.setFlat(True)
-        self._save_btn.hide()
-        self._save_btn.clicked.connect(self._on_rename)
-        name_row.addWidget(self._save_btn)
-
-        self._trash_btn = QPushButton()
-        self._trash_btn.setObjectName("tag_icon_btn")
-        self._trash_btn.setFixedSize(28, 28)
-        self._trash_btn.setFlat(True)
-        self._trash_btn.clicked.connect(self._on_delete_tag)
-        name_row.addWidget(self._trash_btn)
+        self._action_btn = QPushButton()
+        self._action_btn.setObjectName("tag_icon_btn")
+        self._action_btn.setFixedSize(28, 28)
+        self._action_btn.setFlat(True)
+        self._action_btn.clicked.connect(self._on_action_btn_clicked)
+        name_row.addWidget(self._action_btn)
 
         panel_layout.addLayout(name_row)
 
         self._color_picker_row = QWidget()
+        self._color_picker_row.setFixedHeight(28)
         self._color_picker_row.hide()
         picker_layout = QHBoxLayout(self._color_picker_row)
         picker_layout.setContentsMargins(10, 4, 10, 4)
@@ -324,6 +322,7 @@ class TagManagerWidget(QWidget):
         self._confirm_delete_label.setObjectName("tag_confirm_delete")
         self._confirm_delete_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_delete_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._confirm_delete_label.setFixedHeight(28)
         self._confirm_delete_label.clicked.connect(self._on_confirm_delete)
         self._confirm_delete_label.setVisible(False)
         panel_layout.addWidget(self._confirm_delete_label)
@@ -414,17 +413,19 @@ class TagManagerWidget(QWidget):
         if color_hex:
             self._detail_dot.setObjectName("tag_dot_colored")
             self._detail_dot.setStyleSheet(f"color: {color_hex};")
-
         else:
             self._detail_dot.setStyleSheet("")
             self._detail_dot.setObjectName("tag_dot_neutral")
+        self._detail_dot.style().unpolish(self._detail_dot)
+        self._detail_dot.style().polish(self._detail_dot)
 
     def _open_tag(self, tag: str):
         self._current_tag = tag
         self._tag_name_original = tag
-        self._save_btn.hide()
+        self._color_picker_row.hide()
         self._confirming_delete = False
         self._confirm_delete_label.setVisible(False)
+        self._set_action_mode("delete")
         self._tag_name_edit.setText(tag)
         self._rename_status.setText("")
         color_key = self.db.get_tag_color(tag)
@@ -461,7 +462,9 @@ class TagManagerWidget(QWidget):
                 f"{len(books)} book{'s' if len(books) != 1 else ''}"
             )
             self._rename_status.setText("Renamed")
+            self._set_action_mode("check")
             self.tag_changed.emit()
+            QTimer.singleShot(1500, lambda: self._set_action_mode("delete"))
             QTimer.singleShot(1500, lambda: self._rename_status.setText(""))
         else:
             self._rename_status.setText("Name already in use")
@@ -469,18 +472,34 @@ class TagManagerWidget(QWidget):
 
     def _on_tag_name_changed(self, text: str):
         if text.strip() != self._tag_name_original:
-            self._save_btn.show()
+            self._set_action_mode("save")
         else:
-            self._save_btn.hide()
+            self._set_action_mode("delete")
+
+    def _on_action_btn_clicked(self):
+        if self._action_btn_mode == "delete":
+            self._on_delete_tag()
+        elif self._action_btn_mode == "save":
+            self._on_rename()
+
+    def _set_action_mode(self, mode: str):
+        self._action_btn_mode = mode
+        color = self._current_theme.get("accent", "#888888")
+        if mode == "delete":
+            px = _load_icon("trash.svg", color, 18, 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(18, 18))
+        elif mode == "save":
+            px = _load_icon("save.svg", color, 16, 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(16, 16))
+        elif mode == "check":
+            px = _load_icon("check.svg", color, 16, 0.7)
+            self._action_btn.setIcon(QIcon(px))
+            self._action_btn.setIconSize(QSize(16, 16))
 
     def _update_tag_icons(self):
-        t_color = self._current_theme.get("accent", "#888888") if self._current_theme else "#888888"
-        save_px = _load_icon("save.svg", t_color, 16, 0.7)
-        self._save_btn.setIcon(QIcon(save_px))
-        self._save_btn.setIconSize(QSize(16, 16))
-        trash_px = _load_icon("trash.svg", t_color, 21, 0.7)
-        self._trash_btn.setIcon(QIcon(trash_px))
-        self._trash_btn.setIconSize(QSize(21, 21))
+        self._set_action_mode(self._action_btn_mode)
 
     def _on_delete_tag(self):
         if not self._current_tag:
@@ -507,7 +526,7 @@ class TagManagerWidget(QWidget):
         from ..themes import get_tags_stylesheet
         self._current_theme_name = theme_name
         self.setStyleSheet(get_tags_stylesheet(theme_name))
-        if hasattr(self, '_save_btn'):
+        if hasattr(self, '_action_btn'):
             from ..themes import _resolve_theme
             self._current_theme = _resolve_theme(theme_name)
             self._update_tag_icons()
