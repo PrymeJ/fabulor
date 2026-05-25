@@ -265,7 +265,7 @@ class TagManagerWidget(QWidget):
         self._panel_widget.setObjectName("tag_manager_panel")
         self._panel_widget.hide()
         panel_layout = QVBoxLayout(self._panel_widget)
-        panel_layout.setContentsMargins(10, 10, 10, 10)
+        panel_layout.setContentsMargins(10, 10, 10, 0)
         panel_layout.setSpacing(6)
 
         self._back_btn = QPushButton("‹")
@@ -309,15 +309,15 @@ class TagManagerWidget(QWidget):
         panel_layout.addLayout(name_row)
 
         self._reserved_row = QWidget()
-        self._reserved_row.setFixedHeight(32)
+        self._reserved_row.setFixedHeight(21)
         reserved_layout = QStackedLayout(self._reserved_row)
         reserved_layout.setContentsMargins(0, 0, 0, 0)
         reserved_layout.setStackingMode(QStackedLayout.StackingMode.StackOne)
 
         self._color_picker_row = QWidget()
         picker_layout = QHBoxLayout(self._color_picker_row)
-        picker_layout.setContentsMargins(10, 0, 10, 0)
-        picker_layout.setSpacing(8)
+        picker_layout.setContentsMargins(2, 0, 10, 0)
+        picker_layout.setSpacing(9)
         neutral_dot = QLabel("●")
         neutral_dot.setFixedSize(20, 20)
         neutral_dot.setAlignment(Qt.AlignmentFlag.AlignCenter)

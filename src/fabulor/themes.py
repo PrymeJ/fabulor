@@ -3383,7 +3383,7 @@ def get_tags_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border: 2px solid {t['accent']};
-            padding: 2px 6px;
+            padding: 0px 0px;
         }}
         QPushButton {{
             background: {accent_style};
