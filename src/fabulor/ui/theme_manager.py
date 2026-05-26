@@ -271,7 +271,7 @@ class ThemeManager(QObject):
             from PySide6.QtGui import QRegion
             if pm and pm.is_any_panel_visible():
                 mask = QRegion(self.main_window.rect())
-                panels = ['library_panel', 'speed_panel',
+                panels = ['library_panel', 'tags_panel', 'speed_panel',
                           'sleep_panel', 'stats_panel', 'book_detail_panel']
                 for attr in panels:
                     p = getattr(pm, attr, None)
