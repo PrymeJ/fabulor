@@ -1209,6 +1209,7 @@ class StatsPanel(QWidget):
         day_label.setObjectName("settings_header")
         pref_row.addWidget(day_label)
         self.day_start_spin = QSpinBox()
+        self.day_start_spin.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.day_start_spin.setRange(0, 23)
         self.day_start_spin.setValue(self.config.get_day_start_hour())
         self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
