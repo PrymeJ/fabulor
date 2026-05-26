@@ -50,17 +50,20 @@ class ContextIconMenu(QWidget):
     def _refresh_icons(self):
         for btn in (self._cut_btn, self._copy_btn, self._paste_btn, self._del_btn):
             name = btn.property("_icon_name")
-            pixmap = load_themed_icon(name, self._color, _ICON_SIZE)
-            btn.setIcon(QIcon(pixmap))
+            icon = QIcon()
+            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, 0.9), QIcon.Mode.Normal)
+            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, 0.3), QIcon.Mode.Disabled)
+            btn.setIcon(icon)
 
     def apply_theme(self, theme: dict):
         self._color = theme.get("accent", "#ffffff")
-        bg   = theme.get("panel_bg", "#1e1e1e")
+        bg   = theme.get("bg_main", "#1e1e1e")
         bdr  = theme.get("accent_dark", "#555555")
+        hvr  = theme.get("accent_dark", "#555555")
         self.setStyleSheet(
             f"ContextIconMenu {{ background: {bg}; border: 1px solid {bdr}; border-radius: 4px; }}"
             f"QToolButton {{ background: transparent; border: none; }}"
-            f"QToolButton:hover {{ background: {bdr}; border-radius: 3px; }}"
+            f"QToolButton:hover {{ background: {hvr}; border-radius: 3px; }}"
         )
         self._refresh_icons()
 
