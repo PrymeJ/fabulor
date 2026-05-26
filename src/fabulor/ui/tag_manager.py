@@ -550,6 +550,12 @@ class TagManagerWidget(QWidget):
                 self._on_action_btn_hover(False)
             return False
 
+        if obj is self._tag_name_edit and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape:
+                self._revert_tag_name()
+                self._tag_name_edit.clearFocus()
+                return True
+
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()

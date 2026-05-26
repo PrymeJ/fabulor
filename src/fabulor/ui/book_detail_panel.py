@@ -702,6 +702,11 @@ class BookDetailPanel(QWidget):
                 self._on_meta_action_hover(hover=False)
             return False
 
+        if self._editing and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape:
+                self._exit_edit_mode(save=False)
+                return True
+
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
             gpos = event.globalPosition().toPoint()
