@@ -6,8 +6,8 @@ from PySide6.QtGui import QIcon
 from .icon_utils import load_themed_icon
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
-_BTN_SIZE = 28
-_ICON_SIZE = 16
+_BTN_SIZE = 20
+_ICON_SIZE = 14
 
 
 class ContextIconMenu(QWidget):
@@ -20,7 +20,6 @@ class ContextIconMenu(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._target = None
         self._color = "#ffffff"
         self._build_ui()
@@ -55,9 +54,9 @@ class ContextIconMenu(QWidget):
             btn.setIcon(QIcon(pixmap))
 
     def apply_theme(self, theme: dict):
-        self._color = theme.get("button_text", "#ffffff")
+        self._color = theme.get("accent", "#ffffff")
         bg   = theme.get("panel_bg", "#1e1e1e")
-        bdr  = theme.get("accent", "#555555")
+        bdr  = theme.get("accent_dark", "#555555")
         self.setStyleSheet(
             f"ContextIconMenu {{ background: {bg}; border: 1px solid {bdr}; border-radius: 4px; }}"
             f"QToolButton {{ background: transparent; border: none; }}"
