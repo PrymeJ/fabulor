@@ -240,6 +240,13 @@ class LibraryPanel(QFrame):
                 self._tag_filter_active = False
             _original_focus(event)
         self.search_field.focusInEvent = _on_search_focus
+        def _search_key(e):
+            if e.key() == Qt.Key.Key_Escape:
+                self.search_field.clear()
+                self.search_field.clearFocus()
+            else:
+                QLineEdit.keyPressEvent(self.search_field, e)
+        self.search_field.keyPressEvent = _search_key
 
         self.back_button = QPushButton("Back")
         self.back_button.setFixedHeight(28)

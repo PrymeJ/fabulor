@@ -65,6 +65,13 @@ class SleepTimerPanel(QWidget):
         self.custom_sleep_input.setPlaceholderText("min")
         self.custom_sleep_input.setFixedWidth(50)
         self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
+        def _sleep_input_key(e):
+            if e.key() == Qt.Key.Key_Escape:
+                self.custom_sleep_input.clear()
+                self.custom_sleep_input.clearFocus()
+            else:
+                QLineEdit.keyPressEvent(self.custom_sleep_input, e)
+        self.custom_sleep_input.keyPressEvent = _sleep_input_key
         custom_time_layout.addWidget(self.custom_sleep_input)
 
         set_custom_btn = QPushButton("Set")
