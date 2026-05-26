@@ -299,6 +299,7 @@ fabulor/
         ├── audio_controls.py        # Audio settings tab
         ├── theme_manager.py         # ThemeManager, ThemeComboBox; _apply_stylesheets() dispatches per-component setStyleSheet calls; timing constants (_THEME_SWITCH_FADE_MS, _SNAPBACK_FADE_MS, _PANEL_ANIM_GUARD_MS) defined at top of file
         ├── panels.py                # Panel manager (library, settings panels)
+        ├── text_context_menu.py     # ContextIconMenu — shared floating icon menu for QLineEdit right-click (Cut/Copy/Paste/Delete); one instance per parent panel, reused via show_for(target, global_pos)
         │
         ├── models/
         ├── __init__.py
@@ -308,6 +309,10 @@ fabulor/
   │     ├── img                      # Theme backgrounds
         ├── overlook.png             # Background for The Overlook
     
+## Shared widget instances
+
+`ContextIconMenu` (`ui/text_context_menu.py`) follows a shared-instance pattern: one instance is created per parent panel (`BookDetailPanel`, `TagManagerWidget`) and reused across all QLineEdit fields in that panel via `show_for(target, global_pos)`. Do not instantiate one per field. The `global_pos` argument must be in global screen coordinates (use `widget.mapToGlobal(pos)` at the call site). Theme is applied via `apply_theme(theme_dict)` — call it from the panel's `on_theme_changed`.
+
 ## Stylesheet architecture (COMPLETED)
 
 Each major UI component owns its own stylesheet. `ThemeManager._apply_stylesheets(theme_name, hover=False)` dispatches `setStyleSheet()` to individual components — never to `main_window` as a whole.

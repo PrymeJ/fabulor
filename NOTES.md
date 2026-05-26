@@ -1,4 +1,12 @@
 
+## `ContextIconMenu` — `self.window()` returns the menu itself under Popup window type (2026-05-27)
+
+`ContextIconMenu` uses `Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint`. Under this window type, `self.window()` returns the widget itself — not the top-level application window — because Popup creates a new top-level window in Qt's hierarchy. Using `self.window().width()` / `.height()` for position clamping therefore clamps against the menu's own 126×36px bounds, not the app window. Fix: use `QApplication.activeWindow()` instead. Guard against `None` (returns `None` when the app is not focused or during shutdown).
+
+## `ContextIconMenu` — `WA_TranslucentBackground` wipes the background despite `WA_StyledBackground` (2026-05-27)
+
+Setting `WA_TranslucentBackground` on a `QWidget` subclass that also uses `WA_StyledBackground` causes the QSS `background:` rule to be ignored — the widget renders fully transparent even with a valid stylesheet. The two attributes conflict: `WA_TranslucentBackground` forces alpha compositing at the window level, which punches through the QSS paint. Remove `WA_TranslucentBackground` and rely solely on `WA_StyledBackground` + the QSS `background:` rule for solid background rendering.
+
 ## `hide_all_panels` then open: timer vs signal (2026-05-26)
 
 `_on_open_tag_manager_from_detail` in `app.py` calls `panel_manager.hide_all_panels()` then uses `QTimer.singleShot(320, panel_manager._open_tags_flow)` to delay the open until all close animations have finished. 320ms is chosen to clear the longest panel close animation (300ms).

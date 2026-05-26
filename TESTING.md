@@ -184,6 +184,7 @@
 - [x] "End of Book" mode works
 - [x] Custom time input works with positive integers (Regex validation)
 - [x] Custom time input rejects non-positive/invalid input
+- [ ] Right-clicking custom time input clears the field
 - [ ] Pressing Escape while custom time input is focused clears the field and removes focus
 - [x] "Disable Sleep Timer" button works
 - [x] Sidebar pulse animation triggers on active timer
@@ -218,6 +219,7 @@
 ### Sort and filter
 - [x] Sorting: Title, Author, Last Played, Progress, Duration, Year
 - [x] Ascending/Descending toggle works for all keys and persists across restarts
+- [ ] Right-clicking search field clears the field
 - [ ] Pressing Escape while search field is focused clears the field and removes focus
 - [] Recent and Progress sort exclude books with progress < 1 second
 - [] Progress sort orders by percentage not raw seconds
@@ -397,6 +399,26 @@
 - [ ] Clicking outside the fields reverts all edits, hides Save
 - [ ] Clicking another tab reverts all edits
 - [ ] Closing the panel reverts all edits
+- [ ] IBeam cursor visible on all four metadata fields in both read-only and edit mode
+
+### Metadata field context menu (Cut/Copy/Paste/Delete)
+- [ ] Right-clicking a metadata field with selected text shows Cut/Copy/Delete enabled, Paste enabled if clipboard non-empty
+- [ ] Right-clicking with no selection and clipboard empty: menu does not appear
+- [ ] Right-clicking with no selection but clipboard has text: only Paste shows enabled (read-only field suppresses it)
+- [ ] Cut removes selected text and copies to clipboard
+- [ ] Copy copies selected text without removing it
+- [ ] Paste inserts clipboard text at cursor
+- [ ] Delete removes selected text without copying
+- [ ] Menu dismisses after any action
+- [ ] Menu dismisses when clicking outside it
+- [ ] Menu stays within the application window bounds (does not bleed off-edge)
+- [ ] Menu styled correctly with current theme (no system default appearance)
+- [ ] Right-clicking the tag input field shows same menu with correct state
+
+### Tag name field context menu (Tag manager)
+- [ ] Right-clicking tag name field shows context menu with correct enabled state
+- [ ] All four actions work correctly
+- [ ] Menu dismisses on action and on click-outside
 - [ ] Save updates title and author in library panel immediately (no panel close required)
 - [ ] Save updates narrator and year in library panel immediately (no panel close required)
 - [ ] Rescan after save: locked fields are not overwritten; unlocked fields update from metadata
