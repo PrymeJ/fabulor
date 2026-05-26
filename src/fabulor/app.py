@@ -1302,6 +1302,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
         self.book_detail_panel.tag_filter_requested.connect(self._on_tag_filter_requested)
+        self.book_detail_panel.open_tag_manager_requested.connect(self._on_open_tag_manager_from_detail)
         self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
@@ -1555,6 +1556,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self._post_seek_pending_position,
                 )
         self._post_seek_pending_position = None
+
+    def _on_open_tag_manager_from_detail(self) -> None:
+        self.panel_manager.hide_all_panels()
+        QTimer.singleShot(320, self.panel_manager._open_tags_flow)
 
     def _on_tag_filter_requested(self, tag: str) -> None:
         self.panel_manager._close_book_detail_flow()

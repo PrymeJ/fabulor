@@ -100,6 +100,7 @@ class BookDetailPanel(QWidget):
     active_cover_changed = Signal(str, str)  # (book_path, cover_path)
     book_removed = Signal()
     tag_filter_requested = Signal(str)
+    open_tag_manager_requested = Signal()
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -392,6 +393,14 @@ class BookDetailPanel(QWidget):
         outer.addWidget(self._tag_input_widget)
 
         outer.addStretch()
+
+        self._tag_manager_btn = QPushButton("Tag management")
+        self._tag_manager_btn.setObjectName("tag_manager_nav_btn")
+        self._tag_manager_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tag_manager_btn.clicked.connect(self.open_tag_manager_requested)
+        self._tag_manager_btn.hide()
+        outer.addWidget(self._tag_manager_btn)
+
         return widget
 
     def _rebuild_tag_chips(self):
@@ -513,6 +522,7 @@ class BookDetailPanel(QWidget):
 
     def load_book(self, book_data: dict, tab: str = 'stats', context: str = ''):
         self._context = context
+        self._tag_manager_btn.setVisible(context != 'tags')
         self._book_path = book_data.get('path') or book_data.get('book_path')
         self._book_data = book_data
         if 'duration' not in book_data:

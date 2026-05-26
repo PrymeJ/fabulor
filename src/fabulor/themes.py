@@ -3289,6 +3289,22 @@ def get_stats_stylesheet(theme_name="default"):
         QPushButton#tag_add_btn:pressed {{
             background-color: {t['accent_dark']};
         }}
+        QPushButton#tag_manager_nav_btn {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            padding: 4px;
+            border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#tag_manager_nav_btn:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#tag_manager_nav_btn:pressed {{
+            background: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
     """
 
 
