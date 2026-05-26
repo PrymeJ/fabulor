@@ -1013,10 +1013,10 @@ class BookDetailPanel(QWidget):
         else:
             color = self._theme.get("accent", "#888888")
             opacity = 0.70
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21, opacity)
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 16, opacity)
         self._remove_btn.setIcon(QIcon(pixmap))
-        self._remove_btn.setContentsMargins(4, 0, 0, 0)
-        self._remove_btn.setIconSize(QSize(21, 21))
+        self._remove_btn.setContentsMargins(8, 0, 0, 0)
+        self._remove_btn.setIconSize(QSize(16, 16))
         
 
 
@@ -1028,7 +1028,7 @@ class BookDetailPanel(QWidget):
         self._confirm_remove_label.setVisible(True)
         self._remove_btn.setCursor(Qt.CursorShape.ArrowCursor)
         color = self._theme.get("accent", "#888888")
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 21, 0.35)
+        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 16, 0.35)
         self._remove_btn.setIcon(QIcon(pixmap))
         if self._remove_cancel_timer:
             self._remove_cancel_timer.stop()

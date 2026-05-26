@@ -549,9 +549,9 @@ class TagManagerWidget(QWidget):
         color = self._current_theme.get("accent", "#888888")
         if self._action_btn_mode == "delete":
             icon_color = "#cc3333" if hover else color
-            px = _load_icon("trash.svg", icon_color, 21, 1.0 if hover else 0.70)
+            px = _load_icon("trash.svg", icon_color, 16, 1.0 if hover else 0.70)
             self._action_btn.setIcon(QIcon(px))
-            self._action_btn.setIconSize(QSize(21, 21))
+            self._action_btn.setIconSize(QSize(16, 16))
         elif self._action_btn_mode == "save":
             px = _load_icon("save.svg", color, 16, 1.0 if hover else 0.7)
             self._action_btn.setIcon(QIcon(px))
@@ -640,9 +640,9 @@ class TagManagerWidget(QWidget):
             else Qt.CursorShape.PointingHandCursor
         )
         if mode == "delete":
-            px = _load_icon("trash.svg", color, 21, 0.70)
+            px = _load_icon("trash.svg", color, 16, 0.70)
             self._action_btn.setIcon(QIcon(px))
-            self._action_btn.setIconSize(QSize(21, 21))
+            self._action_btn.setIconSize(QSize(16, 16))
         elif mode == "save":
             px = _load_icon("save.svg", color, 16, 0.7)
             self._action_btn.setIcon(QIcon(px))
@@ -652,7 +652,7 @@ class TagManagerWidget(QWidget):
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(16, 16))
         elif mode == "check":
-            px = _load_icon("check.svg", color, 16, 1.0)
+            px = _load_icon("check.svg", color, 16, 0.7)
             self._action_btn.setIcon(QIcon(px))
             self._action_btn.setIconSize(QSize(16, 16))
 
@@ -668,7 +668,7 @@ class TagManagerWidget(QWidget):
         self._book_grid.set_locked(True)
         self._confirming_delete = True
         color = self._current_theme.get("accent", "#888888")
-        px = _load_icon("trash.svg", color, 21, 0.35)
+        px = _load_icon("trash.svg", color, 16, 0.35)
         self._action_btn.setIcon(QIcon(px))
         self._action_btn.setCursor(Qt.CursorShape.ArrowCursor)
         self._detail_dot.setCursor(Qt.CursorShape.ArrowCursor)
