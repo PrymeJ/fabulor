@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- License: CC Attribution. Made by Dmitriy Novikov: https://www.figma.com/@novaslide -->
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M13 9C10.7909 9 9 10.7909 9 13V18C9 20.2091 10.7909 22 13 22H18C20.2091 22 22 20.2091 22 18V13C22 10.7909 20.2091 9 18 9H13Z" fill="#000000"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M6 2C3.79086 2 2 3.79086 2 6V11C2 13.3689 3.7613 15 6 15C6.55228 15 7 14.5523 7 14V13C7 9.68629 9.68629 7 13 7H14C14.5523 7 15 6.55228 15 6C15 3.7613 13.3689 2 11 2H6Z" fill="#000000"/>
+</svg>
