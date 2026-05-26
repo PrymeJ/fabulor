@@ -398,6 +398,33 @@ The Settings panel Themes tab was audited and ruled out for per-element color an
 
 ---
 
+## Theme System — Known Bugs (2026-05-26)
+
+### Spurious sidebar expand during theme hover — root cause unknown
+
+**Symptom:** Occasionally during hover-preview over theme pool items, the sidebar briefly becomes
+visible behind or alongside the settings panel. Visually this shows as sidebar button labels
+(SETTINGS, STATS, etc.) bleeding through, giving a hodge-podge appearance.
+
+**Root cause:** Sidebar expands when it shouldn't — suspected race between the right-click handler
+and the panel animation guard, but not confirmed. The condition is sporadic and has not been
+reliably reproduced.
+
+**Mitigation (2026-05-26):** The overlay mask now unconditionally excludes the sidebar geometry
+(previously only excluded when `sidebar_expanded` was already `True`). This limits visual damage
+when the sidebar appears unexpectedly, but does not fix the underlying expand.
+
+**Do not remove the `if pm.sidebar_expanded:` guard** — it controls the sidebar exclusion in other
+code paths and is not the cause of the bug.
+
+**Investigation notes:** The right-click flow in `_on_theme_right_clicked` calls
+`_on_theme_changed` which checks `_any_panel_animating()` — if the panel guard fires while a
+sidebar animation is in progress, the deferred retry may execute after the sidebar has already
+closed, leaving `sidebar_expanded` stale. Check `_toggle_sidebar` / `_on_sidebar_hidden` timing
+relative to `_panel_guard_timer` expiry.
+
+---
+
 ## Player / VT — Deferred Bug Investigations (2026-05-16)
 
 ### Prev chapter while paused goes to N-1 instead of restarting N — RESOLVED (2026-05-16)
