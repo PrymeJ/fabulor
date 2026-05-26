@@ -55,7 +55,8 @@ TAG_COLORS = {
 
 
 class _TagBookThumb(QWidget):
-    remove_requested = Signal(str)  # book_path
+    remove_requested = Signal(str)   # book_path
+    detail_requested = Signal(str)   # book_path
 
     def __init__(self, book: dict, assets_dir: str, parent=None):
         super().__init__(parent)
@@ -116,6 +117,9 @@ class _TagBookThumb(QWidget):
         self._cover.setPixmap(scaled.copy(x, y, 48, 48))
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            self.detail_requested.emit(self._path)
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             w = self.parent()
             while w and not isinstance(w, _TagBookGrid):
@@ -168,6 +172,7 @@ class _TagBookGrid(QScrollArea):
         for i, book in enumerate(self._books):
             thumb = _TagBookThumb(book, self._assets_dir)
             thumb.remove_requested.connect(self._on_remove)
+            thumb.detail_requested.connect(self.parent_detail)
             self._grid.addWidget(thumb, i // self._cols, i % self._cols)
             self._thumbs[book['path']] = thumb
 
@@ -195,7 +200,9 @@ class _TagBookGrid(QScrollArea):
         self.parent_remove(path)
 
     def parent_remove(self, path: str):
-        # Overridden by TagManagerWidget
+        pass
+
+    def parent_detail(self, path: str):
         pass
 
 
@@ -205,7 +212,8 @@ class TagManagerWidget(QWidget):
       - Tag list: scrollable chips with book count
       - Tag panel: book grid for a selected tag, with inline rename and delete
     """
-    tag_changed = Signal()  # emitted when tags are modified (rename, delete, book removed)
+    tag_changed = Signal()       # emitted when tags are modified (rename, delete, book removed)
+    detail_requested = Signal(str)  # book_path — right-click on thumbnail
 
     def __init__(self, db, assets_dir: str, parent=None):
         super().__init__(parent)
@@ -366,6 +374,7 @@ class TagManagerWidget(QWidget):
 
         self._book_grid = _TagBookGrid(self._assets_dir)
         self._book_grid.parent_remove = self._on_grid_remove
+        self._book_grid.parent_detail = lambda path: self.detail_requested.emit(path)
         panel_layout.addWidget(self._book_grid)
 
         self._stack_layout.addWidget(self._panel_widget)
