@@ -85,7 +85,24 @@ class ContextIconMenu(QWidget):
         self._del_btn.setEnabled(delete_ok)
 
         self.adjustSize()
-        self.move(global_pos)
+        w = self.width()
+        h = self.height()
+
+        win = QApplication.activeWindow()
+        if win is None:
+            self.move(global_pos)
+            self.show()
+            return
+
+        win_global = win.mapToGlobal(QPoint(0, 0))
+        content_top = win_global.y()
+        content_left = win_global.x()
+        content_right = content_left + win.width()
+        content_bottom = content_top + win.height()
+
+        x = max(content_left, min(global_pos.x(), content_right - w))
+        y = max(content_top, min(global_pos.y(), content_bottom - h))
+        self.move(x, y)
         self.show()
 
     # --- actions ---
