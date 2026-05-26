@@ -775,6 +775,7 @@ class BookDetailPanel(QWidget):
         for field in (self._title_label, self._author_label,
                       self._narrator_label, self._year_label):
             field.setReadOnly(False)
+            field.setCursor(Qt.CursorShape.IBeamCursor)
             field.setCursorPosition(0)
         self._title_label.setFocus()
 
@@ -818,6 +819,7 @@ class BookDetailPanel(QWidget):
         for field in (self._title_label, self._author_label,
                       self._narrator_label, self._year_label):
             field.setReadOnly(True)
+            field.setCursor(Qt.CursorShape.IBeamCursor)
         if save:
             self._commit_inline_save()
         else:
