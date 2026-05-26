@@ -56,9 +56,12 @@ class ContextIconMenu(QWidget):
             btn.setIcon(icon)
 
     def apply_theme(self, theme: dict):
+        _BDR_OPACITY = 0.80
         self._color = theme.get("accent", "#ffffff")
         bg   = theme.get("bg_main", "#1e1e1e")
-        bdr  = theme.get("accent_dark", "#555555")
+        _bdr_hex = theme.get("accent", "#555555").lstrip("#")
+        r, g, b = int(_bdr_hex[0:2], 16), int(_bdr_hex[2:4], 16), int(_bdr_hex[4:6], 16)
+        bdr  = f"rgba({r},{g},{b},{_BDR_OPACITY})"
         hvr  = theme.get("accent_dark", "#555555")
         self.setStyleSheet(
             f"ContextIconMenu {{ background: {bg}; border: 1px solid {bdr}; border-radius: 4px; }}"
