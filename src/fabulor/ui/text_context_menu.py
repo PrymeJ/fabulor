@@ -8,6 +8,8 @@ from .icon_utils import load_themed_icon
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 _BTN_SIZE = 20
 _ICON_SIZE = 14
+_ICON_OPACITY_ACTIVE = 0.9
+_ICON_OPACITY_DISABLED = 0.3
 
 
 class ContextIconMenu(QWidget):
@@ -51,17 +53,16 @@ class ContextIconMenu(QWidget):
         for btn in (self._cut_btn, self._copy_btn, self._paste_btn, self._del_btn):
             name = btn.property("_icon_name")
             icon = QIcon()
-            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, 0.9), QIcon.Mode.Normal)
-            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, 0.3), QIcon.Mode.Disabled)
+            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, _ICON_OPACITY_ACTIVE), QIcon.Mode.Normal)
+            icon.addPixmap(load_themed_icon(name, self._color, _ICON_SIZE, _ICON_OPACITY_DISABLED), QIcon.Mode.Disabled)
             btn.setIcon(icon)
 
     def apply_theme(self, theme: dict):
         _BDR_OPACITY = 0.80
         self._color = theme.get("accent", "#ffffff")
         bg   = theme.get("bg_main", "#1e1e1e")
-        _bdr_hex = theme.get("accent", "#555555").lstrip("#")
-        r, g, b = int(_bdr_hex[0:2], 16), int(_bdr_hex[2:4], 16), int(_bdr_hex[4:6], 16)
-        bdr  = f"rgba({r},{g},{b},{_BDR_OPACITY})"
+        r, g, b = bytes.fromhex(theme.get("accent", "#555555").lstrip("#"))
+        bdr = f"rgba({r},{g},{b},{_BDR_OPACITY})"
         hvr  = theme.get("accent_dark", "#555555")
         self.setStyleSheet(
             f"ContextIconMenu {{ background: {bg}; border: 1px solid {bdr}; border-radius: 4px; }}"
