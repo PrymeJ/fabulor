@@ -230,6 +230,7 @@ class LibraryPanel(QFrame):
 
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("search #tag")
+        self.search_field.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)

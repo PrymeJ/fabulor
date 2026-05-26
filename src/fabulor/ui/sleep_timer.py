@@ -63,6 +63,7 @@ class SleepTimerPanel(QWidget):
         custom_time_layout = QHBoxLayout()
         self.custom_sleep_input = QLineEdit()
         self.custom_sleep_input.setPlaceholderText("min")
+        self.custom_sleep_input.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         self.custom_sleep_input.setFixedWidth(50)
         self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
         def _sleep_input_key(e):

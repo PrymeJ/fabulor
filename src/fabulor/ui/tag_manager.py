@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
+from .text_context_menu import ContextIconMenu
 
 MAX_TAG_LENGTH = 20
 
@@ -228,6 +229,10 @@ class TagManagerWidget(QWidget):
         self._current_theme: dict = {}
         self._action_btn_mode: str = "delete"
         self._build_ui()
+        self._ctx_menu = ContextIconMenu(self)
+        self._tag_name_edit.customContextMenuRequested.connect(
+            lambda pos: self._ctx_menu.show_for(self._tag_name_edit, self._tag_name_edit.mapToGlobal(pos))
+        )
 
     def _inject_active_covers(self, books: list[dict]) -> list[dict]:
         for book in books:
@@ -302,6 +307,7 @@ class TagManagerWidget(QWidget):
         self._tag_name_edit = QLineEdit()
         self._tag_name_edit.setObjectName("tag_name_field")
         self._tag_name_edit.setMaxLength(MAX_TAG_LENGTH)
+        self._tag_name_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tag_name_edit.returnPressed.connect(self._on_rename)
         self._tag_name_edit.textChanged.connect(self._on_tag_name_changed)
         self._tag_name_edit.mousePressEvent = lambda e: (
@@ -703,13 +709,14 @@ class TagManagerWidget(QWidget):
         self._set_action_mode("delete")
 
     def on_theme_changed(self, theme_name: str) -> None:
-        from ..themes import get_tags_stylesheet
+        from ..themes import get_tags_stylesheet, _resolve_theme
         self._current_theme_name = theme_name
         self.setStyleSheet(get_tags_stylesheet(theme_name))
+        resolved = _resolve_theme(theme_name)
         if hasattr(self, '_action_btn'):
-            from ..themes import _resolve_theme
-            self._current_theme = _resolve_theme(theme_name)
+            self._current_theme = resolved
             self._update_tag_icons()
+        self._ctx_menu.apply_theme(resolved)
 
     def _on_grid_remove(self, path: str):
         if self._confirming_delete:

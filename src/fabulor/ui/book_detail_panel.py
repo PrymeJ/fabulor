@@ -18,6 +18,7 @@ from .cover_loader import to_grayscale
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 from .tag_manager import TAG_COLORS, MAX_TAG_LENGTH
+from .text_context_menu import ContextIconMenu
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
@@ -126,6 +127,7 @@ class BookDetailPanel(QWidget):
             os.path.join(os.path.dirname(__file__), "..", "assets")
         )
         self._build_ui()
+        self._ctx_menu = ContextIconMenu(self)
         self._tag_suggest_timer = QTimer(self)
         self._tag_suggest_timer.setSingleShot(True)
         self._tag_suggest_timer.setInterval(200)
@@ -158,6 +160,7 @@ class BookDetailPanel(QWidget):
             edit.setFrame(False)
             edit.setReadOnly(True)
             edit.setCursor(Qt.CursorShape.IBeamCursor)
+            edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             edit.textChanged.connect(self._check_dirty)
             edit.returnPressed.connect(self._on_inline_save)
             return edit
@@ -166,6 +169,11 @@ class BookDetailPanel(QWidget):
         self._author_label   = make_field("book_detail_author")
         self._narrator_label = make_field("book_detail_narrator", placeholder="Narrator")
         self._year_label     = make_field("book_detail_year",     placeholder="Year")
+
+        for _meta_field in (self._title_label, self._author_label, self._narrator_label, self._year_label):
+            _meta_field.customContextMenuRequested.connect(
+                lambda pos, f=_meta_field: self._ctx_menu.show_for(f, f.mapToGlobal(pos))
+            )
         self._year_label.setValidator(
             QRegularExpressionValidator(QRegularExpression(r'^-?\d*$'))
         )
@@ -372,6 +380,10 @@ class BookDetailPanel(QWidget):
         self._tag_input.setObjectName("tag_add_field")
         self._tag_input.setPlaceholderText("Add tag…")
         self._tag_input.setMaxLength(MAX_TAG_LENGTH)
+        self._tag_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tag_input.customContextMenuRequested.connect(
+            lambda pos: self._ctx_menu.show_for(self._tag_input, self._tag_input.mapToGlobal(pos))
+        )
         self._tag_input.returnPressed.connect(self._on_add_tag)
 
         self._tag_completer_model = QStringListModel()
@@ -1047,6 +1059,7 @@ class BookDetailPanel(QWidget):
         self._set_meta_state(self._meta_state)
         self._cover_panel.on_theme_changed(theme)
         self._rebuild_tag_display(self._tag_display_tags)
+        self._ctx_menu.apply_theme(theme)
 
     @staticmethod
     def _fmt(seconds: float) -> str:
