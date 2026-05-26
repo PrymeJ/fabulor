@@ -184,6 +184,7 @@
 - [x] "End of Book" mode works
 - [x] Custom time input works with positive integers (Regex validation)
 - [x] Custom time input rejects non-positive/invalid input
+- [ ] Pressing Escape while custom time input is focused clears the field and removes focus
 - [x] "Disable Sleep Timer" button works
 - [x] Sidebar pulse animation triggers on active timer
 - [x] Volume fade-out logic (Scale ratio based on remaining seconds)
@@ -217,6 +218,7 @@
 ### Sort and filter
 - [x] Sorting: Title, Author, Last Played, Progress, Duration, Year
 - [x] Ascending/Descending toggle works for all keys and persists across restarts
+- [ ] Pressing Escape while search field is focused clears the field and removes focus
 - [] Recent and Progress sort exclude books with progress < 1 second
 - [] Progress sort orders by percentage not raw seconds
 - [] Zero-progress books sort to bottom of Progress/Recent, alphabetically within that group
@@ -330,6 +332,38 @@
 - [ ] Deleting a tag with confirmation removes it and returns to chip list
 - [ ] After excluding a book: its thumbnail in the tag grid updates to grayscale without reopening the panel
 - [ ] After a library path removal: tag manager grid refreshes to show updated state
+- [ ] Closing and reopening the tag panel always lands on the tag list, not a previously viewed tag panel
+- [ ] Opening panel with a tag that has 100+ books: no delay or freeze on open
+
+### Tag panel — inline name editing
+- [ ] Editing tag name shows save icon (dirty state)
+- [ ] Pressing Escape reverts edit and clears focus
+- [ ] Clicking outside name field and save button reverts edit
+- [ ] Saving and re-editing: dirty state correctly compares against saved name (not original)
+- [ ] Duplicate name: save button turns red, clears on next keystroke
+- [ ] Clicking the color dot while editing: name reverts, focus clears, picker opens
+
+### Tag panel — color picker
+- [ ] Clicking dot opens picker row
+- [ ] Clicking dot again closes picker (toggle)
+- [ ] Clicking empty panel area dismisses picker
+- [ ] Clicking a book thumbnail while picker is open dismisses picker (no book removed)
+- [ ] Book thumbnails show arrow cursor while picker is open
+- [ ] After dismissing picker: book thumbnails restore hand cursor
+
+### Tag panel — delete confirmation
+- [ ] Trash button shows hand cursor in normal state
+- [ ] Clicking trash shows confirmation, trash icon dims to 0.35 opacity, cursor becomes arrow
+- [ ] Clicking anywhere on panel background dismisses confirmation
+- [ ] Clicking a book thumbnail while confirming dismisses confirmation (no book removed)
+- [ ] 7-second auto-dismiss fires if no action taken
+- [ ] Confirming delete returns to tag list
+
+### Tag panel — book thumbnail right-click
+- [ ] Right-clicking a thumbnail opens Book Detail Panel (Stats tab) over the tag panel
+- [ ] Tag panel remains visible behind Book Detail Panel
+- [ ] Close button on Book Detail Panel returns to tag panel
+- [ ] Clicking title bar dismisses both Book Detail Panel and tag panel
 
 ## Book Detail Panel
 
@@ -359,6 +393,7 @@
 - [ ] Save label disappears if edits are reverted back to original values
 - [ ] Enter in any field saves and shows "Saved" for 1 second
 - [ ] Clicking Save saves and shows "Saved" for 1 second
+- [ ] Pressing Escape reverts all edits and exits edit mode
 - [ ] Clicking outside the fields reverts all edits, hides Save
 - [ ] Clicking another tab reverts all edits
 - [ ] Closing the panel reverts all edits
@@ -414,6 +449,9 @@
 - [ ] Remove (✕) button removes tag correctly
 - [ ] Max 5 tags enforced (input flashes red on reject)
 - [ ] Delete listening history button prompts confirmation, clears data, refreshes stats tab
+- [ ] "Tag management" button visible when opened from library or stats
+- [ ] "Tag management" button hidden when opened from tag panel (context='tags')
+- [ ] Clicking "Tag management": all panels dismiss, then tag panel slides in
 
 ### Header tag chips (under year field)
 - [ ] Tags shown in header row with correct accent color (● tag format)

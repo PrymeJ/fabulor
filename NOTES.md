@@ -1,4 +1,14 @@
 
+## `hide_all_panels` then open: timer vs signal (2026-05-26)
+
+`_on_open_tag_manager_from_detail` in `app.py` calls `panel_manager.hide_all_panels()` then uses `QTimer.singleShot(320, panel_manager._open_tags_flow)` to delay the open until all close animations have finished. 320ms is chosen to clear the longest panel close animation (300ms).
+
+**Why this is debt:** The 320ms is a magic number. If any panel animation duration is changed, this delay silently breaks. The correct approach is a signal: `PanelManager` should emit an `all_panels_hidden` signal after the last running close animation completes. `hide_all_panels` would need to track which animations were started (count or set), and each `_on_*_hidden` callback would decrement the count and emit the signal when it hits zero. The caller would connect to `all_panels_hidden` with a one-shot connection.
+
+**Why the timer was used:** `hide_all_panels` runs multiple close animations in parallel with no shared completion point. Adding the count-down mechanism was a larger change than warranted for a single use case. If a second "hide-all-then-open" flow is added anywhere, the signal approach becomes mandatory.
+
+**Where to fix:** `panels.py` — `hide_all_panels` and each `_on_*_hidden` method. `app.py` — replace `singleShot(320, ...)` with a one-shot `all_panels_hidden` connection.
+
 ## `QStackedLayout` for mutually exclusive UI slots (2026-05-25)
 
 When multiple widgets need to occupy the same fixed space with only one visible at a time, `QStackedLayout` inside a fixed-height container is the correct pattern. `.show()`/`.hide()` on siblings in a regular layout shifts surrounding content as each sibling collapses; `QStackedLayout` holds the reserved space constant regardless of which page is current. Pattern: create a `QWidget` with `setFixedHeight(N)`, assign a `QStackedLayout` to it, add all candidate pages (including a blank `QWidget` as the "empty" page), default to `setCurrentWidget(empty_page)`, and switch via `setCurrentWidget`. Store the layout reference on `self` for access from other methods.
