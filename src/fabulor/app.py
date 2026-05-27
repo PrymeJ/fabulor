@@ -324,7 +324,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._post_seek_credit_timer.timeout.connect(self._on_seek_credit_earned)
 
         self._setup_ui()
-        self._restore_search_filter()
 
         self.ui_timer = QTimer()
         self.quote_timer = QTimer()
@@ -1443,21 +1442,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             (kind == 'text' and self.config.get_persist_filter_text())
         )
         self.config.settings.setValue("persisted_filter", text if allowed else "")
-
-    def _restore_search_filter(self):
-        if not self.config.get_persist_filter_enabled():
-            return
-        text = self.config.settings.value("persisted_filter", "")
-        if not text:
-            return
-        kind = self._classify_filter(text)
-        allowed = (
-            (kind == 'tag' and self.config.get_persist_filter_tags()) or
-            (kind == 'year' and self.config.get_persist_filter_year()) or
-            (kind == 'text' and self.config.get_persist_filter_text())
-        )
-        if allowed:
-            self.library_panel.search_field.setText(text)
 
     def _on_sleep_timer_started(self):
         self.sleep_trigger_btn.setText("SLEEP")

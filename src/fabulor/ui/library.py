@@ -250,6 +250,13 @@ class LibraryPanel(QFrame):
                 QLineEdit.keyPressEvent(self.search_field, e)
         self.search_field.keyPressEvent = _search_key
 
+        if self.config.get_persist_filter_enabled():
+            _saved = self.config.settings.value("persisted_filter", "")
+            if _saved:
+                self.search_field.blockSignals(True)
+                self.search_field.setText(_saved)
+                self.search_field.blockSignals(False)
+
         self.back_button = QPushButton("Back")
         self.back_button.setFixedHeight(28)
         self.back_button.clicked.connect(self.back_requested.emit)
