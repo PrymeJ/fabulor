@@ -225,7 +225,7 @@ class ThemeManager(QObject):
             self._panel_guard_timer.stop()
             try:
                 self._panel_guard_timer.timeout.disconnect()
-            except TypeError:
+            except (TypeError, RuntimeError):
                 pass
             self._panel_guard_timer.timeout.connect(
                 lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated)
