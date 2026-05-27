@@ -752,11 +752,8 @@ class Player(QObject):
                 start_limit = chaps[curr_idx].get('time', 0)
                 
             new_pos = max(start_limit, (self.time_pos or 0) - rewind_amt)
-            if self._virtual_timeline is not None:
-                self.seek_async(new_pos)
-            else:
-                self.time_pos = new_pos
-            self.is_seeking = True
+            self.seek_async(new_pos)
+            # is_seeking is set True inside seek_async already
 
     def save_seek_position(self, old_pos: float, duration_limit: int) -> bool:
         """
