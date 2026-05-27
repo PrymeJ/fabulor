@@ -157,6 +157,7 @@ class BookDetailPanel(QWidget):
             edit = _ElidingLineEdit()
             edit.setObjectName(obj_name)
             edit.setPlaceholderText(placeholder)
+            edit.setMaxLength(300)
             edit.setFrame(False)
             edit.setReadOnly(True)
             edit.setCursor(Qt.CursorShape.IBeamCursor)

@@ -229,6 +229,7 @@ class LibraryPanel(QFrame):
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
 
         self.search_field = QLineEdit()
+        self.search_field.setMaxLength(26)
         self.search_field.setPlaceholderText("search #tag")
         self.search_field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.search_field.customContextMenuRequested.connect(lambda _: self.search_field.clear())
