@@ -262,3 +262,27 @@ class Config:
 
     def set_chapter_list_source(self, source: str):
         self.settings.setValue("chapter_list_source", source)
+
+    def get_persist_filter_enabled(self) -> bool:
+        return self.settings.value("persist_filter_enabled", "false") == "true"
+
+    def set_persist_filter_enabled(self, enabled: bool):
+        self.settings.setValue("persist_filter_enabled", str(enabled).lower())
+
+    def get_persist_filter_tags(self) -> bool:
+        return self.settings.value("persist_filter_tags", "true") == "true"
+
+    def set_persist_filter_tags(self, enabled: bool):
+        self.settings.setValue("persist_filter_tags", str(enabled).lower())
+
+    def get_persist_filter_text(self) -> bool:
+        return self.settings.value("persist_filter_text", "true") == "true"
+
+    def set_persist_filter_text(self, enabled: bool):
+        self.settings.setValue("persist_filter_text", str(enabled).lower())
+
+    def get_persist_filter_year(self) -> bool:
+        return self.settings.value("persist_filter_year", "true") == "true"
+
+    def set_persist_filter_year(self, enabled: bool):
+        self.settings.setValue("persist_filter_year", str(enabled).lower())

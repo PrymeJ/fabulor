@@ -324,6 +324,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._post_seek_credit_timer.timeout.connect(self._on_seek_credit_earned)
 
         self._setup_ui()
+        self._restore_search_filter()
 
         self.ui_timer = QTimer()
         self.quote_timer = QTimer()
@@ -1217,10 +1218,44 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chap_source_row.addStretch()
         lib_layout.addLayout(chap_source_row)
 
+        lib_layout.addSpacing(10)
+
+        persist_header = QLabel("Persist search filter")
+        persist_header.setObjectName("settings_header")
+        lib_layout.addWidget(persist_header)
+
+        persist_row = QHBoxLayout()
+        self.persist_filter_buttons = {}
+        for val, label in [(False, "Off"), (True, "On")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._on_persist_filter_master(v))
+            persist_row.addWidget(btn)
+            self.persist_filter_buttons[val] = btn
+        persist_row.addStretch()
+
+        if self.config.get_persist_filter_enabled() and not any([
+            self.config.get_persist_filter_tags(),
+            self.config.get_persist_filter_text(),
+            self.config.get_persist_filter_year(),
+        ]):
+            self.config.set_persist_filter_enabled(False)
+        _master_on = self.config.get_persist_filter_enabled()
+        self.persist_filter_sub_buttons = {}
+        for key, label in [("tags", "Tags"), ("text", "Text"), ("year", "Year")]:
+            btn = QPushButton(label)
+            btn.setObjectName("pattern_button")
+            btn.setVisible(_master_on)
+            btn.clicked.connect(lambda _, k=key: self._on_persist_filter_sub(k))
+            persist_row.addWidget(btn)
+            self.persist_filter_sub_buttons[key] = btn
+        lib_layout.addLayout(persist_row)
+
         # Library controller connections are consolidated in __init__
         lib_layout.addStretch()
         self.tabs.addTab(library_tab, "Library")
         self._update_pattern_visuals()
+        self._update_persist_filter_visuals()
 
     def _build_audio_tab(self):
         self.audio_tab = AudioSettingsTab(self.player, self.config, self)
@@ -1326,6 +1361,103 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for btn in [self.at_pattern_btn, self.ta_pattern_btn]:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+    def _sync_persist_filter_on_open(self):
+        if not hasattr(self, 'persist_filter_sub_buttons'):
+            return
+        if self.config.get_persist_filter_enabled() and not any([
+            self.config.get_persist_filter_tags(),
+            self.config.get_persist_filter_text(),
+            self.config.get_persist_filter_year(),
+        ]):
+            self.config.set_persist_filter_enabled(False)
+        enabled = self.config.get_persist_filter_enabled()
+        for btn in self.persist_filter_sub_buttons.values():
+            btn.setVisible(enabled)
+        self._update_persist_filter_visuals()
+
+    def _on_persist_filter_master(self, enabled: bool):
+        if enabled:
+            # If all three sub-keys are False, reset them all to True before enabling
+            if not any([
+                self.config.get_persist_filter_tags(),
+                self.config.get_persist_filter_text(),
+                self.config.get_persist_filter_year(),
+            ]):
+                self.config.set_persist_filter_tags(True)
+                self.config.set_persist_filter_text(True)
+                self.config.set_persist_filter_year(True)
+        self.config.set_persist_filter_enabled(enabled)
+        for btn in self.persist_filter_sub_buttons.values():
+            btn.setVisible(enabled)
+        self._update_persist_filter_visuals()
+
+    def _on_persist_filter_sub(self, key: str):
+        getters = {"tags": self.config.get_persist_filter_tags,
+                   "text": self.config.get_persist_filter_text,
+                   "year": self.config.get_persist_filter_year}
+        setters = {"tags": self.config.set_persist_filter_tags,
+                   "text": self.config.set_persist_filter_text,
+                   "year": self.config.set_persist_filter_year}
+        setters[key](not getters[key]())
+        self._update_persist_filter_visuals()
+
+    def _update_persist_filter_visuals(self):
+        if not hasattr(self, 'persist_filter_buttons'): return
+        enabled = self.config.get_persist_filter_enabled()
+        for val, btn in self.persist_filter_buttons.items():
+            btn.setProperty("selected", "true" if bool(val) == enabled else "false")
+            btn.style().unpolish(btn); btn.style().polish(btn)
+        sub_states = {
+            "tags": self.config.get_persist_filter_tags(),
+            "text": self.config.get_persist_filter_text(),
+            "year": self.config.get_persist_filter_year(),
+        }
+        for key, btn in self.persist_filter_sub_buttons.items():
+            btn.setProperty("selected", "true" if sub_states[key] else "false")
+            btn.style().unpolish(btn); btn.style().polish(btn)
+
+    @staticmethod
+    def _classify_filter(text: str):
+        """Returns 'tag', 'year', or 'text' for a non-empty search string."""
+        import re
+        if text.startswith('#'):
+            return 'tag'
+        if (text.startswith('>') and text[1:].isdigit()) or \
+           (text.startswith('<') and text[1:].isdigit()) or \
+           re.fullmatch(r'[<>]\d+[<>]\d+', text):
+            return 'year'
+        return 'text'
+
+    def _save_search_filter(self):
+        if not self.config.get_persist_filter_enabled():
+            return
+        text = self.library_panel.search_field.text()
+        if not text:
+            self.config.settings.setValue("persisted_filter", "")
+            return
+        kind = self._classify_filter(text)
+        allowed = (
+            (kind == 'tag' and self.config.get_persist_filter_tags()) or
+            (kind == 'year' and self.config.get_persist_filter_year()) or
+            (kind == 'text' and self.config.get_persist_filter_text())
+        )
+        self.config.settings.setValue("persisted_filter", text if allowed else "")
+
+    def _restore_search_filter(self):
+        if not self.config.get_persist_filter_enabled():
+            return
+        text = self.config.settings.value("persisted_filter", "")
+        if not text:
+            return
+        kind = self._classify_filter(text)
+        allowed = (
+            (kind == 'tag' and self.config.get_persist_filter_tags()) or
+            (kind == 'year' and self.config.get_persist_filter_year()) or
+            (kind == 'text' and self.config.get_persist_filter_text())
+        )
+        if allowed:
+            self.library_panel.search_field.setText(text)
 
     def _on_sleep_timer_started(self):
         self.sleep_trigger_btn.setText("SLEEP")
@@ -2658,6 +2790,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.stop()
         self.quote_timer.stop()
         self._undo_timer.stop()
+        self._save_search_filter()
         if self.player:
             self.config.set_volume(self.volume_slider.value())
             if self.current_file:

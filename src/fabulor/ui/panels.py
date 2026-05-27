@@ -158,6 +158,7 @@ class PanelManager:
 
     def _start_settings_entry(self):
         """Starts the settings panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        self.main_window._sync_persist_filter_on_open()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.settings_panel.setFixedWidth(panel_w)
