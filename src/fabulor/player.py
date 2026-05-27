@@ -37,6 +37,7 @@ except ImportError:
 # drift appears, change this one constant — it appears in previous_chapter(),
 # the VT chapter walk in _on_time_pos_change, and _sync_chapter_ui in app.py.
 _CHAPTER_BOUNDARY_EPSILON = 0.35
+_MP3_SEEK_THRESHOLD: float = 60.0  # long seeks on single VBR MP3 use stop-and-load
 
 class Player(QObject):
     chapter_changed = Signal(int)
@@ -74,6 +75,10 @@ class Player(QObject):
         self._last_vt_chapter: int = -1
         self._last_nonvt_chapter: int = 0
         self._held_play: tuple | None = None
+        self._play_target: str | None = None
+        self._mp3_seek_reload_pending: bool = False
+        self._mp3_seek_target: float = 0.0
+        self._mp3_seek_was_playing: bool = False
 
     @staticmethod
     def format_time(seconds):
@@ -324,6 +329,8 @@ class Player(QObject):
         self._is_vt_file_switch = False
         self._last_vt_chapter = -1
         self._last_nonvt_chapter = -1
+        self._play_target = None
+        self._mp3_seek_reload_pending = False
         # Clear cached mpv state so stale values from previous book can't leak
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
@@ -332,6 +339,7 @@ class Player(QObject):
         QThreadPool.globalInstance().start(_ResolveWorker())
 
     def _on_playlist_resolved(self, play_target, chapters_file):
+        self._play_target = play_target
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             try:
@@ -376,6 +384,12 @@ class Player(QObject):
                 return
             self.chapter_changed.emit(int(value))
     def _on_file_loaded(self, event):
+        if self._mp3_seek_reload_pending:
+            self._mp3_seek_reload_pending = False
+            self._is_seeking = False
+            self._seek_target = None
+            self.instance.pause = not self._mp3_seek_was_playing
+            return
         if self._pending_local_pos is not None:
             pending = self._pending_local_pos
             self._pending_local_pos = None
@@ -458,6 +472,18 @@ class Player(QObject):
                 return i
         return 0
 
+    def _mp3_stop_and_load(self, target_pos: float) -> None:
+        """Reload single MP3 at target_pos to avoid VBR stream-scan latency on long seeks."""
+        was_playing = not self._cached_pause
+        self._mp3_seek_reload_pending = True
+        self._mp3_seek_was_playing = was_playing
+        self._eof = False
+        self._is_seeking = True
+        self._seek_target = target_pos
+        self._cached_time_pos = target_pos
+        self.instance.pause = True
+        self.instance.command('loadfile', self._play_target, 'replace', '0', f'start={target_pos}')
+
     def seek_async(self, pos: float) -> None:
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
         if not self.instance:
@@ -478,6 +504,11 @@ class Player(QObject):
                 self._is_vt_file_switch = True
                 self.instance.play(target_file['file_path'])
         else:
+            if (self._play_target is not None
+                    and self._play_target.lower().endswith('.mp3')
+                    and abs(pos - (self._cached_time_pos or 0.0)) > _MP3_SEEK_THRESHOLD):
+                self._mp3_stop_and_load(pos)
+                return
             self.instance.command_async('seek', pos, 'absolute+exact')
             self._eof = False
             self.is_seeking = True
