@@ -1638,6 +1638,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             def _write():
                 try:
                     self.db.write_session(
+                        book_id=book.id,
                         book_path=book.path,
                         book_title=book.title,
                         book_author=book.author,
@@ -1936,7 +1937,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 pos = dur
                 self._set_play_icon("restart")
                 if not self._eof_event_written and self._current_book is not None: #Temporary
-                    self.db.write_book_event(self._current_book.path, 'finished')      #Temporary
+                    self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)      #Temporary
                     self._eof_event_written = True #Temporary
                     self._close_session()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():

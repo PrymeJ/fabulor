@@ -1642,6 +1642,7 @@ class StatsPanel(QWidget):
             self._month_finished_section.hide()
 
     def _on_tab_changed(self, index: int):
+        self._invalidate_period_cache()
         if self.tabs.tabText(index) == "Overall":
             self.refresh_overall()
         elif self.tabs.tabText(index) == "Day":

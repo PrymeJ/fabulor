@@ -422,7 +422,7 @@ class BookDetailPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        tags = self.db.get_book_tags(self._book_path)
+        tags = self.db.get_book_tags(self._book_data['id'])
         tag_colors = {t: self.db.get_tag_color(t) for t in tags}
         for tag in tags:
             chip = QWidget()
@@ -488,7 +488,7 @@ class BookDetailPanel(QWidget):
     def _do_tag_suggestions(self):
         text = self._tag_input.text().strip()
         if text and self._book_path:
-            suggestions = self.db.get_tag_suggestions(text, self._book_path)
+            suggestions = self.db.get_tag_suggestions(text, self._book_data['id'])
             self._tag_completer_model.setStringList(suggestions)
             self._style_completer_popup()
         else:
@@ -502,7 +502,7 @@ class BookDetailPanel(QWidget):
         tag = self._tag_input.text().strip().lower()
         if not tag or not self._book_path:
             return
-        added = self.db.add_book_tag(self._book_path, tag)
+        added = self.db.add_book_tag(self._book_path, tag, book_id=self._book_data['id'])
         if added:
             self._tag_completer_model.setStringList([])
             self._tag_input.clear()
@@ -515,7 +515,7 @@ class BookDetailPanel(QWidget):
 
     def _on_remove_tag(self, tag: str):
         if self._book_path:
-            self.db.remove_book_tag(self._book_path, tag)
+            self.db.remove_book_tag(self._book_data['id'], tag)
             self._rebuild_tag_chips()
             self.tags_changed.emit()
 
@@ -869,7 +869,7 @@ class BookDetailPanel(QWidget):
         if not self._book_path:
             return
         day_start = self.config.get_day_start_hour()
-        stats = self.db.get_book_stats(self._book_path, day_start)
+        stats = self.db.get_book_stats(self._book_data['id'], day_start)
         duration = self._book_data.get('duration')
         if not duration:
             book = self.db.get_book(self._book_path)
@@ -898,7 +898,7 @@ class BookDetailPanel(QWidget):
         self._stat_labels[1].setText(self._fmt(stats['total_seconds']))
         self._stat_labels[2].setText(str(stats['session_count']))
 
-        sessions = self.db.get_book_sessions(self._book_path)
+        sessions = self.db.get_book_sessions(self._book_data['id'])
 
         has_history = bool(sessions)
         self._history_header.setVisible(has_history)
@@ -949,7 +949,7 @@ class BookDetailPanel(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             if self._book_path:
-                self.db.delete_book_stats(self._book_path)
+                self.db.delete_book_stats(self._book_data['id'], self._book_path)
                 self._refresh_stats()
                 self.history_deleted.emit()
 

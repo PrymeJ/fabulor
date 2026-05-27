@@ -137,6 +137,37 @@ class LibraryDB:
                 )
             """)
 
+            # Migrate: add book_id FK columns to session/event/tag tables
+            ls_cols = {row[1] for row in conn.execute("PRAGMA table_info(listening_sessions)").fetchall()}
+            if "book_id" not in ls_cols:
+                conn.execute("ALTER TABLE listening_sessions ADD COLUMN book_id INTEGER REFERENCES books(id)")
+                conn.execute("""
+                    UPDATE listening_sessions
+                    SET book_id = (SELECT id FROM books WHERE books.path = listening_sessions.book_path)
+                    WHERE book_id IS NULL
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_book_id ON listening_sessions (book_id)")
+
+            be_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_events)").fetchall()}
+            if "book_id" not in be_cols:
+                conn.execute("ALTER TABLE book_events ADD COLUMN book_id INTEGER REFERENCES books(id)")
+                conn.execute("""
+                    UPDATE book_events
+                    SET book_id = (SELECT id FROM books WHERE books.path = book_events.book_path)
+                    WHERE book_id IS NULL
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_book_id ON book_events (book_id)")
+
+            bt_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_tags)").fetchall()}
+            if "book_id" not in bt_cols:
+                conn.execute("ALTER TABLE book_tags ADD COLUMN book_id INTEGER REFERENCES books(id)")
+                conn.execute("""
+                    UPDATE book_tags
+                    SET book_id = (SELECT id FROM books WHERE books.path = book_tags.book_path)
+                    WHERE book_id IS NULL
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_book_tags_book_id ON book_tags (book_id)")
+
             # Migrate: add is_deleted column if absent
             col_names = {row[1] for row in conn.execute("PRAGMA table_info(books)").fetchall()}
             if "is_deleted" not in col_names:
@@ -383,17 +414,18 @@ class LibraryDB:
 
     def write_session(self, book_path, book_title, book_author, book_duration,
                       session_start, session_end, position_start, position_end,
-                      furthest_position, listened_seconds):
+                      furthest_position, listened_seconds, book_id: int | None = None):
         """Inserts one listening session row."""
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO listening_sessions
-                    (book_path, book_title, book_author, book_duration,
+                    (book_id, book_path, book_title, book_author, book_duration,
                      session_start, session_end,
                      position_start, position_end, furthest_position,
                      listened_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
+                book_id,
                 str(book_path) if book_path else None,
                 book_title,
                 book_author,
@@ -425,18 +457,18 @@ class LibraryDB:
                     b.is_excluded,
                     MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
-                     WHERE ls2.book_path = ls.book_path
+                     WHERE ls2.book_id = ls.book_id
                      AND strftime('%Y-%m-%d', datetime(ls2.session_start, ?)) = ?
                      ORDER BY ls2.session_start ASC LIMIT 1) as period_position_start,
                     (SELECT ls2.position_end FROM listening_sessions ls2
-                     WHERE ls2.book_path = ls.book_path
+                     WHERE ls2.book_id = ls.book_id
                      AND strftime('%Y-%m-%d', datetime(ls2.session_start, ?)) = ?
                      ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
-                LEFT JOIN books b ON ls.book_path = b.path
-                LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
+                LEFT JOIN books b ON ls.book_id = b.id
+                LEFT JOIN book_events be ON ls.book_id = be.book_id AND be.event_type = 'finished'
                 WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
-                GROUP BY ls.book_path
+                GROUP BY ls.book_id
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
             """, (offset, date_str, offset, date_str, offset, date_str)).fetchall()
         return [dict(r) for r in rows]
@@ -493,17 +525,18 @@ class LibraryDB:
             cursor = conn.execute(
                 "SELECT"
                 "  strftime(?, datetime(session_start, ?)) AS period,"
+                "  book_id,"
                 "  book_path,"
                 "  book_title,"
                 "  SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) AS seconds"
                 " FROM listening_sessions"
-                " GROUP BY period, book_path"
+                " GROUP BY period, book_id"
                 " ORDER BY period DESC, seconds DESC",
                 (fmt, offset)
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_book_stats(self, book_path: str, day_start_hour: int) -> dict:
+    def get_book_stats(self, book_id: int, day_start_hour: int) -> dict:
         with self._get_conn() as conn:
             agg = conn.execute("""
                 SELECT
@@ -513,24 +546,24 @@ class LibraryDB:
                     MIN(session_start) as first_session,
                     MAX(session_end) as last_session
                 FROM listening_sessions
-                WHERE book_path = ?
-            """, (book_path,)).fetchone()
+                WHERE book_id = ?
+            """, (book_id,)).fetchone()
 
             per_day = conn.execute("""
                 SELECT
                     strftime('%Y-%m-%d', datetime(session_start, ?)) as date,
                     SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as seconds
                 FROM listening_sessions
-                WHERE book_path = ?
+                WHERE book_id = ?
                 GROUP BY date
                 ORDER BY date ASC
-            """, (f'-{day_start_hour} hours', book_path)).fetchall()
+            """, (f'-{day_start_hour} hours', book_id)).fetchall()
 
             finished = conn.execute("""
                 SELECT COUNT(*) as n, MAX(event_time) as last_finished
                 FROM book_events
-                WHERE book_path = ? AND event_type = 'finished'
-            """, (book_path,)).fetchone()
+                WHERE book_id = ? AND event_type = 'finished'
+            """, (book_id,)).fetchone()
 
         return {
             'furthest_position': agg['furthest_position'] or 0.0,
@@ -559,7 +592,7 @@ class LibraryDB:
                     COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds,
                     ls.session_start
                 FROM listening_sessions ls
-                LEFT JOIN books b ON ls.book_path = b.path
+                LEFT JOIN books b ON ls.book_id = b.id
                 ORDER BY seconds DESC
                 LIMIT 1
             """).fetchone()
@@ -569,7 +602,7 @@ class LibraryDB:
                     COALESCE(ls.listened_seconds, (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds,
                     ls.session_start
                 FROM listening_sessions ls
-                LEFT JOIN books b ON ls.book_path = b.path
+                LEFT JOIN books b ON ls.book_id = b.id
                 ORDER BY ls.session_start DESC
                 LIMIT 1
             """).fetchone()
@@ -642,18 +675,18 @@ class LibraryDB:
                     b.is_excluded,
                     MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
-                     WHERE ls2.book_path = ls.book_path
+                     WHERE ls2.book_id = ls.book_id
                      AND strftime(?, datetime(ls2.session_start, ?)) = ?
                      ORDER BY ls2.session_start ASC LIMIT 1) as period_position_start,
                     (SELECT ls2.position_end FROM listening_sessions ls2
-                     WHERE ls2.book_path = ls.book_path
+                     WHERE ls2.book_id = ls.book_id
                      AND strftime(?, datetime(ls2.session_start, ?)) = ?
                      ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
-                LEFT JOIN books b ON ls.book_path = b.path
-                LEFT JOIN book_events be ON ls.book_path = be.book_path AND be.event_type = 'finished'
+                LEFT JOIN books b ON ls.book_id = b.id
+                LEFT JOIN book_events be ON ls.book_id = be.book_id AND be.event_type = 'finished'
                 WHERE strftime(?, datetime(ls.session_start, ?)) = ?
-                GROUP BY ls.book_path
+                GROUP BY ls.book_id
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
             """, (fmt, offset, period_label, fmt, offset, period_label, fmt, offset, period_label)).fetchall()
         return [dict(r) for r in rows]
@@ -667,7 +700,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
-                    b.id AS book_id,
+                    be.book_id,
                     be.book_path,
                     be.event_time,
                     b.cover_path,
@@ -676,10 +709,10 @@ class LibraryDB:
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
-                LEFT JOIN books b ON be.book_path = b.path
+                LEFT JOIN books b ON be.book_id = b.id
                 WHERE be.event_type = 'finished'
                 AND strftime(?, datetime(be.event_time, ?)) = ?
-                GROUP BY be.book_path
+                GROUP BY be.book_id
                 ORDER BY be.event_time DESC
             """, (fmt, offset, period_label)).fetchall()
         return [dict(r) for r in rows]
@@ -689,7 +722,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
-                    b.id AS book_id,
+                    be.book_id,
                     be.book_path,
                     MAX(be.event_time) as event_time,
                     b.cover_path,
@@ -698,21 +731,20 @@ class LibraryDB:
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
-                LEFT JOIN books b ON be.book_path = b.path
+                LEFT JOIN books b ON be.book_id = b.id
                 WHERE be.event_type = 'finished'
-                GROUP BY be.book_path
+                GROUP BY be.book_id
                 ORDER BY event_time DESC
                 LIMIT ?
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
     
-    #Temporary
-    def write_book_event(self, book_path: str, event_type: str):
+    def write_book_event(self, book_path: str, event_type: str, book_id: int | None = None):
         with self._get_conn() as conn:
             conn.execute("""
-                INSERT INTO book_events (book_path, event_type, event_time)
-                VALUES (?, ?, ?)
-            """, (book_path, event_type, datetime.now().isoformat()))
+                INSERT INTO book_events (book_id, book_path, event_type, event_time)
+                VALUES (?, ?, ?, ?)
+            """, (book_id, book_path, event_type, datetime.now().isoformat()))
 
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
@@ -721,7 +753,7 @@ class LibraryDB:
             conn.execute("DELETE FROM book_events")
             conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
 
-    def get_book_sessions(self, book_path: str) -> list[dict]:
+    def get_book_sessions(self, book_id: int) -> list[dict]:
         """Returns individual sessions for a book, newest first."""
         with self._get_conn() as conn:
             rows = conn.execute("""
@@ -733,16 +765,16 @@ class LibraryDB:
                     position_start,
                     position_end
                 FROM listening_sessions
-                WHERE book_path = ?
+                WHERE book_id = ?
                 ORDER BY session_start DESC
-            """, (book_path,)).fetchall()
+            """, (book_id,)).fetchall()
         return [dict(r) for r in rows]
 
-    def delete_book_stats(self, book_path: str):
-        """Deletes all session and event rows for a specific book path."""
+    def delete_book_stats(self, book_id: int, book_path: str):
+        """Deletes all session and event rows for a specific book."""
         with self._get_conn() as conn:
-            conn.execute("DELETE FROM listening_sessions WHERE book_path = ?", (book_path,))
-            conn.execute("DELETE FROM book_events WHERE book_path = ?", (book_path,))
+            conn.execute("DELETE FROM listening_sessions WHERE book_id = ?", (book_id,))
+            conn.execute("DELETE FROM book_events WHERE book_id = ?", (book_id,))
             conn.execute(
                 "UPDATE books SET started_at = NULL, finished_at = NULL WHERE path = ?",
                 (book_path,)
@@ -802,15 +834,15 @@ class LibraryDB:
         except Exception:
             return False
 
-    def get_book_tags(self, book_path: str) -> list[str]:
+    def get_book_tags(self, book_id: int) -> list[str]:
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT tag FROM book_tags WHERE book_path=? ORDER BY tag",
-                (book_path,)
+                "SELECT tag FROM book_tags WHERE book_id=? ORDER BY tag",
+                (book_id,)
             ).fetchall()
         return [r[0] for r in rows]
 
-    def add_book_tag(self, book_path: str, tag: str) -> bool:
+    def add_book_tag(self, book_path: str, tag: str, book_id: int | None = None) -> bool:
         """Returns False if tag already exists on this book, per-book limit reached, or global tag limit reached."""
         tag = tag.strip().lower()[:20]
         if not tag:
@@ -834,8 +866,8 @@ class LibraryDB:
                     return False
             try:
                 conn.execute(
-                    "INSERT INTO book_tags (book_path, tag) VALUES (?, ?)",
-                    (book_path, tag)
+                    "INSERT INTO book_tags (book_id, book_path, tag) VALUES (?, ?, ?)",
+                    (book_id, book_path, tag)
                 )
                 conn.execute(
                     "INSERT OR IGNORE INTO tags (name) VALUES (?)",
@@ -845,11 +877,11 @@ class LibraryDB:
             except Exception:
                 return False  # UNIQUE constraint hit
 
-    def remove_book_tag(self, book_path: str, tag: str) -> None:
+    def remove_book_tag(self, book_id: int, tag: str) -> None:
         with self._get_conn() as conn:
             conn.execute(
-                "DELETE FROM book_tags WHERE book_path=? AND tag=?",
-                (book_path, tag)
+                "DELETE FROM book_tags WHERE book_id=? AND tag=?",
+                (book_id, tag)
             )
 
     def get_hourly_heatmap(self, n_days: int = 14) -> list[dict]:
@@ -872,7 +904,7 @@ class LibraryDB:
                     COALESCE(ls.listened_seconds,
                         (julianday(ls.session_end) - julianday(ls.session_start)) * 86400) as seconds
                 FROM listening_sessions ls
-                LEFT JOIN books b ON ls.book_path = b.path
+                LEFT JOIN books b ON ls.book_id = b.id
                 WHERE strftime('%Y-%m-%d', ls.session_start) IN (
                     SELECT DISTINCT strftime('%Y-%m-%d', session_start)
                     FROM listening_sessions
@@ -959,7 +991,7 @@ class LibraryDB:
             rows = conn.execute(
                 """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path, b.is_deleted, b.is_excluded
                 FROM books b
-                JOIN book_tags t ON b.path = t.book_path
+                JOIN book_tags t ON b.id = t.book_id
                 WHERE t.tag = ?
                 ORDER BY b.title""",
                 (tag,)
@@ -998,16 +1030,16 @@ class LibraryDB:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(DISTINCT tag) FROM book_tags").fetchone()[0]
 
-    def get_tag_suggestions(self, prefix: str, book_path: str) -> list[str]:
+    def get_tag_suggestions(self, prefix: str, book_id: int) -> list[str]:
         with self._get_conn() as conn:
             rows = conn.execute(
                 """SELECT DISTINCT tag FROM book_tags
                 WHERE tag LIKE ?
                 AND tag NOT IN (
-                    SELECT tag FROM book_tags WHERE book_path=?
+                    SELECT tag FROM book_tags WHERE book_id=?
                 )
                 ORDER BY tag LIMIT 10""",
-                (f"{prefix.lower()}%", book_path)
+                (f"{prefix.lower()}%", book_id)
             ).fetchall()
         return [r[0] for r in rows]
 

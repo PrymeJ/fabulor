@@ -730,7 +730,10 @@ class TagManagerWidget(QWidget):
 
     def _on_book_removed(self, path: str):
         if self._current_tag:
-            self.db.remove_book_tag(path, self._current_tag)
+            book = self.db.get_book(path)
+            if book is None:
+                return
+            self.db.remove_book_tag(book.id, self._current_tag)
             remaining = self.db.get_books_by_tag(self._current_tag)
             if not remaining:
                 self.db.delete_tag(self._current_tag)
