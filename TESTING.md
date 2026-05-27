@@ -176,6 +176,13 @@
 - [x] Choosing Smart rewind does not dismiss panel
 - [x] Left clicking on the panel does not dismiss the panel
 
+### Smart rewind sub-button visibility
+- [ ] Panel opens with smart rewind Off: duration buttons (10, 20, 30) not visible
+- [ ] Panel opens with smart rewind On: duration buttons visible with correct value selected
+- [ ] Clicking Off: duration buttons hide immediately
+- [ ] Clicking 5, 30, or 60: duration buttons appear with previously saved duration selected
+- [ ] Close panel, reopen: visibility state matches current smart rewind wait setting
+
 ## Sleep panel
 
 - [x] Sleep button in sidebar opens panel
@@ -527,6 +534,20 @@
 - [ ] Cover order (sort_order) is preserved across restarts
 - [ ] Deleting a cover removes it from DB and thumbnail strip; active falls back to next available
 - [ ] Switching to another book and back restores the correct cover state for each book
+
+## Persist search filter (Settings → Library)
+
+- [ ] Master Off by default on fresh install
+- [ ] Clicking On: Tag, Text, Year sub-buttons appear, all selected
+- [ ] Clicking On when all three sub-buttons were previously Off: sub-buttons reset to all On
+- [ ] Clicking Off: sub-buttons hide immediately
+- [ ] Close settings, reopen: sub-button visibility matches master state
+- [ ] All three sub-buttons toggled Off, panel closed and reopened: master shows Off, sub-buttons hidden
+- [ ] With master On and Tag enabled: tag filter (#tag) in search field persists across restart
+- [ ] With master On and Text enabled: plain text filter persists across restart
+- [ ] With master On and Year enabled: year filter (>NNNN) persists across restart
+- [ ] With master On but Tag disabled: tag filter not restored on restart
+- [ ] With master Off: search field always empty on launch regardless of previous filter
 
 ## Saving states
 
