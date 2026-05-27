@@ -140,9 +140,11 @@ class SpeedControlsPanel(QWidget):
             self.smart_wait_buttons[val] = btn
         smart_buttons_row.addStretch()
 
+        _rewind_on = self.config.get_smart_rewind_wait() > 0
         for val in [10, 20, 30]:
             btn = QPushButton(str(val))
             btn.setObjectName("pattern_button")
+            btn.setVisible(_rewind_on)
             btn.clicked.connect(lambda _, v=val: self._update_smart_rewind_duration(v))
             smart_buttons_row.addWidget(btn)
             self.smart_dur_buttons[val] = btn
@@ -172,8 +174,17 @@ class SpeedControlsPanel(QWidget):
 
     def _update_skip_mode(self, val): self.config.set_skip_duration(val); self.update_visuals(); self.skip_duration_changed.emit(val)
     def _update_long_skip_mode(self, val): self.config.set_long_skip_duration(val); self.update_visuals()
-    def _update_smart_rewind_mode(self, val): self.config.set_smart_rewind_wait(val); self._validate_smart_rewind_settings(finalize=False)
+    def _update_smart_rewind_mode(self, val):
+        self.config.set_smart_rewind_wait(val)
+        for btn in self.smart_dur_buttons.values():
+            btn.setVisible(val > 0)
+        self._validate_smart_rewind_settings(finalize=False)
     def _update_smart_rewind_duration(self, val): self.config.set_smart_rewind_duration(val); self._validate_smart_rewind_settings(finalize=False)
+
+    def sync_smart_rewind_visuals(self):
+        on = self.config.get_smart_rewind_wait() > 0
+        for btn in self.smart_dur_buttons.values():
+            btn.setVisible(on)
 
     def _validate_smart_rewind_settings(self, finalize=False):
         wait = self.config.get_smart_rewind_wait()

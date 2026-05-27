@@ -190,6 +190,7 @@ class PanelManager:
 
     def _start_speed_entry(self):
         """Starts the speed panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        self.main_window.speed_panel.sync_smart_rewind_visuals()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.speed_panel.setFixedWidth(panel_w)
