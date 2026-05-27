@@ -269,11 +269,11 @@ class Config:
     def set_persist_filter_enabled(self, enabled: bool):
         self.settings.setValue("persist_filter_enabled", str(enabled).lower())
 
-    def get_persist_filter_tags(self) -> bool:
-        return self.settings.value("persist_filter_tags", "true") == "true"
+    def get_persist_filter_tag(self) -> bool:
+        return self.settings.value("persist_filter_tag", "true") == "true"
 
-    def set_persist_filter_tags(self, enabled: bool):
-        self.settings.setValue("persist_filter_tags", str(enabled).lower())
+    def set_persist_filter_tag(self, enabled: bool):
+        self.settings.setValue("persist_filter_tag", str(enabled).lower())
 
     def get_persist_filter_text(self) -> bool:
         return self.settings.value("persist_filter_text", "true") == "true"

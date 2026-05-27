@@ -1234,14 +1234,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         persist_row.addStretch()
 
         if self.config.get_persist_filter_enabled() and not any([
-            self.config.get_persist_filter_tags(),
+            self.config.get_persist_filter_tag(),
             self.config.get_persist_filter_text(),
             self.config.get_persist_filter_year(),
         ]):
             self.config.set_persist_filter_enabled(False)
         _master_on = self.config.get_persist_filter_enabled()
         self.persist_filter_sub_buttons = {}
-        for key, label in [("tags", "Tags"), ("text", "Text"), ("year", "Year")]:
+        for key, label in [("tag", "Tag"), ("text", "Text"), ("year", "Year")]:
             btn = QPushButton(label)
             btn.setObjectName("pattern_button")
             btn.setVisible(_master_on)
@@ -1365,7 +1365,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not hasattr(self, 'persist_filter_sub_buttons'):
             return
         if self.config.get_persist_filter_enabled() and not any([
-            self.config.get_persist_filter_tags(),
+            self.config.get_persist_filter_tag(),
             self.config.get_persist_filter_text(),
             self.config.get_persist_filter_year(),
         ]):
@@ -1379,11 +1379,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if enabled:
             # If all three sub-keys are False, reset them all to True before enabling
             if not any([
-                self.config.get_persist_filter_tags(),
+                self.config.get_persist_filter_tag(),
                 self.config.get_persist_filter_text(),
                 self.config.get_persist_filter_year(),
             ]):
-                self.config.set_persist_filter_tags(True)
+                self.config.set_persist_filter_tag(True)
                 self.config.set_persist_filter_text(True)
                 self.config.set_persist_filter_year(True)
         self.config.set_persist_filter_enabled(enabled)
@@ -1392,10 +1392,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_persist_filter_visuals()
 
     def _on_persist_filter_sub(self, key: str):
-        getters = {"tags": self.config.get_persist_filter_tags,
+        getters = {"tag": self.config.get_persist_filter_tag,
                    "text": self.config.get_persist_filter_text,
                    "year": self.config.get_persist_filter_year}
-        setters = {"tags": self.config.set_persist_filter_tags,
+        setters = {"tag": self.config.set_persist_filter_tag,
                    "text": self.config.set_persist_filter_text,
                    "year": self.config.set_persist_filter_year}
         setters[key](not getters[key]())
@@ -1408,7 +1408,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.setProperty("selected", "true" if bool(val) == enabled else "false")
             btn.style().unpolish(btn); btn.style().polish(btn)
         sub_states = {
-            "tags": self.config.get_persist_filter_tags(),
+            "tag": self.config.get_persist_filter_tag(),
             "text": self.config.get_persist_filter_text(),
             "year": self.config.get_persist_filter_year(),
         }
@@ -1437,7 +1437,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         kind = self._classify_filter(text)
         allowed = (
-            (kind == 'tag' and self.config.get_persist_filter_tags()) or
+            (kind == 'tag' and self.config.get_persist_filter_tag()) or
             (kind == 'year' and self.config.get_persist_filter_year()) or
             (kind == 'text' and self.config.get_persist_filter_text())
         )
