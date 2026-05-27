@@ -187,11 +187,6 @@ class SpeedControlsPanel(QWidget):
             btn.setVisible(on)
 
     def _validate_smart_rewind_settings(self, finalize=False):
-        wait = self.config.get_smart_rewind_wait()
-        dur = self.config.get_smart_rewind_duration()
-        if finalize and ((wait > 0 and dur == 0) or (wait == 0 and dur > 0)):
-            self.config.set_smart_rewind_wait(0)
-            self.config.set_smart_rewind_duration(0)
         self.update_visuals()
 
     def update_visuals(self, theme_name=None):
