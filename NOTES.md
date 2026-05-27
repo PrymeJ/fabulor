@@ -1,4 +1,12 @@
 
+## Deferred: drop deprecated `book_path` columns from session/event/tag tables (2026-05-28)
+
+`listening_sessions`, `book_events`, and `book_tags` retain `book_path TEXT` columns that are no longer written or queried — kept for now to allow easy rollback. When ready to drop: a single migration pass in `_create_tables` using `PRAGMA table_info` + `CREATE TABLE … AS SELECT` (SQLite doesn't support `DROP COLUMN` below 3.35; check version or use the full table-rebuild pattern). No logic changes required — all query paths already use `book_id`.
+
+## Deferred: migrate `book_files` to `book_id` FK (2026-05-28)
+
+`book_files` still uses `book_path TEXT` as its composite primary key `(book_path, file_path)`. Migrate this when VT (virtual timeline) is next being actively worked on — the table is internal to the VT/scanner path and the change is isolated there.
+
 ## `get_listening_time_per_period` — orphaned sessions collapse under NULL book_id (2026-05-27)
 
 `get_listening_time_per_period` groups by `period, book_id` and selects `book_path` alongside it. For rows where `book_id IS NULL` (sessions whose book path had no match in `books` during the migration backfill, or sessions written before the migration), SQLite treats all NULLs as equal in GROUP BY, so multiple orphaned books collapse into a single row. The `book_path` column in that row will be whichever path SQLite happens to pick from the group — not reliable.
