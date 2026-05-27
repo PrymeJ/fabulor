@@ -213,7 +213,8 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 - Library tab: naming pattern, folder management, chapter source (Embedded / .cue)
 
 ### Session Recording
-- DB: `listening_sessions`, `book_events` tables. WAL mode. Composite index on `(book_path, session_start)`.
+- DB: `listening_sessions`, `book_events` tables. WAL mode. Index on `book_id`.
+- `listening_sessions`, `book_events`, and `book_tags` use `book_id INTEGER REFERENCES books(id)` as their book FK. `book_path` columns are retained but deprecated — not written or queried, not dropped. Orphaned rows (path no longer in `books`) keep `book_id = NULL` and still surface in stats via LEFT JOIN.
 - `_close_session()` → `_current_book = db.get_book()` → `_open_session()` — order critical
 - 60s wall-clock threshold, 3min pause timeout, 15s seek credit
 - `started_at`, `finished_at` on books table

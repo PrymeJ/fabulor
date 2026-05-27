@@ -1,4 +1,12 @@
 
+## `get_listening_time_per_period` — orphaned sessions collapse under NULL book_id (2026-05-27)
+
+`get_listening_time_per_period` groups by `period, book_id` and selects `book_path` alongside it. For rows where `book_id IS NULL` (sessions whose book path had no match in `books` during the migration backfill, or sessions written before the migration), SQLite treats all NULLs as equal in GROUP BY, so multiple orphaned books collapse into a single row. The `book_path` column in that row will be whichever path SQLite happens to pick from the group — not reliable.
+
+This was already a degenerate case: before the migration, `book_path` was the key and orphaned sessions were at least grouped correctly per path. After migration, correctness depends on the backfill having matched all paths. In practice, all in-library sessions (including for `is_deleted=1` books) are backfilled correctly because `books.id` still exists. Only sessions for paths that were hard-deleted from the `books` table (which the app never does) would have `book_id = NULL`.
+
+**Consequence:** `get_listening_time_per_period` results are only consumed by the stats heatmap (`get_hourly_heatmap` is separate). Low impact. No fix planned; document for awareness.
+
 ## `ContextIconMenu` — `self.window()` returns the menu itself under Popup window type (2026-05-27)
 
 `ContextIconMenu` uses `Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint`. Under this window type, `self.window()` returns the widget itself — not the top-level application window — because Popup creates a new top-level window in Qt's hierarchy. Using `self.window().width()` / `.height()` for position clamping therefore clamps against the menu's own 126×36px bounds, not the app window. Fix: use `QApplication.activeWindow()` instead. Guard against `None` (returns `None` when the app is not focused or during shutdown).
