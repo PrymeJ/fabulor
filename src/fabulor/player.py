@@ -699,6 +699,8 @@ class Player(QObject):
                 return target
 
     def next_chapter(self):
+        if self._eof:
+            return
         if self._virtual_timeline is not None and self._chapter_list:
             curr_time = self.time_pos or 0
             curr_chap = 0
@@ -721,15 +723,12 @@ class Player(QObject):
             for i, chap in enumerate(chap_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
+            if not chap_list or curr_chap >= len(chap_list) - 1:
+                return
             next_chap = curr_chap + 1
-            if next_chap < len(chap_list):
-                target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
-                self.seek_async(target)
-                return target
-            else:
-                target = self._book_duration or self.duration or 0
-                self.seek_async(target)
-                return target
+            target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+            self.seek_async(target)
+            return target
 
     def seek_within_chapter(self, fraction: float):
         """
@@ -737,6 +736,8 @@ class Player(QObject):
         fraction is 0.0-1.0.
         """
         if not self.instance or not self.duration:
+            return
+        if self._eof:
             return
 
         if self._virtual_timeline is not None and self._chapter_list:

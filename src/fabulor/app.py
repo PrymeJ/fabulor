@@ -2543,7 +2543,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
-        if self.player:
+        if self.player and not self.player.eof_reached:
             old_pos = self.player.time_pos
             speed = self.player.speed or 1.0
             if long_skip:
