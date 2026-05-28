@@ -38,6 +38,7 @@ except ImportError:
 # the VT chapter walk in _on_time_pos_change, and _sync_chapter_ui in app.py.
 _CHAPTER_BOUNDARY_EPSILON = 0.35
 _MP3_SEEK_THRESHOLD: float = 60.0  # long seeks on single VBR MP3 use stop-and-load
+_VT_MP3_SIZE_THRESHOLD: int = 40 * 1024 * 1024  # 40 MB — VT files above this use stop-and-load
 
 class Player(QObject):
     chapter_changed = Signal(int)
@@ -475,8 +476,13 @@ class Player(QObject):
                 return i
         return 0
 
-    def _mp3_stop_and_load(self, target_pos: float) -> None:
-        """Reload single MP3 at target_pos to avoid VBR stream-scan latency on long seeks."""
+    def _mp3_stop_and_load(self, target_pos: float, file_path: str | None = None, local_pos: float | None = None) -> None:
+        """Reload MP3 at target_pos to avoid VBR stream-scan latency on long seeks.
+
+        For single-file books, file_path/local_pos are None and target_pos is global == local.
+        For VT same-file seeks, file_path is the VT file and local_pos is the offset within it;
+        target_pos remains the global position so _cached_time_pos drives correct UI display.
+        """
         was_playing = not self._cached_pause
         self._mp3_seek_reload_pending = True
         self._mp3_seek_was_playing = was_playing
@@ -485,8 +491,10 @@ class Player(QObject):
         self._seek_target = target_pos
         self._cached_time_pos = target_pos
         self._mp3_seek_visual_lock = True
+        load_path = file_path if file_path is not None else self._play_target
+        start_pos = local_pos if local_pos is not None else target_pos
         self.instance.pause = True
-        self.instance.command('loadfile', self._play_target, 'replace', '0', f'start={target_pos}')
+        self.instance.command('loadfile', load_path, 'replace', '0', f'start={start_pos}')
 
     def seek_async(self, pos: float) -> None:
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
@@ -500,6 +508,11 @@ class Player(QObject):
             self.is_seeking = True
             self._seek_target = pos
             if target_idx == self._current_vt_index:
+                if (target_file['file_path'].lower().endswith('.mp3')
+                        and abs(local_pos - ((self._cached_time_pos or 0.0) - self._file_offset)) > _MP3_SEEK_THRESHOLD
+                        and os.path.getsize(target_file['file_path']) > _VT_MP3_SIZE_THRESHOLD):
+                    self._mp3_stop_and_load(pos, file_path=target_file['file_path'], local_pos=local_pos)
+                    return
                 self.instance.command_async('seek', local_pos, 'absolute+exact')
             else:
                 self._pending_local_pos = local_pos
