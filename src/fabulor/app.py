@@ -1565,6 +1565,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_percentage_label.setVisible(visible)
         self.chapter_preview_label.setVisible(visible)
 
+    def _set_chapter_ui_active(self, active):
+        """Make chapter widgets interactive and visible, or ghosted (transparent, no interaction).
+        Layout is never affected — widgets stay in place regardless of active state."""
+        slider = self.chapter_progress_slider
+        if active:
+            slider.bg_color = QColor("transparent")  # will be overridden by QSS repolish
+            slider.fill_color = QColor("transparent")
+            slider.style().unpolish(slider)
+            slider.style().polish(slider)
+            slider.update()
+            slider.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+            slider.setCursor(Qt.PointingHandCursor)
+            for lbl in (self.current_chapter_label, self.chap_elapsed_label,
+                        self.chap_duration_label):
+                lbl.setStyleSheet("")
+        else:
+            slider.bg_color = QColor("transparent")
+            slider.fill_color = QColor("transparent")
+            slider.update()
+            slider.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            for lbl in (self.current_chapter_label, self.chap_elapsed_label,
+                        self.chap_duration_label):
+                lbl.setStyleSheet("color: transparent;")
+            self.current_chapter_label.setCursor(Qt.ArrowCursor)
+            self._chapter_label_clickable = False
+
     def _save_current_progress(self):
         """Saves the current playback position to both DB and Config."""
         if self.current_file and self.player.is_initialized:
@@ -1758,9 +1784,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
+                self._set_chapter_ui_active(True)
             else:
                 self.chapter_list_widget.clear()
                 self.progress_slider.set_markers([])
+                self._set_chapter_ui_active(False)
+                self._prev_chap_title = ""
+                self._next_chap_title = ""
+                self._clear_preview()
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
