@@ -707,15 +707,11 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
-            next_chap = curr_chap + 1
-            if next_chap < len(self._chapter_list):
-                target = self._chapter_list[next_chap].get('time', 0)
-                self.seek_async(target)
-                return target
-            else:
-                target = self._book_duration or self.duration or 0
-                self.seek_async(target)
-                return target
+            if curr_chap >= len(self._chapter_list) - 1:
+                return
+            target = self._chapter_list[curr_chap + 1].get('time', 0)
+            self.seek_async(target)
+            return target
         else:
             chap_list = self.chapter_list or []
             curr_time = self.time_pos or 0
