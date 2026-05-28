@@ -80,6 +80,35 @@
 - [ ] After switching books, previous book's chapter label does not bleed through
 - [ ] Rapid book switch (VT → any): newly selected book's progress slider shows correct position, not 0% (regression: signal accumulation in load_book could cause handler to run twice, resetting progress)
 
+## Single MP3 — stop-and-load seek (VBR fast positioning)
+
+### Long seek (> 60s threshold — triggers reload)
+- [ ] Seek forward > 60s on a large single MP3: lands near target position quickly (no stream-scan freeze)
+- [ ] Seek backward > 60s: lands near target, no freeze
+- [ ] Progress slider shows correct position after reload completes
+- [ ] Chapter label correct after reload (no stale value from pre-seek position)
+- [ ] Time labels (elapsed, remaining) correct after reload
+
+### Playback state restore
+- [ ] Seek > 60s while playing: playback resumes automatically after reload
+- [ ] Seek > 60s while paused: stays paused after reload (play button shows ▶, not ⏸)
+- [ ] Smart rewind fires correctly on resume after a reload seek (if configured)
+
+### Short seek (< 60s threshold — normal seek_async path)
+- [ ] Seek < 60s while playing: uses normal async seek, no file reload, no disruption
+- [ ] Seek < 60s while paused: uses normal async seek, stays paused
+
+### Play/pause button during rapid slider drags
+- [ ] Rapid slider clicks (multiple long seeks in quick succession) while playing: button does not flicker between ▶ and ⏸
+- [ ] Space bar press during or immediately after rapid slider clicks: button ends up in the correct final state
+- [ ] Rapid slider clicks while paused: button consistently shows ▶ throughout, does not flash ⏸
+
+### Non-regression (other formats must be unaffected)
+- [ ] M4B seek (any distance): visual lock never activates, button behaves as before
+- [ ] Multi-file MP3 folder (VT book): VT seek path used, stop-and-load not triggered
+- [ ] CUE book seek: normal path, no change
+- [ ] FLAC book seek: normal path, no change
+
 ## Cover art theme fade
 
 - [ ] Switching book while cover art theme active: progress sliders snap instantly, no morph
