@@ -743,7 +743,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_duration_label.setFixedHeight(24)
         self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
-        self.chap_duration_label.setCursor(Qt.PointingHandCursor)
 
         self.current_chapter_label = ScrollingLabel("")
         self.current_chapter_label.setObjectName("chapter_selector")
@@ -1577,6 +1576,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             slider.update()
             slider.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             slider.setCursor(Qt.PointingHandCursor)
+            self.chap_duration_label.setCursor(Qt.PointingHandCursor)
             for lbl in (self.current_chapter_label, self.chap_elapsed_label,
                         self.chap_duration_label):
                 lbl.setStyleSheet("")
@@ -1589,6 +1589,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.chap_duration_label):
                 lbl.setStyleSheet("color: transparent;")
             self.current_chapter_label.setCursor(Qt.ArrowCursor)
+            self.chap_duration_label.setCursor(Qt.ArrowCursor)
             self._chapter_label_clickable = False
 
     def _save_current_progress(self):
