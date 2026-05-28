@@ -18,6 +18,12 @@
 - [ ] Chapter Navigation: Auto-play setting respected after digit jump
 - [x] End of the file Play button turns into Restart
 - [x] End of the file logic correct
+- [ ] EOF: >> (skip forward) button does nothing — no state change, no Play button appearing
+- [ ] EOF: >| (next chapter) button does nothing — no state change, no Play button appearing
+- [ ] EOF: chapter slider drag seeks within last chapter and turns Restart into Play
+- [ ] EOF: chapter slider mouse wheel seeks within last chapter and turns Restart into Play (regression check — was already working)
+- [ ] EOF: >| on last chapter of a multi-chapter book (not yet at EOF) — returns early, no seek, no corruption
+- [ ] EOF: rapid >| clicks on last chapter — no freeze, no state corruption
 - [x] Speed button left click opens menu
 - [x] Speed-adjusted time calculations (Elapsed/Total change with speed)
 - [x] Speed button right click increases speed || hold right click ?
@@ -79,6 +85,17 @@
 - [ ] Switch VT → M4B → VT: all three states correct independently
 - [ ] After switching books, previous book's chapter label does not bleed through
 - [ ] Rapid book switch (VT → any): newly selected book's progress slider shows correct position, not 0% (regression: signal accumulation in load_book could cause handler to run twice, resetting progress)
+
+## Books without chapters (chapterless)
+
+- [ ] Chapter slider is invisible — no visual trace, layout unchanged (no pixel shift on surrounding elements)
+- [ ] Chapter slider area does not show a hand cursor on hover
+- [ ] Clicking where the chapter slider is has no effect
+- [ ] Chapter label, elapsed and duration labels are invisible — no text visible, no cursor change on hover
+- [ ] Chapter duration label shows no hand cursor (was unconditionally set in build; now ghosted)
+- [ ] Prev/next chapter hover hints do not show a stale chapter name from the previously loaded book
+- [ ] Switching from a chaptered book to a chapterless book: chapter UI ghosts, no layout shift
+- [ ] Switching from a chapterless book back to a chaptered book: chapter UI restores fully, slider interactive, labels visible, hand cursors correct
 
 ## Single MP3 — stop-and-load seek (VBR fast positioning)
 

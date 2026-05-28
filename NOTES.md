@@ -1,4 +1,16 @@
 
+## `seek_within_chapter` has no EOF guard — intentional (2026-05-28)
+
+`seek_within_chapter` does not guard on `self._eof`. An EOF guard was added and removed in the same session. The reason: `seek_async` clears `_eof` internally, so any positional seek correctly transitions out of EOF state. Mouse wheel on the chapter slider already worked at EOF for this reason. Click/drag on the chapter slider must behave the same way. The EOF guard belongs on directional advances (`next_chapter`, `handle_forward`) that should be inert once EOF is reached — not on positional seeks that the user explicitly initiates.
+
+## `next_chapter` last-chapter boundary — no fallback to `_book_duration` (2026-05-28)
+
+Both VT and non-VT branches of `next_chapter` now return early when `curr_chap >= len(chap_list) - 1`. The old `else: seek to _book_duration or duration` fallback is gone. For non-VT: seeking past the last chapter caused state corruption on rapid >| clicks. For VT: EOF is reached naturally when the last file finishes playing — forcing a seek to `_book_duration` was redundant and wrong. If `next_chapter` is ever touched again, do not restore the `_book_duration` fallback.
+
+## `chap_duration_label` cursor owned by `_set_chapter_ui_active` (2026-05-28)
+
+`chap_duration_label.setCursor(Qt.PointingHandCursor)` was set unconditionally in `_build_secondary_controls`. It was moved to `_set_chapter_ui_active` so the cursor state is managed alongside the chapter UI active/inactive toggle. Active: `PointingHandCursor`. Inactive (no chapters): `ArrowCursor`. If `_build_secondary_controls` is ever refactored, do not re-add the unconditional cursor set there.
+
 ## Deferred: drop deprecated `book_path` columns from session/event/tag tables (2026-05-28)
 
 `listening_sessions`, `book_events`, and `book_tags` retain `book_path TEXT` columns that are no longer written or queried — kept for now to allow easy rollback. When ready to drop: a single migration pass in `_create_tables` using `PRAGMA table_info` + `CREATE TABLE … AS SELECT` (SQLite doesn't support `DROP COLUMN` below 3.35; check version or use the full table-rebuild pattern). No logic changes required — all query paths already use `book_id`.
