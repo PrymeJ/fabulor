@@ -733,8 +733,6 @@ class Player(QObject):
         """
         if not self.instance or not self.duration:
             return
-        if self._eof:
-            return
 
         if self._virtual_timeline is not None and self._chapter_list:
             curr_time = self.time_pos or 0
