@@ -116,8 +116,10 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 - Property caching: `time_pos`, `duration`, `pause`, `speed` cached via observe_property
 - Async seeking: `Player.seek_async(pos)` uses `command_async('seek', pos, 'absolute+exact')`
   - All UI-driven seeks (slider, chapter, right-click, undo, VT cross-file, chapter nav) use `seek_async`
-  - Smart rewind, skip buttons, position restore remain on sync `time_pos =` path
+  - Smart rewind also uses `seek_async` (unified 2026-05-28 — was `time_pos =` on non-VT, now consistent)
+  - Skip buttons, position restore remain on sync `time_pos =` path
   - Chapter navigation always uses position-based walk + `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)` — never `self.chapter = idx`
+- Stop-and-load seek for single VBR MP3 files: `seek_async` intercepts seeks > `_MP3_SEEK_THRESHOLD` (60s) on single `.mp3` files and calls `_mp3_stop_and_load()` instead of `command_async`. Uses `loadfile start=X` which positions via the Xing/TOC header rather than stream scanning. Playback state restored in `_on_file_loaded` early-return block. `book_ready` is NOT re-emitted during reload. `_mp3_seek_visual_lock` suppresses play/pause icon flicker during the reload window. VT, M4B, and CUE paths are unaffected.
 - `_CHAPTER_BOUNDARY_EPSILON = 0.35` — compensates for mpv's ~23ms undershoot at chapter boundaries and float drift in mpv's internal boundary representation. Lives at seek time, not save time.
 - Chapter changed signal path: `seek_async` emits `chapter_changed` immediately on seek (optimistic, for paused case). `_on_time_pos_change` has VT and non-VT walk blocks for natural playback transitions. `_on_chapter_change` (mpv native) suppressed when `_is_seeking` or `_chapter_list is not None`.
 - Per-book speed memory, global speed default, volume control
@@ -276,7 +278,7 @@ Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no
 - **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Cover monochrome, metadata read-only, Cover+Tags tabs hidden — deferred to Session 7.
 - **Session recording gaps (fully deferred):**
   - VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions across VT files.
-  - Sleep timer — sleep feature also prevents session recording during the sleep window. Both gaps deferred until single large MP3 handling is resolved; they share the same root cause area.
+  - Sleep timer — sleep feature prevents session recording during the sleep window. Deferred.
 - **`path_to_index()`** is in `library.py` (`LibraryPanel`, not `BookModel`).
 - **VT open issues (multi-file MP3) — fully deferred:**
   - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.

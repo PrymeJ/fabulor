@@ -347,7 +347,7 @@ Property caching (added 2026-05-14)
 time_pos, duration, pause, speed are all cached via observe_property callbacks and served from _cached_time_pos, _cached_duration, _cached_pause, _cached_speed. Reads never cross the IPC boundary. Setters still write to self.instance — the observer fires and updates the cache automatically.
 
 Seeking — async path (added 2026-05-14)
-Player.seek_async(pos) uses command_async('seek', pos, 'absolute+exact') — non-blocking, returns immediately. This is the correct method for all UI-driven seeks (slider, chapter slider, right-click snap, undo, and all VT cross-file seeks). apply_smart_rewind and book-load position restore remain on the sync time_pos = path.
+Player.seek_async(pos) uses command_async('seek', pos, 'absolute+exact') — non-blocking, returns immediately. This is the correct method for all UI-driven seeks (slider, chapter slider, right-click snap, undo, all VT cross-file seeks, and apply_smart_rewind). Book-load position restore remains on the sync time_pos = path. For single .mp3 files, seek_async intercepts seeks > 60s and calls _mp3_stop_and_load() instead (loadfile start= via Xing/TOC header, avoids VBR stream scan). Short seeks and all non-MP3 formats fall through to command_async as before.
 seek_within_chapter returns the computed new_pos (float) on success, None on early exit. Callers use this value directly — never read time_pos back after a seek.
 is_seeking is cleared in _on_time_pos_change when the observed position arrives within 1.0s of _seek_target. It is NOT cleared in the 200ms polling loop.
 

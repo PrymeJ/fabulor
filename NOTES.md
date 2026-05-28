@@ -173,9 +173,28 @@ Without it, libmpv's internal threads outlive Qt's cleanup, causing a crash in `
 - All four hot-path properties (`time_pos`, `duration`, `pause`, `speed`) cached via `observe_property` — reads no longer cross the IPC boundary.
 - `is_seeking` clearance moved into `_on_time_pos_change` observer (fires when mpv delivers the settled position) — removed from the 200ms polling loop where it fired prematurely.
 
-**What is intentionally left on sync path:** `apply_smart_rewind`, skip buttons, chapter nav, book-load position restore. Not slider-driven, not the problem path.
+**What is intentionally left on sync path:** Skip buttons, book-load position restore. Not slider-driven, not the problem path. `apply_smart_rewind` was also left on sync initially but was unified to `seek_async` on 2026-05-28.
 
 **`_seek_target = None` edge case:** If `seek_async` is called and `_seek_target` is `None` when the observer fires, `is_seeking` still clears (the `_seek_target is None` branch). This is safe — it means no target was set, so any position qualifies as settled. The edge case that previously caused 228% progress was from an earlier implementation that used `_seek_target` in the flow-animation path; that code was removed.
+
+---
+
+## Single VBR MP3 seek lag — RESOLVED (2026-05-28)
+
+**Root cause:** `absolute+exact` seeks in VBR MP3 files require mpv to scan forward through the compressed bitstream to locate the target frame. For large files or long seeks, this scan takes 1–30 seconds. This is a libmpv/VBR constraint — no seek flag avoids it for stream-based seeking.
+
+**Fix:** `seek_async` intercepts seeks above `_MP3_SEEK_THRESHOLD` (60s) on single `.mp3` files (`_play_target.endswith('.mp3')` and `_virtual_timeline is None`) and calls `_mp3_stop_and_load(target_pos)` instead. This issues `loadfile … start={target_pos}` which positions via the Xing/TOC header (byte offset from TOC fraction) — approximate but fast.
+
+**State machine:**
+1. `_mp3_stop_and_load`: sets `_mp3_seek_reload_pending`, `_mp3_seek_visual_lock`, pauses mpv, issues `loadfile`.
+2. `_on_file_loaded` early-return block: clears `_mp3_seek_reload_pending`, clears `_is_seeking`, restores pause state, clears `_mp3_seek_visual_lock`, returns without emitting `book_ready`.
+3. `_set_play_icon` in app.py: returns early while `mp3_seek_visual_lock` is True — prevents play/pause icon flicker during the reload window.
+
+**Why not `loadfile start=` for all seeks?** Short seeks on VBR MP3 are fast (mpv's seek is a forward scan from a nearby keyframe). The 60s threshold avoids unnecessary file reloads on short seeks where `absolute+exact` is fine. The threshold is a module constant (`_MP3_SEEK_THRESHOLD`) for easy tuning.
+
+**Invariant:** `book_ready` is never re-emitted during a reload seek. The early-return in `_on_file_loaded` skips all existing post-load logic. VT, M4B, CUE books: not `.mp3` or `_virtual_timeline is not None` — intercept never reached.
+
+**Previously attempted (rejected):** `loadfile start=` from `_restore_position` — mpv reported `time_pos=0.0` after `file-loaded` regardless. That was a position-restore context; here we issue `loadfile` with a live player instance that has already loaded the file, which behaves differently.
 
 ---
 
