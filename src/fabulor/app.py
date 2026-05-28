@@ -1985,6 +1985,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _set_play_icon(self, state):
         """Set play_pause_button icon. state: 'play', 'pause', or 'restart'."""
+        if self.player.mp3_seek_visual_lock:
+            return
         icons = {"play": self._icon_play, "pause": self._icon_pause, "restart": self._icon_restart}
         fallback = {"play": "Play", "pause": "Pause", "restart": "Restart"}
         icon = icons[state]

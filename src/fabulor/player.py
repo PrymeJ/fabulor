@@ -79,6 +79,7 @@ class Player(QObject):
         self._mp3_seek_reload_pending: bool = False
         self._mp3_seek_target: float = 0.0
         self._mp3_seek_was_playing: bool = False
+        self._mp3_seek_visual_lock: bool = False
 
     @staticmethod
     def format_time(seconds):
@@ -331,6 +332,7 @@ class Player(QObject):
         self._last_nonvt_chapter = -1
         self._play_target = None
         self._mp3_seek_reload_pending = False
+        self._mp3_seek_visual_lock = False
         # Clear cached mpv state so stale values from previous book can't leak
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
@@ -389,6 +391,7 @@ class Player(QObject):
             self._is_seeking = False
             self._seek_target = None
             self.instance.pause = not self._mp3_seek_was_playing
+            self._mp3_seek_visual_lock = False
             return
         if self._pending_local_pos is not None:
             pending = self._pending_local_pos
@@ -481,6 +484,7 @@ class Player(QObject):
         self._is_seeking = True
         self._seek_target = target_pos
         self._cached_time_pos = target_pos
+        self._mp3_seek_visual_lock = True
         self.instance.pause = True
         self.instance.command('loadfile', self._play_target, 'replace', '0', f'start={target_pos}')
 
@@ -527,6 +531,10 @@ class Player(QObject):
     def is_seeking(self): return self._is_seeking
     @is_seeking.setter
     def is_seeking(self, val): self._is_seeking = val
+
+    @property
+    def mp3_seek_visual_lock(self) -> bool:
+        return self._mp3_seek_visual_lock
 
     @property
     def duration(self):
