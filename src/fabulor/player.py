@@ -502,11 +502,6 @@ class Player(QObject):
         if not self.instance:
             return
         if self._virtual_timeline is not None:
-            if pos >= (self._book_duration or 0) - 1.0:
-                self._eof = True
-                self.instance.pause = True
-                self._cached_time_pos = self._book_duration - self._file_offset
-                return
             target_idx = self._resolve_vt_index(pos)
             target_file = self._virtual_timeline[target_idx]
             local_pos = pos - target_file['cumulative_start']
@@ -523,6 +518,8 @@ class Player(QObject):
                         and not self._mp3_seek_reload_pending):
                     self._mp3_stop_and_load(pos, file_path=target_file['file_path'], local_pos=local_pos)
                     return
+                if target_file['duration'] - local_pos < 2.0:
+                    return  # too close to file end — let natural EOF handle it
                 self.instance.command_async('seek', local_pos, 'absolute+exact')
             else:
                 self._eof = False
@@ -534,6 +531,9 @@ class Player(QObject):
                 self._is_vt_file_switch = True
                 self.instance.play(target_file['file_path'])
         else:
+            dur = self._cached_duration
+            if dur and dur - pos < 2.0:
+                return  # too close to EOF — let natural EOF handle it
             if (self._play_target is not None
                     and self._play_target.lower().endswith('.mp3')
                     and abs(pos - (self._cached_time_pos or 0.0)) > _MP3_SEEK_THRESHOLD
