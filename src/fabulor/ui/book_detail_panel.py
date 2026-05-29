@@ -116,6 +116,7 @@ class BookDetailPanel(QWidget):
         self._is_archived: bool = False
         self._confirming_remove: bool = False
         self._remove_cancel_timer: QTimer | None = None
+        self._delete_history_cancel_timer: QTimer | None = None
         self._context: str = ""
         self._tag_display_tags: list = []
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
@@ -353,6 +354,15 @@ class BookDetailPanel(QWidget):
         outer.addWidget(self._history_session_list)
 
         outer.addStretch()
+
+        self._delete_history_confirm_label = _ClickableLabel("Click to delete all history for this book")
+        self._delete_history_confirm_label.setObjectName("book_detail_confirm_remove")
+        self._delete_history_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._delete_history_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_history_confirm_label.setFixedHeight(28)
+        self._delete_history_confirm_label.clicked.connect(self._on_delete_book_stats_confirmed)
+        self._delete_history_confirm_label.setVisible(False)
+        outer.addWidget(self._delete_history_confirm_label)
 
         self._delete_history_btn = QPushButton("Delete listening history")
         self._delete_history_btn.setObjectName("stats_reset_btn")
@@ -940,18 +950,23 @@ class BookDetailPanel(QWidget):
         self._apply_bar_colors()
 
     def _on_delete_book_stats(self):
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self, "Delete history",
-            f"Delete all listening history for this book? This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            if self._book_path:
-                self.db.delete_book_stats(self._book_data['id'], self._book_path)
-                self._refresh_stats()
-                self.history_deleted.emit()
+        self._delete_history_confirm_label.setVisible(True)
+        if self._delete_history_cancel_timer:
+            self._delete_history_cancel_timer.stop()
+        self._delete_history_cancel_timer = QTimer(self)
+        self._delete_history_cancel_timer.setSingleShot(True)
+        self._delete_history_cancel_timer.timeout.connect(self._cancel_delete_history)
+        self._delete_history_cancel_timer.start(7000)
+
+    def _cancel_delete_history(self):
+        self._delete_history_confirm_label.setVisible(False)
+
+    def _on_delete_book_stats_confirmed(self):
+        self._cancel_delete_history()
+        if self._book_path:
+            self.db.delete_book_stats(self._book_data['id'], self._book_path)
+            self._refresh_stats()
+            self.history_deleted.emit()
 
     def _apply_bar_colors(self):
         from PySide6.QtGui import QColor

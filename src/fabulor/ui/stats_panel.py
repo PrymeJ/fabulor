@@ -1218,10 +1218,23 @@ class StatsPanel(QWidget):
         pref_row.addStretch()
         layout.addLayout(pref_row)
 
-        reset_btn = QPushButton("Reset all stats")
-        reset_btn.setObjectName("stats_reset_btn")
-        reset_btn.clicked.connect(self._on_reset_stats)
-        layout.addWidget(reset_btn)
+        layout.addStretch()
+
+        self._reset_confirm_label = QLabel("Confirm — delete all listening history?")
+        self._reset_confirm_label.setObjectName("book_detail_confirm_remove")
+        self._reset_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._reset_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reset_confirm_label.setFixedHeight(28)
+        self._reset_confirm_label.mousePressEvent = lambda _: self._on_reset_stats_confirmed()
+        self._reset_confirm_label.setVisible(False)
+        layout.addWidget(self._reset_confirm_label)
+
+        self._reset_stats_btn = QPushButton("Reset all stats")
+        self._reset_stats_btn.setObjectName("stats_reset_btn")
+        self._reset_stats_btn.clicked.connect(self._on_reset_stats)
+        layout.addWidget(self._reset_stats_btn)
+
+        self._reset_cancel_timer: QTimer | None = None
 
         return widget
 
@@ -1693,19 +1706,24 @@ class StatsPanel(QWidget):
     # _on_tab_changed fires automatically, which calls _refresh_daily
 
     def _on_reset_stats(self):
-        from PySide6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self, "Reset stats",
-            "Delete all listening history? This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self.db.reset_stats()
-            self.refresh_all()
-            bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
-            if bdp and bdp.isVisible():
-                bdp._refresh_stats()
+        self._reset_confirm_label.setVisible(True)
+        if self._reset_cancel_timer:
+            self._reset_cancel_timer.stop()
+        self._reset_cancel_timer = QTimer(self)
+        self._reset_cancel_timer.setSingleShot(True)
+        self._reset_cancel_timer.timeout.connect(self._cancel_reset_stats)
+        self._reset_cancel_timer.start(7000)
+
+    def _cancel_reset_stats(self):
+        self._reset_confirm_label.setVisible(False)
+
+    def _on_reset_stats_confirmed(self):
+        self._cancel_reset_stats()
+        self.db.reset_stats()
+        self.refresh_all()
+        bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
+        if bdp and bdp.isVisible():
+            bdp._refresh_stats()
 
     def _refresh_time(self):
         rows = self.db.get_hourly_heatmap(n_days=14)
