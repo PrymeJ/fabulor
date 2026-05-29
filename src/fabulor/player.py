@@ -502,6 +502,11 @@ class Player(QObject):
         if not self.instance:
             return
         if self._virtual_timeline is not None:
+            if pos >= (self._book_duration or 0) - 1.0:
+                self._eof = True
+                self.instance.pause = True
+                self._cached_time_pos = self._book_duration - self._file_offset
+                return
             target_idx = self._resolve_vt_index(pos)
             target_file = self._virtual_timeline[target_idx]
             local_pos = pos - target_file['cumulative_start']
