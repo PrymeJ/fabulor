@@ -3,8 +3,6 @@
 # status_banner, sidebar, vol_container
 import os
 import re
-import threading
-from datetime import datetime
 from PySide6.QtWidgets import (
     QLineEdit, QFileDialog, QListWidget,
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
@@ -41,6 +39,7 @@ from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
 from .settings_controller import SettingsController
+from .session_recorder import SessionRecorder
 
 _ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
@@ -258,7 +257,6 @@ class PlayerInterface:
 
 
 class MainWindow(QWidget):  # QWidget, not QMainWindow
-    session_written = Signal()
     naming_pattern_changed = Signal(str)
     scroll_mode_changed = Signal(str)
     hints_mode_changed = Signal(bool)
@@ -305,22 +303,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Session recording
         self._current_book = None
-        self._session_start: datetime | None = None          # wall-clock time of first play
-        self._session_segment_start: datetime | None = None  # wall-clock time of current play segment
-        self._session_listened_seconds: float = 0.0          # accumulated listened time across pauses
-        self._session_position_start: float | None = None
-        self._session_furthest_position: float | None = None
-        self._post_seek_pending_position: float | None = None
-
-        self._session_pause_timer = QTimer(self)
-        self._session_pause_timer.setSingleShot(True)
-        self._session_pause_timer.setInterval(3 * 60 * 1000)  # 3 minutes
-        self._session_pause_timer.timeout.connect(self._close_session)
-
-        self._post_seek_credit_timer = QTimer(self)
-        self._post_seek_credit_timer.setSingleShot(True)
-        self._post_seek_credit_timer.setInterval(15 * 1000)  # 15 seconds
-        self._post_seek_credit_timer.timeout.connect(self._on_seek_credit_earned)
+        self.session_recorder = SessionRecorder(
+            db=self.db,
+            get_position_fn=self._get_current_position,
+            get_book_fn=lambda: self._current_book,
+            parent=self,
+        )
 
         self._mpv_ready = True
         self._pre_switch_slider_value = None
@@ -337,7 +325,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.book_ready.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
         self.player.file_switched.connect(self._on_vt_file_switched, Qt.ConnectionType.QueuedConnection)
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
-        self.session_written.connect(self._on_session_written)
+        self.session_recorder.session_written.connect(self._on_session_written)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
@@ -1446,7 +1434,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Helper for controller when the currently playing folder is removed from library."""
         self.current_file = ""
         self._current_book = None
-        self._close_session()
+        self.session_recorder.close()
         if self.player:
             self.player.terminate()
         self.progress_slider.set_markers([])
@@ -1583,106 +1571,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except (ShutdownError, AttributeError, SystemError):
             return 0.0
 
-    def _open_session(self):
-        """Start a brand-new session (first play after no active session)."""
-        now = datetime.now()
-        pos = self._get_current_position()
-        self._session_start = now
-        self._session_segment_start = now
-        self._session_listened_seconds = 0.0
-        self._session_position_start = pos
-        self._session_furthest_position = pos
-        book = self._current_book
-        dur = book.duration if book else 0
-        pct = (pos / dur * 100) if dur else 0
-        s = int(pos)
-        pos_str = f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
-        print(f"[open_session] book='{book.title if book else '?'}' clock={now.strftime('%H:%M:%S')} pos={pos_str} ({pct:.1f}%)")
-
-    def _resume_session(self):
-        """Resume an existing session after a short pause (< 3 min)."""
-        self._session_segment_start = datetime.now()
-        self._session_pause_timer.stop()
-
-    def _pause_session(self):
-        """Accumulate the current segment's listened time and start the 3-min timer."""
-        if self._session_segment_start is not None:
-            segment = (datetime.now() - self._session_segment_start).total_seconds()
-            self._session_listened_seconds += segment
-            self._session_segment_start = None
-        listened_so_far = self._session_listened_seconds
-        print(f"[pause_session] listened_so_far={listened_so_far/60:.1f}min")
-        self._session_pause_timer.start()
-
-    def _close_session(self):
-
-        self._session_pause_timer.stop()
-        self._post_seek_credit_timer.stop()
-
-        # Flush any in-progress segment (close while playing, not after pause)
-        if self._session_segment_start is not None:
-            segment = (datetime.now() - self._session_segment_start).total_seconds()
-            self._session_listened_seconds += segment
-            self._session_segment_start = None
-
-        listened = self._session_listened_seconds
-        now = datetime.now()
-
-        if listened >= 60 and self._current_book is not None:
-            book = self._current_book
-            start = self._session_start
-            pos_start = self._session_position_start
-            pos_end = max(self._get_current_position(), pos_start)
-            furthest = self._session_furthest_position
-            dur = book.duration if book else 0
-            pct_end = (pos_end / dur * 100) if dur else 0
-            s_start = int(pos_start)
-            s_end = int(pos_end)
-            pos_start_str = f"{s_start//3600:02d}:{(s_start%3600)//60:02d}:{s_start%60:02d}"
-            pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
-            print(f"[close_session] book='{book.title}' {pos_start_str}→{pos_end_str} ({pct_end:.1f}%) listened={listened/60:.1f}min")
-
-            def _write():
-                try:
-                    self.db.write_session(
-                        book_id=book.id,
-                        book_path=book.path,
-                        book_title=book.title,
-                        book_author=book.author,
-                        book_duration=book.duration,
-                        session_start=start,
-                        session_end=now,
-                        position_start=pos_start,
-                        position_end=pos_end,
-                        furthest_position=furthest,
-                        listened_seconds=listened,
-                    )
-                    if not self.db.get_book_started_at(book.path):
-                        self.db.set_started_at(book.path, start)
-                    self.session_written.emit()
-                except Exception:
-                    pass
-
-            threading.Thread(target=_write, daemon=True).start()
-        else:
-            print(f"[close_session] discarded — listened={listened:.0f}s < 60s threshold")
-
-        self._session_start = None
-        self._session_segment_start = None
-        self._session_listened_seconds = 0.0
-        self._session_position_start = None
-        self._session_furthest_position = None
-        self._post_seek_pending_position = None
-
-    def _on_seek_credit_earned(self):
-        if self._post_seek_pending_position is not None:
-            if self._session_furthest_position is not None:
-                self._session_furthest_position = max(
-                    self._session_furthest_position,
-                    self._post_seek_pending_position,
-                )
-        self._post_seek_pending_position = None
-
     def _on_open_tag_manager_from_detail(self) -> None:
         self.panel_manager.hide_all_panels()
         QTimer.singleShot(320, self.panel_manager._open_tags_flow)
@@ -1712,7 +1600,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_saved_pct = -1
         self._eof_dur_fetched = False
         self.current_file = path
-        self._close_session()
+        self.session_recorder.close()
         self.panel_manager.hide_all_panels()
         QTimer.singleShot(0, lambda: (
             self.db.update_last_played(path),
@@ -1913,12 +1801,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             speed = self.player.speed or 1.0
 
             current_time = time.time()
-            if (self._session_start is not None
-                    and self._post_seek_pending_position is None
-                    and self._session_furthest_position is not None
-                    and mpv_pos is not None):
-                if mpv_pos > self._session_furthest_position:
-                    self._session_furthest_position = mpv_pos
+            self.session_recorder.update_furthest_position(mpv_pos)
             is_eof = self.player.eof_reached
 
             # Handle the early return carefully:
@@ -1952,7 +1835,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if not self._eof_event_written and self._current_book is not None:
                     self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)      #Temporary
                     self._eof_event_written = True
-                    self._close_session()
+                    self.session_recorder.close()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
                     self.stats_panel.refresh_overall()
@@ -2158,13 +2041,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if abs(new_pos - old_pos) > 60 * speed:
                     self._trigger_undo(old_pos)
                 self.player.seek_async(new_pos)
-                if self._session_furthest_position is not None:
-                    if new_pos > self._session_furthest_position:
-                        self._post_seek_pending_position = new_pos
-                        self._post_seek_credit_timer.start()
-                    else:
-                        self._post_seek_pending_position = None
-                        self._post_seek_credit_timer.stop()
+                self.session_recorder.notify_seek(new_pos)
                 # Immediately sync for library reactivity
                 self.config.set_last_position(self.current_file, new_pos)
                 if self.library_panel.isVisible():
@@ -2198,10 +2075,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if self.current_file:
                     self.db.update_last_played(self.current_file)
                 self.player.pause = False
-                if self._session_start is None:
-                    self._open_session()
+                if not self.session_recorder.is_active:
+                    self.session_recorder.open()
                 else:
-                    self._resume_session()
+                    self.session_recorder.resume()
         except (ShutdownError, AttributeError, SystemError):
             return
 
@@ -2221,13 +2098,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if abs(new_pos - old_pos) > 60 * speed:
                     self._trigger_undo(old_pos)
 
-                if self._session_furthest_position is not None:
-                    if new_pos > self._session_furthest_position:
-                        self._post_seek_pending_position = new_pos
-                        self._post_seek_credit_timer.start()
-                    else:
-                        self._post_seek_pending_position = None
-                        self._post_seek_credit_timer.stop()
+                self.session_recorder.notify_seek(new_pos)
 
                 self.config.set_last_position(self.current_file, new_pos)
                 if self.library_panel.isVisible():
@@ -2520,7 +2391,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.status_banner.setText("Error: File missing!")
                 self.status_banner.show()
                 return
-            self._close_session()
+            self.session_recorder.close()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
             self._mpv_ready = True
@@ -2538,17 +2409,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
                 self.player.pause = False
                 self.library_panel.set_is_playing(True)
-                if self._session_start is None:
-                    self._open_session()
+                if not self.session_recorder.is_active:
+                    self.session_recorder.open()
                 else:
-                    self._resume_session()
+                    self.session_recorder.resume()
             else:
                 # Pausing
                 self._last_pause_timestamp = time.time()
                 self._save_current_progress()
                 self.player.pause = True
                 self.library_panel.set_is_playing(False)
-                self._pause_session()
+                self.session_recorder.pause()
                 if self.library_panel.isVisible():
                     self.library_panel.update_current_book_progress()
 
@@ -2839,7 +2710,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.scanner._worker_thread.quit()
                 self.scanner._worker_thread.wait()
 
-        self._close_session()
+        self.session_recorder.close()
         event.accept()
 
     def _validate_smart_rewind_settings(self):
