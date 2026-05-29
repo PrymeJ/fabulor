@@ -293,8 +293,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._undo_timer = QTimer(self)
         self._last_saved_pct = -1
         self._last_undo_click_time = 0
-        self._undo_slide_in_connected = False
-        self._undo_slide_out_connected = False
+        self._undo_sliding_in: bool | None = None
         self.audio_tab = None
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
@@ -361,6 +360,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_anim = QPropertyAnimation(self.undo_overlay, b"pos")
         self.undo_anim.setDuration(400)
         self.undo_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.undo_anim.finished.connect(self._on_undo_anim_finished)
 
         QApplication.instance().installEventFilter(self)
 
@@ -2450,8 +2450,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
-            print(f"[handle_forward] old_pos={old_pos:.2f} skip={skip:.2f} new_pos={new_pos:.2f} duration={self.player.duration:.2f}")
-
+            
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
@@ -2496,23 +2495,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _trigger_undo(self, old_pos):
         """Slides in the floating undo button."""
         duration = self.config.get_undo_duration()
-        
-        # Delegate undo point saving logic to Player
+
         if not self.player.save_seek_position(old_pos, duration):
             return
-            
+
         width = self.width()
         overlay_w = 32
         y_pos = 56
         target_x = width - overlay_w
 
-        # Guard 1: If the button is already sliding in, let it finish.
-        # The player logic has already updated the click timestamp to keep it alive.
-        if self.undo_anim.state() == QPropertyAnimation.Running and self._undo_slide_in_connected:
+        # Guard 1: already sliding in — let it finish.
+        if self.undo_anim.state() == QPropertyAnimation.Running and self._undo_sliding_in is True:
             return
 
-        # Guard 2: If the button is already visible and settled at its target, 
-        # just refresh the hide timer.
+        # Guard 2: already visible and settled — just refresh the hide timer.
         if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
             self._undo_timer.stop()
             if duration > 0:
@@ -2520,18 +2516,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._undo_timer.stop()
-
         self.undo_anim.stop()
-        if self._undo_slide_out_connected:
-            self.undo_anim.finished.disconnect(self.undo_overlay.hide)
-            self._undo_slide_out_connected = False
-        if self._undo_slide_in_connected:
-            self.undo_anim.finished.disconnect(self._on_undo_slide_in_done)
-            self._undo_slide_in_connected = False
-
-        if self.undo_overlay.isVisible() and self.undo_overlay.x() == target_x:
-            self._undo_timer.start(duration * 1000)
-            return
+        self._undo_sliding_in = None
 
         self.undo_overlay.move(width, y_pos)
         self.undo_overlay.show()
@@ -2539,15 +2525,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.undo_anim.setStartValue(QPoint(width, y_pos))
         self.undo_anim.setEndValue(QPoint(target_x, y_pos))
-        self.undo_anim.finished.connect(self._on_undo_slide_in_done)
-        self._undo_slide_in_connected = True
+        self._undo_sliding_in = True
         self.undo_anim.start()
 
+    def _on_undo_anim_finished(self):
+        """Single dispatcher for undo_anim.finished. Replaces manual connect/disconnect."""
+        if self._undo_sliding_in is True:
+            self._undo_sliding_in = None
+            self._on_undo_slide_in_done()
+        elif self._undo_sliding_in is False:
+            self._undo_sliding_in = None
+            self.undo_overlay.hide()
+
     def _on_undo_slide_in_done(self):
-        self._undo_slide_in_connected = False
         duration = self.config.get_undo_duration()
         if duration > 0:
-            self._undo_timer.start(duration * 1000)    
+            self._undo_timer.start(duration * 1000)
 
     def _perform_undo(self):
         """Seeks back and slides the button out."""
@@ -2560,21 +2553,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._undo_pos = None
-        width = self.width() # Keep for UI animation
-        self.undo_anim.stop()
-        if self._undo_slide_in_connected:
-            self.undo_anim.finished.disconnect(self._on_undo_slide_in_done)
-            self._undo_slide_in_connected = False
-        if self._undo_slide_out_connected:
-            self.undo_anim.finished.disconnect(self.undo_overlay.hide)
-            self._undo_slide_out_connected = False
-
+        width = self.width()
         overlay_w = 32
         y_pos = 56
+
+        self.undo_anim.stop()
+        self._undo_sliding_in = None
+
         self.undo_anim.setStartValue(QPoint(width - overlay_w, y_pos))
         self.undo_anim.setEndValue(QPoint(width, y_pos))
-        self.undo_anim.finished.connect(self.undo_overlay.hide)
-        self._undo_slide_out_connected = True
+        self._undo_sliding_in = False
         self.undo_anim.start()
 
     def wheelEvent(self, event):
