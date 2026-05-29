@@ -1418,32 +1418,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.setProperty("selected", "true" if sub_states[key] else "false")
             btn.style().unpolish(btn); btn.style().polish(btn)
 
-    @staticmethod
-    def _classify_filter(text: str):
-        """Returns 'tag', 'year', or 'text' for a non-empty search string."""
-        if text.startswith('#'):
-            return 'tag'
-        if (text.startswith('>') and text[1:].isdigit()) or \
-           (text.startswith('<') and text[1:].isdigit()) or \
-           re.fullmatch(r'[<>]\d+[<>]\d+', text):
-            return 'year'
-        return 'text'
-
-    def _save_search_filter(self):
-        if not self.config.get_persist_filter_enabled():
-            return
-        text = self.library_panel.search_field.text()
-        if not text:
-            self.config.settings.setValue("persisted_filter", "")
-            return
-        kind = self._classify_filter(text)
-        allowed = (
-            (kind == 'tag' and self.config.get_persist_filter_tag()) or
-            (kind == 'year' and self.config.get_persist_filter_year()) or
-            (kind == 'text' and self.config.get_persist_filter_text())
-        )
-        self.config.settings.setValue("persisted_filter", text if allowed else "")
-
     def _on_sleep_timer_started(self):
         self.sleep_trigger_btn.setText("SLEEP")
         self.sleep_cancel_btn.show()
@@ -2851,7 +2825,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.stop()
         self.quote_timer.stop()
         self._undo_timer.stop()
-        self._save_search_filter()
+        self.library_panel.save_search_filter()
         if self.player:
             self.config.set_volume(self.volume_slider.value())
             if self.current_file:

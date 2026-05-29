@@ -538,6 +538,34 @@ class LibraryPanel(QFrame):
             self.search_field.setStyleSheet("")
         QTimer.singleShot(0, self._load_visible_covers)
 
+    @staticmethod
+    def _classify_filter(text: str):
+        """Returns 'tag', 'year', or 'text' for a non-empty search string."""
+        import re
+        if text.startswith('#'):
+            return 'tag'
+        if (text.startswith('>') and text[1:].isdigit()) or \
+           (text.startswith('<') and text[1:].isdigit()) or \
+           re.fullmatch(r'[<>]\d+[<>]\d+', text):
+            return 'year'
+        return 'text'
+
+    def save_search_filter(self):
+        """Persist the current search field text to config on app close."""
+        if not self.config.get_persist_filter_enabled():
+            return
+        text = self.search_field.text()
+        if not text:
+            self.config.settings.setValue("persisted_filter", "")
+            return
+        kind = self._classify_filter(text)
+        allowed = (
+            (kind == 'tag' and self.config.get_persist_filter_tag()) or
+            (kind == 'year' and self.config.get_persist_filter_year()) or
+            (kind == 'text' and self.config.get_persist_filter_text())
+        )
+        self.config.settings.setValue("persisted_filter", text if allowed else "")
+
     # ── Live progress ────────────────────────────────────────────────────────
 
     def update_current_book_progress(self):
