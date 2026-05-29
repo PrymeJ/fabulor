@@ -345,6 +345,8 @@ class ThemeManager(QObject):
                 target.setStyleSheet(ss_stats)
         if hasattr(mw, 'sidebar'):
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
+        if hasattr(mw, '_set_chapter_ui_active'):
+            mw._set_chapter_ui_active(mw._chapter_ui_active)
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""

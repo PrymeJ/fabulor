@@ -280,6 +280,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._cover_fit_mode = 'fit'
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
+        self._chapter_ui_active = True
         self.current_file = ""
         self.config = Config()
         self.db = LibraryDB()
@@ -1567,6 +1568,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _set_chapter_ui_active(self, active):
         """Make chapter widgets interactive and visible, or ghosted (transparent, no interaction).
         Layout is never affected — widgets stay in place regardless of active state."""
+        self._chapter_ui_active = active
         slider = self.chapter_progress_slider
         if active:
             slider.bg_color = QColor("transparent")  # will be overridden by QSS repolish
