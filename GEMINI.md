@@ -348,6 +348,9 @@ time_pos, duration, pause, speed are all cached via observe_property callbacks a
 
 Seeking — async path (added 2026-05-14)
 Player.seek_async(pos) uses command_async('seek', pos, 'absolute+exact') — non-blocking, returns immediately. This is the correct method for all UI-driven seeks (slider, chapter slider, right-click snap, undo, all VT cross-file seeks, and apply_smart_rewind). Book-load position restore remains on the sync time_pos = path. For single .mp3 files, seek_async intercepts seeks > 60s and calls _mp3_stop_and_load() instead (loadfile start= via Xing/TOC header, avoids VBR stream scan). Short seeks and all non-MP3 formats fall through to command_async as before.
+
+Stop-and-load pattern — VT same-file constraint (added 2026-05-29)
+_mp3_stop_and_load takes optional file_path and local_pos for VT same-file reloads. When called from the VT same-file branch, it must NOT modify _current_vt_index, _file_offset, or _is_vt_file_switch — those fields are exclusively for real file transitions (_advance_or_finish and the different-file branch of seek_async). A same-file stop-and-load is not a file switch: the VT index and offset are already correct. Touching them would corrupt the VT state machine and cause the next natural file advance to jump to the wrong file. _on_file_loaded early-return on _mp3_seek_reload_pending already handles the reload correctly without any VT state changes.
 seek_within_chapter returns the computed new_pos (float) on success, None on early exit. Callers use this value directly — never read time_pos back after a seek.
 is_seeking is cleared in _on_time_pos_change when the observed position arrives within 1.0s of _seek_target. It is NOT cleared in the 200ms polling loop.
 

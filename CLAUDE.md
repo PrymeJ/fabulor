@@ -69,6 +69,9 @@ The guards `CASE WHEN books.title_locked = 1 THEN excluded.title ELSE updated.ti
 ### DO NOT add separate save/lock widgets to BookDetailPanel
 The metadata action button state is driven exclusively by `_MetaActionState` enum. Do not add `_save_label` or `_lock_btn` widgets — use `_set_meta_state()` to manage appearance.
 
+### DO NOT set cursor or stylesheet on chapter widgets outside `_set_chapter_ui_active`
+`_set_chapter_ui_active(active: bool)` is the sole owner of chapter slider cursor, chapter label stylesheets, and `WA_TransparentForMouseEvents` state. Do not set these directly in `_build_secondary_controls`, theme application, or any other call site. Theme changes repolish child widgets and clear instance stylesheets — `_apply_stylesheets` reapplies the correct state by calling `mw._set_chapter_ui_active(mw._chapter_ui_active)` at its end. The `_chapter_ui_active` flag tracks the logical state and must stay in sync: always route through `_set_chapter_ui_active`, never set flag or widget state separately.
+
 ---
 
 ## Tech Stack
@@ -120,6 +123,9 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - Skip buttons, position restore remain on sync `time_pos =` path
   - Chapter navigation always uses position-based walk + `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)` — never `self.chapter = idx`
 - Stop-and-load seek for single VBR MP3 files: `seek_async` intercepts seeks > `_MP3_SEEK_THRESHOLD` (60s) on single `.mp3` files and calls `_mp3_stop_and_load()` instead of `command_async`. Uses `loadfile start=X` which positions via the Xing/TOC header rather than stream scanning. Playback state restored in `_on_file_loaded` early-return block. `book_ready` is NOT re-emitted during reload. `_mp3_seek_visual_lock` suppresses play/pause icon flicker during the reload window. VT, M4B, and CUE paths are unaffected.
+  - MP3 seek state variables: `_play_target` (resolved file path for current book), `_mp3_seek_reload_pending` (guards `_on_file_loaded` early-return and prevents concurrent reloads), `_mp3_seek_was_playing` (pre-reload pause state for restore), `_mp3_seek_visual_lock` (suppresses icon updates during reload window). All reset in `load_book`.
+  - VT same-file stop-and-load: `_mp3_stop_and_load` takes optional `file_path` and `local_pos`. `_cached_time_pos` must be set to `local_pos` (not global `target_pos`) so the `time_pos` getter (`_file_offset + _cached_time_pos`) returns the correct global value. Setting it to global `target_pos` double-counts `_file_offset`.
+  - Concurrent reload guard: both call sites in `seek_async` include `and not self._mp3_seek_reload_pending`. Stacked `loadfile` calls cause the second `_on_file_loaded` to bypass the early-return and emit `book_ready`, triggering DB position restore.
 - `_CHAPTER_BOUNDARY_EPSILON = 0.35` — compensates for mpv's ~23ms undershoot at chapter boundaries and float drift in mpv's internal boundary representation. Lives at seek time, not save time.
 - Chapter changed signal path: `seek_async` emits `chapter_changed` immediately on seek (optimistic, for paused case). `_on_time_pos_change` has VT and non-VT walk blocks for natural playback transitions. `_on_chapter_change` (mpv native) suppressed when `_is_seeking` or `_chapter_list is not None`.
 - Per-book speed memory, global speed default, volume control

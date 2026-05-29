@@ -1,4 +1,33 @@
 
+## `_cached_time_pos` holds local position for VT books — never set it to global (2026-05-29)
+
+`_cached_time_pos` is the raw value observed from mpv's `time-pos` property. For VT books mpv only knows about the current file, so `_cached_time_pos` is always file-local. The `time_pos` getter adds `_file_offset` to translate to global book position: `return self._file_offset + self._cached_time_pos`.
+
+Consequence: **never assign a global position to `_cached_time_pos` in a VT context**. Doing so causes `time_pos` to return `_file_offset + global_pos`, inflated by exactly `_file_offset`. This was the root cause of the 0% reset bug in VT stop-and-load: `_mp3_stop_and_load` was setting `_cached_time_pos = target_pos` (global), inflating `time_pos` during the reload window, and `handle_forward`/`handle_rewind` were reading that inflated value and seeking to a wrong position.
+
+Correct assignment: `_cached_time_pos = local_pos if local_pos is not None else target_pos`. For single-file calls `local_pos is None` and `target_pos == local_pos`, so no change in behaviour.
+
+## `handle_forward` / `handle_rewind` — two independent guards required (2026-05-29)
+
+Both methods must guard on `not self.player.mp3_seek_reload_pending` **and** check `if old_pos is None: return` after reading `time_pos`. These are separate failure modes:
+
+1. `mp3_seek_reload_pending` guard: prevents entering the method at all while a reload is in flight, which avoids reading a potentially corrupt `time_pos`.
+2. `old_pos is None` guard: `time_pos` can still return `None` during the reload window (mpv observer fires before the property is populated after `loadfile`). `None - skip` in Python raises `TypeError`; historically the code used `(old_pos or 0) - skip` which silently became `0 - skip` and sought to near the start of the book.
+
+Both guards are required. Removing either reintroduces a distinct bug.
+
+## Theme repolish overrides `_set_chapter_ui_active` state — always reapply after theme change (2026-05-29)
+
+`_apply_stylesheets` calls `setStyleSheet` on `content_container`, which triggers a Qt repolish of all child widgets. This clears instance stylesheets and cursor overrides set by `_set_chapter_ui_active(False)` — after a theme change, the chapter UI appeared interactive again for books without chapters.
+
+Fix: `_chapter_ui_active: bool` flag in `app.py` tracks the logical state. `_set_chapter_ui_active` sets the flag. `_apply_stylesheets` calls `mw._set_chapter_ui_active(mw._chapter_ui_active)` at its end to reapply. `_set_chapter_ui_active` is idempotent so repeated calls are safe.
+
+## `_mp3_seek_reload_pending` concurrent reload guard (2026-05-29)
+
+`_mp3_stop_and_load` must not be called while `_mp3_seek_reload_pending` is already `True`. Without this guard, stacked `loadfile` calls cause the second `_on_file_loaded` to go through the normal post-load path instead of the early-return block, emitting `book_ready` and triggering position restore from DB — resetting playback to the saved progress position.
+
+Both call sites in `seek_async` (VT same-file branch and non-VT branch) include `and not self._mp3_seek_reload_pending` in their conditions. If a reload is already in flight the new seek request is silently dropped (normal `command_async` fallthrough still available for the non-VT path if the distance check also fails).
+
 ## `seek_within_chapter` has no EOF guard — intentional (2026-05-28)
 
 `seek_within_chapter` does not guard on `self._eof`. An EOF guard was added and removed in the same session. The reason: `seek_async` clears `_eof` internally, so any positional seek correctly transitions out of EOF state. Mouse wheel on the chapter slider already worked at EOF for this reason. Click/drag on the chapter slider must behave the same way. The EOF guard belongs on directional advances (`next_chapter`, `handle_forward`) that should be inert once EOF is reached — not on positional seeks that the user explicitly initiates.

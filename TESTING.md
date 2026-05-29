@@ -122,9 +122,48 @@
 
 ### Non-regression (other formats must be unaffected)
 - [ ] M4B seek (any distance): visual lock never activates, button behaves as before
-- [ ] Multi-file MP3 folder (VT book): VT seek path used, stop-and-load not triggered
+- [ ] Multi-file MP3 folder (VT book, file < 40MB): VT seek path used, stop-and-load NOT triggered
 - [ ] CUE book seek: normal path, no change
 - [ ] FLAC book seek: normal path, no change
+
+## VT stop-and-load seek (multi-file MP3, file > 40 MB)
+
+### Same-file long seek (triggers reload)
+- [ ] Seek backward > 60s within a large VT MP3 file: lands near target quickly, no stream-scan freeze
+- [ ] Progress slider shows correct global position after reload (not inflated by file offset)
+- [ ] Chapter label correct after reload
+- [ ] Time labels correct after reload
+
+### Playback state restore
+- [ ] Seek > 60s within large VT file while playing: playback resumes after reload
+- [ ] Seek > 60s within large VT file while paused: stays paused, play button shows ▶
+
+### Short seek (< 60s — normal command_async path)
+- [ ] Seek < 60s within large VT file: no reload, no disruption
+
+### EOF and boundary protection
+- [ ] Seek into final 5s of a VT file: uses normal command_async, not stop-and-load
+- [ ] Seek into first 2s of a VT file (local_pos < 2.0): uses normal command_async, not stop-and-load
+- [ ] Seek that crosses a VT file boundary: uses normal VT file-switch path, unaffected by stop-and-load
+
+### Mouse wheel during reload
+- [ ] Mouse wheel over chapter slider during a VT stop-and-load reload: does not trigger a second reload or seek to wrong position (handle_rewind/forward guard)
+- [ ] Skip button press during reload: ignored (mp3_seek_reload_pending guard)
+
+### Concurrent reload guard
+- [ ] Rapid slider drags (multiple long seeks in quick succession) on large VT file: no stacked reloads, no book_ready re-emission, no DB position restore triggered mid-playback
+
+### Non-regression
+- [ ] Single-file MP3 stop-and-load: unaffected by VT changes, behaves as before
+- [ ] VT file with file < 40 MB: no stop-and-load triggered regardless of seek distance
+- [ ] VT file switch (seek crossing file boundary): _current_vt_index, _file_offset, _is_vt_file_switch unchanged by stop-and-load path
+
+## Chapter UI persistence across theme changes
+
+- [ ] Load a book with no chapters: chapter slider transparent, labels transparent, no hand cursor
+- [ ] Change theme (manual, rotation, hover): chapter UI remains ghost after theme change
+- [ ] Load a chaptered book after a chapterless one: chapter UI fully restores (slider active, labels visible, hand cursor)
+- [ ] Change theme while on a chaptered book: chapter UI remains fully interactive after theme change
 
 ## Cover art theme fade
 
