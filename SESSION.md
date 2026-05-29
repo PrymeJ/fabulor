@@ -1,3 +1,48 @@
+# Session Summary — 2026-05-29 Session 4 — Undo animation refactor + long skip / wheel undo
+
+## What changed
+
+### `app.py` — undo animation machinery replaced with single persistent slot
+
+The previous implementation connected and disconnected `undo_anim.finished` to different slots at runtime (`_on_undo_slide_in_done` for slide-in, `undo_overlay.hide` for slide-out), tracked by two boolean flags (`_undo_slide_in_connected`, `_undo_slide_out_connected`). A missed disconnect or wrong flag state could leave a dangling or duplicate connection.
+
+**Fix:** `undo_anim.finished` is now connected exactly once in `__init__` to a single dispatcher `_on_undo_anim_finished`. Direction is tracked by a single `_undo_sliding_in: bool | None` flag (None = not animating, True = sliding in, False = sliding out).
+
+```python
+def _on_undo_anim_finished(self):
+    """Single dispatcher for undo_anim.finished. Replaces manual connect/disconnect."""
+    if self._undo_sliding_in is True:
+        self._undo_sliding_in = None
+        self._on_undo_slide_in_done()
+    elif self._undo_sliding_in is False:
+        self._undo_sliding_in = None
+        self.undo_overlay.hide()
+```
+
+`_trigger_undo` and `_hide_undo_banner` now set `_undo_sliding_in` before `undo_anim.start()` instead of connecting/disconnecting. Both call `undo_anim.stop()` followed by `_undo_sliding_in = None` before reconfiguring the animation — the stop fires `finished` with `_undo_sliding_in = None`, which the dispatcher ignores.
+
+`_on_undo_slide_in_done` is unchanged in body — still starts the hide timer. It is now called by the dispatcher rather than being connected directly to the signal.
+
+The two old boolean flags (`_undo_slide_in_connected`, `_undo_slide_out_connected`) are gone. Zero references remain.
+
+### `app.py` — undo point added to long skip and chapter wheel scroll
+
+Undo was previously triggered only on slider/right-click seeks and chapter nav. Three new call sites:
+
+- **`handle_rewind(long_skip=True)`** — `_trigger_undo(old_pos)` after `seek_async`, inside the `if long_skip:` branch
+- **`handle_forward(long_skip=True)`** — same; the pre-existing `print()` debug line was already absent
+- **`wheelEvent` chapter progress slider branch** — `_trigger_undo(current_pos)` before `seek_async` (consistent with prev/next ordering)
+
+Short skips (regular << and >> button taps) do not set an undo point — the distance is too small to warrant one.
+
+## What was not changed
+
+- `_on_undo_slide_in_done` body is unchanged
+- No other methods modified
+- `undo_anim.finished` has exactly one connection in the file
+
+---
+
 # Session Summary — 2026-05-29 Session 3 — App audit pass and SessionRecorder extraction
 
 ## Overview

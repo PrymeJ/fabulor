@@ -677,6 +677,14 @@
 - [x] Settings: Consistency in button groups (Blur, Fade, Hints, Scroll)
 - [x] Undo button: Sequence logic (anchors to first click during rapid seeking)
 - [x] Undo button: Threshold scales with playback speed (60s * speed)
+- [ ] Undo button: Long rewind (hold << or right-click <<) triggers undo point
+- [ ] Undo button: Long forward (hold >> or right-click >>) triggers undo point
+- [ ] Undo button: Mouse wheel over chapter slider triggers undo point
+- [ ] Undo button: Short skip (<< / >> tap) does NOT trigger undo point
+- [ ] Undo button: Animation — slide-in and slide-out both complete cleanly with no ghost or flicker
+- [ ] Undo button: Triggering undo while already visible refreshes the hide timer (does not restart animation)
+- [ ] Undo button: Triggering undo while slide-in is in progress is ignored (no duplicate animation)
+- [ ] Undo button: Triggering undo while slide-out is in progress: slide-out interrupted, button slides back in
 - [x] Theme rotation: Timer based on interval settings
 
 ## Audio Processing || no effect
