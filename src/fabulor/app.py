@@ -1635,6 +1635,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             segment = (datetime.now() - self._session_segment_start).total_seconds()
             self._session_listened_seconds += segment
             self._session_segment_start = None
+        listened_so_far = self._session_listened_seconds
+        print(f"[pause_session] listened_so_far={listened_so_far/60:.1f}min")
         self._session_pause_timer.start()
 
     def _close_session(self):
@@ -1663,6 +1665,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             s_end = int(pos_end)
             pos_start_str = f"{s_start//3600:02d}:{(s_start%3600)//60:02d}:{s_start%60:02d}"
             pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
+            print(f"[close_session] book='{book.title}' {pos_start_str}→{pos_end_str} ({pct_end:.1f}%) listened={listened/60:.1f}min")
 
             def _write():
                 try:
@@ -1686,6 +1689,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     pass
 
             threading.Thread(target=_write, daemon=True).start()
+        else:
+            print(f"[close_session] discarded — listened={listened:.0f}s < 60s threshold")
 
         self._session_start = None
         self._session_segment_start = None
