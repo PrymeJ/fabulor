@@ -47,9 +47,20 @@ Six audit passes applied as a single branch. All items below confirmed landed.
 
 `book_files` still uses `book_path TEXT` as its composite primary key `(book_path, file_path)`. Migrate when VT is next being actively worked on.
 
-## Deferred: PanelManager patched post-construction — signal connection timing (2026-05-29)
+## Deferred: panel construction and animation sequencing debt — P2-C + P6-A + P6-D (2026-05-29)
 
-`panel_manager` is initialized as `None` in `__init__` and assigned after `_setup_ui()`. Any signal that needs to fire through `panel_manager` before construction completes is currently deferred or guarded with `if self.panel_manager`. This is a construction-order smell. Clean up when panels are next significantly refactored.
+Three fragilities with a shared root. Fix together in one deliberate structural pass — do not touch individually.
+
+**P2-C — PanelManager patched post-construction (low):**
+`PanelManager` is constructed before `_build_book_detail_panel` runs. `panel_manager.book_detail_panel` and `panel_manager.book_detail_panel_animation` are manually patched at lines ~1321–1322 after the fact. `PanelManager` does not own all its panels at construction time. Not broken, but fragile.
+
+**P6-A — `book_ready` two-slot deferred mechanism (medium):**
+`player.book_ready` connects to both `_on_file_ready` and `_on_file_loaded_populate_chapters`. Both check `library_panel._is_animating` and set their own deferred flags (`_file_ready_deferred`, `_chaps_deferred`). `_drain_deferred_file_ready` handles both. The two independent flags are functional but fragile — if one fires but the other fails to drain (e.g. due to a VT file-load ordering race), state is inconsistent.
+
+**P6-D — `QTimer.singleShot(320ms)` in `_on_open_tag_manager_from_detail` (known debt):**
+Line ~1713: `QTimer.singleShot(320, self.panel_manager._open_tags_flow)`. 320ms is a magic number covering the longest panel close animation. The correct fix is an `all_panels_hidden` signal from `PanelManager`, emitted when the last running close animation completes. See NOTES entry "hide_all_panels then open: timer vs signal" for full design.
+
+**Fix trigger:** When mini player mode is built, panel construction order will be rationalized anyway. Fix all three then.
 
 ## Deferred: `_update_pattern_visuals` duplication (2026-05-29)
 
