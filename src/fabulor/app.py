@@ -2436,6 +2436,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = max(0, old_pos - skip)
             self.player.seek_async(new_pos)
+            if long_skip:
+                self._trigger_undo(old_pos)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
@@ -2450,7 +2452,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
-            
+            if long_skip:
+                self._trigger_undo(old_pos)
+
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
         self._clear_preview()
@@ -2624,6 +2628,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 new_pos = min(self.player.duration or 0, current_pos + skip)
             else:
                 new_pos = max(0, current_pos - skip)
+            self._trigger_undo(current_pos)
             self.player.seek_async(new_pos)
             event.accept()
         else:
