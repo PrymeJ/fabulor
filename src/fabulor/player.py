@@ -387,7 +387,6 @@ class Player(QObject):
                 return
             self.chapter_changed.emit(int(value))
     def _on_file_loaded(self, event):
-        print(f"[_on_file_loaded] reload_pending={self._mp3_seek_reload_pending} vt_switch={self._is_vt_file_switch}")
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False

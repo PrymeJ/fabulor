@@ -2749,15 +2749,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._set_speed(new_speed)
             event.accept()
         elif self.chapter_progress_slider.underMouse():
-            if not self.player or not self.current_file: return
+            if not self.player or not self.current_file:
+                return
+            if self.player.mp3_seek_reload_pending:
+                return
             delta = event.angleDelta().y()
-            modifiers = QGuiApplication.keyboardModifiers()
-            long_skip = bool(modifiers & Qt.ShiftModifier)
-            
-            if delta > 0:
-                self.handle_forward(long_skip=long_skip*15)
+            chap_list = self.player.chapter_list or []
+            current_pos = self.player.time_pos
+            if current_pos is None:
+                return
+            if chap_list:
+                curr_chap_idx = 0
+                for i, chap in enumerate(chap_list):
+                    if chap.get('time', 0) <= current_pos + _CHAPTER_BOUNDARY_EPSILON:
+                        curr_chap_idx = i
+                chap_start = chap_list[curr_chap_idx].get('time', 0)
+                if curr_chap_idx + 1 < len(chap_list):
+                    chap_dur = chap_list[curr_chap_idx + 1].get('time', 0) - chap_start
+                else:
+                    chap_dur = (self.player.duration or 0) - chap_start
+                skip = max(10.0, chap_dur * 0.05)
             else:
-                self.handle_rewind(long_skip=long_skip*15)
+                skip = self.config.get_skip_duration()
+            speed = self.player.speed or 1.0
+            skip *= speed
+            if delta > 0:
+                new_pos = min(self.player.duration or 0, current_pos + skip)
+            else:
+                new_pos = max(0, current_pos - skip)
+            self.player.seek_async(new_pos)
             event.accept()
         else:
             super().wheelEvent(event)
