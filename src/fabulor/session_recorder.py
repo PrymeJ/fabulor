@@ -115,8 +115,8 @@ class SessionRecorder(QObject):
                         furthest_position=furthest,
                         listened_seconds=listened,
                     )
-                    if not self._db.get_book_started_at(book.path):
-                        self._db.set_started_at(book.path, start)
+                    if not self._db.get_book_started_at(book.id):
+                        self._db.set_started_at(book.id, start)
                     self.session_written.emit()
                 except Exception:
                     pass

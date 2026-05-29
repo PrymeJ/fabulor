@@ -473,20 +473,20 @@ class LibraryDB:
             """, (offset, date_str, offset, date_str, offset, date_str)).fetchall()
         return [dict(r) for r in rows]
 
-    def set_started_at(self, book_path: str, started_at: datetime):
+    def set_started_at(self, book_id: int, started_at: datetime):
         """Sets started_at only if it has not been set yet."""
         with self._get_conn() as conn:
             conn.execute(
-                "UPDATE books SET started_at = ? WHERE path = ? AND started_at IS NULL",
-                (started_at.isoformat(), str(book_path))
+                "UPDATE books SET started_at = ? WHERE id = ? AND started_at IS NULL",
+                (started_at.isoformat(), book_id)
             )
 
-    def get_book_started_at(self, book_path: str) -> datetime | None:
-        """Returns the started_at datetime for the given path, or None."""
+    def get_book_started_at(self, book_id: int) -> datetime | None:
+        """Returns the started_at datetime for the given book_id, or None."""
         with self._get_conn() as conn:
             cursor = conn.execute(
-                "SELECT started_at FROM books WHERE path = ?",
-                (str(book_path),)
+                "SELECT started_at FROM books WHERE id = ?",
+                (book_id,)
             )
             row = cursor.fetchone()
             if row is None or row["started_at"] is None:
