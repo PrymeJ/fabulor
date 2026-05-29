@@ -2597,6 +2597,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 skip = self.config.get_skip_duration() * speed
             new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
+            print(f"[handle_forward] old_pos={old_pos:.2f} skip={skip:.2f} new_pos={new_pos:.2f} duration={self.player.duration:.2f}")
 
     def _on_prev_right_click(self):
         self.panel_manager.hide_all_panels()
