@@ -300,8 +300,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.audio_tab = None
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
-
-        # Temporary
         self._eof_event_written: bool = False
         self._eof_dur_fetched: bool = False
 
@@ -1977,9 +1975,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if is_eof:
                 pos = dur
                 self._set_play_icon("restart")
-                if not self._eof_event_written and self._current_book is not None: #Temporary
+                if not self._eof_event_written and self._current_book is not None:
                     self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)      #Temporary
-                    self._eof_event_written = True #Temporary
+                    self._eof_event_written = True
                     self._close_session()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
