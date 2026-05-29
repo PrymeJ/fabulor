@@ -538,6 +538,10 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT use inline `convertToFormat(QImage.Format.Format_Grayscale8)` for grayscale conversion. Always use `to_grayscale()` from `cover_loader.py`. Inline conversion loses the alpha channel and turns transparent pixels black.
 
+## DO NOT seek to a position within 2 seconds of a file's duration. mpv hangs silently when seeked that close to EOF — no error, no event, no recovery. Every call to `command_async('seek', ...)` or `loadfile start=X` must include a guard that returns early if `duration - pos < 2.0`. The guards currently live in `seek_async` (player.py): VT same-file branch checks `target_file['duration'] - local_pos < 2.0`; non-VT branch checks `self._cached_duration - pos < 2.0`. If you add any new seek path, the buffer must be present. The stop-and-load path already has a 5s buffer in its own condition.
+
+## DO NOT join `book_events` directly into a query that aggregates `listening_sessions`. The join produces a cartesian product (sessions × finished events per book) before GROUP BY, inflating SUM(listened_seconds) by the finished event count. Always use a correlated scalar subquery for the `is_finished` flag: `(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) FROM book_events be WHERE be.book_id = b.id) as is_finished`. This applies to `get_daily_book_breakdown`, `get_books_listened_in_period`, and any future query with the same shape.
+
 ## DO NOT add a broad `QWidget { background: transparent; }` rule to any panel stylesheet. It overrides named-widget background rules (including the panel root's semi-transparent fill) and makes the entire panel invisible. Always use specific object-name selectors (`QWidget#foo`) when setting transparency on child containers.
 
 ---

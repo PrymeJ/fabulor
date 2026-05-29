@@ -146,6 +146,13 @@
 - [ ] Seek into first 2s of a VT file (local_pos < 2.0): uses normal command_async, not stop-and-load
 - [ ] Seek that crosses a VT file boundary: uses normal VT file-switch path, unaffected by stop-and-load
 
+### Near-EOF seek guard (VT — within 2s of file end)
+- [ ] Skip forward (>>) landing within 2s of current file end: returns early, no hang, no state change, natural EOF fires
+- [ ] Next chapter (>|) targeting a position within 2s of file end: same early-return behaviour
+- [ ] Mouse wheel over chapter slider landing within 2s of file end: same early-return behaviour
+- [ ] Progress slider drag released within 2s of file end: same early-return behaviour
+- [ ] Natural playback through final 2s: mpv hits EOF normally, VT advances to next file (guard only applies to seeks)
+
 ### Mouse wheel during reload
 - [ ] Mouse wheel over chapter slider during a VT stop-and-load reload: does not trigger a second reload or seek to wrong position (handle_rewind/forward guard)
 - [ ] Skip button press during reload: ignored (mp3_seek_reload_pending guard)
@@ -157,6 +164,14 @@
 - [ ] Single-file MP3 stop-and-load: unaffected by VT changes, behaves as before
 - [ ] VT file with file < 40 MB: no stop-and-load triggered regardless of seek distance
 - [ ] VT file switch (seek crossing file boundary): _current_vt_index, _file_offset, _is_vt_file_switch unchanged by stop-and-load path
+
+## Near-EOF seek guard (non-VT: M4B, single MP3, CUE, FLAC)
+
+- [ ] Skip forward (>>) landing within 2s of book end: returns early, no hang, mpv plays out naturally to EOF
+- [ ] Next chapter (>|) on last chapter landing within 2s of end: returns early (last-chapter guard fires first, but EOF guard is backup)
+- [ ] Mouse wheel over chapter slider landing within 2s of end: returns early, no hang
+- [ ] Progress slider drag released within 2s of end: returns early, no hang
+- [ ] Natural playback through final 2s: mpv hits EOF normally — guard only blocks seeks, not playback
 
 ## Chapter UI persistence across theme changes
 

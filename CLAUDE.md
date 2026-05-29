@@ -252,6 +252,12 @@ Must only connect to `book_ready`. `file_loaded` fires on every mpv file load in
 ### DO NOT read `progress_slider.value()` in `_on_file_ready` for animation
 Slider value is stale. Always compute from `int((new_progress / self.player.duration) * 1000)`.
 
+### DO NOT seek to a position within 2 seconds of a file's duration
+mpv hangs silently when seeked within ~2s of EOF — no error, no event, no recovery. Every `command_async('seek', ...)` or `loadfile start=X` call must be preceded by a guard that returns early if `duration - pos < 2.0`. Guards currently live in `seek_async` (player.py): VT same-file branch checks `target_file['duration'] - local_pos < 2.0`; non-VT branch checks `self._cached_duration - pos < 2.0`. The stop-and-load path has its own 5s buffer. If any new seek path is added, the buffer must be present.
+
+### DO NOT join `book_events` directly into a query that aggregates `listening_sessions`
+The join produces a cartesian product (sessions × finished events per book) before GROUP BY, inflating `SUM(listened_seconds)` by the finished event count. Always use a correlated scalar subquery: `(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) FROM book_events be WHERE be.book_id = b.id) as is_finished`. Applies to `get_daily_book_breakdown`, `get_books_listened_in_period`, and any future query with the same shape.
+
 ### DO NOT remove animation-state guards in `_sync_progress_sliders` / `_sync_chapter_ui`
 Both check whether animation is running before setValue. Removing causes jitter from 200ms timer fighting animation.
 

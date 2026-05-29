@@ -1,4 +1,27 @@
 
+## mpv hangs silently on seeks within 2s of file end — buffer required on every seek path (2026-05-29)
+
+Seeking mpv to a position within approximately 2 seconds of a file's `duration` causes it to hang silently — no error, no EOF event, no recovery. The buffer must be present in every seek path that calls `command_async` or `loadfile start=`.
+
+Current guards in `seek_async` (player.py):
+- **VT same-file branch**: `if target_file['duration'] - local_pos < 2.0: return` — placed after the stop-and-load block, before `command_async`.
+- **Non-VT branch**: `if dur and dur - pos < 2.0: return` — placed before the stop-and-load check.
+- **stop-and-load (VT)**: condition already includes `local_pos < target_file['duration'] - 5.0` — covered.
+- **stop-and-load (non-VT)**: `_mp3_stop_and_load` uses `loadfile start=X`; the non-VT guard above fires first and prevents it from being called near EOF.
+
+Do not remove these guards. Do not add a seek path to `command_async` or `loadfile` without including a 2s (minimum) buffer from the file's duration.
+
+## Stats inflation: `LEFT JOIN book_events` before GROUP BY produces cartesian product (2026-05-29)
+
+`get_daily_book_breakdown` and `get_books_listened_in_period` in `db.py` were joining `book_events` before the `GROUP BY`, producing one row per `(session, finished_event)` pair. If a book had N finished events, `SUM(listened_seconds)` was inflated by N. Fixed by replacing the join with a correlated scalar subquery:
+
+```sql
+(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END)
+ FROM book_events be WHERE be.book_id = b.id) as is_finished
+```
+
+Rule: never join `book_events` directly into a query that also aggregates `listening_sessions`. Always use a scalar subquery for the `is_finished` flag.
+
 ## `_cached_time_pos` holds local position for VT books — never set it to global (2026-05-29)
 
 `_cached_time_pos` is the raw value observed from mpv's `time-pos` property. For VT books mpv only knows about the current file, so `_cached_time_pos` is always file-local. The `time_pos` getter adds `_file_offset` to translate to global book position: `return self._file_offset + self._cached_time_pos`.
