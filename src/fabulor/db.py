@@ -455,7 +455,8 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
-                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
+                    (SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END)
+                     FROM book_events be WHERE be.book_id = b.id) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
                      WHERE ls2.book_id = ls.book_id
                      AND strftime('%Y-%m-%d', datetime(ls2.session_start, ?)) = ?
@@ -466,7 +467,6 @@ class LibraryDB:
                      ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_id = b.id
-                LEFT JOIN book_events be ON ls.book_id = be.book_id AND be.event_type = 'finished'
                 WHERE strftime('%Y-%m-%d', datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_id
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
@@ -673,7 +673,8 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
-                    MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) as is_finished,
+                    (SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END)
+                     FROM book_events be WHERE be.book_id = b.id) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
                      WHERE ls2.book_id = ls.book_id
                      AND strftime(?, datetime(ls2.session_start, ?)) = ?
@@ -684,7 +685,6 @@ class LibraryDB:
                      ORDER BY ls2.session_start DESC LIMIT 1) as period_position_end
                 FROM listening_sessions ls
                 LEFT JOIN books b ON ls.book_id = b.id
-                LEFT JOIN book_events be ON ls.book_id = be.book_id AND be.event_type = 'finished'
                 WHERE strftime(?, datetime(ls.session_start, ?)) = ?
                 GROUP BY ls.book_id
                 ORDER BY clock_seconds DESC, COALESCE(book_seconds_advanced, 0) DESC
