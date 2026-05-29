@@ -1,4 +1,5 @@
 import random
+import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject
 from PySide6.QtGui import QFont, QFontMetrics
@@ -224,7 +225,9 @@ class ThemeManager(QObject):
         if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
             self._panel_guard_timer.stop()
             try:
-                self._panel_guard_timer.timeout.disconnect()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    self._panel_guard_timer.timeout.disconnect()
             except (TypeError, RuntimeError):
                 pass
             self._panel_guard_timer.timeout.connect(
