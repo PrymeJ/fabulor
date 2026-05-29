@@ -324,6 +324,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._post_seek_credit_timer.setInterval(15 * 1000)  # 15 seconds
         self._post_seek_credit_timer.timeout.connect(self._on_seek_credit_earned)
 
+        self._mpv_ready = True
+        self._pre_switch_slider_value = None
+        self._pre_switch_chap_slider_value = None
+
         self._setup_ui()
 
         self.ui_timer = QTimer()
@@ -335,6 +339,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.book_ready.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
         self.player.file_switched.connect(self._on_vt_file_switched, Qt.ConnectionType.QueuedConnection)
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
+        self.session_written.connect(self._on_session_written)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
@@ -1337,7 +1342,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
         self.book_detail_panel.tag_filter_requested.connect(self._on_tag_filter_requested)
         self.book_detail_panel.open_tag_manager_requested.connect(self._on_open_tag_manager_from_detail)
-        self.session_written.connect(self._on_session_written)
         self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
         self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
@@ -1419,7 +1423,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     @staticmethod
     def _classify_filter(text: str):
         """Returns 'tag', 'year', or 'text' for a non-empty search string."""
-        import re
         if text.startswith('#'):
             return 'tag'
         if (text.startswith('>') and text[1:].isdigit()) or \
@@ -1839,7 +1842,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_chapter_label_clickability(self):
         """Enable the chapter label as a clickable link only when there are 2+ chapters."""
-        from PySide6.QtCore import Qt
         chaps = self.player.chapter_list or [] if self.player else []
         clickable = len(chaps) >= 2
         self.current_chapter_label.setCursor(
@@ -1981,7 +1983,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self._close_session()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
-                self.stats_panel.refresh_overall()     #Temporary
+                    self.stats_panel.refresh_overall()
                 self._paused_time = None
                 self.progress_slider.setValue(1000)
                 self.current_time_label.setText(self.player.format_time(pos / speed))
@@ -2020,7 +2022,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.update_timer_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
-             self._update_chapter_label_from_index(self.player.chapter or 0)
+            chap_list = self.player.chapter_list
+            pos = self.player.time_pos
+            if pos is not None:
+                curr_chap = 0
+                for i, chap in enumerate(chap_list):
+                    if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
+                        curr_chap = i
+                self._update_chapter_label_from_index(curr_chap)
 
     def _set_play_icon(self, state):
         """Set play_pause_button icon. state: 'play', 'pause', or 'restart'."""
@@ -2171,7 +2180,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if self.player and self.player.duration:
             try:
-                old_pos = self.player.time_pos
+                old_pos = self.player.time_pos or 0.0
                 new_pos = (self.progress_slider.value() / 1000) * self.player.duration
                 speed = self.player.speed or 1.0
                 if abs(new_pos - old_pos) > 60 * speed:
@@ -2196,6 +2205,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_slider_right_clicked(self, ratio):
         """Handler for right-click snapping to chapter notches."""
         if not self.player or not self.player.duration:
+            return
+        if self.player.mp3_seek_reload_pending:
             return
 
         self._hide_popups()
@@ -2229,7 +2240,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if self.player and self.player.duration:
             try:
-                old_pos = self.player.time_pos
+                old_pos = self.player.time_pos or 0.0
                 new_pos = self.player.seek_within_chapter(self.chapter_progress_slider.value() / 1000)
                 if new_pos is None:
                     return
@@ -2474,7 +2485,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 y = (s.height() - target_h) // 2
                 result = s.copy(x, y, target_w, target_h)
             elif fit == 'top':
-                from PySide6.QtGui import QPainter
                 fitted = src.scaled(target_w, 32767,
                                     Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 result = QPixmap(target_w, target_h)
