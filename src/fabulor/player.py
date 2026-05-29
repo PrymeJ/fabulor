@@ -387,6 +387,7 @@ class Player(QObject):
                 return
             self.chapter_changed.emit(int(value))
     def _on_file_loaded(self, event):
+        print(f"[_on_file_loaded] reload_pending={self._mp3_seek_reload_pending} vt_switch={self._is_vt_file_switch}")
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
@@ -481,7 +482,8 @@ class Player(QObject):
 
         For single-file books, file_path/local_pos are None and target_pos is global == local.
         For VT same-file seeks, file_path is the VT file and local_pos is the offset within it;
-        target_pos remains the global position so _cached_time_pos drives correct UI display.
+        _cached_time_pos is set to local_pos so time_pos getter (_file_offset + _cached_time_pos)
+        returns the correct global position without double-counting the offset.
         """
         was_playing = not self._cached_pause
         self._mp3_seek_reload_pending = True
@@ -489,7 +491,7 @@ class Player(QObject):
         self._eof = False
         self._is_seeking = True
         self._seek_target = target_pos
-        self._cached_time_pos = target_pos
+        self._cached_time_pos = local_pos if local_pos is not None else target_pos
         self._mp3_seek_visual_lock = True
         load_path = file_path if file_path is not None else self._play_target
         start_pos = local_pos if local_pos is not None else target_pos
@@ -504,17 +506,24 @@ class Player(QObject):
             target_idx = self._resolve_vt_index(pos)
             target_file = self._virtual_timeline[target_idx]
             local_pos = pos - target_file['cumulative_start']
-            self._eof = False
-            self.is_seeking = True
-            self._seek_target = pos
             if target_idx == self._current_vt_index:
+                if local_pos >= target_file['duration']:
+                    return  # past end — no state mutation, let natural EOF handle it
+                self._eof = False
+                self.is_seeking = True
+                self._seek_target = pos
                 if (target_file['file_path'].lower().endswith('.mp3')
                         and abs(local_pos - ((self._cached_time_pos or 0.0) - self._file_offset)) > _MP3_SEEK_THRESHOLD
-                        and os.path.getsize(target_file['file_path']) > _VT_MP3_SIZE_THRESHOLD):
+                        and os.path.getsize(target_file['file_path']) > _VT_MP3_SIZE_THRESHOLD
+                        and 2.0 < local_pos < target_file['duration'] - 5.0
+                        and not self._mp3_seek_reload_pending):
                     self._mp3_stop_and_load(pos, file_path=target_file['file_path'], local_pos=local_pos)
                     return
                 self.instance.command_async('seek', local_pos, 'absolute+exact')
             else:
+                self._eof = False
+                self.is_seeking = True
+                self._seek_target = pos
                 self._pending_local_pos = local_pos
                 self._current_vt_index = target_idx
                 self._file_offset = target_file['cumulative_start']
@@ -523,7 +532,8 @@ class Player(QObject):
         else:
             if (self._play_target is not None
                     and self._play_target.lower().endswith('.mp3')
-                    and abs(pos - (self._cached_time_pos or 0.0)) > _MP3_SEEK_THRESHOLD):
+                    and abs(pos - (self._cached_time_pos or 0.0)) > _MP3_SEEK_THRESHOLD
+                    and not self._mp3_seek_reload_pending):
                 self._mp3_stop_and_load(pos)
                 return
             self.instance.command_async('seek', pos, 'absolute+exact')
@@ -548,6 +558,10 @@ class Player(QObject):
     @property
     def mp3_seek_visual_lock(self) -> bool:
         return self._mp3_seek_visual_lock
+
+    @property
+    def mp3_seek_reload_pending(self) -> bool:
+        return self._mp3_seek_reload_pending
 
     @property
     def duration(self):

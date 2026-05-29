@@ -2106,6 +2106,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
     def _sync_chapter_ui(self, pos, dur, speed):
+        if self.player and self.player.mp3_seek_reload_pending:
+            return
         chap_list = self.player.chapter_list or []
         if not chap_list:
             return
@@ -2563,26 +2565,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_rewind(self, long_skip=False):
         self.panel_manager.hide_all_panels()
-        if self.player:
+        if self.player and not self.player.mp3_seek_reload_pending:
             old_pos = self.player.time_pos
+            if old_pos is None:
+                return
             speed = self.player.speed or 1.0
             if long_skip:
                 skip = self.config.get_long_skip_duration() * 60 * speed
             else:
                 skip = self.config.get_skip_duration() * speed
-            new_pos = max(0, (old_pos or 0) - skip)
+            new_pos = max(0, old_pos - skip)
             self.player.seek_async(new_pos)
 
     def handle_forward(self, long_skip=False):
         self.panel_manager.hide_all_panels()
-        if self.player and not self.player.eof_reached:
+        if self.player and not self.player.eof_reached and not self.player.mp3_seek_reload_pending:
             old_pos = self.player.time_pos
+            if old_pos is None:
+                return
             speed = self.player.speed or 1.0
             if long_skip:
                 skip = self.config.get_long_skip_duration() * 60 * speed
             else:
                 skip = self.config.get_skip_duration() * speed
-            new_pos = min(self.player.duration or 0, (old_pos or 0) + skip)
+            new_pos = min(self.player.duration or 0, old_pos + skip)
             self.player.seek_async(new_pos)
 
     def _on_prev_right_click(self):
