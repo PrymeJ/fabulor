@@ -223,9 +223,26 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 ### Session Recording
 - DB: `listening_sessions`, `book_events` tables. WAL mode. Index on `book_id`.
 - `listening_sessions`, `book_events`, and `book_tags` use `book_id INTEGER REFERENCES books(id)` as their book FK. `book_path` columns are retained but deprecated — not written or queried, not dropped. Orphaned rows (path no longer in `books`) keep `book_id = NULL` and still surface in stats via LEFT JOIN.
-- `_close_session()` → `_current_book = db.get_book()` → `_open_session()` — order critical
 - 60s wall-clock threshold, 3min pause timeout, 15s seek credit
 - `started_at`, `finished_at` on books table
+
+#### SessionRecorder (`session_recorder.py`)
+All session state and persistence logic lives in `SessionRecorder(QObject)`, not `MainWindow`. `MainWindow` holds `self.session_recorder` and delegates all lifecycle calls to it. `_current_book` stays on `MainWindow` — the recorder receives it via `get_book_fn=lambda: self._current_book`.
+
+**Public API:**
+- `open()` — start a new session (first play after no active session)
+- `resume()` — resume after a short pause (< 3 min window)
+- `pause()` — accumulate segment time, start 3-min timeout
+- `close()` — flush to DB if ≥ 60s listened, reset all state
+- `update_furthest_position(pos)` — called from the 200ms UI loop; replaces inline furthest-pos tracking that was in `_update_ui_sync`
+- `notify_seek(new_pos)` — called from slider released handlers; replaces duplicated seek-credit logic
+- `is_active` — property, True when session is open
+
+**Signal:** `session_written` lives on `SessionRecorder`, not `MainWindow`. Connect via `self.session_recorder.session_written.connect(...)`.
+
+**DB migration status:**
+- `set_started_at` / `get_book_started_at` — fully migrated to `book_id` (no `book_path` lookup). No other call sites outside `session_recorder.py`.
+- `write_session` / `write_book_event` — still dual-write `book_path` + `book_id`. `book_path` columns not yet dropped — pending final column drop pass.
 
 ---
 
@@ -289,7 +306,7 @@ Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no
 - Book detail panel background opacity — user wants it opaque eventually. Not in current scope.
 - **Deleted/excluded book UI in stats panel** — stats panel shows sessions and history for excluded books (via `listening_sessions` join, which is unfenced by `is_excluded`). No visual differentiation currently. Duration label not clickable for books no longer in the library. Cover monochrome, metadata read-only, Cover+Tags tabs hidden — deferred to Session 7.
 - **Session recording gaps (fully deferred):**
-  - VT file switches — `_close_session`/`_open_session` wiring doesn't account for mid-book file transitions across VT files.
+  - VT file switches — `session_recorder.close/open` wiring doesn't account for mid-book VT file transitions. `file_switched` is not threaded into the session recorder.
   - Sleep timer — sleep feature prevents session recording during the sleep window. Deferred.
 - **`path_to_index()`** is in `library.py` (`LibraryPanel`, not `BookModel`).
 - **VT open issues (multi-file MP3) — fully deferred:**

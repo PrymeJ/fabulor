@@ -405,12 +405,26 @@ _apply_view_mode(mode) is the single method that switches QListView between Icon
 ---
 ## Session Recording with DB integration
 
-- _close_session() then _current_book = db.get_book() then _open_session() — order is critical. Close before updating _current_book or the wrong book gets credited.
+Session lifecycle is owned by `SessionRecorder` in `session_recorder.py` — **not** by `MainWindow`. The old `_open_session`, `_resume_session`, `_pause_session`, `_close_session` methods no longer exist on `MainWindow`. Never call them; they will raise `AttributeError`.
+
+**Call sites use the recorder:**
+- `self.session_recorder.open()` — on first play
+- `self.session_recorder.resume()` — on unpause within 3-min window
+- `self.session_recorder.pause()` — on pause
+- `self.session_recorder.close()` — on book switch, EOF, app close
+- `self.session_recorder.notify_seek(new_pos)` — after any user-initiated seek (slider released, right-click snap)
+- `self.session_recorder.update_furthest_position(mpv_pos)` — in the 200ms UI timer loop
+
+`_current_book` stays on `MainWindow`. The recorder reads it via a lambda: `get_book_fn=lambda: self._current_book`. Do not pass `_current_book` directly or store a reference on the recorder.
+
+`session_written` signal lives on `SessionRecorder`. Connect via `self.session_recorder.session_written.connect(slot)`.
+
 - _session_position_start set after _restore_position() via config.get_last_position() — not from mpv directly, which is async and returns 0 at that point.
 - PRAGMA foreign_keys = ON added to db.py connection setup.
-started_at added to books table — set on first session write if not already set.
+- started_at added to books table — set on first session write if not already set. Uses book_id lookup (not path).
 - Threshold: 60 seconds wall-clock. Pause timeout: 3 minutes. Seek credit: 15 seconds continuous play.
 - Ctrl+C / entr -r kills bypass closeEvent — sessions interrupted this way are lost. Expected, not a bug.
+- write_session / write_book_event still dual-write book_path + book_id. book_path columns not yet dropped — do not remove the book_path arguments from those calls.
 
 ## Cross-Platform Notes
 

@@ -1,3 +1,85 @@
+# Session Summary — 2026-05-29 Session 3 — App audit pass and SessionRecorder extraction
+
+## Overview
+
+Six audit passes applied to `app.py` as branch `refactor/app-audit`, plus a `SessionRecorder` extraction on `refactor/session-recorder` merged back in. Five commits total. No behavior changes — all fixes are correctness, architecture cleanup, and invariant enforcement.
+
+## Pass 1 — Invariant violations, None guards, dead imports (commit c7cc829)
+
+**Invariant #1 violation fixed** — `_sync_playback_state` was reading `self.player.chapter or 0` to seed the chapter label on first display. `self.player.chapter` is mpv's async property and is wrong for the same reasons documented in the critical rules. Replaced with the standard epsilon walk: find last `chapter_list` entry where `time <= pos + _CHAPTER_BOUNDARY_EPSILON`.
+
+**EOF refresh_overall loop fixed** — `self.stats_panel.refresh_overall()` was unconditionally outside the `if not self._eof_event_written` block, firing every 200ms at EOF. Moved inside the guard — now fires exactly once per EOF event (commit c0dda9f removed the `#Temporary` comment on this block, making the behavior permanent).
+
+**None guards added:**
+- `_on_slider_released`: `old_pos = self.player.time_pos or 0.0` — `time_pos` can be `None` before mpv delivers position; `abs(None - new_pos)` would raise `TypeError`
+- `_on_chap_slider_released`: same
+- `_on_slider_right_clicked`: added `if self.player.mp3_seek_reload_pending: return` after the duration guard — prevents a right-click chapter snap from launching a seek into a live reload
+
+**Initialization fixes:**
+- `_mpv_ready`, `_pre_switch_slider_value`, `_pre_switch_chap_slider_value` all initialized unconditionally in `__init__`. Previously only set on specific code paths — methods reading them before first book load would raise `AttributeError`.
+- `session_written.connect` moved from `_build_book_detail_panel` (runs once at UI build, too late if signal fires before detail panel is built) to the player signal block in `__init__`.
+
+**Dead inner imports removed:**
+- `import re` inside `_classify_filter` — `re` imported at module level (line 5)
+- `from PySide6.QtCore import Qt` inside `_update_chapter_label_clickability` — `Qt` imported at module level
+- `from PySide6.QtGui import QPainter` inside `_update_cover_art_scaling` — `QPainter` imported at module level
+
+## Pass 2 — EOF #Temporary cleanup (commit c0dda9f)
+
+Removed `#Temporary` markers from the EOF event block in `_update_ui_sync`. The `_eof_event_written` flag and `write_book_event` call are not temporary — they are the production EOF recording path. The markers were misleading; removing them signals the code is settled.
+
+## Pass 3 — _classify_filter and save_search_filter moved to LibraryPanel (commit 1048256)
+
+Both methods belong with the widget that owns the search field (`LibraryPanel`), not with `MainWindow`. `save_search_filter` is now public (no leading underscore) because it is called from `MainWindow.closeEvent`. `closeEvent` now calls `self.library_panel.save_search_filter()`. No behavior change.
+
+`_classify_filter` carries a local `import re` in `library.py` per the task spec — `re` is not imported at module level in that file.
+
+## Pass 4 — SessionRecorder extraction (commit 705261f)
+
+All session state and persistence logic extracted from `MainWindow` into `SessionRecorder(QObject)` in a new file `session_recorder.py`.
+
+**What moved:**
+- `_session_start`, `_session_segment_start`, `_session_listened_seconds`, `_session_position_start`, `_session_furthest_position`, `_post_seek_pending_position`
+- `_session_pause_timer` (3-min timeout → `close()`)
+- `_post_seek_credit_timer` (15-sec seek credit)
+- `_open_session`, `_resume_session`, `_pause_session`, `_close_session`, `_on_seek_credit_earned`
+- `session_written = Signal()` class-level declaration
+
+**What stayed on MainWindow:**
+- `_current_book` — read by numerous UI methods; recorder receives it via `get_book_fn=lambda: self._current_book`
+- All call sites updated to use `self.session_recorder.open/resume/pause/close()`
+
+**New methods on SessionRecorder:**
+- `update_furthest_position(pos)` — called from the 200ms UI timer loop, replaces the inline 5-line block that was in `_update_ui_sync`
+- `notify_seek(new_pos)` — called from `_on_slider_released` and `_on_chap_slider_released`, replaces the duplicated 7-line seek-credit blocks in both
+- `is_active` property — used at play sites to distinguish `open()` vs `resume()`
+
+**Imports removed from app.py:** `threading`, `datetime` (now owned by `session_recorder.py`)
+
+**Signal ownership transfer:** `session_written` emits from `SessionRecorder._write()` background thread. `MainWindow.__init__` connects via `self.session_recorder.session_written.connect(self._on_session_written)`.
+
+## Pass 5 — set_started_at / get_book_started_at migration to book_id (commit d6888be)
+
+Both DB methods now accept `book_id: int` instead of `book_path: str`. SQL uses `WHERE id = ?` instead of `WHERE path = ?`. The only call site is `session_recorder.py`'s `_write()` inner function, which now passes `book.id`. No dual-write needed — these methods do not write `book_path` to any column, so the migration policy (retain deprecated columns until drop pass) does not apply.
+
+## What was tested
+
+- Session record path: played a book past 60s, closed app → session visible in stats
+- Session discard path: played < 60s, closed app → no session written, no crash
+- Chapter label on "Select Chapter" state: resolved correctly without using `player.chapter`
+- EOF handling: `refresh_overall()` fires once, not every 200ms
+
+## What remains deferred
+
+- `write_session` / `write_book_event` deprecated `book_path` columns: not yet dropped. Pending full column-drop migration pass.
+- `book_files` table: still on `book_path` FK. Migrate when VT is next touched.
+- VT file switch session recording: `session_recorder.close/open` wiring does not account for mid-book VT file transitions. Deferred until session recording is next touched.
+- PanelManager patched post-construction (construction-order smell)
+- `_update_pattern_visuals` duplication between `app.py` and `settings_controller.py`
+- Temp debug buttons (`next_quote_btn`, `temp_settings_btn`) — intentionally kept for main player layout work
+
+---
+
 # Session Summary — 2026-05-29 Session 2 — Near-EOF seek hang, stats inflation fix
 
 ## What changed

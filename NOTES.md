@@ -1,4 +1,66 @@
 
+## App audit pass — 2026-05-29 (refactor/app-audit)
+
+Six audit passes applied as a single branch. All items below confirmed landed.
+
+**Invariant violations fixed:**
+- `self.player.chapter` direct read in `_sync_playback_state` replaced with epsilon walk (invariant #1 — async chapter property). Now walks `chapter_list` finding last entry `<= pos + _CHAPTER_BOUNDARY_EPSILON`.
+- `refresh_overall()` inside EOF block was firing every 200ms at EOF — now inside the `if not self._eof_event_written` guard, fires exactly once per EOF event.
+- `#Temporary` comments removed from EOF handling block — the behavior is permanent, not provisional.
+
+**None guards added:**
+- `_on_slider_released`: `old_pos = self.player.time_pos or 0.0`
+- `_on_chap_slider_released`: same
+- `_on_slider_right_clicked`: added `if self.player.mp3_seek_reload_pending: return` after the duration guard
+
+**Initialization fixes:**
+- `_mpv_ready`, `_pre_switch_slider_value`, `_pre_switch_chap_slider_value` now all initialized unconditionally in `__init__` (previously only set on some code paths, causing `AttributeError` if relevant methods ran before first book load)
+- `session_written.connect` moved from `_build_book_detail_panel` to the player signal block in `__init__`
+
+**Dead inner imports removed:**
+- `import re` inside `_classify_filter`
+- `from PySide6.QtCore import Qt` inside `_update_chapter_label_clickability`
+- `from PySide6.QtGui import QPainter` inside `_update_cover_art_scaling`
+
+**Method relocations:**
+- `_classify_filter` and `save_search_filter` moved from `MainWindow` to `LibraryPanel` — they belong with the widget that owns the search field. `closeEvent` now calls `self.library_panel.save_search_filter()`.
+
+**SessionRecorder extraction:**
+- All session state and persistence moved to `SessionRecorder(QObject)` in `session_recorder.py`
+- `MainWindow` retains `_current_book`; recorder reads it via lambda
+- `session_written` signal ownership transferred to `SessionRecorder`; `MainWindow.session_written` removed
+- `update_furthest_position()` replaces inline furthest-pos tracking in the 200ms UI loop
+- `notify_seek()` replaces duplicated seek-credit logic in both slider released handlers
+- `threading` and `datetime` imports removed from `app.py` (now owned by recorder)
+- Session record and discard paths confirmed working manually
+
+**DB migration:**
+- `set_started_at` / `get_book_started_at` migrated to `book_id` parameter (no `book_path` lookup). Only call site is `session_recorder.py`.
+
+---
+
+## Deferred: drop deprecated `book_path` args from write_session / write_book_event (2026-05-29)
+
+`write_session` and `write_book_event` still accept and write `book_path` alongside `book_id`. The `book_path` columns in `listening_sessions` and `book_events` are not queried but are retained for easy rollback. When ready: remove the `book_path` parameter from both method signatures, drop the column writes, then run the column-drop migration pass described in the existing "drop deprecated book_path columns" entry below.
+
+## Deferred: book_files not yet migrated to book_id FK (2026-05-29)
+
+`book_files` still uses `book_path TEXT` as its composite primary key `(book_path, file_path)`. Migrate when VT is next being actively worked on.
+
+## Deferred: PanelManager patched post-construction — signal connection timing (2026-05-29)
+
+`panel_manager` is initialized as `None` in `__init__` and assigned after `_setup_ui()`. Any signal that needs to fire through `panel_manager` before construction completes is currently deferred or guarded with `if self.panel_manager`. This is a construction-order smell. Clean up when panels are next significantly refactored.
+
+## Deferred: `_update_pattern_visuals` duplication (2026-05-29)
+
+`_update_pattern_visuals` in `app.py` and its equivalent in `settings_controller.py` share overlapping responsibility for updating the pattern button visual state. The duplication was noted but not resolved in the audit pass — fixing requires confirming which call sites use which path and whether either can be removed. Address in the next settings-panel pass.
+
+## Deferred: temp debug buttons `next_quote_btn` and `temp_settings_btn` (2026-05-29)
+
+`next_quote_btn` and `temp_settings_btn` in the status banner area are placeholder UI kept intentionally for main player layout work. Do not remove until the status banner and player layout are finalized.
+
+---
+
 ## mpv hangs silently on seeks within 2s of file end — buffer required on every seek path (2026-05-29)
 
 Seeking mpv to a position within approximately 2 seconds of a file's `duration` causes it to hang silently — no error, no EOF event, no recovery. The buffer must be present in every seek path that calls `command_async` or `loadfile start=`.
