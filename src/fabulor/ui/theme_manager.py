@@ -94,6 +94,9 @@ class ThemeManager(QObject):
         else:
             self._current_theme_name = self.selected_themes[0]
 
+        from collections import deque
+        self._recent_themes: deque[str] = deque(maxlen=10)
+
         self._theme_fade_anim = None
         self.theme_widgets = {} # theme_name -> QPushButton
         self.interval_widgets = {} # minutes -> QPushButton
@@ -243,15 +246,32 @@ class ThemeManager(QObject):
             current = None if self._cover_theme_active else self._current_theme_name
             pool = [c for c in candidates if c != current]
 
-            # Weighted selection by perceptual distance from current theme.
-            # None (cover theme) is always kept and receives median weight.
-            # Named themes beyond distance 0.5 are excluded when pool is large enough.
             _EXCLUSION_THRESHOLD = 0.5
             _MIN_POOL = 4
 
             named = [c for c in pool if c is not None]
             has_cover = None in pool
 
+            # Step 1: calculate recent exclusion window from full available pool
+            full_named_count = len(named)
+            recent_exclude_n = min(full_named_count // 4, 8)
+
+            # Step 2: remove recently shown themes
+            recent_set = set(list(self._recent_themes)[-recent_exclude_n:]) if recent_exclude_n > 0 else set()
+            named_after_recent = [c for c in named if c not in recent_set]
+
+            # Step 3: relax recent exclusion if pool would drop below _MIN_POOL
+            if len(named_after_recent) < _MIN_POOL:
+                # Re-admit oldest recent themes until we have enough
+                recent_ordered = list(self._recent_themes)  # oldest first
+                for candidate in recent_ordered:
+                    if candidate in named and candidate not in named_after_recent:
+                        named_after_recent.append(candidate)
+                    if len(named_after_recent) >= _MIN_POOL:
+                        break
+            named = named_after_recent
+
+            # Step 4: distance exclusion — only when pool large enough
             if current is not None and len(named) > _MIN_POOL:
                 distances = {c: _theme_distance(current, c) for c in named}
                 filtered = [c for c in named if distances[c] <= _EXCLUSION_THRESHOLD]
@@ -262,13 +282,12 @@ class ThemeManager(QObject):
                 distances = {c: _theme_distance(current, c)
                              for c in named} if current is not None else {}
 
-            # Inverse-distance weights with power curve (closer = higher weight)
+            # Step 5: inverse-distance weights with power curve
             epsilon = 1e-6
             weights = [1.0 / (distances.get(c, 0.25) ** 1.5 + epsilon)
                        for c in named]
 
             if has_cover:
-                # Cover theme gets median weight — always eligible, not favored
                 cover_weight = sorted(weights)[len(weights) // 2] if weights else 1.0
                 named.append(None)
                 weights.append(cover_weight)
@@ -281,6 +300,9 @@ class ThemeManager(QObject):
                 self._current_theme_name = chosen
                 self._cover_theme_active = False
                 self._on_theme_changed(chosen, save=False, user_initiated=user_initiated)
+            # Record chosen theme in recent history (named themes only)
+            if chosen is not None:
+                self._recent_themes.append(chosen)
             self._restart_rotation_timer()
 
     def _restart_rotation_timer(self):
@@ -603,6 +625,7 @@ class ThemeManager(QObject):
             self.selected_themes.append(theme_name)
             self.config.set_theme(",".join(self.selected_themes))
         self._current_theme_name = theme_name
+        self._recent_themes.append(theme_name)
         self._cover_theme_active = False
         self._on_theme_changed(theme_name, save=False)
         self._restart_rotation_timer()
