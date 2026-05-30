@@ -1,7 +1,7 @@
 import random
 import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
-from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve, Property
 from PySide6.QtGui import QFont, QFontMetrics, QColor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
@@ -12,6 +12,27 @@ from ..themes import (
 _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
+
+
+class _LabelColorAnim(QObject):
+    """Drives a QLabel's text color via an instance-level color: stylesheet so the color
+    can cross-fade independently of the theme QSS. clear_override() removes the instance
+    stylesheet so the theme QSS resumes ownership."""
+
+    def __init__(self, label, parent=None):
+        super().__init__(parent)
+        self._label = label
+        self._color = QColor()
+
+    def _get_color(self): return self._color
+    def _set_color(self, color):
+        self._color = color
+        self._label.setStyleSheet(f"color: {color.name()};")
+
+    color = Property(QColor, _get_color, _set_color)
+
+    def clear_override(self):
+        self._label.setStyleSheet("")
 
 
 class ThemeComboBox(QComboBox):
@@ -111,6 +132,8 @@ class ThemeManager(QObject):
             self._fade_anim.stop()
             self._fade_overlay.hide()
             self._fade_effect.setOpacity(0.0)
+        self._stop_label_color_anims()
+        self._unfreeze_fade_labels()
         if hasattr(self, '_slider_anims'):
             for anims in self._slider_anims.values():
                 for anim in anims.values():
@@ -119,6 +142,7 @@ class ThemeManager(QObject):
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()
+        self._unfreeze_fade_labels()
         if self._save_on_fade:
             self._cached_theme_pixmap = self.main_window.grab()
 
@@ -127,6 +151,8 @@ class ThemeManager(QObject):
             return
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
+        self._stop_label_color_anims()
+        self._unfreeze_fade_labels()
         if hasattr(self, '_slider_anims'):
             for anims in self._slider_anims.values():
                 for anim in anims.values():
@@ -345,10 +371,86 @@ class ThemeManager(QObject):
                 anim.setEasingCurve(QEasingCurve.OutCubic)
         return self._slider_anims[sid]
 
-    def _do_fade_with_slider_animation(self, theme_name, hover, save, fade_ms):
-        """Auto-rotation fade: exclude sliders from the overlay via mask, then animate
-        their color properties over the fade duration. No hide/show — avoids blinking."""
+    # Chapter label: frozen for the full fade (scroll-position ghost; can get stuck on
+    # chapter change — force-refreshed on unfreeze).
+    _FADE_LABEL_ATTRS = ('current_chapter_label',)
+    # Time labels: frozen only for the first ~350ms of a 750ms fade. The overlay is linear;
+    # by 350ms opacity is ~0.53 and dropping — ghosting is barely perceptible past that
+    # point. Early unfreeze means the pause is ~350ms instead of 750ms.
+    _FADE_TIME_LABEL_ATTRS = ('current_time_label', 'total_time_label',
+                               'chap_elapsed_label', 'chap_duration_label')
+    _TIME_LABEL_FREEZE_MS = 1250
+
+    def _freeze_fade_labels(self):
+        self._frozen_labels = []
+        for attr in self._FADE_LABEL_ATTRS + self._FADE_TIME_LABEL_ATTRS:
+            w = getattr(self.main_window, attr, None)
+            if w is not None and hasattr(w, 'freeze'):
+                w.freeze()
+                self._frozen_labels.append(w)
+
+    def _unfreeze_time_labels(self):
+        """Unfreeze only the time labels (called early, mid-fade)."""
+        for attr in self._FADE_TIME_LABEL_ATTRS:
+            w = getattr(self.main_window, attr, None)
+            if w is not None and hasattr(w, 'unfreeze'):
+                w.unfreeze()
+        # Remove them from _frozen_labels so _unfreeze_fade_labels doesn't re-unfreeze them
+        chapter_label = getattr(self.main_window, 'current_chapter_label', None)
+        self._frozen_labels = [w for w in getattr(self, '_frozen_labels', ())
+                                if w is chapter_label]
+
+    def _unfreeze_fade_labels(self):
+        for w in getattr(self, '_frozen_labels', ()):
+            w.unfreeze()
+        self._frozen_labels = []
+        # Force chapter label to reflect current chapter, in case it changed while frozen.
         mw = self.main_window
+        if hasattr(mw, '_update_chapter_label_from_index') and hasattr(mw, 'player') and mw.player:
+            chaps = mw.player.chapter_list
+            pos = mw.player.time_pos
+            if chaps and pos is not None:
+                idx = next((i for i in range(len(chaps) - 1, -1, -1)
+                            if chaps[i].get('time', 0) <= pos + 0.35), 0)
+                mw._update_chapter_label_from_index(idx)
+
+    def _get_label_anim(self, label):
+        """Lazily create and cache a (_LabelColorAnim, QPropertyAnimation) pair per label."""
+        if not hasattr(self, '_label_anims'):
+            self._label_anims = {}
+        lid = id(label)
+        if lid not in self._label_anims:
+            adapter = _LabelColorAnim(label, self)
+            anim = QPropertyAnimation(adapter, b"color", self)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.finished.connect(adapter.clear_override)
+            self._label_anims[lid] = (adapter, anim)
+        return self._label_anims[lid]
+
+    def _stop_label_color_anims(self):
+        if hasattr(self, '_label_anims'):
+            for adapter, anim in self._label_anims.values():
+                if anim.state() == QPropertyAnimation.Running:
+                    anim.stop()
+                adapter.clear_override()
+
+    def _do_fade_with_slider_animation(self, theme_name, hover, save, fade_ms):
+        """Auto-rotation fade: exclude sliders from the overlay via mask and animate their
+        colors. Labels are frozen (text pinned) and their colors animate old→new in sync
+        with the overlay, so neither moving text nor color-snap creates a ghost."""
+        from PySide6.QtGui import QPalette
+        mw = self.main_window
+
+        # Freeze labels BEFORE the grab so screenshot text == live text.
+        self._freeze_fade_labels()
+
+        # Read label start colors from live palette before applying new theme.
+        all_label_attrs = self._FADE_LABEL_ATTRS + self._FADE_TIME_LABEL_ATTRS
+        label_start = {}
+        for attr in all_label_attrs:
+            w = getattr(mw, attr, None)
+            if w is not None and w.isVisible():
+                label_start[attr] = QColor(w.palette().color(QPalette.WindowText))
 
         # Read start colors before anything changes
         sliders = []
@@ -396,11 +498,17 @@ class ThemeManager(QObject):
         self._fade_anim.start()
         self._theme_fade_anim = self._fade_anim
 
+        # Unfreeze the time labels early — overlay is linear so by _TIME_LABEL_FREEZE_MS
+        # it is dim enough that any ghost is barely visible.
+        early_ms = min(self._TIME_LABEL_FREEZE_MS, fade_ms)
+        QTimer.singleShot(early_ms, self._unfreeze_time_labels)
+
         # Apply new stylesheet — qproperty colors land on next event loop tick
         self._apply_stylesheets(theme_name, hover=hover)
 
         # Defer color animation until QSS has applied
         def _start_color_anims():
+            remaining_ms = max(50, fade_ms - 16)
             for s in sliders:
                 sid = id(s)
                 if sid not in start_colors:
@@ -417,7 +525,6 @@ class ThemeManager(QObject):
                 s.notch_color = start['notch']
 
                 anims = self._get_slider_anims(s)
-                remaining_ms = max(50, fade_ms - 16)
                 for key in ('bg', 'fill', 'notch'):
                     anim = anims[key]
                     if anim.state() == QPropertyAnimation.Running:
@@ -426,6 +533,26 @@ class ThemeManager(QObject):
                     anim.setStartValue(start[key])
                     anim.setEndValue(end[key])
                     anim.start()
+
+            # Animate label colors old→new on the real (frozen) labels.
+            # The overlay covers them, so no doubling or hole — just the color cross-fades
+            # underneath, matching the overlay opacity curve closely enough to be invisible.
+            for attr in all_label_attrs:
+                w = getattr(mw, attr, None)
+                if w is None or not w.isVisible() or attr not in label_start:
+                    continue
+                start = label_start[attr]
+                end = QColor(w.palette().color(QPalette.WindowText))
+                if start == end:
+                    continue
+                adapter, anim = self._get_label_anim(w)
+                if anim.state() == QPropertyAnimation.Running:
+                    anim.stop()
+                adapter._set_color(start)   # pin to old color before animation starts
+                anim.setDuration(remaining_ms)
+                anim.setStartValue(start)
+                anim.setEndValue(end)
+                anim.start()
 
         QTimer.singleShot(0, _start_color_anims)
 

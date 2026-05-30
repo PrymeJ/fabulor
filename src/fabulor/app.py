@@ -20,7 +20,7 @@ from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
 from .themes import THEMES, _resolve_theme
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
-from .ui.controls import ClickSlider, ScrollingLabel, HoverButton
+from .ui.controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.speed_controls import SpeedControlsPanel
 from .ui.audio_controls import AudioSettingsTab
@@ -723,13 +723,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _build_secondary_controls(self):
         # 1. Chapter Info Row (Top of secondary stack)
         chapter_info_layout = QHBoxLayout()
-        self.chap_elapsed_label = QLabel("00:00:00")
+        self.chap_elapsed_label = FreezableLabel("00:00:00")
         self.chap_elapsed_label.setObjectName("chap_elapsed_label")
         self.chap_elapsed_label.setFixedWidth(48)
         self.chap_elapsed_label.setFixedHeight(24)
         self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
-        self.chap_duration_label = QLabel("00:00:00")
+        self.chap_duration_label = FreezableLabel("00:00:00")
         self.chap_duration_label.setObjectName("chap_duration_label")
         self.chap_duration_label.setFixedWidth(48)
         self.chap_duration_label.setFixedHeight(24)
@@ -761,13 +761,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # 3. Book Info Row (Elapsed - Speed - Total/Remaining)
         book_info_layout = QHBoxLayout()
-        self.current_time_label = QLabel("00:00:00")
+        self.current_time_label = FreezableLabel("00:00:00")
         self.current_time_label.setObjectName("curr_time_label")
         self.current_time_label.setFixedWidth(80)
         self.current_time_label.setFixedHeight(24)
         self.current_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
-        self.total_time_label = QLabel("00:00:00")
+        self.total_time_label = FreezableLabel("00:00:00")
         self.total_time_label.setObjectName("total_time_label")
         self.total_time_label.setFixedWidth(80)
         self.total_time_label.setFixedHeight(24)

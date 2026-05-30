@@ -261,7 +261,28 @@ class ClickSlider(QWidget):
                     p.drawLine(x, mid_y, x, 0)             # Center to Top
         p.end()
 
-class ScrollingLabel(QLabel):
+class FreezableLabel(QLabel):
+    """A QLabel whose text can be temporarily pinned. While frozen, setText is a no-op,
+    so the displayed value cannot change. Used to hold the time/chapter labels steady
+    during a theme fade so their moving text does not ghost under the fade overlay."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._frozen = False
+
+    def freeze(self):
+        self._frozen = True
+
+    def unfreeze(self):
+        self._frozen = False
+
+    def setText(self, text):
+        if self._frozen:
+            return
+        super().setText(text)
+
+
+class ScrollingLabel(FreezableLabel):
     """A label that scrolls its text horizontally if it's too long to fit."""
     clicked = Signal()
 
@@ -299,7 +320,9 @@ class ScrollingLabel(QLabel):
         self.update()
 
     def setText(self, text):
-        super().setText(text)
+        if self._frozen:
+            return
+        QLabel.setText(self, text)
         self._update_scrolling_state()
 
     def resizeEvent(self, event):
