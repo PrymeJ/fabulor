@@ -1,3 +1,60 @@
+# Session Summary — 2026-05-30 Session 1 — Font, inline confirmations, session crash recovery, position tracking fix
+
+## What changed
+
+### `main.py` — Open Sans Condensed set as app font
+
+`OpenSans-CondensedRegular.ttf` added to `src/fabulor/assets/fonts/`. Loaded at startup via `QFontDatabase.addApplicationFont`. The TTF registers two family names; the condensed family is selected explicitly by name (`"Open Sans Condensed"`). Size fixed at 11pt to match the system default that all existing QSS pixel sizes were calibrated against — the font's own default is 12pt, which made everything 1pt larger.
+
+### `themes.py` — No font-size changes needed
+
+All affected widgets (chapter time labels, playback buttons, sleep grid buttons, library Add/Remove/Rescan, tag management button, delete/reset stat buttons) had no explicit `font-size` in their QSS and were inheriting the app font. The 11pt fix in `main.py` resolved all of them without touching stylesheets.
+
+### `book_detail_panel.py`, `stats_panel.py` — System dialogs replaced with inline confirmations
+
+Two `QMessageBox.question` dialogs replaced with the same click-to-confirm pattern already used by the trash button:
+
+- **History tab → "Delete listening history"**: first click shows a `_delete_history_confirm_label` above the button (`book_detail_confirm_remove` style, `setFixedHeight(28)`); clicking the label confirms; auto-dismisses after 7 seconds. State tracked by `_delete_history_cancel_timer`.
+- **Options tab → "Reset all stats"**: same pattern with `_reset_confirm_label` and `_reset_cancel_timer`. Button and confirm label pushed to the bottom of the tab via `addStretch()` before them, so the layout doesn't shift on show/hide.
+
+### `session_recorder.py` — Crash recovery via checkpoint file
+
+`SessionRecorder` now writes a JSON checkpoint every 30 seconds while a session is active, and recovers it on startup if the previous session ended uncleanly (crash, force-kill).
+
+**Checkpoint location:** `<db_dir>/session_checkpoint.json`
+
+**Write:** `_write_checkpoint` snapshots current session state (book, positions, accumulated listened seconds including the in-progress segment) without modifying live state. All I/O is `try/except OSError`. Fired by `_checkpoint_timer` (30s interval), started in `open()`, stopped in `close()`.
+
+**Recovery:** `_recover_checkpoint` runs once in `__init__`. If the file exists and `listened_seconds >= 60`, it writes a session record to the DB on a daemon thread (same shape as `close()`'s `_write()`). The checkpoint is always deleted after recovery whether it succeeds or fails (`missing_ok=True`). If `listened_seconds < 60`, the file is discarded without writing.
+
+**Clean close:** the checkpoint is deleted inside `_write()` after `session_written.emit()`, so only crashed/killed sessions leave a recoverable file behind.
+
+`segment_start` is written as null when paused — the in-progress segment since the last checkpoint is considered lost on recovery (conservative, avoids complexity).
+
+### `session_recorder.py` — `position_end` bug fixes
+
+Two related fixes:
+
+1. **`close()`**: `pos_end` now uses `max(live_pos, self._session_furthest_position or pos_start or 0.0, pos_start or 0.0)` so `position_end` is never less than `furthest_position` when mpv returns 0.0 at shutdown.
+2. **`_recover_checkpoint()`**: `position_end` now uses `furthest if furthest is not None else position_start` instead of `position_start` unconditionally.
+
+### `session_recorder.py` — `_session_furthest_position` never advanced (root cause + fix)
+
+**Symptom:** Sessions closed with `position_start == position_end == 0.0` regardless of actual playback. Listened time accumulated correctly (wall-clock based); position tracking did not.
+
+**Root cause:** `open()` performed incomplete initialization. It reset session position and listened-time state but left `_post_seek_pending_position` and `_seek_credit_timer` dangling from prior activity. The second condition in `update_furthest_position` checks `_post_seek_pending_position is None`; if a forward-seek's 15-second credit window was still live when `open()` ran (no intervening `close()` to clear it), every 200ms tick was short-circuited and `_session_furthest_position` never advanced past its open-time value (0.0 for a fresh book).
+
+**Fix:** `open()` now resets seek-credit state explicitly, mirroring what `close()` already does:
+
+```python
+self._post_seek_pending_position = None
+self._seek_credit_timer.stop()
+```
+
+Confirmed via isolation test: `SessionRecorder` exercised directly (no GUI), with a forward seek leaving pending non-None, then `open()` called without `close()` — before fix, furthest stuck; after fix, furthest advances correctly. Normal playback, backward seeks, and the legitimate forward-seek credit window all verified intact.
+
+---
+
 # Session Summary — 2026-05-29 Session 4 — Undo animation refactor + long skip / wheel undo
 
 ## What changed

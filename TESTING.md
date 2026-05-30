@@ -423,7 +423,36 @@
 
 ### Options tab
 - [ ] Day-start hour spinner range 0–23, persists correctly
-- [ ] Reset all stats button prompts confirmation before executing
+- [ ] Reset all stats button shows inline confirmation label above the button on first click
+- [ ] Clicking the confirmation label executes the reset and refreshes all tabs
+- [ ] Confirmation auto-dismisses after 7 seconds if not acted on
+- [ ] Button and confirmation label are pinned to the bottom of the tab (not top)
+
+## Session crash recovery
+
+### Checkpoint written during playback
+- [ ] Play a book for 35+ seconds: `session_checkpoint.json` appears in the DB directory
+- [ ] Checkpoint contains correct book_id, listened_seconds, furthest_position, session_start
+- [ ] Pausing does not stop checkpoint writes (timer runs through pause)
+- [ ] Stopping cleanly (pause + 3-min timeout, or book switch): checkpoint file is deleted
+
+### Clean session close
+- [ ] Play a book for 60+ seconds, then close the app normally: no checkpoint file left behind
+- [ ] Play a book for < 60 seconds, then close normally: no checkpoint file (session discarded, no write)
+
+### Crash recovery on next launch
+- [ ] Simulate a crash: play 60+ seconds, kill the process (SIGKILL), relaunch — session appears in stats history
+- [ ] Recovered session `listened_seconds` matches checkpoint value (not inflated by post-crash time)
+- [ ] `position_end` equals `furthest_position` in recovered session (not stuck at `position_start`)
+- [ ] Checkpoint file is deleted after recovery regardless of DB write success
+- [ ] Simulate a crash after < 60 seconds: relaunch — no session written, checkpoint deleted
+- [ ] Corrupt checkpoint file (invalid JSON): relaunch — app starts cleanly, checkpoint deleted, no crash
+
+### Position tracking (furthest position)
+- [ ] Play a book from the beginning for several minutes: `position_end` in the written session reflects actual progress, not 0.0
+- [ ] Seek forward then continue playing: furthest position advances past the seek target after 15s credit window
+- [ ] Seek backward: furthest position is not reduced
+- [ ] Switch books (seek forward on book A, switch to book B, play): book B's furthest position advances from the start of that session (not blocked by book A's seek credit)
 
 ### Cover display in stats rows
 - [ ] BookDayRow and FinishedBookThumb show the user-selected active cover (not scanner thumbnail)
@@ -577,7 +606,7 @@
 - [ ] Add tag field with autocomplete works; Enter and + button both add
 - [ ] Remove (✕) button removes tag correctly
 - [ ] Max 5 tags enforced (input flashes red on reject)
-- [ ] Delete listening history button prompts confirmation, clears data, refreshes stats tab
+- [ ] Delete listening history button shows inline confirmation label above the button on first click; clicking the label clears data and refreshes stats tab; auto-dismisses after 7 seconds if not acted on
 - [ ] "Tag management" button visible when opened from library or stats
 - [ ] "Tag management" button hidden when opened from tag panel (context='tags')
 - [ ] Clicking "Tag management": all panels dismiss, then tag panel slides in
