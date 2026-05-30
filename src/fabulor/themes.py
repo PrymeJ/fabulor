@@ -134,8 +134,6 @@ THEMES = {
         "button_skip":               "#619ED3",
         "tag_list_text":             "#86C6FF",
         "tag_list_text_hover":       "#FC1543",
-
-
     },
     "Anomander": {
         "bg_deep":                   "#000000",
