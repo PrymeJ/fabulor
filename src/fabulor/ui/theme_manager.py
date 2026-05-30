@@ -1,8 +1,8 @@
 import random
 import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
-from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
+from PySide6.QtGui import QFont, QFontMetrics, QColor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
@@ -111,6 +111,11 @@ class ThemeManager(QObject):
             self._fade_anim.stop()
             self._fade_overlay.hide()
             self._fade_effect.setOpacity(0.0)
+        if hasattr(self, '_slider_anims'):
+            for anims in self._slider_anims.values():
+                for anim in anims.values():
+                    if anim.state() == QPropertyAnimation.Running:
+                        anim.stop()
 
     def _on_fade_finished(self):
         self._fade_overlay.hide()
@@ -122,6 +127,16 @@ class ThemeManager(QObject):
             return
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
+        if hasattr(self, '_slider_anims'):
+            for anims in self._slider_anims.values():
+                for anim in anims.values():
+                    if anim.state() == QPropertyAnimation.Running:
+                        anim.stop()
+                        end = anim.endValue()
+                        if end is not None:
+                            anim.targetObject().setProperty(
+                                anim.propertyName().data().decode(), end
+                            )
         if hasattr(self, '_fade_overlay') and self._fade_overlay.isVisible():
             self._fade_overlay.hide()
             self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
@@ -266,7 +281,9 @@ class ThemeManager(QObject):
         if not user_initiated and fade_ms > 0 and themes_tab_active:
             fade_ms = 0
 
-        if fade_ms > 0:
+        if fade_ms > 0 and themes_tab_active:
+            # Themes tab visible — user is deliberately previewing themes, nothing is
+            # moving. Full overlay fade including sliders (original behavior).
             pix = self.main_window.grab()
             self._fade_overlay.setPixmap(pix)
             self._fade_overlay.setGeometry(self.main_window.rect())
@@ -285,22 +302,6 @@ class ThemeManager(QObject):
                 self._fade_overlay.setMask(mask)
             else:
                 self._fade_overlay.clearMask()
-            # For cover-art theme transitions, exclude custom-painted widgets that
-            # show correct values immediately — leaving them in the overlay causes
-            # a ghost of the old value morphing over the new one.
-            if isinstance(theme_name, dict):
-                mw = self.main_window
-                from PySide6.QtCore import QPoint
-                exclude = ['progress_slider', 'chapter_progress_slider', 'progress_percentage_label']
-                current_mask = self._fade_overlay.mask()
-                if current_mask.isEmpty():
-                    current_mask = QRegion(self.main_window.rect())
-                for attr in exclude:
-                    w = getattr(mw, attr, None)
-                    if w and w.isVisible():
-                        top_left = w.mapTo(mw, QPoint(0, 0))
-                        current_mask -= QRegion(top_left.x(), top_left.y(), w.width(), w.height())
-                self._fade_overlay.setMask(current_mask)
 
             self._fade_overlay.show()
             self._fade_overlay.raise_()
@@ -309,12 +310,17 @@ class ThemeManager(QObject):
             self._fade_anim.setDuration(fade_ms)
             self._fade_anim.start()
             self._theme_fade_anim = self._fade_anim
+            self._apply_stylesheets(theme_name, hover=hover)
+        elif fade_ms > 0:
+            # Auto-rotation (or any non-themes-tab fade): sliders may be mid-interaction.
+            # Exclude them from the overlay and animate their color properties instead.
+            self._do_fade_with_slider_animation(theme_name, hover, save, fade_ms)
         else:
             self._fade_overlay.hide()
             if save:
                 self._cached_theme_pixmap = self.main_window.grab()
+            self._apply_stylesheets(theme_name, hover=hover)
 
-        self._apply_stylesheets(theme_name, hover=hover)
         if hasattr(self.main_window, '_refresh_panel_visuals'):
             self.main_window._refresh_panel_visuals(theme_name)
         if isinstance(theme_name, dict):
@@ -323,6 +329,105 @@ class ThemeManager(QObject):
         else:
             self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
         self.update_theme_list_visuals()
+
+    def _get_slider_anims(self, slider) -> dict:
+        """Lazily create and cache QPropertyAnimation instances for a slider's color properties."""
+        if not hasattr(self, '_slider_anims'):
+            self._slider_anims = {}
+        sid = id(slider)
+        if sid not in self._slider_anims:
+            self._slider_anims[sid] = {
+                'bg':    QPropertyAnimation(slider, b"bg_color",    self),
+                'fill':  QPropertyAnimation(slider, b"fill_color",  self),
+                'notch': QPropertyAnimation(slider, b"notch_color", self),
+            }
+            for anim in self._slider_anims[sid].values():
+                anim.setEasingCurve(QEasingCurve.OutCubic)
+        return self._slider_anims[sid]
+
+    def _do_fade_with_slider_animation(self, theme_name, hover, save, fade_ms):
+        """Auto-rotation fade: exclude sliders from the overlay via mask, then animate
+        their color properties over the fade duration. No hide/show — avoids blinking."""
+        mw = self.main_window
+
+        # Read start colors before anything changes
+        sliders = []
+        start_colors = {}
+        for attr in ('progress_slider', 'chapter_progress_slider'):
+            s = getattr(mw, attr, None)
+            if s is not None and s.isVisible():
+                sliders.append(s)
+                start_colors[id(s)] = {
+                    'bg':    QColor(s.bg_color),
+                    'fill':  QColor(s.fill_color),
+                    'notch': QColor(s.notch_color),
+                }
+
+        pix = mw.grab()
+        self._fade_overlay.setPixmap(pix)
+        self._fade_overlay.setGeometry(mw.rect())
+
+        from PySide6.QtGui import QRegion
+        from PySide6.QtCore import QPoint
+        pm = getattr(mw, 'panel_manager', None)
+        if pm and pm.is_any_panel_visible():
+            mask = QRegion(mw.rect())
+            panels = ['library_panel', 'tags_panel', 'speed_panel',
+                      'sleep_panel', 'stats_panel', 'book_detail_panel']
+            for attr in panels:
+                p = getattr(pm, attr, None)
+                if p and p.isVisible():
+                    mask -= QRegion(p.geometry())
+            if pm.sidebar_expanded:
+                mask -= QRegion(pm.sidebar.geometry())
+        else:
+            mask = QRegion(mw.rect())
+
+        # Punch slider regions out of the overlay so new colors show through immediately
+        for s in sliders:
+            top_left = s.mapTo(mw, QPoint(0, 0))
+            mask -= QRegion(top_left.x(), top_left.y(), s.width(), s.height())
+        self._fade_overlay.setMask(mask)
+
+        self._fade_overlay.show()
+        self._fade_overlay.raise_()
+        self._save_on_fade = save
+        self._fade_anim.setDuration(fade_ms)
+        self._fade_anim.start()
+        self._theme_fade_anim = self._fade_anim
+
+        # Apply new stylesheet — qproperty colors land on next event loop tick
+        self._apply_stylesheets(theme_name, hover=hover)
+
+        # Defer color animation until QSS has applied
+        def _start_color_anims():
+            for s in sliders:
+                sid = id(s)
+                if sid not in start_colors:
+                    continue
+                start = start_colors[sid]
+                end = {
+                    'bg':    QColor(s.bg_color),
+                    'fill':  QColor(s.fill_color),
+                    'notch': QColor(s.notch_color),
+                }
+                # Reset to start so the qproperty snap is invisible
+                s.bg_color    = start['bg']
+                s.fill_color  = start['fill']
+                s.notch_color = start['notch']
+
+                anims = self._get_slider_anims(s)
+                remaining_ms = max(50, fade_ms - 16)
+                for key in ('bg', 'fill', 'notch'):
+                    anim = anims[key]
+                    if anim.state() == QPropertyAnimation.Running:
+                        anim.stop()
+                    anim.setDuration(remaining_ms)
+                    anim.setStartValue(start[key])
+                    anim.setEndValue(end[key])
+                    anim.start()
+
+        QTimer.singleShot(0, _start_color_anims)
 
     def _apply_stylesheets(self, theme_name, hover=False):
         mw = self.main_window
