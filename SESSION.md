@@ -1,3 +1,31 @@
+# Session Summary — 2026-05-31 Session 1 — Weighted theme rotation + recent exclusion window
+
+## What changed
+
+### `theme_manager.py` — Perceptual-distance weighted theme selection
+
+**Problem:** Uniform random selection from the rotation pool could pick perceptually similar themes back-to-back, and could immediately re-select the theme that just played.
+
+**Fix:** `_do_rotate` now uses `random.choices` with inverse-distance weights rather than `random.choice`.
+
+**`_theme_distance(name_a, name_b)`** — module-level function. Computes perceptual distance (0.0–1.0) between two themes using four components of their `bg_main` and `accent` colors: bg hue delta (45%), bg lightness delta (25%), bg saturation delta (15%), accent hue delta (15%). `colorsys` is stdlib; imported inside the function. `THEMES` is already at module scope.
+
+**Selection pipeline in `_do_rotate` (5 steps):**
+
+1. **Recent exclusion** — the last `min(pool // 4, 8)` named themes (from `self._recent_themes`) are removed from the candidate set. Pool size is measured before any exclusion.
+2. **Relax recent exclusion** — if removal would drop the candidate count below `_MIN_POOL = 4`, oldest-first re-admission from `_recent_themes` until the count recovers. Prevents stalling when the pool is small.
+3. **Distance exclusion** — themes with distance > `_EXCLUSION_THRESHOLD = 0.5` from the current theme are filtered out, but only when the post-recent pool exceeds `_MIN_POOL`. If filtering would drop below `_MIN_POOL`, the filter is skipped.
+4. **Inverse-distance weights** — each candidate is weighted `1 / (distance ** 1.5 + ε)`. Closer themes are more likely; the power curve sharpens the preference without fully excluding near neighbors.
+5. **Cover-theme slot** — when `None` (cover art theme) is in the pool, it receives the median weight of the named candidates, keeping it always eligible but not preferentially selected.
+
+**Recent history — `self._recent_themes`** — `deque(maxlen=10)` initialized in `__init__` after `_current_theme_name` is set. Appended after every rotation (named picks only, not cover). Manual right-click activation (`_on_theme_right_clicked`) also appends, so manual jumps participate in the exclusion window.
+
+### `app.py` / `theme_manager.py` — Rotation key debounce (2s cooldown)
+
+The `T` key shortcut for manual theme rotation now enforces a 2-second cooldown timer to prevent rapid repeated fires from saturating the rotation history with a single spammed theme.
+
+---
+
 # Session Summary — 2026-05-30 Session 2 — Slider color animation during theme fade
 
 ## What changed
