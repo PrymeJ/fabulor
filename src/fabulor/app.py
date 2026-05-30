@@ -397,6 +397,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.settings_controller.bind_mainwindow_handlers(self)
 
+        self._theme_rotate_cooldown = QTimer(self)
+        self._theme_rotate_cooldown.setSingleShot(True)
+        self._theme_rotate_cooldown.setInterval(2000)
+        self._theme_rotate_cooldown.timeout.connect(self._on_theme_rotate_cooldown)
+        self._theme_rotate_pending = False
+
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
         # Delegate to SettingsController visual updaters now that it's bound.
@@ -2149,7 +2155,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if event.key() == Qt.Key.Key_C and getattr(self, '_chapter_label_clickable', False):
             self._show_chapter_dropdown()
         elif event.key() == Qt.Key.Key_T:
-            QTimer.singleShot(500, self.theme_manager._rotate_theme)
+            if not self._theme_rotate_cooldown.isActive():
+                self.theme_manager._rotate_theme()
+                self._theme_rotate_cooldown.start()
+            else:
+                self._theme_rotate_pending = True
         else:
             super().keyPressEvent(event)
 
@@ -2636,6 +2646,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             super().wheelEvent(event)
 
+    def _on_theme_rotate_cooldown(self):
+        if self._theme_rotate_pending:
+            self._theme_rotate_pending = False
+            self.theme_manager._rotate_theme()
+            self._theme_rotate_cooldown.start()
+
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer."""
         self.vol_hide_timer.stop()
@@ -2687,6 +2703,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not isinstance(obj, QObject) or obj is None:
             return False
         return super().eventFilter(obj, event)
+    
     def closeEvent(self, event):
         self.ui_timer.stop()
         self.quote_timer.stop()
