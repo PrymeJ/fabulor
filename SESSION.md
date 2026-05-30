@@ -1,3 +1,60 @@
+# Session Summary — 2026-05-30 Session 2 — Slider color animation during theme fade
+
+## What changed
+
+### `theme_manager.py` — Two-state fade handling; slider color animation
+
+**Problem:** `ClickSlider` widgets (the progress bar and chapter slider) repaint immediately when QSS applies during a theme change. This caused a ghost: the fade overlay showed old slider colors dissolving over sliders already displaying new colors.
+
+**Fix:** `_on_theme_changed` now branches at the `fade_ms > 0` block:
+
+- **Themes tab visible** (`themes_tab_active`): full overlay grab including sliders, no color animation — original behavior, unchanged. The user is deliberately previewing themes, nothing is moving.
+- **All other fades** (auto-rotation, cover-art theme): delegates to `_do_fade_with_slider_animation`.
+
+`_do_fade_with_slider_animation`: reads each slider's start colors (`bg_color`, `fill_color`, `notch_color`) before the grab, punches their rects out of the overlay mask (sliders paint their full rect so no background is exposed), starts the overlay fade, applies the new stylesheet, then on the next event loop tick reads the end colors (set by qproperty repolish), resets sliders to start, and animates them old→new via `QPropertyAnimation` over `fade_ms - 16ms`. `QEasingCurve.OutCubic`.
+
+`_get_slider_anims(slider)`: lazily creates and caches three `QPropertyAnimation` instances per slider (keyed by `id(slider)`), parented to `ThemeManager`.
+
+`abort_theme_fade` and `snap_theme_forward` both stop running slider animations; snap also drives each to its end value so the final theme color lands immediately.
+
+`QColor`, `QEasingCurve`, `Property` added to imports.
+
+### `app.py` — Temporary `t` shortcut for testing theme rotation
+
+`keyPressEvent` now fires `_rotate_theme` after a 5-second delay when `T` is pressed. Exists to avoid waiting the full rotation interval during development; remove when no longer needed.
+
+---
+
+## Theme fade label ghosting — approaches tried and rejected
+
+The session continued with attempts to extend the same treatment to the five time/chapter labels (`current_time_label`, `total_time_label`, `chap_elapsed_label`, `chap_duration_label`, `current_chapter_label`). All failed. The root cause was the same for every approach: **the overlay cross-fades by opacity-blending two full renders; any region treated differently from the rest of the window becomes a visible rectangle or flash**.
+
+Sliders work because they are opaque and paint their full rect — the punch-hole exposes the slider itself, not the window background. Labels are transparent — any hole exposes the freshly-themed window background, which differs from the surrounding (still-fading) overlay.
+
+### Failed approaches (in order)
+
+1. **Mask punch-out for labels (no animation)** — labels have transparent backgrounds; the holes exposed the new theme bg instantly while the overlay around them still showed the old bg. Visible rectangle flash.
+
+2. **Mirror QLabel on top of overlay** — a new QLabel was placed above the overlay at each label's geometry, copying text/font/alignment and animating color. Two problems: (a) the mirror renders on top of the real label = text doubles and looks bold, (b) `ScrollingLabel` scroll position is not tracked so the chapter label mirror was misaligned.
+
+3. **Paint-over screenshot** — filled each label's rect in the overlay pixmap with the background color sampled just above it (row spacing), removing stale text from the overlay. The fill color was the OLD bg; by the time the overlay faded, the live label beneath had the NEW bg = a rectangle blink as the old-bg patch dissolved over the new-bg label.
+
+4. **Deferred background repaint** — called `_apply_stylesheets(..., defer_base=True)` to hold the main-window background at the old color during the fade, so punch-holes would expose a matching bg. Side effect: every other component that depends on the base stylesheet (title bar, content_container) also got its bg deferred. Result: two different themes simultaneously; the background snapped at the end of the fade.
+
+5. **Two-speed fade (fast overlay for label band)** — a second overlay covered the label band only, fading at 150ms while the main overlay faded at 750ms. The band reached the new theme ~600ms before its surroundings, making it visibly brighter for that window. Visible rectangle.
+
+6. **Per-widget mini-overlays** — each label and slider got its own QLabel overlay showing a screenshot slice, fading in sync with the main overlay. Too many independent opacities; the whole player area animated as disconnected rectangles.
+
+### Current state
+
+Reverted to `58602ea`: sliders animate, labels fade normally with the overlay. The label ghost only appears if the user is actively seeking during the 750ms fade — a narrow window. Every fix attempt introduced an artifact visible on every theme change.
+
+### Remaining idea (not tried)
+
+Freeze each label's displayed text at fade-start for the 750ms duration. No rendering trick — the label simply stops updating while the overlay is active, then resumes. Ghost is impossible because the underlying value can't change. Dismissed for now: the label jumps to the current value when the overlay clears (could look like a stutter on the time display). Revisit if the seeking-ghost becomes a higher priority.
+
+---
+
 # Session Summary — 2026-05-30 Session 1 — Font, inline confirmations, session crash recovery, position tracking fix
 
 ## What changed
