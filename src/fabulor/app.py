@@ -2149,7 +2149,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if event.key() == Qt.Key.Key_C and getattr(self, '_chapter_label_clickable', False):
             self._show_chapter_dropdown()
         elif event.key() == Qt.Key.Key_T:
-            QTimer.singleShot(300, self.theme_manager._rotate_theme)
+            QTimer.singleShot(500, self.theme_manager._rotate_theme)
         else:
             super().keyPressEvent(event)
 
