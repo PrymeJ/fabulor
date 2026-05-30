@@ -9,6 +9,41 @@ from ..themes import (
     get_stats_stylesheet, THEMES
 )
 
+def _theme_distance(name_a: str, name_b: str) -> float:
+    """
+    Perceptual distance between two themes based on bg_main hue, saturation,
+    lightness delta, and accent hue. Returns 0.0–1.0 (higher = more different).
+    """
+    import colorsys
+
+    def hex_to_hsl(hex_color: str):
+        hex_color = hex_color.lstrip('#')
+        r, g, b = [int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4)]
+        h, lum, s = colorsys.rgb_to_hls(r, g, b)
+        return h * 360, s, lum
+
+    def hue_dist(h1, h2):
+        d = abs(h1 - h2)
+        return min(d, 360 - d) / 180.0
+
+    t_a = THEMES.get(name_a, {})
+    t_b = THEMES.get(name_b, {})
+    bg_a = t_a.get('bg_main', '#1A1A1A')
+    bg_b = t_b.get('bg_main', '#1A1A1A')
+    acc_a = t_a.get('accent', '#FFFFFF')
+    acc_b = t_b.get('accent', '#FFFFFF')
+
+    h_bg_a, s_bg_a, l_bg_a = hex_to_hsl(bg_a)
+    h_bg_b, s_bg_b, l_bg_b = hex_to_hsl(bg_b)
+    h_acc_a = hex_to_hsl(acc_a)[0]
+    h_acc_b = hex_to_hsl(acc_b)[0]
+
+    return (hue_dist(h_bg_a, h_bg_b) * 0.45 +
+            abs(s_bg_a - s_bg_b)      * 0.15 +
+            abs(l_bg_a - l_bg_b)      * 0.25 +
+            hue_dist(h_acc_a, h_acc_b) * 0.15)
+
+
 _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
@@ -207,7 +242,38 @@ class ThemeManager(QObject):
         if len(candidates) > 1:
             current = None if self._cover_theme_active else self._current_theme_name
             pool = [c for c in candidates if c != current]
-            chosen = random.choice(pool)
+
+            # Weighted selection by perceptual distance from current theme.
+            # None (cover theme) is always kept and receives median weight.
+            # Named themes beyond distance 0.5 are excluded when pool is large enough.
+            _EXCLUSION_THRESHOLD = 0.5
+            _MIN_POOL = 4
+
+            named = [c for c in pool if c is not None]
+            has_cover = None in pool
+
+            if current is not None and len(named) > _MIN_POOL:
+                distances = {c: _theme_distance(current, c) for c in named}
+                filtered = [c for c in named if distances[c] <= _EXCLUSION_THRESHOLD]
+                if len(filtered) >= _MIN_POOL:
+                    named = filtered
+                    distances = {c: distances[c] for c in named}
+            else:
+                distances = {c: _theme_distance(current, c)
+                             for c in named} if current is not None else {}
+
+            # Inverse-distance weights with power curve (closer = higher weight)
+            epsilon = 1e-6
+            weights = [1.0 / (distances.get(c, 0.25) ** 1.5 + epsilon)
+                       for c in named]
+
+            if has_cover:
+                # Cover theme gets median weight — always eligible, not favored
+                cover_weight = sorted(weights)[len(weights) // 2] if weights else 1.0
+                named.append(None)
+                weights.append(cover_weight)
+
+            chosen = random.choices(named, weights=weights, k=1)[0]
             if chosen is None:
                 self._cover_theme_active = True
                 self._on_theme_changed(self._cover_theme, save=False, user_initiated=user_initiated)
