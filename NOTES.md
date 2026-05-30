@@ -1,11 +1,13 @@
 
-## Theme fade — slider color animation (2026-05-30)
+## Theme fade — slider color animation + label freeze (2026-05-30)
 
-`ClickSlider` widgets repaint immediately on QSS repolish, producing a ghost during the overlay fade (old screenshot color dissolving over already-repainted new color). Fixed in `theme_manager.py` by punching slider rects out of the overlay mask and animating `bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation` over the fade duration. Works because sliders paint their full rect — the hole exposes the slider itself, not the window background.
+`ClickSlider` widgets repaint immediately on QSS repolish, producing a ghost during the overlay fade. Fixed in `theme_manager.py` by punching slider rects out of the overlay mask and animating `bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation`. Works because sliders paint their full rect — the hole exposes the slider itself, not the window background.
 
-**The transparent-label constraint:** The five time/chapter labels could not be treated the same way. Labels have transparent backgrounds; a punch-hole exposes the window background, which has already been repainted to the new theme — the hole then shows new-bg while the surrounding overlay still shows old-bg = a rectangle flash. Six approaches were tried and all failed (see SESSION.md 2026-05-30 Session 2 for full list). The fundamental issue: the overlay cross-fades two full renders via opacity blending; any region treated differently from the rest of the window becomes a visible rectangle. Labels are left under the full overlay (mild ghost only if seeking during the 750ms fade).
+**Labels** cannot use punch-holes (transparent background would expose the freshly-themed window bg = rectangle flash). Six overlay/rendering approaches failed (see SESSION.md 2026-05-30 Session 2). Fixed instead with `FreezableLabel` — text is pinned for the fade duration so the live label and overlay screenshot are always identical, making a ghost impossible.
 
-**Viable remaining option:** Freeze label text at fade-start for the fade duration. Ghost is impossible if the value can't change. Tradeoff: the label jumps when the overlay clears (stutter on time display). Not yet tried.
+**`FreezableLabel(QLabel)`** in `controls.py`: `setText` is a no-op while frozen. `ScrollingLabel` inherits it. The four time labels are `FreezableLabel` at construction; `ScrollingLabel` (chapter label) gains freeze for free. Chapter label is force-refreshed on unfreeze via `chapter_list` + `time_pos` epsilon walk so a chapter change during the freeze doesn't leave it stuck.
+
+**Tradeoff:** Labels pause for 750ms on every theme change. The freeze feels more prominent than expected because there is no color motion to mask it — earlier experiments with color animation on frozen labels made the freeze less perceptible but introduced other artifacts. Accepted as the cleanest outcome.
 
 ---
 

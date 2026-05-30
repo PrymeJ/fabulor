@@ -45,13 +45,22 @@ Sliders work because they are opaque and paint their full rect — the punch-hol
 
 6. **Per-widget mini-overlays** — each label and slider got its own QLabel overlay showing a screenshot slice, fading in sync with the main overlay. Too many independent opacities; the whole player area animated as disconnected rectangles.
 
-### Current state
+### Resolution: freeze-text
 
-Reverted to `58602ea`: sliders animate, labels fade normally with the overlay. The label ghost only appears if the user is actively seeking during the 750ms fade — a narrow window. Every fix attempt introduced an artifact visible on every theme change.
+After the six failed overlay/rendering approaches, the fix came from attacking the ghost at its source rather than the overlay.
 
-### Remaining idea (not tried)
+**`FreezableLabel(QLabel)`** added to `controls.py`. Exposes `freeze()`/`unfreeze()`; `setText` is a no-op while frozen. `ScrollingLabel` now inherits `FreezableLabel`. The four time labels in `app.py` were changed from `QLabel` to `FreezableLabel` at construction.
 
-Freeze each label's displayed text at fade-start for the 750ms duration. No rendering trick — the label simply stops updating while the overlay is active, then resumes. Ghost is impossible because the underlying value can't change. Dismissed for now: the label jumps to the current value when the overlay clears (could look like a stutter on the time display). Revisit if the seeking-ghost becomes a higher priority.
+**`ThemeManager._do_fade_with_slider_animation`** freezes all five labels before `mw.grab()` (so the screenshot text and live label are identical at grab time), then unfreezes in `_on_fade_finished`/`abort_theme_fade`/`snap_theme_forward`. The chapter label is force-refreshed on unfreeze using the `chapter_list` + `time_pos` epsilon walk (same invariant as all other chapter display code) — so a chapter change during the freeze doesn't leave it stuck.
+
+**Why it works:** the ghost only occurs when the live label's value changes under the frozen overlay. With text pinned, the overlay and the live label are always identical — nothing can diverge.
+
+**Tradeoffs accepted:**
+- Time labels pause for the 750ms fade duration. On normal playback this is a sub-second freeze. Worth it vs. the ghost on every seek-during-fade.
+- The chapter label scrolls, pauses, then resumes — scroll position resets. Negligible.
+- If a chapter changes during a fade the chapter label shows the old name for up to 750ms, then force-refreshes. Rare and brief.
+
+**Why 750ms freeze feels more frozen than the discarded 1250ms+color-animation approach:** the color animation provided motion that masked the text freeze. Without it the labels are completely static, which the eye reads more clearly as "stuck" even though the actual duration is shorter. Accepted — the freeze is brief and the alternative is a ghost on every theme change.
 
 ---
 
