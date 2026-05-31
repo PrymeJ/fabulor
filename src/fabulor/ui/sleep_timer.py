@@ -8,6 +8,7 @@ from mpv import ShutdownError
 class SleepTimerPanel(QWidget):
     timer_started = Signal()
     timer_stopped = Signal()
+    timer_expired = Signal()  # fired only when the timer fires and pauses playback
     display_text_updated = Signal(str)
 
     def __init__(self, player, config, theme_manager, parent=None):
@@ -207,6 +208,7 @@ class SleepTimerPanel(QWidget):
                     self.player.pause = True
                 except (ShutdownError, AttributeError, SystemError):
                     pass
+                self.timer_expired.emit()
             else:
                 display_text = f"[{self.player.format_time(remaining_seconds)}]"
                 # Volume Fade Logic
@@ -234,12 +236,14 @@ class SleepTimerPanel(QWidget):
                             self.player.pause = True
                         except (ShutdownError, AttributeError, SystemError):
                             pass
+                        self.timer_expired.emit()
                 elif chaps and curr_chap == len(chaps) - 1 and (player_pos >= player_dur - 0.5 or is_eof):
                     self.disable_sleep_timer()
                     try:
                         self.player.pause = True
                     except (ShutdownError, AttributeError, SystemError):
                         pass
+                    self.timer_expired.emit()
         elif self._sleep_mode == 'end_of_book':
             display_text = "[book]"
             if not is_paused:
@@ -251,5 +255,6 @@ class SleepTimerPanel(QWidget):
                         self.player.pause = True
                     except (ShutdownError, AttributeError, SystemError):
                         pass
+                    self.timer_expired.emit()
 
         self.display_text_updated.emit(display_text)

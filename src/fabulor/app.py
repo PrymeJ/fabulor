@@ -511,6 +511,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Connect Sleep Timer signals after panel_manager is initialized
         self.sleep_panel.timer_started.connect(self._on_sleep_timer_started)
         self.sleep_panel.timer_stopped.connect(self._on_sleep_timer_stopped)
+        self.sleep_panel.timer_expired.connect(self._on_sleep_timer_expired)
         self.sleep_panel.display_text_updated.connect(self.sleep_timer_label.setText)
         self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
@@ -1416,6 +1417,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_trigger_btn.setText("SLEEP")
         self.sleep_cancel_btn.show()
         self.sleep_pulse_anim.start()
+        if self.current_file:
+            if not self.session_recorder.is_active:
+                self.session_recorder.open()
+            else:
+                self.session_recorder.resume()
 
     def _on_sleep_timer_stopped(self):
         self.sleep_trigger_btn.setText("SLEEP")
@@ -1423,6 +1429,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_pulse_anim.stop()
         self.sleep_opacity_effect.setOpacity(1.0)
         self.player.set_fade_ratio(1.0)
+
+    def _on_sleep_timer_expired(self):
+        """Called only when the sleep timer fires and pauses playback (not user-cancelled)."""
+        self._last_pause_timestamp = time.time()
+        self._save_current_progress()
+        self.library_panel.set_is_playing(False)
+        if self.session_recorder.is_active:
+            self.session_recorder.pause()
     def _update_chapter_title_text(self, text):
         """Update the scrolling label text."""
         self.current_chapter_label.setText(text)
@@ -2504,6 +2518,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.is_seeking = True
         if force_play:
             self.player.pause = False
+            if self.current_file:
+                if not self.session_recorder.is_active:
+                    self.session_recorder.open()
+                else:
+                    self.session_recorder.resume()
         speed = self.player.speed or 1.0
         if abs((self.player.time_pos or 0) - old_pos) > 60 * speed:
             self._trigger_undo(old_pos)
