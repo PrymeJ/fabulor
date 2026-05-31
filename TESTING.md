@@ -790,7 +790,7 @@
 - [ ] Verify app start restores to correct chapter with cue active
 - [ ] Verify Undo after Next shows correctly with cue active
 
-## Each theme here
+## Each theme here [NOT THE FULL LIST | NEEDS TO BE UPDATED]
 
 - [ ] Alzabo
 - [ ] Anomander
