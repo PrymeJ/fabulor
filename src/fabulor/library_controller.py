@@ -71,7 +71,7 @@ class LibraryController(QObject):
     def _on_scan_progress(self, current, total):
         """Updates the status banner with scan progress."""
         # Logic for banner updates is now handled by the callback which checks visibility
-        self.ui.update_status(f"Loading Library... ({current}/{total})", 
+        self.ui.update_status(f"Loading library... ({current}/{total})", 
                              show_banner=None, show_cancel=None)
         
         if current == 1:

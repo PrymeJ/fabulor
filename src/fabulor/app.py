@@ -43,6 +43,13 @@ from .session_recorder import SessionRecorder
 
 _ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
 
+# Fixed height of the cover-art box. The window is fixed-size; this value is the
+# height the cover area occupies in the correct ("proper") layout. The cover
+# pixmap is scaled to fit inside (label width x this height) preserving aspect
+# ratio, and centered. A fixed height guarantees the box can never resize and
+# push the transport controls out of view.
+COVER_AREA_HEIGHT = 290
+
 def _load_svg_icon(name, color="white"):
     try:
         path = os.path.join(_ICONS_DIR, name)
@@ -582,9 +589,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _build_cover_art(self):
         self.cover_art_label = QLabel()
-        self.cover_art_label.setAlignment(Qt.AlignBottom | Qt.AlignHCenter)
+        self.cover_art_label.setAlignment(Qt.AlignCenter)
         self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cover_art_label.setMinimumSize(0, 0)
+        self.cover_art_label.setFixedHeight(COVER_AREA_HEIGHT)
         self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
         self.visual_layout.addWidget(self.cover_art_label)
 
@@ -2347,7 +2355,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Scales the current cover pixmap to the available space, respecting fit mode."""
         if not self.current_cover_pixmap.isNull() and self.cover_art_label.isVisible():
             target_w = self.cover_art_label.width()
-            target_h = self.cover_art_label.height()
+            target_h = COVER_AREA_HEIGHT
             src = self.current_cover_pixmap
             fit = getattr(self, '_cover_fit_mode', 'fit')
 
