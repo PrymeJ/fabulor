@@ -2514,9 +2514,11 @@ def get_player_stylesheet(theme_name="default"):
         }}
         QPushButton#sleep_timer_display {{
             background: transparent;
+            font-size: 16px;
+            font-weight: bold;
             border: none;
             padding: 0px;
-            color: {t['text']};
+            color: {t['accent']};
         }}
         #chapter_progress {{
             qproperty-bg_color: "{t['slider_chapter_bg']}";
