@@ -1323,7 +1323,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
-        self.book_detail_panel.tags_changed.connect(self.stats_panel._on_tag_changed)
+        self.book_detail_panel.tags_changed.connect(self._on_book_tags_changed)
         self.tags_panel.tag_changed.connect(self.stats_panel._on_tag_changed)
         self.tags_panel.detail_requested.connect(
             lambda path: self.panel_manager.open_book_detail({"path": path}, tab="stats", context='tags')
@@ -1594,6 +1594,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_open_tag_manager_from_detail(self) -> None:
         self.panel_manager.hide_all_panels()
         QTimer.singleShot(320, self.panel_manager._open_tags_flow)
+
+    def _on_book_tags_changed(self) -> None:
+        self.stats_panel._on_tag_changed()
+        search = self.library_panel.search_field.text().strip()
+        if search.startswith("#"):
+            self.library_panel.refresh()
+        self.tags_panel.refresh_books()
 
     def _on_tag_filter_requested(self, tag: str) -> None:
         self.panel_manager._close_book_detail_flow()
