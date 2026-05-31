@@ -201,8 +201,9 @@ class SleepTimerPanel(QWidget):
         self.player.set_fade_ratio(1.0)
 
         if self._sleep_timer_end_time is not None:
-            remaining_seconds = max(0, int(self._sleep_timer_end_time - current_time))
-            if remaining_seconds <= 0 or is_eof:
+            remaining_raw = self._sleep_timer_end_time - current_time
+            remaining_seconds = max(0, int(remaining_raw))
+            if remaining_raw <= 0 or is_eof:
                 self.disable_sleep_timer()
                 try:
                     self.player.pause = True
