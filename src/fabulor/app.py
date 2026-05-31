@@ -1644,6 +1644,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_panel.set_is_playing(False),
             self._load_cover_art(path),
             self.player.load_book(path),
+            # Re-run the chrome gate now that current_file is set. compute_library_state
+            # returns has_book=True, so apply_library_state reveals the player chrome and
+            # hides go_to_library_btn. We replicate _check_library_status's compute-and-apply
+            # directly rather than calling it, because it also calls handle_background_tasks
+            # which would start a scan on every book selection.
+            self.library_controller.apply_library_state(
+                self.library_controller.compute_library_state()
+            ),
         ))
 
     def _on_vt_file_switched(self):
