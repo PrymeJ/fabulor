@@ -297,6 +297,18 @@
 - [x] Sidebar pulse animation triggers on active timer
 - [x] Volume fade-out logic (Scale ratio based on remaining seconds)
 
+### Sleep timer — session integration
+- [x] Selecting a sleep preset while paused: starts playback AND opens a session
+- [x] Selecting a sleep preset while already playing: resumes session if active, opens new one if not
+- [x] Selecting "End of Chapter" or "End of Book" while paused: starts playback AND opens a session
+- [x] Sleep timer fires (timed): session is paused, 3-minute close timer starts, session is written after timeout
+- [x] Sleep timer fires (end of chapter): same as above
+- [x] Sleep timer fires (end of book): same as above
+- [ ] Sleep timer fires then user resumes manually before 3 min: session resumes correctly, not doubled
+- [ ] Sleep timer fires then 3 min elapses with no interaction: session is written with correct listened_seconds
+- [x] User manually disables sleep timer while playing: session continues uninterrupted (not paused)
+- [ ] `session_checkpoint.json` written within 30s of sleep-started session (crash safety)
+
 ## Library loading || size
 
 - [x] "No library" message displayed (quotes rotation active)
@@ -427,6 +439,15 @@
 - [ ] Clicking the confirmation label executes the reset and refreshes all tabs
 - [ ] Confirmation auto-dismisses after 7 seconds if not acted on
 - [ ] Button and confirmation label are pinned to the bottom of the tab (not top)
+
+### Stats accuracy and consistency
+
+- [x] A 2-minute session shows "2m" in Day/Week/Month (not "1m" due to float truncation)
+- [x] A session of Xm 30s–59s rounds up to X+1 in Day/Week/Month, matching Timeline
+- [x] A session of Xm 0s–29s rounds down to X in Day/Week/Month, matching Timeline
+- [ ] Day total and Timeline column total agree for each date (both sum raw seconds, then format)
+- [ ] A session that spans midnight: Timeline splits it across two dates; Day/Week/Month assigns the whole session to the date of session_start
+- [ ] Changing "Day starts at" to 6h: Day/Week/Month shift the cutoff; Timeline always cuts at 00:00
 
 ## Session crash recovery
 

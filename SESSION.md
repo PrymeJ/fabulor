@@ -1,3 +1,30 @@
+# Session Summary — 2026-05-31 Session 2 — Sleep timer session integration + stats rounding
+
+## What changed
+
+### `app.py` + `sleep_timer.py` — Session recorder wired to sleep timer and chapter list
+
+**Problems:**
+1. Starting playback by selecting a sleep timer preset did not open a session.
+2. When the sleep timer fired and paused playback, the session stayed open indefinitely — `session_recorder.pause()` was never called, so the 3-minute close timer never started.
+3. Right-clicking a chapter in the chapter list forced play but did not open or resume a session.
+
+**Root cause for (1):** `_on_sleep_timer_started` checked `not self.player.pause` before deciding whether to open a session. `player.pause` is a cached property updated asynchronously by mpv's observer callback — it still returned `True` at the point the signal fired synchronously, even though `set_sleep_timer` had already set `instance.pause = False`. The fix: drop the pause check entirely; since `set_sleep_timer` unconditionally unpauses before emitting `timer_started`, `current_file` is the only guard needed.
+
+**Fix for (2):** Added `timer_expired = Signal()` to `SleepTimerPanel`. Emitted at each of the three natural-expiry points in `update_timer_state` (timed countdown, end-of-chapter, end-of-book) — but not from `disable_sleep_timer()`, so user-cancellation does not trigger it. Connected to `_on_sleep_timer_expired` in `app.py`, which mirrors the regular pause-button path: saves timestamp, saves progress, updates library playing state, calls `session_recorder.pause()`.
+
+**Fix for (3):** `_on_chapter_list_selected` now calls `session_recorder.open()` or `resume()` when `force_play=True`.
+
+### `sleep_timer.py` — Fire condition uses raw float, not floored int
+
+`update_timer_state` computed `remaining_seconds = max(0, int(self._sleep_timer_end_time - current_time))` and fired when `remaining_seconds <= 0`. The `int()` floor meant the timer fired up to ~1 second early — a 2-minute preset would record ~119s instead of 120s, showing as "1m" in stats. Fixed by splitting: `remaining_raw` for the fire condition (`remaining_raw <= 0`), `int(remaining_raw)` for the display countdown.
+
+### `stats_panel.py` — `_format_duration` rounds instead of floors
+
+`_format_duration` used `int(seconds // 60)` for the minutes component (floor), while the Timeline heatmap used `round(seconds / 60)`. This caused consistent off-by-one disagreement for any session ending in 30–59 seconds past a minute boundary (e.g. 1:45 → "1m" in Day/Week/Month, "2m" in Timeline). Changed to `round((seconds % 3600) / 60)` with a carry guard for the `m == 60` edge case (e.g. 3599s → "1h 0m" not "1h 60m").
+
+---
+
 # Session Summary — 2026-05-31 Session 1 — Weighted theme rotation + recent exclusion window
 
 ## What changed
