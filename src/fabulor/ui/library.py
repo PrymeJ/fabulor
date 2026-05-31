@@ -188,7 +188,7 @@ class LibraryPanel(QFrame):
         self.top_bar_widget = QFrame()
         self.top_bar_widget.setObjectName("library_top_bar")
         self.top_bar_layout = QHBoxLayout(self.top_bar_widget)
-        self.top_bar_layout.setContentsMargins(3, 6, 3, 6)
+        self.top_bar_layout.setContentsMargins(3, 13, 3, 6)
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
@@ -1499,7 +1499,7 @@ class BookDelegate(QStyledItemDelegate):
         square = (self._view_mode == "Square")
 
         # Cover fills cell with 2px margin
-        cover_rect = QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
+        cover_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
         self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
 
         if hovered:
