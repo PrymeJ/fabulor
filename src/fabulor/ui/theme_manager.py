@@ -284,7 +284,7 @@ class ThemeManager(QObject):
 
             # Step 5: inverse-distance weights with power curve
             epsilon = 1e-6
-            weights = [1.0 / (distances.get(c, 0.25) ** 1.5 + epsilon)
+            weights = [1.0 / (distances.get(c, 0.25) ** 1.0 + epsilon)
                        for c in named]
 
             if has_cover:
