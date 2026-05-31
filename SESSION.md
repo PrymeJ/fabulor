@@ -1,3 +1,26 @@
+# Session Summary — 2026-05-31 Session 3 — Tag refresh fix + theme rotation tuning
+
+## What changed
+
+### `app.py` — Refresh library and tags panel on book tag changes
+
+**Problem:** Removing a tag from a book in `BookDetailPanel` did not update the library panel's `#tag` filter view or the Tags panel's current tag book list until the panels were re-opened.
+
+**Root cause:** `book_detail_panel.tags_changed` connected directly to `stats_panel._on_tag_changed`, which refreshes the tag manager list view and rebuilds chips — but never touched the library panel or the `TagManagerWidget`'s current tag book list.
+
+**Fix:** Replaced the direct connection with `_on_book_tags_changed`:
+- Calls `stats_panel._on_tag_changed()` (existing behaviour)
+- Calls `library_panel.refresh()` when the current search starts with `#` — re-applies the filter against the updated DB, dropping the now-untagged book from the results
+- Calls `tags_panel.refresh_books()` — re-opens the current tag's book list in place (not `refresh()`, which would reset to the tag list view)
+
+### `theme_manager.py` — Reduce weight exponent from 1.5 to 1.0
+
+Simulated 10,000 rotations across 57 themes at three exponents. See NOTES.md for full table.
+
+The original exponent of 1.5 produced a 3.4× min/max ratio (Hear Me Roar at 0.9%, Pyke at 3.0%). Dropping to 1.0 brings the ratio to 2.2× (Hear Me Roar at 1.2%, Pyke at 2.5%) while preserving perceptual ordering. Outlier themes reach parity without the weight curve inverting rankings the way 0.5 does.
+
+---
+
 # Session Summary — 2026-05-31 Session 2 — Sleep timer session integration + stats rounding
 
 ## What changed

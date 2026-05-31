@@ -1,4 +1,18 @@
 
+## Theme rotation weight exponent — tuned to 1.0 (2026-05-31)
+
+`_do_rotate` weights candidates as `1.0 / (distance ** exp + ε)`. The original exponent was 1.5. Simulated over 10,000 rotations with all 57 themes in the pool:
+
+| Exponent | Min pick rate | Max pick rate | Ratio |
+|---|---|---|---|
+| 1.5 (original) | 0.9% | 3.0% | 3.4× |
+| **1.0 (current)** | **1.1%** | **2.5%** | **2.2×** |
+| 0.5 | 1.2% | 2.3% | 1.9× |
+
+1.0 was chosen: flattens the distribution meaningfully without the ordering inversions that appear at 0.5 (e.g. Lilac Girls surges above themes that beat it at 1.5 for no perceptual reason). The "prefer visually different" ordering is preserved — just less aggressively amplified.
+
+Do not lower the exponent further without re-running the sim. At 0.5 the weights are so flat that the distance exclusion filter (step 4) does most of the work alone, and the weight curve stops adding meaningful signal.
+
 ## Theme fade — slider color animation + label freeze (2026-05-30)
 
 `ClickSlider` widgets repaint immediately on QSS repolish, producing a ghost during the overlay fade. Fixed in `theme_manager.py` by punching slider rects out of the overlay mask and animating `bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation`. Works because sliders paint their full rect — the hole exposes the slider itself, not the window background.
