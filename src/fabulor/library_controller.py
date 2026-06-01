@@ -122,7 +122,9 @@ class LibraryController(QObject):
             self.ui.set_quote_rotation(True)
             self._rotate_quote()
             self.ui.update_prompts(True)
-            self.ui.update_status(None, show_banner=True, show_cancel=None)
+            # Clear any stale banner (e.g. "Library updated: N books.") left over
+            # from a prior scan when all folders are removed.
+            self.ui.update_status("", show_banner=False, show_cancel=False)
             self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
         else:
             self.ui.update_prompts(False)

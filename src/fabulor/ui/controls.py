@@ -23,6 +23,7 @@ class ClickSlider(QWidget):
         self._notch_color = QColor("#FFFFFF")
         self._notch_opacity = 100
         self._animations_enabled = True
+        self._suppress_fill = False  # When True, paint the bg groove but not the fill
 
         # Reveal animation state
         self._revealed_count = 0.0
@@ -222,7 +223,8 @@ class ClickSlider(QWidget):
         ratio = (self._value - self._minimum) / max(1, self._maximum - self._minimum)
         filled = int(ratio * self.width())
         p.fillRect(0, 0, self.width(), self.height(), self._bg_color)
-        p.fillRect(0, 0, filled, self.height(), self._fill_color)
+        if not self._suppress_fill:
+            p.fillRect(0, 0, filled, self.height(), self._fill_color)
 
         if self.center_mark:
             # Draw a subtle notch in the dead center

@@ -603,14 +603,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_layout.addWidget(self.cover_art_label)
 
     def _build_metadata(self):
+        # Scan section: prompt + button + info, top-aligned, claims remaining space.
+        self.scan_section = QWidget()
+        scan_layout = QVBoxLayout(self.scan_section)
+        scan_layout.setContentsMargins(0, 0, 0, 0)
+        scan_layout.setSpacing(10)
+        scan_layout.setAlignment(Qt.AlignTop)
+
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
         self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        self.visual_layout.addWidget(self.library_prompt_label)
+        scan_layout.addWidget(self.library_prompt_label)
 
         self.scan_now_btn = QPushButton("Scan now")
         self.scan_now_btn.setFixedWidth(120)
-        self.visual_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
+        scan_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
         self.scan_info_label = QLabel(
             "Loading all your books may take a while. If you wish, you can instead "
             "first load fewer books, then choose your whole library later."
@@ -618,7 +625,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_info_label.setAlignment(Qt.AlignCenter)
         self.scan_info_label.setWordWrap(True)
         self.scan_info_label.setStyleSheet("color: #aaa; font-size: 13px; margin: 5px;")
-        self.visual_layout.addWidget(self.scan_info_label)
+        scan_layout.addWidget(self.scan_info_label)
+        scan_layout.addStretch()  # keep the two widgets pinned to the top
+        self.visual_layout.addWidget(self.scan_section, 1)  # stretch 1: claims remaining space
 
         # Metadata (Book Info)
         self.metadata_label = QLabel("")
@@ -634,12 +643,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.go_to_library_btn.hide() # Hide by default
         self.visual_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
 
-        # Quote (Bottom)
+        # Quote section: fixed-height box, quote bottom-anchored, expands upward.
+        self.quote_section = QWidget()
+        self.quote_section.setFixedHeight(217)
+        quote_layout = QVBoxLayout(self.quote_section)
+        quote_layout.setContentsMargins(0, 0, 0, 0)
         self.quote_label = QLabel("")
         self.quote_label.setObjectName("quote_label")
-        self.quote_label.setAlignment(Qt.AlignCenter)
+        self.quote_label.setAlignment(Qt.AlignBottom | Qt.AlignHCenter)
         self.quote_label.setWordWrap(True)
-        self.visual_layout.addWidget(self.quote_label)
+        quote_layout.addWidget(self.quote_label, 0, Qt.AlignBottom)
+        self.visual_layout.addWidget(self.quote_section)
     def _build_controls(self):
         # Speed button centered above transport controls
         speed_row = QHBoxLayout()
@@ -673,7 +687,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_anim.setDuration(600)
         self.preview_anim.setEasingCurve(QEasingCurve.OutCubic)
 
-        controls_layout = QHBoxLayout()
+        self.transport_controls = QWidget()
+        controls_layout = QHBoxLayout(self.transport_controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         self.prev_button = HoverButton()
         self.prev_button.setObjectName("prev_btn")
         _icon = _load_svg_icon("previous.svg")
@@ -723,7 +739,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.forward_button, self.next_button]:
             btn.setFixedHeight(33)
             controls_layout.addWidget(btn)
-        self.content_layout.addLayout(controls_layout)
+        self.content_layout.addWidget(self.transport_controls)
 
         self._reload_button_icons(self.theme_manager._current_theme_name)
         self.play_pause_button.clicked.connect(self.toggle_play_pause)
@@ -1526,20 +1542,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         elif show_go_to_lib is False: self.go_to_library_btn.hide()
 
     def _update_idle_prompts_ui(self, visible):
-        if visible:
-            self.library_prompt_label.show()
-            self.scan_now_btn.show()
-            self.scan_info_label.show()
-        else:
-            self.library_prompt_label.hide()
-            self.scan_now_btn.hide()
-            self.scan_info_label.hide()
+        # Scan section (prompt + button + info) only shows in the empty state.
+        self.scan_section.setVisible(visible)
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
             self.quote_label.setText(rich_text)
-        if show_quote is True: self.quote_label.show()
-        elif show_quote is False: self.quote_label.hide()
+        # The fixed-height quote section is only visible in the empty state.
+        if show_quote is True: self.quote_section.show()
+        elif show_quote is False: self.quote_section.hide()
 
     def _set_quote_rotation(self, enabled):
         """Starts or stops the 60s quote rotation timer."""
@@ -1561,6 +1572,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chap_duration_label.setVisible(visible)
         self.progress_percentage_label.setVisible(visible)
         self.chapter_preview_label.setVisible(visible)
+        # Transport controls are inert without a book — hide the whole row.
+        self.transport_controls.setVisible(visible)
+        # Suppress the overall-progress fill (keep the bg groove so no layout shift).
+        self.progress_slider._suppress_fill = not visible
+        self.progress_slider.update()
+        # Sleep and Playback panels have no function without an active book.
+        self.sleep_trigger_btn.setVisible(visible)
+        self.speed_trigger_btn.setVisible(visible)
 
     def _set_chapter_ui_active(self, active):
         """Make chapter widgets interactive and visible, or ghosted (transparent, no interaction).
@@ -2648,6 +2667,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def wheelEvent(self, event):
         """Handles volume control via mouse wheel on the cover art area."""
         if self.visual_area.underMouse():
+            if self.current_file is None:  # no book loaded — volume control inert
+                return
             delta = event.angleDelta().y()
             current = self.volume_slider.value()
             # Adjust volume in steps of 5
