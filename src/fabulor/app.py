@@ -350,7 +350,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Consolidated connections for library-related UI -> controller
         # (moved here to ensure `self.library_controller` is available)
         self.cancel_scan_btn.clicked.connect(self.library_controller._on_cancel_scan_clicked)
-        self.next_quote_btn.clicked.connect(self.library_controller._rotate_quote)
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self.library_controller._on_remove_folder_clicked)
@@ -554,23 +553,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cancel_scan_btn = QPushButton("✕")
         self.cancel_scan_btn.setFixedSize(20, 20)
         self.cancel_scan_btn.setToolTip("Cancel scan")
-        
-        # Temporary button for quote testing
-        self.next_quote_btn = QPushButton("Next Quote")
-        self.next_quote_btn.setFixedSize(70, 22)
-        self.next_quote_btn.setStyleSheet("font-size: 9px; padding: 2px;")
-        
-        self.temp_settings_btn = QPushButton("S")
-        self.temp_settings_btn.setFixedSize(22, 22)
-        self.temp_settings_btn.setStyleSheet("font-size: 9px; padding: 2px;")
-        # Use lambda to safely reference panel_manager which is initialized later
-        self.temp_settings_btn.clicked.connect(lambda: self.panel_manager._open_settings_flow() if self.panel_manager else None)
-        
+
         layout.addStretch()
         layout.addWidget(self.status_label)
         layout.addStretch()
-        layout.addWidget(self.next_quote_btn)
-        layout.addWidget(self.temp_settings_btn)
         layout.addWidget(self.cancel_scan_btn)
 
     def _build_title_bar(self):
@@ -611,7 +597,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
-        self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 16px;")
         scan_layout.addSpacing(50)          # label top lands at 50px from section top
         scan_layout.addWidget(self.library_prompt_label)
         scan_layout.addSpacing(80)          # ~80px gap → button top lands at ~150px from section top
@@ -1528,6 +1514,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _update_metadata_ui(self, text=None, show_metadata=None, show_go_to_lib=None):
         if text is not None:
+            self.metadata_label.setStyleSheet("font-weight: bold; font-size: 16px;")
             self.metadata_label.setText(text)
         if show_metadata is True: self.metadata_label.show()
         elif show_metadata is False: self.metadata_label.hide()
@@ -2327,7 +2314,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
             self.metadata_label.show()
-            self.metadata_label.setText("No book selected")
+            self.metadata_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+            self.metadata_label.setText("No book selected.")
             self.theme_manager.clear_cover_theme()
             return
         book = self.db.get_book(file_path)
