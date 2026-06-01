@@ -603,22 +603,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_layout.addWidget(self.cover_art_label)
 
     def _build_metadata(self):
-        # Scan section: prompt + button + info, top-aligned, claims remaining space.
+        # Scan section: prompt + button, spacer-positioned, claims remaining space.
         self.scan_section = QWidget()
         scan_layout = QVBoxLayout(self.scan_section)
         scan_layout.setContentsMargins(0, 0, 0, 0)
-        scan_layout.setSpacing(10)
-        scan_layout.setAlignment(Qt.AlignTop)
+        scan_layout.setSpacing(0)           # spacing controlled manually via addSpacing
 
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
         self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        scan_layout.addSpacing(50)          # label top lands at 50px from section top
         scan_layout.addWidget(self.library_prompt_label)
-
+        scan_layout.addSpacing(80)          # ~80px gap → button top lands at ~150px from section top
+                                            # (exact value depends on label height; tune if needed)
         self.scan_now_btn = QPushButton("Scan now")
         self.scan_now_btn.setFixedWidth(120)
         scan_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
-        scan_layout.addStretch()  # keep the two widgets pinned to the top
+        scan_layout.addStretch()            # eat remaining space below the button
         self.visual_layout.addWidget(self.scan_section, 1)  # stretch 1: claims remaining space
 
         # Metadata (Book Info)
@@ -637,7 +638,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Quote section: fixed-height box, quote bottom-anchored, expands upward.
         self.quote_section = QWidget()
-        self.quote_section.setFixedHeight(217)
+        self.quote_section.setFixedHeight(240)
         quote_layout = QVBoxLayout(self.quote_section)
         quote_layout.setContentsMargins(0, 0, 0, 0)
         self.quote_label = QLabel("")
