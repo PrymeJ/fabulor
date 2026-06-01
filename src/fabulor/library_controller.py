@@ -144,10 +144,17 @@ class LibraryController(QObject):
                 self.ui.update_status(msg, show_banner=True, show_cancel=True)
             self.scanner.start(force_refresh=force_refresh)
 
-    def _check_library_status(self, manual=False, force_refresh=False):
-        """Main entry point for verifying library health and starting scans."""
+    def apply_current_state(self):
+        """Compute and apply library UI state. No background-task/scan side effects.
+        Returns the computed state so callers that also need it (e.g. background
+        task scheduling) can reuse it without recomputing."""
         state = self.compute_library_state()
         self.apply_library_state(state)
+        return state
+
+    def _check_library_status(self, manual=False, force_refresh=False):
+        """Main entry point for verifying library health and starting scans."""
+        state = self.apply_current_state()
         self.handle_background_tasks(state, manual, force_refresh)
 
     def _rotate_quote(self):
