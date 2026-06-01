@@ -26,6 +26,6 @@ BOOK_QUOTES = [
     ("This has been a novel about some people who were punished entirely too much for what they did... If there was any 'sin,' it was that these people wanted to keep on having a good time forever, and were punished for that, but, as I say, I feel that, if so, the punishment was far too great.", "A Scanner Darkly", 15, 14, "white", "right"),
     ("Give a man a fire and he's warm for a day, but set fire to him and he's warm for the rest of his life.", "Jingo", 20, 14, "white", "right"),
     ("You have to be realistic about these things.", "The Blade Itself", 22, 14, "white", "center"),
-    ("May the days be aimless. Let the seasons drift. Do not advance the action according to a plan." "White Noise", 22, 14, "white", "right"),
+    ("May the days be aimless. Let the seasons drift. Do not advance the action according to a plan.", "White Noise", 22, 14, "white", "right"),
     ("I do things like get in a taxi and say, \"The library, and step on it.\"", "Infinite Jest", 19, 14, "white", "right"),
 ]
