@@ -125,14 +125,20 @@ class VisualsInterface:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
-    def set_hints_selection(self, enabled):
+    def set_hints_selection(self, mode):
         m = self._main
         if not hasattr(m, 'hints_buttons'): return
-        for mode, btn in m.hints_buttons.items():
-            is_selected = (mode == "On" if enabled else mode == "Off")
-            btn.setProperty("selected", "true" if is_selected else "false")
+        for m_val, btn in m.hints_buttons.items():
+            btn.setProperty("selected", "true" if m_val == mode else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
+
+        if mode == "Off":
+            m._clear_preview()
+        elif m.prev_button.underMouse():
+            m._on_prev_hover()
+        elif m.next_button.underMouse():
+            m._on_next_hover()
 
     def set_notch_animation_selection(self, enabled):
         m = self._main
@@ -266,7 +272,7 @@ class PlayerInterface:
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     naming_pattern_changed = Signal(str)
     scroll_mode_changed = Signal(str)
-    hints_mode_changed = Signal(bool)
+    hints_mode_changed = Signal(str)
     notches_mode_changed = Signal(bool)
     notch_animation_mode_changed = Signal(bool)
     undo_mode_changed = Signal(int)
@@ -1110,10 +1116,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         hints_row = QHBoxLayout()
         self.hints_buttons = {}
-        for mode in ["On", "Off"]:
+        for mode in ["Sticky", "Transient", "Off"]:
             btn = QPushButton(mode)
             btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.hints_mode_changed.emit(m == "On"))
+            btn.clicked.connect(lambda _, m=mode: self.hints_mode_changed.emit(m))
             hints_row.addWidget(btn)
             self.hints_buttons[mode] = btn
         hints_row.addStretch()
@@ -2242,8 +2248,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._next_chap_title = ""
             self.next_button.setToolTip("") # Clear old tooltips
 
+            # Refresh preview label text if a navigation button is currently hovered
+            if self.config.get_chapter_hints_mode() == "Sticky":
+                if self.prev_button.underMouse():
+                    if self._prev_chap_title:
+                        self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignLeft)
+                        self.chapter_preview_label.setAlignment(Qt.AlignLeft)
+                        self.chapter_preview_label.setText(self._prev_chap_title)
+                    else:
+                        self._clear_preview()
+                elif self.next_button.underMouse():
+                    if self._next_chap_title:
+                        self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignRight)
+                        self.chapter_preview_label.setAlignment(Qt.AlignRight)
+                        self.chapter_preview_label.setText(self._next_chap_title)
+                    else:
+                        self._clear_preview()
+
     def _on_prev_hover(self):
-        if self._prev_chap_title and self.config.get_chapter_hints_enabled():
+        if self._prev_chap_title and self.config.get_chapter_hints_mode() != "Off":
             self.preview_anim.stop()
             self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignLeft)
             self.chapter_preview_label.setAlignment(Qt.AlignLeft)
@@ -2253,7 +2276,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.preview_anim.start()
 
     def _on_next_hover(self):
-        if self._next_chap_title and self.config.get_chapter_hints_enabled():
+        if self._next_chap_title and self.config.get_chapter_hints_mode() != "Off":
             self.preview_anim.stop()
             self.preview_row.setAlignment(self.chapter_preview_label, Qt.AlignRight)
             self.chapter_preview_label.setAlignment(Qt.AlignRight)
@@ -2512,7 +2535,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_prev(self):
         self.panel_manager.hide_all_panels()
-        self._clear_preview()
+        if self.config.get_chapter_hints_mode() == "Transient":
+            self._clear_preview()
         if self.player:
             old_pos = self.player.time_pos or 0.0
             target = self.player.previous_chapter()
@@ -2524,7 +2548,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def handle_next(self):
         self.panel_manager.hide_all_panels()
-        self._clear_preview()
+        if self.config.get_chapter_hints_mode() == "Transient":
+            self._clear_preview()
         if self.player:
             old_pos = self.player.time_pos or 0.0
             target = self.player.next_chapter()

@@ -165,11 +165,11 @@ class Config:
     def set_hover_fade_mode(self, mode: str):
         self.settings.setValue("hover_fade_mode", mode)
 
-    def get_chapter_hints_enabled(self):
-        return self.settings.value("chapter_hints_enabled", "true") == "true"
+    def get_chapter_hints_mode(self):
+        return self.settings.value("chapter_hints_mode", "Sticky")
 
-    def set_chapter_hints_enabled(self, enabled):
-        self.settings.setValue("chapter_hints_enabled", str(enabled).lower())
+    def set_chapter_hints_mode(self, mode):
+        self.settings.setValue("chapter_hints_mode", mode)
 
     def get_chapter_notches_enabled(self):
         return self.settings.value("chapter_notches_enabled", "false") == "true"

@@ -48,15 +48,15 @@ class SettingsController:
         current = self.config.get_scroll_mode()
         self.visuals.set_scroll_selection(current)
 
-    def _update_hints_mode(self, enabled):
+    def _update_hints_mode(self, mode):
         """Changes the chapter hint visibility setting."""
-        self.config.set_chapter_hints_enabled(enabled)
+        self.config.set_chapter_hints_mode(mode)
         self._update_hints_visuals()
 
     def _update_hints_visuals(self):
         """Updates the highlight state of hint toggle buttons."""
-        enabled = self.config.get_chapter_hints_enabled()
-        self.visuals.set_hints_selection(enabled)
+        mode = self.config.get_chapter_hints_mode()
+        self.visuals.set_hints_selection(mode)
 
     def _update_notches_mode(self, enabled):
         self.config.set_chapter_notches_enabled(enabled)
