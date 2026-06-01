@@ -42,8 +42,8 @@ call was fighting it. If you think metadata visibility needs to be controlled at
 ### DO NOT use `self.chapter = idx` for chapter navigation anywhere
 Always use `seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)` with a position-based walk of `chapter_list`. Native mpv chapter assignment undershoots boundaries and causes drift. This applies in `chapter_list.py`, `player.py`, and anywhere else chapter navigation is triggered. The only exception is embedded M4B chapter list clicks where `_chapter_list is None` and `_virtual_timeline is None` — that path still uses `self.chapter = idx` because mpv owns the chapter boundaries natively.
 
-### DO NOT emit `chapter_changed` from `_on_chapter_change` when `_is_seeking` or `_chapter_list is not None`
-The `_is_seeking` guard prevents mpv's async native observer from racing with `seek_async`'s immediate emit and overwriting the correct chapter with a stale value. The `_chapter_list is not None` guard prevents cue-mode corruption — mpv's native chapter index has no relationship to cue chapter index. Both guards are load-bearing; removing either causes visible chapter label errors.
+### DO NOT restore any emit in `_on_chapter_change` — it is fully suppressed as of 2026-06-01
+`_on_chapter_change` now contains only `return`. `_on_time_pos_change` drives `chapter_changed` universally for all book types (VT, CUE, embedded M4B) via position walk. The old `_is_seeking` guard on `_on_chapter_change` was insufficient: `_on_time_pos_change` clears `_is_seeking` first, so by the time `_on_chapter_change` fires the guard is already False — it emitted stale mpv native chapter values, causing snap-back on Prev/Next while paused. Do not add back any emit here.
 
 ### DO NOT set `_virtual_timeline` for CUE books
 CUE mode is indicated solely by `_chapter_list` being non-`None` with `_virtual_timeline` remaining `None`. Setting `_virtual_timeline` would activate VT file-switching machinery on a single-file book.
@@ -127,7 +127,7 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
   - VT same-file stop-and-load: `_mp3_stop_and_load` takes optional `file_path` and `local_pos`. `_cached_time_pos` must be set to `local_pos` (not global `target_pos`) so the `time_pos` getter (`_file_offset + _cached_time_pos`) returns the correct global value. Setting it to global `target_pos` double-counts `_file_offset`.
   - Concurrent reload guard: both call sites in `seek_async` include `and not self._mp3_seek_reload_pending`. Stacked `loadfile` calls cause the second `_on_file_loaded` to bypass the early-return and emit `book_ready`, triggering DB position restore.
 - `_CHAPTER_BOUNDARY_EPSILON = 0.35` — compensates for mpv's ~23ms undershoot at chapter boundaries and float drift in mpv's internal boundary representation. Lives at seek time, not save time.
-- Chapter changed signal path: `seek_async` emits `chapter_changed` immediately on seek (optimistic, for paused case). `_on_time_pos_change` has VT and non-VT walk blocks for natural playback transitions. `_on_chapter_change` (mpv native) suppressed when `_is_seeking` or `_chapter_list is not None`.
+- Chapter changed signal path: `_on_time_pos_change` drives `chapter_changed` universally for all book types via position walk — VT (walks `_chapter_list` against global pos), CUE (walks `_chapter_list`), embedded M4B (walks `self.instance.chapter_list`). `_on_chapter_change` is fully suppressed (always returns). `seek_async` also emits `chapter_changed` immediately for CUE mode (where `_chapter_list` is set) as an optimistic paused-case update.
 - Per-book speed memory, global speed default, volume control
 - Smart rewind on resume
 - Undo (one level, position-at-jump stored, triggered if distance > 60s × speed)
@@ -254,8 +254,8 @@ Always derive chapter by walking `self.player.chapter_list`, finding last entry 
 ### DO NOT use `self.chapter = idx` for chapter navigation
 Always use `seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)` with a position-based walk. Exception: embedded M4B chapter list clicks where `_chapter_list is None` and `_virtual_timeline is None`.
 
-### DO NOT emit `chapter_changed` from `_on_chapter_change` when `_is_seeking` or `_chapter_list is not None`
-`_is_seeking` guard prevents race with `seek_async` emit. `_chapter_list is not None` guard prevents cue-mode index corruption. Both are load-bearing.
+### DO NOT restore any emit in `_on_chapter_change` — it is fully suppressed
+`_on_chapter_change` always returns immediately. `_on_time_pos_change` is the sole driver of `chapter_changed` for all book types. The old `_is_seeking` guard was insufficient — it cleared before `_on_chapter_change` fired, causing paused-state snap-back.
 
 ### DO NOT set `_virtual_timeline` for CUE books
 CUE mode = `_chapter_list is not None` and `_virtual_timeline is None`. Setting `_virtual_timeline` activates VT file-switching on a single-file book.

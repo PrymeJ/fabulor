@@ -288,7 +288,7 @@ The `upsert` resurrection behavior (rescan brings a book back) is a deliberate d
 ## CUE file support — architectural notes (2026-05-16)
 
 - `_chapter_list` being non-`None` is the flag for cue mode. No separate `_cue_mode` boolean needed — the `chapter_list` property already abstracts over VT/cue/native.
-- `_on_chapter_change` must be suppressed when `_chapter_list` is populated — mpv's native chapter index has no relationship to cue chapter index and will cause offset errors.
+- `_on_chapter_change` is fully suppressed (always returns immediately as of 2026-06-01). It was previously guarded per-mode; now it does nothing. `_on_time_pos_change` drives all chapter tracking universally.
 - All chapter navigation must use position-based walks against `_chapter_list` when populated — never `self.chapter` directly.
 - `_virtual_timeline` stays `None` for cue books — do not set it, VT file-switching machinery must not activate.
 - CUE files from Windows rippers (EAC, dBpoweramp) almost always have a UTF-8 BOM — read with `utf-8-sig`, not `utf-8`.
@@ -658,19 +658,33 @@ Three signal-path approaches failed — **do not retry**:
 
 Fixed at the seek: `_restore_position` now uses `seek_async(book_data.progress + 0.35)`. Restores 0.35s past the saved position — accepted trade-off, consistent with what `previous_chapter` does for the same reason.
 
-**Rule: `chapter_changed` signal for non-VT must remain on `_on_chapter_change` (mpv's chapter property), not `_on_time_pos_change`.** VT uses `_on_time_pos_change` because VT chapter times are exact DB values; non-VT chapter times have ~0.25s float drift. The time_pos path cannot distinguish intermediate seek values from settled ones.
+**Rule (superseded — see below):** Earlier rule said `chapter_changed` for non-VT must remain on `_on_chapter_change`. That rule is now wrong. See the 2026-06-01 session entry below.
 
-### M4B chapter label drift after slider/right-click seek — RESOLVED (2026-05-16, session 2)
+### M4B chapter label drift after slider/right-click seek — RESOLVED (2026-05-16, session 2) — superseded by 2026-06-01
 
 Root cause: mpv fires `time-pos` observer only once after a seek while paused. That single callback can arrive at an intermediate position and go silent before the seek fully lands — label stays wrong until the next natural `chapter_changed` emit.
 
-Fix applied:
-- `_on_time_pos_change` now includes a non-VT branch that walks `chapter_list` against `value + _CHAPTER_BOUNDARY_EPSILON` and emits `chapter_changed` when the index changes. Tracks via `_last_nonvt_chapter` (reset in load/reset block alongside `_last_vt_chapter`). Handles natural chapter transitions during playback correctly.
-- `seek_async` non-VT now immediately sets `_cached_time_pos = pos` and emits `chapter_changed` with the derived index. This covers the paused-seek case where the `time-pos` observer fires unreliably.
-- `_on_chapter_change` now returns early if `_is_seeking` is True, preventing mpv's async native observer from racing with the `seek_async` emit and overwriting the correct chapter with a stale value.
-- `_is_seeking` is now set to True in `load_book` at file load time, suppressing spurious chapter observer callbacks during initial load before `_restore_position` runs.
+Fix applied in 2026-05-16:
+- `_on_time_pos_change` added non-VT branch walking `chapter_list` against `value + _CHAPTER_BOUNDARY_EPSILON`, emitting `chapter_changed` when index changes. Tracked via `_last_nonvt_chapter`.
+- `seek_async` non-VT immediately set `_cached_time_pos = pos` and emitted `chapter_changed`.
+- `_on_chapter_change` returned early if `_is_seeking` is True.
 
-**Rule updated:** The earlier rule ("do not use `_on_time_pos_change` for non-VT") is superseded. The non-VT path is now safe because `_on_chapter_change`'s `_is_seeking` guard prevents the race. The previous failures were caused by the race, not by the walk itself.
+**This fix introduced a latent race** — see "Chapter snap-back on Prev/Next while paused" below.
+
+### Chapter snap-back on Prev/Next while paused — RESOLVED (2026-06-01)
+
+Root cause: `_on_time_pos_change` and `_on_chapter_change` were both emitting `chapter_changed` for embedded M4B books. The `_is_seeking` guard on `_on_chapter_change` was insufficient because `_on_time_pos_change` clears `_is_seeking` first (when the position settles within 1.0s of `_seek_target`). By the time `_on_chapter_change` fires, `_is_seeking` is already False — the guard cannot protect against the stale mpv native chapter value.
+
+When **playing**, continuous `time_pos` events keep re-emitting the correct chapter within milliseconds, masking the snap-back. When **paused**, mpv fires no further events after settling — the stale `_on_chapter_change` value is the last word. Symptom: clicking Next while paused briefly shows the correct chapter title, then snaps back to the previous chapter. The actual seek did happen; only the label was wrong.
+
+Fix: `_on_chapter_change` is now fully suppressed (immediate `return`). `_on_time_pos_change` handles chapter tracking universally for all three book types:
+- **VT** (`_virtual_timeline is not None and _chapter_list`): walks `_chapter_list` against global position.
+- **CUE** (`_chapter_list is not None, _virtual_timeline is None`): `self.chapter_list` returns `_chapter_list`, walks it.
+- **Embedded M4B** (`_chapter_list is None, _virtual_timeline is None`): `self.chapter_list` returns `self.instance.chapter_list` (live from mpv), walks it.
+
+All three paths track via `_last_nonvt_chapter` / `_last_vt_chapter` and emit only on change. No emission path remains in `_on_chapter_change`.
+
+**Current rule:** `_on_chapter_change` is dead (always returns). Do not restore it. `_on_time_pos_change` is the sole driver of `chapter_changed` for all book types.
 
 ### Progress slider race on book switch
 Symptom: slider briefly shows 0% before animating to the correct position on book switch. The flow animation in `_on_file_ready` calls `animate_to(target, old_value=_pre_switch_slider_value)`. If `_pre_switch_slider_value` was set correctly but the animation's start value is 0 (because `_update_ui_sync` ran with `is_seeking=True` and forced the slider to 0 during the deadzone window), the animation starts from 0. Guard already exists in `_sync_progress_sliders` (`if slider_animating: return`), but the race is between the deadzone clear and the animation start. Known, pre-existing.

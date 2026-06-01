@@ -1,3 +1,54 @@
+# Session Summary — 2026-06-01 Session 2 — Sticky chapter hints + chapter snap-back fix
+
+## What changed
+
+### `app.py` + `config.py` + `settings_controller.py` — Chapter hints Sticky/Transient/Off mode (commit `6023a08`)
+
+**Previous state:** Chapter hint labels (showing the prev/next chapter title on button hover) had a binary On/Off toggle. On click, `_clear_preview()` was always called unconditionally in `handle_prev`/`handle_next`.
+
+**Change:** Expanded to three modes persisted via `config.get_chapter_hints_mode()` / `config.set_chapter_hints_mode()` (QSettings key `chapter_hints_mode`, default `"Sticky"`). Old key `chapter_hints_enabled` is superseded.
+
+- **Sticky** — preview label persists after a nav button click for as long as the mouse stays on the button. `_update_chapter_label_from_index` refreshes the preview text (to the new prev/next title) after every `chapter_changed` signal when a nav button is `underMouse()`.
+- **Transient** — `_clear_preview()` is called on click, fading the label out immediately (previous behavior).
+- **Off** — preview never shown; `_clear_preview()` called on mode switch.
+
+`hints_mode_changed` signal type changed from `Signal(bool)` to `Signal(str)`. `set_hints_selection` in `VisualsInterface` updated to match the three-button layout (`["Sticky", "Transient", "Off"]`). `settings_controller._update_hints_mode` and `_update_hints_visuals` updated to pass/read the string mode.
+
+Also fixed: `_on_prev_hover` / `_on_next_hover` changed guard from `get_chapter_hints_enabled()` to `get_chapter_hints_mode() != "Off"`.
+
+---
+
+### `player.py` — `_on_chapter_change` fully suppressed; `_on_time_pos_change` drives chapter tracking universally
+
+**Root cause diagnosed:** `_on_time_pos_change` and `_on_chapter_change` were both emitting `chapter_changed` for embedded M4B books. The `_is_seeking` guard on `_on_chapter_change` was structurally insufficient: `_on_time_pos_change` clears `_is_seeking` when the position settles within 1.0s of `_seek_target`. By the time mpv fires the chapter property observer (`_on_chapter_change`), `_is_seeking` is already `False` — the guard cannot filter the stale mpv native chapter value.
+
+**Symptom:** Clicking Prev or Next while paused caused the chapter label to flash the correct chapter briefly then snap back to the previous one. When playing, continuous `time_pos` events re-emitted the correct chapter within milliseconds and masked the snap-back. When paused, mpv fires no further events after settling, so the stale `_on_chapter_change` value was permanent.
+
+**Fix:** `_on_chapter_change` now contains only `return`. `_on_time_pos_change` handles all three book types:
+- **VT** (`_virtual_timeline is not None and _chapter_list`): walks `_chapter_list` against global position, emits via `_last_vt_chapter`.
+- **CUE** (`_chapter_list is not None, _virtual_timeline is None`): `self.chapter_list` returns `_chapter_list`; same walk path.
+- **Embedded M4B** (`_chapter_list is None, _virtual_timeline is None`): `self.chapter_list` returns `self.instance.chapter_list` (live from mpv); walks it, emits via `_last_nonvt_chapter`.
+
+Also fixed: VT `next_chapter()` was missing `_CHAPTER_BOUNDARY_EPSILON` on the seek target (non-VT branch already had it). Added epsilon to match.
+
+Also removed: stale `print()` debug statement in VT `next_chapter()`.
+
+---
+
+## Invariant added
+
+**DO NOT restore any emit in `_on_chapter_change`.** It is fully suppressed. `_on_time_pos_change` is the sole driver of `chapter_changed` for all book types. The `_is_seeking` guard that previously lived on `_on_chapter_change` was structurally broken — `_on_time_pos_change` always clears `_is_seeking` first.
+
+---
+
+## Commits
+
+- `6023a08` — feat: implement sticky chapter preview label on navigation when hovered
+- `0e0196b` — feat: add quotes
+- `fc85c5f` — fix: suppress async mpv chapter snap-back on navigation
+
+---
+
 # Session Summary — 2026-06-01 Session 1 — Cover area height fix + library state refactor
 
 ## What changed
