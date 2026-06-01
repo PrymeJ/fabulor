@@ -618,14 +618,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_now_btn = QPushButton("Scan now")
         self.scan_now_btn.setFixedWidth(120)
         scan_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
-        self.scan_info_label = QLabel(
-            "Loading all your books may take a while. If you wish, you can instead "
-            "first load fewer books, then choose your whole library later."
-        )
-        self.scan_info_label.setAlignment(Qt.AlignCenter)
-        self.scan_info_label.setWordWrap(True)
-        self.scan_info_label.setStyleSheet("color: #aaa; font-size: 13px; margin: 5px;")
-        scan_layout.addWidget(self.scan_info_label)
         scan_layout.addStretch()  # keep the two widgets pinned to the top
         self.visual_layout.addWidget(self.scan_section, 1)  # stretch 1: claims remaining space
 
@@ -1576,6 +1568,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.transport_controls.setVisible(visible)
         # Suppress the overall-progress fill (keep the bg groove so no layout shift).
         self.progress_slider._suppress_fill = not visible
+        self.progress_slider.setEnabled(visible)
         self.progress_slider.update()
         # Sleep and Playback panels have no function without an active book.
         self.sleep_trigger_btn.setVisible(visible)
@@ -2219,6 +2212,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._theme_rotate_cooldown.start()
             else:
                 self._theme_rotate_pending = True
+        elif event.key() == Qt.Key.Key_Q:
+            # TODO: remove before release — testing only
+            if not self.current_file and self.quote_section.isVisible():
+                self.library_controller._rotate_quote()
         else:
             super().keyPressEvent(event)
 
@@ -2667,7 +2664,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def wheelEvent(self, event):
         """Handles volume control via mouse wheel on the cover art area."""
         if self.visual_area.underMouse():
-            if self.current_file is None:  # no book loaded — volume control inert
+            if not self.current_file:  # no book loaded — volume control inert
                 return
             delta = event.angleDelta().y()
             current = self.volume_slider.value()
