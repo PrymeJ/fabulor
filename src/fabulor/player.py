@@ -378,14 +378,12 @@ class Player(QObject):
         
 
     def _on_chapter_change(self, name, value):
-        if value is not None:
-            if self._virtual_timeline is not None:
-                return
-            if self._chapter_list is not None:  # cue mode
-                return
-            if self._is_seeking:
-                return
-            self.chapter_changed.emit(int(value))
+        # For non-VT non-CUE (embedded M4B), _on_time_pos_change handles chapter
+        # tracking via position walk. The native mpv chapter property update is async
+        # and races with _on_time_pos_change — it fires after _is_seeking is already
+        # cleared, so the _is_seeking guard here can't protect against the stale value.
+        # Suppressing it entirely avoids the snap-back on chapter navigation.
+        return
     def _on_file_loaded(self, event):
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
@@ -682,10 +680,12 @@ class Player(QObject):
         if mpv_pos is None: return 0
 
         if self.pause:
-            # Only update display if we are seeking or the change is significant (>1s)
-            if self._paused_time is None or self._is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
+            if self._is_seeking:
+                # Show seek target immediately; let _on_time_pos_change clear _is_seeking
+                # once mpv lands. Don't touch _paused_time yet — it's still the pre-seek pos.
+                return self._seek_target if self._seek_target is not None else (self._paused_time or mpv_pos)
+            if self._paused_time is None or abs(mpv_pos - self._paused_time) > 1.0:
                 self._paused_time = mpv_pos
-                self._is_seeking = False
             return self._paused_time
 
         self._paused_time = None
@@ -738,10 +738,9 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
                     curr_chap = i
-            print(f"[next_chapter] eof={self._eof} curr_chap={curr_chap} total={len(self._chapter_list)}")
             if curr_chap >= len(self._chapter_list) - 1:
                 return
-            target = self._chapter_list[curr_chap + 1].get('time', 0)
+            target = self._chapter_list[curr_chap + 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
             self.seek_async(target)
             return target
         else:
