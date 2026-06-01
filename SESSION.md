@@ -1,3 +1,65 @@
+# Session Summary — 2026-06-01 Session 1 — Cover area height fix + library state refactor
+
+## What changed
+
+### `app.py` — Pin cover art label to fixed height (`COVER_AREA_HEIGHT`)
+
+**Problem:** `cover_art_label` had an Expanding vertical size policy and no maximum height. With `visual_area` added to `content_layout` with stretch factor 1, the label claimed all remaining vertical space. `_update_cover_art_scaling()` read `cover_art_label.height()` to scale the pixmap — which returned the layout-allocated height, not a stable design value. Two bugs:
+
+1. Unusual-aspect-ratio covers (tall or landscape) caused the label to report an inflated height, producing an oversized pixmap; in the fixed-size window the transport controls below got squeezed out of view.
+2. After returning from the empty/no-library state, the deferred `_update_cover_art_scaling` fired before the layout had settled, reading a stale height and reproducing the broken layout. Only a restart restored correct layout.
+
+**Fix:**
+- Added module-level constant `COVER_AREA_HEIGHT = 280` (calibrated empirically from the fixed-size window budget: 564px − title bar 32 − progress slider 24 = 508 content height; minus margins, spacing, and six fixed-height rows below `visual_area` = 290 theoretical, tuned to 280).
+- `_build_cover_art`: added `setFixedHeight(COVER_AREA_HEIGHT)`, changed alignment from `AlignBottom | AlignHCenter` to `AlignCenter` so letterboxed covers center vertically in the fixed box.
+- `_update_cover_art_scaling`: changed `target_h` from `self.cover_art_label.height()` to `COVER_AREA_HEIGHT`. `target_w` still reads `.width()`; the fit/stretch/crop/top scaling logic is untouched.
+
+**Invariant added to CLAUDE.md:** Do not revert `target_h` to reading the live allocated height. The constant decouples scaling from transient layout state.
+
+---
+
+### `app.py` + `library_controller.py` — Restore player chrome after empty → load book path
+
+**Problem:** `apply_library_state()` is the sole gate for player chrome visibility — it calls `set_visible(state["has_book"])` and manages `go_to_library_btn`. In the empty → add folder → scan → pick book path:
+
+1. Empty state: `apply_library_state(mode="empty", has_book=False)` → chrome hidden.
+2. Scan finishes: `apply_library_state(mode="ready", has_book=False)` → `go_to_library_btn.show()` fires. This state is sticky.
+3. User picks a book: `_on_book_selected_from_library` sets `current_file`, calls `_load_cover_art` and `player.load_book` — but never re-runs the chrome gate. `_on_file_ready` doesn't either.
+
+Result: cover loaded correctly (from the height fix), but chrome stayed hidden and `go_to_library_btn` remained visible until app restart.
+
+**Fix (initial):** Added `apply_library_state(compute_library_state())` inline in the deferred `singleShot(0)` lambda in `_on_book_selected_from_library`, after `_load_cover_art` and `player.load_book`. (`_check_library_status()` was not used because it calls `handle_background_tasks`, which would fire a scan on every book pick.)
+
+**Refactor:** Extracted the compute-and-apply pair into `apply_current_state()` on `LibraryController`, and rewrote `_check_library_status` to delegate to it:
+
+```python
+def apply_current_state(self):
+    state = self.compute_library_state()
+    self.apply_library_state(state)
+    return state  # returned so _check_library_status can feed handle_background_tasks without recomputing
+
+def _check_library_status(self, manual=False, force_refresh=False):
+    state = self.apply_current_state()
+    self.handle_background_tasks(state, manual, force_refresh)
+```
+
+The book-selection path now calls `self.library_controller.apply_current_state()` — one clean call, no inline replication. The compute+apply pairing lives in exactly one place.
+
+**Caller audit:** Three remaining `_check_library_status` call sites all legitimately want a scan trigger or fire during an active scan where the trigger is a no-op. No callers need migration. `_on_scan_finished` does not call `_check_library_status` at all.
+
+**Invariant added to CLAUDE.md:** Never replicate `apply_library_state(compute_library_state())` at a call site — route through `apply_current_state()`.
+
+---
+
+## Commits
+
+- `12047a2` — wip: stabilize cover art height to prevent layout shifts
+- `3899b8f` — wip: reveal player chrome when switching books in library
+- `e12ce5b` — refactor: extract apply_current_state() from _check_library_status + fix cover area height
+- (docs commit — CLAUDE.md, NOTES.md, SESSION.md)
+
+---
+
 # Session Summary — 2026-05-31 Session 3 — Tag refresh fix + theme rotation tuning
 
 ## What changed

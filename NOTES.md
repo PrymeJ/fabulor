@@ -723,3 +723,24 @@ These items exist in the codebase intentionally and should not be removed withou
 
 ### Config — `balance` key has no bounds validation
 `config.set_balance(value)` writes whatever it receives. The audio tab constrains input to `[-1.0, 1.0]` via the slider, but the config layer has no clamp. A manually edited or corrupted QSettings file can store an out-of-range value that passes silently to mpv's audio filter. Add `max(-1.0, min(1.0, value))` in `set_balance` when config is next touched.
+---
+
+## Library State Refactor + Cover Area Fix (2026-06-01)
+
+### `apply_current_state()` vs `_check_library_status()` (LibraryController)
+
+`apply_current_state()` computes library state, applies it to the UI, and returns the computed state object — no background-task or scan side effects. `_check_library_status()` delegates to `apply_current_state()` and feeds its returned state into `handle_background_tasks()`. All scan triggering lives in `_check_library_status` alone.
+
+The book-selection path (`_on_book_selected_from_library`) calls `self.library_controller.apply_current_state()` inside its deferred `singleShot(0)` lambda, after `_load_cover_art` and `player.load_book`, so cover and chrome reveal in the same event-loop tick. `_check_library_status` is not used here because `handle_background_tasks` would fire a scan on every book pick.
+
+`apply_library_state` is the sole chrome gate: it calls `set_visible(state["has_book"])` and manages `go_to_library_btn` visibility. Chrome only appears when this gate runs with `has_book=True`. The failure mode that prompted the refactor: in the empty → add folder → scan → pick book path, `current_file` was set but the gate never ran with `has_book=True`, so chrome stayed hidden until restart.
+
+**Caller audit (2026-06-01):** Three `_check_library_status` call sites remain. All three legitimately want a scan trigger (`_on_remove_folder_clicked`, `_on_scan_now_clicked`) or fire during an active scan where `handle_background_tasks` guards on `mode != "scanning"` and is effectively a no-op (`_on_scan_progress` at `current == 1`). None need migration to `apply_current_state()` for correctness. `_on_scan_finished` does not call `_check_library_status` at all.
+
+### `COVER_AREA_HEIGHT = 280` (`app.py` module constant)
+
+Calibrated fixed height of the cover art box in pixels. `cover_art_label` is pinned with `setFixedHeight(COVER_AREA_HEIGHT)` and `setAlignment(Qt.AlignCenter)`. `_update_cover_art_scaling` uses this as `target_h`.
+
+Value derived from the fixed-size window budget (564px total − title bar 32 − progress slider 24 = 508 content height; minus content margins 20, 5 spacing gaps 50, and six fixed-height rows below visual_area: speed 33, preview 21, controls 33, chapter_info 24, chapter_slider 13, book_info 24 = 148; 508 − 218 = 290 theoretical). Calibrated empirically to 280 after testing covers of various aspect ratios.
+
+Do not derive `target_h` from `cover_art_label.height()` — that reflects transient layout allocation, which is wrong during any state transition. If the window layout ever changes, re-calibrate empirically.
