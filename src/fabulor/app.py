@@ -1491,10 +1491,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False):
         if text is not None and (self.status_banner.isVisible() or show_banner):
             self.status_label.setText(text)
-            if self.status_banner.isVisible():
+            fade = getattr(self.theme_manager, '_fade_overlay', None)
+            if self.status_banner.isVisible() and not (fade and fade.isVisible()):
                 self.status_banner.raise_()
 
-        if show_banner is True: self.status_banner.show()
+        if show_banner is True:
+            self.status_banner.show()
+            fade = getattr(self.theme_manager, '_fade_overlay', None)
+            if not (fade and fade.isVisible()):
+                self.status_banner.raise_()
         elif show_banner is False: self.status_banner.hide()
 
         if show_cancel is True: self.cancel_scan_btn.show()

@@ -2271,7 +2271,7 @@ def get_base_stylesheet(theme_name="default"):
             font-size: 11px;
         }}
         QWidget#status_banner {{
-            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            background-color: transparent;
             border-radius: 0px;
         }}
         QWidget#status_banner QLabel {{
@@ -2280,14 +2280,14 @@ def get_base_stylesheet(theme_name="default"):
         QWidget#status_banner QPushButton {{
             background-color: {t['accent']};
             color: {t['text']};
-            font-weight: bold;
             font-size: 13px;
+            font-weight: bold;
             padding: 0px;
             border: none;
             border-radius: 3px;
         }}
         QWidget#status_banner QPushButton:hover {{
-            color: {t['accent_dark']};
+            color: {t['bg_main']};
         }}
         QProgressBar#scan_progress {{
             background-color: {t['slider_overall_bg']};
@@ -2370,7 +2370,6 @@ def get_base_stylesheet(theme_name="default"):
             background-color: {t.get('undo_hover', t.get('accent'))};
         }}
     """
-
 
 def get_title_bar_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
