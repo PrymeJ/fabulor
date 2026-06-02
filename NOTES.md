@@ -792,3 +792,11 @@ When the carousel is active, `_carousel_container` is inserted at index 0 (pushi
 - Static mode threshold is count-based (`n <= 3`), not width-based. Three covers at 96px/slot = 288px > 280px viewport, so they cannot scroll seamlessly (2x strip = 576px < threshold for gapless looping). Centered static layout is correct for 2–3 covers.
 - `scroll_speed` default is 15 px/s (tuned from initial 30 — user preference).
 - Carousel issues from visual inspection are pending resolution (commit tagged `wip`).
+
+### Design decision — cancel scan keeps partial results
+
+Cancelling a scan leaves already-scanned books in the library. This is intentional: for a large library mid-scan, removing the partial results would be destructive — the user would lose progress data and cover art for hundreds of books already processed. If a user adds the wrong folder, they remove it manually. Do not treat partial-scan residue as a bug.
+
+### Intentional redundancy — `or not has_indexed_books` in `apply_library_state`
+
+The condition `state["mode"] == "empty" or not state["has_indexed_books"]` contains a redundant clause. `compute_library_state` already sets `mode = "empty"` whenever `not has_indexed_books` (line: `if not has_locations or not has_indexed_books: mode = "empty"`), so the `or not has_indexed_books` branch can never be reached today. It is kept as a guard against future refactors that might introduce a state where `has_indexed_books=False` but `mode != "empty"` (e.g. a new `"no_books"` mode). Do not remove it for cleanup — the redundancy is load-bearing intent, not dead code.
