@@ -133,7 +133,7 @@ class LibraryController(QObject):
             self.ui.set_quote_rotation(False)
 
             if not state["has_book"]:
-                self.ui.update_metadata("", show_metadata=True, show_go_to_lib=True)
+                self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=True)
                 # Ambient cover carousel — reshuffled on each no-book entry.
                 self.ui.show_carousel()
             else:

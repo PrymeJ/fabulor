@@ -293,7 +293,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._pending_cover_pixmap = None
         self._cover_fit_mode = 'fit'
         self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
-        self._carousel_pending = False  # True while deferred _show_carousel build is queued
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self._chapter_ui_active = True
@@ -638,7 +637,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         nb_layout.setContentsMargins(0, 0, 0, 0)
         nb_layout.setSpacing(0)
 
-        nb_layout.addSpacing(50)
+        nb_layout.addSpacing(80)
         self.no_book_label = QLabel("No book selected.")
         self.no_book_label.setAlignment(Qt.AlignCenter)
         self.no_book_label.setStyleSheet("font-weight: bold; font-size: 16px;")
@@ -669,7 +668,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Quote section: fixed-height box, quote bottom-anchored, expands upward.
         self.quote_section = QWidget()
-        self.quote_section.setFixedHeight(240)
+        self.quote_section.setFixedHeight(238)
         quote_layout = QVBoxLayout(self.quote_section)
         quote_layout.setContentsMargins(0, 0, 0, 0)
         self.quote_label = QLabel("")
@@ -1634,31 +1633,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return pixmaps, cover_h
 
     def _show_carousel(self):
-        """Queue a deferred carousel build into the permanent carousel_holder slot."""
-        self._hide_carousel()
-        self._carousel_pending = True
-        QTimer.singleShot(0, self._build_carousel_deferred)
-
-    def _build_carousel_deferred(self):
-        """Deferred continuation of _show_carousel — runs after the event loop yields."""
-        self._carousel_pending = False
+        """Build and place the carousel synchronously. Safe to call multiple times."""
         if self._carousel is not None:
-            return   # already built by a duplicate call
+            return   # already showing — do not reshuffle mid-display
         if self.current_file or not self.no_book_section.isVisible():
-            return   # no longer in the no-book state
+            return   # not in the no-book state
         pixmaps, cover_h = self._build_carousel_covers()
         if not pixmaps:
-            return   # too few covers — leave the holder empty
+            return
         self._carousel = CoverCarousel(pixmaps, cover_h)
         self.carousel_holder.layout().addWidget(self._carousel)
 
     def _hide_carousel(self):
-        """Stop and remove the carousel from its holder slot."""
-        self._carousel_pending = False
+        """Stop and remove the carousel from its holder."""
         if self._carousel is not None:
             self._carousel.stop()
-            layout = self.carousel_holder.layout()
-            layout.removeWidget(self._carousel)
+            self.carousel_holder.layout().removeWidget(self._carousel)
             self._carousel.setParent(None)
             self._carousel.deleteLater()
             self._carousel = None
