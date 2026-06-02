@@ -326,7 +326,9 @@
 - [ ] Transport controls (play/pause, skip, chapter nav) hidden
 - [ ] Progress slider fill hidden; groove (bg) still visible — no layout shift
 - [ ] Progress slider non-interactive (click/drag does nothing, no Undo affordance)
-- [ ] Sleep and Playback sidebar buttons hidden; Library, Settings, Stats, Tags visible
+- [ ] Sleep and Playback sidebar buttons hidden
+- [ ] **Library sidebar button hidden** (nothing to browse); Settings, Stats, Tags visible at sidebar top
+- [ ] **Library separator (10px gap below Library button) also hidden** — Settings button is flush to top
 - [ ] Mouse wheel over cover area does nothing (no volume popup)
 - [ ] Quote section (fixed 240px) visible and bottom-anchored — quotes sit at the bottom of their box
 - [ ] Quotes rotate every 60 seconds automatically
@@ -340,14 +342,37 @@
 - [ ] Transport controls reappear on book load
 - [ ] Progress slider fill reappears and tracks playback
 - [ ] Sleep and Playback sidebar buttons reappear
+- [ ] Library sidebar button reappears; separator restores
 - [ ] Volume wheel works on cover area
 - [ ] Cover art displays correctly at COVER_AREA_HEIGHT
 - [ ] Quote section hidden; scan section hidden
+
+## No-audiobooks state (library path configured, zero indexed audiobooks)
+
+This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g. folder of text files, wrong directory, unmounted drive). Soft-deleted and excluded books do not count toward the visible book count.
+
+- [ ] "No audiobooks in the folders added." label visible (not "No library folders.")
+- [ ] "Scan now" button visible
+- [ ] **Library sidebar button hidden** — same as empty state; nothing to browse
+- [ ] Quote section visible with rotating quote (same as empty state)
+- [ ] KEY_Q rotates quote
+- [ ] "No book selected." and "Go to Library" NOT visible
+- [ ] Carousel NOT visible
+- [ ] Transport controls and player chrome hidden
+
+### No-audiobooks transition tests
+
+- [ ] Add a folder of text files → scan completes → no-audiobooks state shows correctly
+- [ ] Rescan same folder → state unchanged (still no-audiobooks)
+- [ ] Add a real audiobooks folder → scan completes → transitions to no-book state; Library button reappears; carousel shows
+- [ ] Remove the text-files folder entirely → transitions to empty state; message changes to "No library folders."
+- [ ] Soft-delete all books via trash button → state transitions to no-audiobooks (visible count = 0, excluded books don't count)
 
 ## No-book state (library indexed, no book selected)
 
 - [ ] "No book selected." label visible, bold 16px, centered
 - [ ] "Go to Library" button visible
+- [ ] **Library sidebar button visible**
 - [ ] Transport controls hidden
 - [ ] Progress slider fill hidden; groove visible
 - [ ] Progress slider non-interactive
@@ -358,20 +383,37 @@
 
 ### No-book-state cover carousel
 
-- [ ] ≥ 8 portrait covers in library: carousel appears above label/button, covers scroll left at slow continuous pace
-- [ ] Portrait pool < 8, ≥ 4 square covers: carousel shows square thumbnails (92×92), scrolling
+- [ ] ≥ 12 portrait covers in library: carousel appears in carousel_holder, covers scroll left at slow continuous pace
+- [ ] Portrait pool < 12, ≥ 4 square covers: carousel shows square thumbnails (92×92), scrolling
 - [ ] 2–3 covers total: static centered row, no scroll, all covers visible
-- [ ] 0–1 covers with art: no carousel — label and button only, no layout shift
-- [ ] All carousel covers are bottom-aligned within the 150px container
+- [ ] 0–1 covers with art: no carousel — label and button only; carousel_holder reserves its 150px height — no layout shift
+- [ ] All carousel covers are bottom-aligned within the 150px holder
 - [ ] No cursor change, no hover effect, no click response on carousel
 - [ ] Reshuffling: enter no-book state, load a book, remove the book → re-enter no-book state — cover order differs from previous visit
 - [ ] Old carousel timer is not leaking: repeated no-book/player state cycling does not accumulate runaway timers
+- [ ] Carousel appears after a scan completes (without app restart) — no carousel-pending cancellation issue
 
 ### No-book-state regression: select book from library
 
 - [ ] Carousel hides immediately on book load
 - [ ] Cover art, transport controls, and full chrome restore correctly
 - [ ] No carousel visible during or after book-load transition
+
+## Scan-active button disabling
+
+- [ ] Start a scan: Add, Remove, Rescan buttons in Library panel are visually disabled (greyed out) but still visible
+- [ ] Scan completes: all three buttons re-enable
+- [ ] Cancel scan: buttons re-enable immediately on cancel
+- [ ] Open Library panel while a scan is already running: buttons open already disabled (not enabled-then-disabled flicker)
+- [ ] Open Library panel when no scan is running: buttons open enabled
+
+## Book removal / folder removal
+
+- [ ] **Trash button (book detail panel):** removing the currently-playing book hides player chrome immediately; correct state shown (no-book or empty) without app restart
+- [ ] **Folder removal (own folder):** removing the folder containing the active book unloads the book; player chrome disappears; correct state shown
+- [ ] **Folder removal (last folder):** removing the last library folder while any book is loaded unloads the book regardless of path-match; empty state shown with Library button hidden
+- [ ] **Folder removal (different folder):** removing a folder that does NOT contain the active book leaves the book loaded; only the folder list updates
+- [ ] No stale time labels, chapter info, speed badge, or progress fill after book unload
 
 ## Library panel
 

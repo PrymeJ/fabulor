@@ -1,3 +1,55 @@
+# Session Summary — 2026-06-03 Session 2 — State machine fixes, scan-active disabling, no-audiobooks state
+
+## What changed
+
+### `library_controller.py` + `app.py` — `apply_library_state` defensive guard (commit `645f460`)
+
+The empty branch now opens with `self.ui.set_visible(False)` before any other call. This overrides the `set_visible(state["has_book"])` that ran at the top of `apply_library_state` — a defensive guard ensuring player chrome never coexists with the empty state even if `has_book` is still `True` at the moment the branch fires (e.g. book not yet unloaded).
+
+### `library_controller.py` — `_on_remove_folder_clicked`: `no_folders_left` check (commit `645f460`)
+
+Book unloading on folder removal previously only fired when `current_file.startswith(path_p)` — i.e. the active book was inside the removed folder. This missed the case where all folders are removed: the active book is now unreachable regardless of which folder it was in, but the path check still fails if it was in a different folder already removed in a prior step. Added:
+
+```python
+no_folders_left = len(self.db.get_scan_locations()) == 0
+if current_file and (current_file.startswith(path_p) or no_folders_left):
+    self.app.on_book_removed()
+```
+
+Unload fires before `_check_library_status` / `apply_current_state` so state is computed with `has_book=False`.
+
+### `app.py` — `_on_book_removed` calls `apply_current_state()` (commit `645f460`)
+
+Added `self.library_controller.apply_current_state()` at the end of `_on_book_removed`. Fixes the book-detail **trash button** path (`_on_book_detail_removed` → `_on_book_removed`) which previously left stale player chrome visible — it refreshed library/tags/stats panels but never re-ran the chrome gate. The folder-removal path was already gated via `_check_library_status`; the extra call there is redundant-but-harmless.
+
+### `app.py` + `library_controller.py` + `ui/panels.py` — Scan-active button disabling (commit `645f460`)
+
+Add/Remove/Rescan buttons in the Library panel are now non-interactive during an active scan. Visible but `setEnabled(False)`.
+
+- `_set_scan_buttons_enabled(enabled)` helper on `MainWindow` controls `add_folder_btn`, `remove_folder_btn`, `refresh_library_btn`.
+- `UIInterface.set_scan_buttons_enabled(v)` passthrough added.
+- Disabled in `handle_background_tasks` immediately before `scanner.start()`.
+- Re-enabled in `_on_scan_finished` and `_on_cancel_scan_clicked` (cancel path re-enables immediately; `_on_scan_finished` fires when the worker thread exits, so both cover the lifecycle).
+- `_start_library_entry` in `panels.py` syncs button state on panel open via `scanner.is_running()` — if a scan is already running when the Library panel slides in, the buttons open already disabled.
+
+### `library_controller.py` + `db.py` + `app.py` — No-audiobooks state + Library button visibility (commit `42e5f7d`)
+
+**Problem:** A library path configured but containing zero legitimate audiobooks (text files, wrong directory, unmounted drive) fell into the no-book state — showing the carousel and "Go to Library" even though the Library panel has nothing to show. Root cause: `compute_library_state` used `get_book_count()` which counts all DB rows including `is_deleted=1` and `is_excluded=1` books, so soft-deleted books from a prior scan kept `has_indexed_books=True` even after all real books were removed.
+
+**Fix — `db.py`:** New `get_visible_book_count()` queries `WHERE is_deleted = 0 AND is_excluded = 0`. `compute_library_state` now uses this.
+
+**Fix — `apply_library_state`:** Expanded the empty-like condition to `mode == "empty" or not has_indexed_books` (the `or` clause is currently redundant since `compute_library_state` already collapses no-books into `mode="empty"`, but kept as a future guard). Within the branch, prompt text is discriminated by `has_locations`:
+- `has_locations=False` → `"No library folders."`
+- `has_locations=True` → `"No audiobooks in the folders added."`
+
+`UIInterface.set_prompt_text(text)` passthrough added.
+
+**Fix — Library button visibility:** `library_trigger_btn` and `library_separator` (10px `QWidget` spacer immediately below it in `sidebar_layout`) are toggled together via `UIInterface.set_library_btn_visible(v)`. Hidden in the empty-like branch, visible in the else branch. The `addSpacing(10)` that previously separated the Library button from the rest of the sidebar was converted to a named `QWidget` (`self.library_separator`) so it can be toggled.
+
+**Fix — `_rotate_quote`:** Removed the `if not self.db.get_scan_locations()` guard that was suppressing quotes when library folders exist. `_rotate_quote` is only ever called from the empty-like branch, so the guard was redundant for the no-paths case and actively wrong for the no-audiobooks case (where `has_locations=True`). Quotes now rotate in both sub-cases.
+
+---
+
 # Session Summary — 2026-06-02 Session 1 — Empty/no-book state UX + cover carousel
 
 ## What changed
