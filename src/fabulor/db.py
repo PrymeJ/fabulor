@@ -340,6 +340,17 @@ class LibraryDB:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
 
+    def get_all_cover_paths(self) -> list[str]:
+        """Returns cached cover paths for all visible books that have one.
+        Used by the no-book-state cover carousel."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT cover_path FROM books "
+                "WHERE is_deleted = 0 AND is_excluded = 0 "
+                "AND cover_path IS NOT NULL AND cover_path != ''"
+            ).fetchall()
+            return [row[0] for row in rows]
+
     def set_metadata_locks(self, book_path: str, title: bool, author: bool, narrator: bool, year: bool) -> None:
         """Updates all four metadata lock columns for the given book path."""
         with self._get_conn() as conn:

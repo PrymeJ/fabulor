@@ -119,6 +119,7 @@ class LibraryController(QObject):
         self.ui.set_visible(state["has_book"])
 
         if state["mode"] == "empty":
+            self.ui.hide_carousel()
             self.ui.set_quote_rotation(True)
             self._rotate_quote()
             self.ui.update_prompts(True)
@@ -130,13 +131,16 @@ class LibraryController(QObject):
             self.ui.update_prompts(False)
             self.ui.update_quote(None, show_quote=False)
             self.ui.set_quote_rotation(False)
-            
+
             if not state["has_book"]:
                 self.ui.update_metadata("No book selected.", show_metadata=True, show_go_to_lib=True)
+                # Ambient cover carousel — reshuffled on each no-book entry.
+                self.ui.show_carousel()
             else:
                 # Leave metadata_label visibility to _load_cover_art — it controls
                 # whether to show "author - title" when no cover exists.
                 self.ui.update_metadata(None, show_go_to_lib=False)
+                self.ui.hide_carousel()
 
     def handle_background_tasks(self, state, manual=False, force_refresh=False):
         """Triggers scans based on current mode and location status."""

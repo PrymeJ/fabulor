@@ -34,6 +34,7 @@ from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
+from .ui.carousel import CoverCarousel
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
@@ -84,6 +85,8 @@ class UIInterface:
     def update_prompts(self, v): self._main._update_idle_prompts_ui(v)
     def update_quote(self, *a, **k): self._main._update_quote_ui(*a, **k)
     def set_quote_rotation(self, v): self._main._set_quote_rotation(v)
+    def show_carousel(self): self._main._show_carousel()
+    def hide_carousel(self): self._main._hide_carousel()
 
 class AppInterface:
     def __init__(self, main):
@@ -289,6 +292,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = QPixmap()
         self._pending_cover_pixmap = None
         self._cover_fit_mode = 'fit'
+        self._carousel = None  # CoverCarousel for the no-book state (lazily built)
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self._chapter_ui_active = True
@@ -1529,6 +1533,94 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_idle_prompts_ui(self, visible):
         # Scan section (prompt + button + info) only shows in the empty state.
         self.scan_section.setVisible(visible)
+
+    def _build_carousel_covers(self):
+        """Build (pixmaps, cover_h) for the no-book carousel from cached covers.
+        Returns (None, 0) when there are too few covers to bother."""
+        import random
+        from PIL import Image
+
+        cover_paths = self.db.get_all_cover_paths()
+        if not cover_paths:
+            return None, 0
+        random.shuffle(cover_paths)
+        sample = cover_paths[:100]   # cap to bound large-library cost
+
+        portraits, squares = [], []
+        for path in sample:
+            try:
+                with Image.open(path) as img:
+                    w, h = img.size   # header-only read; do NOT call img.load()
+            except Exception:
+                continue
+            if w <= 0:
+                continue
+            ratio = h / w
+            if ratio >= 1.4:
+                portraits.append(path)
+                if len(portraits) >= 8:
+                    break   # enough portraits found — stop early
+            else:
+                squares.append(path)
+                if len(squares) >= 12 and len(portraits) < 4:
+                    break   # squares plentiful, portraits too scarce — stop
+
+        if len(portraits) >= 8:
+            pool, cover_h = portraits, 140
+        elif len(squares) >= 4:
+            pool, cover_h = squares, 92
+        elif len(portraits) >= 4:
+            pool, cover_h = portraits, 140
+        else:
+            return None, 0   # not enough covers — caller skips carousel
+
+        selected = pool[:12]
+        pixmaps = []
+        for path in selected:
+            pm = QPixmap(path)
+            if pm.isNull():
+                continue
+            pm = pm.scaled(92, cover_h, Qt.KeepAspectRatioByExpanding,
+                           Qt.SmoothTransformation)
+            if pm.width() > 92 or pm.height() > cover_h:
+                x_off = (pm.width() - 92) // 2
+                y_off = (pm.height() - cover_h) // 2
+                pm = pm.copy(x_off, y_off, 92, cover_h)
+            pixmaps.append(pm)
+
+        if not pixmaps:
+            return None, 0
+        return pixmaps, cover_h
+
+    def _show_carousel(self):
+        """Reshuffle and (re)build the no-book carousel. Removes any prior instance."""
+        self._hide_carousel()   # tear down a stale carousel from a previous visit
+        pixmaps, cover_h = self._build_carousel_covers()
+        if not pixmaps:
+            return   # too few covers — leave the plain label + button layout
+        self._carousel = CoverCarousel(pixmaps, cover_h)
+        # Container holds a top spacer so the strip sits ~30px from the visual-area top.
+        self._carousel_container = QWidget()
+        c_layout = QVBoxLayout(self._carousel_container)
+        c_layout.setContentsMargins(0, 0, 0, 0)
+        c_layout.setSpacing(0)
+        c_layout.addSpacing(30)
+        c_layout.addWidget(self._carousel, 0, Qt.AlignHCenter)
+        c_layout.addSpacing(30)
+        # Insert at the top of visual_layout (above the hidden cover_art_label).
+        self.visual_layout.insertWidget(0, self._carousel_container)
+
+    def _hide_carousel(self):
+        """Stop the scroll timer and remove the carousel from the layout."""
+        if self._carousel is not None:
+            self._carousel.stop()
+            self._carousel = None
+        container = getattr(self, '_carousel_container', None)
+        if container is not None:
+            self.visual_layout.removeWidget(container)
+            container.setParent(None)
+            container.deleteLater()
+            self._carousel_container = None
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
