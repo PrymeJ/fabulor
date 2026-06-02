@@ -1,3 +1,76 @@
+# Session Summary — 2026-06-02 Session 1 — Empty/no-book state UX + cover carousel
+
+## What changed
+
+### `app.py` — Empty and no-book state UI gates (commit `4b55058` + follow-ups)
+
+**Problem:** Transport controls, progress fill, Sleep/Playback sidebar buttons, and volume wheel were all active/visible with no book loaded, offering inert affordances.
+
+**Changes:**
+- `_set_interface_visible(visible)` extended: hides `transport_controls` (QWidget container wrapping the playback button row), suppresses the progress slider fill via `ClickSlider._suppress_fill = not visible` + `setEnabled(visible)`, hides `sleep_trigger_btn` and `speed_trigger_btn`. All are restored when a book loads.
+- `wheelEvent` `visual_area` branch now guards `if not self.current_file: return` (previously used `is None`, which never fires since `current_file` initialises to `""`, not `None`).
+- `scan_info_label` ("Loading all your books…") removed entirely — widget, layout entry, and all references.
+- `KEY_Q` in `keyPressEvent`: rotates the quote when `not self.current_file and self.quote_section.isVisible()`. Testing aid only — `# TODO: remove before release`.
+
+### `app.py` + `themes.py` — Status banner fixes (commits `05b112e`, `b743c96`)
+
+- Removed `border-right: 1px solid {accent}` from `#status_banner` QSS — was painting a 1px accent-colored vertical sliver on the right edge of the banner.
+- `#status_banner QPushButton` rule added: transparent background, theme text color, accent hover state. Previously unstyled (OS default appearance).
+- `#status_banner` background changed from `rgba(bg_main, panel_opacity_hover)` to `transparent` — makes the banner area track the main window's background through theme transitions instead of snapping independently.
+- `_update_status_banner_ui` `raise_()` calls guarded: the banner is not raised while `_fade_overlay` is visible. Root cause of the snap: scan progress updates were firing `status_banner.raise_()` repeatedly, lifting the banner above the fade overlay mid-fade and exposing the newly-applied QSS colors before the fade completed.
+
+### `app.py` + `library_controller.py` — Empty-state layout (commits `4b55058`, `6829dbe`, `c0e3fed`)
+
+**Empty-state layout redesign** — three vertical sections in `visual_layout`:
+
+1. **Scan section** (`self.scan_section`, stretch=1): `QWidget` container with `addSpacing(50)` before the prompt label and `addSpacing(80)` between label and button. Label lands ~50px from section top; button ~150px. `addStretch()` at the bottom. No `setAlignment` — spacers handle positioning.
+2. **Quote section** (`self.quote_section`, `setFixedHeight(240)`): `quote_label` inside with `Qt.AlignBottom | Qt.AlignHCenter` — quotes stay bottom-anchored within the fixed box and expand upward as they rotate.
+3. Status banner is a floating `QWidget(self)` overlay, not a layout item.
+
+`_update_idle_prompts_ui(visible)` now toggles `scan_section.setVisible(visible)` (previously toggled the three widgets individually). `_update_quote_ui` now toggles `quote_section.show/hide` rather than `quote_label` directly.
+
+**Stale banner clear:** Empty branch of `apply_library_state` now calls `update_status("", show_banner=False, show_cancel=False)` instead of `update_status(None, show_banner=True, show_cancel=None)` — previously left a stale "Library updated: N books." visible after all folders were removed.
+
+**Debug buttons removed** (commit `29a99d6`): `next_quote_btn` and `temp_settings_btn` removed from `_build_status_banner`, layout, and signal connections. `KEY_Q` is the replacement testing shortcut for quote rotation.
+
+**Label style parity** (commit `29a99d6`): "No book selected." and "No library folders." both use `font-weight: bold; font-size: 16px;`. The style is applied in `_update_metadata_ui` (used by the controller path) and directly in `_load_cover_art` (the no-file path).
+
+### `app.py` + `db.py` + `ui/carousel.py` — Ambient cover carousel (commit `4a73f44`)
+
+New ambient cover carousel for the no-book state. **Issues are pending from visual inspection — commit is tagged `wip`.**
+
+**`ui/carousel.py` — `CoverCarousel(QWidget)`:**
+- Fixed 280×150px, no mouse interaction.
+- Covers bottom-aligned within the 150px container, scroll left at `scroll_speed` px/s (default 15, was initially 30).
+- 33ms QTimer (`~30 fps`), sub-pixel `_offset` accumulation, seamless loop reset when `_offset >= _strip_w`.
+- Static mode (≤ 3 covers): no timer, covers centered horizontally. Threshold is count-based (`n <= 3`) — the width formula (`3 * 96 = 288 > 280`) doesn't fit in the viewport, so centering is the right call.
+- `stop()` method stops the timer safely; no-op in static mode (timer is `None`).
+
+**`db.py` — `get_all_cover_paths()`:**
+Returns `cover_path` for all `is_deleted=0 AND is_excluded=0` books with a non-null, non-empty `cover_path`. Uses `books.cover_path` (scanner thumbnails) — active covers from `book_covers` are not consulted.
+
+**`app.py` — `_build_carousel_covers()`, `_show_carousel()`, `_hide_carousel()`:**
+- Shuffles all cover paths, caps at 100, Pillow header-only reads classify by aspect ratio (portrait ≥ 1.4 : landscape/square). Portrait pool preferred (≥ 8 portraits → 140px height); square fallback (≥ 4 squares → 92px); hybrid fallback (≥ 4 portraits → 140px). Fewer than 4 → no carousel.
+- Covers scaled-and-cropped to exactly (92, cover_h) via `KeepAspectRatioByExpanding` + `copy()` center crop.
+- `_show_carousel()`: calls `_hide_carousel()` first (safe teardown of prior instance), builds `CoverCarousel`, wraps it in a `_carousel_container` with `addSpacing(30)` above and below, inserts at index 0 of `visual_layout`.
+- `_hide_carousel()`: stops timer, removes container from layout, `deleteLater()`.
+- `UIInterface.show_carousel()` / `hide_carousel()` delegate to the above.
+
+**`library_controller.py` — wiring:**
+- `apply_library_state` no-book branch (else, not has_book) → `show_carousel()` after metadata update.
+- `apply_library_state` player branch (has_book) and empty branch → `hide_carousel()`.
+- Carousel reshuffles on each no-book entry.
+
+**Layout approach: FALLBACK.** `metadata_label` is shared with the player state (used for "Author - Title" when no cover exists at lines ~2338, ~2367). Carousel is inserted as an independent `visual_layout` item at index 0, not grouped with the label.
+
+---
+
+# Session Summary — 2026-06-01 Session 3 — App icon update (commit `64768d2`)
+
+Single `chore` commit. No logic changes.
+
+---
+
 # Session Summary — 2026-06-01 Session 2 — Sticky chapter hints + chapter snap-back fix
 
 ## What changed

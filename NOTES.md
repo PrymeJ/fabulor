@@ -92,9 +92,9 @@ Line ~1713: `QTimer.singleShot(320, self.panel_manager._open_tags_flow)`. 320ms 
 
 `_update_pattern_visuals` in `app.py` and its equivalent in `settings_controller.py` share overlapping responsibility for updating the pattern button visual state. The duplication was noted but not resolved in the audit pass — fixing requires confirming which call sites use which path and whether either can be removed. Address in the next settings-panel pass.
 
-## Deferred: temp debug buttons `next_quote_btn` and `temp_settings_btn` (2026-05-29)
+## `KEY_Q` quote rotation shortcut — remove before release (2026-06-02)
 
-`next_quote_btn` and `temp_settings_btn` in the status banner area are placeholder UI kept intentionally for main player layout work. Do not remove until the status banner and player layout are finalized.
+`keyPressEvent` fires `library_controller._rotate_quote()` when `Key_Q` is pressed and `not self.current_file and self.quote_section.isVisible()`. Testing aid only. Remove before release. Marked `# TODO: remove before release — testing only` in `app.py`.
 
 ---
 
@@ -726,8 +726,8 @@ These items exist in the codebase intentionally and should not be removed withou
 ### Debug prints and timing instrumentation
 `_close_session`, `_on_file_ready`, `_on_book_selected_from_library` contain `print()` calls and timing probes left from VT debugging. Remove in a dedicated cleanup commit — do not remove piecemeal during feature work.
 
-### Temp buttons in status banner
-`next_quote_btn` and `temp_settings_btn` in the status banner are placeholder UI. Their click handlers delegate to panel flows that have permanent entry points elsewhere. Remove when the status banner layout is finalized.
+### `KEY_Q` quote rotation shortcut — remove before release
+`keyPressEvent` → `library_controller._rotate_quote()` when empty state active. Tagged `# TODO: remove before release` in `app.py`.
 
 ### Temp EOF flags
 `_eof_event_written` and `_eof_dur_fetched` flags, and associated `#Temporary` comments, were added to guard double-write during EOF session close. Review whether they are still necessary after the session recording rewrite for VT. Do not remove blindly — check whether the guard condition is still reachable.
@@ -758,3 +758,37 @@ Calibrated fixed height of the cover art box in pixels. `cover_art_label` is pin
 Value derived from the fixed-size window budget (564px total − title bar 32 − progress slider 24 = 508 content height; minus content margins 20, 5 spacing gaps 50, and six fixed-height rows below visual_area: speed 33, preview 21, controls 33, chapter_info 24, chapter_slider 13, book_info 24 = 148; 508 − 218 = 290 theoretical). Calibrated empirically to 280 after testing covers of various aspect ratios.
 
 Do not derive `target_h` from `cover_art_label.height()` — that reflects transient layout allocation, which is wrong during any state transition. If the window layout ever changes, re-calibrate empirically.
+
+---
+
+## Empty-state and no-book-state layout — architecture notes (2026-06-02)
+
+### `visual_layout` widget order and visibility contract
+
+The `visual_layout` (inside `visual_area`) contains these widgets in order:
+
+| Index | Widget | Empty state | No-book state | Player state |
+|---|---|---|---|---|
+| 0 | `cover_art_label` (fixed 280px) | hidden | hidden | shown |
+| 1 | `scan_section` (stretch=1) | shown | hidden | hidden |
+| 2 | `metadata_label` | hidden | shown ("No book selected.") | owner: `_load_cover_art` |
+| 3 | `go_to_library_btn` | hidden | shown | hidden |
+| 4 | `quote_section` (fixed 240px) | shown | hidden | hidden |
+
+When the carousel is active, `_carousel_container` is inserted at index 0 (pushing everything else down by one). It is removed and `deleteLater()`'d on player-state and empty-state entry. The container wraps `CoverCarousel` with `addSpacing(30)` above and below.
+
+### Status banner is a floating overlay, not a layout item
+
+`status_banner` is a `QWidget(self)` child of `MainWindow`, positioned via `setGeometry(0, height-30, width, 30)` in `resizeEvent`. It is not in `visual_layout` or `content_layout`. Raising it above the fade overlay is suppressed while `_fade_overlay.isVisible()` — see session notes on the snap-back bug fix.
+
+### `_suppress_fill` on `ClickSlider` — paint-only gate
+
+`ClickSlider._suppress_fill = True` prevents the fill rect from being painted in `paintEvent` while still painting the background groove. The flag is toggled by `_set_interface_visible`. `setEnabled(False)` is also called alongside it to block mouse events; `ClickSlider.paintEvent` does not read `isEnabled()` so there is no visual side-effect from disabling.
+
+### Cover carousel — sampling invariants
+
+- Uses `books.cover_path` (scanner thumbnails), not user-selected active covers from `book_covers`. Intentional — fast, no joins, matches prompt scope.
+- Pillow reads are header-only (`img.size` without `img.load()`) — reads only the image header, not the full pixel data.
+- Static mode threshold is count-based (`n <= 3`), not width-based. Three covers at 96px/slot = 288px > 280px viewport, so they cannot scroll seamlessly (2x strip = 576px < threshold for gapless looping). Centered static layout is correct for 2–3 covers.
+- `scroll_speed` default is 15 px/s (tuned from initial 30 — user preference).
+- Carousel issues from visual inspection are pending resolution (commit tagged `wip`).
