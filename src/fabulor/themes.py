@@ -2272,11 +2272,22 @@ def get_base_stylesheet(theme_name="default"):
         }}
         QWidget#status_banner {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
-            border-right: 1px solid {t['accent']};
             border-radius: 0px;
         }}
         QWidget#status_banner QLabel {{
             color: {t['text']};
+        }}
+        QWidget#status_banner QPushButton {{
+            background-color: {t['accent']};
+            color: {t['text']};
+            font-weight: bold;
+            font-size: 13px;
+            padding: 0px;
+            border: none;
+            border-radius: 3px;
+        }}
+        QWidget#status_banner QPushButton:hover {{
+            color: {t['accent_dark']};
         }}
         QProgressBar#scan_progress {{
             background-color: {t['slider_overall_bg']};
