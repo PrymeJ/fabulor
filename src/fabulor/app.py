@@ -1598,14 +1598,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             ratio = h / w
             if ratio >= 1.4:
                 portraits.append(path)
-                if len(portraits) >= 8:
+                if len(portraits) >= 12:
                     break   # enough portraits found — stop early
             else:
                 squares.append(path)
                 if len(squares) >= 12 and len(portraits) < 4:
                     break   # squares plentiful, portraits too scarce — stop
 
-        if len(portraits) >= 8:
+        if len(portraits) >= 12:
             pool, cover_h = portraits, 140
         elif len(squares) >= 4:
             pool, cover_h = squares, 92

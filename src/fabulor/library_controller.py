@@ -81,7 +81,7 @@ class LibraryController(QObject):
         """Finalizes scan and hides banner."""
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
-
+        self.apply_current_state()
         self.ui.refresh_panel(force=True)
         self.app.refresh_tag_manager()
         self.app.refresh_stats()
