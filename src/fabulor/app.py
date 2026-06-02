@@ -292,7 +292,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = QPixmap()
         self._pending_cover_pixmap = None
         self._cover_fit_mode = 'fit'
-        self._carousel = None  # CoverCarousel for the no-book state (lazily built)
+        self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
+        self._carousel_pending = False  # True while deferred _show_carousel build is queued
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self._chapter_ui_active = True
@@ -436,6 +437,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.show()
         self.theme_manager.initialize_fade_overlay()
+        # Pause the carousel timer during theme fades to prevent freeze/ghost artifacts.
+        # stateChanged covers Running (stop), Stopped (resume), and abort paths.
+        self.theme_manager._fade_anim.stateChanged.connect(self._on_fade_state_changed)
+
+    def _on_fade_state_changed(self, new_state, old_state):
+        from PySide6.QtCore import QAbstractAnimation
+        if new_state == QAbstractAnimation.Running:
+            if self._carousel is not None:
+                self._carousel.stop()
+        elif new_state == QAbstractAnimation.Stopped:
+            if self._carousel is not None:
+                self._carousel.start()
 
     def _setup_ui(self):
         self.setFixedSize(300, 564)
@@ -602,7 +615,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_prompt_label = QLabel("No library folders.")
         self.library_prompt_label.setAlignment(Qt.AlignCenter)
         self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-        scan_layout.addSpacing(50)          # label top lands at 50px from section top
+        scan_layout.addSpacing(80)          # label top lands at 50px from section top
         scan_layout.addWidget(self.library_prompt_label)
         scan_layout.addSpacing(80)          # ~80px gap → button top lands at ~150px from section top
                                             # (exact value depends on label height; tune if needed)
@@ -612,19 +625,47 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         scan_layout.addStretch()            # eat remaining space below the button
         self.visual_layout.addWidget(self.scan_section, 1)  # stretch 1: claims remaining space
 
-        # Metadata (Book Info)
+        # Metadata (Book Info) — shared with player state (shows "Author - Title" for no-cover books)
         self.metadata_label = QLabel("")
         self.metadata_label.setAlignment(Qt.AlignCenter)
         self.metadata_label.setWordWrap(True)
         self.metadata_label.mousePressEvent = self._on_drag_area_pressed
         self.visual_layout.addWidget(self.metadata_label)
 
-        # Library button now appears AFTER the metadata label
+        # No-book section — permanent fixed slot; never inserted/removed at runtime.
+        self.no_book_section = QWidget()
+        nb_layout = QVBoxLayout(self.no_book_section)
+        nb_layout.setContentsMargins(0, 0, 0, 0)
+        nb_layout.setSpacing(0)
+
+        nb_layout.addSpacing(50)
+        self.no_book_label = QLabel("No book selected.")
+        self.no_book_label.setAlignment(Qt.AlignCenter)
+        self.no_book_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        nb_layout.addWidget(self.no_book_label)
+
+        nb_layout.addSpacing(125)
+
+        # Permanent carousel slot — always reserves 150px whether or not a carousel is inside.
+        self.carousel_holder = QWidget()
+        self.carousel_holder.setFixedHeight(150)
+        self.carousel_holder.setFixedWidth(280)
+        ch_layout = QVBoxLayout(self.carousel_holder)
+        ch_layout.setContentsMargins(0, 0, 0, 0)
+        ch_layout.setSpacing(0)
+        nb_layout.addWidget(self.carousel_holder, 0, Qt.AlignHCenter)
+
+        nb_layout.addSpacing(12)
+
         self.go_to_library_btn = QPushButton("Go to Library")
         self.go_to_library_btn.setObjectName("go_to_library_btn")
-        self.go_to_library_btn.setFixedWidth(120)
-        self.go_to_library_btn.hide() # Hide by default
-        self.visual_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
+        self.go_to_library_btn.setFixedWidth(110)
+        nb_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
+
+        nb_layout.addStretch()
+
+        self.no_book_section.hide()
+        self.visual_layout.addWidget(self.no_book_section)
 
         # Quote section: fixed-height box, quote bottom-anchored, expands upward.
         self.quote_section = QWidget()
@@ -1527,8 +1568,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.metadata_label.setText(text)
         if show_metadata is True: self.metadata_label.show()
         elif show_metadata is False: self.metadata_label.hide()
-        if show_go_to_lib is True: self.go_to_library_btn.show()
-        elif show_go_to_lib is False: self.go_to_library_btn.hide()
+        if show_go_to_lib is True: self.no_book_section.show()
+        elif show_go_to_lib is False: self.no_book_section.hide()
 
     def _update_idle_prompts_ui(self, visible):
         # Scan section (prompt + button + info) only shows in the empty state.
@@ -1593,34 +1634,34 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return pixmaps, cover_h
 
     def _show_carousel(self):
-        """Reshuffle and (re)build the no-book carousel. Removes any prior instance."""
-        self._hide_carousel()   # tear down a stale carousel from a previous visit
+        """Queue a deferred carousel build into the permanent carousel_holder slot."""
+        self._hide_carousel()
+        self._carousel_pending = True
+        QTimer.singleShot(0, self._build_carousel_deferred)
+
+    def _build_carousel_deferred(self):
+        """Deferred continuation of _show_carousel — runs after the event loop yields."""
+        self._carousel_pending = False
+        if self._carousel is not None:
+            return   # already built by a duplicate call
+        if self.current_file or not self.no_book_section.isVisible():
+            return   # no longer in the no-book state
         pixmaps, cover_h = self._build_carousel_covers()
         if not pixmaps:
-            return   # too few covers — leave the plain label + button layout
+            return   # too few covers — leave the holder empty
         self._carousel = CoverCarousel(pixmaps, cover_h)
-        # Container holds a top spacer so the strip sits ~30px from the visual-area top.
-        self._carousel_container = QWidget()
-        c_layout = QVBoxLayout(self._carousel_container)
-        c_layout.setContentsMargins(0, 0, 0, 0)
-        c_layout.setSpacing(0)
-        c_layout.addSpacing(30)
-        c_layout.addWidget(self._carousel, 0, Qt.AlignHCenter)
-        c_layout.addSpacing(30)
-        # Insert at the top of visual_layout (above the hidden cover_art_label).
-        self.visual_layout.insertWidget(0, self._carousel_container)
+        self.carousel_holder.layout().addWidget(self._carousel)
 
     def _hide_carousel(self):
-        """Stop the scroll timer and remove the carousel from the layout."""
+        """Stop and remove the carousel from its holder slot."""
+        self._carousel_pending = False
         if self._carousel is not None:
             self._carousel.stop()
+            layout = self.carousel_holder.layout()
+            layout.removeWidget(self._carousel)
+            self._carousel.setParent(None)
+            self._carousel.deleteLater()
             self._carousel = None
-        container = getattr(self, '_carousel_container', None)
-        if container is not None:
-            self.visual_layout.removeWidget(container)
-            container.setParent(None)
-            container.deleteLater()
-            self._carousel_container = None
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
@@ -1748,7 +1789,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._load_cover_art(path),
             self.player.load_book(path),
             # Re-run the chrome gate now that current_file is set: with has_book=True,
-            # apply_library_state reveals the player chrome and hides go_to_library_btn.
+            # apply_library_state reveals the player chrome and hides no_book_section.
             # apply_current_state is the compute-and-apply half of _check_library_status,
             # split out so the selection path drives the gate without triggering a scan.
             self.library_controller.apply_current_state(),
@@ -2410,9 +2451,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not file_path:
             self.current_cover_pixmap = QPixmap()
             self.cover_art_label.hide()
-            self.metadata_label.show()
-            self.metadata_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-            self.metadata_label.setText("No book selected.")
+            self.metadata_label.hide()
             self.theme_manager.clear_cover_theme()
             return
         book = self.db.get_book(file_path)

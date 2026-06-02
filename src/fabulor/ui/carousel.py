@@ -5,14 +5,13 @@ scroll left at a slow continuous pace, or sit static and centered when there
 are too few to fill the strip.
 """
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QElapsedTimer
 from PySide6.QtGui import QPainter
 
 _COVER_W = 92
 _WIDGET_W = 280
 _WIDGET_H = 150
 _TICK_MS = 33                      # ~30 fps
-_TICK_S = _TICK_MS / 1000.0
 
 
 class CoverCarousel(QWidget):
@@ -37,6 +36,9 @@ class CoverCarousel(QWidget):
         self._static = n <= 3
 
         self._timer = None
+        self._elapsed = QElapsedTimer()
+        self._last_ms = 0
+
         if self._static:
             # No looping needed — draw the original list centered.
             self._pixmaps = list(pixmaps)
@@ -46,18 +48,28 @@ class CoverCarousel(QWidget):
             self._timer = QTimer(self)
             self._timer.setInterval(_TICK_MS)
             self._timer.timeout.connect(self._tick)
+            self._elapsed.start()
             self._timer.start()
 
     def _tick(self):
-        self._offset += self._scroll_speed * _TICK_S
-        if self._offset >= self._strip_w:
-            self._offset -= self._strip_w        # seamless loop reset
+        now_ms = self._elapsed.elapsed()
+        dt = (now_ms - self._last_ms) / 1000.0
+        self._last_ms = now_ms
+        self._offset = (self._offset + self._scroll_speed * dt) % self._strip_w
         self.update()
 
     def stop(self):
         """Stop the scroll timer. Safe to call when in static mode."""
         if self._timer is not None:
             self._timer.stop()
+
+    def start(self):
+        """Resume the scroll timer after a stop(). Safe to call when in static mode."""
+        if self._timer is not None and not self._timer.isActive():
+            # Reset elapsed so dt doesn't spike from accumulated idle time.
+            self._elapsed.restart()
+            self._last_ms = 0
+            self._timer.start()
 
     def paintEvent(self, event):
         p = QPainter(self)
