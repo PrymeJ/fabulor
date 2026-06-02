@@ -79,6 +79,11 @@ class PanelManager:
             self._start_library_entry()
 
     def _start_library_entry(self):
+        # Sync folder-button state to the live scan status — a scan may already be
+        # running when the panel opens, in which case the buttons open disabled.
+        self.main_window._set_scan_buttons_enabled(
+            not self.main_window.scanner.is_running()
+        )
         panel_w = self.main_window.width()
         sidebar_y = 32 # Start right under the TitleBar, covering the progress bar
         self.library_panel.setFixedWidth(panel_w)

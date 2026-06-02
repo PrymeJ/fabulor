@@ -87,6 +87,7 @@ class UIInterface:
     def set_quote_rotation(self, v): self._main._set_quote_rotation(v)
     def show_carousel(self): self._main._show_carousel()
     def hide_carousel(self): self._main._hide_carousel()
+    def set_scan_buttons_enabled(self, v): self._main._set_scan_buttons_enabled(v)
 
 class AppInterface:
     def __init__(self, main):
@@ -1515,6 +1516,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.set_playing_path("")
         self.library_panel.set_is_playing(False)
         self.config.set_last_book("")
+        # Reconcile chrome now that the book is gone — without this, callers that
+        # don't independently re-run the gate (e.g. the book-detail trash button)
+        # leave stale player chrome visible.
+        self.library_controller.apply_current_state()
 
     def get_current_file(self):
         """Return the currently loaded file path."""
@@ -1689,6 +1694,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Sleep and Playback panels have no function without an active book.
         self.sleep_trigger_btn.setVisible(visible)
         self.speed_trigger_btn.setVisible(visible)
+
+    def _set_scan_buttons_enabled(self, enabled):
+        """Enable/disable the Library panel's folder-management buttons.
+        Disabled (but still visible) while a scan is in progress."""
+        self.add_folder_btn.setEnabled(enabled)
+        self.remove_folder_btn.setEnabled(enabled)
+        self.refresh_library_btn.setEnabled(enabled)
 
     def _set_chapter_ui_active(self, active):
         """Make chapter widgets interactive and visible, or ghosted (transparent, no interaction).

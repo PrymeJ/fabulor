@@ -27,11 +27,14 @@ class LibraryController(QObject):
         path = self.browser.get_selected_folder()
         if path:
             self.db.remove_scan_location(path)
-            
-            # Unload the book if it was inside the removed library folder
+
+            # Unload the book if it was inside the removed folder, OR if no library
+            # folders remain at all (the loaded book is now unreachable regardless of
+            # whether its specific folder matched). Unload must precede the state apply.
             current_file = self.app.get_current_file()
             path_p = path if path.endswith(os.sep) else path + os.sep
-            if current_file and current_file.startswith(path_p):
+            no_folders_left = len(self.db.get_scan_locations()) == 0
+            if current_file and (current_file.startswith(path_p) or no_folders_left):
                 self.app.on_book_removed()
 
             self._refresh_folder_list()
@@ -66,6 +69,7 @@ class LibraryController(QObject):
     def _on_cancel_scan_clicked(self):
         """Stops the current scan."""
         self.scanner.stop()
+        self.ui.set_scan_buttons_enabled(True)
         self.ui.update_status("Scan cancelled.", show_banner=True, show_cancel=False)
 
     def _on_scan_progress(self, current, total):
@@ -79,6 +83,7 @@ class LibraryController(QObject):
 
     def _on_scan_finished(self, total):
         """Finalizes scan and hides banner."""
+        self.ui.set_scan_buttons_enabled(True)
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
         self.apply_current_state()
@@ -119,6 +124,7 @@ class LibraryController(QObject):
         self.ui.set_visible(state["has_book"])
 
         if state["mode"] == "empty":
+            self.ui.set_visible(False)  # empty state never coexists with player chrome
             self.ui.hide_carousel()
             self.ui.set_quote_rotation(True)
             self._rotate_quote()
@@ -148,6 +154,7 @@ class LibraryController(QObject):
             if manual or force_refresh or not state["has_indexed_books"]:
                 msg = "Forcing deep scan..." if force_refresh else "Library scanning..."
                 self.ui.update_status(msg, show_banner=True, show_cancel=True)
+            self.ui.set_scan_buttons_enabled(False)
             self.scanner.start(force_refresh=force_refresh)
 
     def apply_current_state(self):
