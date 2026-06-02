@@ -102,7 +102,7 @@ class LibraryController(QObject):
         """Computes the current logical state of the library."""
         locs = self.db.get_scan_locations()
         has_locations = len(locs) > 0
-        has_indexed_books = self.db.get_book_count() > 0
+        has_indexed_books = self.db.get_visible_book_count() > 0
         has_book = bool(self.app.get_current_file())
 
         if not has_locations or not has_indexed_books:
@@ -123,9 +123,21 @@ class LibraryController(QObject):
         """Updates the UI components based on the provided state object."""
         self.ui.set_visible(state["has_book"])
 
-        if state["mode"] == "empty":
+        # Empty-like state covers both "no library folders" and "folders exist but
+        # zero indexed audiobooks" — both warrant the scan/quote prompt rather than
+        # the no-book carousel (which leads to a Library that has nothing to show).
+        # Note: compute_library_state already collapses both into mode == "empty",
+        # so the `not has_indexed_books` clause is currently redundant but kept as a
+        # guard against future mode-logic changes.
+        if state["mode"] == "empty" or not state["has_indexed_books"]:
             self.ui.set_visible(False)  # empty state never coexists with player chrome
+            self.ui.set_library_btn_visible(False)  # nothing to browse — hide Library
             self.ui.hide_carousel()
+            # Discriminate by has_locations: no paths vs. paths-with-no-books.
+            if not state["has_locations"]:
+                self.ui.set_prompt_text("No library folders.")
+            else:
+                self.ui.set_prompt_text("No audiobooks in the folders added.")
             self.ui.set_quote_rotation(True)
             self._rotate_quote()
             self.ui.update_prompts(True)
@@ -134,6 +146,7 @@ class LibraryController(QObject):
             self.ui.update_status("", show_banner=False, show_cancel=False)
             self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
         else:
+            self.ui.set_library_btn_visible(True)  # books indexed — Library is useful
             self.ui.update_prompts(False)
             self.ui.update_quote(None, show_quote=False)
             self.ui.set_quote_rotation(False)
@@ -171,11 +184,13 @@ class LibraryController(QObject):
         self.handle_background_tasks(state, manual, force_refresh)
 
     def _rotate_quote(self):
-        """Update metadata label with a random quote when idle."""
-        if not self.db.get_scan_locations():
-            text, title, text_size, title_size, color, text_align = random.choice(BOOK_QUOTES)
-            styled_quote = (
-                f"<div style='font-size: {text_size}px; color: {color}; text-align: {text_align}; width: 100%;'>{text}</div>"
-                f"<div style='text-align: right; font-size: {title_size}px; color: #ddd;'><br>{title}</div>"
-            )
-            self.ui.update_quote(styled_quote, show_quote=True)
+        """Update metadata label with a random quote when idle.
+        Called only from the empty-like branch of apply_library_state, so it applies
+        to both sub-cases: no folders configured, and folders with zero audiobooks.
+        (The old `if not get_scan_locations()` guard suppressed quotes in the latter.)"""
+        text, title, text_size, title_size, color, text_align = random.choice(BOOK_QUOTES)
+        styled_quote = (
+            f"<div style='font-size: {text_size}px; color: {color}; text-align: {text_align}; width: 100%;'>{text}</div>"
+            f"<div style='text-align: right; font-size: {title_size}px; color: #ddd;'><br>{title}</div>"
+        )
+        self.ui.update_quote(styled_quote, show_quote=True)

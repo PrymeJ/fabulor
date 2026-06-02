@@ -88,6 +88,10 @@ class UIInterface:
     def show_carousel(self): self._main._show_carousel()
     def hide_carousel(self): self._main._hide_carousel()
     def set_scan_buttons_enabled(self, v): self._main._set_scan_buttons_enabled(v)
+    def set_prompt_text(self, text): self._main.library_prompt_label.setText(text)
+    def set_library_btn_visible(self, v):
+        self._main.library_trigger_btn.setVisible(v)
+        self._main.library_separator.setVisible(v)
 
 class AppInterface:
     def __init__(self, main):
@@ -898,7 +902,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_trigger_btn.setObjectName("sidebar_library_btn")
         self.sidebar_layout.addWidget(self.library_trigger_btn)
         
-        self.sidebar_layout.addSpacing(10) # Separation
+        self.library_separator = QWidget()
+        self.library_separator.setFixedHeight(10)
+        self.sidebar_layout.addWidget(self.library_separator)
 
         self.settings_trigger_btn = QPushButton("SETTINGS")
         self.settings_trigger_btn.setObjectName("sidebar_settings_btn")

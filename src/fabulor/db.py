@@ -340,6 +340,13 @@ class LibraryDB:
         with self._get_conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
 
+    def get_visible_book_count(self) -> int:
+        """Returns the number of books visible in the library (excludes soft-deleted and excluded)."""
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM books WHERE is_deleted = 0 AND is_excluded = 0"
+            ).fetchone()[0]
+
     def get_all_cover_paths(self) -> list[str]:
         """Returns cached cover paths for all visible books that have one.
         Used by the no-book-state cover carousel."""
