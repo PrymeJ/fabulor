@@ -267,6 +267,15 @@
 - [x] Remove selected works
 - [x] Rescan library works
 
+### Library panel — multi-select folder removal and targeted rescan
+
+- [ ] Ctrl+click / Shift+click selects multiple folders in the folder list
+- [ ] "Remove selected" removes all selected folders in one operation
+- [ ] Removing multiple folders updates library state correctly (books soft-deleted for all removed paths)
+- [ ] "Rescan" with multiple folders selected rescans only the selected folders (targeted rescan)
+- [ ] "Rescan" with no selection rescans all folders
+- [ ] Right-clicking the folder list after closing a folder-picker dialog does NOT open a context menu (right-click suppressed on dialog-close)
+
 ## Speed panel || Playback or Speed?, remove vertical line and darken
 
 - [x] Choosing speed dismisses panel
@@ -392,6 +401,24 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Reshuffling: enter no-book state, load a book, remove the book → re-enter no-book state — cover order differs from previous visit
 - [ ] Old carousel timer is not leaking: repeated no-book/player state cycling does not accumulate runaway timers
 - [ ] Carousel appears after a scan completes (without app restart) — no carousel-pending cancellation issue
+
+### Carousel slide-in and cover reveal animation
+
+- [ ] On entering no-book state: carousel stripe slides in from the right over ~220ms (OutCubic ease), not a sudden appearance
+- [ ] Covers do not appear during the slide — they start fading in 325ms after the stripe settles
+- [ ] Covers fade in one by one with ~75ms stagger; no cover appears mid-slide
+- [ ] On book load (carousel dismissed): stripe disappears without animation jitter
+- [ ] Full-width stripe (300px, bleeds to both window edges) with themed fill and 1px border lines at top and bottom
+- [ ] `carousel_bg` theme key controls stripe fill color; `carousel_stripe` controls border line color; both fall back correctly on themes that don't define them
+
+### Theme bg_image suppression in no-book and empty states
+
+- [ ] With an image-backed theme active (e.g. "The Overlook"): no-book state shows plain themed background — hexagon/carpet image is NOT visible behind "No book selected" label or carousel
+- [ ] With an image-backed theme: empty state shows plain themed background — image NOT visible behind "No library folders." prompt or quote
+- [ ] Load a book: bg_image reappears around the cover art (normal player look)
+- [ ] Switch themes while in the no-book state: bg_image stays suppressed (no flash of the image on theme change)
+- [ ] Switch themes while in the empty state: bg_image stays suppressed
+- [ ] Switch themes while a book is loaded: bg_image of the new theme applies correctly
 
 ### No-book-state regression: select book from library
 
@@ -886,7 +913,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Verify app start restores to correct chapter with cue active
 - [ ] Verify Undo after Next shows correctly with cue active
 
-## Each theme here [NOT THE FULL LIST | NEEDS TO BE UPDATED]
+## Each theme
 
 - [ ] Alzabo
 - [ ] Anomander
@@ -895,38 +922,32 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Brave New World
 - [ ] Camorr
 - [ ] Chatsubo
-- [ ] Cibola Burn
-- [ ] Dorian Grey
+- [ ] City of Stairs
+- [ ] Crimson Guard
 - [ ] Earthsea
 - [ ] Emiko
 - [ ] Eyes of Ibad
+- [ ] Galatea
 - [ ] Gormenghast
 - [ ] Gravity's Rainbow
 - [ ] Hear Me Roar
-- [ ] Horrorshow
-- [ ] Ithaca
 - [ ] Jade City
 - [ ] Manderley
 - [ ] Melnibonéan
-- [ ] Oranges Are Not the Only Fruit
+- [ ] Not the Only Fruit
 - [ ] Razorgirl
-- [ ] Rebma
 - [ ] Red Rising
 - [ ] Rivendell
-- [ ] Shai-Hulud
 - [ ] Shade of the Evening
+- [ ] Shai-Hulud
 - [ ] Shrike
 - [ ] Sitting in the Wing Chair
 - [ ] Slow Regard
-- [ ] Symir
-- [ ] The Bone Clocks
-- [ ] The City of Stairs
 - [ ] The Color Purple
 - [ ] The Overlook
-- [ ] The Waste Lands
 - [ ] Tigana
-- [ ] Tlön
-- [ ] Unknown Kadath
 - [ ] Urras
 - [ ] Waknuk
+- [ ] Wasp Factory
+- [ ] Waste Lands
 - [ ] Winterfell
