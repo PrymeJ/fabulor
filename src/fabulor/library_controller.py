@@ -22,24 +22,38 @@ class LibraryController(QObject):
         self.ui.update_folders(locs)
 
     def _on_remove_folder_clicked(self):
-        """Removes the selected folder from the database and updates UI."""
+        """Removes all selected folders from the database and updates UI."""
         self.scanner.stop()
-        path = self.browser.get_selected_folder()
-        if path:
+        paths = self.browser.get_selected_folders()
+        if not paths:
+            return
+
+        current_file = self.app.get_current_file()
+
+        # Determine upfront whether a book unload is needed, before any DB changes.
+        # Unload if the current book is inside any removed folder, OR if removing all
+        # selected would leave zero folders remaining.
+        remaining = [loc for loc in self.db.get_scan_locations() if loc not in paths]
+        no_folders_left = len(remaining) == 0
+        needs_unload = False
+        if current_file:
+            for path in paths:
+                path_p = path if path.endswith(os.sep) else path + os.sep
+                if current_file.startswith(path_p):
+                    needs_unload = True
+                    break
+            if no_folders_left:
+                needs_unload = True
+
+        for path in paths:
             self.db.remove_scan_location(path)
 
-            # Unload the book if it was inside the removed folder, OR if no library
-            # folders remain at all (the loaded book is now unreachable regardless of
-            # whether its specific folder matched). Unload must precede the state apply.
-            current_file = self.app.get_current_file()
-            path_p = path if path.endswith(os.sep) else path + os.sep
-            no_folders_left = len(self.db.get_scan_locations()) == 0
-            if current_file and (current_file.startswith(path_p) or no_folders_left):
-                self.app.on_book_removed()
+        if needs_unload:
+            self.app.on_book_removed()
 
-            self._refresh_folder_list()
-            self._check_library_status(manual=True)
-            self.ui.refresh_panel(force=True)
+        self._refresh_folder_list()
+        self._check_library_status(manual=True)
+        self.ui.refresh_panel(force=True)
 
     def _on_scan_now_clicked(self):
         """Triggers a folder picker and starts scanning."""
@@ -65,6 +79,15 @@ class LibraryController(QObject):
                 self.db.add_scan_location(new_path)
                 self._check_library_status(manual=True)
                 self._refresh_folder_list()
+
+    def _on_rescan_clicked(self):
+        """Rescans selected paths, or all configured paths if none selected."""
+        selected = self.browser.get_selected_folders()
+        state = self.apply_current_state()
+        if selected:
+            self.handle_background_tasks(state, manual=True, force_refresh=True, locations=selected)
+        else:
+            self.handle_background_tasks(state, manual=True, force_refresh=True)
 
     def _on_cancel_scan_clicked(self):
         """Stops the current scan."""
@@ -161,14 +184,18 @@ class LibraryController(QObject):
                 self.ui.update_metadata(None, show_go_to_lib=False)
                 self.ui.hide_carousel()
 
-    def handle_background_tasks(self, state, manual=False, force_refresh=False):
+    def handle_background_tasks(self, state, manual=False, force_refresh=False, locations=None):
         """Triggers scans based on current mode and location status."""
         if state["mode"] != "scanning" and state["has_locations"]:
             if manual or force_refresh or not state["has_indexed_books"]:
-                msg = "Forcing deep scan..." if force_refresh else "Library scanning..."
+                if locations is not None:
+                    n = len(locations)
+                    msg = f"Rescanning {n} folder{'s' if n != 1 else ''}..."
+                else:
+                    msg = "Rescanning all folders..." if force_refresh else "Library scanning..."
                 self.ui.update_status(msg, show_banner=True, show_cancel=True)
             self.ui.set_scan_buttons_enabled(False)
-            self.scanner.start(force_refresh=force_refresh)
+            self.scanner.start(force_refresh=force_refresh, locations=locations)
 
     def apply_current_state(self):
         """Compute and apply library UI state. No background-task/scan side effects.

@@ -73,6 +73,19 @@ def _load_svg_icon(name, color="white"):
         print(f"Warning: could not load icon {name}: {e}")
         return QIcon()
 
+class _PathListEventFilter(QObject):
+    def __init__(self, list_widget):
+        super().__init__(list_widget)
+        self.list_widget = list_widget
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            index = self.list_widget.indexAt(event.pos())
+            if not index.isValid():
+                self.list_widget.clearSelection()
+        return super().eventFilter(obj, event)
+
+
 class UIInterface:
     def __init__(self, main):
         self._main = main
@@ -108,6 +121,7 @@ class BrowserInterface:
         self._main = main
 
     def get_selected_folder(self): return self._main._get_selected_folder_path()
+    def get_selected_folders(self): return self._main._get_selected_folder_paths()
     def pick_folder(self): return self._main._get_new_folder_path()
 
 
@@ -362,7 +376,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self.library_controller._on_remove_folder_clicked)
-        self.refresh_library_btn.clicked.connect(lambda: self.library_controller._check_library_status(manual=True, force_refresh=True))
+        self.refresh_library_btn.clicked.connect(self.library_controller._on_rescan_clicked)
 
         self.scanner.progress.connect(self.library_controller._on_scan_progress)
         self.scanner.finished.connect(self.library_controller._on_scan_finished)
@@ -1241,10 +1255,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.folder_list_widget = QListWidget()
         self.folder_list_widget.setObjectName("settings_folder_list")
+        self.folder_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         # Make height flexible: start small, grow to a cap
         self.folder_list_widget.setMinimumHeight(45)
         self.folder_list_widget.setMaximumHeight(120)
         self.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._path_list_ef = _PathListEventFilter(self.folder_list_widget)
+        self.folder_list_widget.viewport().installEventFilter(self._path_list_ef)
         lib_layout.addWidget(self.folder_list_widget)
 
         folder_btns_layout = QHBoxLayout()
@@ -1539,6 +1556,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _get_selected_folder_path(self):
         item = self.folder_list_widget.currentItem()
         return item.text() if item else None
+
+    def _get_selected_folder_paths(self):
+        return [item.text() for item in self.folder_list_widget.selectedItems()]
 
     def _get_new_folder_path(self):
         return QFileDialog.getExistingDirectory(None, "Select Library Folder")

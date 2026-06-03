@@ -13,19 +13,20 @@ class ScannerWorker(QObject):
     progress = Signal(int, int) # processed, total
     finished = Signal(int)      # total_processed
     
-    def __init__(self, db_path, force_refresh=False):
+    def __init__(self, db_path, force_refresh=False, locations=None):
         super().__init__()
         self.db_path = db_path
         self._running = threading.Event()
         self._running.set()
         self.force_refresh = force_refresh
+        self._locations = locations  # None = use all configured locations
 
     def stop(self):
         self._running.clear()
 
     def run_scan(self):
         db = LibraryDB(self.db_path)
-        locations = db.get_scan_locations()
+        locations = self._locations if self._locations is not None else db.get_scan_locations()
         
         audio_exts = {'.m4b', '.mp3', '.flac', '.m4a'}
         book_dirs = []
@@ -277,13 +278,13 @@ class LibraryScanner(QObject):
         """Returns True if the scanner's worker thread is currently active."""
         return self._worker_thread is not None and self._worker_thread.isRunning()
 
-    def start(self, force_refresh=False):
+    def start(self, force_refresh=False, locations=None):
         # Prevent multiple overlapping threads
         if self._worker_thread and self._worker_thread.isRunning():
             return
 
         self._worker_thread = QThread()
-        self.worker = ScannerWorker(self.db_path, force_refresh=force_refresh)
+        self.worker = ScannerWorker(self.db_path, force_refresh=force_refresh, locations=locations)
         self.worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self.worker.run_scan)
         self.worker.progress.connect(self.progress.emit)
