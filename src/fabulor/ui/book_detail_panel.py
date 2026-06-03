@@ -19,6 +19,7 @@ from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 from .tag_manager import TAG_COLORS, MAX_TAG_LENGTH
 from .text_context_menu import ContextIconMenu
+from .icon_utils import render_logo_placeholder as _render_logo_placeholder
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 
@@ -574,7 +575,11 @@ class BookDetailPanel(QWidget):
         if cover_path and os.path.exists(cover_path):
             pixmap.load(cover_path)
         if pixmap.isNull():
-            pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
+            color = self._theme.get('placeholder_stats',
+                self._theme.get('placeholder_cover',
+                    self._theme.get('library_narrator',
+                        self._theme.get('text', '#888888'))))
+            pixmap = _render_logo_placeholder(color, 80)
         if not pixmap.isNull():
             self._apply_cover(pixmap)
 
@@ -623,7 +628,11 @@ class BookDetailPanel(QWidget):
         if file_path and os.path.exists(file_path):
             pixmap.load(file_path)
         if pixmap.isNull():
-            pixmap.load(os.path.join(self._assets_dir, "fabulor.ico"))
+            color = self._theme.get('placeholder_stats',
+                self._theme.get('placeholder_cover',
+                    self._theme.get('library_narrator',
+                        self._theme.get('text', '#888888'))))
+            pixmap = _render_logo_placeholder(color, 80)
         if not pixmap.isNull():
             # TODO: verify _refresh_header_cover scaling matches load_book (setFixedHeight was absent here)
             self._apply_cover(pixmap)
