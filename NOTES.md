@@ -1,4 +1,12 @@
 
+## Wrapping a `QHBoxLayout` in a `QWidget` loses inter-item spacing (2026-06-03)
+
+When a `QHBoxLayout` is assigned directly to a parent `QVBoxLayout` (via `addLayout`), it fills the parent's full width and inherits style-derived spacing (~6px). When the same layout is instead assigned to a `QWidget` wrapper (for naming/visibility purposes) and that widget is added via `addWidget`, two things break: (1) the widget shrinks to wrap its children's fixed sizes instead of filling available width, and (2) `setContentsMargins(0,0,0,0)` on the inner layout does NOT reset spacing — but the previous lack of an explicit `setSpacing` relied on style defaults that may not apply in all states. Always call `setSpacing(N)` explicitly on any `QHBoxLayout` inside a `QWidget` wrapper so the spacing is not state-dependent. Also set `setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)` on the wrapper widget so it fills available width like a bare layout would.
+
+Root cause of the transport button alignment regression introduced in the `4b55058` refactor.
+
+---
+
 ## Carousel geometry (2026-06-03)
 
 - `CoverCarousel` is parented to `content_container`, not `visual_area` or `carousel_holder`. `setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)` where `y = carousel_holder.mapTo(content_container, QPoint(0, 0)).y()`. `stackUnder(self.visual_area)` keeps it behind the label and button.

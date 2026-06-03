@@ -313,6 +313,12 @@ fabulor/
 
 `ContextIconMenu` (`ui/text_context_menu.py`) follows a shared-instance pattern: one instance is created per parent panel (`BookDetailPanel`, `TagManagerWidget`) and reused across all QLineEdit fields in that panel via `show_for(target, global_pos)`. Do not instantiate one per field. The `global_pos` argument must be in global screen coordinates (use `widget.mapToGlobal(pos)` at the call site). Theme is applied via `apply_theme(theme_dict)` — call it from the panel's `on_theme_changed`.
 
+## Wrapping a layout in a `QWidget` for naming: always set `setSpacing` explicitly
+
+When a `QHBoxLayout` is added directly to a parent layout via `addLayout`, it fills the full available width and inherits style-derived spacing. When wrapped in a `QWidget` for naming/visibility purposes and added via `addWidget`, the widget shrinks to wrap its children unless given `setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)`, and spacing is no longer guaranteed. Always call `setSpacing(N)` explicitly on any layout inside a `QWidget` wrapper.
+
+---
+
 ## Stylesheet architecture (COMPLETED)
 
 Each major UI component owns its own stylesheet. `ThemeManager._apply_stylesheets(theme_name, hover=False)` dispatches `setStyleSheet()` to individual components — never to `main_window` as a whole.

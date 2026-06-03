@@ -383,6 +383,10 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 | `stats_panel` | `get_stats_stylesheet()` |
 | `tags_panel` (`TagManagerWidget`) | `get_tags_stylesheet()` |
 
+### Wrapping a layout in a `QWidget` for naming purposes requires explicit `setSpacing`
+
+When a `QHBoxLayout` is added directly to a parent layout via `addLayout`, it fills the full available width and inherits style-derived spacing. When the same layout is wrapped in a `QWidget` (for `setObjectName`, `setVisible`, etc.) and added via `addWidget`, two things change: (1) the widget shrinks to its children's fixed sizes unless given `setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)`, and (2) spacing is no longer guaranteed by style inheritance. Always call `setSpacing(N)` explicitly on any layout inside a named `QWidget` wrapper.
+
 ### `WA_StyledBackground` required for QSS on plain `QWidget` containers
 
 Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color QSS rule **must** call `setAttribute(Qt.WA_StyledBackground, True)`. Without it Qt silently ignores the background rule — the widget appears either fully transparent or painted by the system palette. This applies to every panel root widget and any intermediate container that needs its own background. Child containers that should be transparent must NOT set `WA_StyledBackground` — set it only on the root. Verified on `TagManagerWidget` (2026-05-24).
