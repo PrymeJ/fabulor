@@ -1,4 +1,5 @@
 import os
+import re
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QLineEdit, QGridLayout, QSizePolicy, QStackedLayout
@@ -12,6 +13,28 @@ from .library import _cover_cache
 from .text_context_menu import ContextIconMenu
 
 MAX_TAG_LENGTH = 20
+_ASSETS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets"))
+
+
+def _render_svg_placeholder(color: str, size: int) -> QPixmap:
+    """Render fabulor.svg recolored to `color` into a `size`×`size` QPixmap."""
+    try:
+        svg_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
+        with open(svg_path) as f:
+            data = f.read()
+        data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
+        data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
+        data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
+        data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
+        renderer = QSvgRenderer(QByteArray(data.encode()))
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        renderer.render(painter)
+        painter.end()
+        return pm
+    except Exception:
+        return QPixmap()
 
 
 class _ClickableLabel(QLabel):
@@ -59,7 +82,7 @@ class _TagBookThumb(QWidget):
     remove_requested = Signal(str)   # book_path
     detail_requested = Signal(str)   # book_path
 
-    def __init__(self, book: dict, assets_dir: str, parent=None):
+    def __init__(self, book: dict, assets_dir: str, placeholder_color: str = "#888888", parent=None):
         super().__init__(parent)
         self._path = book['path']
         self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0))
@@ -76,13 +99,9 @@ class _TagBookThumb(QWidget):
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
-        placeholder = QPixmap()
-        placeholder.load(os.path.join(assets_dir, 'fabulor.ico'))
-        if not placeholder.isNull():
-            scaled = placeholder.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-            x = (scaled.width() - 48) // 2
-            y = (scaled.height() - 48) // 2
-            self._cover.setPixmap(scaled.copy(x, y, 48, 48))
+        pm = _render_svg_placeholder(placeholder_color, 48)
+        if not pm.isNull():
+            self._cover.setPixmap(pm)
 
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
@@ -134,9 +153,10 @@ class _TagBookThumb(QWidget):
 class _TagBookGrid(QScrollArea):
     """Scrollable grid of book thumbnails for a tag."""
 
-    def __init__(self, assets_dir: str, parent=None):
+    def __init__(self, assets_dir: str, placeholder_color: str = "#888888", parent=None):
         super().__init__(parent)
         self._assets_dir = assets_dir
+        self._placeholder_color = placeholder_color
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -155,6 +175,12 @@ class _TagBookGrid(QScrollArea):
         self._locked: bool = False
         self._grid.setColumnStretch(self._cols, 1)
 
+    def set_placeholder_color(self, color: str):
+        if self._placeholder_color != color:
+            self._placeholder_color = color
+            if self._books:
+                self._rebuild()
+
     def set_books(self, books: list[dict]):
         self._books = list(books)
         self._rebuild()
@@ -171,7 +197,7 @@ class _TagBookGrid(QScrollArea):
         self._thumbs.clear()
 
         for i, book in enumerate(self._books):
-            thumb = _TagBookThumb(book, self._assets_dir)
+            thumb = _TagBookThumb(book, self._assets_dir, self._placeholder_color)
             thumb.remove_requested.connect(self._on_remove)
             thumb.detail_requested.connect(self.parent_detail)
             self._grid.addWidget(thumb, i // self._cols, i % self._cols)
@@ -228,6 +254,7 @@ class TagManagerWidget(QWidget):
         self._cancel_timer: QTimer | None = None
         self._current_theme: dict = {}
         self._action_btn_mode: str = "delete"
+        self._placeholder_color_tags: str = "#888888"
         self._build_ui()
         self._ctx_menu = ContextIconMenu(self)
         self._tag_name_edit.customContextMenuRequested.connect(
@@ -378,7 +405,7 @@ class TagManagerWidget(QWidget):
         panel_layout.addWidget(self._book_count_label)
         panel_layout.addSpacing(6)
 
-        self._book_grid = _TagBookGrid(self._assets_dir)
+        self._book_grid = _TagBookGrid(self._assets_dir, self._placeholder_color_tags)
         self._book_grid.parent_remove = self._on_grid_remove
         self._book_grid.parent_detail = lambda path: self.detail_requested.emit(path)
         panel_layout.addWidget(self._book_grid)
@@ -717,6 +744,13 @@ class TagManagerWidget(QWidget):
             self._current_theme = resolved
             self._update_tag_icons()
         self._ctx_menu.apply_theme(resolved)
+        self._placeholder_color_tags = resolved.get(
+            'placeholder_tags',
+            resolved.get('placeholder_stats',
+                resolved.get('placeholder_cover', '#FFFFFF'))
+        )
+        if hasattr(self, '_book_grid'):
+            self._book_grid.set_placeholder_color(self._placeholder_color_tags)
 
     def _on_grid_remove(self, path: str):
         if self._confirming_delete:

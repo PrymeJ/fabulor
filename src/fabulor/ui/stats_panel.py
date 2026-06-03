@@ -14,6 +14,31 @@ from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 
+_ASSETS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets"))
+
+
+def _render_svg_placeholder(color: str, size: int) -> QPixmap:
+    """Render fabulor.svg recolored to `color` into a `size`×`size` QPixmap."""
+    try:
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray
+        svg_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
+        with open(svg_path) as f:
+            data = f.read()
+        data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
+        data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
+        data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
+        data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
+        renderer = QSvgRenderer(QByteArray(data.encode()))
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        painter = QPainter(pm)
+        renderer.render(painter)
+        painter.end()
+        return pm
+    except Exception:
+        return QPixmap()
+
 
 def _elide(text: str, font, max_px: int) -> str:
     from PySide6.QtGui import QFontMetrics
@@ -337,15 +362,15 @@ def _dim_effect():
 class BookDayRow(QWidget):
     clicked = Signal(dict)
 
-    def __init__(self, row_data: dict, assets_dir: str, index: int = 0, parent=None):
+    def __init__(self, row_data: dict, assets_dir: str, index: int = 0, placeholder_color: str = "#888888", parent=None):
         super().__init__(parent)
         self._row_data = row_data
         self.setObjectName("stats_book_day_row_alt" if index % 2 else "stats_book_day_row")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # A book is archived if its path is missing (location removed) or if it's explicitly excluded
-        self._is_archived = (row_data.get("book_path") is None or 
-                            row_data.get("is_deleted", 0) or 
+        self._is_archived = (row_data.get("book_path") is None or
+                            row_data.get("is_deleted", 0) or
                             row_data.get("is_excluded", 0))
 
         layout = QHBoxLayout(self)
@@ -359,16 +384,13 @@ class BookDayRow(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        icon_path = os.path.join(assets_dir, "fabulor.ico")
-        placeholder = QPixmap()
-        placeholder.load(icon_path)
-        if not placeholder.isNull():
-            cover_label.setPixmap(placeholder.scaled(
-                48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-            ))
+        pm = _render_svg_placeholder(placeholder_color, 48)
+        if not pm.isNull():
+            cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
         self._assets_dir = assets_dir
+        self._placeholder_color = placeholder_color
 
         active_cover_path = row_data.get("active_cover_path")
         load_path = active_cover_path or cover_path
@@ -494,12 +516,9 @@ class BookDayRow(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            placeholder = QPixmap()
-            placeholder.load(os.path.join(self._assets_dir, "fabulor.ico"))
-            if not placeholder.isNull():
-                self._cover_label.setPixmap(placeholder.scaled(
-                    48, 48, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-                ))
+            pm = _render_svg_placeholder(self._placeholder_color, 48)
+            if not pm.isNull():
+                self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -508,13 +527,14 @@ class BookDayRow(QWidget):
 
 class FinishedBookThumb(QWidget):
     clicked = Signal(dict)
-    def __init__(self, row_data: dict, assets_dir: str, parent=None):
+    def __init__(self, row_data: dict, assets_dir: str, placeholder_color: str = "#888888", parent=None):
         super().__init__(parent)
         self._row_data = row_data
         self._assets_dir = assets_dir
+        self._placeholder_color = placeholder_color
         self.setFixedSize(47, 47)
-        self._is_archived = (row_data.get("is_deleted", 0) or 
-                            row_data.get("is_excluded", 0) or 
+        self._is_archived = (row_data.get("is_deleted", 0) or
+                            row_data.get("is_excluded", 0) or
                             row_data.get("book_path") is None)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
@@ -528,13 +548,9 @@ class FinishedBookThumb(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        icon_path = os.path.join(assets_dir, "fabulor.ico")
-        placeholder = QPixmap()
-        placeholder.load(icon_path)
-        if not placeholder.isNull():
-            cover_label.setPixmap(placeholder.scaled(
-                47, 47, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation
-            ))
+        pm = _render_svg_placeholder(placeholder_color, 47)
+        if not pm.isNull():
+            cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
 
@@ -592,14 +608,9 @@ class FinishedBookThumb(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            placeholder = QPixmap()
-            placeholder.load(os.path.join(self._assets_dir, "fabulor.ico"))
-            if not placeholder.isNull():
-                self._cover_label.setPixmap(placeholder.scaled(
-                    47, 47,
-                    Qt.AspectRatioMode.IgnoreAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                ))
+            pm = _render_svg_placeholder(self._placeholder_color, 47)
+            if not pm.isNull():
+                self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -678,13 +689,13 @@ class FinishedScrollRow(QWidget):
         self._left_arrow.setVisible(bar.value() > bar.minimum())
         self._right_arrow.setVisible(bar.value() < bar.maximum())
 
-    def set_items(self, rows: list[dict], click_callback):
+    def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
         while self._layout.count() > 0:
             item = self._layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         for row in rows:
-            thumb = FinishedBookThumb(row, self._assets_dir)
+            thumb = FinishedBookThumb(row, self._assets_dir, placeholder_color)
             thumb.clicked.connect(click_callback)
             self._layout.addWidget(thumb)
         # Defer arrow update until layout has settled
@@ -1023,6 +1034,7 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._placeholder_color = "#888888"
         self._active_days: list[str] = []
         self._current_day_index: int = 0
         self._active_weeks: list[str] = []
@@ -1119,6 +1131,11 @@ class StatsPanel(QWidget):
 
     def on_theme_changed(self, theme: dict):
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
+        self._placeholder_color = theme.get(
+            'placeholder_stats',
+            theme.get('placeholder_cover',
+                theme.get('library_narrator', '#FFFFFF'))
+        )
         if hasattr(self, '_bar_chart'):
             self._bar_chart.set_accent_color(self._accent_color)
         if hasattr(self, '_heatmap'):
@@ -1189,7 +1206,7 @@ class StatsPanel(QWidget):
 
         # Recently finished books
         finished = self._inject_active_covers(self.db.get_recently_finished(limit=20))
-        self._finished_scroll_row.set_items(finished, self._on_book_row_clicked)
+        self._finished_scroll_row.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._finished_section.show()
         else:
@@ -1380,7 +1397,7 @@ class StatsPanel(QWidget):
         self._day_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i)
+            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._add_row_safely(self._day_rows_layout, book_row)
         self._day_rows_widget.setUpdatesEnabled(True)
@@ -1391,7 +1408,7 @@ class StatsPanel(QWidget):
 
         day_start = self.config.get_day_start_hour()
         finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
-        self._day_finished_scroll.set_items(finished, self._on_book_row_clicked)
+        self._day_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._day_finished_section.show()
         else:
@@ -1512,7 +1529,7 @@ class StatsPanel(QWidget):
         self._week_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i)
+            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._add_row_safely(self._week_rows_layout, book_row)
         self._week_rows_widget.setUpdatesEnabled(True)
@@ -1522,7 +1539,7 @@ class StatsPanel(QWidget):
         self._week_total_label.setText(self._format_duration(total_seconds))
 
         finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
-        self._week_finished_scroll.set_items(finished, self._on_book_row_clicked)
+        self._week_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._week_finished_section.show()
         else:
@@ -1641,7 +1658,7 @@ class StatsPanel(QWidget):
         self._month_rows_widget.setUpdatesEnabled(False)
         for i, row in enumerate(rows):
             total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i)
+            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
             book_row.clicked.connect(self._on_book_row_clicked)
             self._add_row_safely(self._month_rows_layout, book_row)
         self._month_rows_widget.setUpdatesEnabled(True)
@@ -1651,7 +1668,7 @@ class StatsPanel(QWidget):
         self._month_total_label.setText(self._format_duration(total_seconds))
 
         finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
-        self._month_finished_scroll.set_items(finished, self._on_book_row_clicked)
+        self._month_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._month_finished_section.show()
         else:

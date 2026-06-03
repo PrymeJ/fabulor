@@ -2536,7 +2536,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _show_cover_placeholder(self):
         t = _resolve_theme(self.theme_manager._current_theme_name)
-        color = t.get('library_narrator', t.get('button_text', t.get('text', '#888888')))
+        color = t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
         try:
             logo_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
             with open(logo_path) as f:
