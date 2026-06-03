@@ -12,6 +12,8 @@ _COVER_W = 92
 _WIDGET_W = 280
 _WIDGET_H = 150
 _TICK_MS = 33                      # ~30 fps
+_REVEAL_INTERVAL_MS = 75           # ms between each cover appearing
+_REVEAL_FIRST_DELAY_MS = 325       # ms before the first cover appears
 
 
 class CoverCarousel(QWidget):
@@ -48,8 +50,50 @@ class CoverCarousel(QWidget):
             self._timer = QTimer(self)
             self._timer.setInterval(_TICK_MS)
             self._timer.timeout.connect(self._tick)
-            self._elapsed.start()
-            self._timer.start()
+
+        # Reveal phase: covers appear one by one before scrolling begins.
+        self._revealing = True
+        self._reveal_count = 0   # incremented to 1 on first tick (after first-delay)
+        self._reveal_target = (
+            min(4, len(self._pixmaps))            # static: all covers (already ≤ 3)
+            if self._static
+            else min(4, len(pixmaps))             # scroll: original (un-duplicated) count
+        )
+        self._reveal_timer = QTimer(self)
+        self._reveal_timer.setSingleShot(True)
+        self._reveal_timer.setInterval(_REVEAL_FIRST_DELAY_MS)
+        self._reveal_timer.timeout.connect(self._reveal_first)
+        self._reveal_timer.start()
+
+    def _reveal_first(self):
+        self._reveal_count = 1
+        self.update()
+        if self._reveal_count < self._reveal_target:
+            self._reveal_timer = QTimer(self)
+            self._reveal_timer.setInterval(_REVEAL_INTERVAL_MS)
+            self._reveal_timer.timeout.connect(self._reveal_tick)
+            self._reveal_timer.start()
+        else:
+            self._reveal_timer = None
+            self._revealing = False
+            if self._timer is not None:
+                self._elapsed.restart()
+                self._last_ms = 0
+                self._timer.start()
+
+    def _reveal_tick(self):
+        self._reveal_count += 1
+        self.update()
+        if self._reveal_count >= self._reveal_target:
+            t = self._reveal_timer
+            self._reveal_timer = None
+            self._revealing = False
+            if t is not None:
+                t.stop()
+            if not self._static and self._timer is not None:
+                self._elapsed.restart()
+                self._last_ms = 0
+                self._timer.start()
 
     def _tick(self):
         now_ms = self._elapsed.elapsed()
@@ -59,12 +103,17 @@ class CoverCarousel(QWidget):
         self.update()
 
     def stop(self):
-        """Stop the scroll timer. Safe to call when in static mode."""
+        """Stop scroll and reveal timers. Safe to call at any phase."""
+        rt = self._reveal_timer
+        if rt is not None and rt.isActive():
+            rt.stop()
         if self._timer is not None:
             self._timer.stop()
 
     def start(self):
         """Resume the scroll timer after a stop(). Safe to call when in static mode."""
+        if self._revealing:
+            return   # reveal not finished — scroll starts automatically when done
         if self._timer is not None and not self._timer.isActive():
             # Reset elapsed so dt doesn't spike from accumulated idle time.
             self._elapsed.restart()
@@ -73,8 +122,15 @@ class CoverCarousel(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        bottom_y = self.height()                 # covers sit on this baseline (150)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        bottom_y = self.height()
+
+        if self._revealing:
+            y = bottom_y - self._cover_h
+            for i in range(min(self._reveal_count, len(self._pixmaps))):
+                p.drawPixmap(i * self._unit, y, self._pixmaps[i])
+            return
+
         y = bottom_y - self._cover_h             # bottom-aligned
 
         if self._static:
