@@ -2416,17 +2416,24 @@ def get_title_bar_stylesheet(theme_name="default"):
     """
 
 
-def get_player_stylesheet(theme_name="default"):
+def get_player_stylesheet(theme_name="default", suppress_bg_image=False):
     """
     Rules for content_container and its descendants: playback controls, chapter
     labels, time labels, sliders, visual area. Generic QLabel/QPushButton rules
     here only cascade within content_container's subtree.
+
+    suppress_bg_image: when True, the theme's bg_image is omitted from the
+    #visual_area rule entirely. Used by the no-book and empty library states to
+    strip the image. It must be omitted at generation time rather than overridden
+    on the child widget — Qt's QSS cascade treats `background-image: none` as
+    "unspecified" and lets the ancestor rule's url() win, so a child override
+    cannot kill the image. The only reliable suppression is to not emit it.
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
 
     visual_area_bg = ""
-    if t.get("bg_image"):
+    if t.get("bg_image") and not suppress_bg_image:
         bg_path = get_asset_path(t["bg_image"])
         visual_area_bg = f"background-image: url({bg_path}); background-position: center; background-repeat: no-repeat;"
 
@@ -2434,10 +2441,6 @@ def get_player_stylesheet(theme_name="default"):
         QWidget#visual_area {{
             background-color: transparent;
             {visual_area_bg}
-        }}
-        QWidget#visual_area[carouselActive="true"] {{
-            background-color: transparent;
-            background-image: none;
         }}
         QLabel {{
             color: {t['text']};

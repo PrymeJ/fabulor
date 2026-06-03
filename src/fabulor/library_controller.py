@@ -159,6 +159,7 @@ class LibraryController(QObject):
             self.ui.set_visible(False)  # empty state never coexists with player chrome
             self.ui.set_library_btn_visible(False)  # nothing to browse — hide Library
             self.ui.hide_carousel()
+            self.ui.set_bg_suppressed(True)  # strip theme bg image behind scan prompt/quote
             # Discriminate by has_locations: no paths vs. paths-with-no-books.
             if not state["has_locations"]:
                 self.ui.set_prompt_text("No library folders.")
@@ -182,6 +183,9 @@ class LibraryController(QObject):
 
             if not state["has_book"]:
                 self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=True)
+                # Strip theme bg image before showing the carousel so visual_area is
+                # transparent when the stripe stacks under it.
+                self.ui.set_bg_suppressed(True)
                 # Ambient cover carousel — reshuffled on each no-book entry.
                 self.ui.show_carousel()
             else:
@@ -189,6 +193,7 @@ class LibraryController(QObject):
                 # whether to show "author - title" when no cover exists.
                 self.ui.update_metadata(None, show_go_to_lib=False)
                 self.ui.hide_carousel()
+                self.ui.set_bg_suppressed(False)  # restore theme bg image for the loaded book
 
     def handle_background_tasks(self, state, manual=False, force_refresh=False, locations=None):
         """Triggers scans based on current mode and location status."""

@@ -18,7 +18,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
-from .themes import THEMES, _resolve_theme
+from .themes import THEMES, _resolve_theme, get_player_stylesheet
 from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
 from .ui.controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
@@ -101,6 +101,7 @@ class UIInterface:
     def set_quote_rotation(self, v): self._main._set_quote_rotation(v)
     def show_carousel(self): self._main._show_carousel()
     def hide_carousel(self): self._main._hide_carousel()
+    def set_bg_suppressed(self, v): self._main._set_bg_suppressed(v)
     def set_scan_buttons_enabled(self, v): self._main._set_scan_buttons_enabled(v)
     def set_prompt_text(self, text): self._main.library_prompt_label.setText(text)
     def set_library_btn_visible(self, v):
@@ -503,6 +504,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.root_layout.addWidget(self.content_container)
 
         # Visual Area for blurring (Cover Art and Metadata)
+        # _bg_suppressed: drives theme bg_image omission in no-book/empty states.
+        # Read by ThemeManager._apply_stylesheets; owned by _set_bg_suppressed.
+        self._bg_suppressed = False
         self.visual_area = QWidget()
         self.visual_area.setObjectName("visual_area")
         self.visual_layout = QVBoxLayout(self.visual_area)
@@ -1699,13 +1703,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         carousel_h = self._carousel.height()
         self._carousel.setGeometry(CAROUSEL_STRIPE_W, y, CAROUSEL_STRIPE_W, carousel_h)
         self._carousel.stackUnder(self.visual_area)
-
-        # Suppress visual_area's QSS background so the stripe paints through.
-        self.visual_area.setAutoFillBackground(False)
-        self.visual_area.setProperty("carouselActive", True)
-        self.visual_area.style().unpolish(self.visual_area)
-        self.visual_area.style().polish(self.visual_area)
-
+        # visual_area's QSS background is already suppressed by the not-has_book
+        # branch of apply_library_state (set_bg_suppressed(True)), so the stripe
+        # paints through. Suppression is owned by the state machine, not here.
         self._carousel.show()
 
         # Slide in from the right over 200ms; covers reveal only after 325ms so they
@@ -1728,10 +1728,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._carousel.setParent(None)
             self._carousel.deleteLater()
             self._carousel = None
-        self.visual_area.setAutoFillBackground(True)
-        self.visual_area.setProperty("carouselActive", False)
-        self.visual_area.style().unpolish(self.visual_area)
-        self.visual_area.style().polish(self.visual_area)
+        # Background suppression is owned by apply_library_state via
+        # _set_bg_suppressed — not toggled here on teardown.
+
+    def _set_bg_suppressed(self, suppressed: bool):
+        """Single authority for the visual_area background-image suppression used
+        in the no-book and empty states.
+
+        The theme bg_image is painted by content_container's `#visual_area` QSS
+        rule. It CANNOT be cancelled by overriding the child: Qt's QSS cascade
+        treats `background-image: none` as "unspecified", so the ancestor rule's
+        url() wins on the child anyway (verified — a child `background-color`
+        override applied, but the image layered on top of it). The only reliable
+        kill-switch is to regenerate content_container's stylesheet WITHOUT the
+        image. `_bg_suppressed` is read by ThemeManager._apply_stylesheets so a
+        theme change in these states keeps the image stripped.
+
+        autoFillBackground(False) when suppressed lets the carousel stripe / themed
+        window background show through the now-transparent visual_area."""
+        self._bg_suppressed = suppressed
+        self.visual_area.setAutoFillBackground(not suppressed)
+        theme_name = self.theme_manager._current_theme_name
+        self.content_container.setStyleSheet(
+            get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
+        )
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:

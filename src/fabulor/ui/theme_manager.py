@@ -561,7 +561,11 @@ class ThemeManager(QObject):
         if hasattr(mw, 'title_bar'):
             mw.title_bar.setStyleSheet(get_title_bar_stylesheet(theme_name))
         if hasattr(mw, 'content_container'):
-            mw.content_container.setStyleSheet(get_player_stylesheet(theme_name))
+            # Honor the no-book/empty-state bg-image suppression so a theme change
+            # in those states doesn't re-introduce the stripped image.
+            mw.content_container.setStyleSheet(
+                get_player_stylesheet(theme_name, suppress_bg_image=getattr(mw, '_bg_suppressed', False))
+            )
         if hasattr(mw, '_reload_button_icons'):
             mw._reload_button_icons(theme_name)
         if not hover and hasattr(mw, 'library_panel'):
