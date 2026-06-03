@@ -314,6 +314,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._cover_fit_mode = 'fit'
         self._showing_placeholder = False
         self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
+        self._carousel_slide_anim = None
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self._chapter_ui_active = True
@@ -1691,7 +1692,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         y = self.carousel_holder.mapTo(self.content_container, QPoint(0, 0)).y()
         self._carousel.setParent(self.content_container)
         carousel_h = self._carousel.height()
-        self._carousel.setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)
+        self._carousel.setGeometry(CAROUSEL_STRIPE_W, y, CAROUSEL_STRIPE_W, carousel_h)
         self._carousel.stackUnder(self.visual_area)
 
         # Suppress visual_area's QSS background so the stripe paints through.
@@ -1702,8 +1703,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._carousel.show()
 
+        # Slide in from the right over 200ms; covers reveal only after 325ms so they
+        # always appear on the settled stripe.
+        self._carousel_slide_anim = QPropertyAnimation(self._carousel, b"pos")
+        self._carousel_slide_anim.setDuration(220)
+        self._carousel_slide_anim.setStartValue(QPoint(CAROUSEL_STRIPE_W, y))
+        self._carousel_slide_anim.setEndValue(QPoint(0, y))
+        self._carousel_slide_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._carousel_slide_anim.start()
+
     def _hide_carousel(self):
         """Stop and remove the carousel."""
+        if self._carousel_slide_anim is not None:
+            self._carousel_slide_anim.stop()
+            self._carousel_slide_anim = None
         if self._carousel is not None:
             self._carousel.stop()
             self._carousel.hide()
