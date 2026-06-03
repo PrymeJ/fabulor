@@ -1520,14 +1520,12 @@ THEMES = {
     "gradient_bg_end": "#1E3A32",
     "gradient_bg_angle": 135,
     "gradient_accent_start": "#5AA898",
-    "gradient_accent_end": "#3A8878",
+    "gradient_accent_end": "#D4AA4A",
     "gradient_accent_angle": 45,
     "gradient_slider_fill_start": "#5AA898",
     "gradient_slider_fill_end": "#8AD8C8",
     "gradient_slider_fill_angle": 90,
-    "accent_light": "#D4AA4A",
-    "gradient_accent_start": "#5AA898",
-    "gradient_accent_end": "#D4AA4A",
+
     "bg_image"           : "img/driftmark.png"
 },
 "Pink Institute": {
@@ -3023,7 +3021,7 @@ def get_stats_stylesheet(theme_name="default"):
         QPushButton#book_detail_close_btn {{
             background-color: {t['accent']};
             color: {t['bg_main']};
-            border: 0px solid currentColor;
+            border: none;
             border-radius: 7px;
             font-size: 9px;
             padding: 0px;
