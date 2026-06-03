@@ -1,3 +1,35 @@
+## Session Summary — 2026-06-03 Session 2
+
+**Scope:** Carousel stripe geometry and theming — `app.py`, `carousel.py`, `themes.py`.
+
+### What was built
+
+The cover carousel stripe is now full-width (300px, bleeding to both window edges) with themed fill and 1px border lines at top and bottom.
+
+**Geometry (carousel.py + app.py):**
+
+`CoverCarousel` is now parented to `content_container`, not `visual_area` or `carousel_holder`. Geometry: `setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)` where `y = carousel_holder.mapTo(content_container, QPoint(0, 0)).y()`. `stackUnder(self.visual_area)` keeps covers behind the label and button. The previous approach (parented to `visual_area`, offset `x=-10`) did not reach both edges cleanly.
+
+The `visual_area` QSS background (including `bg_image` rules) must be suppressed for the duration of the carousel or it paints over the stripe center. Fixed via a dynamic property: `visual_area.setProperty("carouselActive", True)` + `unpolish/polish`. A corresponding QSS rule in `get_player_stylesheet` (`QWidget#visual_area[carouselActive="true"]`) forces both `background-color: transparent` and `background-image: none`. `setAutoFillBackground(False/True)` is toggled alongside it. Both are restored in `_hide_carousel`.
+
+**Theming (carousel.py + app.py + themes.py):**
+
+Two new theme keys documented in the `themes.py` docstring under `NO-BOOK CAROUSEL`:
+- `carousel_bg` → fill color (`_stripe_color`). Fallback: `bg_main` (not `bg_deep` — every theme has `bg_main`; `bg_deep` is unreliable).
+- `carousel_stripe` → 1px border line color (`_line_color`). Fallback: auto-derived from `carousel_bg` via lightness shift.
+
+`_auto_stripe_line_color(hex)` in `carousel.py`: shifts HSL lightness by `_LINE_LIGHTNESS_SHIFT` (0.35) — up for dark fills, down for light fills.
+
+`CoverCarousel.__init__` accepts `line_color: str | None`. `_line_color_explicit` is set at construction and never changed — it controls whether `__init__`'s explicit color is used or auto-derive runs. `set_stripe_color(color, line_color=None)` always recomputes `_line_color` (either from the passed value or auto-derived) — the `_line_color_explicit` flag is not consulted here. This is intentional: if `set_stripe_color` also checked `_line_color_explicit`, a theme with an explicit `carousel_stripe` at construction would never be able to switch to a different explicit value when the theme changes. Each call to `set_stripe_color` is self-contained.
+
+**Key constants added to `carousel.py`:**
+- `_LINE_LIGHTNESS_SHIFT = 0.35`
+- `_STRIPE_LINE_PX = 1`
+
+### What was debugged mid-session
+
+The initial implementation used `carousel_stripe` as both the fill key and the line-color key — they were the same variable. `carousel_bg` was wired in the docstring but not in the code, so it had no effect. Swapping the wiring (two call sites in `app.py`) fixed the key semantics. The `_line_color_explicit` flag initially also bled into `set_stripe_color`, causing themes to steal each other's line colors on theme rotation — removed from that method.
+
 # Session Summary — 2026-06-03 Session 1 — SVG cover placeholder, stylesheet parse fix, chapter slider flash guard
 
 ## What changed
@@ -4284,9 +4316,6 @@ Off / With pool / Exclusive labels, left-to-right. The entire pool block (theme 
 2. **selected = mode is with_pool**: being in the pool IS the mode setting. Toggle is symmetric: off↔with_pool.
 3. **Exclusive hides pool_container**: cover entry disappears in Exclusive — correct, the mode selector communicates state.
 4. **panel_opacity_hover**: was `1.00` (fully opaque panels) in cover_theme. Changed to `0.92` to match other themes.
-
----
-
 
 
 

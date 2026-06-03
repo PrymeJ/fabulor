@@ -1,4 +1,13 @@
 
+## Carousel geometry (2026-06-03)
+
+- `CoverCarousel` is parented to `content_container`, not `visual_area` or `carousel_holder`. `setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)` where `y = carousel_holder.mapTo(content_container, QPoint(0, 0)).y()`. `stackUnder(self.visual_area)` keeps it behind the label and button.
+- `visual_area` QSS background (including `bg_image`) must be suppressed during the carousel via `setProperty("carouselActive", True)` + `unpolish/polish`. Without this, a theme with a bg_image paints over the stripe center. The QSS rule lives in `get_player_stylesheet`. Both `autoFillBackground` and the property are restored in `_hide_carousel`.
+- `carousel_bg` → fill. `carousel_stripe` → 1px border lines. Both fall back to `bg_main` (not `bg_deep` — every theme has `bg_main`).
+- `set_stripe_color` always recomputes line color; `_line_color_explicit` is `__init__`-only. If this flag ever bleeds into `set_stripe_color`, themes will steal each other's line colors on rotation.
+
+---
+
 ## Cover placeholder (2026-06-03)
 
 - `_show_cover_placeholder()` intercepts both no-cover exits in `_load_cover_art` — the `else` branch only. The early `not file_path` return (no-book state) is untouched; `cover_art_label` stays hidden there.
