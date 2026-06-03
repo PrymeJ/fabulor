@@ -1,3 +1,25 @@
+## Session Summary — 2026-06-03 Session 3
+
+**Scope:** Carousel slide-in animation; transport button alignment regression fix — `app.py`, `carousel.py`.
+
+### What was built
+
+**Carousel slide-in animation (`app.py`):**
+
+`_show_carousel` now positions the `CoverCarousel` off-screen to the right at `x = CAROUSEL_STRIPE_W` and slides it to `x = 0` over 220ms with an `OutCubic` ease via `QPropertyAnimation` on `b"pos"`. Covers reveal only after 325ms (`_REVEAL_FIRST_DELAY_MS`) so they always appear on the settled stripe, never mid-slide. `_carousel_slide_anim` is stored on `MainWindow` (initialised to `None` in `__init__`) and stopped/cleared in `_hide_carousel` before the widget is torn down.
+
+**Transport button alignment fix (`app.py`):**
+
+The transport button row had regressed since commit `4b55058` (which wrapped the buttons' `QHBoxLayout` in a named `QWidget`). The wrapper widget was shrinking to fit its children (240px) instead of filling the 280px content area, and inter-button spacing had been implicitly zeroed. Fixed by: `setSpacing(10)` on the inner layout (240px buttons + 4 × 10px gaps = 280px, exactly filling the content area) and `setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)` on the wrapper. Also corrected `carousel_holder.setFixedWidth` to use `CAROUSEL_STRIPE_W` (300) instead of the now-stale hardcoded 280.
+
+### Non-obvious decisions
+
+1. **`setSpacing(10)` chosen to fill exactly 280px**: 5 buttons × fixed widths (46+46+56+46+46 = 240px) + 4 gaps × 10px = 280px = content area width (300px window − 10px left margin − 10px right margin). This aligns Prev with `current_time_label`'s left edge and Next with `total_time_label`'s right edge. Any other spacing value leaves a visible offset.
+
+2. **Root cause of the regression**: wrapping a `QHBoxLayout` in a `QWidget` (for naming/visibility) removes style-derived layout defaults — the widget shrinks to content and spacing is no longer guaranteed. Always call `setSpacing(N)` explicitly and set `Expanding` size policy on any named wrapper widget. Documented in CLAUDE.md, GEMINI.md, and NOTES.md.
+
+---
+
 ## Session Summary — 2026-06-03 Session 2
 
 **Scope:** Carousel stripe geometry and theming — `app.py`, `carousel.py`, `themes.py`.
@@ -25,6 +47,10 @@ Two new theme keys documented in the `themes.py` docstring under `NO-BOOK CAROUS
 **Key constants added to `carousel.py`:**
 - `_LINE_LIGHTNESS_SHIFT = 0.35`
 - `_STRIPE_LINE_PX = 1`
+
+**Slide-in animation (`app.py`):**
+
+Added in the closing commit of this session (`0973194`, later amended). `_show_carousel` positions the carousel at `x = CAROUSEL_STRIPE_W` (off-screen right) and slides it to `x = 0` over 220ms. `_carousel_slide_anim` stored on `MainWindow`; stopped in `_hide_carousel`. (Full notes moved to Session 3 where it was formally documented.)
 
 ### What was debugged mid-session
 
