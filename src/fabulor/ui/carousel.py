@@ -14,6 +14,8 @@ _WIDGET_H = 150
 _TICK_MS = 33                      # ~30 fps
 _REVEAL_INTERVAL_MS = 75           # ms between each cover appearing
 _REVEAL_FIRST_DELAY_MS = 325       # ms before the first cover appears
+_REVEAL_INITIAL_OPACITY = 0.2      # starting opacity for the first-cover fade-in
+_REVEAL_FADE_MS = 180              # duration of the first-cover fade from _REVEAL_INITIAL_OPACITY to 1.0
 
 
 class CoverCarousel(QWidget):
@@ -54,6 +56,8 @@ class CoverCarousel(QWidget):
         # Reveal phase: covers appear one by one before scrolling begins.
         self._revealing = True
         self._reveal_count = 0   # incremented to 1 on first tick (after first-delay)
+        self._first_cover_opacity = _REVEAL_INITIAL_OPACITY
+        self._fade_timer = None
         self._reveal_target = (
             min(4, len(self._pixmaps))            # static: all covers (already ≤ 3)
             if self._static
@@ -67,6 +71,13 @@ class CoverCarousel(QWidget):
 
     def _reveal_first(self):
         self._reveal_count = 1
+        self._first_cover_opacity = _REVEAL_INITIAL_OPACITY
+        step = (1.0 - _REVEAL_INITIAL_OPACITY) / max(1, _REVEAL_FADE_MS / _TICK_MS)
+        self._fade_step = step
+        self._fade_timer = QTimer(self)
+        self._fade_timer.setInterval(_TICK_MS)
+        self._fade_timer.timeout.connect(self._fade_tick)
+        self._fade_timer.start()
         self.update()
         if self._reveal_count < self._reveal_target:
             self._reveal_timer = QTimer(self)
@@ -80,6 +91,15 @@ class CoverCarousel(QWidget):
                 self._elapsed.restart()
                 self._last_ms = 0
                 self._timer.start()
+
+    def _fade_tick(self):
+        self._first_cover_opacity = min(1.0, self._first_cover_opacity + self._fade_step)
+        self.update()
+        if self._first_cover_opacity >= 1.0:
+            t = self._fade_timer
+            self._fade_timer = None
+            if t is not None:
+                t.stop()
 
     def _reveal_tick(self):
         self._reveal_count += 1
@@ -107,6 +127,9 @@ class CoverCarousel(QWidget):
         rt = self._reveal_timer
         if rt is not None and rt.isActive():
             rt.stop()
+        ft = self._fade_timer
+        if ft is not None and ft.isActive():
+            ft.stop()
         if self._timer is not None:
             self._timer.stop()
 
@@ -128,7 +151,12 @@ class CoverCarousel(QWidget):
         if self._revealing:
             y = bottom_y - self._cover_h
             for i in range(min(self._reveal_count, len(self._pixmaps))):
-                p.drawPixmap(i * self._unit, y, self._pixmaps[i])
+                if i == 0 and self._first_cover_opacity < 1.0:
+                    p.setOpacity(self._first_cover_opacity)
+                    p.drawPixmap(i * self._unit, y, self._pixmaps[i])
+                    p.setOpacity(1.0)
+                else:
+                    p.drawPixmap(i * self._unit, y, self._pixmaps[i])
             return
 
         y = bottom_y - self._cover_h             # bottom-aligned
