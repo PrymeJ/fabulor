@@ -564,6 +564,8 @@ Both settings persist via QSettings (`chapter_digit_mode`, `chapter_digit_autopl
 
 ## DO NOT add a broad `QWidget { background: transparent; }` rule to any panel stylesheet. It overrides named-widget background rules (including the panel root's semi-transparent fill) and makes the entire panel invisible. Always use specific object-name selectors (`QWidget#foo`) when setting transparency on child containers.
 
+## DO NOT try to cancel the theme `bg_image` with a child override. Qt's QSS cascade treats `background-image: none` as "unspecified", so the ancestor rule's `url()` wins on the child anyway — an instance stylesheet on `visual_area`, a `background-image: none` rule, or a dynamic property (like the removed `carouselActive`) will NOT remove the image. The only working suppression is to omit it at generation time: `get_player_stylesheet(theme_name, suppress_bg_image=True)`. Route all suppression through `MainWindow._set_bg_suppressed(suppressed)` — it sets `_bg_suppressed`, sets `autoFillBackground(not suppressed)`, and re-applies the regenerated stylesheet. `apply_library_state` is the only caller (`True` for empty + no-book, `False` for has_book); `ThemeManager._apply_stylesheets` reads `_bg_suppressed` so theme changes keep it stripped. `_show_carousel`/`_hide_carousel` must not touch background or `autoFillBackground`.
+
 ---
 
-*Last updated: 2026-05-24 — archived book UI in detail panel and stats widgets, narrator/year library sync fix, year field validator, get_book_dict, tag manager refresh wiring, AppInterface proxy pattern for cross-panel calls.*
+*Last updated: 2026-06-03 — theme bg_image suppression via `suppress_bg_image` / `_set_bg_suppressed`; child-override suppression does not work (Qt cascade ignores `background-image: none`).*
