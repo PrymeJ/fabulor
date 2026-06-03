@@ -34,7 +34,7 @@ from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
-from .ui.carousel import CoverCarousel
+from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
@@ -670,9 +670,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         nb_layout.addSpacing(125)
 
-        # Permanent carousel slot — always reserves 150px whether or not a carousel is inside.
+        # Permanent carousel slot — always reserves height whether or not a carousel is inside.
         self.carousel_holder = QWidget()
-        self.carousel_holder.setFixedHeight(150)
+        self.carousel_holder.setFixedHeight(140 + 2 * CAROUSEL_STRIPE_PAD)
         self.carousel_holder.setFixedWidth(280)
         ch_layout = QVBoxLayout(self.carousel_holder)
         ch_layout.setContentsMargins(0, 0, 0, 0)
@@ -1662,12 +1662,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             pm = QPixmap(path)
             if pm.isNull():
                 continue
-            pm = pm.scaled(92, cover_h, Qt.KeepAspectRatioByExpanding,
+            pm = pm.scaled(CAROUSEL_COVER_W, cover_h, Qt.KeepAspectRatioByExpanding,
                            Qt.SmoothTransformation)
-            if pm.width() > 92 or pm.height() > cover_h:
-                x_off = (pm.width() - 92) // 2
+            if pm.width() > CAROUSEL_COVER_W or pm.height() > cover_h:
+                x_off = (pm.width() - CAROUSEL_COVER_W) // 2
                 y_off = (pm.height() - cover_h) // 2
-                pm = pm.copy(x_off, y_off, 92, cover_h)
+                pm = pm.copy(x_off, y_off, CAROUSEL_COVER_W, cover_h)
             pixmaps.append(pm)
 
         if not pixmaps:
@@ -1683,17 +1683,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pixmaps, cover_h = self._build_carousel_covers()
         if not pixmaps:
             return
-        self._carousel = CoverCarousel(pixmaps, cover_h)
-        self.carousel_holder.layout().addWidget(self._carousel)
+        t = _resolve_theme(self.theme_manager._current_theme_name)
+        bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
+        line_color = t.get('carousel_stripe') or None
+        self._carousel = CoverCarousel(pixmaps, cover_h, stripe_color=bg_color, line_color=line_color)
+
+        y = self.carousel_holder.mapTo(self.content_container, QPoint(0, 0)).y()
+        self._carousel.setParent(self.content_container)
+        carousel_h = self._carousel.height()
+        self._carousel.setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)
+        self._carousel.stackUnder(self.visual_area)
+
+        # Suppress visual_area's QSS background so the stripe paints through.
+        self.visual_area.setAutoFillBackground(False)
+        self.visual_area.setProperty("carouselActive", True)
+        self.visual_area.style().unpolish(self.visual_area)
+        self.visual_area.style().polish(self.visual_area)
+
+        self._carousel.show()
 
     def _hide_carousel(self):
-        """Stop and remove the carousel from its holder."""
+        """Stop and remove the carousel."""
         if self._carousel is not None:
             self._carousel.stop()
-            self.carousel_holder.layout().removeWidget(self._carousel)
+            self._carousel.hide()
             self._carousel.setParent(None)
             self._carousel.deleteLater()
             self._carousel = None
+        self.visual_area.setAutoFillBackground(True)
+        self.visual_area.setProperty("carouselActive", False)
+        self.visual_area.style().unpolish(self.visual_area)
+        self.visual_area.style().polish(self.visual_area)
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
@@ -2165,6 +2185,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.next_button.setText("")
             self.next_button.setIcon(_next)
         self._update_skip_icons()
+        if self._carousel is not None:
+            bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
+            line_color = t.get('carousel_stripe') or None
+            self._carousel.set_stripe_color(bg_color, line_color=line_color)
         if self._showing_placeholder:
             self._show_cover_placeholder()
         # Refresh whichever play/pause/restart icon is currently showing

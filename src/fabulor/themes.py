@@ -87,6 +87,12 @@ COVER ART BASED THEME COLORS
 These keys are generated dynamically by build_cover_theme() in cover_theme.py and are not set in static theme dicts.
 lib_hover: Background color for library item hover, derived from the dominant cover hue (mid-dark). Used as library_item_hover_color.
 chap_fill: Fill color for the chapter progress bar and library slider, derived from the dominant cover hue (slightly lighter than lib_hover). Used as slider_chapter_fill and library_slider_fill.
+
+NO-BOOK CAROUSEL
+carousel_bg     : Fill color for the full-width stripe in the no-book state.
+                  Fallback: bg_deep. Set explicitly per theme during theme passes.
+carousel_stripe : Color of the 2px horizontal lines at the top and bottom of the stripe.
+                  Fallback: auto-calculated from carousel_bg (lightness-shifted), then accent_light, then text.
 """
 
 THEMES = {
@@ -139,6 +145,8 @@ THEMES = {
         "button_skip":               "#619ED3",
         "tag_list_text":             "#86C6FF",
         "tag_list_text_hover":       "#FC1543",
+        "carousel_bg":               "#032734",
+        "carousel_stripe":           "#438396",
     },
     "Anomander": {
         "bg_deep":                   "#000000",
@@ -2426,6 +2434,10 @@ def get_player_stylesheet(theme_name="default"):
         QWidget#visual_area {{
             background-color: transparent;
             {visual_area_bg}
+        }}
+        QWidget#visual_area[carouselActive="true"] {{
+            background-color: transparent;
+            background-image: none;
         }}
         QLabel {{
             color: {t['text']};
