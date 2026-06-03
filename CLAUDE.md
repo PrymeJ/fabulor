@@ -340,33 +340,41 @@ The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { 
 
 ```
 src/fabulor/
-├── app.py                    # MainWindow wiring + module-level SettingsController interface classes (VisualsInterface, PanelInterface, UICallbackInterface, LibraryInterface, PlayerInterface, BrowserInterface) — ~2570 lines
+├── app.py                    # MainWindow wiring + module-level interface classes (VisualsInterface, PanelInterface, UICallbackInterface, LibraryInterface, PlayerInterface, BrowserInterface, UIInterface, AppInterface)
 ├── player.py                 # MPV wrapper, VT, async seek, gate/ungate
 ├── db.py                     # SQLite layer
 ├── config.py                 # QSettings wrapper
-├── themes.py                 # Theme dicts + per-component QSS functions
-├── library_controller.py     # Library logic, scan wiring
+├── themes.py                 # Theme dicts + per-component QSS functions (get_player_stylesheet accepts suppress_bg_image)
+├── library_controller.py     # Library logic, scan wiring, apply_library_state, _set_bg_suppressed
 ├── settings_controller.py    # Settings logic (dynamic binding)
+├── session_recorder.py       # SessionRecorder — session open/pause/resume/close, checkpoint, furthest-pos tracking
+├── book_quotes.py            # Quote pool for the empty/no-book state rotation
+├── assets.py                 # get_asset_path helper (resolves paths into the assets/ bundle)
 ├── library/
-│   └── scanner.py            # Async file scan (threading.Event for cancel)
+│   ├── scanner.py            # Async file scan (threading.Event for cancel)
+│   └── cover_manager.py      # Cover extraction and DB persistence helpers
+├── models/
+│   └── book.py               # Book dataclass
 └── ui/
-    ├── controls.py           # ClickSlider (animatedValue, when_animations_done), HoverButton
+    ├── controls.py           # ClickSlider (animatedValue, when_animations_done), HoverButton, FreezableLabel
     ├── chapter_list.py       # Chapter list overlay (child widget, not popup)
     ├── library.py            # BookModel, BookDelegate, LibraryPanel (owns evict_cover/get_cached_cover — app.py must not access _cover_cache directly), _cover_cache
     ├── cover_loader.py       # CoverLoaderWorker: Signal(int, QImage)
     ├── cover_panel.py        # Cover management panel
     ├── cover_theme.py        # Dominant color extraction
-    ├── theme_manager.py      # ThemeManager — overlay, snapback, rotation
+    ├── theme_manager.py      # ThemeManager — overlay, snapback, rotation; reads _bg_suppressed on theme change
     ├── panels.py             # PanelManager — all panel open/close flows
     ├── book_detail_panel.py  # Book detail (stats, history, tags, cover header, inline edit)
-    ├── stats_panel.py        # Stats panel, TagManagerWidget, SessionListWidget, _RangeBar
-    ├── tag_manager.py        # TagManagerWidget internals
+    ├── stats_panel.py        # Stats panel, SessionListWidget, _RangeBar
+    ├── tag_manager.py        # TagManagerWidget — tag list, tag panel, book grid, color picker
     ├── title_bar.py          # Custom title bar
     ├── speed_controls.py     # Speed panel
     ├── sleep_timer.py        # Sleep timer panel
+    ├── audio_controls.py     # Audio settings panel (normalisation, voice boost, balance, stereo/mono)
+    ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
-    └── models/
-        └── book.py           # Book dataclass
+    ├── icon_utils.py         # render_logo_placeholder, render_logo_placeholder_bordered — SVG logo placeholder renderers
+    └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
 ```
 
 ---
@@ -396,4 +404,4 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-05-24 — library_year theme key added (1-per-row year field color, falls back to library_narrator); library overlay (2/3-per-row, Square) switched from hardcoded white to library_elapsed/library_total/library_percentage theme colors; cover_theme.py updated with brighter text/text_dim/text_dimmer values, chap_fill_lighter and slider_bg_lighter variants for improved overlay legibility.*
+*Last updated: 2026-06-03 — file tree synced with tracked sources (added session_recorder.py, book_quotes.py, assets.py, library/cover_manager.py, models/, ui/audio_controls.py, ui/carousel.py, ui/icon_utils.py, ui/text_context_menu.py; corrected models/book.py path; updated descriptions for themes.py suppress_bg_image, theme_manager.py _bg_suppressed, tag_manager.py, stats_panel.py, controls.py FreezableLabel); bg-image suppression invariant added to Critical Architecture Rules.*
