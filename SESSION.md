@@ -1,3 +1,29 @@
+## Session Summary — 2026-06-03 Session 4
+
+**Scope:** Strip theme `bg_image` in the no-book and empty-library states — `app.py`, `themes.py`, `library_controller.py`, `theme_manager.py`.
+
+### What was built
+
+Themes with a `bg_image` (Overlook, Winterfell, Pyke, etc.) painted their image over the prompts, carousel, and quote in the no-book and empty-library states. The image is now suppressed in exactly those two states and restored whenever a book is loaded.
+
+- **`get_player_stylesheet(theme_name, suppress_bg_image=False)`** (`themes.py`): when `True`, the `bg_image` is omitted from the `#visual_area` rule entirely.
+- **`MainWindow._set_bg_suppressed(suppressed)`** (`app.py`): single authority. Sets `self._bg_suppressed`, calls `setAutoFillBackground(not suppressed)`, and re-applies `content_container`'s stylesheet via `get_player_stylesheet(theme, suppress_bg_image=suppressed)`. Exposed on `UIInterface` as `set_bg_suppressed`.
+- **`apply_library_state`** (`library_controller.py`): drives it — `set_bg_suppressed(True)` in the empty branch and the no-book branch (before `show_carousel()`), `set_bg_suppressed(False)` in the has_book branch.
+- **`ThemeManager._apply_stylesheets`** reads `getattr(mw, '_bg_suppressed', False)` so a theme change while in a suppressed state does not re-introduce the image.
+- `_show_carousel` / `_hide_carousel` no longer touch `carouselActive` or `autoFillBackground` — suppression is fully owned by the state machine. The `carouselActive` QSS rule and property are gone.
+
+### Non-obvious decisions
+
+1. **The image cannot be cancelled by overriding the child widget.** Qt's QSS cascade treats `background-image: none` as "unspecified", so an ancestor rule's `url()` wins on the child per-property even when the child sets `none`. Verified with a red-background diagnostic: the child stylesheet applied (area went red) but the image layered on top of the red. The only reliable kill is to never emit the image — hence the `suppress_bg_image` flag at generation time. Two earlier attempts (renaming the `carouselActive` property; a child instance stylesheet with `background-image: none`) both produced no visible change. Full tried/failed writeup in NOTES.md.
+2. **The `QGraphicsBlurEffect` on `visual_area` was a red herring** — suspected of caching a source pixmap, but `blurRadius` is 0 except during panel transitions and the red diagnostic proved repaints propagate normally.
+3. **Per-state stripping over hiding image-themes from the pool.** Suppressing the themes themselves would have left a visible gap in the Settings theme pool. Stripping the image per-state keeps every theme selectable.
+
+### Known cosmetic note
+
+In the empty state the stripped background plus the window gradient can read slightly dark behind the quote panel. Accepted as good enough — far better than the overlapping image.
+
+---
+
 ## Session Summary — 2026-06-03 Session 3
 
 **Scope:** Carousel slide-in animation; transport button alignment regression fix — `app.py`, `carousel.py`.

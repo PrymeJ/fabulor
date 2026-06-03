@@ -1,4 +1,44 @@
 
+## Suppressing a theme `bg_image`: only regeneration works, not child override (2026-06-03)
+
+The theme `bg_image` (Overlook hexagons, etc.) is painted by `content_container`'s
+`QWidget#visual_area { background-image: url(...) }` rule (`get_player_stylesheet`). In
+the no-book and empty-library states it overlapped the prompts / carousel / quote. Goal:
+strip the image in those two states, keep it everywhere a book is loaded.
+
+**What was tried and failed:**
+
+1. **Rename `carouselActive` → `bgSuppressed` and set the property in the state machine.**
+   No change. The original `carouselActive` mechanism never actually suppressed anything —
+   the no-book state already showed the image with the carousel fully built (so the
+   property *was* set). Renaming a non-working rule does nothing.
+2. **Instance stylesheet on `visual_area` itself: `background-image: none`.** No change.
+   A red-background diagnostic proved why: setting `QWidget#visual_area { background-image:
+   none; background-color: red }` as the child's own stylesheet **did** turn the area red,
+   but the image layered *on top of the red*. So the child stylesheet applies fine — but
+   **Qt's QSS cascade treats `background-image: none` as "unspecified"**, so the ancestor
+   rule's `url()` wins on the child per-property. `background-color` (a real value) overrode;
+   `background-image: none` was silently dropped. No child override can kill an ancestor's
+   background-image. (The `QGraphicsBlurEffect` on `visual_area`, suspected as a pixmap-cache
+   culprit, was a red herring — `blurRadius` is 0 except during panel transitions, and the
+   red proved repaints propagate fine.)
+
+**What worked:** regenerate `content_container`'s stylesheet **without** the image.
+`get_player_stylesheet(theme_name, suppress_bg_image=True)` omits the `bg_image` from the
+`#visual_area` rule entirely — the only reliable kill, since the image is simply never
+emitted. `MainWindow._set_bg_suppressed` is the single authority: it sets `_bg_suppressed`,
+calls `setAutoFillBackground(False)` (so the transparent `visual_area` lets the carousel
+stripe / themed window bg show through), and re-applies the regenerated stylesheet.
+`apply_library_state` drives it (`True` for empty + no-book, `False` for has_book), and
+`ThemeManager._apply_stylesheets` reads `_bg_suppressed` so a theme change in those states
+doesn't re-introduce the image.
+
+**Why this over hiding image-themes from the pool:** the alternative (suppressing the
+themes themselves) would have meant a visible gap in the theme pool shown in Settings —
+ugly and confusing. Stripping the image per-state keeps every theme selectable.
+
+---
+
 ## Wrapping a `QHBoxLayout` in a `QWidget` loses inter-item spacing (2026-06-03)
 
 When a `QHBoxLayout` is assigned directly to a parent `QVBoxLayout` (via `addLayout`), it fills the parent's full width and inherits style-derived spacing (~6px). When the same layout is instead assigned to a `QWidget` wrapper (for naming/visibility purposes) and that widget is added via `addWidget`, two things break: (1) the widget shrinks to wrap its children's fixed sizes instead of filling available width, and (2) `setContentsMargins(0,0,0,0)` on the inner layout does NOT reset spacing — but the previous lack of an explicit `setSpacing` relied on style defaults that may not apply in all states. Always call `setSpacing(N)` explicitly on any `QHBoxLayout` inside a `QWidget` wrapper so the spacing is not state-dependent. Also set `setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)` on the wrapper widget so it fills available width like a bare layout would.
@@ -10,7 +50,7 @@ Root cause of the transport button alignment regression introduced in the `4b550
 ## Carousel geometry (2026-06-03)
 
 - `CoverCarousel` is parented to `content_container`, not `visual_area` or `carousel_holder`. `setGeometry(0, y, CAROUSEL_STRIPE_W, carousel_h)` where `y = carousel_holder.mapTo(content_container, QPoint(0, 0)).y()`. `stackUnder(self.visual_area)` keeps it behind the label and button.
-- `visual_area` QSS background (including `bg_image`) must be suppressed during the carousel via `setProperty("carouselActive", True)` + `unpolish/polish`. Without this, a theme with a bg_image paints over the stripe center. The QSS rule lives in `get_player_stylesheet`. Both `autoFillBackground` and the property are restored in `_hide_carousel`.
+- `visual_area`'s `bg_image` must be suppressed while the carousel shows, or a theme with a bg_image paints over the stripe center. This is now handled by the state machine, not the carousel: `apply_library_state`'s no-book branch calls `set_bg_suppressed(True)` before `show_carousel()`. Suppression works by regenerating `content_container`'s stylesheet without the image (`get_player_stylesheet(..., suppress_bg_image=True)`) — see the bg_image-suppression note above for why a child-widget override (the old `carouselActive` property) could not work. `_show_carousel`/`_hide_carousel` no longer touch `carouselActive` or `autoFillBackground`.
 - `carousel_bg` → fill. `carousel_stripe` → 1px border lines. Both fall back to `bg_main` (not `bg_deep` — every theme has `bg_main`).
 - `set_stripe_color` always recomputes line color; `_line_color_explicit` is `__init__`-only. If this flag ever bleeds into `set_stripe_color`, themes will steal each other's line colors on rotation.
 
