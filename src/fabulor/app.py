@@ -674,7 +674,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Permanent carousel slot — always reserves height whether or not a carousel is inside.
         self.carousel_holder = QWidget()
         self.carousel_holder.setFixedHeight(140 + 2 * CAROUSEL_STRIPE_PAD)
-        self.carousel_holder.setFixedWidth(280)
+        self.carousel_holder.setFixedWidth(CAROUSEL_STRIPE_W)
         ch_layout = QVBoxLayout(self.carousel_holder)
         ch_layout.setContentsMargins(0, 0, 0, 0)
         ch_layout.setSpacing(0)
@@ -739,6 +739,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.transport_controls = QWidget()
         controls_layout = QHBoxLayout(self.transport_controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(10)
         self.prev_button = HoverButton()
         self.prev_button.setObjectName("prev_btn")
         _icon = _load_svg_icon("previous.svg")
@@ -788,6 +789,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.forward_button, self.next_button]:
             btn.setFixedHeight(33)
             controls_layout.addWidget(btn)
+        self.transport_controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.content_layout.addWidget(self.transport_controls)
 
         self._reload_button_icons(self.theme_manager._current_theme_name)
