@@ -42,7 +42,8 @@ from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder
 
-_ICONS_DIR = os.path.join(os.path.dirname(__file__), "assets", "icons")
+_ICONS_DIR  = os.path.join(os.path.dirname(__file__), "assets", "icons")
+_ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
 
 # Fixed height of the cover-art box. The window is fixed-size; this value is the
 # height the cover area occupies in the correct ("proper") layout. The cover
@@ -311,6 +312,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = QPixmap()
         self._pending_cover_pixmap = None
         self._cover_fit_mode = 'fit'
+        self._showing_placeholder = False
         self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
@@ -2154,6 +2156,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.next_button.setText("")
             self.next_button.setIcon(_next)
         self._update_skip_icons()
+        if self._showing_placeholder:
+            self._show_cover_placeholder()
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
             self._set_play_icon("restart")
@@ -2462,6 +2466,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_anim.start()
 
     def _apply_main_cover(self, pixmap):
+        self._showing_placeholder = False
         self.current_cover_pixmap = pixmap
         self.cover_art_label.show()
         self.metadata_label.hide()
@@ -2489,16 +2494,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         active_path   = active['file_path'] if active else None
         fallback_path = book.cover_path if book else None
 
-        # No cover source at all → show author/title immediately
+        # No cover source at all → show placeholder logo + author/title
         if not active_path and not fallback_path:
             self.current_cover_pixmap = QPixmap()
-            self.cover_art_label.hide()
+            self._pending_cover_pixmap = None
+            self.theme_manager.clear_cover_theme()
+            self._show_cover_placeholder()
             self.metadata_label.show()
             self.metadata_label.setText(
                 f"{book.author} - {book.title}" if book else "Unknown book"
             )
-            self._pending_cover_pixmap = None
-            self.theme_manager.clear_cover_theme()
             return
 
         # Active cover set in book_covers → load from that path directly.
@@ -2521,13 +2526,39 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._apply_main_cover(pixmap)
         else:
             self.current_cover_pixmap = QPixmap()
-            self.cover_art_label.hide()
+            self._pending_cover_pixmap = None
+            self.theme_manager.clear_cover_theme()
+            self._show_cover_placeholder()
             self.metadata_label.show()
             self.metadata_label.setText(
                 f"{book.author} - {book.title}" if book else "Unknown book"
             )
-            self._pending_cover_pixmap = None
-            self.theme_manager.clear_cover_theme()
+
+    def _show_cover_placeholder(self):
+        t = _resolve_theme(self.theme_manager._current_theme_name)
+        color = t.get('library_narrator', t.get('button_text', t.get('text', '#888888')))
+        try:
+            logo_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
+            with open(logo_path) as f:
+                data = f.read()
+            data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
+            data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
+            data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
+            data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
+            ba = QByteArray(data.encode())
+            renderer = QSvgRenderer(ba)
+            placeholder_size = int(COVER_AREA_HEIGHT * 0.65)
+            pm = QPixmap(placeholder_size, placeholder_size)
+            pm.fill(Qt.transparent)
+            painter = QPainter(pm)
+            renderer.render(painter)
+            painter.end()
+            self.cover_art_label.setPixmap(pm)
+            self.cover_art_label.show()
+            self._showing_placeholder = True
+        except Exception:
+            self.cover_art_label.hide()
+            self._showing_placeholder = False
 
     def _on_active_cover_changed(self, book_path: str, file_path: str) -> None:
         if not book_path:
