@@ -3463,10 +3463,11 @@ def get_sidebar_stylesheet(theme_name="default"):
             padding: 0;
         }}
         #sidebar QPushButton {{
-            font-size: 12px;
+            font-size: 13px;
             color: rgb({sidebar_text_rgb});
             background: transparent;
             border: none;
+            margin-left: -1px;
             text-align: left;
             font-weight: bold;
             padding: 0;
