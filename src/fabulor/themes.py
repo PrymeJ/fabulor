@@ -65,8 +65,8 @@ undo_hover: The color used when hovering over the undo button. Fallback: "accent
 
 PLACEHOLDER COVER COLORS
 placeholder_cover: Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
-placeholder_stats: Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → #FFFFFF.
-placeholder_tags: Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → #FFFFFF.
+placeholder_stats: Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → text → #888888.
+placeholder_tags: Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → library_narrator → text → #888888.
 
 TRANSPARENCY AND EFFECTS
 sidebar_opacity: A float (0.0 to 1.0) defining how transparent the sidebar is when idle.

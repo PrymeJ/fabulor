@@ -13,31 +13,7 @@ from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnte
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
-
-_ASSETS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets"))
-
-
-def _render_svg_placeholder(color: str, size: int) -> QPixmap:
-    """Render fabulor.svg recolored to `color` into a `size`×`size` QPixmap."""
-    try:
-        from PySide6.QtSvg import QSvgRenderer
-        from PySide6.QtCore import QByteArray
-        svg_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
-        with open(svg_path) as f:
-            data = f.read()
-        data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
-        data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
-        data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
-        data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
-        renderer = QSvgRenderer(QByteArray(data.encode()))
-        pm = QPixmap(size, size)
-        pm.fill(Qt.transparent)
-        painter = QPainter(pm)
-        renderer.render(painter)
-        painter.end()
-        return pm
-    except Exception:
-        return QPixmap()
+from .icon_utils import render_logo_placeholder as _render_svg_placeholder
 
 
 def _elide(text: str, font, max_px: int) -> str:
@@ -1130,11 +1106,13 @@ class StatsPanel(QWidget):
         return widget
 
     def on_theme_changed(self, theme: dict):
+        from ..themes import _resolve_theme
+        theme = _resolve_theme(theme)
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
         self._placeholder_color = theme.get(
             'placeholder_stats',
             theme.get('placeholder_cover',
-                theme.get('library_narrator', '#FFFFFF'))
+                theme.get('library_narrator', theme.get('text', '#888888')))
         )
         if hasattr(self, '_bar_chart'):
             self._bar_chart.set_accent_color(self._accent_color)

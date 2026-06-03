@@ -1,5 +1,4 @@
 import os
-import re
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QLineEdit, QGridLayout, QSizePolicy, QStackedLayout
@@ -10,31 +9,10 @@ from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
+from .icon_utils import render_logo_placeholder as _render_svg_placeholder
 from .text_context_menu import ContextIconMenu
 
 MAX_TAG_LENGTH = 20
-_ASSETS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets"))
-
-
-def _render_svg_placeholder(color: str, size: int) -> QPixmap:
-    """Render fabulor.svg recolored to `color` into a `size`×`size` QPixmap."""
-    try:
-        svg_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
-        with open(svg_path) as f:
-            data = f.read()
-        data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
-        data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
-        data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
-        data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
-        renderer = QSvgRenderer(QByteArray(data.encode()))
-        pm = QPixmap(size, size)
-        pm.fill(Qt.transparent)
-        painter = QPainter(pm)
-        renderer.render(painter)
-        painter.end()
-        return pm
-    except Exception:
-        return QPixmap()
 
 
 class _ClickableLabel(QLabel):
@@ -735,11 +713,13 @@ class TagManagerWidget(QWidget):
             self._cancel_timer = None
         self._set_action_mode("delete")
 
-    def on_theme_changed(self, theme_name: str) -> None:
+    def on_theme_changed(self, theme_name) -> None:
         from ..themes import get_tags_stylesheet, _resolve_theme
-        self._current_theme_name = theme_name
-        self.setStyleSheet(get_tags_stylesheet(theme_name))
         resolved = _resolve_theme(theme_name)
+        # get_tags_stylesheet expects a name string; derive one for the stylesheet
+        # but use the resolved dict for all color lookups below.
+        self._current_theme_name = theme_name if isinstance(theme_name, str) else resolved
+        self.setStyleSheet(get_tags_stylesheet(theme_name))
         if hasattr(self, '_action_btn'):
             self._current_theme = resolved
             self._update_tag_icons()
@@ -747,7 +727,9 @@ class TagManagerWidget(QWidget):
         self._placeholder_color_tags = resolved.get(
             'placeholder_tags',
             resolved.get('placeholder_stats',
-                resolved.get('placeholder_cover', '#FFFFFF'))
+                resolved.get('placeholder_cover',
+                    resolved.get('library_narrator',
+                        resolved.get('text', '#888888'))))
         )
         if hasattr(self, '_book_grid'):
             self._book_grid.set_placeholder_color(self._placeholder_color_tags)
