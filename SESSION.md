@@ -1,4 +1,62 @@
-# Session Summary — 2026-06-03 Session 2 — State machine fixes, scan-active disabling, no-audiobooks state
+# Session Summary — 2026-06-03 Session 1 — SVG cover placeholder, stylesheet parse fix, chapter slider flash guard
+
+## What changed
+
+### `app.py` — SVG logo placeholder for no-cover state (commits `b5815a2`, `707e91b`)
+
+`_show_cover_placeholder()` added to `MainWindow`. Intercepts both no-cover exits in `_load_cover_art` (the `else` branch — no cover in DB, and the null-pixmap fallback after load attempt). Recolors `fabulor.svg` via four regex passes (attribute and CSS property forms, `(?!none)` guarded) to the `placeholder_cover` theme color, renders into a `COVER_AREA_HEIGHT * 0.65` square pixmap, and sets it on `cover_art_label`.
+
+- `_showing_placeholder: bool` flag added in `__init__`, cleared at top of `_apply_main_cover`, checked in `_reload_button_icons` to re-render on theme change.
+- The early `not file_path` return (no-book state) is untouched — `cover_art_label` stays hidden there.
+- `_ASSETS_DIR` module-level constant added alongside `_ICONS_DIR`.
+
+### `icon_utils.py` — consolidated placeholder renderer (commit `f48c0bd`)
+
+`render_logo_placeholder(color, size) -> QPixmap` — canonical single implementation, replaces the duplicate that was in `tag_manager.py`. `render_logo_placeholder_bordered(color, icon_size, canvas_w, canvas_h, offset_y=0) -> QPixmap` added for thumbnail contexts: renders logo centered on a fixed canvas with a 2px border in the same color. `offset_y` allows per-site vertical nudge (used by `FinishedBookThumb` to align with real covers).
+
+### `stats_panel.py` + `tag_manager.py` — themed placeholder in thumbnails (commits `707e91b`, `09bc9bb`)
+
+`BookDayRow`, `FinishedBookThumb`, and `_TagBookThumb` all replaced `fabulor.ico` fallback with `render_logo_placeholder_bordered`. `StatsPanel.on_theme_changed` now resolves the theme via `_resolve_theme()` before reading colors (raw dict from `get_current_theme()` lacks merged keys). `TagManagerWidget.on_theme_changed` made robust to both string and dict input. `FinishedBookThumb.cover_label` gained `setAlignment(Qt.AlignCenter)` (was missing, causing top-left offset for smaller placeholder).
+
+### `book_detail_panel.py` — placeholder in header cover (commits `499b7d3`, `09bc9bb`)
+
+Both `.ico` fallbacks in `load_book` and `_refresh_header_cover` replaced with `render_logo_placeholder_bordered`. Canvas is 80×120 (portrait), icon rendered at 80px and centered. Border drawn on the full canvas.
+
+### `themes.py` — placeholder theme keys + `currentColor` fix (commits `707e91b`, `f48c0bd`, `b32b9b0`)
+
+Three new keys documented in docstring: `placeholder_cover`, `placeholder_stats`, `placeholder_tags` with fallback chains. `currentColor` (unsupported CSS3 keyword) removed from `QPushButton#book_detail_close_btn` border — was causing "Could not parse stylesheet" Qt warnings on every child widget receiving the stats stylesheet. Replaced with `border: none`.
+
+### `theme_manager.py` — chapter slider flash guard (commit `b32b9b0`)
+
+`_do_fade_with_slider_animation` now skips `chapter_progress_slider` when `mw._chapter_ui_active` is `False`. The overlay punch-through re-exposes the slider during the window between `_apply_stylesheets` (repolish overwrites transparent colors) and `_set_chapter_ui_active` reapplication, causing a full-opacity flash.
+
+### `library_controller.py` — status banner scan guard (commit `82e12b7`)
+
+Status banner no longer clears while a scan is running. Previously the completion handler could dismiss the banner before the scan-in-progress state was fully reflected.
+
+### `app.py` + `scanner.py` + `library_controller.py` — multi-select folder removal, targeted rescan (commit `7efb644`)
+
+Folder removal UI gained multi-select. Rescan targets only the re-added or modified locations rather than the full library.
+
+### `assets/fabulor.svg` — viewport adjustment (commit `222dc9c`)
+
+SVG viewport and path data updated for better centering of the logo artwork within the 250×250 viewBox.
+
+---
+
+## Non-obvious decisions
+
+1. **`_resolve_theme` in `on_theme_changed`**: `get_current_theme()` returns a raw unresolved dict — it does not merge against the base theme. Any `on_theme_changed` handler that reads merged keys (like `library_narrator`) must call `_resolve_theme()` itself. `_resolve_theme` is idempotent on already-resolved dicts.
+
+2. **`render_logo_placeholder_bordered` canvas vs icon size**: the border is drawn on the full canvas (`canvas_w × canvas_h`), not on the icon. The icon is rendered at `icon_size` and centered. This means the visual margin between icon and border is the SVG's own internal padding plus `(canvas - icon) / 2`.
+
+3. **`offset_y` on `FinishedBookThumb`**: real covers use `KeepAspectRatioByExpanding` + crop and land at y=0 naturally. The placeholder's centered position was 1px higher than real covers in the `FinishedScrollRow` context. `offset_y=1` corrects this without touching the other sites.
+
+4. **`currentColor` in QSS**: Qt QSS does not support the CSS3 `currentColor` keyword. It silently fails to parse the entire stylesheet block and logs "Could not parse stylesheet" on every widget that inherits it. The warning appeared on QPushButton, BookDetailPanel, CoverPanel, MainWindow, QListView — all children of panels styled with the stats stylesheet.
+
+---
+
+# Session Summary — 2026-06-02 Session 2 — State machine fixes, scan-active disabling, no-audiobooks state
 
 ## What changed
 

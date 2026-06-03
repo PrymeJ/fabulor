@@ -1,4 +1,15 @@
 
+## Cover placeholder (2026-06-03)
+
+- `_show_cover_placeholder()` intercepts both no-cover exits in `_load_cover_art` — the `else` branch only. The early `not file_path` return (no-book state) is untouched; `cover_art_label` stays hidden there.
+- `render_logo_placeholder(color, size)` lives in `icon_utils.py` — single implementation. Stats panel and tag manager both import it as `_render_svg_placeholder`. Don't reimplement it locally.
+- `render_logo_placeholder_bordered(color, icon_size, canvas_w, canvas_h, offset_y=0)` also lives in `icon_utils.py` — renders the logo centered on a fixed canvas with a 2px border. Used by book detail panel, stats panel, and tag manager thumbnails.
+- `_showing_placeholder` flag: set by `_show_cover_placeholder()`, cleared at the top of `_apply_main_cover`. Theme refresh: `_reload_button_icons` calls `_show_cover_placeholder()` again if flag is set.
+- Placeholder border: shown in thumbnail contexts (book detail header, stats rows, tag thumbnails) only — not in the main cover area where the logo fills sufficient space.
+- Theme keys: `placeholder_cover` (main player), `placeholder_stats`, `placeholder_tags` — documented in `themes.py` docstring with fallback chains.
+
+---
+
 ## Theme rotation weight exponent — tuned to 1.0 (2026-05-31)
 
 `_do_rotate` weights candidates as `1.0 / (distance ** exp + ε)`. The original exponent was 1.5. Simulated over 10,000 rotations with all 57 themes in the pool:
