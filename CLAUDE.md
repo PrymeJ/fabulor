@@ -96,6 +96,11 @@ stack details.
 
 Claude does not need hard constraint rules like GEMINI.md — the working model is "flag, confirm, then act."
 
+## Conventions
+
+- **SESSION.md entries are always prepended** (newest at the top), not appended.
+- **All git commit messages must start with a verb** (e.g. `feat:`, `fix:`, `docs:`, `refactor:`).
+
 ---
 
 ## Window
