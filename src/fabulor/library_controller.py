@@ -27,6 +27,7 @@ class LibraryController(QObject):
         paths = self.browser.get_selected_folders()
         if not paths:
             return
+        self.scanner.stop()
 
         current_file = self.app.get_current_file()
 
@@ -82,6 +83,8 @@ class LibraryController(QObject):
 
     def _on_rescan_clicked(self):
         """Rescans selected paths, or all configured paths if none selected."""
+        if not self.db.get_scan_locations():
+            return
         selected = self.browser.get_selected_folders()
         state = self.apply_current_state()
         if selected:

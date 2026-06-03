@@ -364,6 +364,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
         self.session_recorder.session_written.connect(self._on_session_written)
 
+        self.status_hide_timer = QTimer(self)
+        self.status_hide_timer.setSingleShot(True)
+        self.status_hide_timer.timeout.connect(self.status_banner.hide)
+
         # Initialize Library Controller
         self.library_controller = LibraryController(
             self.db, self.config, self.scanner,
@@ -1566,6 +1570,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return QFileDialog.getExistingDirectory(None, "Select Library Folder")
 
     def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False):
+        # Cancel any pending hide if we are updating text or changing visibility
+        if show_banner is not None:
+            self.status_hide_timer.stop()
+
         if text is not None and (self.status_banner.isVisible() or show_banner):
             self.status_label.setText(text)
             fade = getattr(self.theme_manager, '_fade_overlay', None)
@@ -1577,13 +1585,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             fade = getattr(self.theme_manager, '_fade_overlay', None)
             if not (fade and fade.isVisible()):
                 self.status_banner.raise_()
-        elif show_banner is False: self.status_banner.hide()
+        elif show_banner is False:
+            self.status_banner.hide()
 
         if show_cancel is True: self.cancel_scan_btn.show()
         elif show_cancel is False: self.cancel_scan_btn.hide()
 
         if auto_hide:
-            QTimer.singleShot(3000, self.status_banner.hide)
+            self.status_hide_timer.start(3000)
 
     def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
         self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
@@ -2974,6 +2983,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.stop()
         self.quote_timer.stop()
         self._undo_timer.stop()
+        self.status_hide_timer.stop()
         self.library_panel.save_search_filter()
         if self.player:
             self.config.set_volume(self.volume_slider.value())
