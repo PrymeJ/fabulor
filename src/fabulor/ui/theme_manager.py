@@ -480,6 +480,8 @@ class ThemeManager(QObject):
         for attr in ('progress_slider', 'chapter_progress_slider'):
             s = getattr(mw, attr, None)
             if s is not None and s.isVisible():
+                if attr == 'chapter_progress_slider' and not mw._chapter_ui_active:
+                    continue   # inactive (ghosted) — keep covered by overlay, no punch-through
                 sliders.append(s)
                 start_colors[id(s)] = {
                     'bg':    QColor(s.bg_color),
@@ -496,7 +498,7 @@ class ThemeManager(QObject):
         pm = getattr(mw, 'panel_manager', None)
         if pm and pm.is_any_panel_visible():
             mask = QRegion(mw.rect())
-            panels = ['library_panel', 'tags_panel', 'speed_panel',
+            panels = ['library_panel', 'tags_panel', 'speed_panel', 'sidebar_panel',
                       'sleep_panel', 'stats_panel', 'book_detail_panel']
             for attr in panels:
                 p = getattr(pm, attr, None)
