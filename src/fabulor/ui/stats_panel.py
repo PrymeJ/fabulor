@@ -360,7 +360,7 @@ class BookDayRow(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow init
         cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
@@ -491,7 +491,7 @@ class BookDayRow(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 48, 48)
+            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow refresh_cover
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
@@ -523,7 +523,7 @@ class FinishedBookThumb(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb init
         cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
@@ -582,7 +582,7 @@ class FinishedBookThumb(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 47, 47, offset_y=1)
+            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb refresh_cover
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):

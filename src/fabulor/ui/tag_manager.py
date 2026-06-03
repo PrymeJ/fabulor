@@ -77,7 +77,7 @@ class _TagBookThumb(QWidget):
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 35, 48, 48, offset_y=1)
         self._cover.setPixmap(pm)
 
         self._assets_dir = assets_dir
