@@ -1,6 +1,6 @@
 import os
 import random
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from .book_quotes import BOOK_QUOTES
 
 class LibraryController(QObject):
@@ -109,7 +109,7 @@ class LibraryController(QObject):
         self.ui.set_scan_buttons_enabled(True)
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
-        self.apply_current_state()
+        QTimer.singleShot(0, self.apply_current_state)
         self.ui.refresh_panel(force=True)
         self.app.refresh_tag_manager()
         self.app.refresh_stats()
@@ -159,6 +159,8 @@ class LibraryController(QObject):
             # Discriminate by has_locations: no paths vs. paths-with-no-books.
             if not state["has_locations"]:
                 self.ui.set_prompt_text("No library folders.")
+            elif self.scanner.is_running():
+                self.ui.set_prompt_text("Scanning for audiobooks...")
             else:
                 self.ui.set_prompt_text("No audiobooks in the folders added.")
             self.ui.set_quote_rotation(True)
@@ -166,7 +168,7 @@ class LibraryController(QObject):
             self.ui.update_prompts(True)
             # Clear any stale banner (e.g. "Library updated: N books.") left over
             # from a prior scan when all folders are removed.
-            if not self.scanner.is_running():
+            if not state["has_locations"]:
                 self.ui.update_status("", show_banner=False, show_cancel=False)
             self.ui.update_metadata(None, show_metadata=False, show_go_to_lib=False)
         else:
