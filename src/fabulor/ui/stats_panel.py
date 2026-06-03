@@ -13,7 +13,7 @@ from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnte
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
-from .icon_utils import render_logo_placeholder as _render_svg_placeholder
+from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 
 
 def _elide(text: str, font, max_px: int) -> str:
@@ -360,9 +360,8 @@ class BookDayRow(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder(placeholder_color, 48)
-        if not pm.isNull():
-            cover_label.setPixmap(pm)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48)
+        cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
         self._assets_dir = assets_dir
@@ -492,9 +491,8 @@ class BookDayRow(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder(self._placeholder_color, 48)
-            if not pm.isNull():
-                self._cover_label.setPixmap(pm)
+            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 48, 48)
+            self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -521,12 +519,12 @@ class FinishedBookThumb(QWidget):
         cover_label = QLabel()
         cover_label.setFixedSize(47, 47)
         cover_label.setScaledContents(False)
+        cover_label.setAlignment(Qt.AlignCenter)
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder(placeholder_color, 47)
-        if not pm.isNull():
-            cover_label.setPixmap(pm)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)
+        cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
 
@@ -584,9 +582,8 @@ class FinishedBookThumb(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder(self._placeholder_color, 47)
-            if not pm.isNull():
-                self._cover_label.setPixmap(pm)
+            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 47, 47, offset_y=1)
+            self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

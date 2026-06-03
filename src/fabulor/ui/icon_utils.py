@@ -45,3 +45,18 @@ def render_logo_placeholder(color: str, size: int) -> QPixmap:
         return pm
     except Exception:
         return QPixmap()
+
+
+def render_logo_placeholder_bordered(color: str, icon_size: int, canvas_w: int, canvas_h: int, offset_y: int = 0) -> QPixmap:
+    """Render fabulor.svg centered on a `canvas_w`×`canvas_h` canvas with a 2px border."""
+    from PySide6.QtGui import QColor
+    icon = render_logo_placeholder(color, icon_size)
+    pm = QPixmap(canvas_w, canvas_h)
+    pm.fill(Qt.transparent)
+    painter = QPainter(pm)
+    if not icon.isNull():
+        painter.drawPixmap((canvas_w - icon_size) // 2, (canvas_h - icon_size) // 2 + offset_y, icon)
+    painter.setPen(QColor(color))
+    painter.drawRect(pm.rect().adjusted(1, 1, -1, -1))
+    painter.end()
+    return pm

@@ -579,7 +579,14 @@ class BookDetailPanel(QWidget):
                 self._theme.get('placeholder_cover',
                     self._theme.get('library_narrator',
                         self._theme.get('text', '#888888'))))
-            pixmap = _render_logo_placeholder(color, 80)
+            icon = _render_logo_placeholder(color, 80)
+            pixmap = QPixmap(80, 120)
+            pixmap.fill(Qt.transparent)
+            p = QPainter(pixmap)
+            p.drawPixmap(0, (140 - 100) // 2, icon)
+            p.setPen(QColor(color))
+            p.drawRect(pixmap.rect().adjusted(1, 1, -1, -1))
+            p.end()
         if not pixmap.isNull():
             self._apply_cover(pixmap)
 
@@ -632,7 +639,14 @@ class BookDetailPanel(QWidget):
                 self._theme.get('placeholder_cover',
                     self._theme.get('library_narrator',
                         self._theme.get('text', '#888888'))))
-            pixmap = _render_logo_placeholder(color, 80)
+            icon = _render_logo_placeholder(color, 80)
+            pixmap = QPixmap(80, 120)
+            pixmap.fill(Qt.transparent)
+            p = QPainter(pixmap)
+            p.drawPixmap(0, (120 - 80) // 2, icon)
+            p.setPen(QColor(color))
+            p.drawRect(pixmap.rect().adjusted(1, 1, -1, -1))
+            p.end()
         if not pixmap.isNull():
             # TODO: verify _refresh_header_cover scaling matches load_book (setFixedHeight was absent here)
             self._apply_cover(pixmap)

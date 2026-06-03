@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
-from .icon_utils import render_logo_placeholder as _render_svg_placeholder
+from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .text_context_menu import ContextIconMenu
 
 MAX_TAG_LENGTH = 20
@@ -77,9 +77,8 @@ class _TagBookThumb(QWidget):
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
-        pm = _render_svg_placeholder(placeholder_color, 48)
-        if not pm.isNull():
-            self._cover.setPixmap(pm)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48)
+        self._cover.setPixmap(pm)
 
         self._assets_dir = assets_dir
         cover_path = book.get('cover_path')
