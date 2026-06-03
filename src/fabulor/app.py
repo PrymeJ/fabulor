@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QSize, QByteArray
+    QRegularExpression, Signal, QObject, QSize, QByteArray, QElapsedTimer
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -315,6 +315,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._showing_placeholder = False
         self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
         self._carousel_slide_anim = None
+        self._dialog_close_time = QElapsedTimer()
         self.is_slider_dragging = False
         self.is_chapter_slider_dragging = False
         self._chapter_ui_active = True
@@ -1570,7 +1571,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return [item.text() for item in self.folder_list_widget.selectedItems()]
 
     def _get_new_folder_path(self):
-        return QFileDialog.getExistingDirectory(None, "Select Library Folder")
+        path = QFileDialog.getExistingDirectory(None, "Select Library Folder")
+        self._dialog_close_time.restart()
+        return path
 
     def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False):
         # Cancel any pending hide if we are updating text or changing visibility
@@ -2694,6 +2697,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             elif self.current_file:
                 self.toggle_play_pause()
         elif event.button() == Qt.RightButton:
+            if self._dialog_close_time.isValid() and self._dialog_close_time.elapsed() < 500:
+                return
             # Guard: Only allow sidebar right-click toggle if books are indexed
             if self.db.get_book_count() > 0:
                 self.panel_manager.handle_drag_area_right_click(event)
