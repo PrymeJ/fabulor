@@ -1283,6 +1283,10 @@ class StatsPanel(QWidget):
         self._day_prev_btn.setObjectName("stats_nav_btn")
         self._day_prev_btn.setFixedWidth(28)
         self._day_prev_btn.clicked.connect(self._day_prev)
+        self._day_prev_btn.mousePressEvent = lambda e: (
+            self._day_oldest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._day_prev_btn, e)
+        )
 
         self._day_label = QLabel("—")
         self._day_label.setObjectName("stats_day_label")
@@ -1292,10 +1296,24 @@ class StatsPanel(QWidget):
         self._day_next_btn.setObjectName("stats_nav_btn")
         self._day_next_btn.setFixedWidth(28)
         self._day_next_btn.clicked.connect(self._day_next)
+        self._day_next_btn.mousePressEvent = lambda e: (
+            self._day_newest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._day_next_btn, e)
+        )
 
         header_layout.addWidget(self._day_prev_btn)
         header_layout.addWidget(self._day_label, stretch=1)
         header_layout.addWidget(self._day_next_btn)
+
+        def _day_wheel(e):
+            days = getattr(self, '_active_days', None) or []
+            n = len(days)
+            step = 1 if n <= 50 else 2 if n <= 100 else 3 if n <= 200 else 4 if n <= 300 else 7
+            delta = -step if e.angleDelta().y() > 0 else step
+            self._current_day_index = max(0, min(n - 1, self._current_day_index + delta))
+            self._refresh_daily()
+        header.wheelEvent = _day_wheel
+
         outer.addWidget(header)
 
         # Total time for the day (restored to top position)
@@ -1345,6 +1363,16 @@ class StatsPanel(QWidget):
     def _day_next(self):
         if self._current_day_index > 0:
             self._current_day_index -= 1
+            self._refresh_daily()
+
+    def _day_oldest(self):
+        if self._active_days:
+            self._current_day_index = len(self._active_days) - 1
+            self._refresh_daily()
+
+    def _day_newest(self):
+        if self._active_days:
+            self._current_day_index = 0
             self._refresh_daily()
 
     def _add_row_safely(self, layout, widget):
@@ -1417,6 +1445,10 @@ class StatsPanel(QWidget):
         self._week_prev_btn.setObjectName("stats_nav_btn")
         self._week_prev_btn.setFixedWidth(28)
         self._week_prev_btn.clicked.connect(self._week_prev)
+        self._week_prev_btn.mousePressEvent = lambda e: (
+            self._week_oldest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._week_prev_btn, e)
+        )
 
         self._week_label = QLabel("—")
         self._week_label.setObjectName("stats_day_label")
@@ -1426,10 +1458,22 @@ class StatsPanel(QWidget):
         self._week_next_btn.setObjectName("stats_nav_btn")
         self._week_next_btn.setFixedWidth(28)
         self._week_next_btn.clicked.connect(self._week_next)
+        self._week_next_btn.mousePressEvent = lambda e: (
+            self._week_newest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._week_next_btn, e)
+        )
 
         header_layout.addWidget(self._week_prev_btn)
         header_layout.addWidget(self._week_label, stretch=1)
         header_layout.addWidget(self._week_next_btn)
+
+        def _week_wheel(e):
+            weeks = getattr(self, '_active_weeks', None) or []
+            delta = -1 if e.angleDelta().y() > 0 else 1
+            self._current_week_index = max(0, min(len(weeks) - 1, self._current_week_index + delta))
+            self._refresh_weekly()
+        header.wheelEvent = _week_wheel
+
         outer.addWidget(header)
 
         # Total time for the week
@@ -1478,6 +1522,16 @@ class StatsPanel(QWidget):
     def _week_next(self):
         if self._current_week_index > 0:
             self._current_week_index -= 1
+            self._refresh_weekly()
+
+    def _week_oldest(self):
+        if self._active_weeks:
+            self._current_week_index = len(self._active_weeks) - 1
+            self._refresh_weekly()
+
+    def _week_newest(self):
+        if self._active_weeks:
+            self._current_week_index = 0
             self._refresh_weekly()
 
     def _refresh_weekly(self):
@@ -1548,6 +1602,10 @@ class StatsPanel(QWidget):
         self._month_prev_btn.setObjectName("stats_nav_btn")
         self._month_prev_btn.setFixedWidth(28)
         self._month_prev_btn.clicked.connect(self._month_prev)
+        self._month_prev_btn.mousePressEvent = lambda e: (
+            self._month_oldest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._month_prev_btn, e)
+        )
 
         self._month_label = QLabel("—")
         self._month_label.setObjectName("stats_day_label")
@@ -1557,10 +1615,22 @@ class StatsPanel(QWidget):
         self._month_next_btn.setObjectName("stats_nav_btn")
         self._month_next_btn.setFixedWidth(28)
         self._month_next_btn.clicked.connect(self._month_next)
+        self._month_next_btn.mousePressEvent = lambda e: (
+            self._month_newest() if e.button() == Qt.MouseButton.RightButton
+            else QPushButton.mousePressEvent(self._month_next_btn, e)
+        )
 
         header_layout.addWidget(self._month_prev_btn)
         header_layout.addWidget(self._month_label, stretch=1)
         header_layout.addWidget(self._month_next_btn)
+
+        def _month_wheel(e):
+            months = getattr(self, '_active_months', None) or []
+            delta = -1 if e.angleDelta().y() > 0 else 1
+            self._current_month_index = max(0, min(len(months) - 1, self._current_month_index + delta))
+            self._refresh_monthly()
+        header.wheelEvent = _month_wheel
+
         outer.addWidget(header)
 
         # Total time for the month
@@ -1609,6 +1679,16 @@ class StatsPanel(QWidget):
     def _month_next(self):
         if self._current_month_index > 0:
             self._current_month_index -= 1
+            self._refresh_monthly()
+
+    def _month_oldest(self):
+        if self._active_months:
+            self._current_month_index = len(self._active_months) - 1
+            self._refresh_monthly()
+
+    def _month_newest(self):
+        if self._active_months:
+            self._current_month_index = 0
             self._refresh_monthly()
 
     def _refresh_monthly(self):
