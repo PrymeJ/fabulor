@@ -2,97 +2,104 @@ import math
 from fabulor.assets import get_asset_path
 
 """
-CORE BACKGROUND COLORS
-bg_deep: The darkest background color. Used for the custom title bar, the background behind the volume overlay, and the status banner at the bottom.
-bg_main: The primary background color for the main window and panels (settings, library, speed, etc.).
-bg_sidebar: The background color for the sliding sidebar on the left.
-bg_dropdown: The background color for lists and dropdown menus (like the chapter list and folder list).
-library_bg: The background color for the library book display area. Falls back to dark grey (#1A1A1A).
-library_grid_bg: Background color for the grid view. Falls back to bg_library.
-library_row_one: Background color for odd rows in 1-per-row and List views. Falls back to bg_library.
-library_row_two: Background color for even rows in 1-per-row and List views. Falls back to bg_library.
-library_item_hover_color: Background color for a book item when hovered. Falls back to accent.
-library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover background. Falls back to 0.5.
-library_title: Text color for book titles in the library view.
-library_author: Text color for book authors in the library view.
-library_narrator: Text color for book narrators in the library view.
-library_year: Text color for the year field in 1-per-row view. Falls back to library_narrator.
-library_slider_bg: Background color for the progress bar groove in library items.
-library_slider_fill: Fill color for the progress bar in library items.
-library_elapsed: Text color for elapsed time labels in library items.
-library_total: Text color for total duration labels in library items.
-library_percentage: Text color for the progress percentage in library items.
-library_input_bg: Background color for sort/view dropdowns and the search field in the library. Falls back to bg_dropdown.
-library_input_text: Text color for sort/view dropdowns and the search field in the library. Falls back to text.
-settings_tab_hover_bg: Background color for unselected tabs when hovered. Falls back to accent.
-settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Falls back to 0.85.
-settings_tab_hover_text: Text color for unselected tabs when hovered. Falls back to text.
-cover_preview_bg: Background color for book cover previews in the library. Falls back to bg_deep, then #000000.
-dropdown_expand: Button color for the chapter list expand/collapse button. Falls back to accent.
+GROUP 1 — CORE BACKGROUNDS
+bg_deep:              The darkest background color. Used for the custom title bar, the background behind the volume overlay, and the status banner at the bottom.
+bg_main:              The primary background color for the main window and panels (settings, library, speed, etc.).
+bg_sidebar:           The background color for the sliding sidebar on the left.
+bg_dropdown:          The background color for lists and dropdown menus (like the chapter list and folder list).
+bg_image:             (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
+panel_opacity_hover:  A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
+undo_hover:           The color used when hovering over the undo button. Fallback: accent.
 
-UI TEXT COLORS
-text: The default color for most labels and UI text.
-button_text: (Optional) Specific color for text inside buttons. If not provided, it falls back to text_on_light_bg or text.
-button_play: (Optional) Icon/text color for the play/pause/restart button. Falls back to button_text, then text_on_light_bg, then text.
-button_skip: (Optional) Icon/text color for the rewind and forward skip buttons. Falls back to button_play.
-button_chapter: (Optional) Icon/text color for the previous and next chapter buttons. Falls back to button_play.
-slider_progress: (Optional) Color for the percentage label that sits on top of the overall progress slider.
-sidebar_text: (Optional) Color for text and buttons inside the sidebar. Falls back to the main text color.
-sidebar_text_hover: (Optional) Color for text and buttons inside the sidebar when hovered. Falls back to accent.
-dropdown_text: (Optional) Color for text inside the chapter dropdown list.
-dropdown_time_text: (Optional) Color for the duration text inside the chapter dropdown list.
-text_on_light_bg: (Optional) Used as a fallback for buttons or specific labels if they are placed over light-colored elements.
-settings_theme_names_dimmed: Specifically used in the Settings panel for theme names that are currently unselected/dimmed.
-tag_list_text: (Optional) Color for text inside the tag list. Falls back to text.
-tag_list_text_hover: (Optional) Color for text inside the tag list when hovered. Falls back to accent_light.
+GROUP 2 — CORE TEXT & ACCENT
+text:                 The default color for most labels and UI text.
+text_on_light_bg:     (Optional) Used as a fallback for buttons or specific labels placed over light-colored elements.
+accent:               The primary interaction color. Used for selected tabs, slider handles (implicitly via fill), and primary buttons.
+accent_light:         The color used when hovering over buttons or selecting list items.
+accent_dark:          The color used for borders or when a button is actively pressed.
 
-SLIDERS
-slider_overall_bg: Background (groove) color of the main book progress bar.
-slider_overall_fill: The filled portion color of the main book progress bar.
-slider_chapter_bg: Background of the chapter-specific progress bar.
-slider_chapter_fill: The filled portion of the chapter-specific progress bar.
-slider_vol_bg: Background of the volume slider.
-slider_vol_fill: The filled portion of the volume slider.
-notch_color: (Optional) The color of chapter markers on the progress bars.
-notch_opacity: (Optional) The transparency (0-255) of chapter markers.
+GROUP 3 — PLAYER BUTTONS
+button_text:          (Optional) Specific color for text inside buttons. Fallback: text_on_light_bg → text.
+button_play:          (Optional) Icon/text color for the play/pause/restart button. Fallback: button_text → text_on_light_bg → text.
+button_skip:          (Optional) Icon/text color for the rewind and forward skip buttons. Fallback: button_play.
+button_chapter:       (Optional) Icon/text color for the previous and next chapter buttons. Fallback: button_play.
+slider_progress:      (Optional) Color for the percentage label that sits on top of the overall progress slider.
 
-ACCENT AND INTERACTION COLORS
-accent: The primary interaction color. Used for selected tabs, slider handles (implicitly via fill), and primary buttons.
-accent_light: The color used when hovering over buttons or selecting list items.
-accent_dark: The color used for borders or when a button is actively pressed.
-dropdown_curr_chap: The color used to highlight the currently playing chapter within the chapter dropdown list.
-undo_hover: The color used when hovering over the undo button. Fallback: "accent"
+GROUP 4 — PLAYER SLIDERS
+slider_overall_bg:    Background (groove) color of the main book progress bar.
+slider_overall_fill:  The filled portion color of the main book progress bar.
+slider_chapter_bg:    Background of the chapter-specific progress bar.
+slider_chapter_fill:  The filled portion of the chapter-specific progress bar.
+slider_vol_bg:        Background of the volume slider.
+slider_vol_fill:      The filled portion of the volume slider.
+notch_color:          (Optional) The color of chapter markers on the progress bars.
+notch_opacity:        (Optional) The transparency (0-255) of chapter markers.
 
-PLACEHOLDER COVER COLORS
-placeholder_cover: Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
-placeholder_stats: Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → text → #888888.
-placeholder_tags: Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → library_narrator → text → #888888.
+GROUP 5 — CHAPTER DROPDOWN
+dropdown_curr_chap:   The color used to highlight the currently playing chapter within the chapter dropdown list.
+dropdown_text:        (Optional) Color for text inside the chapter dropdown list.
+dropdown_time_text:   (Optional) Color for the duration text inside the chapter dropdown list.
+dropdown_expand:      Button color for the chapter list expand/collapse button. Fallback: accent.
 
-TRANSPARENCY AND EFFECTS
-sidebar_opacity: A float (0.0 to 1.0) defining how transparent the sidebar is when idle.
-panel_opacity_hover: A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
-bg_image: (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
-search_error_text: (Optional) Text color for the search field when no results are found. Falls back to "#ffaaaa".
+GROUP 6 — SIDEBAR
+sidebar_text:         (Optional) Color for text and buttons inside the sidebar. Fallback: text.
+sidebar_text_hover:   (Optional) Color for text and buttons inside the sidebar when hovered. Fallback: accent.
+sidebar_opacity:      A float (0.0 to 1.0) defining how transparent the sidebar is when idle.
 
-DYNAMIC GRADIENTS
-The theme engine supports linear gradients for several components. You can define these by adding the following keys using a specific prefix:
+GROUP 7 — LIBRARY
+library_bg:           The background color for the library book display area. Fallback: #1A1A1A.
+library_grid_bg:      Background color for the grid view. Fallback: library_bg.
+library_row_one:      Background color for odd rows in 1-per-row and List views. Fallback: library_bg.
+library_row_two:      Background color for even rows in 1-per-row and List views. Fallback: library_bg.
+library_item_hover_color: Background color for a book item when hovered. Fallback: accent.
+library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover background. Fallback: 0.5.
+library_title:        Text color for book titles in the library view.
+library_author:       Text color for book authors in the library view.
+library_narrator:     Text color for book narrators in the library view.
+library_year:         Text color for the year field in 1-per-row view. Fallback: library_narrator.
+library_elapsed:      Text color for elapsed time labels in library items.
+library_total:        Text color for total duration labels in library items.
+library_percentage:   Text color for the progress percentage in library items.
+library_slider_bg:    Background color for the progress bar groove in library items.
+library_slider_fill:  Fill color for the progress bar in library items.
+library_input_bg:     Background color for sort/view dropdowns and the search field in the library. Fallback: bg_dropdown.
+library_input_text:   Text color for sort/view dropdowns and the search field in the library. Fallback: text.
+search_error_text:    (Optional) Text color for the search field when no results are found. Fallback: #ffaaaa.
 
+GROUP 8 — SETTINGS PANEL
+settings_tab_hover_bg:      Background color for unselected tabs when hovered. Fallback: accent.
+settings_tab_hover_opacity: Opacity for unselected tabs when hovered. Fallback: 0.85.
+settings_tab_hover_text:    Text color for unselected tabs when hovered. Fallback: text.
+settings_theme_names_dimmed: Color for theme names in the Settings panel that are currently unselected/dimmed.
+
+GROUP 9 — TAGS
+tag_list_text:        (Optional) Color for text inside the tag list. Fallback: text.
+tag_list_text_hover:  (Optional) Color for text inside the tag list when hovered. Fallback: accent_light.
+
+GROUP 10 — MISC UI
+cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
+
+GROUP 11 — PLACEHOLDER COVERS
+placeholder_cover:    Color for the Fabulor logo shown in the player cover area when a book has no cover art. Fallback chain: library_narrator → text → #888888.
+placeholder_stats:    Color for the Fabulor logo shown in stats panel book thumbnails (BookDayRow, FinishedBookThumb). Fallback chain: placeholder_cover → library_narrator → text → #888888.
+placeholder_tags:     Color for the Fabulor logo shown in tag panel book thumbnails. Fallback chain: placeholder_stats → placeholder_cover → library_narrator → text → #888888.
+
+GROUP 12 — CAROUSEL
+carousel_bg:          Fill color for the full-width stripe in the no-book state. Fallback: bg_deep.
+carousel_stripe:      Color of the 2px horizontal lines at the top and bottom of the stripe. Fallback: auto-calculated from carousel_bg (lightness-shifted) → accent_light → text.
+
+GROUP 13 — DYNAMIC GRADIENTS
+The theme engine supports linear gradients for several components. Define them using these keys:
 Prefixes: bg, sidebar, accent, slider_fill
-Properties:
 gradient_[prefix]_start: Hex color for the start of the gradient.
-gradient_[prefix]_end: Hex color for the end of the gradient.
+gradient_[prefix]_end:   Hex color for the end of the gradient.
 gradient_[prefix]_angle: Integer angle in degrees (e.g., 115 or 135).
+gradient_bg_split:       (Optional) Float stop position (0.0–1.0) where bg gradient holds before transitioning to the end color.
 
 COVER ART BASED THEME COLORS
 These keys are generated dynamically by build_cover_theme() in cover_theme.py and are not set in static theme dicts.
-lib_hover: Background color for library item hover, derived from the dominant cover hue (mid-dark). Used as library_item_hover_color.
-chap_fill: Fill color for the chapter progress bar and library slider, derived from the dominant cover hue (slightly lighter than lib_hover). Used as slider_chapter_fill and library_slider_fill.
-
-NO-BOOK CAROUSEL
-carousel_bg     : Fill color for the full-width stripe in the no-book state.
-                  Fallback: bg_deep. Set explicitly per theme during theme passes.
-carousel_stripe : Color of the 2px horizontal lines at the top and bottom of the stripe.
-                  Fallback: auto-calculated from carousel_bg (lightness-shifted), then accent_light, then text.
+lib_hover:  Background color for library item hover, derived from the dominant cover hue (mid-dark). Used as library_item_hover_color.
+chap_fill:  Fill color for the chapter progress bar and library slider, derived from the dominant cover hue (slightly lighter than lib_hover). Used as slider_chapter_fill and library_slider_fill.
 """
 
 THEMES = {
