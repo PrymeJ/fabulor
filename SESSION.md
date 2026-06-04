@@ -1,3 +1,42 @@
+## Session Summary — 2026-06-04 Session 1
+
+**Scope:** Reorganise and normalise `themes.py` theme dicts — key renames, canonical ordering, formatting, alphabetical sort.
+
+### What was built
+
+**Key renames** (updated in `themes.py`, `cover_theme.py`, `library.py`, `book_detail_panel.py`):
+- `bg_library` → `library_bg`
+- `progress_text` → `slider_progress`
+- `expand_button` → `dropdown_expand`
+- `curr_chap_highlight` → `dropdown_curr_chap`
+- `panel_theme_names_dimmed` → `settings_theme_names_dimmed`
+
+**Canonical key order** established and applied to all 58 themes:
+1. Core backgrounds (`bg_deep`, `bg_main`, `bg_sidebar`, `bg_dropdown`, `bg_image`, `panel_opacity_hover`, `undo_hover`)
+2. Core text & accent (`text`, `text_on_light_bg`, `accent`, `accent_light`, `accent_dark`)
+3. Player buttons (`button_text`, `button_play`, `button_skip`, `button_chapter`, `slider_progress`)
+4. Player sliders (overall, chapter, vol + `notch_color`, `notch_opacity`)
+5. Chapter dropdown (`dropdown_curr_chap`, `dropdown_text`, `dropdown_time_text`, `dropdown_expand`)
+6. Sidebar (`sidebar_text`, `sidebar_text_hover`, `sidebar_opacity`)
+7. Library display (`library_bg` through `search_error_text`)
+8. Settings panel (`settings_tab_hover_*`, `settings_theme_names_dimmed`)
+9. Tags (`tag_list_text`, `tag_list_text_hover`)
+10. Misc UI (`cover_preview_bg`, placeholder covers, carousel)
+11. Gradients (all `gradient_*` keys last)
+
+**Formatting normalised** across all themes: uniform `"key":` column width (32 chars), single space before value, all hex codes uppercased, floats consistently formatted.
+
+**Theme dict alphabetically sorted** A–Z (accent-insensitive, so Melnibonéan sorts with M).
+
+**Docstring updated** with new key names and corrected fallback references (`bg_library` → `library_bg` in three entries).
+
+### Non-obvious decisions
+- `panel_opacity_hover` and `undo_hover` placed in Group 1 (backgrounds/transparency) rather than their previous scattered positions — both are window-level transparency/interaction values, not component-specific.
+- `search_error_text` moved into the Library group (Group 7) — it exclusively styles the library search field error state.
+- The `bg_library` Qt property name on `BookDelegate` in `library.py` (lines 1005–1007) was intentionally left unchanged — it is a Python `@Property` identifier, not a theme dict key.
+
+---
+
 ## Session Summary — 2026-06-03 Session 4
 
 **Scope:** Strip theme `bg_image` in the no-book and empty-library states — `app.py`, `themes.py`, `library_controller.py`, `theme_manager.py`.
