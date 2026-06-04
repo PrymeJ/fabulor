@@ -3118,7 +3118,9 @@ def get_stats_stylesheet(theme_name="default"):
             border: 1px solid {t['accent']};
             border-radius: 4px;
             padding: 1px 2px;
-            max-height: 22px;
+            max-height: 18px;
+            font-size: 12px;
+            margin-top: 10px;
         }}
         QSpinBox::up-button, QSpinBox::down-button {{
             width: 16px;
