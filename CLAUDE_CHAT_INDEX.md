@@ -464,7 +464,8 @@ Use this file to locate which window discussed a given topic before pulling it u
 - `setParent(None)` replaces `deleteLater()` for synchronous widget removal
 - `setMinimumWidth` computed after population (`n × 47 + (n−1) × 4`)
 - First-visit cold-cache flash (startup, preloader not yet reached) accepted
-
+- Mouse wheel navigation on the date header row (the ‹/› + date label widget) in Day, Week, and Month tabs
+- Toggle in Stats Options to enable/disable mouse wheel period navigation
 ---
 
 *Index generated Jun 4 2026. Update as new windows are retired.*

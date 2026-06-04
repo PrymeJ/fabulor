@@ -1,3 +1,25 @@
+## Session Summary — 2026-06-04 Session 3
+
+**Scope:** Period navigation UX improvements in stats_panel.py — right-click jump-to-boundary on nav buttons, mouse wheel navigation on period headers, and a user-configurable scroll acceleration setting.
+
+### What was built
+
+**Right-click on ‹ / › nav buttons** — jumps to the oldest or newest available period without stepping through intermediate entries. Six methods added (`_day/week/month_oldest/newest`); `mousePressEvent` overridden on all six buttons via lambda assignment (same pattern as the existing reset-confirm handler). Right-click `‹` → oldest (highest index), right-click `›` → newest (index 0).
+
+**Mouse wheel on period header** — `wheelEvent` installed on the header widget (`QWidget` containing the arrows and date label) for each of the three period tabs. Scoped to the header only; does not capture wheel events from the book-row grid, carousel, or tab widget. Wheel-up moves toward the most recent period, wheel-down moves toward the oldest.
+
+**Day-tab scroll acceleration** — step size derived from total number of available day periods at wheel time: 1/2/3/4/7 (thresholds: 50/100/200/300). Week and Month always step 1. The step table is read lazily from `_active_days` at event time, so no extra DB query is needed.
+
+**"Period scroll acceleration" toggle in Stats ⚙ tab** — On/Off `pattern_button` row under the "Day starts at" spinner. Uses `config.get/set_stats_accel_scroll()` (default On, stored as `"true"`/`"false"` string in QSettings). When Off, step is always 1 regardless of period count. Button selected state uses the standard `setProperty("selected", ...)`/`unpolish`/`polish` pattern.
+
+### Non-obvious decisions
+
+- `wheelEvent` is installed on the `header` local variable directly (same closure-assignment pattern as the button `mousePressEvent` overrides already in the file). No subclass or event filter needed.
+- The acceleration guard sits inside `_day_wheel` only — Week/Month closures are unaffected and remain unconditionally step-1, so the setting has no code path to toggle there.
+- `_active_days/weeks/months` are accessed via `getattr(..., None) or []` inside the wheel closures — safe at install time when the lists don't exist yet.
+
+---
+
 ## Session Summary — 2026-06-04 Session 2
 
 **Scope:** Fix cover flicker and widget stacking in the stats panel's finished-books carousel (`FinishedScrollRow` / `FinishedBookThumb` in `stats_panel.py`).

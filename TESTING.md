@@ -446,6 +446,36 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 ### Synchronous widget removal
 - [ ] Navigate period rapidly (click ‹ several times quickly): no stacking — old thumbs removed before new ones inserted, no overlap
 
+## Stats panel — period navigation (Day / Week / Month tabs)
+
+### Right-click jump to boundary
+- [ ] Right-click ‹ on Day tab: jumps directly to the oldest available day (no step-through)
+- [ ] Right-click › on Day tab: jumps directly to the most recent day
+- [ ] Right-click ‹ on Week tab: jumps to oldest week
+- [ ] Right-click › on Week tab: jumps to most recent week
+- [ ] Right-click ‹ on Month tab: jumps to oldest month
+- [ ] Right-click › on Month tab: jumps to most recent month
+- [ ] Right-click when already at the boundary: no crash, no index change, display unchanged
+- [ ] Left-click still works normally after right-click handlers are installed
+
+### Mouse wheel on period header
+- [ ] Wheel up on Day header: moves to a more recent day (index decreases)
+- [ ] Wheel down on Day header: moves to an older day (index increases)
+- [ ] Wheel up on Week header: moves to the more recent week
+- [ ] Wheel up on Month header: moves to the more recent month
+- [ ] Wheel at the most-recent boundary: no wrap, no crash, display unchanged
+- [ ] Wheel at the oldest boundary: no wrap, no crash, display unchanged
+- [ ] Wheel on the book-row grid below the header: does NOT navigate periods (no capture outside header)
+- [ ] Wheel on the finished-books carousel: does NOT navigate periods
+
+### Scroll acceleration (Stats ⚙ tab toggle)
+- [ ] "Period scroll acceleration" row visible in Stats ⚙ tab under "Day starts at"
+- [ ] Default state is On on first launch (no prior preference saved)
+- [ ] Preference survives app restart
+- [ ] On: Day tab wheel step follows the table (≤50→1, ≤100→2, ≤200→3, ≤300→4, >300→7)
+- [ ] Off: Day tab wheel always steps exactly 1 period per tick regardless of total count
+- [ ] Week and Month wheel always step 1 regardless of the toggle state
+
 ### No-book-state regression: select book from library
 
 - [ ] Carousel hides immediately on book load
