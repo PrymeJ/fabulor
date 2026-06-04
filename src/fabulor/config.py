@@ -286,3 +286,9 @@ class Config:
 
     def set_persist_filter_year(self, enabled: bool):
         self.settings.setValue("persist_filter_year", str(enabled).lower())
+
+    def get_stats_accel_scroll(self) -> bool:
+        return self.settings.value("stats_accel_scroll", "true") == "true"
+
+    def set_stats_accel_scroll(self, enabled: bool):
+        self.settings.setValue("stats_accel_scroll", str(enabled).lower())

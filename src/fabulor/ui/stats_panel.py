@@ -1209,8 +1209,8 @@ class StatsPanel(QWidget):
     def _build_options_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(4, 0, 4, 10)
-        layout.setSpacing(0)
+        layout.setContentsMargins(10, 0, 10, 10)
+        layout.setSpacing(6)
 
         pref_row = QHBoxLayout()
         day_label = QLabel("Day starts at")
@@ -1225,6 +1225,22 @@ class StatsPanel(QWidget):
         pref_row.addWidget(self.day_start_spin)
         pref_row.addStretch()
         layout.addLayout(pref_row)
+
+        accel_header = QLabel("Period scroll acceleration")
+        accel_header.setObjectName("settings_header")
+        layout.addWidget(accel_header)
+
+        accel_row = QHBoxLayout()
+        self._accel_scroll_buttons = {}
+        for state in ["On", "Off"]:
+            btn = QPushButton(state)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=state: self._set_accel_scroll(s == "On"))
+            accel_row.addWidget(btn)
+            self._accel_scroll_buttons[state] = btn
+        accel_row.addStretch()
+        layout.addLayout(accel_row)
+        self._update_accel_scroll_buttons()
 
         layout.addStretch()
 
@@ -1245,6 +1261,17 @@ class StatsPanel(QWidget):
         self._reset_cancel_timer: QTimer | None = None
 
         return widget
+
+    def _set_accel_scroll(self, enabled: bool):
+        self.config.set_stats_accel_scroll(enabled)
+        self._update_accel_scroll_buttons()
+
+    def _update_accel_scroll_buttons(self):
+        enabled = self.config.get_stats_accel_scroll()
+        for state, btn in self._accel_scroll_buttons.items():
+            btn.setProperty("selected", "true" if (state == "On") == enabled else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _on_tag_changed(self):
         if hasattr(self, '_tag_manager'):
@@ -1308,7 +1335,10 @@ class StatsPanel(QWidget):
         def _day_wheel(e):
             days = getattr(self, '_active_days', None) or []
             n = len(days)
-            step = 1 if n <= 50 else 2 if n <= 100 else 3 if n <= 200 else 4 if n <= 300 else 7
+            if self.config.get_stats_accel_scroll():
+                step = 1 if n <= 30 else 2 if n <= 100 else 3 if n <= 200 else 4 if n <= 300 else 7
+            else:
+                step = 1
             delta = -step if e.angleDelta().y() > 0 else step
             self._current_day_index = max(0, min(n - 1, self._current_day_index + delta))
             self._refresh_daily()
