@@ -523,18 +523,20 @@ class FinishedBookThumb(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb init
-        cover_label.setPixmap(pm)
-
         self._cover_label = cover_label
 
         active_cover_path = row_data.get("active_cover_path")
         load_path = active_cover_path or cover_path
-        if book_path and load_path and os.path.exists(load_path):
-            book_id = row_data.get("book_id")
-            if _cover_cache.get(book_id):
-                self._apply_cover(_cover_cache[book_id])
-            else:
+        book_id = row_data.get("book_id")
+        self._book_id = book_id
+        cached = _cover_cache.get(book_id)
+        print(f"[FinishedBookThumb] book_id={book_id} cache_hit={cached is not None}")
+        if cached:
+            self._apply_cover(cached)
+        else:
+            pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb init
+            cover_label.setPixmap(pm)
+            if book_path and load_path and os.path.exists(load_path):
                 worker = CoverLoaderWorker(
                     type('_FT', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
                     active_cover_path=active_cover_path,
@@ -549,7 +551,9 @@ class FinishedBookThumb(QWidget):
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
-        self._apply_cover(QPixmap.fromImage(image))
+        pixmap = QPixmap.fromImage(image)
+        _cover_cache[self._book_id] = pixmap
+        self._apply_cover(pixmap)
 
     def _apply_cover(self, pixmap):
         if self._is_archived:
@@ -640,6 +644,8 @@ class FinishedScrollRow(QWidget):
         bar.valueChanged.connect(self._update_arrows)
         bar.rangeChanged.connect(self._update_arrows)
 
+        self._current_ids = []
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._scroll.setGeometry(0, 0, self.width(), self.height())
@@ -663,14 +669,22 @@ class FinishedScrollRow(QWidget):
         self._right_arrow.setVisible(bar.value() < bar.maximum())
 
     def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
+        incoming_ids = [r.get("book_id") for r in rows]
+        if set(incoming_ids) == set(self._current_ids):
+            return
+        self._current_ids = incoming_ids
         while self._layout.count() > 0:
             item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
         for row in rows:
             thumb = FinishedBookThumb(row, self._assets_dir, placeholder_color)
             thumb.clicked.connect(click_callback)
             self._layout.addWidget(thumb)
+        n = len(rows)
+        min_w = n * 47 + max(n - 1, 0) * 4  # thumb width + spacing between thumbs
+        self._container.setMinimumWidth(min_w)
         # Defer arrow update until layout has settled
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, self._update_arrows)
