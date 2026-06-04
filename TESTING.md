@@ -420,6 +420,32 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Switch themes while in the empty state: bg_image stays suppressed
 - [ ] Switch themes while a book is loaded: bg_image of the new theme applies correctly
 
+## Stats panel — finished-books carousel (FinishedBookThumb / FinishedScrollRow)
+
+### Cache behaviour
+- [ ] Open stats panel → Overall tab: recently-finished carousel populates; covers load (placeholder briefly visible on first visit if preloader hasn't reached book yet — accepted)
+- [ ] Switch to Day/Week/Month tab with at least one finished book: carousel populates; covers load
+- [ ] Switch away and back to same tab with same books: no rebuild, no placeholder flash — covers are cache hits, displayed immediately
+- [ ] Period navigate (‹ / › arrows) to a different day/week/month and back: covers for previously-seen periods are cache hits on return, no flash
+
+### Excluded / soft-deleted books
+- [ ] Finish a book then exclude it (trash button): it still appears in the Finished carousel in stats
+- [ ] Its cover loads correctly (no permanent placeholder) — preloader skips excluded books, but `_on_cover_loaded` writes to `_cover_cache` so subsequent visits are cache hits
+- [ ] Cover renders in grayscale (archived book treatment)
+
+### Redundant rebuild guard
+- [ ] Rapidly switch Day → Week → Day: no duplicate thumbs, no stacking artifact
+- [ ] Navigate period backward and forward to the same period: set_items called twice with same IDs — guard fires, no rebuild, thumbs unchanged
+- [ ] Period query returning same books in different order: guard uses set equality, still fires — no spurious rebuild
+
+### Horizontal scroll
+- [ ] With 1 finished book: carousel shows the single thumb, no scroll arrows
+- [ ] With enough finished books to overflow viewport width: right arrow (▶) appears on hover; scrolling moves thumbs; left arrow (◀) appears after scrolling; arrows hide on mouse-out
+- [ ] Thumbs are not compressed — each is 47×47, not squashed to fit viewport
+
+### Synchronous widget removal
+- [ ] Navigate period rapidly (click ‹ several times quickly): no stacking — old thumbs removed before new ones inserted, no overlap
+
 ### No-book-state regression: select book from library
 
 - [ ] Carousel hides immediately on book load

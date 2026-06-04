@@ -1,4 +1,28 @@
 
+## Finished-books carousel cover loading (stats_panel.py) — 2026-06-04
+
+`FinishedBookThumb._on_cover_loaded` now writes to `_cover_cache[self._book_id]` before
+calling `_apply_cover`, matching the library grid's pattern. Previously the worker result
+was consumed locally and discarded, causing cold-cache misses on every carousel rebuild for
+custom-cover books and excluded/deleted finished books (which the preloader skips entirely,
+since `get_all_books` is fenced by `is_deleted = 0 AND is_excluded = 0`). Fix: cache write
+in `_on_cover_loaded` + `self._book_id` stored in `__init__`.
+
+`FinishedScrollRow.set_items`:
+- `_current_ids` guard (set equality, not list equality) skips rebuild when book IDs are
+  unchanged regardless of query return order — list equality was order-sensitive and fired
+  spurious rebuilds after `_invalidate_period_cache()` re-ran the DB query.
+- `setParent(None)` replaces `deleteLater()` for synchronous widget removal — `deleteLater`
+  is deferred and left old widgets in the layout during rapid successive calls.
+- `setMinimumWidth` computed after population (`n × 47 + (n−1) × 4`) so the container
+  overflows correctly with `setWidgetResizable(True)`. Without this, `setWidgetResizable(True)`
+  forces the container to viewport width, compressing fixed-size thumbs instead of scrolling.
+
+First-visit cold-cache flash (startup, books not yet reached by preloader) is accepted
+behaviour. All subsequent visits for the same book IDs are cache hits.
+
+---
+
 ## Suppressing a theme `bg_image`: only regeneration works, not child override (2026-06-03)
 
 The theme `bg_image` (Overlook hexagons, etc.) is painted by `content_container`'s

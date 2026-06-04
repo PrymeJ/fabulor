@@ -1,3 +1,27 @@
+## Session Summary — 2026-06-04 Session 2
+
+**Scope:** Fix cover flicker and widget stacking in the stats panel's finished-books carousel (`FinishedScrollRow` / `FinishedBookThumb` in `stats_panel.py`).
+
+### What was built
+
+**Root-cause investigation** — traced three separate bugs through `_cover_cache`, `CoverLoaderWorker`, the idle preloader, and the `set_items` call chain:
+
+1. **`FinishedBookThumb._on_cover_loaded` discarded worker result** — cover was applied locally but never written to `_cover_cache`, so every carousel rebuild for excluded/deleted books (preloader skips them) or custom-cover books (before preloader reached them) was a cold-cache miss. Fix: write `_cover_cache[self._book_id] = pixmap` before `_apply_cover`, storing `self._book_id` in `__init__`.
+
+2. **`_current_ids` guard was order-sensitive** — `set_items` compared `incoming_ids == self._current_ids` as list equality. `_on_tab_changed` calls `_invalidate_period_cache()` before each refresh, causing the DB to re-run `get_finished_in_period` which could return the same books in a different order — bypassing the guard and triggering a full rebuild. Fix: changed to `set(incoming_ids) == set(self._current_ids)`.
+
+3. **`setWidgetResizable(True)` prevented horizontal scrolling** — forces the container to fill viewport width, compressing fixed-size thumbs instead of overflowing. Fix: set `setMinimumWidth(n × 47 + (n−1) × 4)` on the container after population, allowing the layout to overflow correctly while keeping `setWidgetResizable(True)` for correct height.
+
+`setParent(None)` replaced `deleteLater()` in the clear loop for synchronous widget removal.
+
+### Non-obvious decisions
+
+- First-visit cold-cache flash (books not yet in cache on first stats-panel open) is accepted — inherent to the lazy-load architecture. The fix eliminates all *subsequent* flickers, which was the real UX problem.
+- `_current_ids` stores a list (insertion order preserved for future use) but comparison is set-based — only the comparison operator changed, not the storage type.
+- `setWidgetResizable(False)` was tried and caused all thumbs to disappear (container collapsed to zero height). Reverted immediately; `setMinimumWidth` was the correct solution.
+
+---
+
 ## Session Summary — 2026-06-04 Session 1
 
 **Scope:** Reorganise and normalise `themes.py` theme dicts — key renames, canonical ordering, formatting, alphabetical sort.
