@@ -916,38 +916,60 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 ## Each theme
 
 - [ ] Alzabo
+- [ ] Annihilation
 - [ ] Anomander
 - [ ] Blood Meridian
 - [ ] Blue Moranth
 - [ ] Brave New World
 - [ ] Camorr
+- [ ] Cerulean Sea
 - [ ] Chatsubo
+- [ ] Cibola Burn
 - [ ] City of Stairs
 - [ ] Crimson Guard
+- [ ] Dorian Grey
+- [ ] Driftmark
 - [ ] Earthsea
 - [ ] Emiko
 - [ ] Eyes of Ibad
+- [ ] Fifth Season
+- [ ] Fire and Blood
 - [ ] Galatea
+- [ ] Goldfinch
 - [ ] Gormenghast
 - [ ] Gravity's Rainbow
 - [ ] Hear Me Roar
+- [ ] Highgarden
 - [ ] Jade City
+- [ ] Lilac Girls
 - [ ] Manderley
 - [ ] Melnibonéan
 - [ ] Not the Only Fruit
+- [ ] Pink Institute
+- [ ] Piranesi
+- [ ] Plum Island
+- [ ] Pyke
 - [ ] Razorgirl
+- [ ] Rebma
 - [ ] Red Rising
 - [ ] Rivendell
-- [ ] Shade of the Evening
+- [ ] Rose Code
 - [ ] Shai-Hulud
+- [ ] Shade of the Evening
 - [ ] Shrike
 - [ ] Sitting in the Wing Chair
 - [ ] Slow Regard
+- [ ] Storm's End
+- [ ] Sunspear
 - [ ] The Color Purple
+- [ ] The Eyrie
 - [ ] The Overlook
 - [ ] Tigana
+- [ ] Turquoise Days
 - [ ] Urras
+- [ ] Violeta
 - [ ] Waknuk
 - [ ] Wasp Factory
 - [ ] Waste Lands
 - [ ] Winterfell
+- [ ] Yellowface
