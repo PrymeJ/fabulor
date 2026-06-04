@@ -530,7 +530,6 @@ class FinishedBookThumb(QWidget):
         book_id = row_data.get("book_id")
         self._book_id = book_id
         cached = _cover_cache.get(book_id)
-        print(f"[FinishedBookThumb] book_id={book_id} cache_hit={cached is not None}")
         if cached:
             self._apply_cover(cached)
         else:
