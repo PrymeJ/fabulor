@@ -100,6 +100,7 @@ Claude does not need hard constraint rules like GEMINI.md — the working model 
 
 - **SESSION.md entries are always prepended** (newest at the top), not appended.
 - **All git commit messages must start with a verb** (e.g. `feat:`, `fix:`, `docs:`, `refactor:`).
+- **After completing a task, flag if SESSION.md, NOTES.md, CLAUDE.md, or TESTING.md would benefit from an update** — but only when there is something specific and non-obvious worth recording, not as a reflexive offer after every change.
 
 ---
 
