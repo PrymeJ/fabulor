@@ -498,7 +498,7 @@ class ThemeManager(QObject):
         pm = getattr(mw, 'panel_manager', None)
         if pm and pm.is_any_panel_visible():
             mask = QRegion(mw.rect())
-            panels = ['library_panel', 'tags_panel', 'speed_panel', 'sidebar_panel',
+            panels = ['library_panel', 'tags_panel', 'speed_panel',
                       'sleep_panel', 'stats_panel', 'book_detail_panel']
             for attr in panels:
                 p = getattr(pm, attr, None)
