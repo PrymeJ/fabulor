@@ -993,7 +993,7 @@ class BookDetailPanel(QWidget):
 
     def _apply_bar_colors(self):
         from PySide6.QtGui import QColor
-        accent = QColor(self._theme.get('curr_chap_highlight', '#888888'))
+        accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
         bg = QColor(self._theme.get('library_slider_bg', '#333333'))
         self._session_list.set_colors(accent, bg)
         self._history_session_list.set_colors(accent, bg)

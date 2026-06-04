@@ -972,8 +972,8 @@ class BookDelegate(QStyledItemDelegate):
         ha = theme.get('library_item_hover_alpha', 0.50)
         self._hover_bg_color = qc(hc, int(ha * 255))
 
-        self._bg_library     = qc(theme.get('bg_library',         '#1e1e1e'))
-        self._grid_bg        = qc(theme.get('library_grid_bg',    theme.get('bg_library', '#1a1a1a')))
+        self._bg_library     = qc(theme.get('library_bg',          '#1e1e1e'))
+        self._grid_bg        = qc(theme.get('library_grid_bg',    theme.get('library_bg', '#1a1a1a')))
         self._row_one        = qc(theme.get('library_row_one',    '#242424'))
         self._row_two        = qc(theme.get('library_row_two',    '#2a2a2a'))
         self._color_title    = qc(theme.get('library_title',      '#ffffff'))
