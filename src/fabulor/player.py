@@ -114,6 +114,14 @@ class Player(QObject):
             if abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
+                # Reset chapter tracking counters so the subsequent position walk
+                # always emits chapter_changed with the settled chapter. Without this,
+                # if the final chapter == last tracked chapter (updated during intermediate
+                # seek events that were blocked by the is_seeking label gate), the
+                # curr != _last_*_chapter check would be False and no emit would fire —
+                # leaving the chapter label showing the wrong book's chapter.
+                self._last_nonvt_chapter = -1
+                self._last_vt_chapter = -1
         # VT: use self._chapter_list directly — it holds the virtual timeline chapter
         # data (exact DB times, global positions). self._file_offset translates the
         # local mpv time_pos into the global VT position.

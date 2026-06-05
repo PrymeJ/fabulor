@@ -871,6 +871,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.chap_duration_label):
                 lbl.setStyleSheet("")
         else:
+            # Stop any in-flight bg_color/fill_color animations before setting
+            # transparent. If a theme fade started (and animated the slider colors
+            # toward a non-transparent value) while this book was still chapter-active,
+            # those QPropertyAnimations would immediately override the transparent
+            # value we're about to set — making the background briefly visible.
+            if hasattr(self, 'theme_manager'):
+                tm = self.theme_manager
+                if hasattr(tm, '_slider_anims'):
+                    for anim in tm._slider_anims.get(id(slider), {}).values():
+                        from PySide6.QtCore import QPropertyAnimation
+                        if anim.state() != QPropertyAnimation.State.Stopped:
+                            anim.stop()
             slider.bg_color = QColor("transparent")
             slider.fill_color = QColor("transparent")
             slider.update()
@@ -1377,6 +1389,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # in the gap between _pre_switch_chap_slider_value capture and animate_to() call,
         # causing the slider to visibly jump before the flow animation starts.
         if self._pre_switch_chap_slider_value is not None:
+            return
+        # Guard: skip during seeks. Intermediate time_pos values would cause the timer
+        # to write a wrong chapter position to the slider (and wrong elapsed/duration
+        # labels) while mpv is scanning toward the target. The timer self-corrects within
+        # one 200ms tick after is_seeking clears.
+        if self.player.is_seeking:
             return
         # Always derive chapter from pos so the UI stays consistent regardless
         # of when mpv's internal chapter property settles after a seek.
