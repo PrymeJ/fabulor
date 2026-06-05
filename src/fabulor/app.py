@@ -998,11 +998,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if pre is not None:
             self._pre_switch_slider_value = None
             dur = self.player.duration
-            if not dur and book_data and book_data.duration:
-                # Fall back to DB-stored duration when mpv hasn't cached it yet.
-                # Lets the animation run with a slightly-approximate target rather
-                # than skipping entirely and leaving the slider to snap.
-                dur = book_data.duration
             if new_progress == 0:
                 # Book starting from scratch — always animate to 0.
                 new_val = 0
