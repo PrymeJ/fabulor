@@ -347,6 +347,51 @@ class LibraryDB:
                 "SELECT COUNT(*) FROM books WHERE is_deleted = 0 AND is_excluded = 0"
             ).fetchone()[0]
 
+    def has_books_with_progress(self) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM books
+                   WHERE is_deleted = 0 AND is_excluded = 0
+                   AND progress > 1.0
+                   LIMIT 1"""
+            ).fetchone()
+            return row is not None
+
+    def has_finished_books(self) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """SELECT 1 FROM books b
+                   WHERE b.is_deleted = 0 AND b.is_excluded = 0
+                   AND EXISTS (
+                       SELECT 1 FROM book_events be
+                       WHERE be.book_id = b.id
+                       AND be.event_type = 'finished'
+                   )
+                   LIMIT 1"""
+            ).fetchone()
+            return row is not None
+
+    def get_finished_book_data(self) -> dict:
+        """Returns {book_id: most_recent_finished_datetime} for all visible books
+        that have at least one finished event."""
+        from datetime import datetime
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT b.id, MAX(be.event_time) as last_finished
+                   FROM books b
+                   JOIN book_events be ON be.book_id = b.id
+                   WHERE b.is_deleted = 0 AND b.is_excluded = 0
+                   AND be.event_type = 'finished'
+                   GROUP BY b.id"""
+            ).fetchall()
+            result = {}
+            for row in rows:
+                try:
+                    result[row[0]] = datetime.fromisoformat(row[1])
+                except (TypeError, ValueError):
+                    result[row[0]] = datetime.min
+            return result
+
     def get_all_cover_paths(self) -> list[str]:
         """Returns cached cover paths for all visible books that have one.
         Used by the no-book-state cover carousel."""

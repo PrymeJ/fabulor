@@ -1413,6 +1413,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager._close_book_detail_flow
         )
         self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
+        self.book_detail_panel.history_deleted.connect(self.library_panel.refresh)
         self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
         self.book_detail_panel.tags_changed.connect(self._on_book_tags_changed)
         self.tags_panel.tag_changed.connect(self.stats_panel._on_tag_changed)

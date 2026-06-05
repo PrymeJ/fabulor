@@ -33,6 +33,7 @@ SORT_KEY_MAP = {
     "Progress":    "progress",
     "Duration":    "duration",
     "Year":        "year",
+    "Finished":    "finished",
 }
 
 MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
@@ -113,6 +114,16 @@ class LibraryPanel(QFrame):
 
     _open_count = 0
 
+    _SORT_DIRECTION_DEFAULTS = {
+    "Title":       True,   # ascending, A→Z
+    "Author":      True,   # ascending, A→Z
+    "Year":        False,  # descending, newest→oldest
+    "Duration":    False,  # descending, longest→shortest
+    "Last Played": False,  # descending, most recent first
+    "Progress":    False,  # descending, highest first
+    "Finished":    False,  # descending, most recently finished first
+    }
+
     def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
         self.db              = db
@@ -123,6 +134,7 @@ class LibraryPanel(QFrame):
         self._current_theme  = {}
         self._show_start     = None
         self._tag_filter_active: bool = False
+        self._sort_initialized = False
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -144,6 +156,63 @@ class LibraryPanel(QFrame):
         self._delegate.update_theme(self._current_theme)
         self._apply_view_mode(self._delegate._view_mode)
         self._list_view.viewport().update()
+
+    # ── Sort combo ───────────────────────────────────────────────────────────
+
+    def _init_sort_combo(self, saved_sort: str) -> None:
+        """Populate sort_combo with the base options, restoring saved_sort."""
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.clear()
+        for display, key in [
+            ("Title",    "Title"),
+            ("Author",   "Author"),
+            ("Recent",   "Last Played"),
+            ("Duration", "Duration"),
+            ("Year",     "Year"),
+        ]:
+            self.sort_combo.addItem(display, key)
+        idx = self.sort_combo.findData(saved_sort)
+        self.sort_combo.setCurrentIndex(idx if idx != -1 else self.sort_combo.findData("Title"))
+        self.sort_combo.blockSignals(False)
+
+    def _rebuild_sort_combo(self) -> None:
+        """Rebuild sort_combo dynamically, adding Progress/Finished only when data exists."""
+        first_call = not self._sort_initialized
+        if first_call:
+            current_key = self.config.get_library_sort_key()
+            self._sort_initialized = True
+        else:
+            current_key = self.sort_combo.currentData()
+
+        self.sort_combo.blockSignals(True)
+        self.sort_combo.clear()
+
+        has_prog     = self.db.has_books_with_progress()
+        has_finished = self.db.has_finished_books()
+
+        options = [
+            ("Title",    "Title"),
+            ("Author",   "Author"),
+            ("Recent",   "Last Played"),
+            ("Duration", "Duration"),
+            ("Year",     "Year"),
+        ]
+        if has_prog:
+            options.insert(0, ("Progress", "Progress"))
+        if has_finished:
+            options.append(("Finished", "Finished"))
+
+        for display, key in options:
+            self.sort_combo.addItem(display, key)
+
+        idx = self.sort_combo.findData(current_key)
+        self.sort_combo.setCurrentIndex(idx if idx != -1 else self.sort_combo.findData("Title"))
+
+        if first_call:
+            self._sort_ascending = self.config.get_library_sort_ascending()
+            self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
+
+        self.sort_combo.blockSignals(False)
 
     # ── Model / view setup ───────────────────────────────────────────────────
 
@@ -192,22 +261,9 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = QComboBox()
-        for display, key in [
-            ("Title",    "Title"),
-            ("Author",   "Author"),
-            ("Recent",   "Last Played"),
-            ("Progress", "Progress"),
-            ("Duration", "Duration"),
-            ("Year",     "Year"),
-        ]:
-            self.sort_combo.addItem(display, key)
         self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
-        saved_sort = self.config.get_library_sort_key()
-        for i in range(self.sort_combo.count()):
-            if self.sort_combo.itemData(i) == saved_sort:
-                self.sort_combo.setCurrentIndex(i)
-                break
+        self._init_sort_combo(self.config.get_library_sort_key())
         self._sort_ascending   = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentData()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
@@ -380,6 +436,7 @@ class LibraryPanel(QFrame):
 
     def refresh(self, force=False):
         self._resolve_theme_colors()
+        self._rebuild_sort_combo()
         # Sync model's filter/sort state from UI without triggering a reset, then
         # reload books with a layoutChanged so the view keeps its scroll position.
         sort_key  = self.sort_combo.currentData()
@@ -394,7 +451,8 @@ class LibraryPanel(QFrame):
         books = self.db.get_all_books()
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
-            
+
+        self._book_model.set_finished_dates(self.db.get_finished_book_data())
         self._book_model.set_books(books)
 
         def _after_covers(_attempt=0):
@@ -514,11 +572,13 @@ class LibraryPanel(QFrame):
         QTimer.singleShot(0, self._load_visible_covers)
 
     def _on_sort_changed(self):
-        sort_key  = self.sort_combo.currentData()
-        ascending = getattr(self, '_sort_ascending', True)
-        direction = "ascending" if ascending else "descending"
+        sort_key = self.sort_combo.currentData()
+        self._sort_ascending = self.__class__._SORT_DIRECTION_DEFAULTS.get(sort_key, True)
+        self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
+        direction = "ascending" if self._sort_ascending else "descending"
         self._book_model.sort_books(SORT_KEY_MAP.get(sort_key, "title"), direction)
         self.config.set_library_sort_key(sort_key)
+        self.config.set_library_sort_ascending(self._sort_ascending)
         self._last_filter_mode = sort_key
         QTimer.singleShot(0, self._load_visible_covers)
 
@@ -622,6 +682,8 @@ class LibraryPanel(QFrame):
         # Resume interrupted queue, or build a fresh one
         if not getattr(self, '_preload_queue', None):
             sort_key  = SORT_KEY_MAP.get(self.config.get_library_sort_key(), "title")
+            if sort_key not in self.db._ALLOWED_SORT_COLUMNS:
+                sort_key = "title"
             ascending = self.config.get_library_sort_ascending()
             books = self.db.get_all_books(sort_by=sort_key, order="ASC" if ascending else "DESC")
             self._preload_queue = [b for b in books if b.id not in _cover_cache]
@@ -728,6 +790,7 @@ class BookModel(QAbstractListModel):
         self._sort_direction: str = "ascending"
         self.filter_empty: bool = False
         self._filter_no_match: bool = False
+        self._finished_dates: dict[int, object] = {}
 
     # ── QAbstractListModel interface ────────────────────────────────────────
 
@@ -767,6 +830,9 @@ class BookModel(QAbstractListModel):
 
         self._apply_filter_and_sort()
         self.endResetModel()
+
+    def set_finished_dates(self, dates: dict) -> None:
+        self._finished_dates = dates
 
     def update_book_metadata(self, book_id: int, title: str, author: str, narrator: str = "", year: object = None) -> None:
         for book in self._books:
@@ -824,10 +890,21 @@ class BookModel(QAbstractListModel):
     # ── Internal ────────────────────────────────────────────────────────────
 
     def _apply_filter_and_sort(self) -> None:
+        # Narrow to the relevant subset for the current sort key first,
+        # then apply text/tag/year filtering on that subset.
+        from datetime import datetime as dt
+
+        if self._sort_field == "last_played":
+            source = [b for b in self._books if (b.progress or 0.0) > MIN_PROGRESS]
+        elif self._sort_field == "finished":
+            source = [b for b in self._books if b.id in self._finished_dates]
+        else:
+            source = self._books
+
         text = self._filter_text
         if text:
             if text == '#':
-                books = list(self._books)
+                books = list(source)
                 self._filter_no_match = False
             elif text.startswith('#'):
                 tag = text[1:]
@@ -835,52 +912,50 @@ class BookModel(QAbstractListModel):
                     tagged = self._db.get_paths_for_tag_prefix(tag)
                 else:
                     tagged = set()
-                matched = [b for b in self._books if b.path in tagged]
+                matched = [b for b in source if b.path in tagged]
                 self._filter_no_match = not matched
-                books = matched if matched else list(self._books)
+                books = matched if matched else list(source)
             elif _parse_year_range(text) is not None:
                 year_min, year_max = _parse_year_range(text)
-                matched = [b for b in self._books
+                matched = [b for b in source
                            if b.year is not None and year_min <= b.year <= year_max]
                 self._filter_no_match = False
-                books = matched if matched else list(self._books)
+                books = matched if matched else list(source)
             elif text.startswith('>') and text[1:].isdigit():
                 year_min = int(text[1:])
-                matched = [b for b in self._books if b.year is not None and b.year >= year_min]
+                matched = [b for b in source if b.year is not None and b.year >= year_min]
                 self._filter_no_match = False
-                books = matched if matched else list(self._books)
+                books = matched if matched else list(source)
             elif text.startswith('<') and text[1:].isdigit():
                 year_max = int(text[1:])
-                matched = [b for b in self._books if b.year is not None and b.year <= year_max]
+                matched = [b for b in source if b.year is not None and b.year <= year_max]
                 self._filter_no_match = False
-                books = matched if matched else list(self._books)
+                books = matched if matched else list(source)
             else:
                 matched = [
-                    b for b in self._books
+                    b for b in source
                     if text in b.title.lower()
                     or text in (b.author or "").lower()
                     or text in (b.narrator or "").lower()
                     or (b.year is not None and len(text) == 4 and text.isdigit() and text == str(b.year))
                 ]
                 self._filter_no_match = not matched
-                books = matched if matched else list(self._books)
+                books = matched if matched else list(source)
         else:
             self._filter_no_match = False
-            books = list(self._books)
-
-        # Filter "Recent" to only show books that have progress
-        if self._sort_field == "last_played":
-            books = [b for b in books if (b.progress or 0.0) > MIN_PROGRESS]
+            books = list(source)
 
         reverse = self._sort_direction == "descending"
         field = self._sort_field
 
-        from datetime import datetime as dt
         def sort_key(b):
             if field == "progress":
                 pos = b.progress or 0.0
                 dur = b.duration or 0.0
                 return pos / dur if dur > 0 else 0.0
+
+            if field == "finished":
+                return self._finished_dates.get(b.id, dt.min)
 
             val = getattr(b, field, None)
             if val is None:
