@@ -1,23 +1,17 @@
 
-## DO NOT animate the chapter progress slider value — 2026-06-05
+## Theme fade must not start while any slider value animation is running — 2026-06-05
 
-`animate_to()` on `chapter_progress_slider` causes ghosting during theme fades. The overlay punch-through exposes the live slider widget; if the slider value is animating, the moving fill creates a visible ghost against the static overlay screenshot. Confirmed during refactor session.
+`animate_to()` on a slider while a theme fade overlay punch-through is active causes ghosting. The overlay punches a hole for each included slider, exposing the live widget. If the slider's fill position is moving, the animated fill produces a visible ghost against the static overlay screenshot.
 
-**What is safe:** color animation only (`bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation` in `theme_manager.py`). Color transitions happen inside the widget's paint rect with no position change, so no ghost is produced.
+**What is safe for themes:** color animation only (`bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation` in `theme_manager.py`). Colors change inside the widget without moving the fill, so no position-ghost is produced.
 
-**What causes ghosting:** any `animate_to()` call while a theme fade overlay with a punch-through hole is active. The chapter slider has a permanent punch-through hole when `_chapter_ui_active = True`. Any book switch (which may trigger a cover-art theme fade shortly after) overlaps with value animation.
+**What causes ghosting:** `animate_to()` (value/fill animation) overlapping with the fade overlay's active window.
 
-**Current state:** `_on_file_loaded_populate_chapters` uses `setValue(new_chap_val)` only — no `animate_to`. Authoritative position computation (chapter list walk against `book_data.progress`) is retained for the `setValue` target.
+**Progress slider:** safe because `_apply_pending_cover_theme` defers via `progress_slider.when_animations_done()`. The theme fade starts only after the progress animation completes.
 
-See SESSION.md 2026-06-05 Session 2 "Reverted" section and NOTES.md 2026-05-30 theme fade entry.
+**Chapter slider:** safe because `_apply_pending_cover_theme` chains a SECOND wait through `chapter_progress_slider.when_animations_done()` after the progress slider. Both must settle before `apply_cover_theme` fires.
 
----
-
-## DO NOT animate the progress slider value during theme fades — 2026-06-05
-
-Same root cause as the chapter slider note above. The progress slider IS animated via `animate_to()` during book switches (the "flow" animation). This is safe ONLY because the cover-art theme fade is deferred until `progress_slider.when_animations_done()` completes — so flow animation and theme fade never overlap on the progress slider. This ordering is enforced by `_apply_pending_cover_theme`.
-
-If any code path ever triggers a theme fade while the progress slider is mid-animation, ghosting will appear on the progress slider too. The invariant: theme fade must not start while `progress_slider._flow_anim` is running.
+**Invariant (enforced by `_apply_pending_cover_theme`):** cover art theme fade starts only after BOTH `progress_slider` AND `chapter_progress_slider` animations have finished. If any new slider gets `animate_to()` during book switches, add it to the chain.
 
 ---
 
