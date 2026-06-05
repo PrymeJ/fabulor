@@ -1619,6 +1619,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # clean chapter_changed with the correct index.
         if self.player.is_seeking:
             return
+        if self._switch.flow_pending_chapter:
+            return
         
         # If the list is empty, trigger population now that we know we have data
         if not self.chapter_list_widget.count():
