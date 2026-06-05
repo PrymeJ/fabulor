@@ -1057,36 +1057,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         except (ShutdownError, AttributeError, SystemError):
             return
         pre_chap = self._switch.take_chapter_target()
-        if pre_chap is not None:
-            book_data = getattr(self, '_current_book', None)
-            new_progress = book_data.progress if book_data else 0
-            if new_progress == 0:
+        pre_chap = pre_chap if pre_chap is not None else 0
+
+        book_data = getattr(self, '_current_book', None)
+        new_progress = book_data.progress if book_data else 0
+        if new_progress == 0:
+            new_chap_val = 0
+        else:
+            # Compute from authoritative data (chapter list + saved progress)
+            # rather than reading the stale slider value. At the time this handler
+            # runs the timer has not ticked, so slider.value() holds the previous
+            # book's chapter position (same as pre_chap) — making pre_chap ==
+            # new_chap_val always False and degrading animate_to to setValue.
+            chap_list = self.player.chapter_list or []
+            chap_dur_val = self.player.duration or 0
+            if chap_list and chap_dur_val:
+                curr = 0
+                for i, chap in enumerate(chap_list):
+                    if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
+                        curr = i
+                start = chap_list[curr].get('time', 0)
+                end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
+                cd = end - start
+                seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
+                c_elapsed = max(0, (new_progress + seek_offset) - start)
+                new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
+            else:
                 new_chap_val = 0
-            else:
-                # Compute from authoritative data (chapter list + saved progress)
-                # rather than reading the stale slider value. At the time this handler
-                # runs the timer has not ticked, so slider.value() holds the previous
-                # book's chapter position (same as pre_chap) — making pre_chap ==
-                # new_chap_val always False and degrading animate_to to setValue.
-                chap_list = self.player.chapter_list or []
-                chap_dur_val = self.player.duration or 0
-                if chap_list and chap_dur_val:
-                    curr = 0
-                    for i, chap in enumerate(chap_list):
-                        if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
-                            curr = i
-                    start = chap_list[curr].get('time', 0)
-                    end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
-                    cd = end - start
-                    seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
-                    c_elapsed = max(0, (new_progress + seek_offset) - start)
-                    new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
-                else:
-                    new_chap_val = 0
-            if pre_chap != new_chap_val:
-                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
-            else:
-                self.chapter_progress_slider.setValue(new_chap_val)
+        if pre_chap != new_chap_val:
+            self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+        else:
+            self.chapter_progress_slider.setValue(new_chap_val)
 
     def _drain_deferred_file_ready(self):
         if self._switch.file_ready_deferred:
