@@ -948,35 +948,38 @@ class BookModel(QAbstractListModel):
         reverse = self._sort_direction == "descending"
         field = self._sort_field
 
+        def effective_val(b):
+            if field == "finished":
+                return self._finished_dates.get(b.id)
+            if field == "progress":
+                v = b.progress or 0.0
+                return v if v > MIN_PROGRESS else None
+            if field == "last_played":
+                return None if (b.progress or 0.0) <= MIN_PROGRESS else getattr(b, field, None)
+            val = getattr(b, field, None)
+            if val is None:
+                return None
+            if isinstance(val, str) and not val.strip():
+                return None
+            return val
+
         def sort_key(b):
             if field == "progress":
                 pos = b.progress or 0.0
                 dur = b.duration or 0.0
                 return pos / dur if dur > 0 else 0.0
-
             if field == "finished":
                 return self._finished_dates.get(b.id, dt.min)
-
             val = getattr(b, field, None)
-            if val is None:
-                if field == "last_played": return dt.min
-                # Safeguard: check first book for type hint if available
-                first_b = self._books[0] if self._books else None
-                if first_b and isinstance(getattr(first_b, field, None), str):
-                    return ""
-                return 0
             if isinstance(val, str):
                 return val.lower()
             return val
 
-        if self._sort_field in ("last_played", "progress"):
-            have    = [b for b in books if (b.progress or 0.0) > MIN_PROGRESS]
-            missing = [b for b in books if (b.progress or 0.0) <= MIN_PROGRESS]
-            have.sort(key=sort_key, reverse=reverse)
-            missing.sort(key=lambda b: (b.title or "").lower())
-            books = have + missing
-        else:
-            books.sort(key=sort_key, reverse=reverse)
+        have    = [b for b in books if effective_val(b) is not None]
+        missing = [b for b in books if effective_val(b) is None]
+        have.sort(key=sort_key, reverse=reverse)
+        missing.sort(key=lambda b: (b.title or "").lower())
+        books = have + missing
         self._filtered = books
 
     def _emit_for_id(self, book_id: int) -> None:
