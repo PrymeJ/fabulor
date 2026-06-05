@@ -309,6 +309,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._mpv_ready = True
         self._pre_switch_slider_value = None
+        self._pre_switch_chap_slider_value = None
         self._chaps_dur_retried = False
 
         self._setup_ui()
@@ -942,6 +943,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._paused_time = None
         self._mpv_ready = False
         self._pre_switch_slider_value = self.progress_slider.value()
+        self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
         self._chaps_dur_retried = False
         # Preemptively deactivate chapter UI before the new book loads. Keeps the
         # slider transparent throughout the loading window. Without this,
@@ -1049,28 +1051,37 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
-        # Set chapter slider to the correct position for the new book. Use an
-        # authoritative walk of chapter_list + saved progress rather than reading
-        # slider.value() (stale) or computing 0 as a fallback. No animate_to —
-        # animating the slider value causes ghosting when it overlaps a theme fade
-        # (the overlay punch-through exposes the moving slider).
-        book_data = getattr(self, '_current_book', None)
-        new_progress = book_data.progress if book_data else 0
-        chap_list = self.player.chapter_list or []
-        chap_dur_val = self.player.duration or 0
-        if chap_list and chap_dur_val and new_progress > 0:
-            curr = 0
-            for i, chap in enumerate(chap_list):
-                if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
-                    curr = i
-            start = chap_list[curr].get('time', 0)
-            end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
-            cd = end - start
-            c_elapsed = max(0, new_progress - start)
-            new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
-        else:
-            new_chap_val = 0
-        self.chapter_progress_slider.setValue(new_chap_val)
+        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
+        if pre_chap is not None:
+            self._pre_switch_chap_slider_value = None
+            book_data = getattr(self, '_current_book', None)
+            new_progress = book_data.progress if book_data else 0
+            if new_progress == 0:
+                new_chap_val = 0
+            else:
+                # Compute from authoritative data (chapter list + saved progress)
+                # rather than reading the stale slider value. At the time this handler
+                # runs the timer has not ticked, so slider.value() holds the previous
+                # book's chapter position (same as pre_chap) — making pre_chap ==
+                # new_chap_val always False and degrading animate_to to setValue.
+                chap_list = self.player.chapter_list or []
+                chap_dur_val = self.player.duration or 0
+                if chap_list and chap_dur_val:
+                    curr = 0
+                    for i, chap in enumerate(chap_list):
+                        if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
+                            curr = i
+                    start = chap_list[curr].get('time', 0)
+                    end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
+                    cd = end - start
+                    c_elapsed = max(0, new_progress - start)
+                    new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
+                else:
+                    new_chap_val = 0
+            if pre_chap != new_chap_val:
+                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+            else:
+                self.chapter_progress_slider.setValue(new_chap_val)
 
     def _drain_deferred_file_ready(self):
         if getattr(self, '_file_ready_deferred', False):
@@ -1084,12 +1095,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not pixmap:
             return
         self._pending_cover_pixmap = None
-        if hasattr(self.progress_slider, 'when_animations_done'):
-            self.progress_slider.when_animations_done(
-                lambda: self.theme_manager.apply_cover_theme(pixmap)
-            )
-        else:
+        # Chain through both sliders' when_animations_done before starting the
+        # theme fade. The chapter progress slider is punch-through-exposed during
+        # theme fades; if its value animation (animate_to) is still running when
+        # the fade overlay is captured, the moving fill produces a ghost image.
+        # Waiting for both sliders to settle eliminates the overlap.
+        def _apply():
             self.theme_manager.apply_cover_theme(pixmap)
+        def _after_progress():
+            if hasattr(self, 'chapter_progress_slider') and hasattr(self.chapter_progress_slider, 'when_animations_done'):
+                self.chapter_progress_slider.when_animations_done(_apply)
+            else:
+                _apply()
+        if hasattr(self.progress_slider, 'when_animations_done'):
+            self.progress_slider.when_animations_done(_after_progress)
+        else:
+            _after_progress()
 
     def _on_load_failed(self, reason):
         """Called when mpv fires end-file with a non-normal reason (error/unknown)."""
@@ -1387,6 +1408,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         chap_list = self.player.chapter_list or []
         if not chap_list:
+            return
+        # Guard: skip during book-switch pre-animation window. Without this, the timer
+        # fires between the pre_chap capture and the animate_to() call, writing the
+        # new file's chapter-at-pos-0 to the slider and producing a visible jump
+        # before the flow animation starts.
+        if self._pre_switch_chap_slider_value is not None:
             return
         # Guard: skip during seeks. Intermediate time_pos values would cause the timer
         # to write a wrong chapter position to the slider (and wrong elapsed/duration
