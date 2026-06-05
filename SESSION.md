@@ -1,3 +1,39 @@
+## Session Summary — 2026-06-05 Session 3
+
+**Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
+
+**Scope:** Consolidate the scattered book-switch transition guards into a single state machine. No behavior change — every guard site is a 1:1 predicate rename with identical timing.
+
+### What was built
+
+**`book_switch.py` + `BookSwitchState`** — a single authority for the book-switch lifecycle. Previously, six concurrent concerns (`book_ready` emission, library slide-out animation, mpv position-restore seek, cover load, 200ms UI timer, cover-art theme fade) were coordinated by ad-hoc flags read directly off `MainWindow`. The Session 2 regression list above is the symptom: each fix added another scattered guard. `BookSwitchState` now owns the six **switch-specific** flags behind an explicit `SwitchPhase` (`IDLE`/`LOADING`/`RESTORING`). Instantiated once as `self._switch` in `MainWindow.__init__`.
+
+Flags absorbed (old `MainWindow` attr → SM): `_mpv_ready` → `in_deadzone` (inverted); `_pre_switch_slider_value` → `flow_pending_progress` + `take_progress_target()`; `_pre_switch_chap_slider_value` → `flow_pending_chapter` + `take_chapter_target()`; `_chaps_dur_retried`, `_file_ready_deferred`, `_chaps_deferred` → same-named SM members.
+
+**Transitions:** `begin(pre_slider, pre_chap)` (IDLE→LOADING) in `_on_book_selected_from_library`; `library_revealed()` (LOADING→RESTORING) in `panels._on_library_hidden`; the two `take_*_target()` consumers drain captures back to IDLE.
+
+### Non-obvious decisions
+
+**Phase is *derived*, not stored.** `phase` is computed from `in_deadzone` + the two pre-value sub-flags, so there is no fragile terminal "switch done" transition: it returns to `IDLE` automatically once the deadzone ends and both `book_ready` handlers consume their captures. The post-consume animation/seek-settle window is carried by the retained orthogonal guards — exactly as before.
+
+**Scope boundary: switch-specific flags only.** The SM does NOT absorb the *orthogonal* guards — `player._is_seeking`/`_seek_target`, the slider-drag flags, `_flow_anim` running state, `mp3_seek_reload_pending`. Those fire for non-switch reasons (chapter nav, manual seeks, theme color animations, MP3 stop-and-load) and are the documented fixes for the Session 2 bugs. Absorbing them would extend the blast radius into chapter navigation and manual seeking. The SM *composes* with them: e.g. `_sync_progress_sliders` still reads `not is_seeking and not slider_animating and not self._switch.flow_pending_progress`.
+
+**`_mpv_ready` writes outside the selection path were deleted, not rerouted.** Init (`__init__`), startup-restore, and EOF-restart never call `begin()`, so phase is `IDLE` and `in_deadzone` is already `False` there — the old `_mpv_ready = True` writes were no-ops. Only the selection-path write became `begin()`.
+
+**The ghost fix is orthogonal and untouched.** The chapter-slider ghost (theme-fade overlay punch-through exposing a moving `animate_to()` fill) is fixed by the double-chain `when_animations_done` wait in `_apply_pending_cover_theme`, not by any of the six flags. The SM left it alone, so consolidation neither fixes nor breaks it.
+
+### Known limitation (pre-existing, not addressed)
+
+**Rapid-switch has no stale-book guard.** `_on_file_ready` operates entirely through `self.current_file` (set synchronously by `begin()`); there is no switch-generation token dropping a `book_ready` queued for an earlier selection. `take_progress_target()` is the identical read-and-null as the old code — same exposure, no better, no worse. The SM is the natural home for a future fix (a `generation` counter bumped in `begin()` and checked by each handler), but that is a behavior change and was deliberately left out of this consolidation.
+
+### Files touched
+- `book_switch.py` (new) — `BookSwitchState`, `SwitchPhase`.
+- `app.py` — instantiate `self._switch`; delete the six attrs + three non-selection `_mpv_ready` writes; rewrite `_on_book_selected_from_library`, `_on_file_ready`, `_on_file_loaded_populate_chapters`, `_drain_deferred_file_ready`, and the guard sites in `_update_ui_sync`/`_sync_progress_sliders`/`_sync_chapter_ui`/`_sync_persistence`.
+- `ui/panels.py` — `_on_library_hidden` uses `library_revealed()` + SM deferred flags.
+- `player.py` — **not** touched (seek lifecycle out of scope).
+
+---
+
 ## Session Summary — 2026-06-05 Session 2
 
 **Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
