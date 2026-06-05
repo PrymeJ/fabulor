@@ -804,7 +804,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         window background show through the now-transparent visual_area."""
         self._bg_suppressed = suppressed
         self.visual_area.setAutoFillBackground(not suppressed)
-        theme_name = self.theme_manager._current_theme_name
+        # Use the active display theme (may be a cover-art dict) rather than
+        # _current_theme_name (the named pool theme). Using _current_theme_name
+        # while a cover theme is active regenerates the stylesheet with pool
+        # colors, causing a visible flash to the non-cover theme on every book
+        # switch (apply_library_state always calls _set_bg_suppressed(False)).
+        theme_name = (getattr(self.theme_manager, '_active_display_theme', None)
+                      or self.theme_manager._current_theme_name)
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
         )
@@ -939,6 +945,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._pre_switch_slider_value = self.progress_slider.value()
         self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
         self._chaps_dur_retried = False
+        # Preemptively deactivate chapter UI before the new book loads. The chapter
+        # slider stays transparent until _on_file_loaded_populate_chapters confirms
+        # chapters exist. Without this, the slider background briefly flashes visible
+        # between book switches because _on_book_selected_from_library → apply_current_state
+        # → _set_bg_suppressed calls _apply_stylesheets which repolishes the slider's
+        # bg_color back to a theme color before _set_chapter_ui_active(False) runs.
+        # For the no-chapter → no-chapter case this produces:
+        #   no slider  →  slider bg visible (loading)  →  no slider  (wrong)
+        # With this call it stays invisible throughout.
+        self._set_chapter_ui_active(False)
         self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
@@ -986,13 +1002,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if pre is not None:
             self._pre_switch_slider_value = None
             dur = self.player.duration
+            if not dur and book_data and book_data.duration:
+                # Fall back to DB-stored duration when mpv hasn't cached it yet.
+                # Lets the animation run with a slightly-approximate target rather
+                # than skipping entirely and leaving the slider to snap.
+                dur = book_data.duration
             if new_progress == 0:
                 # Book starting from scratch — always animate to 0.
                 new_val = 0
             elif not dur:
-                # Duration not yet cached from mpv. Skip animation rather than
-                # flowing to 0%; _is_seeking guard holds the slider until the
-                # seek completes, then the timer snaps to the correct position.
+                # Duration still unavailable after DB fallback — skip animation.
+                # _is_seeking guard holds the slider until seek completes, then
+                # the timer snaps to the correct position.
                 new_val = None
             else:
                 new_val = int((new_progress / dur) * 1000)
