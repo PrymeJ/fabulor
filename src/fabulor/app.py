@@ -1073,6 +1073,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.seek_async(book_data.progress)
             else:
                 self.player.seek_async(book_data.progress + _CHAPTER_BOUNDARY_EPSILON)
+        else:
+            # No position to restore — clear the _is_seeking flag set by load_book.
+            # Without this, _on_time_pos_change won't auto-clear it (since _seek_target
+            # is None) and _sync_progress_sliders would never update the slider.
+            self.player.is_seeking = False
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)

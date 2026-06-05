@@ -109,9 +109,9 @@ class Player(QObject):
 
     def _on_time_pos_change(self, name, value):
         self._cached_time_pos = value
-        if self._is_seeking and value is not None:
+        if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
-            if self._seek_target is None or abs(global_value - self._seek_target) < 1.0:
+            if abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
         # VT: use self._chapter_list directly — it holds the virtual timeline chapter
@@ -338,6 +338,7 @@ class Player(QObject):
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
         self._cached_duration = None
+        self._seek_target = None
 
         QThreadPool.globalInstance().start(_ResolveWorker())
 
