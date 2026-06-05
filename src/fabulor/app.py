@@ -1308,7 +1308,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                                 == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                if not slider_animating and not self.player.is_seeking:
+                if not slider_animating and not self.player.is_seeking and self._pre_switch_slider_value is None:
                     self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
