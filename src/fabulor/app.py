@@ -816,6 +816,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
         )
+        # The setStyleSheet triggers Qt to call polish() on all child widgets, which
+        # re-reads the QSS and overrides the transparent bg_color/fill_color set by
+        # the preemptive _set_chapter_ui_active(False). Re-assert directly without
+        # the full _set_chapter_ui_active side effects (animation stop, cursor, labels).
+        if not getattr(self, '_chapter_ui_active', True) and hasattr(self, 'chapter_progress_slider'):
+            s = self.chapter_progress_slider
+            s.bg_color = QColor("transparent")
+            s.fill_color = QColor("transparent")
+            s.update()
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
@@ -953,12 +962,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # when take_chapter_target() later lifts the gate on the still-hidden slider.
             self.chapter_progress_slider.value() if self._chapter_ui_active else None,
         )
-        # Preemptively deactivate chapter UI before the new book loads. Keeps the
-        # slider transparent throughout the loading window. Without this,
-        # apply_current_state → _set_bg_suppressed repolishes the slider's bg_color
-        # to a theme color before _on_file_loaded_populate_chapters can call
-        # _set_chapter_ui_active(False), producing a visible background flash.
-        self._set_chapter_ui_active(False)
+
         self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
