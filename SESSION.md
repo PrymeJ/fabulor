@@ -1,3 +1,56 @@
+## Session Summary — 2026-06-05 Session 2
+
+**Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
+
+**Scope:** MainWindow builder extraction refactor; post-refactor regression fixes for book-switch animation pipeline (progress slider, chapter slider, chapter label, cover theme, chapter slider background).
+
+### What was built
+
+**Refactor: `ui/main_window_builders.py` + `ui/ui_helpers.py`** — extracted all 19 `_build_*` methods from `MainWindow` into free functions. Each takes `mw` and assigns widgets directly onto it; `_setup_ui` calls them in identical order. `COVER_AREA_HEIGHT`, `_load_svg_icon` moved to `ui_helpers.py` to avoid circular imports. `app.py` dropped ~1100 lines (3071 → ~1970). Batch A: player-view builders. Batch B: panel builders. Batch C: settings builders (intra-module calls become plain function calls, not `mw.`). All tests confirmed working before this session's regressions surfaced.
+
+### Post-refactor regressions fixed (all on the branch)
+
+**Progress slider 0% flash (root cause, `player.py`)** — `_on_time_pos_change` cleared `_is_seeking` on the first `time_pos=0` from the new file (the `_seek_target is None` branch). `_sync_progress_sliders` guards on `not is_seeking`, so the guard was instantly dropped, allowing the 200ms timer to write 0 to the slider before `_on_file_ready` ran. Fix: `_is_seeking` only clears when `_seek_target is not None AND abs(global - target) < 1.0`. `load_book` now resets `_seek_target = None` alongside `_cached_time_pos`/`_cached_duration`. `_restore_position` explicitly clears `is_seeking=False` for the no-progress case. See CLAUDE.md "DO NOT restore the `_seek_target is None` branch" rule.
+
+**Progress slider: dur=None race (`_on_file_ready`)** — when `_cached_duration` hasn't arrived yet, `not dur` was animating to 0 as a fallback. Fixed to set `new_val = None` and skip animation when dur unavailable (after DB fallback `book_data.duration` also fails). `new_progress == 0` is now a separate branch that always animates to 0 correctly.
+
+**Progress slider snap (DB duration fallback)** — `_on_file_ready` now falls back to `book_data.duration` (DB-stored) when `_cached_duration` is None. Lets animation run with an approximate target rather than skipping and snapping.
+
+**Chapter label/slider not appearing: `_chaps_dur_retried` retry** — `_on_file_loaded_populate_chapters` was calling `_set_chapter_ui_active(False)` when `dur=None`, making the chapter label transparent for the entire session. Fixed: if `dur=None`, schedule one 150ms retry (`_chaps_dur_retried` flag, reset in `_on_book_selected_from_library`) instead of deactivating. Retry proceeds normally when duration arrives.
+
+**Chapter label oscillation / VU-meter during seeks** — `_update_chapter_label_from_index` now gates on `is_seeking`. Intermediate `time_pos` events as mpv scans toward the seek target crossed chapter boundaries, firing `chapter_changed` on each, producing visible label oscillation on backward seeks. Gate suppresses all updates during seeking; the final `time_pos` event that settles the seek fires one clean update. Side effect: CUE-mode optimistic emit from `seek_async` is also suppressed, but the settle-time `time_pos` still updates within ~100ms.
+
+**Chapter label stuck on wrong book after seek** — the `is_seeking` gate blocks label updates but `_on_time_pos_change` still updates `_last_nonvt_chapter` during intermediate events. When the seek settled at the same chapter as the last tracked one, `curr == _last_nonvt_chapter` → no `chapter_changed` emit → label never updated. Fixed in `player.py`: reset `_last_nonvt_chapter = -1` and `_last_vt_chapter = -1` when `_is_seeking` clears, guaranteeing one final emit.
+
+**Chapter slider timer jitter after seek** — after the seek completed, the 200ms timer wrote intermediate positions to the chapter slider. Added `is_seeking` guard to `_sync_chapter_ui` (now mirrors `_sync_progress_sliders`). Timer self-corrects within one 200ms tick after seek settles.
+
+**Chapter slider background flash (no-chapter books)** — the slider background area briefly appeared during book switches. Root cause: `_on_book_selected_from_library → apply_current_state → _set_bg_suppressed` repolished the chapter slider's `bg_color` back to a theme color before `_on_file_loaded_populate_chapters` called `_set_chapter_ui_active(False)`. Fixed: preemptive `_set_chapter_ui_active(False)` in `_on_book_selected_from_library` at selection time. Slider stays transparent throughout; `_on_file_loaded_populate_chapters` calls `_set_chapter_ui_active(True)` only when chapters are confirmed.
+
+**Chapter slider bg flash from running color animations** — if a theme fade started while the book had chapters, `QPropertyAnimation` instances on `bg_color`/`fill_color` targeted non-transparent colors. When switching to a no-chapter book, `_set_chapter_ui_active(False)` set `bg_color = transparent`, but the running animation immediately overrode it on the next frame. Fixed: `_set_chapter_ui_active(False)` now stops any in-flight `_slider_anims` for the chapter slider before setting transparent.
+
+**Cover art theme flash to pool theme** — `_set_bg_suppressed` was regenerating the `content_container` stylesheet using `_current_theme_name` (the named pool theme) instead of `_active_display_theme` (which holds the cover art dict when a cover theme is active). `apply_library_state` calls `_set_bg_suppressed(False)` on every book switch, causing a brief flash to the pool theme between every cover-art-theme transition. Fixed: `_set_bg_suppressed` now uses `_active_display_theme or _current_theme_name`.
+
+### Reverted / known remaining issues
+
+**Chapter slider value animation reverted** — the original `_on_file_loaded_populate_chapters` code used `animate_to(new_chap_val, old_value=pre_chap)` for a "flow" animation on the chapter slider during book switches. This was NOT introduced this session (it was pre-existing). However testing confirmed it causes ghosting: the theme overlay punch-through exposes the chapter slider widget, and the moving slider value creates a visible ghost against the static overlay screenshot. Reverted to `setValue(new_chap_val)`. The authoritative position computation (chapter list walk against saved progress) was retained; only the animation call was removed. The `_pre_switch_chap_slider_value` flag and its `_sync_chapter_ui` guard were removed with it.
+
+**Progress slider still occasionally snaps** — the `dur=None` path where neither `_cached_duration` nor `book_data.duration` is available. Rare but not eliminated. The DB fallback covers most cases.
+
+### What to watch for if reverting the refactor
+
+If the branch is reverted to the pre-refactor state on `main`, the following fixes should be cherry-picked or manually applied (they are independent of the extraction):
+1. `player.py` `_on_time_pos_change` — `_seek_target is None` branch fix
+2. `player.py` `_last_nonvt_chapter`/`_last_vt_chapter` reset on seek clear
+3. `app.py` `_on_file_ready` — `dur=None` skip instead of animate-to-0
+4. `app.py` `_on_file_loaded_populate_chapters` — `_chaps_dur_retried` retry, preemptive `_set_chapter_ui_active(False)`, authoritative `new_chap_val` computation, and removal of `animate_to`
+5. `app.py` `_update_chapter_label_from_index` — `is_seeking` gate
+6. `app.py` `_sync_chapter_ui` — `is_seeking` guard
+7. `app.py` `_set_chapter_ui_active(False)` — stop running color animations
+8. `app.py` `_set_bg_suppressed` — use `_active_display_theme` not `_current_theme_name`
+9. `app.py` preemptive `_set_chapter_ui_active(False)` in `_on_book_selected_from_library`
+
+---
+
 ## Session Summary — 2026-06-05 Session 1
 
 **Scope:** Library sort view — Progress and Finished sort keys, dynamic sort combo, sort direction defaults, null-last sorting.

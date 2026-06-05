@@ -1,4 +1,44 @@
 
+## DO NOT animate the chapter progress slider value — 2026-06-05
+
+`animate_to()` on `chapter_progress_slider` causes ghosting during theme fades. The overlay punch-through exposes the live slider widget; if the slider value is animating, the moving fill creates a visible ghost against the static overlay screenshot. Confirmed during refactor session.
+
+**What is safe:** color animation only (`bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation` in `theme_manager.py`). Color transitions happen inside the widget's paint rect with no position change, so no ghost is produced.
+
+**What causes ghosting:** any `animate_to()` call while a theme fade overlay with a punch-through hole is active. The chapter slider has a permanent punch-through hole when `_chapter_ui_active = True`. Any book switch (which may trigger a cover-art theme fade shortly after) overlaps with value animation.
+
+**Current state:** `_on_file_loaded_populate_chapters` uses `setValue(new_chap_val)` only — no `animate_to`. Authoritative position computation (chapter list walk against `book_data.progress`) is retained for the `setValue` target.
+
+See SESSION.md 2026-06-05 Session 2 "Reverted" section and NOTES.md 2026-05-30 theme fade entry.
+
+---
+
+## DO NOT animate the progress slider value during theme fades — 2026-06-05
+
+Same root cause as the chapter slider note above. The progress slider IS animated via `animate_to()` during book switches (the "flow" animation). This is safe ONLY because the cover-art theme fade is deferred until `progress_slider.when_animations_done()` completes — so flow animation and theme fade never overlap on the progress slider. This ordering is enforced by `_apply_pending_cover_theme`.
+
+If any code path ever triggers a theme fade while the progress slider is mid-animation, ghosting will appear on the progress slider too. The invariant: theme fade must not start while `progress_slider._flow_anim` is running.
+
+---
+
+## _set_bg_suppressed must use _active_display_theme, not _current_theme_name — 2026-06-05
+
+`_set_bg_suppressed` regenerates `content_container`'s stylesheet by calling `get_player_stylesheet(theme_name, suppress_bg_image=...)`. Using `_current_theme_name` (the named pool theme) instead of `_active_display_theme` (which holds the cover dict when a cover theme is active) causes a one-frame flash to the pool theme on every book switch, because `apply_library_state` calls `_set_bg_suppressed(False)` on each switch.
+
+Fix: `theme_name = getattr(tm, '_active_display_theme', None) or tm._current_theme_name`.
+
+---
+
+## Chapter slider background: preemptive _set_chapter_ui_active(False) at book switch — 2026-06-05
+
+The chapter slider background becomes briefly visible during book switches. Root cause: `apply_current_state → apply_library_state → _set_bg_suppressed` repolishes child widgets (via `content_container.setStyleSheet`) resetting the chapter slider's `bg_color` from transparent back to the theme color, before `_on_file_loaded_populate_chapters` calls `_set_chapter_ui_active(False)`.
+
+Fix: call `_set_chapter_ui_active(False)` preemptively in `_on_book_selected_from_library` at selection time. The slider stays transparent throughout the loading window. `_on_file_loaded_populate_chapters` restores it to active only when chapters are confirmed.
+
+Also: `_set_chapter_ui_active(False)` must stop any running `bg_color`/`fill_color` QPropertyAnimations on the chapter slider before setting transparent. A theme fade that started while the book had chapters creates color animations targeting non-transparent values; they override the transparent assignment on the next animation frame.
+
+---
+
 ## Library sort: computed keys must not be passed to get_all_books() — 2026-06-05
 
 `"finished"` is computed in-memory by `BookModel` from `_finished_dates`; it is not a DB column and is not in `db._ALLOWED_SORT_COLUMNS`. Any code path that passes a `SORT_KEY_MAP` value to `get_all_books()` must guard against computed keys:
