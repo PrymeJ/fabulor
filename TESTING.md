@@ -165,6 +165,47 @@
 - [ ] VT file with file < 40 MB: no stop-and-load triggered regardless of seek distance
 - [ ] VT file switch (seek crossing file boundary): _current_vt_index, _file_offset, _is_vt_file_switch unchanged by stop-and-load path
 
+## Library sort views
+
+### Sort combo population
+- [ ] Fresh install (no config): combo shows Title only (no Progress or Finished), direction is ascending (↑)
+- [ ] Library with progress books: Progress appears at top of combo
+- [ ] Library with no progress books: Progress does not appear
+- [ ] Library with finished books: Finished appears at bottom of combo
+- [ ] Library with no finished books: Finished does not appear
+- [ ] After deleting the last progress book's history: Progress disappears from combo on next refresh, combo falls back to Title with ascending direction
+- [ ] After deleting the last finished book's history via book detail: Finished disappears immediately (history_deleted wires library refresh)
+
+### Sort direction defaults and persistence
+- [ ] Switch to each sort key in turn — verify default direction: Title ↑, Author ↑, Recent ↓, Duration ↓, Year ↓, Progress ↓, Finished ↓
+- [ ] Toggle direction on Title (↑→↓), close app, reopen — Title sort opens with ↓
+- [ ] Toggle direction on Progress (↓→↑), switch to Title (↓ default), switch back to Progress — Progress shows ↑ (persisted from toggle, not reset by the switch)
+- [ ] Close app on Progress ↑, reopen — Progress ↑ restored
+- [ ] Close app on Year ↓ (default), reopen — Year ↓ restored
+- [ ] Close app on Year ↑ (toggled), reopen — Year ↑ restored
+
+### Sort correctness
+- [ ] Title ascending: A→Z, books with empty/unknown title appear at end
+- [ ] Author ascending: A→Z, books with empty/unknown author appear at end
+- [ ] Year descending: newest first, books with no year appear at end
+- [ ] Year ascending: oldest first, books with no year appear at end
+- [ ] Duration descending: longest first
+- [ ] Recent: shows only books with progress, most recently played first
+- [ ] Progress: shows only books with progress, highest percentage first; books with no progress do not appear
+- [ ] Finished: shows only finished books, most recently finished first; unfinished books do not appear
+- [ ] Null-last in all directions: books missing the active sort field always appear at the end regardless of ascending/descending
+
+### Finished sort key
+- [ ] Finishing a book (reaching EOF) causes it to appear under Finished sort on next library open/refresh
+- [ ] Book finished multiple times: sort order reflects most recent finish date, not first
+- [ ] Finished book deleted from history via book detail: disappears from Finished view immediately
+
+### Search interaction with sort views
+- [ ] Text search while on Progress sort: filters within in-progress books only (not all books)
+- [ ] Text search while on Finished sort: filters within finished books only
+- [ ] Text search while on Recent sort: filters within in-progress books only
+- [ ] #tag search while on Finished sort: filters finished books by tag
+
 ## Near-EOF seek guard (non-VT: M4B, single MP3, CUE, FLAC)
 
 - [ ] Skip forward (>>) landing within 2s of book end: returns early, no hang, mpv plays out naturally to EOF

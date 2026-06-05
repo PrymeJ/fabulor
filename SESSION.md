@@ -1,3 +1,28 @@
+## Session Summary — 2026-06-05 Session 1
+
+**Scope:** Library sort view — Progress and Finished sort keys, dynamic sort combo, sort direction defaults, null-last sorting.
+
+### What was built
+
+**"Progress" and "Finished" sort keys** — two new conditional sort options added to the library panel sort combo. "Progress" appears only when at least one visible book has `progress > 1.0`; "Finished" appears only when at least one visible book has a `finished` event in `book_events`. Checked via `db.has_books_with_progress()` and `db.has_finished_books()` on each `refresh()`. `db.get_finished_book_data()` returns `{book_id: datetime}` of the most recent finished event per book, stored as `BookModel._finished_dates`.
+
+**Dynamic sort combo** (`_rebuild_sort_combo`) — replaces the static 6-item population in `_setup_ui`. On first call reads sort key and direction from config (via `_sort_initialized` flag); subsequent calls preserve current state. When a conditional key is removed (e.g. last progress book deleted), falls back to Title and applies Title's default direction, saving both to config.
+
+**Sort direction defaults** (`_SORT_DIRECTION_DEFAULTS`) — class-level dict mapping each key to its default ascending bool. `_on_sort_changed` applies the default for the new key and saves key+direction to config immediately. `_toggle_sort_direction` saves only the direction. Config always holds exactly what's shown.
+
+**Null-last sorting** — `effective_val(b)` replaces the old `_is_missing` predicate and the `None`-fallback inside `sort_key`. Returns the actual sortable value or `None` for: computed fields (`finished` → checks `_finished_dates`, not `Book`), progress/last_played below threshold, `None` DB values, and empty/whitespace strings. `have/missing` split is now universal across all sort fields — books with no value for the active field always appear at the end regardless of direction.
+
+**`history_deleted` wired to library refresh** — `BookDetailPanel.history_deleted` now also connects to `LibraryPanel.refresh` so the Finished key disappears immediately when a user deletes all history for the last finished book.
+
+### Non-obvious decisions
+
+- `"finished"` is a computed sort key, not a DB column. `start_idle_preload` and any other path passing sort keys to `get_all_books` falls back to `"title"` when the key is not in `db._ALLOWED_SORT_COLUMNS`.
+- `books.finished_at` exists on the schema but is never written — `_finished_dates` from `book_events` is the sole source of truth for Finished sort/filter. `finished_at` is inert.
+- `effective_val` must handle `"finished"` via `_finished_dates.get(b.id)` — `getattr(b, "finished", None)` silently returns `None` for every book (field doesn't exist on `Book`), which would dump the entire Finished view into `missing`.
+- Sort direction and sort key are always saved to config together as a pair in `_on_sort_changed`. Saving only the key (as in a previous iteration) caused wrong direction on next startup if the key's default differed from the saved direction.
+
+---
+
 ## Session Summary — 2026-06-04 Session 3
 
 **Scope:** Period navigation UX improvements in stats_panel.py — right-click jump-to-boundary on nav buttons, mouse wheel navigation on period headers, and a user-configurable scroll acceleration setting.

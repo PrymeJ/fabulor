@@ -1,4 +1,37 @@
 
+## Library sort: computed keys must not be passed to get_all_books() — 2026-06-05
+
+`"finished"` is computed in-memory by `BookModel` from `_finished_dates`; it is not a DB column and is not in `db._ALLOWED_SORT_COLUMNS`. Any code path that passes a `SORT_KEY_MAP` value to `get_all_books()` must guard against computed keys:
+
+```python
+if sort_key not in self.db._ALLOWED_SORT_COLUMNS:
+    sort_key = "title"
+```
+
+Currently applies to `start_idle_preload`. Any future method with the same shape needs the same guard.
+
+---
+
+## _finished_dates is the source of truth for Finished sort/filter — 2026-06-05
+
+`BookModel._finished_dates: dict[int, datetime]` is populated via `db.get_finished_book_data()` in `LibraryPanel.refresh()`. It is the sole authority for whether a book is "finished" and when it was last finished.
+
+`books.finished_at` exists on the schema but is **never written** anywhere in the codebase. Do not read it for Finished-related logic. Either implement the write or drop the column in a future migration — currently harmless but confusing.
+
+The `effective_val` / `have-missing` split in `_apply_filter_and_sort` handles `"finished"` via `self._finished_dates.get(b.id)` — **not** `getattr(b, "finished", None)`. The field does not exist on `Book`; `getattr` would return `None` for every book, silently dumping the entire Finished view into `missing`.
+
+---
+
+## Sort key and direction must be saved to config together — 2026-06-05
+
+`_on_sort_changed` saves both `sort_key` and `sort_ascending` to config whenever the user switches sort keys. `_toggle_sort_direction` saves only the direction. This means config always reflects exactly what's shown.
+
+Saving the key without the direction (or vice versa) produces wrong state on next startup: if the key's default direction differs from the last-saved direction, restoring only the key applies the default instead of the user's last state.
+
+When `_rebuild_sort_combo` falls back to Title (because a conditional key like Progress/Finished is no longer valid), it applies Title's default direction and saves both key and direction to config immediately — not the removed key's direction.
+
+---
+
 ## Finished-books carousel cover loading (stats_panel.py) — 2026-06-04
 
 `FinishedBookThumb._on_cover_loaded` now writes to `_cover_cache[self._book_id]` before
