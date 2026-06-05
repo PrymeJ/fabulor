@@ -962,7 +962,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # when take_chapter_target() later lifts the gate on the still-hidden slider.
             self.chapter_progress_slider.value() if self._chapter_ui_active else None,
         )
-
         self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
@@ -1007,23 +1006,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
         pre = self._switch.take_progress_target()
-        if pre is not None:
-            dur = self.player.duration
-            if new_progress == 0:
-                # Book starting from scratch — always animate to 0.
-                new_val = 0
-            elif not dur:
-                # Duration still unavailable after DB fallback — skip animation.
-                # _is_seeking guard holds the slider until seek completes, then
-                # the timer snaps to the correct position.
-                new_val = None
+        pre = pre if pre is not None else 0  # startup/EOF-restart: animate from 0
+        dur = self.player.duration or (book_data.duration if book_data else None)
+        if new_progress == 0:
+            # Book starting from scratch — always animate to 0.
+            new_val = 0
+        elif not dur:
+            # Duration still unavailable after DB fallback — skip animation.
+            # _is_seeking guard holds the slider until seek completes, then
+            # the timer snaps to the correct position.
+            new_val = None
+        else:
+            new_val = int((new_progress / dur) * 1000)
+        if new_val is not None:
+            if pre != new_val:
+                self.progress_slider.animate_to(new_val, old_value=pre)
             else:
-                new_val = int((new_progress / dur) * 1000)
-            if new_val is not None:
-                if pre != new_val:
-                    self.progress_slider.animate_to(new_val, old_value=pre)
-                else:
-                    self.progress_slider.setValue(new_val)
+                self.progress_slider.setValue(new_val)
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
@@ -1079,7 +1078,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     start = chap_list[curr].get('time', 0)
                     end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
                     cd = end - start
-                    c_elapsed = max(0, new_progress - start)
+                    seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
+                    c_elapsed = max(0, (new_progress + seek_offset) - start)
                     new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
                 else:
                     new_chap_val = 0
