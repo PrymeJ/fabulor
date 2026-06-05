@@ -1,3 +1,41 @@
+## Session Summary — 2026-06-05 Session 4
+
+**Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
+
+**Scope:** Book-switch transition visual fixes — chapterless background flash, chaptered→chaptered chapter slider flow, progress slider 0% regression.
+
+### What was fixed
+
+**Chapterless→chapterless background flash** — `_set_bg_suppressed` calls `content_container.setStyleSheet(...)`, which triggers Qt to call `polish()` on all child widgets. `polish()` re-reads the QSS and restores the chapter slider's `bg_color`/`fill_color` from the stylesheet, overriding the transparent values set by the earlier `_set_chapter_ui_active(False)`. Fix: lightweight re-assert directly after `setStyleSheet` in `_set_bg_suppressed`, guarded by `not _chapter_ui_active`:
+
+```python
+if not getattr(self, '_chapter_ui_active', True) and hasattr(self, 'chapter_progress_slider'):
+    s = self.chapter_progress_slider
+    s.bg_color = QColor("transparent")
+    s.fill_color = QColor("transparent")
+    s.update()
+```
+
+This is intentionally NOT a call to `_set_chapter_ui_active()` — that carries side effects (animation stops, cursor, label stylesheet) that are wrong at this call site.
+
+**Chaptered→chaptered chapter slider flow** — the unconditional preemptive `_set_chapter_ui_active(False)` in `_on_book_selected_from_library` was hiding the chapter slider before load regardless of whether the outgoing book had chapters. For chaptered→chaptered, this killed the flow animation: the slider would clear, blink, then animate from the old position instead of holding it visibly and flowing cleanly to the new one. Removing the unconditional call restores the correct behavior. The `_set_bg_suppressed` guard handles chapterless books; chaptered books stay visible and flow.
+
+**`_switch.begin()` pre_chap=None for chapterless outgoing books** — capturing the slider value when `_chapter_ui_active` is False armed `flow_pending_chapter` unnecessarily. Now `None` is passed, keeping `flow_pending_chapter` False and `_sync_chapter_ui` ungated throughout.
+
+**Progress slider 0% flash gone** — the 200ms timer no longer writes 0 during the pre-ready window. Occasional jump on progress slider remains — pre-existing race, not zeroing.
+
+### Invariants established
+
+`_set_bg_suppressed` must re-assert transparency after `setStyleSheet`. Qt's repolish overwrites custom color properties on child widgets. The lightweight re-assert is load-bearing — remove it and the chapterless flash returns.
+
+### Remaining known issues
+
+- Progress slider occasional jump — intermittent race, pre-existing.
+- Chapterless↔chaptered transitions are abrupt (slider appears/disappears without animation) — cosmetic, deferred.
+- DB-first progress value causes drift visible in short chapters (≤15s) — deferred.
+
+---
+
 ## Session Summary — 2026-06-05 Session 3
 
 **Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
