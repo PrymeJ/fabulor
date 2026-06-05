@@ -38,6 +38,7 @@ from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder
+from .book_switch import BookSwitchState
 
 # Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
 # main_window_builders module can use them without importing app.py).
@@ -307,10 +308,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             parent=self,
         )
 
-        self._mpv_ready = True
-        self._pre_switch_slider_value = None
-        self._pre_switch_chap_slider_value = None
-        self._chaps_dur_retried = False
+        # Single authority for the book-switch transition lifecycle. Owns the
+        # switch-specific flags (deadzone, pre-switch slider captures, duration-retry,
+        # deferred-handler flags) that were previously scattered as raw attributes.
+        self._switch = BookSwitchState()
 
         self._setup_ui()
 
@@ -373,7 +374,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         is_valid = any(last_book.startswith(loc if loc.endswith(os.sep) else loc + os.sep) for loc in locations)
         if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
-            self._mpv_ready = True
+            # No switch SM involvement at startup: phase stays IDLE (in_deadzone False),
+            # so there is no deadzone to clear here.
             self.player.load_book(self.current_file)
             self.player.ungate_play()
             self.library_panel.set_playing_path(self.current_file)
@@ -941,10 +943,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._save_current_progress()
         self._paused_time = None
-        self._mpv_ready = False
-        self._pre_switch_slider_value = self.progress_slider.value()
-        self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
-        self._chaps_dur_retried = False
+        # Enter the switch lifecycle: capture the current slider values as flow-animation
+        # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
+        self._switch.begin(
+            self.progress_slider.value(),
+            self.chapter_progress_slider.value(),
+        )
         # Preemptively deactivate chapter UI before the new book loads. Keeps the
         # slider transparent throughout the loading window. Without this,
         # apply_current_state → _set_bg_suppressed repolishes the slider's bg_color
@@ -980,9 +984,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         if getattr(self.library_panel, '_is_animating', False):
-            self._file_ready_deferred = True
+            self._switch.mark_file_ready_deferred()
             return
-        self._file_ready_deferred = False
+        self._switch.clear_file_ready_deferred()
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
             return
@@ -994,9 +998,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
-        pre = getattr(self, '_pre_switch_slider_value', None)
+        pre = self._switch.take_progress_target()
         if pre is not None:
-            self._pre_switch_slider_value = None
             dur = self.player.duration
             if new_progress == 0:
                 # Book starting from scratch — always animate to 0.
@@ -1016,22 +1019,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
-            self._chaps_deferred = True
+            self._switch.mark_chaps_deferred()
             return
-        self._chaps_deferred = False
+        self._switch.clear_chaps_deferred()
         try:
             dur = self.player.duration
             if not dur:
                 # Duration not yet cached from mpv. Schedule one retry rather than
                 # calling _set_chapter_ui_active(False) prematurely.
-                if not self._chaps_dur_retried:
-                    self._chaps_dur_retried = True
+                if not self._switch.chaps_dur_retried:
+                    self._switch.chaps_dur_retried = True
                     QTimer.singleShot(150, self._on_file_loaded_populate_chapters)
                     return
                 # Second attempt: dur still unavailable — fall through to deactivate.
-                self._chaps_dur_retried = False
+                self._switch.chaps_dur_retried = False
             else:
-                self._chaps_dur_retried = False
+                self._switch.chaps_dur_retried = False
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
@@ -1046,9 +1049,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
-        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
+        pre_chap = self._switch.take_chapter_target()
         if pre_chap is not None:
-            self._pre_switch_chap_slider_value = None
             book_data = getattr(self, '_current_book', None)
             new_progress = book_data.progress if book_data else 0
             if new_progress == 0:
@@ -1079,9 +1081,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.chapter_progress_slider.setValue(new_chap_val)
 
     def _drain_deferred_file_ready(self):
-        if getattr(self, '_file_ready_deferred', False):
+        if self._switch.file_ready_deferred:
             self._on_file_ready()
-        if getattr(self, '_chaps_deferred', False):
+        if self._switch.chaps_deferred:
             self._on_file_loaded_populate_chapters()
         self._apply_pending_cover_theme()
 
@@ -1266,7 +1268,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             else:
                 if is_paused:
-                    if mpv_pos is not None and getattr(self, '_mpv_ready', True):
+                    if mpv_pos is not None and not self._switch.in_deadzone:
                         if self._paused_time is None or self.player.is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
                             self._paused_time = mpv_pos
                     # if mpv_pos is None or mpv not yet ready, keep _paused_time as-is
@@ -1388,7 +1390,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                                 == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                if not slider_animating and not self.player.is_seeking and self._pre_switch_slider_value is None:
+                if not slider_animating and not self.player.is_seeking and not self._switch.flow_pending_progress:
                     self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
@@ -1408,7 +1410,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # fires between the pre_chap capture and the animate_to() call, writing the
         # new file's chapter-at-pos-0 to the slider and producing a visible jump
         # before the flow animation starts.
-        if self._pre_switch_chap_slider_value is not None:
+        if self._switch.flow_pending_chapter:
             return
         # Guard: skip during seeks. Intermediate time_pos values would cause the timer
         # to write a wrong chapter position to the slider (and wrong elapsed/duration
@@ -1446,7 +1448,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:
-            if not self.is_slider_dragging and getattr(self, '_mpv_ready', True):
+            if not self.is_slider_dragging and not self._switch.in_deadzone:
                 percent = (pos / dur) * 100
                 # Update config every 0.1% (live cache)
                 new_pct = int(percent * 10)
@@ -1884,7 +1886,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.session_recorder.close()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
-            self._mpv_ready = True
+            # EOF-restart reloads the same book with no library animation and no
+            # switch begin(); phase is IDLE (in_deadzone False) so no deadzone to clear.
             self.player.load_book(self.current_file, start_paused=False)
             self.player.ungate_play()
             return
