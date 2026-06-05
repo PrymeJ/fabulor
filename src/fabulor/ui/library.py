@@ -206,11 +206,19 @@ class LibraryPanel(QFrame):
             self.sort_combo.addItem(display, key)
 
         idx = self.sort_combo.findData(current_key)
-        self.sort_combo.setCurrentIndex(idx if idx != -1 else self.sort_combo.findData("Title"))
-
-        if first_call:
-            self._sort_ascending = self.config.get_library_sort_ascending()
+        if idx == -1:
+            idx = self.sort_combo.findData("Title")
+            self.sort_combo.setCurrentIndex(idx)
+            fallback_key = self.sort_combo.currentData()
+            self._sort_ascending = self.__class__._SORT_DIRECTION_DEFAULTS.get(fallback_key, True)
             self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
+            self.config.set_library_sort_key(fallback_key)
+            self.config.set_library_sort_ascending(self._sort_ascending)
+        else:
+            self.sort_combo.setCurrentIndex(idx)
+            if first_call:
+                self._sort_ascending = self.config.get_library_sort_ascending()
+                self.sort_dir_btn.setText("↑" if self._sort_ascending else "↓")
 
         self.sort_combo.blockSignals(False)
 
