@@ -310,6 +310,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._mpv_ready = True
         self._pre_switch_slider_value = None
         self._pre_switch_chap_slider_value = None
+        self._chaps_dur_retried = False
 
         self._setup_ui()
 
@@ -925,6 +926,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._mpv_ready = False
         self._pre_switch_slider_value = self.progress_slider.value()
         self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
+        self._chaps_dur_retried = False
         self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
@@ -972,14 +974,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if pre is not None:
             self._pre_switch_slider_value = None
             dur = self.player.duration
-            if new_progress == 0 or not dur:
+            if new_progress == 0:
+                # Book starting from scratch — always animate to 0.
                 new_val = 0
+            elif not dur:
+                # Duration not yet cached from mpv. Skip animation rather than
+                # flowing to 0%; _is_seeking guard holds the slider until the
+                # seek completes, then the timer snaps to the correct position.
+                new_val = None
             else:
                 new_val = int((new_progress / dur) * 1000)
-            if pre != new_val:
-                self.progress_slider.animate_to(new_val, old_value=pre)
-            else:
-                self.progress_slider.setValue(new_val)
+            if new_val is not None:
+                if pre != new_val:
+                    self.progress_slider.animate_to(new_val, old_value=pre)
+                else:
+                    self.progress_slider.setValue(new_val)
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
@@ -988,6 +997,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._chaps_deferred = False
         try:
             dur = self.player.duration
+            if not dur:
+                # Duration not yet cached from mpv. Schedule one retry rather than
+                # calling _set_chapter_ui_active(False) prematurely. Pre-switch
+                # slider flag is intentionally NOT consumed here so the retry can
+                # still set up the chapter flow animation.
+                if not self._chaps_dur_retried:
+                    self._chaps_dur_retried = True
+                    QTimer.singleShot(150, self._on_file_loaded_populate_chapters)
+                    return
+                # Second attempt: dur still unavailable — fall through to deactivate.
+                self._chaps_dur_retried = False
+            else:
+                self._chaps_dur_retried = False
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
@@ -1007,7 +1029,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pre_switch_chap_slider_value = None
             book_data = getattr(self, '_current_book', None)
             new_progress = book_data.progress if book_data else 0
-            new_chap_val = 0 if new_progress == 0 else self.chapter_progress_slider.value()
+            if new_progress == 0:
+                new_chap_val = 0
+            else:
+                # Compute from authoritative data (chapter list + saved progress)
+                # rather than reading the stale slider value. At this point in the
+                # event loop the timer hasn't run yet, so slider.value() still holds
+                # the previous book's chapter position — same as pre_chap — causing
+                # pre_chap == new_chap_val and killing the flow animation.
+                chap_list = self.player.chapter_list or []
+                chap_dur_val = self.player.duration or 0
+                if chap_list and chap_dur_val:
+                    curr = 0
+                    for i, chap in enumerate(chap_list):
+                        if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
+                            curr = i
+                    start = chap_list[curr].get('time', 0)
+                    end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
+                    cd = end - start
+                    c_elapsed = max(0, new_progress - start)
+                    new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
+                else:
+                    new_chap_val = 0
             if pre_chap != new_chap_val:
                 self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
             else:
