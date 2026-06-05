@@ -4,14 +4,13 @@
 import os
 import re
 from PySide6.QtWidgets import (
-    QLineEdit, QFileDialog, QListWidget,
-    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect,
-    QScrollArea, QFrame, QTabWidget
+    QFileDialog,
+    QWidget, QPushButton, QVBoxLayout,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QSize, QByteArray, QElapsedTimer
+    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -19,11 +18,8 @@ from PySide6.QtSvg import QSvgRenderer
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
 from .themes import THEMES, _resolve_theme, get_player_stylesheet
-from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
-from .ui.controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.speed_controls import SpeedControlsPanel
-from .ui.audio_controls import AudioSettingsTab
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
@@ -34,7 +30,7 @@ from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
-from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
+from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
 from .ui import main_window_builders as builders
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
@@ -47,19 +43,6 @@ from .session_recorder import SessionRecorder
 # main_window_builders module can use them without importing app.py).
 # Re-imported here so existing references in this module keep working unchanged.
 from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon
-
-class _PathListEventFilter(QObject):
-    def __init__(self, list_widget):
-        super().__init__(list_widget)
-        self.list_widget = list_widget
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            index = self.list_widget.indexAt(event.pos())
-            if not index.isValid():
-                self.list_widget.clearSelection()
-        return super().eventFilter(obj, event)
-
 
 class UIInterface:
     def __init__(self, main):
@@ -500,7 +483,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         builders.build_sidebar(self)
         builders.build_library_panel(self)
-        self._build_settings_panel()
+        builders.build_settings_panel(self)
         builders.build_stats_panel(self)
         builders.build_tags_panel(self)
 
@@ -558,410 +541,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
 
         QTimer.singleShot(4000, self.library_panel.start_idle_preload)
-
-    def _build_settings_panel(self):
-        self.settings_panel = QWidget(self)
-        self.settings_panel.setObjectName("settings_panel")
-        settings_layout = QVBoxLayout(self.settings_panel)
-        settings_layout.setContentsMargins(5, 5, 5, 5)
-
-        self.tabs = QTabWidget()
-        self.tabs.setObjectName("settings_tabs")
-
-        self._build_themes_tab()
-        self._build_appearance_tab()
-        self._build_library_tab()
-        self._build_audio_tab()
-        self._build_controls_tab()
-
-        settings_layout.addWidget(self.tabs)
-        self.settings_panel.hide()
-        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
-        self.settings_panel_animation.setDuration(300)
-        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_themes_tab(self):
-        themes_tab = QWidget()
-        themes_layout = QVBoxLayout(themes_tab)
-        themes_layout.setContentsMargins(10, 0, 10, 10)
-
-        # Cover art based theme
-        cover_header = QLabel("Cover art based theme")
-        cover_header.setObjectName("settings_header")
-        themes_layout.addWidget(cover_header)
-
-        cover_row = QHBoxLayout()
-        cover_row.setSpacing(4)
-        cover_row.setContentsMargins(0, 0, 0, 0)
-        self.theme_manager.cover_art_mode_widgets = {}
-        for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
-            self.theme_manager.cover_art_mode_widgets[mode] = btn
-            cover_row.addWidget(btn)
-        cover_row.addStretch()
-        themes_layout.addLayout(cover_row)
-
-        # Pool + controls container (hidden when Exclusive is active)
-        self.theme_manager.pool_container = QWidget()
-        pool_layout = QVBoxLayout(self.theme_manager.pool_container)
-        pool_layout.setContentsMargins(0, 0, 0, 0)
-        pool_layout.setSpacing(0)
-
-        # Theme pool
-        pool_header = QLabel("Theme pool")
-        pool_header.setObjectName("settings_header")
-        pool_layout.addWidget(pool_header)
-
-        # Cover art based theme entry — always present, state reflects mode and cover availability
-        cover_pool_row = QHBoxLayout()
-        cover_pool_row.setContentsMargins(0, 0, 0, 0)
-        cover_pool_row.setSpacing(0)
-        cover_pool_btn = ThemeItem("Cover art based theme")
-        cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        cover_pool_btn.clicked.connect(lambda: self.theme_manager._on_cover_pool_btn_clicked())
-        cover_pool_btn.rightClicked.connect(lambda: self.theme_manager._on_cover_pool_btn_right_clicked())
-        cover_pool_btn.hovered.connect(lambda _: self.theme_manager._on_cover_pool_btn_hovered())
-        self.theme_manager.cover_pool_btn = cover_pool_btn
-        cover_pool_row.addWidget(cover_pool_btn)
-        pool_layout.addLayout(cover_pool_row)
-        self.theme_manager.theme_widgets = {}
-
-        limit = max(230, self.settings_panel.width() - 20)
-        for row_items in self.theme_manager.get_packed_themes(limit=limit):
-            row_layout = QHBoxLayout()
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(0)
-
-            for item in row_items:
-                btn = ThemeItem(item['name'])
-                btn.setMinimumWidth(item['width'])
-                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
-                btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
-                btn.hovered.connect(self.theme_manager._on_theme_hovered)
-                self.theme_manager.theme_widgets[item['name']] = btn
-                row_layout.addWidget(btn, item['width'])
-
-            if len(row_items) == 1:
-                row_layout.addStretch()
-
-            pool_layout.addLayout(row_layout)
-
-        themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
-
-        # Add/Remove All Buttons
-        bulk_layout = QHBoxLayout()
-        bulk_layout.setSpacing(10)
-        self.add_all_btn = QPushButton("Add all")
-        self.add_all_btn.setObjectName("theme_add_all")
-        self.add_all_btn.setFixedWidth(80)
-        self.remove_all_btn = QPushButton("Remove all")
-        self.remove_all_btn.setObjectName("theme_remove_all")
-        self.remove_all_btn.setFixedWidth(80)
-        self.change_now_btn = QPushButton("Change now")
-        self.change_now_btn.setObjectName("theme_change_now")
-
-        self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
-        self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
-        self.change_now_btn.clicked.connect(lambda: self.theme_manager._do_rotate(user_initiated=True))
-
-        bulk_layout.addWidget(self.add_all_btn)
-        bulk_layout.addWidget(self.remove_all_btn)
-        bulk_layout.addWidget(self.change_now_btn)
-        bulk_layout.addStretch()
-        pool_layout.addLayout(bulk_layout)
-
-        # Interval Selection
-        interval_row = QHBoxLayout()
-        interval_row.setSpacing(10)
-        interval_row.setContentsMargins(0, 10, 0, 0)
-
-        interval_label = QLabel("Interval (min)")
-        interval_label.setObjectName("theme_hint")
-        interval_row.addWidget(interval_label)
-
-        intervals = [(2, "2"), (5, "5"), (10, "10"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
-        for mins, text in intervals:
-            lbl = QLabel(text)
-            lbl.setObjectName("theme_interval_label")
-            lbl.setCursor(Qt.PointingHandCursor)
-            lbl.mousePressEvent = lambda _, m=mins: self.theme_manager.set_rotation_interval(m)
-            self.theme_manager.interval_widgets[mins] = lbl
-            interval_row.addWidget(lbl)
-        interval_row.addStretch()
-        pool_layout.addLayout(interval_row)
-
-        self.theme_manager.pool_container.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
-        themes_layout.addWidget(self.theme_manager.pool_container)
-        themes_layout.addStretch()
-        self.tabs.addTab(themes_tab, "Themes")
-        self.theme_manager.update_theme_list_visuals()
-        self.theme_manager.update_interval_visuals()
-        self.theme_manager.update_cover_art_mode_visuals()
-
-    def _build_appearance_tab(self):
-        appearance_tab = QWidget()
-        app_layout = QVBoxLayout(appearance_tab)
-        app_layout.setContentsMargins(10, 0, 10, 10)
-
-        fade_header = QLabel("Theme hover (ms)")
-        fade_header.setObjectName("settings_header")
-        app_layout.addWidget(fade_header)
-
-        fade_row = QHBoxLayout()
-        self.fade_buttons = {}
-        for ms_val in [0, 500, 750, 1000, 1500]:
-            label = "Off" if ms_val == 0 else str(ms_val)
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=ms_val: self.fade_mode_changed.emit(v))
-            fade_row.addWidget(btn)
-            self.fade_buttons[ms_val] = btn
-        fade_row.addStretch()
-        app_layout.addLayout(fade_row)
-
-        blur_header = QLabel("Blur")
-        blur_header.setObjectName("settings_header")
-        app_layout.addWidget(blur_header)
-
-        blur_row = QHBoxLayout()
-        self.blur_buttons = {}
-        for state in ["On", "Off"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self.blur_mode_changed.emit(s == "On"))
-            blur_row.addWidget(btn)
-            self.blur_buttons[state] = btn
-        blur_row.addStretch()
-        app_layout.addLayout(blur_row)
-
-        scroll_header = QLabel("Chapter scroll")
-        scroll_header.setObjectName("settings_header")
-        app_layout.addWidget(scroll_header)
-
-        scroll_row = QHBoxLayout()
-        self.scroll_buttons = {}
-        for mode in ["Slow", "Normal", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button") # Re-use styling for consistency
-            btn.clicked.connect(lambda _, m=mode: self.scroll_mode_changed.emit(m))
-            scroll_row.addWidget(btn)
-            self.scroll_buttons[mode] = btn
-        scroll_row.addStretch()
-        app_layout.addLayout(scroll_row)
-
-        hover_fade_header = QLabel("Library hover trail")
-        hover_fade_header.setObjectName("settings_header")
-        app_layout.addWidget(hover_fade_header)
-
-        hover_fade_row = QHBoxLayout()
-        self.hover_fade_buttons = {}
-        for mode in ["Slow", "Normal", "Fast", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.hover_fade_changed.emit(m))
-            hover_fade_row.addWidget(btn)
-            self.hover_fade_buttons[mode] = btn
-        hover_fade_row.addStretch()
-        app_layout.addLayout(hover_fade_row)
-
-        hints_header = QLabel("Chapter hints")
-        hints_header.setObjectName("settings_header")
-        app_layout.addWidget(hints_header)
-
-        hints_row = QHBoxLayout()
-        self.hints_buttons = {}
-        for mode in ["Sticky", "Transient", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.hints_mode_changed.emit(m))
-            hints_row.addWidget(btn)
-            self.hints_buttons[mode] = btn
-        hints_row.addStretch()
-        app_layout.addLayout(hints_row)
-
-        notches_header_row = QHBoxLayout()
-        notches_label = QLabel("Chapter notches")
-        notches_label.setObjectName("settings_header")
-        notches_header_row.addWidget(notches_label)
-        notches_header_row.addStretch()
-
-        self.notches_anim_header_label = QLabel("Animation")
-        self.notches_anim_header_label.setObjectName("settings_header")
-        self.notches_anim_header_label.setVisible(False)
-        notches_header_row.addWidget(self.notches_anim_header_label)
-        app_layout.addLayout(notches_header_row)
-
-        notches_row = QHBoxLayout()
-        self.notches_buttons = {}
-        for mode in ["On", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.notches_mode_changed.emit(m == "On"))
-            notches_row.addWidget(btn)
-            self.notches_buttons[mode] = btn
-        notches_row.addStretch()
-
-        self.notch_animation_buttons = {}
-        for mode in ["On", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.setVisible(False)
-            btn.clicked.connect(lambda _, m=mode: self.notch_animation_mode_changed.emit(m == "On"))
-            notches_row.addWidget(btn)
-            self.notch_animation_buttons[mode] = btn
-
-        app_layout.addLayout(notches_row)
-
-        app_layout.addStretch()
-        self.tabs.addTab(appearance_tab, "Look")
-        # Visual initialization moved to after SettingsController binding
-
-    def _build_library_tab(self):
-        library_tab = QWidget()
-        lib_layout = QVBoxLayout(library_tab)
-        lib_layout.setContentsMargins(10, 0, 10, 10)
-        pattern_header = QLabel("Naming pattern")
-        pattern_header.setObjectName("settings_header")
-        lib_layout.addWidget(pattern_header)
-
-        pattern_row = QHBoxLayout()
-        self.at_pattern_btn = QPushButton("Author - Title")
-        self.ta_pattern_btn = QPushButton("Title - Author")
-        self.at_pattern_btn.setObjectName("pattern_button")
-        self.ta_pattern_btn.setObjectName("pattern_button")
-
-        self.at_pattern_btn.setToolTip("Folders are named like 'Author - Title' (e.g. 'Stephen King - The Shining')")
-        self.ta_pattern_btn.setToolTip("Folders are named like 'Title - Author' (e.g. 'The Shining - Stephen King')")
-
-        pattern_row.addWidget(self.at_pattern_btn)
-        pattern_row.addWidget(self.ta_pattern_btn)
-        pattern_row.addStretch()
-        lib_layout.addLayout(pattern_row)
-
-        self.at_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Author - Title"))
-        self.ta_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Title - Author"))
-
-        lib_layout.addSpacing(10)
-
-        folders_header = QLabel("Manage folders")
-        folders_header.setObjectName("settings_header")
-        lib_layout.addWidget(folders_header)
-
-        self.folder_list_widget = QListWidget()
-        self.folder_list_widget.setObjectName("settings_folder_list")
-        self.folder_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        # Make height flexible: start small, grow to a cap
-        self.folder_list_widget.setMinimumHeight(45)
-        self.folder_list_widget.setMaximumHeight(120)
-        self.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._path_list_ef = _PathListEventFilter(self.folder_list_widget)
-        self.folder_list_widget.viewport().installEventFilter(self._path_list_ef)
-        lib_layout.addWidget(self.folder_list_widget)
-
-        folder_btns_layout = QHBoxLayout()
-        self.add_folder_btn = QPushButton("Add")
-        self.add_folder_btn.setObjectName("library_add_folder_btn")
-        self.remove_folder_btn = QPushButton("Remove")
-        self.remove_folder_btn.setObjectName("library_remove_folder_btn")
-        self.refresh_library_btn = QPushButton("Rescan")
-        self.refresh_library_btn.setObjectName("library_rescan_btn")
-        folder_btns_layout.addWidget(self.add_folder_btn)
-        folder_btns_layout.addWidget(self.remove_folder_btn)
-        folder_btns_layout.addWidget(self.refresh_library_btn)
-        lib_layout.addLayout(folder_btns_layout)
-        lib_layout.addSpacing(10)
-
-        chap_source_header = QLabel("Chapter source")
-        chap_source_header.setObjectName("settings_header")
-        lib_layout.addWidget(chap_source_header)
-
-        chap_source_row = QHBoxLayout()
-        self.chapter_source_buttons = {}
-        for source, label in [("embedded", "Embedded"), ("cue", ".cue")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=source: self.chapter_list_source_changed.emit(s))
-            chap_source_row.addWidget(btn)
-            self.chapter_source_buttons[source] = btn
-        chap_source_row.addStretch()
-        lib_layout.addLayout(chap_source_row)
-
-        lib_layout.addSpacing(10)
-
-        persist_header = QLabel("Persist search filter")
-        persist_header.setObjectName("settings_header")
-        lib_layout.addWidget(persist_header)
-
-        persist_row = QHBoxLayout()
-        self.persist_filter_buttons = {}
-        for val, label in [(False, "Off"), (True, "On")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self._on_persist_filter_master(v))
-            persist_row.addWidget(btn)
-            self.persist_filter_buttons[val] = btn
-        persist_row.addStretch()
-
-        if self.config.get_persist_filter_enabled() and not any([
-            self.config.get_persist_filter_tag(),
-            self.config.get_persist_filter_text(),
-            self.config.get_persist_filter_year(),
-        ]):
-            self.config.set_persist_filter_enabled(False)
-        _master_on = self.config.get_persist_filter_enabled()
-        self.persist_filter_sub_buttons = {}
-        for key, label in [("tag", "Tag"), ("text", "Text"), ("year", "Year")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.setVisible(_master_on)
-            btn.clicked.connect(lambda _, k=key: self._on_persist_filter_sub(k))
-            persist_row.addWidget(btn)
-            self.persist_filter_sub_buttons[key] = btn
-        lib_layout.addLayout(persist_row)
-
-        # Library controller connections are consolidated in __init__
-        lib_layout.addStretch()
-        self.tabs.addTab(library_tab, "Library")
-        self._update_pattern_visuals()
-        self._update_persist_filter_visuals()
-
-    def _build_audio_tab(self):
-        self.audio_tab = AudioSettingsTab(self.player, self.config, self)
-        self.tabs.addTab(self.audio_tab, "Audio")
-
-    def _build_controls_tab(self):
-        # TAB 4: SHORTCUTS
-        shortcuts_tab = QWidget()
-        short_layout = QVBoxLayout(shortcuts_tab)
-        short_layout.setContentsMargins(10, 0, 10, 10)
-        short_layout.setSpacing(6)
-
-        digit_header = QLabel("Chapter number keys")
-        digit_header.setObjectName("settings_header")
-        short_layout.addWidget(digit_header)
-
-        digit_row = QHBoxLayout()
-        self.digit_mode_buttons = {}
-        for mode, label in [("by_name", "By name"), ("by_index", "By index")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.chapter_digit_mode_changed.emit(m))
-            digit_row.addWidget(btn)
-            self.digit_mode_buttons[mode] = btn
-        digit_row.addStretch()
-        self.digit_autoplay_buttons = {}
-        for val, label in [(True, "Auto-play"), (False, "Jump only")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self.chapter_digit_autoplay_changed.emit(v))
-            digit_row.addWidget(btn)
-            self.digit_autoplay_buttons[val] = btn
-        short_layout.addLayout(digit_row)
-        short_layout.addStretch()
-        self.tabs.addTab(shortcuts_tab, "Controls")
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
