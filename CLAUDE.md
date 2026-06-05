@@ -32,6 +32,9 @@ specific reason the rule doesn't apply in this case, not just that it would be s
 
 ### DO NOT remove the animation-state guard in _sync_progress_sliders or _sync_chapter_ui. Both methods check whether the flow animation is running before calling setValue. If that check is removed, the 200ms UI timer will fight the animation frame-by-frame, causing visible jitter. The guard must survive any refactor of those methods.
 
+### DO NOT remove the `_pre_switch_slider_value is None` guard from `_sync_progress_sliders`, or `_pre_switch_chap_slider_value is None` from `_sync_chapter_ui`
+These guard the 200ms UI timer from writing `pos≈0` to the sliders during the book-switch window — between `_on_library_hidden` (sets `_mpv_ready=True`, starts playback) and `_on_file_ready` (sets up the flow animation). Without them: `load_book` sets `_is_seeking=True` with no `_seek_target`; the first `time_pos=0` from the new file clears `_is_seeking` immediately (because `_seek_target is None`); the timer then fires with `pos=0`, `is_seeking=False`, `slider_animating=False` and writes 0 — causing a 0% flash before the flow animation. The flags are set in `_on_book_selected_from_library` and cleared when consumed in `_on_file_ready` / `_on_file_loaded_populate_chapters`.
+
 ### DO NOT let `_do_fade_with_slider_animation` iterate `chapter_progress_slider` when `_chapter_ui_active` is False
 The slider loop in `_do_fade_with_slider_animation` must skip `chapter_progress_slider` when `mw._chapter_ui_active` is `False`. The theme overlay punch-through re-exposes the slider during the window between `_apply_stylesheets` (which repolishes child widgets and overwrites transparent colors with theme colors) and the `_set_chapter_ui_active` reapplication at the end of `_apply_stylesheets`. Without the guard the slider briefly renders at full opacity, causing a visible flash. Guard: `if attr == 'chapter_progress_slider' and not mw._chapter_ui_active: continue`.
 
@@ -375,7 +378,9 @@ src/fabulor/
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
     ├── icon_utils.py         # render_logo_placeholder, render_logo_placeholder_bordered — SVG logo placeholder renderers
-    └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
+    ├── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
+    ├── main_window_builders.py  # Free functions build_X(mw) extracted from MainWindow's _build_* methods; widgets still land as attributes on mw so interface classes and hasattr checks are unaffected. build_settings_panel calls the five tab builders directly (build_themes_tab(mw) etc.) — NOT via mw. — because they are intra-module functions, not MainWindow methods.
+    └── ui_helpers.py         # Shared low-level helpers (_load_svg_icon, COVER_AREA_HEIGHT, asset path constants) broken out to avoid circular import between main_window_builders and app.py
 ```
 
 ---
@@ -405,4 +410,4 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-03 — file tree synced with tracked sources (added session_recorder.py, book_quotes.py, assets.py, library/cover_manager.py, models/, ui/audio_controls.py, ui/carousel.py, ui/icon_utils.py, ui/text_context_menu.py; corrected models/book.py path; updated descriptions for themes.py suppress_bg_image, theme_manager.py _bg_suppressed, tag_manager.py, stats_panel.py, controls.py FreezableLabel); bg-image suppression invariant added to Critical Architecture Rules.*
+*Last updated: 2026-06-05 — added ui/main_window_builders.py and ui/ui_helpers.py (builder extraction refactor).*
