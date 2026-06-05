@@ -947,7 +947,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
         self._switch.begin(
             self.progress_slider.value(),
-            self.chapter_progress_slider.value(),
+            # Only capture a meaningful pre_chap when the chapter UI is active.
+            # Capturing a stale value from a chapterless book would arm
+            # flow_pending_chapter, gating _sync_chapter_ui and causing a flash
+            # when take_chapter_target() later lifts the gate on the still-hidden slider.
+            self.chapter_progress_slider.value() if self._chapter_ui_active else None,
         )
         # Preemptively deactivate chapter UI before the new book loads. Keeps the
         # slider transparent throughout the loading window. Without this,

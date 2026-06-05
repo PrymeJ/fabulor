@@ -112,11 +112,16 @@ class BookSwitchState:
 
     # ----- transitions -----
 
-    def begin(self, pre_slider: int, pre_chap: int) -> None:
+    def begin(self, pre_slider: int, pre_chap: Optional[int]) -> None:
         """IDLE → LOADING. Called at book selection.
 
         Captures the current slider values as flow-animation start points, enters the
         deadzone, and resets the per-switch retry/deferred flags.
+
+        Pass pre_chap=None when the outgoing book is chapterless (_chapter_ui_active is
+        False). Capturing a meaningless slider value would set flow_pending_chapter=True,
+        gating _sync_chapter_ui and preventing the slider from staying hidden during load;
+        None keeps flow_pending_chapter False so the slider stays hidden throughout.
         """
         self._in_deadzone = True
         self._pre_slider = pre_slider
