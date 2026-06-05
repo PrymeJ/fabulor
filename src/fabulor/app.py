@@ -1308,7 +1308,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                                 == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                if not slider_animating and not self.player.is_seeking and self._pre_switch_slider_value is None:
+                if not slider_animating and not self.player.is_seeking:
                     self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
@@ -1355,7 +1355,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 # while the time label (ungated) showed 00:00. The slider
                 # self-corrects within one 200ms tick; that is acceptable.
                 # The chap_animating guard (book-switch flow animation) must stay.
-                if chap_dur > 0 and not chap_animating and self._pre_switch_chap_slider_value is None:
+                if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
     def _sync_persistence(self, pos, dur):
