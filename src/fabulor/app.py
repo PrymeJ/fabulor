@@ -1372,6 +1372,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         chap_list = self.player.chapter_list or []
         if not chap_list:
             return
+        # Guard: skip during book-switch pre-animation window, same as
+        # _sync_progress_sliders. Without this, the timer can call setValue(chapter_at_pos0)
+        # in the gap between _pre_switch_chap_slider_value capture and animate_to() call,
+        # causing the slider to visibly jump before the flow animation starts.
+        if self._pre_switch_chap_slider_value is not None:
+            return
         # Always derive chapter from pos so the UI stays consistent regardless
         # of when mpv's internal chapter property settles after a seek.
         curr_chap = 0
@@ -1396,12 +1402,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
-                # No is_seeking gate here — chapter nav uses self.chapter = N
-                # which never sets _seek_target, so _is_seeking clears on the
-                # first time_pos callback regardless of whether the seek is done.
-                # Gating on is_seeking caused the slider to retain stale values
-                # while the time label (ungated) showed 00:00. The slider
-                # self-corrects within one 200ms tick; that is acceptable.
                 # The chap_animating guard (book-switch flow animation) must stay.
                 if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
@@ -1562,6 +1562,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
         if not self.player:
+            return
+        # Suppress chapter label updates during seeks. Intermediate time_pos events
+        # fire chapter_changed as mpv scans through chapters toward the target,
+        # causing visible VU-meter oscillation between chapter names. The final
+        # time_pos event that settles the seek clears _is_seeking and fires one
+        # clean chapter_changed with the correct index.
+        if self.player.is_seeking:
             return
         
         # If the list is empty, trigger population now that we know we have data
