@@ -10,6 +10,8 @@ unaffected.
 Do NOT add behavior here. These are layout builders only. The call order in
 ``MainWindow._setup_ui`` is load-bearing and must not change.
 """
+import os
+
 from PySide6.QtWidgets import (
     QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
     QSizePolicy, QGraphicsOpacityEffect,
@@ -20,6 +22,10 @@ from PySide6.QtGui import QPixmap
 from .title_bar import TitleBar, RightClickButton
 from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
 from .carousel import CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
+from .library import LibraryPanel
+from .stats_panel import StatsPanel
+from .tag_manager import TagManagerWidget
+from .book_detail_panel import BookDetailPanel
 from .ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon
 
 
@@ -422,3 +428,115 @@ def build_carousel_covers(mw):
     if not pixmaps:
         return None, 0
     return pixmaps, cover_h
+
+
+def build_sidebar(mw):
+    mw.sidebar = QWidget(mw)
+    mw.sidebar.setObjectName("sidebar")
+    mw.sidebar.setFixedWidth(70)
+    mw.sidebar_layout = QVBoxLayout(mw.sidebar)
+    mw.sidebar_layout.setContentsMargins(10, 10, 10, 10)
+
+    mw.library_trigger_btn = QPushButton("LIBRARY")
+    mw.library_trigger_btn.setObjectName("sidebar_library_btn")
+    mw.sidebar_layout.addWidget(mw.library_trigger_btn)
+
+    mw.library_separator = QWidget()
+    mw.library_separator.setFixedHeight(10)
+    mw.sidebar_layout.addWidget(mw.library_separator)
+
+    mw.settings_trigger_btn = QPushButton("SETTINGS")
+    mw.settings_trigger_btn.setObjectName("sidebar_settings_btn")
+    mw.sidebar_layout.addWidget(mw.settings_trigger_btn)
+
+    mw.speed_trigger_btn = QPushButton("PLAYBACK")
+    mw.speed_trigger_btn.setObjectName("sidebar_speed_btn")
+    mw.sidebar_layout.addWidget(mw.speed_trigger_btn)
+
+    mw.sleep_trigger_btn = QPushButton("SLEEP")
+    mw.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
+    mw.sidebar_layout.addWidget(mw.sleep_trigger_btn)
+
+    mw.stats_trigger_btn = QPushButton("STATS")
+    mw.stats_trigger_btn.setObjectName("sidebar_stats_btn")
+    mw.sidebar_layout.addWidget(mw.stats_trigger_btn)
+
+    mw.tags_trigger_btn = QPushButton("TAGS")
+    mw.tags_trigger_btn.setObjectName("sidebar_tags_btn")
+    mw.sidebar_layout.addWidget(mw.tags_trigger_btn)
+
+    mw.sleep_cancel_btn = QPushButton("✕", mw.sleep_trigger_btn)
+    mw.sleep_cancel_btn.setFixedSize(16, 16)
+    mw.sleep_cancel_btn.move(34, 1)
+    mw.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
+    mw.sleep_cancel_btn.clicked.connect(mw.sleep_panel.disable_sleep_timer)
+    mw.sleep_cancel_btn.hide()
+
+    mw.sidebar_layout.addStretch()
+    mw.sidebar.move(-50, 56)
+    mw.sidebar.show()
+    mw.sidebar_animation = QPropertyAnimation(mw.sidebar, b"pos")
+    mw.sidebar_animation.setDuration(300)
+    mw.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+
+def build_library_panel(mw):
+    mw.library_panel = LibraryPanel(mw.db, mw.config, player_instance=mw.player, parent=mw)
+    mw.library_panel.hide()
+    mw.library_panel.set_hover_fade_enabled(mw.config.get_hover_fade_mode())
+    mw.library_panel_animation = QPropertyAnimation(mw.library_panel, b"pos")
+    mw.library_panel_animation.setDuration(300)
+    mw.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+
+def build_stats_panel(mw):
+    mw.stats_panel = StatsPanel(mw.db, mw.config, parent=mw)
+    mw.theme_manager.theme_applied.connect(mw.stats_panel.on_theme_changed)
+    mw.stats_panel.on_theme_changed(mw.theme_manager.get_current_theme())
+    mw.stats_panel.hide()
+    mw.stats_panel_animation = QPropertyAnimation(mw.stats_panel, b"pos")
+    mw.stats_panel_animation.setDuration(300)
+    mw.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+
+def build_tags_panel(mw):
+    _assets_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets"))
+    mw.tags_panel = TagManagerWidget(mw.db, _assets_dir, parent=mw)
+    mw.tags_panel.hide()
+    mw.tags_panel_animation = QPropertyAnimation(mw.tags_panel, b"pos")
+    mw.tags_panel_animation.setDuration(200)
+    mw.tags_panel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+    mw.theme_manager.theme_applied.connect(mw.tags_panel.on_theme_changed)
+    mw.tags_panel.on_theme_changed(mw.theme_manager.get_current_theme())
+
+
+def build_book_detail_panel(mw):
+    mw.book_detail_panel = BookDetailPanel(mw.db, mw.config, parent=mw)
+    mw.book_detail_panel.hide()
+    mw.book_detail_panel_animation = QPropertyAnimation(
+        mw.book_detail_panel, b"pos"
+    )
+    mw.book_detail_panel_animation.setDuration(300)
+    mw.book_detail_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+    mw.panel_manager.book_detail_panel = mw.book_detail_panel
+    mw.panel_manager.book_detail_panel_animation = mw.book_detail_panel_animation
+    mw.book_detail_panel.close_requested.connect(
+        mw.panel_manager._close_book_detail_flow
+    )
+    mw.book_detail_panel.history_deleted.connect(mw.stats_panel.refresh_all)
+    mw.book_detail_panel.history_deleted.connect(mw.library_panel.refresh)
+    mw.book_detail_panel.metadata_saved.connect(mw._on_book_metadata_saved)
+    mw.book_detail_panel.tags_changed.connect(mw._on_book_tags_changed)
+    mw.tags_panel.tag_changed.connect(mw.stats_panel._on_tag_changed)
+    mw.tags_panel.detail_requested.connect(
+        lambda path: mw.panel_manager.open_book_detail({"path": path}, tab="stats", context='tags')
+    )
+    mw.book_detail_panel.active_cover_changed.connect(mw._on_active_cover_changed)
+    mw.book_detail_panel.active_cover_changed.connect(
+        lambda book_path, cover_path: mw.stats_panel.on_cover_changed(book_path, cover_path)
+    )
+    mw.book_detail_panel.book_removed.connect(mw._on_book_detail_removed)
+    mw.book_detail_panel.tag_filter_requested.connect(mw._on_tag_filter_requested)
+    mw.book_detail_panel.open_tag_manager_requested.connect(mw._on_open_tag_manager_from_detail)
+    mw.theme_manager.theme_applied.connect(mw.book_detail_panel.on_theme_changed)
+    mw.book_detail_panel.on_theme_changed(mw.theme_manager.get_current_theme())

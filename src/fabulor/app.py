@@ -498,11 +498,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
         self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
         
-        self._build_sidebar()
-        self._build_library_panel()
+        builders.build_sidebar(self)
+        builders.build_library_panel(self)
         self._build_settings_panel()
-        self._build_stats_panel()
-        self._build_tags_panel()
+        builders.build_stats_panel(self)
+        builders.build_tags_panel(self)
 
         self.speed_panel = SpeedControlsPanel(self.player, self.config, self.theme_manager, self)
         self.speed_panel.hide()
@@ -538,7 +538,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
-        self._build_book_detail_panel()
+        builders.build_book_detail_panel(self)
         self.stats_panel.set_panel_manager(self.panel_manager)
 
         # Connect Sleep Timer signals after panel_manager is initialized
@@ -558,63 +558,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
 
         QTimer.singleShot(4000, self.library_panel.start_idle_preload)
-
-    def _build_sidebar(self):
-        self.sidebar = QWidget(self)
-        self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(70)
-        self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        
-        self.library_trigger_btn = QPushButton("LIBRARY")
-        self.library_trigger_btn.setObjectName("sidebar_library_btn")
-        self.sidebar_layout.addWidget(self.library_trigger_btn)
-        
-        self.library_separator = QWidget()
-        self.library_separator.setFixedHeight(10)
-        self.sidebar_layout.addWidget(self.library_separator)
-
-        self.settings_trigger_btn = QPushButton("SETTINGS")
-        self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
-        self.sidebar_layout.addWidget(self.settings_trigger_btn)
-
-        self.speed_trigger_btn = QPushButton("PLAYBACK")
-        self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
-        self.sidebar_layout.addWidget(self.speed_trigger_btn)
-
-        self.sleep_trigger_btn = QPushButton("SLEEP")
-        self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
-        self.sidebar_layout.addWidget(self.sleep_trigger_btn)
-
-        self.stats_trigger_btn = QPushButton("STATS")
-        self.stats_trigger_btn.setObjectName("sidebar_stats_btn")
-        self.sidebar_layout.addWidget(self.stats_trigger_btn)
-
-        self.tags_trigger_btn = QPushButton("TAGS")
-        self.tags_trigger_btn.setObjectName("sidebar_tags_btn")
-        self.sidebar_layout.addWidget(self.tags_trigger_btn)
-
-        self.sleep_cancel_btn = QPushButton("✕", self.sleep_trigger_btn)
-        self.sleep_cancel_btn.setFixedSize(16, 16)
-        self.sleep_cancel_btn.move(34, 1)
-        self.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
-        self.sleep_cancel_btn.clicked.connect(self.sleep_panel.disable_sleep_timer)
-        self.sleep_cancel_btn.hide()
-
-        self.sidebar_layout.addStretch()
-        self.sidebar.move(-50, 56)
-        self.sidebar.show()
-        self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
-        self.sidebar_animation.setDuration(300)
-        self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_library_panel(self):
-        self.library_panel = LibraryPanel(self.db, self.config, player_instance=self.player, parent=self)
-        self.library_panel.hide()
-        self.library_panel.set_hover_fade_enabled(self.config.get_hover_fade_mode())
-        self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
-        self.library_panel_animation.setDuration(300)
-        self.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
 
     def _build_settings_panel(self):
         self.settings_panel = QWidget(self)
@@ -1019,56 +962,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         short_layout.addLayout(digit_row)
         short_layout.addStretch()
         self.tabs.addTab(shortcuts_tab, "Controls")
-
-    def _build_stats_panel(self):
-        self.stats_panel = StatsPanel(self.db, self.config, parent=self)
-        self.theme_manager.theme_applied.connect(self.stats_panel.on_theme_changed)
-        self.stats_panel.on_theme_changed(self.theme_manager.get_current_theme())
-        self.stats_panel.hide()
-        self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
-        self.stats_panel_animation.setDuration(300)
-        self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_tags_panel(self):
-        _assets_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "assets"))
-        self.tags_panel = TagManagerWidget(self.db, _assets_dir, parent=self)
-        self.tags_panel.hide()
-        self.tags_panel_animation = QPropertyAnimation(self.tags_panel, b"pos")
-        self.tags_panel_animation.setDuration(200)
-        self.tags_panel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.theme_manager.theme_applied.connect(self.tags_panel.on_theme_changed)
-        self.tags_panel.on_theme_changed(self.theme_manager.get_current_theme())
-
-    def _build_book_detail_panel(self):
-        self.book_detail_panel = BookDetailPanel(self.db, self.config, parent=self)
-        self.book_detail_panel.hide()
-        self.book_detail_panel_animation = QPropertyAnimation(
-            self.book_detail_panel, b"pos"
-        )
-        self.book_detail_panel_animation.setDuration(300)
-        self.book_detail_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self.panel_manager.book_detail_panel = self.book_detail_panel
-        self.panel_manager.book_detail_panel_animation = self.book_detail_panel_animation
-        self.book_detail_panel.close_requested.connect(
-            self.panel_manager._close_book_detail_flow
-        )
-        self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
-        self.book_detail_panel.history_deleted.connect(self.library_panel.refresh)
-        self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
-        self.book_detail_panel.tags_changed.connect(self._on_book_tags_changed)
-        self.tags_panel.tag_changed.connect(self.stats_panel._on_tag_changed)
-        self.tags_panel.detail_requested.connect(
-            lambda path: self.panel_manager.open_book_detail({"path": path}, tab="stats", context='tags')
-        )
-        self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
-        self.book_detail_panel.active_cover_changed.connect(
-            lambda book_path, cover_path: self.stats_panel.on_cover_changed(book_path, cover_path)
-        )
-        self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
-        self.book_detail_panel.tag_filter_requested.connect(self._on_tag_filter_requested)
-        self.book_detail_panel.open_tag_manager_requested.connect(self._on_open_tag_manager_from_detail)
-        self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
-        self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
