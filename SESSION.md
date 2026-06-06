@@ -1,3 +1,32 @@
+## Session Summary — 2026-06-06 Session 1
+
+**Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
+
+**Scope:** Book-switch animation polish; chapter label flash; stale slider after book removal; scanner resurrecting excluded/deleted books.
+
+### What was fixed
+
+**Progress slider flows from 0 on startup** — `_on_file_ready` was skipping the animation entirely when `SM.take_progress_target()` returned `None` (no switch in progress). Now defaults `pre = 0`, so startup, EOF-restart, and post-removal loads all animate from 0. EOF-restart is safe: `new_progress == 0` → `new_val == 0` → `pre == new_val` → `setValue(0)`, no animation. DB duration fallback (`book_data.duration`) added alongside `player.duration` to cover the cold-start duration race without affecting the `_chaps_dur_retried` retry path.
+
+**Chapter slider flows from 0 on startup and chapterless→chaptered** — same `pre_chap = 0` default applied to `_on_file_loaded_populate_chapters`. Chapterless→chaptered now animates correctly; `begin()` passes `None` for chapterless outgoing books (no meaningful capture), which the default converts to 0.
+
+**Chapter label flash to index 0 on deferred populate** — `_update_chapter_label_from_index` now has a second gate: `self._switch.flow_pending_chapter`. In the deferred path the seek settles before the 50ms drain fires, leaving `_is_seeking` already False when `populate()` emits `currentRowChanged(0)`. The `flow_pending_chapter` gate is True throughout the `try` block (consumed only after it), blocking the spurious index-0 write.
+
+**Stale progress slider value after book removal** — `_on_book_removed` was not zeroing `_value` before clearing `_suppress_fill`. When the next book loaded, the first paint showed the old book's final position. Fixed: stop `_flow_anim`, set `_value = 0`, reset chapter slider and chapter UI state before `_load_cover_art("")`.
+
+**Scanner resurrecting excluded/deleted books** — `known_paths` was built from `get_all_books()` (fenced by `is_excluded=0 AND is_deleted=0`). Excluded/deleted books were absent, treated as new by the scanner, and upserted — resetting both flags to 0 on every scan. Fix: new `get_all_book_paths()` method (unfenced `SELECT path FROM books`) used in scanner instead. Side effect: folder removal + re-add no longer auto-resurrects `is_deleted` books via a non-force scan. Manual Rescan still works. Silent resurrection was the worse behavior.
+
+### Non-obvious decisions
+
+See NOTES.md entries dated 2026-06-06 for full reasoning on: startup `pre=0` safety, `flow_pending_chapter` gate rationale, `_set_bg_suppressed` direct color assignment vs `_set_chapter_ui_active`, removal of preemptive `_set_chapter_ui_active(False)`, and scanner `known_paths` unfencing.
+
+### Files touched
+- `app.py` — `_on_file_ready` (pre=0 default, DB duration fallback), `_on_file_loaded_populate_chapters` (pre_chap=0 default), `_update_chapter_label_from_index` (flow_pending_chapter gate), `_on_book_removed` (slider zero before _load_cover_art).
+- `db.py` — `get_all_book_paths()` (new unfenced method).
+- `library/scanner.py` — use `get_all_book_paths()` for known_paths.
+
+---
+
 ## Session Summary — 2026-06-05 Session 4
 
 **Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
