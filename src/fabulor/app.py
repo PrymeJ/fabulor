@@ -664,10 +664,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.session_recorder.close()
         if self.player:
             self.player.terminate()
+
+        # Clear markers and stop all in-flight animations to prevent
+        # them from fighting the reset or ghosting over the next book.
         self.progress_slider.set_markers([])
         self.progress_slider._flow_anim.stop()
+        if hasattr(self.progress_slider, '_reveal_anim'):
+            self.progress_slider._reveal_anim.stop()
+        self.chapter_progress_slider._flow_anim.stop()
+
+        # Explicitly zero out internal values and text labels.
+        # Without this, the next book load will briefly show the old book's 
+        # progress labels before the new book's metadata is ready.
         self.progress_slider._value = 0
-        self.chapter_progress_slider.setValue(0)
+        self.chapter_progress_slider.setValue(0)  # resets _value internally
+        self.progress_percentage_label.setText("")
+        self.current_time_label.setText("")
+        self.total_time_label.setText("")
+        self.chap_elapsed_label.setText("")
+        self.chap_duration_label.setText("")
+        self.current_chapter_label.setText("")
+        self._prev_chap_title = ""
+        self._next_chap_title = ""
+        self._last_saved_pct = -1
+
         self._set_chapter_ui_active(False)
         self._load_cover_art("")
         self.library_panel.set_playing_path("")
@@ -1005,7 +1025,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._current_book = self.db.get_book(self.current_file)
 
         self._restore_position()
-        self._update_ui_sync()
+        # Removed self._update_ui_sync() from here.
+        # The explicit call often snapped sliders to target values before the 
+        # flow animation could start from 0, causing the visible "flash" at startup.
 
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
