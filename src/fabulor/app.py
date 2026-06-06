@@ -325,6 +325,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.file_switched.connect(self._on_vt_file_switched, Qt.ConnectionType.QueuedConnection)
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
         self.session_recorder.session_written.connect(self._on_session_written)
+        self.progress_slider._flow_anim.finished.connect(
+            self._resume_ui_timer,
+            Qt.UniqueConnection
+        )
 
         self.status_hide_timer = QTimer(self)
         self.status_hide_timer.setSingleShot(True)
@@ -1008,6 +1012,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_controller.apply_current_state(),
         ))
 
+    def _resume_ui_timer(self):
+        """Resume the 200ms UI timer. Idempotent — safe to call if already running.
+        Called from _flow_anim.finished (animate path) and explicitly from every
+        non-animate exit in _on_file_ready (setValue, no-duration, error paths)."""
+        self.ui_timer.start(200)
+
     def _on_vt_file_switched(self):
         """Lightweight handler for VT file switches. Does not restore position."""
         self.player.is_seeking = False
@@ -1018,15 +1028,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._switch.mark_file_ready_deferred()
             return
         self._switch.clear_file_ready_deferred()
+        self.ui_timer.stop()
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+            self._resume_ui_timer()
             return
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
 
         self._restore_position()
         # Removed self._update_ui_sync() from here.
-        # The explicit call often snapped sliders to target values before the 
+        # The explicit call often snapped sliders to target values before the
         # flow animation could start from 0, causing the visible "flash" at startup.
 
         book_data = self._current_book
@@ -1044,11 +1056,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             new_val = None
         else:
             new_val = int((new_progress / dur) * 1000)
-        if new_val is not None:
-            if pre != new_val:
-                self.progress_slider.animate_to(new_val, old_value=pre)
-            else:
-                self.progress_slider.setValue(new_val)
+        if new_val is None:
+            self._resume_ui_timer()
+        elif pre != new_val:
+            self.progress_slider.animate_to(new_val, old_value=pre)
+            # _resume_ui_timer fires via _flow_anim.finished
+        else:
+            self.progress_slider.setValue(new_val)
+            self._resume_ui_timer()
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
