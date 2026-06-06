@@ -323,7 +323,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.player.book_ready.connect(self._on_file_ready, Qt.ConnectionType.QueuedConnection)
         self.player.book_ready.connect(self._on_file_loaded_populate_chapters, Qt.ConnectionType.QueuedConnection)
         self.player.file_switched.connect(self._on_vt_file_switched, Qt.ConnectionType.QueuedConnection)
-        self.player.seek_settled.connect(self._on_seek_settled, Qt.ConnectionType.QueuedConnection)
         self.player.load_failed.connect(self._on_load_failed, Qt.ConnectionType.QueuedConnection)
         self.session_recorder.session_written.connect(self._on_session_written)
 
@@ -1013,26 +1012,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Lightweight handler for VT file switches. Does not restore position."""
         self.player.is_seeking = False
 
-    def _on_seek_settled(self):
-        """Single convergence point for seek settlement. Called via seek_settled signal
-        (observer path) and directly from _restore_position (no-progress path). Fires
-        deferred flow animations stored by _on_file_ready and _on_file_loaded_populate_chapters.
-        No-ops cleanly on every user scrub (take_* return None when nothing was stored)."""
-        anim = self._switch.take_progress_anim()
-        if anim is not None:
-            pre, target = anim
-            if pre != target:
-                self.progress_slider.animate_to(target, old_value=pre)
-            else:
-                self.progress_slider.setValue(target)
-        chap_anim = self._switch.take_chapter_anim()
-        if chap_anim is not None:
-            pre_c, target_c = chap_anim
-            if pre_c != target_c:
-                self.chapter_progress_slider.animate_to(target_c, old_value=pre_c)
-            else:
-                self.chapter_progress_slider.setValue(target_c)
-
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         if getattr(self.library_panel, '_is_animating', False):
@@ -1045,24 +1024,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
 
-        # Compute and store the flow animation targets BEFORE _restore_position so that
-        # the no-progress branch (which calls _on_seek_settled inline) finds them ready.
+        self._restore_position()
+        # Removed self._update_ui_sync() from here.
+        # The explicit call often snapped sliders to target values before the 
+        # flow animation could start from 0, causing the visible "flash" at startup.
+
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
         pre = self._switch.take_progress_target()
-        pre = pre if pre is not None else 0  # startup/EOF-restart: flow from 0
+        pre = pre if pre is not None else 0  # startup/EOF-restart: animate from 0
         dur = self.player.duration or (book_data.duration if book_data else None)
         if new_progress == 0:
+            # Book starting from scratch — always animate to 0.
             new_val = 0
         elif not dur:
-            # Duration not yet cached — skip animation; timer snaps after seek.
+            # Duration still unavailable after DB fallback — skip animation.
+            # _is_seeking guard holds the slider until seek completes, then
+            # the timer snaps to the correct position.
             new_val = None
         else:
             new_val = int((new_progress / dur) * 1000)
         if new_val is not None:
-            self._switch.store_progress_anim(pre, new_val)
-
-        self._restore_position()
+            if pre != new_val:
+                self.progress_slider.animate_to(new_val, old_value=pre)
+            else:
+                self.progress_slider.setValue(new_val)
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
@@ -1101,9 +1087,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         book_data = getattr(self, '_current_book', None)
         new_progress = book_data.progress if book_data else 0
-        chap_list = self.player.chapter_list or []
-        chap_dur_val = self.player.duration or 0
-        curr_chap_idx = 0
         if new_progress == 0:
             new_chap_val = 0
         else:
@@ -1112,30 +1095,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # runs the timer has not ticked, so slider.value() holds the previous
             # book's chapter position (same as pre_chap) — making pre_chap ==
             # new_chap_val always False and degrading animate_to to setValue.
+            chap_list = self.player.chapter_list or []
+            chap_dur_val = self.player.duration or 0
             if chap_list and chap_dur_val:
+                curr = 0
                 for i, chap in enumerate(chap_list):
                     if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
-                        curr_chap_idx = i
-                start = chap_list[curr_chap_idx].get('time', 0)
-                end = chap_list[curr_chap_idx + 1].get('time', chap_dur_val) if curr_chap_idx + 1 < len(chap_list) else chap_dur_val
+                        curr = i
+                start = chap_list[curr].get('time', 0)
+                end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
                 cd = end - start
                 seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
                 c_elapsed = max(0, (new_progress + seek_offset) - start)
                 new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
             else:
                 new_chap_val = 0
-        if chap_list:
-            self._switch.store_chapter_anim(pre_chap, new_chap_val)
-
-        self._switch.consume_startup_guard()
-        # Write the chapter label only when no seek is in flight. When is_seeking is True
-        # the seek will settle, chapter_changed will fire, and _update_chapter_label_from_index
-        # will write the correct chapter via the signal path. Writing here while seeking would
-        # flash the wrong chapter (index 0 / chapter-at-time-0) before the seek resolves.
-        # When is_seeking is False (no-seek startup, or populate runs after seek settles)
-        # chapter_changed never fires, so this is the only write opportunity.
-        if chap_list and not self.player.is_seeking:
-            self._apply_chapter_label(curr_chap_idx)
+        if pre_chap != new_chap_val:
+            self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+        else:
+            self.chapter_progress_slider.setValue(new_chap_val)
 
     def _drain_deferred_file_ready(self):
         if self._switch.file_ready_deferred:
@@ -1211,9 +1189,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # No position to restore — clear the _is_seeking flag set by load_book.
             # Without this, _on_time_pos_change won't auto-clear it (since _seek_target
             # is None) and _sync_progress_sliders would never update the slider.
-            # Also converge on _on_seek_settled so deferred animations fire immediately.
             self.player.is_seeking = False
-            self._on_seek_settled()
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
@@ -1441,10 +1417,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._set_play_icon("pause" if not self.player.pause else "play")
 
     def _sync_progress_sliders(self, pos, dur, speed):
-        if self._switch.startup_guard:
-            return
-        if self._current_book is None:
-            return
         if dur is not None and dur > 0:
             # Guard: skip setValue while flow animation is running so the timer
             # doesn't fight the animation. Preserve this check on any refactor.
@@ -1464,10 +1436,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.progress_percentage_label.setText(f"{percent:.1f}%")
 
     def _sync_chapter_ui(self, pos, dur, speed):
-        if self._switch.startup_guard:
-            return
-        if self._current_book is None:
-            return
         if self.player and self.player.mp3_seek_reload_pending:
             return
         chap_list = self.player.chapter_list or []
@@ -1666,27 +1634,53 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._hide_popups()
         super().mousePressEvent(event)
 
-    def _apply_chapter_label(self, index):
-        """Write chapter title, list selection, prev/next tips for index. No guards — callers are responsible."""
+    def _update_chapter_label_from_index(self, index):
+        """Updates the label based on the current chapter index."""
+        if not self.player:
+            return
+        # Suppress chapter label updates during seeks. Intermediate time_pos events
+        # fire chapter_changed as mpv scans through chapters toward the target,
+        # causing visible VU-meter oscillation between chapter names. The final
+        # time_pos event that settles the seek clears _is_seeking and fires one
+        # clean chapter_changed with the correct index.
+        if self.player.is_seeking:
+            return
+        if self._switch.flow_pending_chapter:
+            return
+        
+        # If the list is empty, trigger population now that we know we have data
+        if not self.chapter_list_widget.count():
+            self.chapter_list_widget.populate(self.player.duration or 0, self.player.speed or 1.0)
+
         chaps = self.player.chapter_list or []
+        # Ensure index is non-negative to avoid Python's negative indexing (which picks the last chapter)
         if 0 <= index < len(chaps):
             title = chaps[index].get('title') or f"Chapter {index + 1}"
             self._update_chapter_title_text(title)
+            # Also sync the list selection visually
             self.chapter_list_widget.setCurrentRow(index)
+
+            # Save state on chapter change (natural stopping point)
             self._save_current_progress()
+
+            # Update chapter preview labels
             metrics = self.fontMetrics()
             if index > 0:
                 prev_title = chaps[index - 1].get('title') or f"Chapter {index}"
+                # More space available now, using a wider elision limit
                 self._prev_chap_title = metrics.elidedText(prev_title, Qt.ElideRight, 260)
             else:
                 self._prev_chap_title = ""
-            self.prev_button.setToolTip("")
+            self.prev_button.setToolTip("") # Clear old tooltips
+
             if index < len(chaps) - 1:
                 next_title = chaps[index + 1].get('title') or f"Chapter {index + 2}"
                 self._next_chap_title = metrics.elidedText(next_title, Qt.ElideRight, 260)
             else:
                 self._next_chap_title = ""
-            self.next_button.setToolTip("")
+            self.next_button.setToolTip("") # Clear old tooltips
+
+            # Refresh preview label text if a navigation button is currently hovered
             if self.config.get_chapter_hints_mode() == "Sticky":
                 if self.prev_button.underMouse():
                     if self._prev_chap_title:
@@ -1702,22 +1696,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.chapter_preview_label.setText(self._next_chap_title)
                     else:
                         self._clear_preview()
-
-    def _update_chapter_label_from_index(self, index):
-        """Updates the label based on the current chapter index (signal path)."""
-        if not self.player:
-            return
-        # Suppress during seeks: intermediate time_pos events fire chapter_changed as mpv
-        # scans through boundaries, causing VU-meter oscillation. The settled time_pos
-        # clears _is_seeking and fires one clean update.
-        if self.player.is_seeking:
-            return
-        if self._switch.flow_pending_chapter:
-            return
-        # If the list is empty, trigger population now that we know we have data
-        if not self.chapter_list_widget.count():
-            self.chapter_list_widget.populate(self.player.duration or 0, self.player.speed or 1.0)
-        self._apply_chapter_label(index)
 
     def _on_prev_hover(self):
         if self._prev_chap_title and self.config.get_chapter_hints_mode() != "Off":

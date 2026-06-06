@@ -45,7 +45,6 @@ class Player(QObject):
     file_loaded = Signal()
     file_switched = Signal()
     book_ready = Signal()
-    seek_settled = Signal()
     load_failed = Signal(str)  # reason string from mpv end-file event
     _playlist_resolved = Signal(str, str)  # play_target, chapters_file ('' if none)
 
@@ -115,7 +114,6 @@ class Player(QObject):
             if abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 self._seek_target = None
-                self.seek_settled.emit()
                 # Reset chapter tracking counters so the subsequent position walk
                 # always emits chapter_changed with the settled chapter. Without this,
                 # if the final chapter == last tracked chapter (updated during intermediate

@@ -45,9 +45,6 @@ class BookSwitchState:
         self._chaps_dur_retried: bool = False
         self._file_ready_deferred: bool = False
         self._chaps_deferred: bool = False
-        self._startup_guard: bool = True  # True until first _on_file_loaded_populate_chapters clears it
-        self._pending_progress_anim: Optional[tuple[int, int]] = None  # (pre, target)
-        self._pending_chapter_anim: Optional[tuple[int, int]] = None   # (pre, target)
 
     # ----- derived phase -----
 
@@ -132,8 +129,6 @@ class BookSwitchState:
         self._chaps_dur_retried = False
         self._file_ready_deferred = False
         self._chaps_deferred = False
-        self._pending_progress_anim = None
-        self._pending_chapter_anim = None
 
     def library_revealed(self) -> None:
         """LOADING → RESTORING. Called when the library slide-out animation finishes."""
@@ -159,32 +154,3 @@ class BookSwitchState:
         val = self._pre_chap
         self._pre_chap = None
         return val
-
-    # ----- deferred animation storage (consume-once, same contract as take_*_target) -----
-
-    def store_progress_anim(self, pre: int, target: int) -> None:
-        self._pending_progress_anim = (pre, target)
-
-    def take_progress_anim(self) -> Optional[tuple[int, int]]:
-        val = self._pending_progress_anim
-        self._pending_progress_anim = None
-        return val
-
-    def store_chapter_anim(self, pre: int, target: int) -> None:
-        self._pending_chapter_anim = (pre, target)
-
-    def take_chapter_anim(self) -> Optional[tuple[int, int]]:
-        val = self._pending_chapter_anim
-        self._pending_chapter_anim = None
-        return val
-
-    # ----- startup guard -----
-
-    @property
-    def startup_guard(self) -> bool:
-        """True from init until the first _on_file_loaded_populate_chapters completes."""
-        return self._startup_guard
-
-    def consume_startup_guard(self) -> None:
-        """Idempotent. Called at the end of _on_file_loaded_populate_chapters."""
-        self._startup_guard = False
