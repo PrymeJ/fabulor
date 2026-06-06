@@ -1102,6 +1102,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         book_data = getattr(self, '_current_book', None)
         new_progress = book_data.progress if book_data else 0
+        curr_chap_idx = 0
         if new_progress == 0:
             new_chap_val = 0
         else:
@@ -1113,12 +1114,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             chap_list = self.player.chapter_list or []
             chap_dur_val = self.player.duration or 0
             if chap_list and chap_dur_val:
-                curr = 0
                 for i, chap in enumerate(chap_list):
                     if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
-                        curr = i
-                start = chap_list[curr].get('time', 0)
-                end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
+                        curr_chap_idx = i
+                start = chap_list[curr_chap_idx].get('time', 0)
+                end = chap_list[curr_chap_idx + 1].get('time', chap_dur_val) if curr_chap_idx + 1 < len(chap_list) else chap_dur_val
                 cd = end - start
                 seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
                 c_elapsed = max(0, (new_progress + seek_offset) - start)
@@ -1129,6 +1129,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
         else:
             self.chapter_progress_slider.setValue(new_chap_val)
+        if self.player.chapter_list and not self.player.is_seeking:
+            self._update_chapter_label_from_index(curr_chap_idx)
 
     def _drain_deferred_file_ready(self):
         if self._switch.file_ready_deferred:
