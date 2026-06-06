@@ -665,6 +665,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             self.player.terminate()
         self.progress_slider.set_markers([])
+        self.progress_slider._flow_anim.stop()
+        self.progress_slider._value = 0
+        self.chapter_progress_slider.setValue(0)
+        self._set_chapter_ui_active(False)
         self._load_cover_art("")
         self.library_panel.set_playing_path("")
         self.library_panel.set_is_playing(False)

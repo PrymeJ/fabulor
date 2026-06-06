@@ -335,6 +335,15 @@ class LibraryDB:
             cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 AND is_excluded = 0 ORDER BY {sort_by}{collate} {order}")
             return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
+    def get_all_book_paths(self) -> set:
+        """Returns the paths of ALL books regardless of is_excluded or is_deleted.
+        Used by the scanner to determine which paths have been seen before — excluded
+        and soft-deleted books must be included so they are not re-upserted (which
+        would reset is_excluded/is_deleted to 0, resurrecting them)."""
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT path FROM books").fetchall()
+            return {row[0] for row in rows}
+
     def get_book_count(self):
         """Returns the total number of books in the library."""
         with self._get_conn() as conn:
