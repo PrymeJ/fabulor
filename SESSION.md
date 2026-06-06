@@ -1,3 +1,48 @@
+## Session Summary — 2026-06-06 Session 2
+
+**Branch:** `refactor/extract-mainwindow-builders` → merged to `main`
+
+**Scope:** Attempted structural fix for book-switch animation race conditions;
+reverted after cascading regressions; merged stable branch to main.
+
+### What was attempted (and reverted)
+
+**Seek-settle deferral (`wip: converge slider animations at seek_settled signal`)**
+Goal was to eliminate three races: flow animation stutter, intermittent chapter[0]
+flash, and notch double-animation. Approach deferred `animate_to` to a new
+`_on_seek_settled()` convergence point triggered by a `seek_settled` signal from
+`player.py` and a direct inline call from the no-progress `_restore_position` path.
+
+Reverted after producing: slider/fill desync, broken undo, notch reanimation on
+every scrub, VT slider corruption, and chapterless book snaps. Root cause was
+accumulated sequencing complexity — each fix introduced new race surfaces faster
+than old ones were closed.
+
+### What was merged to main
+
+Branch merged as-is at pre-wip state. Remaining known issues carried forward:
+
+- Flow animation stutter on book switch (rare) — 200ms timer has a one-tick race
+  with `animate_to`; structural fix is to suspend timer during load window and
+  resume on `_flow_anim.finished`. Documented in NOTES.md.
+- Intermittent chapter[0] flash on M4B startup (very rare)
+
+### Key learning
+
+The `_on_seek_settled` consolidation was correct in intent but wrong in execution.
+The 200ms timer is the silent antagonist — it fires regardless of load state and
+requires guards that have a one-tick gap. The proper fix is structural: suspend
+`ui_timer` during the book-load window (from book selection until
+`_flow_anim.finished`), not flag-based guarding. Deferred to a focused session.
+
+### Files touched
+- `app.py` — wip changes reverted; net change from session: none beyond branch baseline
+- `player.py` — `seek_settled` signal added and removed; net: none
+- `book_switch.py` — unchanged from branch; still in main as part of
+  BookSwitchState refactor
+
+---
+
 ## Session Summary — 2026-06-06 Session 1
 
 **Branch:** `refactor/extract-mainwindow-builders` (NOT merged to main)
