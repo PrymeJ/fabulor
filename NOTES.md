@@ -1,4 +1,83 @@
 
+## Startup flow animation: pre defaults to 0, not None — 2026-06-06
+
+`_on_file_ready` and `_on_file_loaded_populate_chapters` both do `pre = SM.take_*_target(); pre = pre if pre is not None else 0`. The `None` case covers startup, EOF-restart, and post-removal loads (no `begin()` was called).
+
+Defaulting to 0 is safe for all three:
+- **Startup / post-removal with progress:** animates from 0 to the saved position — correct, there is no meaningful "old" slider position.
+- **EOF-restart:** `new_progress == 0` so `new_val == 0`, `pre == new_val`, falls into `setValue(0)` — no animation, no visible change.
+- **DB duration fallback (`book_data.duration`):** used as fallback when `player.duration` is not yet cached. Sufficient to compute `new_val`; the 200ms timer corrects with the live mpv value once available. Does not affect the `_chaps_dur_retried` retry path, which guards against `player.duration` being `None` independently.
+
+---
+
+## flow_pending_chapter gate in _update_chapter_label_from_index — 2026-06-06
+
+`_update_chapter_label_from_index` has two gates: `player.is_seeking` and `self._switch.flow_pending_chapter`. The second gate was added because `is_seeking` alone is insufficient in the deferred populate path.
+
+When `_on_file_loaded_populate_chapters` is deferred (library still animating) and the seek settles before the 50ms drain fires, `_is_seeking` is already False by the time `populate()` is called. `populate()` sets row 0, emitting `currentRowChanged(0)`, which fires `chapter_changed(0)` and writes chapter 0's name to the label before `_sync_chapter_ui` can correct it.
+
+`flow_pending_chapter` is True throughout `_on_file_loaded_populate_chapters` — `take_chapter_target()` is called after the `try` block, after `populate()`. So the gate blocks the spurious index-0 update and lifts only after the chapter animation target is established.
+
+---
+
+## _set_bg_suppressed re-assert uses direct color assignment, not _set_chapter_ui_active — 2026-06-06
+
+After `content_container.setStyleSheet(...)`, Qt calls `polish()` on all child widgets, which re-reads QSS and overwrites `bg_color`/`fill_color` back to theme colors on the chapter slider. The re-assert in `_set_bg_suppressed` uses direct property assignment (`s.bg_color = QColor("transparent")`), NOT `_set_chapter_ui_active(False)`.
+
+Calling `_set_chapter_ui_active(False)` here would: stop in-flight `bg_color`/`fill_color` QPropertyAnimations (breaking theme fades mid-transition), reset cursor and label stylesheets (side effects wrong at this site), and caused chaptered→chaptered regressions in testing. Direct color assignment is the minimal correct fix and avoids all of these.
+
+---
+
+## Removed preemptive _set_chapter_ui_active(False) from _on_book_selected_from_library — 2026-06-06
+
+The unconditional `_set_chapter_ui_active(False)` before every book load hid the chapter slider regardless of whether the outgoing book had chapters. For chaptered→chaptered switches this destroyed the flow animation: the slider cleared, triggered a hide/show cycle that disrupted `when_animations_done` timing, and caused the chapter ghost. The old position — which is the animation's start point — was gone before `animate_to` could use it.
+
+Protection for chapterless books moved to `_set_bg_suppressed`, which is the correct architectural home: it fires exactly when the repolish that needs countering happens, and only when `_chapter_ui_active` is already False (so chaptered books are unaffected).
+
+---
+
+## Scanner known_paths must be unfenced — 2026-06-06
+
+`scanner.py` uses `known_paths` to skip re-extracting metadata for books already in the DB. Previously built from `get_all_books()` which filters `is_excluded=0 AND is_deleted=0`. Excluded/deleted books were therefore absent from `known_paths`, treated as new by the scanner, and passed to `upsert_books_batch` — which resets `is_excluded=0` and `is_deleted=0`, resurrecting them on every scan.
+
+Fix: `get_all_book_paths()` queries `SELECT path FROM books` with no filter. Excluded/deleted books are now recognised as known and skipped. Side effect: folder removal + re-add no longer auto-resurrects `is_deleted` books via a non-force scan. A manual Rescan (force_refresh=True) still works. Silent resurrection was worse than requiring an explicit rescan.
+
+---
+
+## Theme fade must not start while any slider value animation is running — 2026-06-05
+
+`animate_to()` on a slider while a theme fade overlay punch-through is active causes ghosting. The overlay punches a hole for each included slider, exposing the live widget. If the slider's fill position is moving, the animated fill produces a visible ghost against the static overlay screenshot.
+
+**What is safe for themes:** color animation only (`bg_color`/`fill_color`/`notch_color` via `QPropertyAnimation` in `theme_manager.py`). Colors change inside the widget without moving the fill, so no position-ghost is produced.
+
+**What causes ghosting:** `animate_to()` (value/fill animation) overlapping with the fade overlay's active window.
+
+**Progress slider:** safe because `_apply_pending_cover_theme` defers via `progress_slider.when_animations_done()`. The theme fade starts only after the progress animation completes.
+
+**Chapter slider:** safe because `_apply_pending_cover_theme` chains a SECOND wait through `chapter_progress_slider.when_animations_done()` after the progress slider. Both must settle before `apply_cover_theme` fires.
+
+**Invariant (enforced by `_apply_pending_cover_theme`):** cover art theme fade starts only after BOTH `progress_slider` AND `chapter_progress_slider` animations have finished. If any new slider gets `animate_to()` during book switches, add it to the chain.
+
+---
+
+## _set_bg_suppressed must use _active_display_theme, not _current_theme_name — 2026-06-05
+
+`_set_bg_suppressed` regenerates `content_container`'s stylesheet by calling `get_player_stylesheet(theme_name, suppress_bg_image=...)`. Using `_current_theme_name` (the named pool theme) instead of `_active_display_theme` (which holds the cover dict when a cover theme is active) causes a one-frame flash to the pool theme on every book switch, because `apply_library_state` calls `_set_bg_suppressed(False)` on each switch.
+
+Fix: `theme_name = getattr(tm, '_active_display_theme', None) or tm._current_theme_name`.
+
+---
+
+## Chapter slider background: preemptive _set_chapter_ui_active(False) at book switch — 2026-06-05
+
+The chapter slider background becomes briefly visible during book switches. Root cause: `apply_current_state → apply_library_state → _set_bg_suppressed` repolishes child widgets (via `content_container.setStyleSheet`) resetting the chapter slider's `bg_color` from transparent back to the theme color, before `_on_file_loaded_populate_chapters` calls `_set_chapter_ui_active(False)`.
+
+Fix: call `_set_chapter_ui_active(False)` preemptively in `_on_book_selected_from_library` at selection time. The slider stays transparent throughout the loading window. `_on_file_loaded_populate_chapters` restores it to active only when chapters are confirmed.
+
+Also: `_set_chapter_ui_active(False)` must stop any running `bg_color`/`fill_color` QPropertyAnimations on the chapter slider before setting transparent. A theme fade that started while the book had chapters creates color animations targeting non-transparent values; they override the transparent assignment on the next animation frame.
+
+---
+
 ## Library sort: computed keys must not be passed to get_all_books() — 2026-06-05
 
 `"finished"` is computed in-memory by `BookModel` from `_finished_dates`; it is not a DB column and is not in `db._ALLOWED_SORT_COLUMNS`. Any code path that passes a `SORT_KEY_MAP` value to `get_all_books()` must guard against computed keys:

@@ -146,6 +146,9 @@ class ClickSlider(QWidget):
 
         def _after_flow():
             self._flow_anim.finished.disconnect(_after_flow)
+            # Reset the pending flag before re-entering so the guard doesn't
+            # immediately return and drop the callback.
+            self._when_done_pending = False
             self.when_animations_done(callback)
 
         def _after_reveal():

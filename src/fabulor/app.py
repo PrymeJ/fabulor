@@ -4,14 +4,13 @@
 import os
 import re
 from PySide6.QtWidgets import (
-    QLineEdit, QFileDialog, QListWidget,
-    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
-    QSizePolicy, QApplication, QListView, QGraphicsBlurEffect, QGridLayout, QComboBox, QGraphicsOpacityEffect,
-    QScrollArea, QFrame, QTabWidget
+    QFileDialog,
+    QWidget, QPushButton, QVBoxLayout,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QSize, QByteArray, QElapsedTimer
+    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -19,11 +18,8 @@ from PySide6.QtSvg import QSvgRenderer
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
 from .config import Config
 from .themes import THEMES, _resolve_theme, get_player_stylesheet
-from .ui.title_bar import TitleBar, RightClickButton, ThemeItem
-from .ui.controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.speed_controls import SpeedControlsPanel
-from .ui.audio_controls import AudioSettingsTab
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
@@ -34,58 +30,20 @@ from .ui.panels import PanelManager # New import for PanelManager
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
-from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
+from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
+from .ui import main_window_builders as builders
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
 from .book_quotes import BOOK_QUOTES
 from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder
+from .book_switch import BookSwitchState
 
-_ICONS_DIR  = os.path.join(os.path.dirname(__file__), "assets", "icons")
-_ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
-
-# Fixed height of the cover-art box. The window is fixed-size; this value is the
-# height the cover area occupies in the correct ("proper") layout. The cover
-# pixmap is scaled to fit inside (label width x this height) preserving aspect
-# ratio, and centered. A fixed height guarantees the box can never resize and
-# push the transport controls out of view.
-COVER_AREA_HEIGHT = 280
-
-def _load_svg_icon(name, color="white"):
-    try:
-        path = os.path.join(_ICONS_DIR, name)
-        with open(path) as f:
-            data = f.read()
-        data = re.sub(r'fill="(?!none)[^"]*"',         f'fill="{color}"',   data)
-        data = re.sub(r'stroke="(?!none)[^"]*"',       f'stroke="{color}"', data)
-        data = re.sub(r'(fill:)(?!none)[^;}"]*',       rf'\g<1>{color}',     data)
-        data = re.sub(r'(stroke:)(?!none)[^;}"]*',     rf'\g<1>{color}',     data)
-        ba = QByteArray(data.encode())
-        renderer = QSvgRenderer(ba)
-        size = renderer.defaultSize()
-        pixmap = QPixmap(size)
-        pixmap.fill(Qt.transparent)
-        painter = QPainter(pixmap)
-        renderer.render(painter)
-        painter.end()
-        return QIcon(pixmap)
-    except Exception as e:
-        print(f"Warning: could not load icon {name}: {e}")
-        return QIcon()
-
-class _PathListEventFilter(QObject):
-    def __init__(self, list_widget):
-        super().__init__(list_widget)
-        self.list_widget = list_widget
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            index = self.list_widget.indexAt(event.pos())
-            if not index.isValid():
-                self.list_widget.clearSelection()
-        return super().eventFilter(obj, event)
-
+# Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
+# main_window_builders module can use them without importing app.py).
+# Re-imported here so existing references in this module keep working unchanged.
+from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon
 
 class UIInterface:
     def __init__(self, main):
@@ -350,9 +308,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             parent=self,
         )
 
-        self._mpv_ready = True
-        self._pre_switch_slider_value = None
-        self._pre_switch_chap_slider_value = None
+        # Single authority for the book-switch transition lifecycle. Owns the
+        # switch-specific flags (deadzone, pre-switch slider captures, duration-retry,
+        # deferred-handler flags) that were previously scattered as raw attributes.
+        self._switch = BookSwitchState()
 
         self._setup_ui()
 
@@ -415,7 +374,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         is_valid = any(last_book.startswith(loc if loc.endswith(os.sep) else loc + os.sep) for loc in locations)
         if last_book and is_valid and os.path.exists(last_book):
             self.current_file = last_book
-            self._mpv_ready = True
+            # No switch SM involvement at startup: phase stays IDLE (in_deadzone False),
+            # so there is no deadzone to clear here.
             self.player.load_book(self.current_file)
             self.player.ungate_play()
             self.library_panel.set_playing_path(self.current_file)
@@ -493,8 +453,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.root_layout.setContentsMargins(0, 0, 0, 0)
         self.root_layout.setSpacing(0)
 
-        self._build_title_bar()
-        self._build_progress_bar()
+        builders.build_title_bar(self)
+        builders.build_progress_bar(self)
 
         # Content container
         self.content_container = QWidget()
@@ -515,20 +475,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_area.mousePressEvent = self._on_drag_area_pressed
         self.content_layout.addWidget(self.visual_area, 1) # Stretch factor 1 to claim space
 
-        self._build_cover_art()
-        self._build_metadata()
-        self._build_controls()
-        self._build_secondary_controls()
+        builders.build_cover_art(self)
+        builders.build_metadata(self)
+        builders.build_controls(self)
+        builders.build_secondary_controls(self)
 
         self.chapter_list_widget = ChapterList(self)
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
         self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
         
-        self._build_sidebar()
-        self._build_library_panel()
-        self._build_settings_panel()
-        self._build_stats_panel()
-        self._build_tags_panel()
+        builders.build_sidebar(self)
+        builders.build_library_panel(self)
+        builders.build_settings_panel(self)
+        builders.build_stats_panel(self)
+        builders.build_tags_panel(self)
 
         self.speed_panel = SpeedControlsPanel(self.player, self.config, self.theme_manager, self)
         self.speed_panel.hide()
@@ -536,7 +496,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_panel_animation.setDuration(300)
         self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
         
-        self._build_status_banner()
+        builders.build_status_banner(self)
 
         # Pulse Animation for active sleep timer
         self.sleep_opacity_effect = QGraphicsOpacityEffect(self.sleep_trigger_btn)
@@ -564,7 +524,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
-        self._build_book_detail_panel()
+        builders.build_book_detail_panel(self)
         self.stats_panel.set_panel_manager(self.panel_manager)
 
         # Connect Sleep Timer signals after panel_manager is initialized
@@ -584,851 +544,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
 
         QTimer.singleShot(4000, self.library_panel.start_idle_preload)
-
-    def _build_status_banner(self):
-        self.status_banner = QWidget(self)
-        self.status_banner.setObjectName("status_banner")
-        self.status_banner.setFixedHeight(30)
-        self.status_banner.hide()
-        
-        layout = QHBoxLayout(self.status_banner)
-        layout.setContentsMargins(10, 2, 10, 2)
-        
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        
-        self.cancel_scan_btn = QPushButton("✕")
-        self.cancel_scan_btn.setFixedSize(20, 20)
-        self.cancel_scan_btn.setToolTip("Cancel scan")
-
-        layout.addStretch()
-        layout.addWidget(self.status_label)
-        layout.addStretch()
-        layout.addWidget(self.cancel_scan_btn)
-
-    def _build_title_bar(self):
-        self.title_bar = TitleBar(self)
-        self.root_layout.addWidget(self.title_bar)
-
-    def _build_progress_bar(self):
-        self.progress_slider = ClickSlider(Qt.Horizontal)
-        self.progress_slider.setObjectName("overall_progress")
-        self.progress_slider.sliderPressed.connect(self._hide_popups)
-        self.progress_slider.setRange(0, 1000)
-        self.progress_slider.setFixedHeight(24)
-        self.progress_slider.sliderPressed.connect(self._on_slider_pressed)
-        self.progress_slider.sliderReleased.connect(self._on_slider_released)
-        self.progress_slider.rightClicked.connect(self._on_slider_right_clicked)
-        self.root_layout.addWidget(self.progress_slider)
-
-        self.progress_percentage_label = QLabel(self.progress_slider)
-        self.progress_percentage_label.setObjectName("percentage_label")
-        self.progress_percentage_label.setAlignment(Qt.AlignCenter)
-        self.progress_percentage_label.setAttribute(Qt.WA_TransparentForMouseEvents)
-
-    def _build_cover_art(self):
-        self.cover_art_label = QLabel()
-        self.cover_art_label.setAlignment(Qt.AlignCenter)
-        self.cover_art_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.cover_art_label.setMinimumSize(0, 0)
-        self.cover_art_label.setFixedHeight(COVER_AREA_HEIGHT)
-        self.cover_art_label.mousePressEvent = self._on_drag_area_pressed
-        self.visual_layout.addWidget(self.cover_art_label)
-
-    def _build_metadata(self):
-        # Scan section: prompt + button, spacer-positioned, claims remaining space.
-        self.scan_section = QWidget()
-        scan_layout = QVBoxLayout(self.scan_section)
-        scan_layout.setContentsMargins(0, 0, 0, 0)
-        scan_layout.setSpacing(0)           # spacing controlled manually via addSpacing
-
-        self.library_prompt_label = QLabel("No library folders.")
-        self.library_prompt_label.setAlignment(Qt.AlignCenter)
-        self.library_prompt_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-        scan_layout.addSpacing(80)          # label top lands at 50px from section top
-        scan_layout.addWidget(self.library_prompt_label)
-        scan_layout.addSpacing(80)          # ~80px gap → button top lands at ~150px from section top
-                                            # (exact value depends on label height; tune if needed)
-        self.scan_now_btn = QPushButton("Scan now")
-        self.scan_now_btn.setFixedWidth(120)
-        scan_layout.addWidget(self.scan_now_btn, 0, Qt.AlignCenter)
-        scan_layout.addStretch()            # eat remaining space below the button
-        self.visual_layout.addWidget(self.scan_section, 1)  # stretch 1: claims remaining space
-
-        # Metadata (Book Info) — shared with player state (shows "Author - Title" for no-cover books)
-        self.metadata_label = QLabel("")
-        self.metadata_label.setAlignment(Qt.AlignCenter)
-        self.metadata_label.setWordWrap(True)
-        self.metadata_label.mousePressEvent = self._on_drag_area_pressed
-        self.visual_layout.addWidget(self.metadata_label)
-
-        # No-book section — permanent fixed slot; never inserted/removed at runtime.
-        self.no_book_section = QWidget()
-        nb_layout = QVBoxLayout(self.no_book_section)
-        nb_layout.setContentsMargins(0, 0, 0, 0)
-        nb_layout.setSpacing(0)
-
-        nb_layout.addSpacing(80)
-        self.no_book_label = QLabel("No book selected.")
-        self.no_book_label.setAlignment(Qt.AlignCenter)
-        self.no_book_label.setStyleSheet("font-weight: bold; font-size: 16px;")
-        nb_layout.addWidget(self.no_book_label)
-
-        nb_layout.addSpacing(125)
-
-        # Permanent carousel slot — always reserves height whether or not a carousel is inside.
-        self.carousel_holder = QWidget()
-        self.carousel_holder.setFixedHeight(140 + 2 * CAROUSEL_STRIPE_PAD)
-        self.carousel_holder.setFixedWidth(CAROUSEL_STRIPE_W)
-        ch_layout = QVBoxLayout(self.carousel_holder)
-        ch_layout.setContentsMargins(0, 0, 0, 0)
-        ch_layout.setSpacing(0)
-        nb_layout.addWidget(self.carousel_holder, 0, Qt.AlignHCenter)
-
-        nb_layout.addSpacing(12)
-
-        self.go_to_library_btn = QPushButton("Go to Library")
-        self.go_to_library_btn.setObjectName("go_to_library_btn")
-        self.go_to_library_btn.setFixedWidth(110)
-        nb_layout.addWidget(self.go_to_library_btn, 0, Qt.AlignCenter)
-
-        nb_layout.addStretch()
-
-        self.no_book_section.hide()
-        self.visual_layout.addWidget(self.no_book_section)
-
-        # Quote section: fixed-height box, quote bottom-anchored, expands upward.
-        self.quote_section = QWidget()
-        self.quote_section.setFixedHeight(238)
-        quote_layout = QVBoxLayout(self.quote_section)
-        quote_layout.setContentsMargins(0, 0, 0, 0)
-        self.quote_label = QLabel("")
-        self.quote_label.setObjectName("quote_label")
-        self.quote_label.setAlignment(Qt.AlignBottom | Qt.AlignHCenter)
-        self.quote_label.setWordWrap(True)
-        quote_layout.addWidget(self.quote_label, 0, Qt.AlignBottom)
-        self.visual_layout.addWidget(self.quote_section)
-    def _build_controls(self):
-        # Speed button centered above transport controls
-        speed_row = QHBoxLayout()
-        speed_row.addStretch()
-        self.speed_button = QPushButton("1.00x")
-        self.speed_button.setObjectName("speed_btn")
-        self.speed_button.setFixedWidth(60)
-        self.speed_button.setFixedHeight(33)
-        self.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.speed_button.customContextMenuRequested.connect(self._on_speed_right_clicked)
-        self.speed_button.clicked.connect(self._on_speed_button_clicked)
-        speed_row.addWidget(self.speed_button)
-        self.content_layout.addLayout(speed_row)
-
-        # Chapter preview label (dynamic visibility on hover)
-        self.preview_row = QHBoxLayout()
-        self.preview_row.setContentsMargins(0, 0, 0, 0)
-        self.chapter_preview_label = QLabel("")
-        self.chapter_preview_label.setObjectName("chapter_preview_label")
-        self.chapter_preview_label.setFixedHeight(21) # Reserve space to prevent layout jumping
-        self.chapter_preview_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        self.preview_row.addWidget(self.chapter_preview_label)
-        self.content_layout.addLayout(self.preview_row)
-
-        # Setup fade animation
-        self.preview_opacity = QGraphicsOpacityEffect(self.chapter_preview_label)
-        self.preview_opacity.setOpacity(0.0)
-        self.chapter_preview_label.setGraphicsEffect(self.preview_opacity)
-
-        self.preview_anim = QPropertyAnimation(self.preview_opacity, b"opacity")
-        self.preview_anim.setDuration(600)
-        self.preview_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        self.transport_controls = QWidget()
-        controls_layout = QHBoxLayout(self.transport_controls)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(10)
-        self.prev_button = HoverButton()
-        self.prev_button.setObjectName("prev_btn")
-        _icon = _load_svg_icon("previous.svg")
-        if _icon.isNull():
-            self.prev_button.setText("|<<")
-        else:
-            self.prev_button.setIcon(_icon)
-        self.prev_button.setFixedSize(46, 33)
-        self.prev_button.setIconSize(QSize(32, 22))
-        self.rewind_button = RightClickButton("")
-        self.rewind_button.setObjectName("rewind_btn")
-        self.rewind_button.setFixedSize(46, 33)
-        self.rewind_button.setIconSize(QSize(28, 17))
-        self.rewind_button.setAutoRepeat(True)
-        self.rewind_button.setAutoRepeatDelay(500)   # Wait 500ms before scanning
-        self.rewind_button.setAutoRepeatInterval(150) # Skip again every 150ms
-        self.play_pause_button = QPushButton()
-        self.play_pause_button.setObjectName("play_pause_btn")
-        self._icon_play = _load_svg_icon("play.svg")
-        self._icon_pause = _load_svg_icon("pause.svg")
-        self._icon_restart = _load_svg_icon("restart.svg")
-        self._icon_rewind  = {5: _load_svg_icon("rewind_5.svg"),  10: _load_svg_icon("rewind_10.svg"),  30: _load_svg_icon("rewind_30.svg")}
-        self._icon_forward = {5: _load_svg_icon("forward_5.svg"), 10: _load_svg_icon("forward_10.svg"), 30: _load_svg_icon("forward_30.svg")}
-        if self._icon_play.isNull():
-            self.play_pause_button.setText("Play")
-        else:
-            self.play_pause_button.setIcon(self._icon_play)
-        self.play_pause_button.setFixedSize(56, 33)
-        self.play_pause_button.setIconSize(QSize(52, 33))
-        self.forward_button = RightClickButton("")
-        self.forward_button.setObjectName("forward_btn")
-        self.forward_button.setFixedSize(46, 33)
-        self.forward_button.setIconSize(QSize(28, 17))
-        self.forward_button.setAutoRepeat(True)
-        self.forward_button.setAutoRepeatDelay(500)
-        self.forward_button.setAutoRepeatInterval(150)
-        self.next_button = HoverButton()
-        self.next_button.setObjectName("next_btn")
-        _icon = _load_svg_icon("next.svg")
-        if _icon.isNull():
-            self.next_button.setText(">>|")
-        else:
-            self.next_button.setIcon(_icon)
-        self.next_button.setFixedSize(46, 33)
-        self.next_button.setIconSize(QSize(32, 22))
-        for btn in [self.prev_button, self.rewind_button, self.play_pause_button,
-                    self.forward_button, self.next_button]:
-            btn.setFixedHeight(33)
-            controls_layout.addWidget(btn)
-        self.transport_controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.content_layout.addWidget(self.transport_controls)
-
-        self._reload_button_icons(self.theme_manager._current_theme_name)
-        self.play_pause_button.clicked.connect(self.toggle_play_pause)
-        self.prev_button.clicked.connect(self.handle_prev)
-        self.prev_button.rightClicked.connect(self._on_prev_right_click)
-        self.rewind_button.clicked.connect(self.handle_rewind)
-        self.rewind_button.rightClicked.connect(lambda: self.handle_rewind(long_skip=True))
-        self.forward_button.clicked.connect(self.handle_forward)
-        self.forward_button.rightClicked.connect(lambda: self.handle_forward(long_skip=True))
-        self.next_button.clicked.connect(self.handle_next)
-
-        # Hover signals for chapter previews
-        self.prev_button.hovered.connect(self._on_prev_hover)
-        self.prev_button.unhovered.connect(self._clear_preview)
-        self.next_button.hovered.connect(self._on_next_hover)
-        self.next_button.unhovered.connect(self._clear_preview)
-
-    def _build_secondary_controls(self):
-        # 1. Chapter Info Row (Top of secondary stack)
-        chapter_info_layout = QHBoxLayout()
-        self.chap_elapsed_label = FreezableLabel("00:00:00")
-        self.chap_elapsed_label.setObjectName("chap_elapsed_label")
-        self.chap_elapsed_label.setFixedWidth(48)
-        self.chap_elapsed_label.setFixedHeight(24)
-        self.chap_elapsed_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        
-        self.chap_duration_label = FreezableLabel("00:00:00")
-        self.chap_duration_label.setObjectName("chap_duration_label")
-        self.chap_duration_label.setFixedWidth(48)
-        self.chap_duration_label.setFixedHeight(24)
-        self.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.chap_duration_label.mousePressEvent = self._toggle_remaining_time
-
-        self.current_chapter_label = ScrollingLabel("")
-        self.current_chapter_label.setObjectName("chapter_selector")
-        self.current_chapter_label.setFixedHeight(24)
-        self.current_chapter_label.clicked.connect(self._show_chapter_dropdown)
-        self.current_chapter_label.set_scroll_mode(self.config.get_scroll_mode())
-        self._chapter_label_clickable = False
-        self.current_chapter_label.setCursor(Qt.ArrowCursor)
-        
-        chapter_info_layout.addWidget(self.chap_elapsed_label)
-        chapter_info_layout.addWidget(self.current_chapter_label, 1)
-        chapter_info_layout.addWidget(self.chap_duration_label)
-        self.content_layout.addLayout(chapter_info_layout)
-
-        # 2. Chapter Progress Slider
-        self.chapter_progress_slider = ClickSlider(Qt.Horizontal)
-        self.chapter_progress_slider.setObjectName("chapter_progress")
-        self.chapter_progress_slider.setRange(0, 1000)
-        self.chapter_progress_slider.setFixedHeight(13)
-        self.chapter_progress_slider.sliderPressed.connect(self._hide_popups)
-        self.chapter_progress_slider.sliderPressed.connect(self._on_chap_slider_pressed)
-        self.chapter_progress_slider.sliderReleased.connect(self._on_chap_slider_released)
-        self.content_layout.addWidget(self.chapter_progress_slider)
-
-        # 3. Book Info Row (Elapsed - Speed - Total/Remaining)
-        book_info_layout = QHBoxLayout()
-        self.current_time_label = FreezableLabel("00:00:00")
-        self.current_time_label.setObjectName("curr_time_label")
-        self.current_time_label.setFixedWidth(80)
-        self.current_time_label.setFixedHeight(24)
-        self.current_time_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        
-        self.total_time_label = FreezableLabel("00:00:00")
-        self.total_time_label.setObjectName("total_time_label")
-        self.total_time_label.setFixedWidth(80)
-        self.total_time_label.setFixedHeight(24)
-        self.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.total_time_label.mousePressEvent = self._toggle_remaining_time
-        self.total_time_label.setCursor(Qt.PointingHandCursor)
-        
-        self.sleep_timer_label = QPushButton("")
-        self.sleep_timer_label.setObjectName("sleep_timer_display")
-        self.sleep_timer_label.setFixedWidth(104)
-        self.sleep_timer_label.clicked.connect(self.sleep_panel.disable_sleep_timer)
-        
-        for lbl in [self.current_time_label, self.total_time_label, self.sleep_timer_label]:
-            font = lbl.font()
-            font.setPointSize(12)
-            lbl.setFont(font)
-
-        self.volume_slider = ClickSlider(Qt.Horizontal)
-        self.volume_slider.setObjectName("volume_slider")
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(self.config.get_volume())
-        self.volume_slider.setFixedHeight(9)
-        self.volume_slider.sliderPressed.connect(self._hide_popups)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
-
-        self.vol_stack = QStackedWidget()
-        self.vol_stack.setFixedWidth(104) # Sleep timer location
-        self.vol_stack.setFixedHeight(24)
-        self.vol_stack.addWidget(self.sleep_timer_label)
-
-        self.vol_container = QWidget()
-        vol_container_layout = QVBoxLayout(self.vol_container)
-        vol_container_layout.setContentsMargins(0, 6, 0, 0) # Volume bar location
-        vol_container_layout.setSpacing(0)
-        vol_container_layout.addWidget(self.volume_slider)
-        vol_container_layout.addStretch()
-        self.vol_stack.addWidget(self.vol_container)
-
-        book_info_layout.addWidget(self.current_time_label)
-        book_info_layout.addWidget(self.vol_stack)
-        book_info_layout.addStretch(1)
-        book_info_layout.addWidget(self.total_time_label)
-        self.content_layout.addLayout(book_info_layout)
-
-        # Setup Volume Overlay Animations
-        self.vol_opacity = QGraphicsOpacityEffect(self.volume_slider)
-        self.vol_opacity.setOpacity(0.0)
-        self.volume_slider.setGraphicsEffect(self.vol_opacity)
-        
-        self.vol_fade_anim = QPropertyAnimation(self.vol_opacity, b"opacity")
-        self.vol_fade_anim.setDuration(500) # Slow fade
-        self.vol_fade_anim.setEasingCurve(QEasingCurve.InOutCubic)
-        self.vol_fade_anim.finished.connect(self._on_vol_fade_finished)
-        
-        self.vol_hide_timer = QTimer(self)
-        self.vol_hide_timer.setSingleShot(True)
-        self.vol_hide_timer.timeout.connect(self._fade_out_volume)
-
-    def _build_sidebar(self):
-        self.sidebar = QWidget(self)
-        self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(70)
-        self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        
-        self.library_trigger_btn = QPushButton("LIBRARY")
-        self.library_trigger_btn.setObjectName("sidebar_library_btn")
-        self.sidebar_layout.addWidget(self.library_trigger_btn)
-        
-        self.library_separator = QWidget()
-        self.library_separator.setFixedHeight(10)
-        self.sidebar_layout.addWidget(self.library_separator)
-
-        self.settings_trigger_btn = QPushButton("SETTINGS")
-        self.settings_trigger_btn.setObjectName("sidebar_settings_btn")
-        self.sidebar_layout.addWidget(self.settings_trigger_btn)
-
-        self.speed_trigger_btn = QPushButton("PLAYBACK")
-        self.speed_trigger_btn.setObjectName("sidebar_speed_btn")
-        self.sidebar_layout.addWidget(self.speed_trigger_btn)
-
-        self.sleep_trigger_btn = QPushButton("SLEEP")
-        self.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
-        self.sidebar_layout.addWidget(self.sleep_trigger_btn)
-
-        self.stats_trigger_btn = QPushButton("STATS")
-        self.stats_trigger_btn.setObjectName("sidebar_stats_btn")
-        self.sidebar_layout.addWidget(self.stats_trigger_btn)
-
-        self.tags_trigger_btn = QPushButton("TAGS")
-        self.tags_trigger_btn.setObjectName("sidebar_tags_btn")
-        self.sidebar_layout.addWidget(self.tags_trigger_btn)
-
-        self.sleep_cancel_btn = QPushButton("✕", self.sleep_trigger_btn)
-        self.sleep_cancel_btn.setFixedSize(16, 16)
-        self.sleep_cancel_btn.move(34, 1)
-        self.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
-        self.sleep_cancel_btn.clicked.connect(self.sleep_panel.disable_sleep_timer)
-        self.sleep_cancel_btn.hide()
-
-        self.sidebar_layout.addStretch()
-        self.sidebar.move(-50, 56)
-        self.sidebar.show()
-        self.sidebar_animation = QPropertyAnimation(self.sidebar, b"pos")
-        self.sidebar_animation.setDuration(300)
-        self.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_library_panel(self):
-        self.library_panel = LibraryPanel(self.db, self.config, player_instance=self.player, parent=self)
-        self.library_panel.hide()
-        self.library_panel.set_hover_fade_enabled(self.config.get_hover_fade_mode())
-        self.library_panel_animation = QPropertyAnimation(self.library_panel, b"pos")
-        self.library_panel_animation.setDuration(300)
-        self.library_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_settings_panel(self):
-        self.settings_panel = QWidget(self)
-        self.settings_panel.setObjectName("settings_panel")
-        settings_layout = QVBoxLayout(self.settings_panel)
-        settings_layout.setContentsMargins(5, 5, 5, 5)
-
-        self.tabs = QTabWidget()
-        self.tabs.setObjectName("settings_tabs")
-
-        self._build_themes_tab()
-        self._build_appearance_tab()
-        self._build_library_tab()
-        self._build_audio_tab()
-        self._build_controls_tab()
-
-        settings_layout.addWidget(self.tabs)
-        self.settings_panel.hide()
-        self.settings_panel_animation = QPropertyAnimation(self.settings_panel, b"pos")
-        self.settings_panel_animation.setDuration(300)
-        self.settings_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_themes_tab(self):
-        themes_tab = QWidget()
-        themes_layout = QVBoxLayout(themes_tab)
-        themes_layout.setContentsMargins(10, 0, 10, 10)
-
-        # Cover art based theme
-        cover_header = QLabel("Cover art based theme")
-        cover_header.setObjectName("settings_header")
-        themes_layout.addWidget(cover_header)
-
-        cover_row = QHBoxLayout()
-        cover_row.setSpacing(4)
-        cover_row.setContentsMargins(0, 0, 0, 0)
-        self.theme_manager.cover_art_mode_widgets = {}
-        for mode, label in [("off", "Off"), ("with_pool", "With pool"), ("exclusive", "Exclusive")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.theme_manager.set_cover_art_mode(m))
-            self.theme_manager.cover_art_mode_widgets[mode] = btn
-            cover_row.addWidget(btn)
-        cover_row.addStretch()
-        themes_layout.addLayout(cover_row)
-
-        # Pool + controls container (hidden when Exclusive is active)
-        self.theme_manager.pool_container = QWidget()
-        pool_layout = QVBoxLayout(self.theme_manager.pool_container)
-        pool_layout.setContentsMargins(0, 0, 0, 0)
-        pool_layout.setSpacing(0)
-
-        # Theme pool
-        pool_header = QLabel("Theme pool")
-        pool_header.setObjectName("settings_header")
-        pool_layout.addWidget(pool_header)
-
-        # Cover art based theme entry — always present, state reflects mode and cover availability
-        cover_pool_row = QHBoxLayout()
-        cover_pool_row.setContentsMargins(0, 0, 0, 0)
-        cover_pool_row.setSpacing(0)
-        cover_pool_btn = ThemeItem("Cover art based theme")
-        cover_pool_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        cover_pool_btn.clicked.connect(lambda: self.theme_manager._on_cover_pool_btn_clicked())
-        cover_pool_btn.rightClicked.connect(lambda: self.theme_manager._on_cover_pool_btn_right_clicked())
-        cover_pool_btn.hovered.connect(lambda _: self.theme_manager._on_cover_pool_btn_hovered())
-        self.theme_manager.cover_pool_btn = cover_pool_btn
-        cover_pool_row.addWidget(cover_pool_btn)
-        pool_layout.addLayout(cover_pool_row)
-        self.theme_manager.theme_widgets = {}
-
-        limit = max(230, self.settings_panel.width() - 20)
-        for row_items in self.theme_manager.get_packed_themes(limit=limit):
-            row_layout = QHBoxLayout()
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            row_layout.setSpacing(0)
-
-            for item in row_items:
-                btn = ThemeItem(item['name'])
-                btn.setMinimumWidth(item['width'])
-                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                btn.clicked.connect(lambda _, n=item['name']: self.theme_manager.toggle_theme_selection(n))
-                btn.rightClicked.connect(lambda n=item['name']: self.theme_manager._on_theme_right_clicked(n))
-                btn.hovered.connect(self.theme_manager._on_theme_hovered)
-                self.theme_manager.theme_widgets[item['name']] = btn
-                row_layout.addWidget(btn, item['width'])
-
-            if len(row_items) == 1:
-                row_layout.addStretch()
-
-            pool_layout.addLayout(row_layout)
-
-        themes_tab.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
-
-        # Add/Remove All Buttons
-        bulk_layout = QHBoxLayout()
-        bulk_layout.setSpacing(10)
-        self.add_all_btn = QPushButton("Add all")
-        self.add_all_btn.setObjectName("theme_add_all")
-        self.add_all_btn.setFixedWidth(80)
-        self.remove_all_btn = QPushButton("Remove all")
-        self.remove_all_btn.setObjectName("theme_remove_all")
-        self.remove_all_btn.setFixedWidth(80)
-        self.change_now_btn = QPushButton("Change now")
-        self.change_now_btn.setObjectName("theme_change_now")
-
-        self.add_all_btn.clicked.connect(self.theme_manager.select_all_themes)
-        self.remove_all_btn.clicked.connect(self.theme_manager.deselect_all_themes)
-        self.change_now_btn.clicked.connect(lambda: self.theme_manager._do_rotate(user_initiated=True))
-
-        bulk_layout.addWidget(self.add_all_btn)
-        bulk_layout.addWidget(self.remove_all_btn)
-        bulk_layout.addWidget(self.change_now_btn)
-        bulk_layout.addStretch()
-        pool_layout.addLayout(bulk_layout)
-
-        # Interval Selection
-        interval_row = QHBoxLayout()
-        interval_row.setSpacing(10)
-        interval_row.setContentsMargins(0, 10, 0, 0)
-
-        interval_label = QLabel("Interval (min)")
-        interval_label.setObjectName("theme_hint")
-        interval_row.addWidget(interval_label)
-
-        intervals = [(2, "2"), (5, "5"), (10, "10"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
-        for mins, text in intervals:
-            lbl = QLabel(text)
-            lbl.setObjectName("theme_interval_label")
-            lbl.setCursor(Qt.PointingHandCursor)
-            lbl.mousePressEvent = lambda _, m=mins: self.theme_manager.set_rotation_interval(m)
-            self.theme_manager.interval_widgets[mins] = lbl
-            interval_row.addWidget(lbl)
-        interval_row.addStretch()
-        pool_layout.addLayout(interval_row)
-
-        self.theme_manager.pool_container.leaveEvent = lambda _: self.theme_manager._on_theme_unhovered()
-        themes_layout.addWidget(self.theme_manager.pool_container)
-        themes_layout.addStretch()
-        self.tabs.addTab(themes_tab, "Themes")
-        self.theme_manager.update_theme_list_visuals()
-        self.theme_manager.update_interval_visuals()
-        self.theme_manager.update_cover_art_mode_visuals()
-
-    def _build_appearance_tab(self):
-        appearance_tab = QWidget()
-        app_layout = QVBoxLayout(appearance_tab)
-        app_layout.setContentsMargins(10, 0, 10, 10)
-
-        fade_header = QLabel("Theme hover (ms)")
-        fade_header.setObjectName("settings_header")
-        app_layout.addWidget(fade_header)
-
-        fade_row = QHBoxLayout()
-        self.fade_buttons = {}
-        for ms_val in [0, 500, 750, 1000, 1500]:
-            label = "Off" if ms_val == 0 else str(ms_val)
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=ms_val: self.fade_mode_changed.emit(v))
-            fade_row.addWidget(btn)
-            self.fade_buttons[ms_val] = btn
-        fade_row.addStretch()
-        app_layout.addLayout(fade_row)
-
-        blur_header = QLabel("Blur")
-        blur_header.setObjectName("settings_header")
-        app_layout.addWidget(blur_header)
-
-        blur_row = QHBoxLayout()
-        self.blur_buttons = {}
-        for state in ["On", "Off"]:
-            btn = QPushButton(state)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=state: self.blur_mode_changed.emit(s == "On"))
-            blur_row.addWidget(btn)
-            self.blur_buttons[state] = btn
-        blur_row.addStretch()
-        app_layout.addLayout(blur_row)
-
-        scroll_header = QLabel("Chapter scroll")
-        scroll_header.setObjectName("settings_header")
-        app_layout.addWidget(scroll_header)
-
-        scroll_row = QHBoxLayout()
-        self.scroll_buttons = {}
-        for mode in ["Slow", "Normal", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button") # Re-use styling for consistency
-            btn.clicked.connect(lambda _, m=mode: self.scroll_mode_changed.emit(m))
-            scroll_row.addWidget(btn)
-            self.scroll_buttons[mode] = btn
-        scroll_row.addStretch()
-        app_layout.addLayout(scroll_row)
-
-        hover_fade_header = QLabel("Library hover trail")
-        hover_fade_header.setObjectName("settings_header")
-        app_layout.addWidget(hover_fade_header)
-
-        hover_fade_row = QHBoxLayout()
-        self.hover_fade_buttons = {}
-        for mode in ["Slow", "Normal", "Fast", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.hover_fade_changed.emit(m))
-            hover_fade_row.addWidget(btn)
-            self.hover_fade_buttons[mode] = btn
-        hover_fade_row.addStretch()
-        app_layout.addLayout(hover_fade_row)
-
-        hints_header = QLabel("Chapter hints")
-        hints_header.setObjectName("settings_header")
-        app_layout.addWidget(hints_header)
-
-        hints_row = QHBoxLayout()
-        self.hints_buttons = {}
-        for mode in ["Sticky", "Transient", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.hints_mode_changed.emit(m))
-            hints_row.addWidget(btn)
-            self.hints_buttons[mode] = btn
-        hints_row.addStretch()
-        app_layout.addLayout(hints_row)
-
-        notches_header_row = QHBoxLayout()
-        notches_label = QLabel("Chapter notches")
-        notches_label.setObjectName("settings_header")
-        notches_header_row.addWidget(notches_label)
-        notches_header_row.addStretch()
-
-        self.notches_anim_header_label = QLabel("Animation")
-        self.notches_anim_header_label.setObjectName("settings_header")
-        self.notches_anim_header_label.setVisible(False)
-        notches_header_row.addWidget(self.notches_anim_header_label)
-        app_layout.addLayout(notches_header_row)
-
-        notches_row = QHBoxLayout()
-        self.notches_buttons = {}
-        for mode in ["On", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.notches_mode_changed.emit(m == "On"))
-            notches_row.addWidget(btn)
-            self.notches_buttons[mode] = btn
-        notches_row.addStretch()
-
-        self.notch_animation_buttons = {}
-        for mode in ["On", "Off"]:
-            btn = QPushButton(mode)
-            btn.setObjectName("pattern_button")
-            btn.setVisible(False)
-            btn.clicked.connect(lambda _, m=mode: self.notch_animation_mode_changed.emit(m == "On"))
-            notches_row.addWidget(btn)
-            self.notch_animation_buttons[mode] = btn
-
-        app_layout.addLayout(notches_row)
-
-        app_layout.addStretch()
-        self.tabs.addTab(appearance_tab, "Look")
-        # Visual initialization moved to after SettingsController binding
-
-    def _build_library_tab(self):
-        library_tab = QWidget()
-        lib_layout = QVBoxLayout(library_tab)
-        lib_layout.setContentsMargins(10, 0, 10, 10)
-        pattern_header = QLabel("Naming pattern")
-        pattern_header.setObjectName("settings_header")
-        lib_layout.addWidget(pattern_header)
-
-        pattern_row = QHBoxLayout()
-        self.at_pattern_btn = QPushButton("Author - Title")
-        self.ta_pattern_btn = QPushButton("Title - Author")
-        self.at_pattern_btn.setObjectName("pattern_button")
-        self.ta_pattern_btn.setObjectName("pattern_button")
-
-        self.at_pattern_btn.setToolTip("Folders are named like 'Author - Title' (e.g. 'Stephen King - The Shining')")
-        self.ta_pattern_btn.setToolTip("Folders are named like 'Title - Author' (e.g. 'The Shining - Stephen King')")
-
-        pattern_row.addWidget(self.at_pattern_btn)
-        pattern_row.addWidget(self.ta_pattern_btn)
-        pattern_row.addStretch()
-        lib_layout.addLayout(pattern_row)
-
-        self.at_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Author - Title"))
-        self.ta_pattern_btn.clicked.connect(lambda: self.naming_pattern_changed.emit("Title - Author"))
-
-        lib_layout.addSpacing(10)
-
-        folders_header = QLabel("Manage folders")
-        folders_header.setObjectName("settings_header")
-        lib_layout.addWidget(folders_header)
-
-        self.folder_list_widget = QListWidget()
-        self.folder_list_widget.setObjectName("settings_folder_list")
-        self.folder_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        # Make height flexible: start small, grow to a cap
-        self.folder_list_widget.setMinimumHeight(45)
-        self.folder_list_widget.setMaximumHeight(120)
-        self.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._path_list_ef = _PathListEventFilter(self.folder_list_widget)
-        self.folder_list_widget.viewport().installEventFilter(self._path_list_ef)
-        lib_layout.addWidget(self.folder_list_widget)
-
-        folder_btns_layout = QHBoxLayout()
-        self.add_folder_btn = QPushButton("Add")
-        self.add_folder_btn.setObjectName("library_add_folder_btn")
-        self.remove_folder_btn = QPushButton("Remove")
-        self.remove_folder_btn.setObjectName("library_remove_folder_btn")
-        self.refresh_library_btn = QPushButton("Rescan")
-        self.refresh_library_btn.setObjectName("library_rescan_btn")
-        folder_btns_layout.addWidget(self.add_folder_btn)
-        folder_btns_layout.addWidget(self.remove_folder_btn)
-        folder_btns_layout.addWidget(self.refresh_library_btn)
-        lib_layout.addLayout(folder_btns_layout)
-        lib_layout.addSpacing(10)
-
-        chap_source_header = QLabel("Chapter source")
-        chap_source_header.setObjectName("settings_header")
-        lib_layout.addWidget(chap_source_header)
-
-        chap_source_row = QHBoxLayout()
-        self.chapter_source_buttons = {}
-        for source, label in [("embedded", "Embedded"), ("cue", ".cue")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, s=source: self.chapter_list_source_changed.emit(s))
-            chap_source_row.addWidget(btn)
-            self.chapter_source_buttons[source] = btn
-        chap_source_row.addStretch()
-        lib_layout.addLayout(chap_source_row)
-
-        lib_layout.addSpacing(10)
-
-        persist_header = QLabel("Persist search filter")
-        persist_header.setObjectName("settings_header")
-        lib_layout.addWidget(persist_header)
-
-        persist_row = QHBoxLayout()
-        self.persist_filter_buttons = {}
-        for val, label in [(False, "Off"), (True, "On")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self._on_persist_filter_master(v))
-            persist_row.addWidget(btn)
-            self.persist_filter_buttons[val] = btn
-        persist_row.addStretch()
-
-        if self.config.get_persist_filter_enabled() and not any([
-            self.config.get_persist_filter_tag(),
-            self.config.get_persist_filter_text(),
-            self.config.get_persist_filter_year(),
-        ]):
-            self.config.set_persist_filter_enabled(False)
-        _master_on = self.config.get_persist_filter_enabled()
-        self.persist_filter_sub_buttons = {}
-        for key, label in [("tag", "Tag"), ("text", "Text"), ("year", "Year")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.setVisible(_master_on)
-            btn.clicked.connect(lambda _, k=key: self._on_persist_filter_sub(k))
-            persist_row.addWidget(btn)
-            self.persist_filter_sub_buttons[key] = btn
-        lib_layout.addLayout(persist_row)
-
-        # Library controller connections are consolidated in __init__
-        lib_layout.addStretch()
-        self.tabs.addTab(library_tab, "Library")
-        self._update_pattern_visuals()
-        self._update_persist_filter_visuals()
-
-    def _build_audio_tab(self):
-        self.audio_tab = AudioSettingsTab(self.player, self.config, self)
-        self.tabs.addTab(self.audio_tab, "Audio")
-
-    def _build_controls_tab(self):
-        # TAB 4: SHORTCUTS
-        shortcuts_tab = QWidget()
-        short_layout = QVBoxLayout(shortcuts_tab)
-        short_layout.setContentsMargins(10, 0, 10, 10)
-        short_layout.setSpacing(6)
-
-        digit_header = QLabel("Chapter number keys")
-        digit_header.setObjectName("settings_header")
-        short_layout.addWidget(digit_header)
-
-        digit_row = QHBoxLayout()
-        self.digit_mode_buttons = {}
-        for mode, label in [("by_name", "By name"), ("by_index", "By index")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, m=mode: self.chapter_digit_mode_changed.emit(m))
-            digit_row.addWidget(btn)
-            self.digit_mode_buttons[mode] = btn
-        digit_row.addStretch()
-        self.digit_autoplay_buttons = {}
-        for val, label in [(True, "Auto-play"), (False, "Jump only")]:
-            btn = QPushButton(label)
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self.chapter_digit_autoplay_changed.emit(v))
-            digit_row.addWidget(btn)
-            self.digit_autoplay_buttons[val] = btn
-        short_layout.addLayout(digit_row)
-        short_layout.addStretch()
-        self.tabs.addTab(shortcuts_tab, "Controls")
-
-    def _build_stats_panel(self):
-        self.stats_panel = StatsPanel(self.db, self.config, parent=self)
-        self.theme_manager.theme_applied.connect(self.stats_panel.on_theme_changed)
-        self.stats_panel.on_theme_changed(self.theme_manager.get_current_theme())
-        self.stats_panel.hide()
-        self.stats_panel_animation = QPropertyAnimation(self.stats_panel, b"pos")
-        self.stats_panel_animation.setDuration(300)
-        self.stats_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-
-    def _build_tags_panel(self):
-        _assets_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "assets"))
-        self.tags_panel = TagManagerWidget(self.db, _assets_dir, parent=self)
-        self.tags_panel.hide()
-        self.tags_panel_animation = QPropertyAnimation(self.tags_panel, b"pos")
-        self.tags_panel_animation.setDuration(200)
-        self.tags_panel_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.theme_manager.theme_applied.connect(self.tags_panel.on_theme_changed)
-        self.tags_panel.on_theme_changed(self.theme_manager.get_current_theme())
-
-    def _build_book_detail_panel(self):
-        self.book_detail_panel = BookDetailPanel(self.db, self.config, parent=self)
-        self.book_detail_panel.hide()
-        self.book_detail_panel_animation = QPropertyAnimation(
-            self.book_detail_panel, b"pos"
-        )
-        self.book_detail_panel_animation.setDuration(300)
-        self.book_detail_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self.panel_manager.book_detail_panel = self.book_detail_panel
-        self.panel_manager.book_detail_panel_animation = self.book_detail_panel_animation
-        self.book_detail_panel.close_requested.connect(
-            self.panel_manager._close_book_detail_flow
-        )
-        self.book_detail_panel.history_deleted.connect(self.stats_panel.refresh_all)
-        self.book_detail_panel.history_deleted.connect(self.library_panel.refresh)
-        self.book_detail_panel.metadata_saved.connect(self._on_book_metadata_saved)
-        self.book_detail_panel.tags_changed.connect(self._on_book_tags_changed)
-        self.tags_panel.tag_changed.connect(self.stats_panel._on_tag_changed)
-        self.tags_panel.detail_requested.connect(
-            lambda path: self.panel_manager.open_book_detail({"path": path}, tab="stats", context='tags')
-        )
-        self.book_detail_panel.active_cover_changed.connect(self._on_active_cover_changed)
-        self.book_detail_panel.active_cover_changed.connect(
-            lambda book_path, cover_path: self.stats_panel.on_cover_changed(book_path, cover_path)
-        )
-        self.book_detail_panel.book_removed.connect(self._on_book_detail_removed)
-        self.book_detail_panel.tag_filter_requested.connect(self._on_tag_filter_requested)
-        self.book_detail_panel.open_tag_manager_requested.connect(self._on_open_tag_manager_from_detail)
-        self.theme_manager.theme_applied.connect(self.book_detail_panel.on_theme_changed)
-        self.book_detail_panel.on_theme_changed(self.theme_manager.get_current_theme())
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
@@ -1549,7 +664,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.session_recorder.close()
         if self.player:
             self.player.terminate()
+
+        # Clear markers and stop all in-flight animations to prevent
+        # them from fighting the reset or ghosting over the next book.
         self.progress_slider.set_markers([])
+        self.progress_slider._flow_anim.stop()
+        if hasattr(self.progress_slider, '_reveal_anim'):
+            self.progress_slider._reveal_anim.stop()
+        self.chapter_progress_slider._flow_anim.stop()
+
+        # Explicitly zero out internal values and text labels.
+        # Without this, the next book load will briefly show the old book's 
+        # progress labels before the new book's metadata is ready.
+        self.progress_slider._value = 0
+        self.chapter_progress_slider.setValue(0)  # resets _value internally
+        self.progress_percentage_label.setText("")
+        self.current_time_label.setText("")
+        self.total_time_label.setText("")
+        self.chap_elapsed_label.setText("")
+        self.chap_duration_label.setText("")
+        self.current_chapter_label.setText("")
+        self._prev_chap_title = ""
+        self._next_chap_title = ""
+        self._last_saved_pct = -1
+
+        self._set_chapter_ui_active(False)
         self._load_cover_art("")
         self.library_panel.set_playing_path("")
         self.library_panel.set_is_playing(False)
@@ -1627,71 +766,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Scan section (prompt + button + info) only shows in the empty state.
         self.scan_section.setVisible(visible)
 
-    def _build_carousel_covers(self):
-        """Build (pixmaps, cover_h) for the no-book carousel from cached covers.
-        Returns (None, 0) when there are too few covers to bother."""
-        import random
-        from PIL import Image
-
-        cover_paths = self.db.get_all_cover_paths()
-        if not cover_paths:
-            return None, 0
-        random.shuffle(cover_paths)
-        sample = cover_paths[:100]   # cap to bound large-library cost
-
-        portraits, squares = [], []
-        for path in sample:
-            try:
-                with Image.open(path) as img:
-                    w, h = img.size   # header-only read; do NOT call img.load()
-            except Exception:
-                continue
-            if w <= 0:
-                continue
-            ratio = h / w
-            if ratio >= 1.4:
-                portraits.append(path)
-                if len(portraits) >= 12:
-                    break   # enough portraits found — stop early
-            else:
-                squares.append(path)
-                if len(squares) >= 12 and len(portraits) < 4:
-                    break   # squares plentiful, portraits too scarce — stop
-
-        if len(portraits) >= 12:
-            pool, cover_h = portraits, 140
-        elif len(squares) >= 4:
-            pool, cover_h = squares, 92
-        elif len(portraits) >= 4:
-            pool, cover_h = portraits, 140
-        else:
-            return None, 0   # not enough covers — caller skips carousel
-
-        selected = pool[:12]
-        pixmaps = []
-        for path in selected:
-            pm = QPixmap(path)
-            if pm.isNull():
-                continue
-            pm = pm.scaled(CAROUSEL_COVER_W, cover_h, Qt.KeepAspectRatioByExpanding,
-                           Qt.SmoothTransformation)
-            if pm.width() > CAROUSEL_COVER_W or pm.height() > cover_h:
-                x_off = (pm.width() - CAROUSEL_COVER_W) // 2
-                y_off = (pm.height() - cover_h) // 2
-                pm = pm.copy(x_off, y_off, CAROUSEL_COVER_W, cover_h)
-            pixmaps.append(pm)
-
-        if not pixmaps:
-            return None, 0
-        return pixmaps, cover_h
-
     def _show_carousel(self):
         """Build and place the carousel synchronously. Safe to call multiple times."""
         if self._carousel is not None:
             return   # already showing — do not reshuffle mid-display
         if self.current_file or not self.no_book_section.isVisible():
             return   # not in the no-book state
-        pixmaps, cover_h = self._build_carousel_covers()
+        pixmaps, cover_h = builders.build_carousel_covers(self)
         if not pixmaps:
             return
         t = _resolve_theme(self.theme_manager._current_theme_name)
@@ -1749,10 +830,25 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         window background show through the now-transparent visual_area."""
         self._bg_suppressed = suppressed
         self.visual_area.setAutoFillBackground(not suppressed)
-        theme_name = self.theme_manager._current_theme_name
+        # Use the active display theme (may be a cover-art dict) rather than
+        # _current_theme_name (the named pool theme). Using _current_theme_name
+        # while a cover theme is active regenerates the stylesheet with pool
+        # colors, causing a visible flash to the non-cover theme on every book
+        # switch (apply_library_state always calls _set_bg_suppressed(False)).
+        theme_name = (getattr(self.theme_manager, '_active_display_theme', None)
+                      or self.theme_manager._current_theme_name)
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
         )
+        # The setStyleSheet triggers Qt to call polish() on all child widgets, which
+        # re-reads the QSS and overrides the transparent bg_color/fill_color set by
+        # the preemptive _set_chapter_ui_active(False). Re-assert directly without
+        # the full _set_chapter_ui_active side effects (animation stop, cursor, labels).
+        if not getattr(self, '_chapter_ui_active', True) and hasattr(self, 'chapter_progress_slider'):
+            s = self.chapter_progress_slider
+            s.bg_color = QColor("transparent")
+            s.fill_color = QColor("transparent")
+            s.update()
 
     def _update_quote_ui(self, rich_text=None, show_quote=None):
         if rich_text is not None:
@@ -1816,6 +912,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         self.chap_duration_label):
                 lbl.setStyleSheet("")
         else:
+            # Stop any in-flight bg_color/fill_color animations before setting
+            # transparent. If a theme fade started (and animated the slider colors
+            # toward a non-transparent value) while this book was still chapter-active,
+            # those QPropertyAnimations would immediately override the transparent
+            # value we're about to set — making the background briefly visible.
+            if hasattr(self, 'theme_manager'):
+                tm = self.theme_manager
+                if hasattr(tm, '_slider_anims'):
+                    for anim in tm._slider_anims.get(id(slider), {}).values():
+                        from PySide6.QtCore import QPropertyAnimation
+                        if anim.state() != QPropertyAnimation.State.Stopped:
+                            anim.stop()
             slider.bg_color = QColor("transparent")
             slider.fill_color = QColor("transparent")
             slider.update()
@@ -1868,9 +976,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self._save_current_progress()
         self._paused_time = None
-        self._mpv_ready = False
-        self._pre_switch_slider_value = self.progress_slider.value()
-        self._pre_switch_chap_slider_value = self.chapter_progress_slider.value()
+        # Enter the switch lifecycle: capture the current slider values as flow-animation
+        # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
+        self._switch.begin(
+            self.progress_slider.value(),
+            # Only capture a meaningful pre_chap when the chapter UI is active.
+            # Capturing a stale value from a chapterless book would arm
+            # flow_pending_chapter, gating _sync_chapter_ui and causing a flash
+            # when take_chapter_target() later lifts the gate on the still-hidden slider.
+            self.chapter_progress_slider.value() if self._chapter_ui_active else None,
+        )
         self.current_chapter_label.setText("")
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
@@ -1900,9 +1015,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
         if getattr(self.library_panel, '_is_animating', False):
-            self._file_ready_deferred = True
+            self._switch.mark_file_ready_deferred()
             return
-        self._file_ready_deferred = False
+        self._switch.clear_file_ready_deferred()
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
             return
@@ -1910,18 +1025,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._current_book = self.db.get_book(self.current_file)
 
         self._restore_position()
-        self._update_ui_sync()
+        # Removed self._update_ui_sync() from here.
+        # The explicit call often snapped sliders to target values before the 
+        # flow animation could start from 0, causing the visible "flash" at startup.
 
         book_data = self._current_book
         new_progress = book_data.progress if book_data else 0
-        pre = getattr(self, '_pre_switch_slider_value', None)
-        if pre is not None:
-            self._pre_switch_slider_value = None
-            dur = self.player.duration
-            if new_progress == 0 or not dur:
-                new_val = 0
-            else:
-                new_val = int((new_progress / dur) * 1000)
+        pre = self._switch.take_progress_target()
+        pre = pre if pre is not None else 0  # startup/EOF-restart: animate from 0
+        dur = self.player.duration or (book_data.duration if book_data else None)
+        if new_progress == 0:
+            # Book starting from scratch — always animate to 0.
+            new_val = 0
+        elif not dur:
+            # Duration still unavailable after DB fallback — skip animation.
+            # _is_seeking guard holds the slider until seek completes, then
+            # the timer snaps to the correct position.
+            new_val = None
+        else:
+            new_val = int((new_progress / dur) * 1000)
+        if new_val is not None:
             if pre != new_val:
                 self.progress_slider.animate_to(new_val, old_value=pre)
             else:
@@ -1929,11 +1052,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
-            self._chaps_deferred = True
+            self._switch.mark_chaps_deferred()
             return
-        self._chaps_deferred = False
+        self._switch.clear_chaps_deferred()
         try:
             dur = self.player.duration
+            if not dur:
+                # Duration not yet cached from mpv. Schedule one retry rather than
+                # calling _set_chapter_ui_active(False) prematurely.
+                if not self._switch.chaps_dur_retried:
+                    self._switch.chaps_dur_retried = True
+                    QTimer.singleShot(150, self._on_file_loaded_populate_chapters)
+                    return
+                # Second attempt: dur still unavailable — fall through to deactivate.
+                self._switch.chaps_dur_retried = False
+            else:
+                self._switch.chaps_dur_retried = False
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
@@ -1948,21 +1082,43 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_chapter_label_clickability()
         except (ShutdownError, AttributeError, SystemError):
             return
-        pre_chap = getattr(self, '_pre_switch_chap_slider_value', None)
-        if pre_chap is not None:
-            self._pre_switch_chap_slider_value = None
-            book_data = getattr(self, '_current_book', None)
-            new_progress = book_data.progress if book_data else 0
-            new_chap_val = 0 if new_progress == 0 else self.chapter_progress_slider.value()
-            if pre_chap != new_chap_val:
-                self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+        pre_chap = self._switch.take_chapter_target()
+        pre_chap = pre_chap if pre_chap is not None else 0
+
+        book_data = getattr(self, '_current_book', None)
+        new_progress = book_data.progress if book_data else 0
+        if new_progress == 0:
+            new_chap_val = 0
+        else:
+            # Compute from authoritative data (chapter list + saved progress)
+            # rather than reading the stale slider value. At the time this handler
+            # runs the timer has not ticked, so slider.value() holds the previous
+            # book's chapter position (same as pre_chap) — making pre_chap ==
+            # new_chap_val always False and degrading animate_to to setValue.
+            chap_list = self.player.chapter_list or []
+            chap_dur_val = self.player.duration or 0
+            if chap_list and chap_dur_val:
+                curr = 0
+                for i, chap in enumerate(chap_list):
+                    if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
+                        curr = i
+                start = chap_list[curr].get('time', 0)
+                end = chap_list[curr + 1].get('time', chap_dur_val) if curr + 1 < len(chap_list) else chap_dur_val
+                cd = end - start
+                seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
+                c_elapsed = max(0, (new_progress + seek_offset) - start)
+                new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
             else:
-                self.chapter_progress_slider.setValue(new_chap_val)
+                new_chap_val = 0
+        if pre_chap != new_chap_val:
+            self.chapter_progress_slider.animate_to(new_chap_val, old_value=pre_chap)
+        else:
+            self.chapter_progress_slider.setValue(new_chap_val)
 
     def _drain_deferred_file_ready(self):
-        if getattr(self, '_file_ready_deferred', False):
+        if self._switch.file_ready_deferred:
             self._on_file_ready()
-        if getattr(self, '_chaps_deferred', False):
+        if self._switch.chaps_deferred:
             self._on_file_loaded_populate_chapters()
         self._apply_pending_cover_theme()
 
@@ -1971,12 +1127,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not pixmap:
             return
         self._pending_cover_pixmap = None
-        if hasattr(self.progress_slider, 'when_animations_done'):
-            self.progress_slider.when_animations_done(
-                lambda: self.theme_manager.apply_cover_theme(pixmap)
-            )
-        else:
+        # Chain through both sliders' when_animations_done before starting the
+        # theme fade. The chapter progress slider is punch-through-exposed during
+        # theme fades; if its value animation (animate_to) is still running when
+        # the fade overlay is captured, the moving fill produces a ghost image.
+        # Waiting for both sliders to settle eliminates the overlap.
+        def _apply():
             self.theme_manager.apply_cover_theme(pixmap)
+        def _after_progress():
+            if hasattr(self, 'chapter_progress_slider') and hasattr(self.chapter_progress_slider, 'when_animations_done'):
+                self.chapter_progress_slider.when_animations_done(_apply)
+            else:
+                _apply()
+        if hasattr(self.progress_slider, 'when_animations_done'):
+            self.progress_slider.when_animations_done(_after_progress)
+        else:
+            _after_progress()
 
     def _on_load_failed(self, reason):
         """Called when mpv fires end-file with a non-normal reason (error/unknown)."""
@@ -2019,6 +1185,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.player.seek_async(book_data.progress)
             else:
                 self.player.seek_async(book_data.progress + _CHAPTER_BOUNDARY_EPSILON)
+        else:
+            # No position to restore — clear the _is_seeking flag set by load_book.
+            # Without this, _on_time_pos_change won't auto-clear it (since _seek_target
+            # is None) and _sync_progress_sliders would never update the slider.
+            self.player.is_seeking = False
         saved_speed = self.config.get_book_speed(self.current_file)
         speed = saved_speed if saved_speed is not None else self.config.get_default_speed()
         self._set_speed(speed, save=False)
@@ -2132,7 +1303,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             else:
                 if is_paused:
-                    if mpv_pos is not None and getattr(self, '_mpv_ready', True):
+                    if mpv_pos is not None and not self._switch.in_deadzone:
                         if self._paused_time is None or self.player.is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
                             self._paused_time = mpv_pos
                     # if mpv_pos is None or mpv not yet ready, keep _paused_time as-is
@@ -2254,7 +1425,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                                 == QPropertyAnimation.State.Running)
             if not self.is_slider_dragging:
                 percent = (pos / dur) * 100
-                if not slider_animating and not self.player.is_seeking:
+                if not slider_animating and not self.player.is_seeking and not self._switch.flow_pending_progress:
                     self.progress_slider.setValue(int((pos / dur) * 1000))
                 self.current_time_label.setText(self.player.format_time(pos / speed))
                 if self.show_remaining_time:
@@ -2269,6 +1440,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         chap_list = self.player.chapter_list or []
         if not chap_list:
+            return
+        # Guard: skip during book-switch pre-animation window. Without this, the timer
+        # fires between the pre_chap capture and the animate_to() call, writing the
+        # new file's chapter-at-pos-0 to the slider and producing a visible jump
+        # before the flow animation starts.
+        if self._switch.flow_pending_chapter:
+            return
+        # Guard: skip during seeks. Intermediate time_pos values would cause the timer
+        # to write a wrong chapter position to the slider (and wrong elapsed/duration
+        # labels) while mpv is scanning toward the target. The timer self-corrects within
+        # one 200ms tick after is_seeking clears.
+        if self.player.is_seeking:
             return
         # Always derive chapter from pos so the UI stays consistent regardless
         # of when mpv's internal chapter property settles after a seek.
@@ -2294,19 +1477,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(f"-{self.player.format_time(c_remaining)}")
                 else:
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
-                # No is_seeking gate here — chapter nav uses self.chapter = N
-                # which never sets _seek_target, so _is_seeking clears on the
-                # first time_pos callback regardless of whether the seek is done.
-                # Gating on is_seeking caused the slider to retain stale values
-                # while the time label (ungated) showed 00:00. The slider
-                # self-corrects within one 200ms tick; that is acceptable.
                 # The chap_animating guard (book-switch flow animation) must stay.
                 if chap_dur > 0 and not chap_animating:
                     self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
 
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:
-            if not self.is_slider_dragging and getattr(self, '_mpv_ready', True):
+            if not self.is_slider_dragging and not self._switch.in_deadzone:
                 percent = (pos / dur) * 100
                 # Update config every 0.1% (live cache)
                 new_pct = int(percent * 10)
@@ -2460,6 +1637,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_chapter_label_from_index(self, index):
         """Updates the label based on the current chapter index."""
         if not self.player:
+            return
+        # Suppress chapter label updates during seeks. Intermediate time_pos events
+        # fire chapter_changed as mpv scans through chapters toward the target,
+        # causing visible VU-meter oscillation between chapter names. The final
+        # time_pos event that settles the seek clears _is_seeking and fires one
+        # clean chapter_changed with the correct index.
+        if self.player.is_seeking:
+            return
+        if self._switch.flow_pending_chapter:
             return
         
         # If the list is empty, trigger population now that we know we have data
@@ -2737,7 +1923,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.session_recorder.close()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
-            self._mpv_ready = True
+            # EOF-restart reloads the same book with no library animation and no
+            # switch begin(); phase is IDLE (in_deadzone False) so no deadzone to clear.
             self.player.load_book(self.current_file, start_paused=False)
             self.player.ungate_play()
             return

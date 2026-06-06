@@ -255,12 +255,13 @@ class PanelManager:
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
         mw = self.main_window
-        mw._mpv_ready = True
+        # LOADING → RESTORING: the library slide-out is done, so the deadzone ends.
+        mw._switch.library_revealed()
         player = getattr(mw, 'player', None)
         if player:
             player.ungate_play()
         self._notify_panel_closed()
-        if getattr(mw, '_file_ready_deferred', False) or getattr(mw, '_chaps_deferred', False):
+        if mw._switch.file_ready_deferred or mw._switch.chaps_deferred:
             QTimer.singleShot(50, mw._drain_deferred_file_ready)
         else:
             mw._apply_pending_cover_theme()
