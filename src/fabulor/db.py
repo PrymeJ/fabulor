@@ -818,6 +818,18 @@ class LibraryDB:
                 VALUES (?, ?, ?, ?)
             """, (book_id, book_path, event_type, datetime.now().isoformat()))
 
+    def unfinish_book(self, book_id: int) -> None:
+        """Deletes the most recent 'finished' event for a book."""
+        with self._get_conn() as conn:
+            conn.execute("""
+                DELETE FROM book_events
+                WHERE id = (
+                    SELECT id FROM book_events
+                    WHERE book_id = ? AND event_type = 'finished'
+                    ORDER BY event_time DESC LIMIT 1
+                )
+            """, (book_id,))
+
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
         with self._get_conn() as conn:

@@ -297,6 +297,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager = None # Will be initialized after widgets are created
         self.show_remaining_time = self.config.get_show_remaining_time()
         self._eof_event_written: bool = False
+        self._eof_book_id: int | None = None
         self._eof_dur_fetched: bool = False
 
         # Session recording
@@ -723,7 +724,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._dialog_close_time.restart()
         return path
 
-    def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False):
+    def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False,
+                                 action_text=None, action_callback=None, auto_hide_ms=3000):
         # Cancel any pending hide if we are updating text or changing visibility
         if show_banner is not None:
             self.status_hide_timer.stop()
@@ -745,8 +747,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if show_cancel is True: self.cancel_scan_btn.show()
         elif show_cancel is False: self.cancel_scan_btn.hide()
 
+        if action_text:
+            self.status_action_btn.setText(action_text)
+            try:
+                self.status_action_btn.clicked.disconnect()
+            except RuntimeError:
+                pass
+            if action_callback:
+                self.status_action_btn.clicked.connect(action_callback)
+            self.status_action_btn.show()
+        else:
+            self.status_action_btn.hide()
+
         if auto_hide:
-            self.status_hide_timer.start(3000)
+            self.status_hide_timer.start(auto_hide_ms)
+
+    def _on_revert_finish(self) -> None:
+        if self._eof_book_id is not None:
+            self.db.unfinish_book(self._eof_book_id)
+            self._eof_event_written = False
+            self._eof_book_id = None
+            self._update_status_banner_ui(show_banner=False)
+            self.stats_panel.refresh_all()
+            self.library_panel.refresh()
 
     def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
         self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
@@ -995,6 +1018,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget.clear()
         self._last_saved_pct = -1
         self._eof_dur_fetched = False
+        self._eof_book_id = None
         self.current_file = path
         self.session_recorder.close()
         self.panel_manager.hide_all_panels()
@@ -1305,6 +1329,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 if not self._eof_event_written and self._current_book is not None:
                     self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)      #Temporary
                     self._eof_event_written = True
+                    self._eof_book_id = self._current_book.id if self._current_book else None
+                    self._update_status_banner_ui(
+                        text="Marked as finished.",
+                        show_banner=True,
+                        show_cancel=False,
+                        action_text="Revert",
+                        action_callback=self._on_revert_finish,
+                        auto_hide=True,
+                        auto_hide_ms=10000,
+                    )
                     self.session_recorder.close()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()

@@ -46,7 +46,8 @@ class _PathListEventFilter(QObject):
 def build_status_banner(mw):
     mw.status_banner = QWidget(mw)
     mw.status_banner.setObjectName("status_banner")
-    mw.status_banner.setFixedHeight(30)
+    mw.status_banner.setFixedHeight(40)
+    mw.status_banner.setAutoFillBackground(True)
     mw.status_banner.hide()
 
     layout = QHBoxLayout(mw.status_banner)
@@ -55,6 +56,11 @@ def build_status_banner(mw):
     mw.status_label = QLabel("")
     mw.status_label.setAlignment(Qt.AlignCenter)
 
+    mw.status_action_btn = QPushButton("")
+    mw.status_action_btn.setObjectName("status_action_btn")
+    mw.status_action_btn.setFixedHeight(22)
+    mw.status_action_btn.hide()
+
     mw.cancel_scan_btn = QPushButton("✕")
     mw.cancel_scan_btn.setFixedSize(20, 20)
     mw.cancel_scan_btn.setToolTip("Cancel scan")
@@ -62,6 +68,7 @@ def build_status_banner(mw):
     layout.addStretch()
     layout.addWidget(mw.status_label)
     layout.addStretch()
+    layout.addWidget(mw.status_action_btn)
     layout.addWidget(mw.cancel_scan_btn)
 
 
