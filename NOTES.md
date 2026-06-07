@@ -1,4 +1,28 @@
 
+## Startup animation stutter (2026-06-07)
+On app startup, `book_ready` fires while the event loop is under pressure
+from background work (stats panel cache, cover cache, library population).
+The flow animation competes for main-thread time, producing a stutter around
+the 15-25% mark. Library loads are smooth because the app is idle at that
+point.
+
+This is not a race condition — it is event-loop contention during a
+legitimately busy startup window. It cannot be fixed at the animation layer.
+
+Three options for future revisit:
+1. **Skip animation on startup** — detect `_switch.phase == IDLE` (startup
+   never calls `begin()`, so phase stays IDLE), go straight to `setValue`.
+   Low risk, zero complexity, inconsistent with library-load behavior.
+2. **Defer/cheapen background work** — lazy-load stats/cover cache, move
+   population off the main thread. Correct long-term fix, large scope.
+3. **Delay animation** — fragile, hardware-dependent. Rejected.
+
+**Intermittent chapter[0] flash on **
+Pre-existing. Probably only occurs on app start, not on library book loads. Not
+addressed this session.
+
+---
+
 ## Startup flow animation: pre defaults to 0, not None — 2026-06-06
 
 `_on_file_ready` and `_on_file_loaded_populate_chapters` both do `pre = SM.take_*_target(); pre = pre if pre is not None else 0`. The `None` case covers startup, EOF-restart, and post-removal loads (no `begin()` was called).

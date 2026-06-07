@@ -1,3 +1,77 @@
+## Session Summary — 2026-06-07 Session 1
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Eliminate book-switch animation race conditions; fix chapter label
+staleness; replace chapter list widget-per-row with delegate; timer suspension
+during animation window.
+
+### What was fixed
+
+**ui_timer suspension during book-load animation window**
+`_on_file_ready` now stops `ui_timer` at the top of the method (covers both
+startup and library-load paths). `_resume_ui_timer()` restarts it and is
+connected to `progress_slider._flow_anim.finished` for the animate path;
+called explicitly on all non-animate exits (setValue, no-duration, error).
+Eliminates the one-tick race where the timer wrote `setValue` before
+`_flow_anim.state()` transitioned to `Running`.
+
+**Chapter label and hints staleness on book switch**
+`_on_file_loaded_populate_chapters` now calls
+`_update_chapter_label_from_index(curr_chap_idx)` at the end, gated on
+`not self.player.is_seeking`. When seeking, `chapter_changed` handles the
+label post-settle; when not seeking (position 0, VT), this is the only write
+opportunity. Also hoisted `curr_chap_idx` out of the inner block so it is
+in scope at the call site.
+
+**Chapter list delegate refactor (`chapter_list.py`)**
+Replaced `QWidget`/`QHBoxLayout`/`QLabel` per-row construction with
+`ChapterItemDelegate(QStyledItemDelegate)`. `populate()` now creates only
+`QListWidgetItem` + 3 `setData()` calls per chapter — no widget lifecycle,
+no `setItemWidget()`. Paint fires only for visible rows. `update_theme()`
+passthrough added to `ChapterList`; wired in `theme_manager.py` alongside
+the library delegate update. `ROLE_CHAP_INDEX`, `ROLE_CHAP_TITLE`,
+`ROLE_CHAP_DURATION` replace anonymous `Qt.UserRole` offsets.
+
+### What was attempted and reverted
+
+**Seek-settle deferral for VT file-boundary seeks (`player.py`)**
+Attempted to defer `file_switched` emission until after `_pending_local_pos`
+seek settled in `_on_time_pos_change`. Introduced undo regression (VT slider
+stuck after undo). Reverted cleanly.
+
+**Populate deferral to after `_flow_anim.finished`**
+Added `chaps_flow_deferred` flag to defer `_on_file_loaded_populate_chapters`
+until after the flow animation. Fixed the bottleneck but caused chapter and
+progress sliders to flow sequentially rather than simultaneously — visual
+regression. Reverted.
+
+### Known remaining issues
+
+**Startup animation stutter (all book types, VT worst)**
+On startup, the event loop is under pressure from background work (stats
+cache, cover cache, library population) when `book_ready` fires. The flow
+animation competes for main-thread time, producing a visible stutter around
+the 15-25% mark. Library loads are smooth because the event loop is idle.
+Three options documented for future revisit:
+1. Skip animation on startup (detect via `_switch.phase == IDLE`), go
+   straight to `setValue`. Low risk, inconsistent UX.
+2. Defer/cheapen background work — lazy load stats/cover cache, move work
+   off main thread. Correct long-term fix, large scope.
+3. Delay animation — fragile, hardware-dependent. Rejected.
+
+**Intermittent chapter[0] flash on M4B startup (very rare)**
+Pre-existing. Not addressed this session.
+
+### Files touched
+- `app.py` — `_on_file_ready` (timer stop), `_resume_ui_timer` (new method),
+  `__init__` (`_flow_anim.finished` connection), `_on_file_loaded_populate_chapters`
+  (chapter label write)
+- `ui/chapter_list.py` — delegate refactor
+- `ui/theme_manager.py` — `update_theme` call for chapter list
+
+---
+
 ## Session Summary — 2026-06-06 Session 2
 
 **Branch:** `refactor/extract-mainwindow-builders` → merged to `main`
