@@ -2331,8 +2331,9 @@ def get_base_stylesheet(theme_name="default"):
             color: {t['bg_main']};
             border: none;
             border-radius: 6px;
-            font-size: 10px;
-            padding: 0px;
+            font-size: 8px;
+            margin-top: 4px;
+            margin-right: 4px;
         }}
         QPushButton#eof_close_btn:hover {{
             background-color: {t['accent_light']};
