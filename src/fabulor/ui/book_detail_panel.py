@@ -1,27 +1,22 @@
 # THEME_ANIM_TODO: BookDetailPanel, _ClickableLabel
 import os
-import functools
 from datetime import datetime
-from pathlib import Path
 from enum import Enum, auto
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QByteArray, QSize
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize
 from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
-from PySide6.QtSvg import QSvgRenderer
 
 from .cover_loader import to_grayscale
 from .stats_panel import SessionListWidget, _RangeBar
 from .flow_layout import FlowLayout
 from .tag_manager import TAG_COLORS, MAX_TAG_LENGTH
 from .text_context_menu import ContextIconMenu
-from .icon_utils import render_logo_placeholder as _render_logo_placeholder
-
-_ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
+from .icon_utils import render_logo_placeholder as _render_logo_placeholder, load_themed_icon
 
 
 class _MetaActionState(Enum):
@@ -29,25 +24,6 @@ class _MetaActionState(Enum):
     DIRTY = auto()
     LOCKED = auto()
     UNLOCKED = auto()
-
-@functools.lru_cache(maxsize=32)
-def _load_svg_icon(svg_path: str, color: str, size: int, opacity: float = 1.0) -> QPixmap:
-    with open(svg_path, "r") as f:
-        svg_data = f.read()
-        svg_data = svg_data.replace('stroke="#000000"', f'stroke="{color}"')
-        svg_data = svg_data.replace('fill="#000000"', f'fill="{color}"')
-        # Add a style to set default fill for paths that don't specify it, only if no stroke replacement happened
-        if '<style' not in svg_data and 'stroke=' not in svg_data:
-            svg_data = svg_data.replace('<svg', f'<svg><style>path {{ fill: {color}; }}</style>', 1)
-    renderer = QSvgRenderer(QByteArray(svg_data.encode()))
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    if opacity < 1.0:
-        painter.setOpacity(opacity)
-    renderer.render(painter)
-    painter.end()
-    return pixmap
 
 
 class _ElidingLineEdit(QLineEdit):
@@ -689,19 +665,19 @@ class BookDetailPanel(QWidget):
         elif state == _MetaActionState.DIRTY:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, 0.7)
+            pixmap = load_themed_icon("save.svg", color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
         elif state == _MetaActionState.LOCKED:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, 0.7)
+            pixmap = load_themed_icon("lock.svg", color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
         elif state == _MetaActionState.UNLOCKED:
             self._meta_action_btn.setVisible(True)
             color = self._theme.get("accent", "#888888")
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, 0.7)
+            pixmap = load_themed_icon("lock-open.svg", color, 16, 0.7)
             self._meta_action_btn.setIcon(QIcon(pixmap))
             self._meta_action_btn.setIconSize(QSize(16, 16))
             self._unlock_timer = QTimer()
@@ -820,11 +796,11 @@ class BookDetailPanel(QWidget):
         color = self._theme.get("accent", "#888888")
         opacity = 1.0 if hover else 0.70
         if self._meta_state == _MetaActionState.DIRTY:
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "save.svg"), color, 16, opacity)
+            pixmap = load_themed_icon("save.svg", color, 16, opacity)
         elif self._meta_state == _MetaActionState.LOCKED:
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock.svg"), color, 16, opacity)
+            pixmap = load_themed_icon("lock.svg", color, 16, opacity)
         elif self._meta_state == _MetaActionState.UNLOCKED:
-            pixmap = _load_svg_icon(str(_ICONS_DIR / "lock-open.svg"), color, 16, opacity)
+            pixmap = load_themed_icon("lock-open.svg", color, 16, opacity)
         else:
             return
         self._meta_action_btn.setIcon(QIcon(pixmap))
@@ -1052,7 +1028,7 @@ class BookDetailPanel(QWidget):
         else:
             color = self._theme.get("accent", "#888888")
             opacity = 0.70
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 16, opacity)
+        pixmap = load_themed_icon("trash.svg", color, 16, opacity)
         self._remove_btn.setIcon(QIcon(pixmap))
         self._remove_btn.setContentsMargins(8, 0, 0, 0)
         self._remove_btn.setIconSize(QSize(16, 16))
@@ -1067,7 +1043,7 @@ class BookDetailPanel(QWidget):
         self._confirm_remove_label.setVisible(True)
         self._remove_btn.setCursor(Qt.CursorShape.ArrowCursor)
         color = self._theme.get("accent", "#888888")
-        pixmap = _load_svg_icon(str(_ICONS_DIR / "trash.svg"), color, 16, 0.35)
+        pixmap = load_themed_icon("trash.svg", color, 16, 0.35)
         self._remove_btn.setIcon(QIcon(pixmap))
         if self._remove_cancel_timer:
             self._remove_cancel_timer.stop()
