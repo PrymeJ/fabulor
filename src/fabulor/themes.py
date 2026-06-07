@@ -2311,14 +2311,32 @@ def get_base_stylesheet(theme_name="default"):
         QWidget#status_banner QPushButton {{
             background-color: {t['accent']};
             color: {t['text']};
-            font-size: 13px;
             font-weight: bold;
             padding: 0px;
             border: none;
-            border-radius: 3px;
         }}
         QWidget#status_banner QPushButton:hover {{
             color: {t['bg_main']};
+        }}
+        QPushButton#eof_revert_btn {{
+            background: transparent;
+            padding: 0px;
+            border-radius: 3px;
+        }}
+        QPushButton#eof_revert_btn:hover {{
+            background: {t['accent_light']};
+        }}
+        QPushButton#eof_close_btn {{
+            background-color: {t['accent']};
+            color: {t['bg_main']};
+            border: none;
+            border-radius: 6px;
+            font-size: 10px;
+            padding: 0px;
+        }}
+        QPushButton#eof_close_btn:hover {{
+            background-color: {t['accent_light']};
+            color: {t['text']};
         }}
         QProgressBar#scan_progress {{
             background-color: {t['slider_overall_bg']};

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer
+    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -346,6 +346,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Consolidated connections for library-related UI -> controller
         # (moved here to ensure `self.library_controller` is available)
         self.cancel_scan_btn.clicked.connect(self.library_controller._on_cancel_scan_clicked)
+
+        revert_icon = _load_svg_icon(
+            "revert.svg",
+            color=self.theme_manager.get_current_theme().get('accent', '#ffffff'),
+        )
+        self.eof_revert_btn.setIcon(revert_icon)
+        self.eof_revert_btn.setIconSize(QSize(20, 20))
+        self.eof_revert_btn.clicked.connect(self._on_revert_finish)
+        self.eof_close_btn.clicked.connect(self._dismiss_eof_banner)
+
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.remove_folder_btn.clicked.connect(self.library_controller._on_remove_folder_clicked)
@@ -725,7 +735,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return path
 
     def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False,
-                                 action_text=None, action_callback=None, auto_hide_ms=3000):
+                                 auto_hide_ms=3000):
         # Cancel any pending hide if we are updating text or changing visibility
         if show_banner is not None:
             self.status_hide_timer.stop()
@@ -745,18 +755,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if show_cancel is True: self.cancel_scan_btn.show()
         elif show_cancel is False: self.cancel_scan_btn.hide()
 
-        if action_text:
-            self.status_action_btn.setText(action_text)
-            try:
-                self.status_action_btn.clicked.disconnect()
-            except RuntimeError:
-                pass
-            if action_callback:
-                self.status_action_btn.clicked.connect(action_callback)
-            self.status_action_btn.show()
-        else:
-            self.status_action_btn.hide()
-
         if auto_hide:
             self.status_hide_timer.start(auto_hide_ms)
 
@@ -765,9 +763,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.db.unfinish_book(self._eof_book_id)
             self._eof_event_written = False
             self._eof_book_id = None
+            self.eof_revert_btn.hide()
+            self.eof_close_btn.hide()
             self._update_status_banner_ui(show_banner=False)
             self.stats_panel.refresh_all()
             self.library_panel.refresh()
+
+    def _dismiss_eof_banner(self) -> None:
+        self._eof_book_id = None
+        self.eof_revert_btn.hide()
+        self.eof_close_btn.hide()
+        self._update_status_banner_ui(show_banner=False)
 
     def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
         self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
@@ -1332,11 +1338,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         text="Marked as finished.",
                         show_banner=True,
                         show_cancel=False,
-                        action_text="Revert",
-                        action_callback=self._on_revert_finish,
                         auto_hide=True,
                         auto_hide_ms=10000,
                     )
+                    self.eof_revert_btn.show()
+                    self.eof_close_btn.show()
                     self.session_recorder.close()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
@@ -1682,10 +1688,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     text="Marked as finished.",
                     show_banner=True,
                     show_cancel=False,
-                    action_text="Revert",
-                    action_callback=self._on_revert_finish,
                     auto_hide=False,
                 )
+                self.eof_revert_btn.show()
+                self.eof_close_btn.show()
         else:
             super().keyPressEvent(event)
 

@@ -56,10 +56,17 @@ def build_status_banner(mw):
     mw.status_label = QLabel("")
     mw.status_label.setAlignment(Qt.AlignCenter)
 
-    mw.status_action_btn = QPushButton("")
-    mw.status_action_btn.setObjectName("status_action_btn")
-    mw.status_action_btn.setFixedHeight(22)
-    mw.status_action_btn.hide()
+    mw.eof_revert_btn = QPushButton()
+    mw.eof_revert_btn.setObjectName("eof_revert_btn")
+    mw.eof_revert_btn.setFixedSize(24, 24)
+    mw.eof_revert_btn.setToolTip("Revert finished status")
+    mw.eof_revert_btn.hide()
+
+    mw.eof_close_btn = QPushButton("✕")
+    mw.eof_close_btn.setObjectName("eof_close_btn")
+    mw.eof_close_btn.setFixedSize(14, 14)
+    mw.eof_close_btn.setToolTip("Dismiss")
+    mw.eof_close_btn.hide()
 
     mw.cancel_scan_btn = QPushButton("✕")
     mw.cancel_scan_btn.setFixedSize(20, 20)
@@ -67,8 +74,9 @@ def build_status_banner(mw):
 
     layout.addStretch()
     layout.addWidget(mw.status_label, 0, Qt.AlignVCenter)
+    layout.addWidget(mw.eof_revert_btn, 0, Qt.AlignVCenter)
     layout.addStretch()
-    layout.addWidget(mw.status_action_btn, 0, Qt.AlignVCenter)
+    layout.addWidget(mw.eof_close_btn, 0, Qt.AlignTop | Qt.AlignRight)
     layout.addWidget(mw.cancel_scan_btn, 0, Qt.AlignVCenter)
 
 
