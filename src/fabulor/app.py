@@ -1672,6 +1672,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # TODO: remove before release — testing only
             if not self.current_file and self.quote_section.isVisible():
                 self.library_controller._rotate_quote()
+        elif event.key() == Qt.Key.Key_R:
+            # TODO: remove before release — debug shortcut to simulate EOF finished banner
+            if self.current_file and self._current_book:
+                self.db.write_book_event(self._current_book.id, 'finished')
+                self._eof_book_id = self._current_book.id
+                self._eof_event_written = True
+                self._update_status_banner_ui(
+                    text="Marked as finished.",
+                    show_banner=True,
+                    show_cancel=False,
+                    action_text="Revert",
+                    action_callback=self._on_revert_finish,
+                    auto_hide=False,
+                )
         else:
             super().keyPressEvent(event)
 
