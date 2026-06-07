@@ -7,6 +7,7 @@ bg_deep:              The darkest background color. Used for the custom title ba
 bg_main:              The primary background color for the main window and panels (settings, library, speed, etc.).
 bg_sidebar:           The background color for the sliding sidebar on the left.
 bg_dropdown:          The background color for lists and dropdown menus (like the chapter list and folder list).
+bg_status_banner:     (Optional) The background color for the status banner at the bottom. Fallback: bg_deep, then bg_main.
 bg_image:             (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
 panel_opacity_hover:  A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
 undo_hover:           The color used when hovering over the undo button. Fallback: accent.
@@ -2281,10 +2282,12 @@ def get_base_stylesheet(theme_name="default"):
     """
     Rules for widgets that live directly on MainWindow or its root_layout:
     main window background, QToolTip, overall progress slider + percentage label,
-    status_banner, chapter dropdown (floating child of MainWindow), undo_overlay.
+    status_banner (solid bg_main background, no border/padding), chapter dropdown
+    (floating child of MainWindow), undo_overlay.
     """
     t = _resolve_theme(theme_name)
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
+    status_banner_bg = t.get('bg_status_banner', t.get('bg_deep', t['bg_main']))
 
     return f"""
         QWidget#mainwindow {{
@@ -2298,11 +2301,12 @@ def get_base_stylesheet(theme_name="default"):
             font-size: 11px;
         }}
         QWidget#status_banner {{
-            background-color: transparent;
+            background: {status_banner_bg};
             border-radius: 0px;
         }}
         QWidget#status_banner QLabel {{
             color: {t['text']};
+            font-size: 15px;
         }}
         QWidget#status_banner QPushButton {{
             background-color: {t['accent']};

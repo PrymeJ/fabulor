@@ -738,9 +738,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if show_banner is True:
             self.status_banner.show()
-            fade = getattr(self.theme_manager, '_fade_overlay', None)
-            if not (fade and fade.isVisible()):
-                self.status_banner.raise_()
+            self.status_banner.raise_()
         elif show_banner is False:
             self.status_banner.hide()
 
@@ -1936,7 +1934,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Position the status banner at the bottom as an overlay
         if hasattr(self, 'status_banner'):
-            self.status_banner.setGeometry(0, self.height() - 30, self.width(), 30)
+            self.status_banner.setGeometry(0, self.height() - 36, self.width(), 36)
             if self.status_banner.isVisible():
                 self.status_banner.raise_()
 
