@@ -571,6 +571,9 @@ class ThemeManager(QObject):
         if not hover and hasattr(mw, 'library_panel'):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
             mw.library_panel.update_progress_bar_theme()
+        if not hover and hasattr(mw, 'chapter_list_widget'):
+            theme_dict = self.get_current_theme() or {}
+            mw.chapter_list_widget.update_theme(theme_dict)
         ss_panels = get_settings_stylesheet(theme_name)
         for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
             w = getattr(mw, attr, None)

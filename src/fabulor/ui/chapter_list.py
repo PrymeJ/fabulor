@@ -1,7 +1,7 @@
 # THEME_ANIM_TODO: ChapterList
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QLabel, QGraphicsOpacityEffect, QPushButton
+from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate, QStyle, QGraphicsOpacityEffect, QPushButton
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
-from PySide6.QtGui import QMouseEvent, QKeyEvent
+from PySide6.QtGui import QMouseEvent, QKeyEvent, QColor
 from mpv import ShutdownError
 from fabulor.player import _CHAPTER_BOUNDARY_EPSILON
 
@@ -15,6 +15,49 @@ FADE_OUT_MS = 300
 
 EXPAND_BTN_W = 26
 EXPAND_BTN_H = 11
+
+ROLE_CHAP_INDEX = Qt.UserRole
+ROLE_CHAP_TITLE = Qt.UserRole + 1
+ROLE_CHAP_DURATION = Qt.UserRole + 2
+
+
+class ChapterItemDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._color_text = QColor("#ffffff")
+        self._color_time = QColor("#aaaaaa")
+        self._color_highlight = QColor("#ffffff")
+
+    def update_theme(self, theme_dict):
+        def c(key, fallback):
+            val = theme_dict.get(key) or fallback
+            return QColor(val) if isinstance(val, str) else val
+        self._color_text = c('dropdown_text', theme_dict.get('text', '#ffffff'))
+        self._color_time = c('dropdown_time_text', theme_dict.get('text', '#aaaaaa'))
+        self._color_highlight = c('dropdown_curr_chap', '#ffffff')
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setClipRect(option.rect)
+
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, self._color_highlight)
+
+        r = option.rect
+        title = index.data(ROLE_CHAP_TITLE) or ""
+        title_rect = r.adjusted(H_MARGIN, 0, -(TIME_LABEL_WIDTH + H_MARGIN), 0)
+        painter.setPen(self._color_text)
+        painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
+
+        duration = index.data(ROLE_CHAP_DURATION) or ""
+        time_rect = r.adjusted(r.width() - TIME_LABEL_WIDTH - H_MARGIN, 0, -H_MARGIN, 0)
+        painter.setPen(self._color_time)
+        painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, duration)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width() if option.rect.isValid() else 0, ROW_HEIGHT)
 
 
 class ChapterList(QListWidget):
@@ -64,6 +107,9 @@ class ChapterList(QListWidget):
         # Drive the button's opacity from the same animation — no separate timer
         self._anim.valueChanged.connect(self._sync_btn_opacity)
 
+        self._delegate = ChapterItemDelegate(self)
+        self.setItemDelegate(self._delegate)
+
         self._digit_buffer = ""
         self._digit_timer = QTimer(self)
         self._digit_timer.setSingleShot(True)
@@ -78,6 +124,10 @@ class ChapterList(QListWidget):
 
     def set_config(self, config):
         self.config = config
+
+    def update_theme(self, theme_dict):
+        self._delegate.update_theme(theme_dict)
+        self.update()
 
     def populate(self, total_duration=0, speed=1.0, list_width=0):
         self._digit_buffer = ""
@@ -99,31 +149,12 @@ class ChapterList(QListWidget):
                 end = chapters[i+1].get('time', total_duration) if i + 1 < len(chapters) else total_duration
                 duration_str = self._format_seconds((end - start) / effective_speed)
 
-                item = QListWidgetItem(self)
-                item.setData(Qt.UserRole, i)
+                item = QListWidgetItem()
+                item.setData(ROLE_CHAP_INDEX, i)
+                item.setData(ROLE_CHAP_TITLE, self._elide_text(title, name_width))
+                item.setData(ROLE_CHAP_DURATION, duration_str)
                 item.setSizeHint(QSize(w, ROW_HEIGHT))
-
-                widget = QWidget()
-                widget.setAttribute(Qt.WA_TranslucentBackground)
-                layout = QHBoxLayout(widget)
-                layout.setContentsMargins(5, 0, 5, 0)
-                layout.setSpacing(4)
-
-                name_label = QLabel(self._elide_text(title, name_width))
-                name_label.setFixedHeight(ROW_HEIGHT)
-
-                time_label = QLabel(duration_str)
-                time_label.setObjectName("chapter_time")
-                time_label.setFixedWidth(TIME_LABEL_WIDTH)
-                time_label.setFixedHeight(ROW_HEIGHT)
-                time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-                layout.addWidget(name_label, 1)
-                layout.addWidget(time_label)
-                widget.setFixedHeight(ROW_HEIGHT)
-
                 self.addItem(item)
-                self.setItemWidget(item, widget)
 
             self._visible_rows = min(VISIBLE_ROWS, self.count())
             self._can_expand = self.count() > VISIBLE_ROWS
@@ -277,7 +308,7 @@ class ChapterList(QListWidget):
         try:
             if not self.player:
                 return
-            idx = item.data(Qt.UserRole)
+            idx = item.data(ROLE_CHAP_INDEX)
             chapters = self.player.chapter_list or []
             if not (0 <= idx < len(chapters)):
                 return
