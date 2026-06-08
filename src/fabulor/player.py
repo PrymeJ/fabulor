@@ -369,6 +369,13 @@ class Player(QObject):
                 self._playlist_resolved.disconnect(self._on_playlist_resolved)
             except RuntimeError:
                 pass
+        # play_target is a directory only when _resolve_playlist found no audio
+        # files in the folder — the folder exists but has no playable content.
+        # Don't hand this to mpv (it would error as "Unrecognized file format");
+        # emit load_failed directly so the app can soft-delete the book.
+        if os.path.isdir(play_target):
+            self.load_failed.emit("no audio files in folder")
+            return
         if not self._play_gated:
             # Gate already lifted before resolve finished — play immediately.
             self.instance.chapters_file = chapters_file or None

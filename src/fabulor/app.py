@@ -1245,8 +1245,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             _after_progress()
 
     def _on_load_failed(self, reason):
-        """Called when mpv fires end-file with a non-normal reason (error/unknown)."""
-        self._update_status_banner_ui(text=f"Failed to load: {reason}", show_banner=True, auto_hide=True)
+        """Called when mpv fires end-file with a non-normal reason (error/unknown),
+        or when _resolve_playlist determined the folder has no audio files."""
+        self._update_status_banner_ui(text=f"Failed to load: {reason}.", show_banner=True, auto_hide=True)
+        if reason == "no audio files in folder" and self.current_file:
+            self._mark_book_missing(self.current_file)
 
     def _update_chapter_label_clickability(self):
         """Enable the chapter label as a clickable link only when there are 2+ chapters."""
