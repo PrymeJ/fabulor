@@ -1,20 +1,31 @@
 import os
 from PySide6.QtCore import QObject, Signal, QRunnable, Slot
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QPainter
 
 class CoverLoaderSignals(QObject):
     cover_loaded = Signal(int, QImage) # Emits book_id, image
     finished = Signal()
 
 def to_grayscale(pixmap: QPixmap) -> QPixmap:
-    """Utility to convert a QPixmap to grayscale."""
+    """Utility to convert a QPixmap to grayscale, preserving the alpha channel.
+
+    Format_Grayscale8 discards alpha — transparent edge pixels get composited
+    against black, producing a black fringe on anything with transparency (e.g.
+    SVG placeholders with antialiased borders). Instead: get luminance via
+    Grayscale8, then re-apply the original alpha channel from the ARGB32 source
+    using a QPainter with CompositionMode_DestinationIn."""
     if pixmap.isNull():
         return pixmap
-    # Convert to QImage for transformation
-    image = pixmap.toImage()
-    if image.format() != QImage.Format.Format_Grayscale8:
-        image = image.convertToFormat(QImage.Format.Format_Grayscale8)
-    return QPixmap.fromImage(image)
+    source = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    grey = source.convertToFormat(QImage.Format.Format_Grayscale8) \
+                 .convertToFormat(QImage.Format.Format_ARGB32)
+    # Re-apply the original alpha: paint the alpha mask from source onto grey
+    # using DestinationIn, which multiplies destination alpha by source alpha.
+    painter = QPainter(grey)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    painter.drawImage(0, 0, source)
+    painter.end()
+    return QPixmap.fromImage(grey)
 
 class CoverLoaderWorker(QRunnable):
     """Worker to load covers using QThreadPool to avoid thread exhaustion."""

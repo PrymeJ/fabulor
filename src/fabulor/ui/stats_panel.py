@@ -15,6 +15,12 @@ from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 
+# Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
+# to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
+# does not — the SVG is already a flat icon and the grey wash just looks odd. Instead,
+# render the placeholder in a fixed monochrome colour so it reads as intentionally greyed.
+_ARCHIVED_PLACEHOLDER_COLOR = "#888888"
+
 
 def _elide(text: str, font, max_px: int) -> str:
     from PySide6.QtGui import QFontMetrics
@@ -360,12 +366,13 @@ class BookDayRow(QWidget):
         book_path = row_data.get("book_path")
         cover_path = row_data.get("cover_path")
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow init
+        pm = _render_svg_placeholder_bordered(_ARCHIVED_PLACEHOLDER_COLOR if self._is_archived else placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow init
         cover_label.setPixmap(pm)
 
         self._cover_label = cover_label
         self._assets_dir = assets_dir
         self._placeholder_color = placeholder_color
+        self._has_real_cover = False
 
         active_cover_path = row_data.get("active_cover_path")
         load_path = active_cover_path or cover_path
@@ -465,6 +472,7 @@ class BookDayRow(QWidget):
         self._apply_cover(QPixmap.fromImage(image))
 
     def _apply_cover(self, pixmap):
+        self._has_real_cover = True
         if self._is_archived:
             pixmap = to_grayscale(pixmap)
         scaled = pixmap.scaled(
@@ -473,6 +481,13 @@ class BookDayRow(QWidget):
             Qt.SmoothTransformation,
         )
         self._cover_label.setPixmap(scaled)
+
+    def update_placeholder_color(self, color: str):
+        if self._has_real_cover or self._is_archived:
+            return
+        self._placeholder_color = color
+        pm = _render_svg_placeholder_bordered(color, 34, 48, 48, offset_y=1)
+        self._cover_label.setPixmap(pm)
 
     def refresh_cover(self, cover_path: str):
         book_path = self._row_data.get("book_path")
@@ -491,7 +506,7 @@ class BookDayRow(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow refresh_cover
+            pm = _render_svg_placeholder_bordered(_ARCHIVED_PLACEHOLDER_COLOR if self._is_archived else self._placeholder_color, 34, 48, 48, offset_y=1)  # BookDayRow refresh_cover
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
@@ -506,6 +521,7 @@ class FinishedBookThumb(QWidget):
         self._row_data = row_data
         self._assets_dir = assets_dir
         self._placeholder_color = placeholder_color
+        self._has_real_cover = False
         self.setFixedSize(47, 47)
         self._is_archived = (row_data.get("is_deleted", 0) or
                             row_data.get("is_excluded", 0) or
@@ -533,7 +549,7 @@ class FinishedBookThumb(QWidget):
         if cached:
             self._apply_cover(cached)
         else:
-            pm = _render_svg_placeholder_bordered(placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb init
+            pm = _render_svg_placeholder_bordered(_ARCHIVED_PLACEHOLDER_COLOR if self._is_archived else placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb init
             cover_label.setPixmap(pm)
             if book_path and load_path and os.path.exists(load_path):
                 worker = CoverLoaderWorker(
@@ -555,6 +571,7 @@ class FinishedBookThumb(QWidget):
         self._apply_cover(pixmap)
 
     def _apply_cover(self, pixmap):
+        self._has_real_cover = True
         if self._is_archived:
             pixmap = to_grayscale(pixmap)
         side = min(pixmap.width(), pixmap.height())
@@ -567,6 +584,13 @@ class FinishedBookThumb(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
         self._cover_label.setPixmap(scaled)
+
+    def update_placeholder_color(self, color: str):
+        if self._has_real_cover or self._is_archived:
+            return
+        self._placeholder_color = color
+        pm = _render_svg_placeholder_bordered(color, 34, 47, 47, offset_y=1)
+        self._cover_label.setPixmap(pm)
 
     def refresh_cover(self, cover_path: str):
         book_path = self._row_data.get("book_path")
@@ -585,7 +609,7 @@ class FinishedBookThumb(QWidget):
             )
             QThreadPool.globalInstance().start(worker)
         else:
-            pm = _render_svg_placeholder_bordered(self._placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb refresh_cover
+            pm = _render_svg_placeholder_bordered(_ARCHIVED_PLACEHOLDER_COLOR if self._is_archived else self._placeholder_color, 34, 47, 47, offset_y=1)  # FinishedBookThumb refresh_cover
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
@@ -1142,6 +1166,20 @@ class StatsPanel(QWidget):
             self._heatmap.set_accent_color(self._accent_color)
         if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
             self.tabs.setTabIcon(5, self._make_settings_icon(theme))
+        # Re-render placeholder pixmaps on all existing rows so the color
+        # updates immediately without requiring a full tab rebuild.
+        if not hasattr(self, '_finished_scroll_row'):
+            return
+        color = self._placeholder_color
+        for attr in ('_finished_scroll_row', '_day_finished_scroll',
+                     '_week_finished_scroll', '_month_finished_scroll'):
+            scroll_row = getattr(self, attr, None)
+            if scroll_row is not None:
+                for widget in self._iter_finished_thumbs(scroll_row):
+                    widget.update_placeholder_color(color)
+        for tab_name in ("Day", "Week", "Month"):
+            for widget in self._iter_day_rows(tab_name):
+                widget.update_placeholder_color(color)
 
     def _make_settings_icon(self, theme: dict) -> QIcon:
         color = QColor(theme.get("text", "#ffffff"))
