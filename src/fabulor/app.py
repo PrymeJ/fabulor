@@ -354,7 +354,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.eof_revert_btn.setIconSize(QSize(20, 20))
         self.eof_revert_btn.installEventFilter(self)
         self.eof_revert_btn.clicked.connect(self._on_revert_finish)
-        self.eof_close_btn.clicked.connect(self._dismiss_eof_banner)
+        self.eof_close_btn.clicked.connect(self._dismiss_eof_prompt)
 
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
@@ -636,6 +636,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.style().unpolish(btn); btn.style().polish(btn)
 
     def _on_sleep_timer_started(self):
+        self._dismiss_eof_prompt()
         self.sleep_trigger_btn.setText("SLEEP")
         self.sleep_cancel_btn.show()
         self.sleep_pulse_anim.start()
@@ -754,8 +755,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if show_cancel is True:
             self.cancel_scan_btn.show()
-            # A scan starting takes over the banner — any pending EOF
-            # revert/dismiss controls must go with it.
+            # A scan starting takes over the banner — intentionally retires
+            # any pending EOF revert prompt (book stays finished), same
+            # contract as _dismiss_eof_prompt. Inlined because the banner
+            # state is already being rewritten here for the scan.
             self._eof_book_id = None
             self.eof_revert_btn.hide()
             self.eof_close_btn.hide()
@@ -770,11 +773,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._eof_book_id = None
             self.eof_revert_btn.hide()
             self.eof_close_btn.hide()
-            self._update_status_banner_ui(show_banner=False)
+            self._update_status_banner_ui(
+                text="Finished status reverted.",
+                show_banner=True,
+                show_cancel=False,
+                auto_hide=True,
+                auto_hide_ms=5000,
+            )
             self.stats_panel.refresh_all()
             self.library_panel.refresh()
 
-    def _dismiss_eof_banner(self) -> None:
+    def _dismiss_eof_prompt(self) -> None:
+        """Hide the finished-prompt without touching the DB — the book stays
+        finished. Used both for the explicit close button and for any action
+        (seek away from EOF, Restart, sleep timer start, book switch) that
+        should silently retire the prompt rather than offer a revert."""
+        if self._eof_book_id is None:
+            return
         self._eof_book_id = None
         self.eof_revert_btn.hide()
         self.eof_close_btn.hide()
@@ -1012,6 +1027,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager.hide_all_panels()
             return
 
+        self._dismiss_eof_prompt()
         self._save_current_progress()
         self._paused_time = None
         # Enter the switch lifecycle: capture the current slider values as flow-animation
@@ -1367,6 +1383,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.total_time_label.setText(self.player.format_time(dur / speed))
                 return
             else:
+                # Left EOF (user seeked/rewound away) — retire any pending
+                # revert prompt silently; the book stays marked finished.
+                self._dismiss_eof_prompt()
                 if is_paused:
                     if mpv_pos is not None and not self._switch.in_deadzone:
                         if self._paused_time is None or self.player.is_seeking or abs(mpv_pos - self._paused_time) > 1.0:
@@ -1991,6 +2010,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.status_banner.setText("Error: File missing!")
                 self.status_banner.show()
                 return
+            self._dismiss_eof_prompt()
             self.session_recorder.close()
             self.config.set_last_position(self.current_file, 0)
             self.db.update_progress(self.current_file, 0)
