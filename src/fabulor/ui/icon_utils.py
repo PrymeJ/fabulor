@@ -57,6 +57,6 @@ def render_logo_placeholder_bordered(color: str, icon_size: int, canvas_w: int, 
     if not icon.isNull():
         painter.drawPixmap((canvas_w - icon_size) // 2, (canvas_h - icon_size) // 2 + offset_y, icon)
     painter.setPen(QColor(color))
-    painter.drawRect(pm.rect().adjusted(1, 1, -1, -1))
+    painter.drawRect(pm.rect().adjusted(0, 0, -1, -1))
     painter.end()
     return pm

@@ -143,7 +143,7 @@ class _TagBookGrid(QScrollArea):
         self._container.setStyleSheet("background: transparent;")
         self._grid = QGridLayout(self._container)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(4)
+        self._grid.setSpacing(2)
         self.setWidget(self._container)
 
         self._books: list[dict] = []
