@@ -172,9 +172,20 @@ since `get_all_books` is fenced by `is_deleted = 0 AND is_excluded = 0`). Fix: c
 in `_on_cover_loaded` + `self._book_id` stored in `__init__`.
 
 `FinishedScrollRow.set_items`:
-- `_current_ids` guard (set equality, not list equality) skips rebuild when book IDs are
-  unchanged regardless of query return order — list equality was order-sensitive and fired
-  spurious rebuilds after `_invalidate_period_cache()` re-ran the DB query.
+- **2026-06-08 revision:** the original `_current_ids` guard (set equality on `book_id`)
+  caused the Overall tab's "recently finished" carousel to go stale — its top-20 membership
+  rarely changes day-to-day, so the guard kept skipping rebuilds even when order, covers, or
+  `is_deleted` (location-resurrection) changed. Day/Week/Month's churnier period-scoped lists
+  masked the same bug because their membership changes often enough to pass the set check.
+  Replaced with `_current_sig`: an order-sensitive list of
+  `(book_id, event_time, active_cover_path/cover_path, is_deleted)` tuples. This deliberately
+  re-introduces order-sensitivity — order changes ARE meaningful now (re-finishing reorders
+  the list) — while still skipping the rebuild in the common truly-unchanged case, preserving
+  the perf/flash guard the original code wanted (no widget churn during the panel-open slide).
+- ~~`_current_ids` guard (set equality, not list equality)~~ — superseded above. The original
+  concern (`_invalidate_period_cache()` re-running the query and changing row order with no
+  real change) is still valid, but set-equality threw out too much signal; the richer
+  signature distinguishes "real reorder" from "incidental reorder" via `event_time`.
 - `setParent(None)` replaces `deleteLater()` for synchronous widget removal — `deleteLater`
   is deferred and left old widgets in the layout during rapid successive calls.
 - `setMinimumWidth` computed after population (`n × 47 + (n−1) × 4`) so the container

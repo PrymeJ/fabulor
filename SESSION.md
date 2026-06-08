@@ -1,3 +1,108 @@
+## Session Summary — 2026-06-08 Session 2
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Fix the EOF finish-revert flow (the auto-dismiss/no-op revert bug
+left over from Session 1's banner work), shape its dismissal/feedback
+behavior per user spec, then chase a scanner regression ("re-add a removed
+location and books stay missing") to its root cause and fix the stats-panel
+staleness it exposed along the way.
+
+### What was built
+
+**EOF revert bug — root cause and fix (`bea0b3a`)**
+Investigated why the "Marked as finished" banner auto-dismissed after ~10s
+and why clicking Revert appeared to do nothing (book stayed finished, banner
+"just refreshed"). Two independent bugs at the EOF write site
+(`app.py` EOF block, ~line 1345):
+- `auto_hide=True, auto_hide_ms=10000` made the banner disappear on its own —
+  wrong for a banner carrying action buttons that must persist until the user
+  acts.
+- `_on_revert_finish` reset `_eof_event_written = False` while the player was
+  *still sitting at EOF* (`is_eof` stays `True` until a new file loads). On
+  the very next UI tick the EOF block saw the guard cleared and re-fired:
+  wrote a fresh `finished` event, re-set `_eof_book_id`, and re-displayed the
+  banner+buttons — net effect "revert does nothing, banner just refreshes."
+  Removed that reset; the latch now only re-arms in `_on_file_ready` when a
+  genuinely new file loads (its correct, pre-existing reset point).
+Also removed the `Key_R` debug shortcut (`# TODO: remove before release —
+debug shortcut to simulate EOF finished banner`) — its original form
+(`write_book_event(self._current_book.id, 'finished')`, swapping `id` into
+the `book_path` slot with no `book_id` kwarg) had been writing malformed
+`book_events` rows (`book_path='12263'`, `book_id=NULL`) during testing.
+Found and deleted ~250 such rows directly from `library.db` (verified zero
+remain). The corrected EOF call site (passes `.path`/`book_id=` correctly)
+was unaffected.
+
+**Shaping revert/dismiss behavior (`a54e008`)**
+Per spec: after reverting, show "Finished status reverted" (no icon — hide
+both buttons first) for 5s via the existing `auto_hide`/`status_hide_timer`
+machinery, instead of silently vanishing. Added a shared
+`_dismiss_eof_prompt()` — hides the prompt without touching the DB, book
+stays finished — and wired it into every action that should silently retire
+a pending prompt rather than offer a revert: seeking/rewinding away from EOF
+(detected at the `is_eof` → playback transition in `_update_ui_sync`'s
+`else` branch), clicking Restart, starting the sleep timer, and switching
+books (`_on_book_selected_from_library`). The pre-existing scan-start clobber
+in `_update_status_banner_ui` (`show_cancel=True` hides the eof controls and
+clears `_eof_book_id`) was left as-is — same contract, now commented to make
+clear it's intentional rather than incidental — since the banner state there
+is already mid-rewrite for the scan message.
+
+**Scanner regression: re-added locations stayed empty (`fea932e`)**
+User reported removing then re-adding a scan location left its books "missing"
+in the library/stats, requiring a manual force rescan to bring them back —
+"adding folders should take effect immediately, just like removing them."
+Traced to the documented `known_paths` skip behavior (CLAUDE.md, 2026-06-06
+note): `remove_scan_location` soft-deletes (`is_deleted=1`), but a routine
+scan sees the path in the unfenced `known_paths` and skips re-processing it
+regardless of the flag — only a force rescan calls `upsert_books_batch` and
+resets it. `add_scan_location` had no resurrection counterpart. Added
+`db.restore_books_under_path(path)` — un-soft-deletes (`is_deleted=0`) books
+under `path`, gated on `is_excluded=0` so user-trashed books still require a
+manual force rescan (mirrors `remove_scan_location`'s soft-delete query,
+inverted) — called from `_on_scan_now_clicked` right after
+`add_scan_location`. New CLAUDE.md note documents this as a deliberately
+narrower, separate code path from the scanner/`upsert_books_batch`
+resurrection.
+
+**Stats/tags panels not reflecting resurrection — two layers**
+First layer: `restore_books_under_path` is a synchronous DB write, but the
+only existing refresh trigger was `_on_scan_finished` (fires on the scanner's
+`finished` signal) — not guaranteed to follow promptly (e.g. a scan already
+running means `handle_background_tasks` won't start a new one). Added
+explicit `refresh_stats()`/`refresh_tag_manager()` calls right after the
+resurrection, mirroring the calls already in `_on_scan_finished`.
+
+Second layer — user reported Stats → Overall's "Recently finished" carousel
+stayed stale even across close/reopen, while Day/Week/Month's identical
+carousels refreshed fine. Root cause: `FinishedScrollRow.set_items` (shared
+by all four) skipped its rebuild whenever the **set of `book_id`s** matched
+the previous render — a guard added in an earlier session specifically to
+avoid spurious rebuilds from `_invalidate_period_cache()` reordering query
+results with no real change. Overall's top-20 membership rarely changes
+day-to-day, so the guard kept blocking rebuilds even when order/covers/
+`is_deleted` changed; Day/Week/Month's churnier period-scoped lists changed
+membership often enough to mask the same bug. Considered unconditionally
+rebuilding (simplest, guaranteed-fresh) but rejected it per user concern:
+~20 `FinishedBookThumb` widgets rebuilding during the panel-open slide
+animation risks exactly the stutter/cover-flash class of bug that
+`_add_row_safely`/`refresh_cover`/`on_cover_changed` were built to avoid
+elsewhere in this panel. Replaced the set-of-ids guard with an
+order-sensitive signature — `(book_id, event_time, active_cover_path or
+cover_path, is_deleted)` per row — that deliberately re-introduces order
+sensitivity (reordering IS meaningful now: re-finishing reorders the list)
+while still skipping the rebuild in the true no-change case. NOTES.md's
+existing entry on this widget updated to record both the original rationale
+and why it had to be superseded.
+
+### Commits
+- `bea0b3a` fix: stop EOF revert from re-arming the finished-event guard
+- `a54e008` feat: shape EOF revert-prompt dismissal and post-revert feedback
+- `fea932e` fix: resurrect soft-deleted books on location re-add and refresh stats/tags
+
+---
+
 ## Session Summary — 2026-06-08 Session 1
 
 **Branch:** `main` (direct commits)
