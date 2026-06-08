@@ -8,6 +8,37 @@ the full project description and Gemini-specific constraints. This file answers 
 
 ---
 
+## Running the app (Claude Code / Bash tool)
+
+**Always activate the venv before running** — do not invoke `fabulorenv/bin/python` directly:
+
+```bash
+source fabulorenv/bin/activate && python main.py
+```
+
+Activation sets `LD_LIBRARY_PATH=/home/pryme/Coding/Python/fabulor/fabulorenv/lib/stub`, which
+contains a `libcaca.so.0` shim that resolves a symbol-version conflict
+(`_nc_curscr@NCURSES6_TINFO_5.7.20081102`) between the system's `libcaca` package and its
+`libncursesw`/`libtinfo` packages — confirmed via `objdump -T` to be a genuine broken system
+package mismatch (`libncursesw.so.6` imports `_nc_curscr` but `libtinfow.so.6` doesn't export it;
+only the non-wide `libtinfo.so.6` does). Without the venv's `LD_LIBRARY_PATH`, `import mpv` raises
+`OSError: .../libcaca.so.0: undefined symbol: _nc_curscr, version NCURSES6_TINFO_5.7.20081102`,
+which `player.py`'s top-level `try/except` masks behind a generic "❌ libmpv not found" message —
+so the real cause looks like a missing-library problem when it is actually an `LD_LIBRARY_PATH`
+problem. Setting `LD_LIBRARY_PATH` to other values (e.g. `/usr/lib64`, or PySide6's bundled Qt lib
+dir) does not fix this and can break Qt loading instead — the venv's `lib/stub` shim is the only
+known-working path. This is unrelated to the MPV-init rule below; do not conflate the two.
+
+To launch the app in the background and capture output without leaving stray processes:
+```bash
+source fabulorenv/bin/activate
+python main.py > /tmp/fabulor_run.log 2>&1 &
+# ... test, then:
+kill %1   # or: pkill -f "python main.py" — but check `ps aux` first if an `entr` dev-loop is also running
+```
+
+---
+
 ## Critical Architecture Rules
 
 These rules exist because violating them caused real bugs. The reasoning is documented in

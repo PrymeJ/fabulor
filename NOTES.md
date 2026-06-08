@@ -1,4 +1,62 @@
 
+## `_eof_event_written` resets only in `_on_file_ready` — never in `_on_revert_finish` (2026-06-08)
+
+`_eof_event_written` guards the EOF block (app.py:1361-1363) from writing a
+duplicate `finished` `book_event` on every 200ms UI tick while the player
+sits at EOF — it's set `True` the first time the event is written, and the
+*only* place it is reset to `False` is `_on_file_ready` (app.py:1092, on
+the next book load).
+
+An earlier version of `_on_revert_finish` also reset it to `False`, on the
+theory that reverting "undoes" the finish and should let it re-fire later.
+This was wrong and caused a re-arm bug: the player is *still sitting at
+EOF* when revert is clicked (nothing seeks away), so the very next 200ms
+tick saw `_eof_event_written == False` again, re-wrote the `finished`
+event, and silently undid the revert the user just performed.
+
+**Do not add that reset back to `_on_revert_finish`.** The flag's job is
+"have we written a finished-event for *this* EOF arrival" — revert changes
+the DB's finished status, not whether this EOF arrival already wrote its
+event. `_on_file_ready` remains the sole legitimate reset point, because a
+new `book_ready` means a genuinely new EOF can occur later.
+
+---
+
+## Known gaps — missing-file edge cases not yet exercised (2026-06-08)
+
+While hardening the missing-folder/ghost-playback bug (guard in
+`_on_book_selected_from_library` + try/except in `player.py`'s
+`_ResolveWorker.run`), two related scenarios were identified but not
+verified — both would need a populated multi-file (VT) book or real
+removable media to test meaningfully, so they're logged rather than
+speculatively patched:
+
+- **Partial VT folder removal**: `_resolve_playlist` builds the virtual
+  timeline straight from `db.get_book_files(path)` with no per-file
+  existence check. If some (not all) files in a multi-file book are
+  deleted externally, behavior is unverified — it may rely on the
+  existing `end-file`/`ERROR` → `load_failed` → `_on_load_failed` banner
+  path firing per missing file during VT advancement, or it may stall
+  mid-book when `_advance_or_finish` tries to play a vanished path.
+- **Removable/network drive unmount mid-buffer**: path exists at
+  selection time, then the drive unmounts while mpv is buffering. Almost
+  certainly funnels through the same `end-file`/`ERROR` →
+  `load_failed` mechanism that already handles in-flight I/O errors
+  (case "file disappears mid-playback", confirmed working), but the
+  timing/UX — does the banner appear promptly, or does mpv hang during
+  the buffer stall before the error event fires — is unverified without
+  real removable media.
+
+Two adjacent scenarios were checked and confirmed already handled:
+file-vanishes-mid-playback fires mpv's `end-file` event with
+`reason == ERROR (4)`, which `_on_end_file` turns into `load_failed` →
+`_on_load_failed`'s "Failed to load: {reason}" banner (player.py:426-433,
+app.py:1220-1222); and startup restore of a missing last-played book is
+guarded by `os.path.exists(last_book)` at app.py:390, falling through
+cleanly to the empty-library state with no stale UI.
+
+---
+
 ## HoverButton + setToolTip on small buttons causes an enter/leave feedback loop (2026-06-08)
 
 `eof_revert_btn` (24×24, in the status banner) was built as a `HoverButton`

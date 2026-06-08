@@ -1,3 +1,121 @@
+## Session Summary — 2026-06-08 Session 3
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Investigate and fix the silent ghost-playback bug (deleted book
+folder keeps "playing" as if nothing changed), find and fix a reliable way
+to launch the app from Claude Code's sandboxed shell, verify two related
+missing-file scenarios already work, and document a hard invariant in the
+EOF-revert flow that must not be reintroduced.
+
+### What was built
+
+**Silent ghost-playback bug — root cause and fix (`7f11d34`)**
+User reported: physically deleting a book's folder outside the app left the
+cover/title showing as if the book were still active, and clicking Play
+continued playback of the previously-loaded file as though nothing had
+happened — no error, no banner. Traced to two compounding gaps:
+- `_on_book_selected_from_library` had **no existence check** before
+  optimistically updating cover/title and calling `player.load_book(path)`
+  — so selecting a book whose folder had vanished updated the UI to the
+  dead book before the load silently failed.
+- `player.py`'s `_ResolveWorker.run` called `_resolve_playlist(path)` with
+  **no exception handling**. `Path(path).iterdir()` raises `FileNotFoundError`
+  for a vanished folder; that `OSError` propagated straight out of
+  `QRunnable.run()`, was swallowed by Qt's thread pool, and
+  `_playlist_resolved` never fired — the load died silently on a background
+  thread with a raw traceback in the console, while mpv kept playing
+  whatever was already loaded.
+
+Fixed both layers: added `os.path.exists(path)` guards (a) in
+`_on_book_selected_from_library`, before any UI/state mutation — shows
+"File missing!" via `_update_status_banner_ui` and returns early — and (b)
+in `toggle_play_pause`'s resume-from-pause branch, mirroring the existing
+Restart-branch pattern. Wrapped `_resolve_playlist` in a broad
+`try/except Exception` inside `_ResolveWorker.run` to also cover the race
+where the path vanishes *between* the caller's check and the worker
+actually running — logs via `print` and returns without emitting
+`_playlist_resolved`, so the load aborts cleanly instead of crashing the
+thread. Verified the race-window fix directly: monkeypatched
+`Path.iterdir` to delete the folder at the exact instant `_resolve_playlist`
+accessed it, confirmed the exception was caught, logged, and
+`_playlist_resolved` never emitted — no crash.
+
+Also fixed two pre-existing bugs surfaced along the way: both
+"File missing!" call sites (Restart branch, and the new resume-branch
+guard) were calling `self.status_banner.setText(...)` /`.show()` —
+`status_banner` is a plain `QWidget` with no `setText`, so this raised
+`AttributeError` and never displayed. Routed both through
+`_update_status_banner_ui`, the correct API already used at the
+`_on_file_ready` "File missing!" site (app.py:1084).
+
+User confirmed via live testing (folder removed mid-play and while another
+book was playing): banner now shows correctly, no attempt to switch to the
+dead path, previous book's playback is left alone rather than ghosted.
+
+**Reliable app launch from Claude Code's shell — found and documented**
+Every prior session's attempt to launch the app from the Bash tool failed
+with "❌ libmpv not found" — a friendly wrapper message in `player.py` that
+fires on *any* `OSError` mentioning `libmpv`/`libcaca`/`libtinfo`/
+`_nc_curscr`, masking the real underlying error. Traced the actual cause:
+the system's installed `libcaca` package requires `_nc_curscr` from
+`libncursesw`, but the installed `libtinfow` doesn't export that symbol
+(only the non-wide `libtinfo` does) — a genuine broken system-package
+mismatch, confirmed via `objdump -T`. Neither `LD_LIBRARY_PATH=/usr/lib64`
+nor pointing it at PySide6's bundled Qt lib dir fixes this (the latter
+breaks Qt loading instead). The actual fix: **activate the venv** —
+`source fabulorenv/bin/activate && python main.py`. Activation sets
+`LD_LIBRARY_PATH` to the venv's `lib/stub` directory, which ships a
+compatible `libcaca.so.0` shim that resolves the symbol-version conflict.
+Running `fabulorenv/bin/python main.py` directly (without `source activate`)
+skips this and hits the broken system chain. Documented as a new "Running
+the app" section in CLAUDE.md, including the background-launch/cleanup
+pattern (checking for a coexisting `entr` dev-loop before `pkill`).
+
+**Verified two adjacent missing-file scenarios are already handled**
+In response to a list of related edge cases worth checking:
+- *File disappears mid-playback* (e.g. drive disconnects while playing):
+  already handled — mpv fires `end-file` with `reason == ERROR (4)`,
+  `_on_end_file` extracts the error string and emits `load_failed`,
+  `_on_load_failed` shows "Failed to load: {reason}" (player.py:426-433,
+  app.py:1220-1222). Pre-existing, working, end-to-end wired.
+- *Missing file on startup restore*: already handled — app.py:390 guards
+  `last_book` restoration with `os.path.exists(last_book)` (plus a
+  scan-location validity check); if missing, `current_file` is never set
+  and the app falls through cleanly to the empty-library state.
+
+Two adjacent scenarios remain genuinely unverified and were logged in
+NOTES.md as known gaps rather than speculatively patched: partial VT
+folder removal (some-but-not-all files in a multi-file book deleted —
+unclear whether `_resolve_playlist`/`_advance_or_finish` degrades
+gracefully or stalls mid-book), and removable/network drive unmounting
+mid-buffer (likely covered by the same `load_failed` path as the
+confirmed mid-playback case, but timing/UX unverified without real
+removable media).
+
+**Documented the `_eof_event_written` reset invariant**
+Added a NOTES.md entry recording why `_eof_event_written` must be reset
+*only* in `_on_file_ready` and never in `_on_revert_finish` — the exact
+bug fixed in Session 2's `bea0b3a` (resetting it during revert re-arms the
+guard while the player is still at EOF, causing the very next 200ms tick
+to silently re-write the `finished` event and undo the revert). Recorded
+explicitly so a future session doesn't reintroduce the reset under the
+plausible-sounding theory that "revert should let the event re-fire."
+
+### Documentation
+- **CLAUDE.md**: added "Running the app (Claude Code / Bash tool)" section
+  documenting the `source fabulorenv/bin/activate` requirement and the
+  `libcaca`/`_nc_curscr` system-package mismatch it works around.
+- **NOTES.md**: added "Known gaps — missing-file edge cases not yet
+  exercised" (partial VT removal, drive-unmount-mid-buffer, plus the two
+  confirmed-handled cases for reference) and "`_eof_event_written` resets
+  only in `_on_file_ready`" (the revert-flow invariant above).
+
+### Commits
+- `7f11d34` fix: guard against playback on missing book files and harden the resolve worker
+
+---
+
 ## Session Summary — 2026-06-08 Session 2
 
 **Branch:** `main` (direct commits)
