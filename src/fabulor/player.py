@@ -326,7 +326,18 @@ class Player(QObject):
 
         class _ResolveWorker(QRunnable):
             def run(self):
-                play_target, chapters_file = player._resolve_playlist(path)
+                # Defensive: path can vanish between the caller's existence check and
+                # this worker actually running (race window). Without this catch, any
+                # OSError from Path(path).iterdir() propagates out of QRunnable.run(),
+                # is swallowed by Qt's thread pool, and _playlist_resolved never fires —
+                # the load dies silently and playback continues on whatever was already
+                # loaded. Catch broadly: the goal is "don't die silently on the thread,"
+                # not "handle specific error types differently."
+                try:
+                    play_target, chapters_file = player._resolve_playlist(path)
+                except Exception as e:
+                    print(f"[load_book] _resolve_playlist failed for {path!r}: {e!r}")
+                    return
                 player._playlist_resolved.emit(play_target, chapters_file or "")
 
         # Reset virtual timeline state for new book

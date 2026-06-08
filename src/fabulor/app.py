@@ -1027,6 +1027,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager.hide_all_panels()
             return
 
+        if not os.path.exists(path):
+            self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+            self.panel_manager.hide_all_panels()
+            return
+
         self._dismiss_eof_prompt()
         self._save_current_progress()
         self._paused_time = None
@@ -2007,8 +2012,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         
         if self.player.eof_reached or self.play_pause_button.text() == "Restart":
             if not os.path.exists(self.current_file):
-                self.status_banner.setText("Error: File missing!")
-                self.status_banner.show()
+                self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
                 return
             self._dismiss_eof_prompt()
             self.session_recorder.close()
@@ -2022,6 +2026,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             was_paused = self.player.pause
             if was_paused:
+                if self.current_file and not os.path.exists(self.current_file):
+                    self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+                    return
                 if self.current_file:
                     self.db.update_last_played(self.current_file)
 
