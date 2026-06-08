@@ -1,3 +1,40 @@
+## Session Summary — 2026-06-09 Session 1
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Fix thumbnail sizing and clipping issues in the Stats panel finished-books carousel and the Tag manager book grid. All five commits are UI polish with no behaviour changes.
+
+### Commits
+
+1. **feat: soft-delete books with confirmed-missing backing files** (`31a2d07`)
+   Already committed in Session 3 (2026-06-08) — included here because it was the last item in the prior session's commit log and forms context for the carousel `is_excluded` fix below.
+
+2. **fix: update stats placeholders on theme change and fix grayscale alpha loss** (`1aeb2e1`)
+   Also carried over from 2026-06-08 Session 3 — `to_grayscale` alpha fix and `update_placeholder_color` wiring.
+
+3. **fix: soft-delete books whose folder exists but contains no audio files** (`97fb83c`)
+   Also carried over from 2026-06-08 Session 3.
+
+_(The above three were the last commits of 2026-06-08 and are the starting context for this session.)_
+
+4. **fix: flush placeholder border and reduce tag grid spacing to fit 5 columns** (`9a5471b`)
+   `render_logo_placeholder_bordered` used `adjusted(1, 1, -1, -1)` — border inset 1px on all sides, making SVG placeholders appear 1px narrower/shorter than real cover thumbnails. Changed to `adjusted(0, 0, -1, -1)` (flush to top-left). Tag grid spacing reduced from 4px to 2px so 5×48px columns fit in 250px (5×48 + 4×2 = 248px ≤ 250px).
+
+5. **fix: resize tag grid thumbs to 47px and increase spacing to 3px** (`f24b836`)
+   Further refinement: tag grid thumbs reduced to 47×47 (matching the stats carousel), spacing raised to 3px. 5×47 + 4×3 = 247px — better visual balance.
+
+   Stats carousel `FinishedBookThumb` also changed to 47×47 in this session (applied via direct file edits confirmed already in HEAD as of session start — the size change was already committed in the prior context window).
+
+### Root cause of the carousel last-thumb clip
+
+`FinishedScrollRow.set_items` set `min_w = n * 47 + (n-1) * 4` — but the thumbs were 48px, so the container was 1px × n too narrow. Scrolling to the end exposed the undercount as a partial clip on the last thumb. Fix: `min_w = n * 47` after the thumbs were reduced to 47px (so the formula is again correct). The fix to `min_w` (`47→48`) was applied mid-session but then reverted to `47` when the thumb size was confirmed at 47.
+
+### Root cause of the tag grid last-column clip
+
+Panel width is `int(300 × 0.9) = 270px`, margins `(10, 10, 10, 0)` → 250px available. With `_cols=5` and 48px thumbs and 4px spacing: 5×48 + 4×4 = 256px > 250px — 6px overage caused the rightmost column to clip. Spacing reduction + thumb size reduction brought the total to 247px.
+
+---
+
 ## Session Summary — 2026-06-08 Session 3
 
 **Branch:** `main` (direct commits)

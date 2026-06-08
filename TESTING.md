@@ -506,6 +506,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] With 1 finished book: carousel shows the single thumb, no scroll arrows
 - [ ] With enough finished books to overflow viewport width: right arrow (▶) appears on hover; scrolling moves thumbs; left arrow (◀) appears after scrolling; arrows hide on mouse-out
 - [ ] Thumbs are not compressed — each is 47×47, not squashed to fit viewport
+- [ ] With 15+ finished books: scroll to the end of the carousel — the last thumb is fully visible, not clipped at the right edge
+- [ ] Placeholder and real-cover thumbs appear the same visual size (47×47) — no 1px size discrepancy between books with and without cover art
 
 ### Synchronous widget removal
 - [ ] Navigate period rapidly (click ‹ several times quickly): no stacking — old thumbs removed before new ones inserted, no overlap
@@ -736,6 +738,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] After a library path removal: tag manager grid refreshes to show updated state
 - [ ] Closing and reopening the tag panel always lands on the tag list, not a previously viewed tag panel
 - [ ] Opening panel with a tag that has 100+ books: no delay or freeze on open
+- [ ] Tag panel grid with 5+ books: all 5 columns visible, rightmost column not clipped — 5×47 + 4×3 = 247px fits in the 250px content area
+- [ ] Placeholder and real-cover thumbs in the tag grid appear the same visual size (47×47)
 
 ### Tag panel — inline name editing
 - [ ] Editing tag name shows save icon (dirty state)
