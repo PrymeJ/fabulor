@@ -78,6 +78,16 @@ class LibraryController(QObject):
             if not is_redundant:
                 self.scanner.stop()
                 self.db.add_scan_location(new_path)
+                # Re-adding a location should bring back books that were only
+                # soft-deleted because the location was removed — without this,
+                # a routine scan's known_paths skip leaves them hidden until a
+                # manual force rescan (see scanner.py known_paths note).
+                self.db.restore_books_under_path(new_path)
+                # Resurrection is a synchronous DB write — refresh stats/tags
+                # immediately rather than waiting on _on_scan_finished, which
+                # may not fire promptly (or at all, if a scan is already running).
+                self.app.refresh_stats()
+                self.app.refresh_tag_manager()
                 self._check_library_status(manual=True)
                 self._refresh_folder_list()
 

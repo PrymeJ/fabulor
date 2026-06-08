@@ -213,6 +213,18 @@ class LibraryDB:
         except sqlite3.IntegrityError:
             return False
 
+    def restore_books_under_path(self, path):
+        """Un-soft-deletes books under `path` whose location was previously
+        removed (mirrors remove_scan_location's soft-delete). Books the user
+        explicitly excluded (is_excluded = 1) stay hidden — re-adding a
+        location must not silently resurrect those; only a manual force
+        rescan does."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE books SET is_deleted = 0 WHERE path LIKE ? AND is_deleted = 1 AND is_excluded = 0",
+                (str(path).rstrip("/") + "/%",)
+            )
+
     def get_scan_locations(self):
         """Returns a list of all registered scan paths."""
         with self._get_conn() as conn:

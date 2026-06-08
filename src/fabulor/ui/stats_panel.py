@@ -643,7 +643,7 @@ class FinishedScrollRow(QWidget):
         bar.valueChanged.connect(self._update_arrows)
         bar.rangeChanged.connect(self._update_arrows)
 
-        self._current_ids = []
+        self._current_sig = []
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -668,10 +668,21 @@ class FinishedScrollRow(QWidget):
         self._right_arrow.setVisible(bar.value() < bar.maximum())
 
     def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
-        incoming_ids = [r.get("book_id") for r in rows]
-        if set(incoming_ids) == set(self._current_ids):
+        # Order-sensitive signature: book_id alone misses changes that don't
+        # alter membership but do alter what's rendered (re-finish reordering,
+        # cover swaps, resurrection flipping is_deleted). Comparing the full
+        # tuple per row keeps the no-rebuild fast path for the common
+        # truly-unchanged case while still catching everything that matters —
+        # avoids the rebuild-driven cover flash/stutter risk on panel open.
+        incoming_sig = [
+            (r.get("book_id"), r.get("event_time"),
+             r.get("active_cover_path") or r.get("cover_path"),
+             r.get("is_deleted"))
+            for r in rows
+        ]
+        if incoming_sig == self._current_sig:
             return
-        self._current_ids = incoming_ids
+        self._current_sig = incoming_sig
         while self._layout.count() > 0:
             item = self._layout.takeAt(0)
             widget = item.widget()
