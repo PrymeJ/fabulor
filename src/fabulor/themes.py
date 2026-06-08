@@ -2318,15 +2318,16 @@ def get_base_stylesheet(theme_name="default"):
         QWidget#status_banner QPushButton:hover {{
             color: {t['bg_main']};
         }}
-        QPushButton#eof_revert_btn {{
+        QWidget#status_banner QPushButton#eof_revert_btn {{
             background: transparent;
+            border: none;
             padding: 0px;
-            border-radius: 3px;
         }}
-        QPushButton#eof_revert_btn:hover {{
-            background: {t['accent_light']};
+        QWidget#status_banner QPushButton#eof_revert_btn:hover {{
+            background: transparent;
+            color: {t['accent_light']};
         }}
-        QPushButton#eof_close_btn {{
+        QWidget#status_banner QPushButton#eof_close_btn {{
             background-color: {t['accent']};
             color: {t['bg_main']};
             border: none;
@@ -2335,7 +2336,11 @@ def get_base_stylesheet(theme_name="default"):
             margin-top: 4px;
             margin-right: 4px;
         }}
-        QPushButton#eof_close_btn:hover {{
+        QPushButton#cancel_scan_btn {{
+            font-size: 13px;
+            border-radius: 3px;
+        }}
+        QWidget#status_banner QPushButton#eof_close_btn:hover {{
             background-color: {t['accent_light']};
             color: {t['text']};
         }}
