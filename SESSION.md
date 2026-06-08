@@ -1,3 +1,134 @@
+## Session Summary — 2026-06-08 Session 1
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Add a "finish-book" status banner revert/dismiss action; isolate and
+fix a tooltip/cursor flicker bug on the new banner buttons; add a "finished"
+status icon to the Book Detail Panel sourced from the existing stats query;
+wire live-refresh hooks so stats/finished-status/library updates appear in
+real time when the relevant panels are already open.
+
+### What was built
+
+**Revert action for the finish-book status banner**
+New `db.unfinish_book(book_id)` deletes the most recent `finished` event for a
+book. `_on_revert_finish` calls it, resets `_eof_event_written`/`_eof_book_id`,
+hides the banner, and refreshes `stats_panel`/`library_panel`. Initially wired
+through a generic `status_action_btn` (text-based "Revert" button reused from
+the scan-cancel banner), then replaced with two dedicated, purpose-built
+buttons — `eof_revert_btn` (icon-only, `revert.svg`) and `eof_close_btn`
+("✕", dismiss-only, via new `_dismiss_eof_banner`) — once it became clear the
+generic button's styling and layout couldn't serve both the scan-cancel and
+finish-revert use cases cleanly. `_eof_book_id: int | None` tracks which book
+the pending revert/dismiss applies to; cleared on `load_book` and whenever a
+scan starts (`_update_status_banner_ui` now hides both eof buttons and resets
+`_eof_book_id` when `show_cancel=True` — a finish banner must not survive a
+scan taking over the same banner widget).
+
+**Status banner styling/layout pass**
+Banner height raised 30→36px (then `setFixedHeight` 40→36 at the widget level
+for consistency), background changed from `transparent`/`setAutoFillBackground`
+to a real `WA_StyledBackground` + QSS `background: {bg_status_banner|bg_deep|
+bg_main}` (new optional theme key `bg_status_banner`, documented in the theme
+key reference at the top of `themes.py`), label font bumped to 15px, and the
+`raise_()` call simplified by dropping a stale `_fade_overlay` visibility check
+that no longer reflected how the overlay and banner interact.
+
+**Tooltip/cursor flicker — root-caused to `HoverButton`**
+`eof_revert_btn` initially used `HoverButton` (for a hover icon-color swap,
+`accent` → `accent_light`) plus `setToolTip` and `setCursor`. This combination
+produced a visible enter/leave cycle: the tooltip popup overlapped the small
+24×24 button, stealing hover, which re-triggered enter/leave on the button,
+which re-showed the tooltip — a feedback loop that also made the cursor
+flicker between arrow and pointing-hand. Eliminated through systematic
+elimination (disabling the icon swap entirely had no effect, ruling out
+`setIcon`; A/B testing against `cancel_scan_btn` and `eof_close_btn` — both
+stable despite having `setCursor`/`setToolTip` — isolated the cause to
+`HoverButton`'s `enterEvent`/`leaveEvent` overrides and signal emission
+specifically). Fix: switched to plain `QPushButton` + `installEventFilter(self)`
+catching native `QEvent.Enter`/`QEvent.Leave` in the global `eventFilter` to
+drive the icon swap directly — stable.
+
+After several precise pixel-offset attempts at custom tooltip positioning
+(a `_show_clamped_tooltip` helper anchored to cursor position, adjusted
+6px → 8px → 14px gaps per user feedback), the user concluded the tooltips
+were unnecessary — both buttons are visually self-explanatory — and asked to
+drop them entirely rather than keep chasing placement. Fully removed:
+`setToolTip` calls on both buttons, `_show_clamped_tooltip` method, the
+`QEvent.ToolTip` branch in `eventFilter`, and the now-unused `QToolTip` import.
+Verified via grep returning zero matches across all four symbols.
+
+**QSS specificity and dead-code cleanup**
+Confirmed and cleaned up two leftover issues from the styling pass: a dead
+duplicate `#eof_revert_btn`/`:hover` block in `get_player_stylesheet`
+(unreachable — that stylesheet targets `content_container`, a sibling of
+`status_banner`, not an ancestor — same class of cascade trap as the
+documented `bg_image`/`visual_area` rule in CLAUDE.md), and a blanket
+`QPushButton { background: transparent; border: none; padding: 0px; }` rule
+that had been added to the `mw`-scoped stylesheet and was silently flattening
+`cancel_scan_btn`'s border-radius (it matched every `QPushButton` in scope,
+including buttons with their own radius rules). Both removed; the final
+`#eof_revert_btn`/`#eof_close_btn` rules are qualified with the `status_banner`
+ancestor (`QWidget#status_banner QPushButton#eof_revert_btn`) to win cascade
+specificity without a blanket rule.
+
+**SVG icon loading consolidation**
+Per a separate plan-mode assessment, deleted the duplicate `_load_svg_icon` in
+`book_detail_panel.py` (and its `functools.lru_cache` import) and migrated its
+8 call sites to the existing `load_themed_icon` in `icon_utils.py` — the two
+were near-identical copy-paste functions. `ui_helpers._load_svg_icon` was
+deliberately left untouched: it returns `QIcon` (not `QPixmap`), supports
+dynamic sizing, and has richer CSS-form regex recoloring that `restart.svg`
+specifically depends on to render in the correct theme color — consolidating
+it in would have broken that icon's rendering.
+
+**Finished status icon in Book Detail Panel**
+Added `self._finished_label` (16×16 `QLabel`, `check.svg` via
+`load_themed_icon` at `accent` color, size 16, opacity 0.7 — matching the
+existing trash/lock/save icon convention) positioned in `right_col` directly
+below `_meta_action_btn`, aligned with the narrator row. Sourced from
+`stats['finished_count'] > 0` — the exact same value already computed for the
+Stats tab's "Finished" row — achieving a single source of truth with zero
+additional DB queries. `_update_finished_icon(finished: bool)` owns visibility
+and pixmap; wired into `_refresh_stats()` and `on_theme_changed`.
+
+Layout fix: the icon initially slid up into the lock/save button's space when
+that button was hidden (its layout slot collapsed). Fixed by adding
+`setRetainSizeWhenHidden(True)` to `_meta_action_btn`'s `QSizePolicy` so it
+always reserves its 24×24 footprint in `right_col`, pinning the finished icon
+beneath it regardless of the action button's visibility.
+
+**Live-refresh wiring for stats/finished-status/library**
+Previously, finishing a book or closing a session while the Book Detail Panel,
+Stats Panel, or Library Panel (Finished view) was open did not update those
+views — only a close-and-reopen refreshed them. Added `isVisible()`-gated
+refresh calls (matching the existing pattern in `stats_panel`):
+`_on_session_written` now also calls `book_detail_panel._refresh_stats()` when
+visible; the EOF "marked as finished" handler now also calls
+`library_panel.refresh()` and `book_detail_panel._refresh_stats()` when those
+panels are visible. Confirmed final behavior matches the user's spec exactly:
+when in the main window, Library/Stats/Book-Detail show the update on next
+visit (no refresh cost paid while not visible); when already viewing one of
+those panels, the update appears live.
+
+### Files touched
+- `app.py` — `_update_status_banner_ui`, `_on_revert_finish`, `_dismiss_eof_banner`,
+  `_eof_book_id`, eventFilter (icon hover swap via `QEvent.Enter`/`Leave`,
+  tooltip interception added then fully removed), `_reload_button_icons`,
+  `_on_session_written`, EOF "marked as finished" handler, debug shortcut `R`
+- `db.py` — `unfinish_book`
+- `themes.py` — `bg_status_banner` theme key, `#eof_revert_btn`/`#eof_close_btn`
+  QSS (scoped to `status_banner` ancestor), removed dead duplicate block and
+  blanket `QPushButton` rule
+- `ui/main_window_builders.py` — `build_status_banner` (eof button construction,
+  sizes, cursors, removed tooltips and `HoverButton`)
+- `ui/book_detail_panel.py` — `_finished_label`, `_update_finished_icon`,
+  `_refresh_stats`/`on_theme_changed` wiring, `_load_svg_icon` → `load_themed_icon`
+  migration
+- `assets/icons/revert.svg` — new icon
+
+---
+
 ## Session Summary — 2026-06-07 Session 1
 
 **Branch:** `main` (direct commits)

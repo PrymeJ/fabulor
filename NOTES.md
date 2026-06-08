@@ -1,4 +1,31 @@
 
+## HoverButton + setToolTip on small buttons causes an enter/leave feedback loop (2026-06-08)
+
+`eof_revert_btn` (24×24, in the status banner) was built as a `HoverButton`
+with `setToolTip` and `setCursor(Qt.PointingHandCursor)`, intended to swap its
+icon color (`accent` → `accent_light`) on hover. In practice the tooltip
+popup overlapped the small button, stealing the hover — which fired
+`leaveEvent`/`enterEvent` on the button again, re-showing the tooltip, in a
+loop. Symptoms: the tooltip flickered in and out, and the cursor cycled
+between arrow and pointing-hand.
+
+Systematic elimination ruled out the obvious suspects: disabling the icon
+swap entirely (`setIcon` calls) had no effect, and `cancel_scan_btn` /
+`eof_close_btn` — both plain `QPushButton`s with `setCursor` + `setToolTip` —
+were completely stable. The cause was specifically `HoverButton`'s
+`enterEvent`/`leaveEvent` overrides and `hovered`/`unhovered` signal emission
+interacting badly with native Qt tooltip tracking on a small widget.
+
+**Fix:** use plain `QPushButton` + `installEventFilter(self)`, handling
+`QEvent.Enter`/`QEvent.Leave` directly in the global `eventFilter` to drive
+hover-based icon swaps. Avoid `HoverButton` for small (<~30px) widgets that
+also need a tooltip — or skip the tooltip (the eventual choice here: both
+banner buttons are visually self-explanatory, so tooltips were dropped
+entirely rather than chasing precise `QToolTip.showText` placement, which has
+no window-bounds awareness and is fragile on small widgets near window edges).
+
+---
+
 ## Startup animation stutter (2026-06-07)
 On app startup, `book_ready` fires while the event loop is under pressure
 from background work (stats panel cache, cover cache, library population).

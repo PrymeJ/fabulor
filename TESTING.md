@@ -32,6 +32,29 @@
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
 
+## Finish-book status banner (revert/dismiss)
+
+- [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
+- [ ] Revert button: removes the finished status, hides both eof buttons, banner dismisses
+- [ ] Revert button: stats panel and library Finished view no longer show the book as finished (without needing to reopen)
+- [ ] Close (✕) button: dismisses the banner and hides both eof buttons without reverting finished status
+- [ ] Banner auto-hides after 10s if neither button is pressed; finished status remains and eof buttons hide along with it
+- [ ] Re-finishing a previously-reverted book shows the banner again and re-marks it as finished
+- [ ] Hover state: eof_revert_btn icon changes from accent to accent_light color; cursor is a pointing hand on both buttons
+- [ ] No tooltip flicker or cursor flicker on either button (HoverButton/tooltip feedback-loop regression check)
+- [ ] Starting a scan while the finish banner is shown: banner is taken over by scan progress, both eof buttons disappear (do not linger alongside the cancel button)
+- [ ] Switching to a different book while the finish banner is visible: banner/eof buttons clear correctly, no stale `_eof_book_id` carries over to the new book
+- [ ] Debug shortcut `R` simulates the EOF finished banner correctly (dev-only; confirm it doesn't ship enabled in release builds)
+
+## Live-refresh on session write / book finish
+
+- [ ] Finishing a book while Book Detail Panel is open: finished checkmark icon and stats tab update immediately, no need to close/reopen the panel
+- [ ] Finishing a book while Library panel (Finished view) is open: book appears in the Finished view immediately
+- [ ] Finishing a book while in the main window (no panels open): Library/Stats/Book-Detail show the update on next visit (lazy — no refresh cost paid while not visible)
+- [ ] Closing a session without finishing the book while Book Detail Panel is open: stats (last session, history, totals) update immediately
+- [ ] Reverting a finished status while Book Detail Panel is open for that book: finished checkmark disappears immediately
+- [ ] Finished checkmark icon (Book Detail Panel, narrator row): shows only for books with `finished_count > 0`, sits at 0.7 opacity, no hover state, aligned under the lock/save button regardless of that button's visibility (no overlap or position shift when it's hidden)
+
 ## Flow animation (book switch)
 
 - [ ] Switching from a book with progress to another with progress: both sliders animate smoothly
