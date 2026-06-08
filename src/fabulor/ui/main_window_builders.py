@@ -56,18 +56,15 @@ def build_status_banner(mw):
     mw.status_label = QLabel("")
     mw.status_label.setAlignment(Qt.AlignCenter)
 
-    mw.eof_revert_btn = HoverButton()
+    mw.eof_revert_btn = QPushButton()
     mw.eof_revert_btn.setObjectName("eof_revert_btn")
-    mw.eof_revert_btn.setAttribute(Qt.WA_StyledBackground, True)
     mw.eof_revert_btn.setFixedSize(22, 22)
-    mw.eof_revert_btn.setToolTip("Revert finished status")
     mw.eof_revert_btn.setCursor(Qt.PointingHandCursor)
     mw.eof_revert_btn.hide()
 
     mw.eof_close_btn = QPushButton("✕")
     mw.eof_close_btn.setObjectName("eof_close_btn")
     mw.eof_close_btn.setFixedSize(18, 18)
-    mw.eof_close_btn.setToolTip("Dismiss")
     mw.eof_close_btn.setCursor(Qt.PointingHandCursor)
     mw.eof_close_btn.hide()
 

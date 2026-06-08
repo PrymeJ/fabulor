@@ -6,7 +6,7 @@ import re
 from PySide6.QtWidgets import (
     QFileDialog,
     QWidget, QPushButton, QVBoxLayout,
-    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QToolTip,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
@@ -352,8 +352,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._eof_revert_icon_hover = _load_svg_icon("revert.svg", color=theme.get('accent_light', theme.get('accent', '#ffffff')))
         self.eof_revert_btn.setIcon(self._eof_revert_icon)
         self.eof_revert_btn.setIconSize(QSize(20, 20))
-        self.eof_revert_btn.hovered.connect(lambda: self.eof_revert_btn.setIcon(self._eof_revert_icon_hover))
-        self.eof_revert_btn.unhovered.connect(lambda: self.eof_revert_btn.setIcon(self._eof_revert_icon))
+        self.eof_revert_btn.installEventFilter(self)
         self.eof_revert_btn.clicked.connect(self._on_revert_finish)
         self.eof_close_btn.clicked.connect(self._dismiss_eof_banner)
 
@@ -2283,44 +2282,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.vol_opacity.opacity() == 0:
             self.vol_stack.setCurrentIndex(0)
 
-    def _show_clamped_tooltip(self, widget, event, text):
-        """Show a tooltip clamped to the main window's bounds.
-
-        Qt positions native tooltips relative to the global cursor with no
-        awareness of our small fixed-size window, so they can render
-        partially off-window. This estimates the tooltip size from the text
-        and nudges the show position so the tooltip stays within the window.
-        """
-        global_pos = event.globalPos() if hasattr(event, 'globalPos') else QPoint(
-            event.globalPosition().toPoint()
-        )
-        win_top_left = self.mapToGlobal(QPoint(0, 0))
-        win_rect_global = win_top_left, QPoint(win_top_left.x() + self.width(), win_top_left.y() + self.height())
-
-        # Rough size estimate: width from longest line, height from line count.
-        lines = text.splitlines() or [text]
-        tt_w = min(max(len(line) for line in lines) * 7 + 16, self.width() - 8)
-        tt_h = len(lines) * 18 + 12
-
-        x = global_pos.x() + 12
-        if x + tt_w > win_rect_global[1].x():
-            x = win_rect_global[1].x() - tt_w - 4
-        x = max(x, win_rect_global[0].x() + 4)
-
-        y = global_pos.y() + 18
-        if y + tt_h > win_rect_global[1].y():
-            y = global_pos.y() - tt_h - 8
-        y = max(y, win_rect_global[0].y() + 4)
-
-        QToolTip.showText(QPoint(x, y), text, widget)
-
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        if event.type() == QEvent.ToolTip:
-            text = obj.toolTip() if hasattr(obj, 'toolTip') else ""
-            if text:
-                self._show_clamped_tooltip(obj, event, text)
-                return True
+        if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
+            if event.type() == QEvent.Enter:
+                self.eof_revert_btn.setIcon(self._eof_revert_icon_hover)
+            elif event.type() == QEvent.Leave:
+                self.eof_revert_btn.setIcon(self._eof_revert_icon)
 
         try:
             if event.type() == QEvent.MouseButtonPress:
