@@ -670,14 +670,15 @@ class FinishedScrollRow(QWidget):
     def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
         # Order-sensitive signature: book_id alone misses changes that don't
         # alter membership but do alter what's rendered (re-finish reordering,
-        # cover swaps, resurrection flipping is_deleted). Comparing the full
-        # tuple per row keeps the no-rebuild fast path for the common
+        # cover swaps, resurrection/exclusion flipping is_deleted or is_excluded —
+        # the two independent soft-delete flags, see CLAUDE.md). Comparing the
+        # full tuple per row keeps the no-rebuild fast path for the common
         # truly-unchanged case while still catching everything that matters —
         # avoids the rebuild-driven cover flash/stutter risk on panel open.
         incoming_sig = [
             (r.get("book_id"), r.get("event_time"),
              r.get("active_cover_path") or r.get("cover_path"),
-             r.get("is_deleted"))
+             r.get("is_deleted"), r.get("is_excluded"))
             for r in rows
         ]
         if incoming_sig == self._current_sig:

@@ -795,6 +795,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.eof_close_btn.hide()
         self._update_status_banner_ui(show_banner=False)
 
+    def _mark_book_missing(self, path: str) -> None:
+        """Soft-deletes a book whose backing file/folder is confirmed gone —
+        mirrors the user-trash flow (set_book_excluded), not remove_scan_location's
+        is_deleted. The book stays in the DB (progress, history, tags survive) and
+        a future force rescan or the file's return can resurface it; only Cover/Tags
+        editing and active playback are gone, exactly like a user-trashed book.
+
+        Call this ONLY at a confirmed-missing point — i.e. after os.path.exists(path)
+        has returned False, or mpv itself reported the load failed. Do not call it
+        speculatively (e.g. on a transient I/O hiccup) — that would hide a book the
+        user could otherwise still play once a drive remounts.
+
+        If the missing book is the active one, also tears down playback via
+        _on_book_removed so the UI doesn't keep showing a ghost now-playing state."""
+        book = self.db.get_book(path)
+        if book is None:
+            return
+        self.db.set_book_excluded(path, True)
+        self.library_panel.refresh(force=True)
+        self.tags_panel.refresh_books()
+        self.stats_panel.refresh_current_tab()
+        if path == self.current_file:
+            self._on_book_removed()
+
     def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
         self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
         if self.stats_panel.isVisible():
@@ -1030,6 +1054,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not os.path.exists(path):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
             self.panel_manager.hide_all_panels()
+            self._mark_book_missing(path)
             return
 
         self._dismiss_eof_prompt()
@@ -1087,7 +1112,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.stop()
         if not os.path.exists(self.current_file):
             self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+            missing_path = self.current_file
             self._resume_ui_timer()
+            self._mark_book_missing(missing_path)
             return
         self._eof_event_written = False # Temporary
         self._current_book = self.db.get_book(self.current_file)
@@ -2013,6 +2040,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player.eof_reached or self.play_pause_button.text() == "Restart":
             if not os.path.exists(self.current_file):
                 self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+                self._mark_book_missing(self.current_file)
                 return
             self._dismiss_eof_prompt()
             self.session_recorder.close()
@@ -2028,6 +2056,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if was_paused:
                 if self.current_file and not os.path.exists(self.current_file):
                     self._update_status_banner_ui(text="Error: File missing!", show_banner=True, auto_hide=True)
+                    self._mark_book_missing(self.current_file)
                     return
                 if self.current_file:
                     self.db.update_last_played(self.current_file)
