@@ -789,6 +789,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_session_written(self):
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_current_tab()
+        if self.book_detail_panel.isVisible():
+            self.book_detail_panel._refresh_stats()
 
     def _update_metadata_ui(self, text=None, show_metadata=None, show_go_to_lib=None):
         if text is not None:
@@ -1353,6 +1355,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
                     self.stats_panel.refresh_overall()
+                    if self.book_detail_panel.isVisible():
+                        self.book_detail_panel._refresh_stats()
+                    if self.library_panel.isVisible():
+                        self.library_panel.refresh()
                 self._paused_time = None
                 self.progress_slider.setValue(1000)
                 self.current_time_label.setText(self.player.format_time(pos / speed))
