@@ -185,11 +185,19 @@ class BookDetailPanel(QWidget):
         self._meta_action_btn = QToolButton()
         self._meta_action_btn.setObjectName("metadata_action_btn")
         self._meta_action_btn.setFixedSize(24, 24)
+        _meta_btn_sp = self._meta_action_btn.sizePolicy()
+        _meta_btn_sp.setRetainSizeWhenHidden(True)
+        self._meta_action_btn.setSizePolicy(_meta_btn_sp)
         self._meta_action_btn.setVisible(False)
         self._meta_action_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._meta_action_btn.clicked.connect(self._on_meta_action_clicked)
         self._meta_action_btn.installEventFilter(self)
         self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -4px; padding-right: -4px; margin-bottom: -4px; padding-bottom: -4px;}")
+
+        self._finished_label = QLabel()
+        self._finished_label.setObjectName("book_detail_finished_icon")
+        self._finished_label.setFixedSize(16, 24)
+        self._finished_label.setVisible(False)
 
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
@@ -223,6 +231,7 @@ class BookDetailPanel(QWidget):
         self._close_btn.clicked.connect(self._on_close_clicked)
         right_col.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._meta_action_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._finished_label, alignment=Qt.AlignmentFlag.AlignRight)
 
         right_col.addStretch()
         right_col.addWidget(self._remove_btn, alignment=Qt.AlignmentFlag.AlignRight)
@@ -685,6 +694,14 @@ class BookDetailPanel(QWidget):
             self._unlock_timer.setInterval(2500)
             self._unlock_timer.timeout.connect(lambda: self._set_meta_state(_MetaActionState.HIDDEN))
             self._unlock_timer.start()
+    def _update_finished_icon(self, finished: bool) -> None:
+        if not finished:
+            self._finished_label.setVisible(False)
+            return
+        color = self._theme.get("accent", "#888888")
+        pixmap = load_themed_icon("check.svg", color, 16, 0.7)
+        self._finished_label.setPixmap(pixmap)
+        self._finished_label.setVisible(True)
 
     def _on_meta_action_clicked(self):
         """Handles metadata action button click based on current state."""
@@ -945,6 +962,7 @@ class BookDetailPanel(QWidget):
             )
 
         self._session_list.set_data(sessions, duration or 0.0)
+        self._update_finished_icon(stats['finished_count'] > 0)
         self._history_session_list.set_data(sessions, duration or 0.0)
         self._apply_bar_colors()
 
@@ -1074,6 +1092,7 @@ class BookDetailPanel(QWidget):
         self._style_completer_popup()
         self._update_remove_btn_icon()
         self._set_meta_state(self._meta_state)
+        self._update_finished_icon(self._finished_label.isVisible())
         self._cover_panel.on_theme_changed(theme)
         self._rebuild_tag_display(self._tag_display_tags)
         self._ctx_menu.apply_theme(theme)
