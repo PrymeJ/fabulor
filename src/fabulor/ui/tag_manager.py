@@ -64,7 +64,7 @@ class _TagBookThumb(QWidget):
         super().__init__(parent)
         self._path = book['path']
         self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0))
-        self.setFixedSize(48, 48)
+        self.setFixedSize(47, 47)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(book.get('title', ''))
 
@@ -73,11 +73,11 @@ class _TagBookThumb(QWidget):
         layout.setSpacing(0)
 
         self._cover = QLabel()
-        self._cover.setFixedSize(48, 48)
+        self._cover.setFixedSize(47, 47)
         self._cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cover.setScaledContents(False)
 
-        pm = _render_svg_placeholder_bordered(placeholder_color, 35, 48, 48, offset_y=1)
+        pm = _render_svg_placeholder_bordered(placeholder_color, 35, 47, 47, offset_y=1)
         self._cover.setPixmap(pm)
 
         self._assets_dir = assets_dir
@@ -108,10 +108,10 @@ class _TagBookThumb(QWidget):
     def _apply_cover(self, pixmap):
         if self._is_archived:
             pixmap = to_grayscale(pixmap)
-        scaled = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-        x = (scaled.width() - 48) // 2
-        y = (scaled.height() - 48) // 2
-        self._cover.setPixmap(scaled.copy(x, y, 48, 48))
+        scaled = pixmap.scaled(47, 47, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+        x = (scaled.width() - 47) // 2
+        y = (scaled.height() - 47) // 2
+        self._cover.setPixmap(scaled.copy(x, y, 47, 47))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.RightButton:
@@ -143,7 +143,7 @@ class _TagBookGrid(QScrollArea):
         self._container.setStyleSheet("background: transparent;")
         self._grid = QGridLayout(self._container)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(2)
+        self._grid.setSpacing(3)
         self.setWidget(self._container)
 
         self._books: list[dict] = []
