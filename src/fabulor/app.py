@@ -767,7 +767,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _on_revert_finish(self) -> None:
         if self._eof_book_id is not None:
             self.db.unfinish_book(self._eof_book_id)
-            self._eof_event_written = False
             self._eof_book_id = None
             self.eof_revert_btn.hide()
             self.eof_close_btn.hide()
@@ -1339,15 +1338,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 pos = dur
                 self._set_play_icon("restart")
                 if not self._eof_event_written and self._current_book is not None:
-                    self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)      #Temporary
+                    self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)
                     self._eof_event_written = True
                     self._eof_book_id = self._current_book.id if self._current_book else None
                     self._update_status_banner_ui(
                         text="Marked as finished.",
                         show_banner=True,
                         show_cancel=False,
-                        auto_hide=True,
-                        auto_hide_ms=10000,
+                        auto_hide=False,
                     )
                     self.eof_revert_btn.show()
                     self.eof_close_btn.show()
@@ -1696,20 +1694,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # TODO: remove before release — testing only
             if not self.current_file and self.quote_section.isVisible():
                 self.library_controller._rotate_quote()
-        elif event.key() == Qt.Key.Key_R:
-            # TODO: remove before release — debug shortcut to simulate EOF finished banner
-            if self.current_file and self._current_book:
-                self.db.write_book_event(self._current_book.id, 'finished')
-                self._eof_book_id = self._current_book.id
-                self._eof_event_written = True
-                self._update_status_banner_ui(
-                    text="Marked as finished.",
-                    show_banner=True,
-                    show_cancel=False,
-                    auto_hide=False,
-                )
-                self.eof_revert_btn.show()
-                self.eof_close_btn.show()
         else:
             super().keyPressEvent(event)
 
