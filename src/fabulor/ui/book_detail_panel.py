@@ -1334,9 +1334,9 @@ class _HistoryRow(QWidget):
     confirm_requested = Signal()       # trash clicked — panel uses this to coordinate exclusivity
     delete_confirmed  = Signal(int)    # "Delete?" clicked — emits session id
 
-    _OVERLAY_W   = 72   # width of expanded "Delete?" overlay (covers bar + pct area)
+    _OVERLAY_W   = 156   # width of expanded "Delete?" overlay (covers bar + pct area)
     _TRASH_W     = 45   # width of stage-1 trash icon reveal (covers pct label)
-    _ANIM_MS     = 200
+    _ANIM_MS     = 250
     _CONFIRM_SEC = 7
 
     # Row height used by _populate_history for container sizing
@@ -1414,7 +1414,7 @@ class _HistoryRow(QWidget):
         self._pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(self._pct_label)
 
-        # ── overlay (child, absolutely positioned) ───────────────────────
+        # ── trash overlay (child, absolutely positioned) ─────────────────
         self._overlay = QWidget(self)
         self._overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._overlay.setFixedHeight(self.ROW_H)
@@ -1431,18 +1431,30 @@ class _HistoryRow(QWidget):
         self._trash_icon_color = '#cccccc'
         self._set_trash_icon(self._trash_icon_color)
 
-        self._confirm_label = _ClickableLabel("Delete?")
-        self._confirm_label.setObjectName("history_row_confirm_label")
-        self._confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._confirm_label.setVisible(False)
-        self._confirm_label.clicked.connect(self._on_confirm_clicked)
-
-        ov_layout.addWidget(self._confirm_label, stretch=1)
         ov_layout.addWidget(self._trash_btn)
 
         # Start overlay fully off-screen right
         self._overlay.setGeometry(self.width(), 0, self._TRASH_W, self.ROW_H)
+
+        # ── confirm panel (separate child, slides in from left of trash btn)
+        self._confirm_panel = QWidget(self)
+        self._confirm_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._confirm_panel.setFixedHeight(self.ROW_H)
+
+        cp_layout = QHBoxLayout(self._confirm_panel)
+        cp_layout.setContentsMargins(6, 0, 6, 0)
+        cp_layout.setSpacing(0)
+
+        self._confirm_label = _ClickableLabel("Delete this session?")
+        self._confirm_label.setObjectName("history_row_confirm_label")
+        self._confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._confirm_label.clicked.connect(self._on_confirm_clicked)
+        cp_layout.addWidget(self._confirm_label)
+
+        # Start confirm panel hidden (zero width, just left of trash overlay)
+        self._confirm_panel.setGeometry(self.width() - self._TRASH_W, 0, 0, self.ROW_H)
+        self._confirm_anim: QPropertyAnimation | None = None
 
         self.setMouseTracking(True)
 
@@ -1463,6 +1475,7 @@ class _HistoryRow(QWidget):
             trash_color = theme.get('accent_light', '#cccccc')
             confirm_color = theme.get('text', '#ffffff')
             self._overlay.setStyleSheet(f"QWidget {{ background-color: {row_bg}; }}")
+            self._confirm_panel.setStyleSheet(f"QWidget {{ background-color: {row_bg}; }}")
             self._trash_btn.setStyleSheet(
                 "QToolButton { background: transparent; border: none; }"
             )
@@ -1482,15 +1495,18 @@ class _HistoryRow(QWidget):
     def dismiss_confirmation(self):
         if self._state == 'confirming':
             self._confirm_timer.stop()
-            self._state = 'idle'
-            self._confirm_label.setVisible(False)
-            self._trash_btn.setVisible(True)
-            self._slide_overlay(0)   # slide fully out
+            self._state = 'hover'   # X stays visible; leaveEvent will retract it
+            self._slide_confirm(0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        row_w = self.width()
         if self._state == 'idle':
-            self._overlay.move(self.width(), 0)
+            self._overlay.move(row_w, 0)
+            self._confirm_panel.setGeometry(row_w - self._TRASH_W, 0, 0, self.ROW_H)
+        elif self._state == 'hover':
+            self._overlay.setGeometry(row_w - self._TRASH_W, 0, self._TRASH_W, self.ROW_H)
+            self._confirm_panel.setGeometry(row_w - self._TRASH_W, 0, 0, self.ROW_H)
 
     def enterEvent(self, event):
         super().enterEvent(event)
@@ -1506,9 +1522,7 @@ class _HistoryRow(QWidget):
 
     def _on_trash_clicked(self):
         self._state = 'confirming'
-        self._confirm_label.setVisible(True)
-        self._trash_btn.setVisible(False)
-        self._slide_overlay(self._OVERLAY_W)
+        self._slide_confirm(self._OVERLAY_W - self._TRASH_W)
         self._confirm_timer.start()
         self.confirm_requested.emit()
 
@@ -1517,6 +1531,24 @@ class _HistoryRow(QWidget):
         self._state = 'idle'
         if self._session_id is not None:
             self.delete_confirmed.emit(self._session_id)
+
+    def _slide_confirm(self, target_w: int):
+        """Slide the confirm panel leftward from the left edge of the trash overlay."""
+        if self._confirm_anim and self._confirm_anim.state() == QPropertyAnimation.State.Running:
+            self._confirm_anim.stop()
+        row_w = self.width()
+        start_geom = self._confirm_panel.geometry()
+        # Right edge of confirm panel is always flush with left edge of trash overlay
+        end_geom = QRect(row_w - self._TRASH_W - target_w, 0, target_w, self.ROW_H)
+        sliding_in = target_w > start_geom.width()
+        self._confirm_anim = QPropertyAnimation(self._confirm_panel, b"geometry", self)
+        self._confirm_anim.setDuration(self._ANIM_MS)
+        self._confirm_anim.setEasingCurve(
+            QEasingCurve.Type.OutCubic if sliding_in else QEasingCurve.Type.InOutQuad
+        )
+        self._confirm_anim.setStartValue(start_geom)
+        self._confirm_anim.setEndValue(end_geom)
+        self._confirm_anim.start()
 
     def _slide_overlay(self, target_w: int):
         """Animate overlay width by sliding its left edge; right edge stays at row right."""
