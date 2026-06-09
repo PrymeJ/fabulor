@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
     QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
 )
-from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize
+from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
@@ -99,6 +99,7 @@ class BookDetailPanel(QWidget):
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
         self._pre_edit_meta_state: _MetaActionState | None = None
         self._unlock_timer: QTimer | None = None
+        self._confirming_history_row: '_HistoryRow | None' = None
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -343,11 +344,21 @@ class BookDetailPanel(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(8)
 
-        from .stats_panel import SessionListWidget
-        self._history_session_list = SessionListWidget()
-        outer.addWidget(self._history_session_list)
+        # Scroll area fills all available space; container sized to content so rows never stretch.
+        self._history_scroll = QScrollArea()
+        self._history_scroll.setWidgetResizable(True)
+        self._history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._history_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
-        outer.addStretch()
+        self._history_container = QWidget()
+        self._history_layout = QVBoxLayout(self._history_container)
+        self._history_layout.setContentsMargins(0, 0, 0, 0)
+        self._history_layout.setSpacing(0)  # spacing handled per-row via _HistoryRow margins
+        self._history_scroll.setWidget(self._history_container)
+        self._history_rows: list = []
+
+        outer.addWidget(self._history_scroll, stretch=1)
 
         self._delete_history_confirm_label = _ClickableLabel("Click to delete all history for this book")
         self._delete_history_confirm_label.setObjectName("book_detail_confirm_remove")
@@ -743,6 +754,7 @@ class BookDetailPanel(QWidget):
         if self._editing:
             self._exit_edit_mode(save=False)
         self._cancel_remove()
+        self._dismiss_history_confirm()
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
@@ -790,9 +802,17 @@ class BookDetailPanel(QWidget):
 
         return super().eventFilter(obj, event)
 
+    def _dismiss_history_confirm(self):
+        if self._confirming_history_row is not None:
+            self._confirming_history_row.dismiss_confirmation()
+            self._confirming_history_row = None
+
     def _on_tab_changed(self):
         if self._editing:
             self._exit_edit_mode(save=False)
+        # History tab is index 1; leaving it dismisses any armed confirmation
+        if self.tabs.currentIndex() != 1:
+            self._dismiss_history_confirm()
 
     def _on_field_click(self, event, field):
         QLineEdit.mousePressEvent(field, event)
@@ -972,7 +992,7 @@ class BookDetailPanel(QWidget):
 
         self._session_list.set_data(sessions[:4], duration or 0.0)
         self._update_finished_icon(stats['finished_count'] > 0)
-        self._history_session_list.set_data(sessions, duration or 0.0)
+        self._populate_history(sessions, duration or 0.0)
         self._apply_bar_colors()
 
     def _on_delete_book_stats(self):
@@ -994,12 +1014,66 @@ class BookDetailPanel(QWidget):
             self._refresh_stats()
             self.history_deleted.emit()
 
+    def _populate_history(self, sessions: list, duration: float):
+        for row in self._history_rows:
+            row.deleteLater()
+        self._history_rows.clear()
+        self._confirming_history_row = None
+
+        accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
+        bg     = QColor(self._theme.get('library_slider_bg', '#333333'))
+
+        for i, s in enumerate(sessions):
+            row = _HistoryRow(s, duration, accent, bg, index=i,
+                              parent=self._history_container)
+            row.set_colors(accent, bg, self._theme)
+            row.confirm_requested.connect(
+                lambda checked=False, r=row: self._on_history_confirm_requested(r)
+            )
+            row.delete_confirmed.connect(self._on_history_delete_confirmed)
+            self._history_layout.addWidget(row)
+            self._history_rows.append(row)
+
+        self._resize_history_container()
+
+    def _resize_history_container(self):
+        n = len(self._history_rows)
+        h = n * _HistoryRow.ROW_H if n > 0 else 0
+        self._history_container.setFixedHeight(max(h, 1))
+
+    def _on_history_confirm_requested(self, row):
+        if self._confirming_history_row is not None and self._confirming_history_row is not row:
+            self._confirming_history_row.dismiss_confirmation()
+        self._confirming_history_row = row
+
+    def _on_history_delete_confirmed(self, session_id: int):
+        row = self._confirming_history_row
+        self._confirming_history_row = None
+        if row is None:
+            return
+        self.db.delete_session(session_id)
+        self._history_rows = [r for r in self._history_rows if r is not row]
+
+        anim = QPropertyAnimation(row, b"maximumHeight", self)
+        anim.setDuration(150)
+        anim.setStartValue(row.height())
+        anim.setEndValue(0)
+
+        def _finish():
+            row.deleteLater()
+            self._resize_history_container()
+            self._refresh_stats()
+
+        anim.finished.connect(_finish)
+        anim.start()
+
     def _apply_bar_colors(self):
         from PySide6.QtGui import QColor
         accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
         bg = QColor(self._theme.get('library_slider_bg', '#333333'))
         self._session_list.set_colors(accent, bg)
-        self._history_session_list.set_colors(accent, bg)  # type: ignore[attr-defined]
+        for row in self._history_rows:
+            row.set_colors(accent, bg, self._theme)
         self._furthest_bar.set_colors(accent, bg)
 
     def _style_completer_popup(self):
@@ -1245,3 +1319,203 @@ class _RecentHistoryWidget(QWidget):
         hbox.addWidget(pct_label)
 
         return row
+
+
+class _HistoryRow(QWidget):
+    """Session row for the History tab with hover-reveal trash and slide-in delete confirmation."""
+
+    confirm_requested = Signal()       # trash clicked — panel uses this to coordinate exclusivity
+    delete_confirmed  = Signal(int)    # "Delete?" clicked — emits session id
+
+    _OVERLAY_W   = 72   # width of expanded "Delete?" overlay (covers bar + pct area)
+    _TRASH_W     = 28   # width of stage-1 trash icon reveal
+    _ANIM_MS     = 150
+    _CONFIRM_SEC = 7
+
+    # Row height used by _populate_history for container sizing
+    ROW_H = 26
+
+    def __init__(self, session: dict, duration: float,
+                 accent: QColor, bg: QColor, index: int, parent=None):
+        super().__init__(parent)
+        self._session_id = session.get('id')
+        self._accent = accent
+        self._bg = bg
+        self._state = 'idle'   # idle | hover | confirming
+        self._confirm_timer = QTimer(self)
+        self._confirm_timer.setSingleShot(True)
+        self._confirm_timer.setInterval(self._CONFIRM_SEC * 1000)
+        self._confirm_timer.timeout.connect(self.dismiss_confirmation)
+        self._anim: QPropertyAnimation | None = None
+
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setObjectName("history_row")
+        self.setFixedHeight(self.ROW_H)
+        self._apply_row_bg(index)
+
+        # ── base content ────────────────────────────────────────────────
+        from datetime import timedelta
+        hbox = QHBoxLayout(self)
+        hbox.setContentsMargins(0, 2, 0, 2)
+        hbox.setSpacing(4)
+
+        try:
+            dt_start = datetime.fromisoformat(session['session_start'])
+            secs = session.get('listened_seconds') or 0.0
+            dt_end = dt_start + timedelta(seconds=secs)
+            ts_text = (
+                f"{dt_start.strftime('%b')} {dt_start.day}"
+                f" {dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
+            )
+        except Exception:
+            ts_text = session.get('session_start', '—')
+
+        ts_label = QLabel(ts_text)
+        ts_label.setObjectName("stats_session_label")
+        ts_label.setFixedWidth(92)
+        hbox.addWidget(ts_label)
+
+        pos_start = session.get('position_start') or 0.0
+        pos_end   = session.get('position_end')   or 0.0
+
+        if duration > 0:
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+            raw_delta  = (pos_end - pos_start) / duration * 100
+            delta      = min(100.0, max(-100.0, raw_delta))
+            delta_str  = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            delta_label = QLabel(delta_str)
+            pct         = min(100, round((pos_end / duration) * 100))
+            pct_text    = fmt_pct(pct)
+        else:
+            delta_label = QLabel("")
+            pct_text    = ""
+
+        delta_label.setObjectName("stats_value_label")
+        delta_label.setFixedWidth(36)
+        delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hbox.addWidget(delta_label)
+        hbox.addSpacing(6)
+
+        self._bar = _RangeBar(pos_start, pos_end, duration, accent, bg)
+        self._bar.setFixedHeight(6)
+        hbox.addWidget(self._bar, stretch=1)
+
+        self._pct_label = QLabel(pct_text)
+        self._pct_label.setObjectName("stats_value_label")
+        self._pct_label.setFixedWidth(32)
+        self._pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hbox.addWidget(self._pct_label)
+
+        # ── overlay (child, absolutely positioned) ───────────────────────
+        self._overlay = QWidget(self)
+        self._overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._overlay.setFixedHeight(self.ROW_H)
+
+        ov_layout = QHBoxLayout(self._overlay)
+        ov_layout.setContentsMargins(4, 0, 4, 0)
+        ov_layout.setSpacing(0)
+
+        self._trash_btn = QToolButton(self._overlay)
+        self._trash_btn.setText("✕")
+        self._trash_btn.setObjectName("history_row_trash_btn")
+        self._trash_btn.setFixedSize(self._TRASH_W - 8, self.ROW_H - 4)
+        self._trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trash_btn.clicked.connect(self._on_trash_clicked)
+
+        self._confirm_label = _ClickableLabel("Delete?")
+        self._confirm_label.setObjectName("history_row_confirm_label")
+        self._confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._confirm_label.setVisible(False)
+        self._confirm_label.clicked.connect(self._on_confirm_clicked)
+
+        ov_layout.addWidget(self._confirm_label, stretch=1)
+        ov_layout.addWidget(self._trash_btn)
+
+        # Start overlay fully off-screen right
+        self._overlay.setGeometry(self.width(), 0, self._TRASH_W, self.ROW_H)
+
+        self.setMouseTracking(True)
+
+    def _apply_row_bg(self, index: int):
+        # Alternating background — theme keys with library_row fallback
+        # Actual theme colors set via set_colors(); this sets a placeholder
+        self._row_index = index
+
+    def set_colors(self, accent: QColor, bg: QColor, theme: dict | None = None):
+        self._accent = accent
+        self._bg = bg
+        self._bar.set_colors(accent, bg)
+        if theme:
+            key = 'session_history_row_one' if self._row_index % 2 == 0 else 'session_history_row_two'
+            fallback_key = 'library_row_one' if self._row_index % 2 == 0 else 'library_row_two'
+            row_bg = theme.get(key) or theme.get(fallback_key, 'transparent')
+            self.setStyleSheet(f"QWidget#history_row {{ background-color: {row_bg}; }}")
+            # Style overlay to match panel background so it hides base content cleanly
+            panel_bg = theme.get('bg', '#1a1a2e')
+            trash_color = theme.get('accent_light', '#cccccc')
+            confirm_color = theme.get('text', '#ffffff')
+            self._overlay.setStyleSheet(
+                f"QWidget {{ background-color: {panel_bg}; }}"
+            )
+            self._trash_btn.setStyleSheet(
+                f"QToolButton {{ color: {trash_color}; background: transparent; border: none; font-size: 14px; }}"
+                f"QToolButton:hover {{ color: {confirm_color}; }}"
+            )
+            self._confirm_label.setStyleSheet(
+                f"color: {confirm_color}; font-weight: bold; font-size: 12px;"
+            )
+
+    def dismiss_confirmation(self):
+        if self._state == 'confirming':
+            self._confirm_timer.stop()
+            self._state = 'idle'
+            self._confirm_label.setVisible(False)
+            self._trash_btn.setVisible(True)
+            self._slide_overlay(0)   # slide fully out
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._state == 'idle':
+            self._overlay.move(self.width(), 0)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        if self._state == 'idle':
+            self._state = 'hover'
+            self._slide_overlay(self._TRASH_W)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        if self._state == 'hover':
+            self._state = 'idle'
+            self._slide_overlay(0)
+
+    def _on_trash_clicked(self):
+        self._state = 'confirming'
+        self._confirm_label.setVisible(True)
+        self._trash_btn.setVisible(False)
+        self._slide_overlay(self._OVERLAY_W)
+        self._confirm_timer.start()
+        self.confirm_requested.emit()
+
+    def _on_confirm_clicked(self):
+        self._confirm_timer.stop()
+        self._state = 'idle'
+        if self._session_id is not None:
+            self.delete_confirmed.emit(self._session_id)
+
+    def _slide_overlay(self, target_w: int):
+        """Animate overlay width by sliding its left edge; right edge stays at row right."""
+        if self._anim and self._anim.state() == QPropertyAnimation.State.Running:
+            self._anim.stop()
+        start_geom = self._overlay.geometry()
+        row_w = self.width()
+        end_geom = QRect(row_w - target_w, 0, target_w, self.ROW_H)
+        self._anim = QPropertyAnimation(self._overlay, b"geometry", self)
+        self._anim.setDuration(self._ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setStartValue(start_geom)
+        self._anim.setEndValue(end_geom)
+        self._anim.start()

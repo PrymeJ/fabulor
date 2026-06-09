@@ -854,6 +854,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute("""
                 SELECT
+                    id,
                     session_start,
                     COALESCE(listened_seconds,
                         (julianday(session_end) - julianday(session_start)) * 86400
@@ -865,6 +866,11 @@ class LibraryDB:
                 ORDER BY session_start DESC
             """, (book_id,)).fetchall()
         return [dict(r) for r in rows]
+
+    def delete_session(self, session_id: int):
+        """Hard-deletes a single listening session by id."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM listening_sessions WHERE id = ?", (session_id,))
 
     def delete_book_stats(self, book_id: int, book_path: str):
         """Deletes all session and event rows for a specific book."""

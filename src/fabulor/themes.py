@@ -52,6 +52,8 @@ library_bg:           The background color for the library book display area. Fa
 library_grid_bg:      Background color for the grid view. Fallback: library_bg.
 library_row_one:      Background color for odd rows in 1-per-row and List views. Fallback: library_bg.
 library_row_two:      Background color for even rows in 1-per-row and List views. Fallback: library_bg.
+session_history_row_one: Background color for odd rows in the book detail History tab. Fallback: library_row_one.
+session_history_row_two: Background color for even rows in the book detail History tab. Fallback: library_row_two.
 library_item_hover_color: Background color for a book item when hovered. Fallback: accent.
 library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover background. Fallback: 0.5.
 library_title:        Text color for book titles in the library view.
