@@ -12,7 +12,7 @@ from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 
 from .cover_loader import to_grayscale
-from .stats_panel import SessionListWidget, _RangeBar
+from .stats_panel import _RangeBar
 from .flow_layout import FlowLayout
 from .tag_manager import TAG_COLORS, MAX_TAG_LENGTH
 from .text_context_menu import ContextIconMenu
@@ -276,8 +276,8 @@ class BookDetailPanel(QWidget):
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(10, 10, 10, 10)
-        outer.setSpacing(8)
+        outer.setContentsMargins(10, 10, 10, 20)
+        outer.setSpacing(12)
 
         from PySide6.QtGui import QColor
         grid_widget = QWidget()
@@ -325,16 +325,17 @@ class BookDetailPanel(QWidget):
             self._stat_labels.append(v)
 
         grid.setColumnStretch(1, 1)
-        outer.addWidget(grid_widget)
+        outer.addWidget(grid_widget, 0, Qt.AlignmentFlag.AlignTop)
+        outer.addStretch(1)
 
         self._history_header = QLabel("Recent history")
         self._history_header.setObjectName("stats_history_header")
-        outer.addWidget(self._history_header)
+        self._history_header.setIndent(0)
+        outer.addWidget(self._history_header, 0, Qt.AlignmentFlag.AlignTop)
 
-        self._session_list = SessionListWidget()
-        outer.addWidget(self._session_list)
+        self._session_list = _RecentHistoryWidget()
+        outer.addWidget(self._session_list, 0, Qt.AlignmentFlag.AlignTop)
 
-        outer.addStretch()
         return widget
 
     def _build_history_tab(self) -> QWidget:
@@ -343,6 +344,7 @@ class BookDetailPanel(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(8)
 
+        from .stats_panel import SessionListWidget
         self._history_session_list = SessionListWidget()
         outer.addWidget(self._history_session_list)
 
@@ -970,7 +972,7 @@ class BookDetailPanel(QWidget):
                 f"{stats['finished_count']}× — last {d.strftime('%b')} {d.day}, {d.year}"
             )
 
-        self._session_list.set_data(sessions, duration or 0.0)
+        self._session_list.set_data(sessions[:4], duration or 0.0)
         self._update_finished_icon(stats['finished_count'] > 0)
         self._history_session_list.set_data(sessions, duration or 0.0)
         self._apply_bar_colors()
@@ -999,7 +1001,7 @@ class BookDetailPanel(QWidget):
         accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
         bg = QColor(self._theme.get('library_slider_bg', '#333333'))
         self._session_list.set_colors(accent, bg)
-        self._history_session_list.set_colors(accent, bg)
+        self._history_session_list.set_colors(accent, bg)  # type: ignore[attr-defined]
         self._furthest_bar.set_colors(accent, bg)
 
     def _style_completer_popup(self):
@@ -1138,3 +1140,99 @@ class BookDetailPanel(QWidget):
         if h > 0:
             return f"{h}h {m}m"
         return f"{m}m"
+
+
+class _RecentHistoryWidget(QWidget):
+    """Non-scrollable panel showing up to 4 recent sessions, rows stacked from the bottom."""
+
+    # Row height (13px font + 2px top margin) × 4 rows + 6px spacing × 3 gaps
+    _ROW_H = 18
+    _ROW_SPACING = 6
+    _MAX_ROWS = 4
+    FIXED_HEIGHT = _ROW_H * _MAX_ROWS + _ROW_SPACING * (_MAX_ROWS - 1)  # 90px
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._accent = QColor("#9B59B6")
+        self._bg = QColor("#3A1A50")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(self._ROW_SPACING)
+        self._layout.addStretch()
+        self.setFixedHeight(self.FIXED_HEIGHT)
+
+    def set_colors(self, accent: QColor, bg: QColor):
+        self._accent = accent
+        self._bg = bg
+        for i in range(self._layout.count() - 1):
+            item = self._layout.itemAt(i)
+            if item and item.widget():
+                bar = item.widget().findChild(_RangeBar)
+                if bar:
+                    bar.set_colors(accent, bg)
+
+    def set_data(self, sessions: list, duration: float):
+        while self._layout.count() > 1:
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for s in sessions:
+            row = self._make_row(s, duration)
+            self._layout.insertWidget(self._layout.count() - 1, row)
+
+    def _make_row(self, s: dict, duration: float) -> QWidget:
+        from datetime import timedelta
+        row = QWidget()
+        hbox = QHBoxLayout(row)
+        hbox.setContentsMargins(0, 2, 0, 0)
+        hbox.setSpacing(4)
+
+        try:
+            dt_start = datetime.fromisoformat(s['session_start'])
+            secs = s.get('listened_seconds') or 0.0
+            dt_end = dt_start + timedelta(seconds=secs)
+            ts_text = (
+                f"{dt_start.strftime('%b')} {dt_start.day}"
+                f" {dt_start.strftime('%H:%M')}–{dt_end.strftime('%H:%M')}"
+            )
+        except Exception:
+            ts_text = s.get('session_start', '—')
+
+        ts_label = QLabel(ts_text)
+        ts_label.setObjectName("stats_session_label")
+        ts_label.setFixedWidth(92)
+        hbox.addWidget(ts_label)
+
+        pos_start = s.get('position_start') or 0.0
+        pos_end = s.get('position_end') or 0.0
+
+        if duration > 0:
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+            raw_delta = (pos_end - pos_start) / duration * 100
+            delta = min(100.0, max(-100.0, raw_delta))
+            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            delta_label = QLabel(delta_str)
+            pct = min(100, round((pos_end / duration) * 100))
+            pct_label = QLabel(fmt_pct(pct))
+        else:
+            delta_label = QLabel("")
+            pct_label = QLabel("")
+
+        delta_label.setObjectName("stats_value_label")
+        delta_label.setFixedWidth(36)
+        delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hbox.addWidget(delta_label)
+        hbox.addSpacing(6)
+
+        bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg)
+        bar.setFixedHeight(6)
+        hbox.addWidget(bar, stretch=1)
+
+        pct_label.setObjectName("stats_value_label")
+        pct_label.setFixedWidth(32)
+        pct_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        hbox.addWidget(pct_label)
+
+        return row
