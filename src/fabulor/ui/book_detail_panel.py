@@ -331,9 +331,8 @@ class BookDetailPanel(QWidget):
         self._history_header = QLabel("Recent history")
         self._history_header.setObjectName("stats_history_header")
         self._history_header.setIndent(0)
-        outer.addWidget(self._history_header, 0, Qt.AlignmentFlag.AlignTop)
 
-        self._session_list = _RecentHistoryWidget()
+        self._session_list = _RecentHistoryWidget(self._history_header)
         outer.addWidget(self._session_list, 0, Qt.AlignmentFlag.AlignTop)
 
         return widget
@@ -938,7 +937,6 @@ class BookDetailPanel(QWidget):
         sessions = self.db.get_book_sessions(self._book_data['id'])
 
         has_history = bool(sessions)
-        self._history_header.setVisible(has_history)
         self._session_list.setVisible(has_history)
         self._delete_history_btn.setVisible(has_history)
 
@@ -1143,23 +1141,34 @@ class BookDetailPanel(QWidget):
 
 
 class _RecentHistoryWidget(QWidget):
-    """Non-scrollable panel showing up to 4 recent sessions, rows stacked from the bottom."""
+    """Non-scrollable panel: header + up to 4 session rows pinned to the bottom of the tab."""
 
-    # Row height (13px font + 2px top margin) × 4 rows + 6px spacing × 3 gaps
     _ROW_H = 18
     _ROW_SPACING = 6
     _MAX_ROWS = 4
-    FIXED_HEIGHT = _ROW_H * _MAX_ROWS + _ROW_SPACING * (_MAX_ROWS - 1)  # 90px
+    _HEADER_TO_ROW_GAP = 6  # px between header baseline and first row
 
-    def __init__(self, parent=None):
+    def __init__(self, header: QLabel, parent=None):
         super().__init__(parent)
         self._accent = QColor("#9B59B6")
         self._bg = QColor("#3A1A50")
-        self._layout = QVBoxLayout(self)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        outer.addWidget(header)
+        outer.addSpacing(self._HEADER_TO_ROW_GAP)
+
+        self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(self._ROW_SPACING)
         self._layout.addStretch()
-        self.setFixedHeight(self.FIXED_HEIGHT)
+        outer.addLayout(self._layout)
+
+        rows_h = self._ROW_H * self._MAX_ROWS + self._ROW_SPACING * (self._MAX_ROWS - 1)
+        header_h = header.sizeHint().height()
+        self.setFixedHeight(header_h + self._HEADER_TO_ROW_GAP + rows_h)
 
     def set_colors(self, accent: QColor, bg: QColor):
         self._accent = accent
