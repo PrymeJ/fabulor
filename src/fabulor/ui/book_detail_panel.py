@@ -1399,7 +1399,7 @@ class _HistoryRow(QWidget):
             pct_text    = ""
 
         delta_label.setObjectName("stats_value_label")
-        delta_label.setFixedWidth(36)
+        delta_label.setFixedWidth(39)
         delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(delta_label)
         hbox.addSpacing(6)
