@@ -341,7 +341,7 @@ class BookDetailPanel(QWidget):
     def _build_history_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(0, 10, 0, 10)
         outer.setSpacing(8)
 
         # Scroll area fills all available space; container sized to content so rows never stretch.
@@ -360,6 +360,11 @@ class BookDetailPanel(QWidget):
 
         outer.addWidget(self._history_scroll, stretch=1)
 
+        btn_container = QWidget()
+        btn_layout = QVBoxLayout(btn_container)
+        btn_layout.setContentsMargins(10, 0, 10, 0)
+        btn_layout.setSpacing(8)
+
         self._delete_history_confirm_label = _ClickableLabel("Click to delete all history for this book")
         self._delete_history_confirm_label.setObjectName("book_detail_confirm_remove")
         self._delete_history_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -367,12 +372,14 @@ class BookDetailPanel(QWidget):
         self._delete_history_confirm_label.setFixedHeight(28)
         self._delete_history_confirm_label.clicked.connect(self._on_delete_book_stats_confirmed)
         self._delete_history_confirm_label.setVisible(False)
-        outer.addWidget(self._delete_history_confirm_label)
+        btn_layout.addWidget(self._delete_history_confirm_label)
 
         self._delete_history_btn = QPushButton("Delete listening history")
         self._delete_history_btn.setObjectName("stats_reset_btn")
         self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
-        outer.addWidget(self._delete_history_btn)
+        btn_layout.addWidget(self._delete_history_btn)
+
+        outer.addWidget(btn_container)
 
         return widget
 
@@ -1328,7 +1335,7 @@ class _HistoryRow(QWidget):
     delete_confirmed  = Signal(int)    # "Delete?" clicked — emits session id
 
     _OVERLAY_W   = 72   # width of expanded "Delete?" overlay (covers bar + pct area)
-    _TRASH_W     = 28   # width of stage-1 trash icon reveal
+    _TRASH_W     = 45   # width of stage-1 trash icon reveal (covers pct label)
     _ANIM_MS     = 150
     _CONFIRM_SEC = 7
 
@@ -1356,7 +1363,7 @@ class _HistoryRow(QWidget):
         # ── base content ────────────────────────────────────────────────
         from datetime import timedelta
         hbox = QHBoxLayout(self)
-        hbox.setContentsMargins(0, 2, 0, 2)
+        hbox.setContentsMargins(10, 2, 10, 2)
         hbox.setSpacing(4)
 
         try:
@@ -1417,11 +1424,12 @@ class _HistoryRow(QWidget):
         ov_layout.setSpacing(0)
 
         self._trash_btn = QToolButton(self._overlay)
-        self._trash_btn.setText("✕")
         self._trash_btn.setObjectName("history_row_trash_btn")
         self._trash_btn.setFixedSize(self._TRASH_W - 8, self.ROW_H - 4)
         self._trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._trash_btn.clicked.connect(self._on_trash_clicked)
+        self._trash_icon_color = '#cccccc'
+        self._set_trash_icon(self._trash_icon_color)
 
         self._confirm_label = _ClickableLabel("Delete?")
         self._confirm_label.setObjectName("history_row_confirm_label")
@@ -1452,20 +1460,24 @@ class _HistoryRow(QWidget):
             fallback_key = 'library_row_one' if self._row_index % 2 == 0 else 'library_row_two'
             row_bg = theme.get(key) or theme.get(fallback_key, 'transparent')
             self.setStyleSheet(f"QWidget#history_row {{ background-color: {row_bg}; }}")
-            # Style overlay to match panel background so it hides base content cleanly
-            panel_bg = theme.get('bg', '#1a1a2e')
             trash_color = theme.get('accent_light', '#cccccc')
             confirm_color = theme.get('text', '#ffffff')
-            self._overlay.setStyleSheet(
-                f"QWidget {{ background-color: {panel_bg}; }}"
-            )
+            self._overlay.setStyleSheet(f"QWidget {{ background-color: {row_bg}; }}")
             self._trash_btn.setStyleSheet(
-                f"QToolButton {{ color: {trash_color}; background: transparent; border: none; font-size: 14px; }}"
-                f"QToolButton:hover {{ color: {confirm_color}; }}"
+                "QToolButton { background: transparent; border: none; }"
             )
             self._confirm_label.setStyleSheet(
                 f"color: {confirm_color}; font-weight: bold; font-size: 12px;"
             )
+            if trash_color != self._trash_icon_color:
+                self._trash_icon_color = trash_color
+                self._set_trash_icon(trash_color)
+
+    def _set_trash_icon(self, color: str):
+        icon_size = self.ROW_H - 10  # 16px at ROW_H=26
+        pixmap = load_themed_icon("x.svg", color, icon_size)
+        self._trash_btn.setIcon(QIcon(pixmap))
+        self._trash_btn.setIconSize(QSize(icon_size, icon_size))
 
     def dismiss_confirmation(self):
         if self._state == 'confirming':
