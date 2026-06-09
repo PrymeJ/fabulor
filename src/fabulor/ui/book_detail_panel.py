@@ -233,8 +233,15 @@ class BookDetailPanel(QWidget):
         right_col.addWidget(self._meta_action_btn, alignment=Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._finished_label, alignment=Qt.AlignmentFlag.AlignRight)
 
+        self._ghost_label = QLabel()
+        self._ghost_label.setFixedSize(self._remove_btn.size())
+        self._ghost_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._ghost_label.setContentsMargins(8, 0, 0, 0)
+        self._ghost_label.hide()
+
         right_col.addStretch()
         right_col.addWidget(self._remove_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._ghost_label, alignment=Qt.AlignmentFlag.AlignRight)
         header_layout.addLayout(right_col)
 
         layout.addWidget(header)
@@ -593,6 +600,10 @@ class BookDetailPanel(QWidget):
         self._refresh_stats()
         excluded = bool(_book_dict and _book_dict.get('is_excluded'))
         self._remove_btn.setVisible(not excluded and not self._is_archived)
+        self._ghost_label.setVisible(self._is_archived)
+        if self._is_archived:
+            pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
+            self._ghost_label.setPixmap(pixmap)
         self._locks = self.db.get_metadata_locks(self._book_path)
         if self._is_archived:
             self._set_meta_state(_MetaActionState.HIDDEN)
@@ -1074,6 +1085,8 @@ class BookDetailPanel(QWidget):
         self.db.set_book_excluded(self._book_path, True)
         self._cancel_remove()
         self.book_removed.emit()
+        if self._context != 'library':
+            self._refresh_archived_state()
 
     def _cancel_remove(self) -> None:
         self._confirming_remove = False
@@ -1084,6 +1097,23 @@ class BookDetailPanel(QWidget):
             self._remove_cancel_timer.stop()
             self._remove_cancel_timer = None
         self._update_remove_btn_icon()
+
+    def _refresh_archived_state(self) -> None:
+        _book_dict = self.db.get_book_dict(self._book_path)
+        self._is_archived = (
+            _book_dict is None or
+            bool(_book_dict.get('is_deleted')) or
+            bool(_book_dict.get('is_excluded'))
+        )
+        self._remove_btn.setVisible(not self._is_archived)
+        self._ghost_label.setVisible(self._is_archived)
+        if self._is_archived:
+            self._set_meta_state(_MetaActionState.HIDDEN)
+            pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
+            self._ghost_label.setPixmap(pixmap)
+        cover_pixmap = self._cover_label.pixmap()
+        if cover_pixmap and not cover_pixmap.isNull():
+            self._apply_cover(QPixmap(cover_pixmap))
 
     def on_theme_changed(self, theme: dict):
         from PySide6.QtGui import QColor
@@ -1096,6 +1126,9 @@ class BookDetailPanel(QWidget):
         self._cover_panel.on_theme_changed(theme)
         self._rebuild_tag_display(self._tag_display_tags)
         self._ctx_menu.apply_theme(theme)
+        if self._ghost_label.isVisible():
+            pixmap = load_themed_icon("ghost.svg", theme.get("accent", "#888888"), 16, 0.7)
+            self._ghost_label.setPixmap(pixmap)
 
     @staticmethod
     def _fmt(seconds: float) -> str:

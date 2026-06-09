@@ -666,7 +666,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_book_detail_removed(self) -> None:
         path = self.book_detail_panel._book_path
-        self.panel_manager._close_book_detail_flow()
+        if self.book_detail_panel._context == 'library':
+            self.panel_manager._close_book_detail_flow()
         self.library_panel.refresh(force=True)
         self.tags_panel.refresh_books()
         self.stats_panel.refresh_current_tab()
