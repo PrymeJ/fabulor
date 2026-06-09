@@ -1495,8 +1495,9 @@ class _HistoryRow(QWidget):
     def dismiss_confirmation(self):
         if self._state == 'confirming':
             self._confirm_timer.stop()
-            self._state = 'hover'   # X stays visible; leaveEvent will retract it
+            self._state = 'idle'
             self._slide_confirm(0)
+            self._slide_overlay(0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
