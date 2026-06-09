@@ -800,6 +800,10 @@ class BookDetailPanel(QWidget):
                 if not any(hits(w) for w in confirm_safe):
                     self._cancel_remove()
 
+            if self._confirming_history_row is not None:
+                if not hits(self._confirming_history_row):
+                    self._dismiss_history_confirm()
+
             if self._editing:
                 safe = (self._title_label, self._author_label,
                         self._narrator_label, self._year_label, self._meta_action_btn,
