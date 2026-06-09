@@ -605,9 +605,7 @@ class BookDetailPanel(QWidget):
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
         self._locks = self.db.get_metadata_locks(self._book_path)
-        if self._is_archived:
-            self._set_meta_state(_MetaActionState.HIDDEN)
-        elif any(self._locks.values()):
+        if any(self._locks.values()):
             self._set_meta_state(_MetaActionState.LOCKED)
         else:
             self._set_meta_state(_MetaActionState.HIDDEN)
@@ -1108,9 +1106,12 @@ class BookDetailPanel(QWidget):
         self._remove_btn.setVisible(not self._is_archived)
         self._ghost_label.setVisible(self._is_archived)
         if self._is_archived:
-            self._set_meta_state(_MetaActionState.HIDDEN)
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
+        if any(self._locks.values()):
+            self._set_meta_state(_MetaActionState.LOCKED)
+        else:
+            self._set_meta_state(_MetaActionState.HIDDEN)
         cover_pixmap = self._cover_label.pixmap()
         if cover_pixmap and not cover_pixmap.isNull():
             self._apply_cover(QPixmap(cover_pixmap))
