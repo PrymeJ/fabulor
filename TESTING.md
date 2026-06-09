@@ -854,7 +854,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Trash button hidden for archived books
 - [ ] Ghost icon appears in the trash button slot for archived books, same size, no cursor change, no tooltip
 - [ ] Ghost icon color matches theme accent (updates on theme change)
-- [ ] Metadata action button hidden for archived books (no lock/save icon)
+- [ ] Metadata action button behaves normally for archived books (save/lock/hidden follows same logic as non-archived)
 - [ ] Removing a book from the library via the trash button when opened from Library: panel closes
 - [ ] Removing a book from the library via the trash button when opened from Stats or Tags: panel stays open, trash button replaced by ghost icon, cover goes grayscale, metadata action button hides
 - [ ] Stats panel: BookDayRow and FinishedBookThumb show grayscale cover for archived books
