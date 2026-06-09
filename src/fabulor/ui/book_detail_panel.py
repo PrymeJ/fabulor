@@ -1020,8 +1020,8 @@ class BookDetailPanel(QWidget):
         self._history_rows.clear()
         self._confirming_history_row = None
 
-        accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
-        bg     = QColor(self._theme.get('library_slider_bg', '#333333'))
+        accent = QColor(self._theme.get('library_slider_fill', '#888888'))
+        bg     = QColor(self._theme.get('library_slider_bg',   '#333333'))
 
         for i, s in enumerate(sessions):
             row = _HistoryRow(s, duration, accent, bg, index=i,
@@ -1069,12 +1069,12 @@ class BookDetailPanel(QWidget):
 
     def _apply_bar_colors(self):
         from PySide6.QtGui import QColor
-        accent = QColor(self._theme.get('dropdown_curr_chap', '#888888'))
-        bg = QColor(self._theme.get('library_slider_bg', '#333333'))
-        self._session_list.set_colors(accent, bg)
+        fill = QColor(self._theme.get('library_slider_fill', '#888888'))
+        bg   = QColor(self._theme.get('library_slider_bg',   '#333333'))
+        self._session_list.set_colors(fill, bg)
         for row in self._history_rows:
-            row.set_colors(accent, bg, self._theme)
-        self._furthest_bar.set_colors(accent, bg)
+            row.set_colors(fill, bg, self._theme)
+        self._furthest_bar.set_colors(fill, bg)
 
     def _style_completer_popup(self):
         t = self._theme
