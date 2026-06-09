@@ -1,3 +1,29 @@
+## Session Summary — 2026-06-09 Session 2
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Add ghost icon to `BookDetailPanel` for archived books, and fix panel-close behaviour when removing a book from a non-library context.
+
+### Changes
+
+**`src/fabulor/ui/book_detail_panel.py`**
+- Added `_ghost_label` (`QLabel`, 24×24, 8px left margin) in the right column immediately after `_remove_btn`. Hidden by default.
+- `load_book`: shows ghost / hides trash when `_is_archived` is True; loads ghost pixmap from `ghost.svg` at accent color, 0.7 opacity.
+- `_refresh_archived_state()`: re-queries DB for archived state, swaps `_remove_btn` ↔ `_ghost_label`, hides `_meta_action_btn` via `_set_meta_state(HIDDEN)`, re-applies grayscale to header cover.
+- `_on_confirm_remove`: after `book_removed.emit()`, calls `_refresh_archived_state()` when context is not `'library'` (panel stays open in archived state).
+- `on_theme_changed`: reloads ghost pixmap when label is visible.
+
+**`src/fabulor/app.py`**
+- `_on_book_detail_removed`: gates `_close_book_detail_flow()` on `book_detail_panel._context == 'library'`. Non-library removals (Stats, Tags) still refresh library/tags/stats panels but leave the detail panel open.
+
+### Root cause note
+The prompt specified "do not touch any other file" but `_on_book_detail_removed` unconditionally called `_close_book_detail_flow()` regardless of context — the one-line gate in `app.py` was the only correct fix.
+
+### Commits
+- `2c4274d` feat: add ghost icon in book detail panel for archived books
+
+---
+
 ## Session Summary — 2026-06-09 Session 1
 
 **Branch:** `main` (direct commits)
