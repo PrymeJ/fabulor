@@ -360,26 +360,27 @@ class BookDetailPanel(QWidget):
 
         outer.addWidget(self._history_scroll, stretch=1)
 
-        btn_container = QWidget()
-        btn_layout = QVBoxLayout(btn_container)
-        btn_layout.setContentsMargins(10, 0, 10, 0)
-        btn_layout.setSpacing(8)
+        self._delete_history_btn = QPushButton("Delete listening history")
+        self._delete_history_btn.setObjectName("stats_reset_btn")
+        self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
+        btn_wrapper = QWidget()
+        btn_wrapper_layout = QVBoxLayout(btn_wrapper)
+        btn_wrapper_layout.setContentsMargins(10, 0, 10, 0)
+        btn_wrapper_layout.setSpacing(0)
+        btn_wrapper_layout.addWidget(self._delete_history_btn)
+        outer.addWidget(btn_wrapper)
 
+        # Confirm label floats absolutely above the button — not in the flow layout,
+        # so it never causes the button to shift position.
         self._delete_history_confirm_label = _ClickableLabel("Click to delete all history for this book")
         self._delete_history_confirm_label.setObjectName("book_detail_confirm_remove")
         self._delete_history_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._delete_history_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._delete_history_confirm_label.setFixedHeight(28)
         self._delete_history_confirm_label.clicked.connect(self._on_delete_book_stats_confirmed)
-        self._delete_history_confirm_label.setVisible(False)
-        btn_layout.addWidget(self._delete_history_confirm_label)
-
-        self._delete_history_btn = QPushButton("Delete listening history")
-        self._delete_history_btn.setObjectName("stats_reset_btn")
-        self._delete_history_btn.clicked.connect(self._on_delete_book_stats)
-        btn_layout.addWidget(self._delete_history_btn)
-
-        outer.addWidget(btn_container)
+        self._delete_history_confirm_label.setParent(widget)
+        self._delete_history_confirm_label.hide()
+        self._delete_history_tab_widget = widget  # for resizeEvent positioning
 
         return widget
 
@@ -800,6 +801,10 @@ class BookDetailPanel(QWidget):
                 if not any(hits(w) for w in confirm_safe):
                     self._cancel_remove()
 
+            if self._delete_history_confirm_label.isVisible():
+                if not hits(self._delete_history_confirm_label):
+                    self._cancel_delete_history()
+
             if self._confirming_history_row is not None:
                 if not hits(self._confirming_history_row):
                     self._dismiss_history_confirm()
@@ -1006,8 +1011,17 @@ class BookDetailPanel(QWidget):
         self._populate_history(sessions, duration or 0.0)
         self._apply_bar_colors()
 
+    def _position_delete_history_confirm(self):
+        btn = self._delete_history_btn
+        tab = self._delete_history_tab_widget
+        btn_pos = btn.mapTo(tab, btn.rect().topLeft())
+        lbl = self._delete_history_confirm_label
+        lbl.setGeometry(10, btn_pos.y() - 28 - 8, tab.width() - 20, 28)
+
     def _on_delete_book_stats(self):
-        self._delete_history_confirm_label.setVisible(True)
+        self._position_delete_history_confirm()
+        self._delete_history_confirm_label.show()
+        self._delete_history_confirm_label.raise_()
         if self._delete_history_cancel_timer:
             self._delete_history_cancel_timer.stop()
         self._delete_history_cancel_timer = QTimer(self)
@@ -1016,7 +1030,7 @@ class BookDetailPanel(QWidget):
         self._delete_history_cancel_timer.start(7000)
 
     def _cancel_delete_history(self):
-        self._delete_history_confirm_label.setVisible(False)
+        self._delete_history_confirm_label.hide()
 
     def _on_delete_book_stats_confirmed(self):
         self._cancel_delete_history()
