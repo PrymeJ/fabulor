@@ -1336,11 +1336,11 @@ class _HistoryRow(QWidget):
 
     _OVERLAY_W   = 72   # width of expanded "Delete?" overlay (covers bar + pct area)
     _TRASH_W     = 45   # width of stage-1 trash icon reveal (covers pct label)
-    _ANIM_MS     = 150
+    _ANIM_MS     = 200
     _CONFIRM_SEC = 7
 
     # Row height used by _populate_history for container sizing
-    ROW_H = 26
+    ROW_H = 27
 
     def __init__(self, session: dict, duration: float,
                  accent: QColor, bg: QColor, index: int, parent=None):
@@ -1525,9 +1525,12 @@ class _HistoryRow(QWidget):
         start_geom = self._overlay.geometry()
         row_w = self.width()
         end_geom = QRect(row_w - target_w, 0, target_w, self.ROW_H)
+        sliding_in = target_w > start_geom.width()
         self._anim = QPropertyAnimation(self._overlay, b"geometry", self)
         self._anim.setDuration(self._ANIM_MS)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.setEasingCurve(
+            QEasingCurve.Type.OutCubic if sliding_in else QEasingCurve.Type.InOutQuad
+        )
         self._anim.setStartValue(start_geom)
         self._anim.setEndValue(end_geom)
         self._anim.start()
