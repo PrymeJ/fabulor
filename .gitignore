@@ -222,3 +222,6 @@ __marimo__/
 
 # img files
 /img/
+
+# Claude Code local settings
+.claude/settings.local.json
