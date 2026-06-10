@@ -137,6 +137,16 @@ class LibraryDB:
                 )
             """)
 
+            # Flat date -> 0|1 grid for the 364-day streak panel. Maintained
+            # incrementally by write/delete paths; full rebuild on day_start_hour
+            # change or cache-date mismatch. See build_streak_grid_cache.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS streak_grid_cache (
+                    date TEXT PRIMARY KEY,
+                    listened INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+
             # Migrate: add book_id FK columns to session/event/tag tables
             ls_cols = {row[1] for row in conn.execute("PRAGMA table_info(listening_sessions)").fetchall()}
             if "book_id" not in ls_cols:
@@ -498,8 +508,14 @@ class LibraryDB:
 
     def write_session(self, book_path, book_title, book_author, book_duration,
                       session_start, session_end, position_start, position_end,
-                      furthest_position, listened_seconds, book_id: int | None = None):
-        """Inserts one listening session row."""
+                      furthest_position, listened_seconds, book_id: int | None = None,
+                      day_start_hour: int = 0):
+        """Inserts one listening session row and updates the streak grid cell(s)
+        for this session's adjusted date(s). A session spanning the day boundary
+        updates both its start-day and end-day cells."""
+        start_iso = session_start.isoformat()
+        end_iso = session_end.isoformat()
+        offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO listening_sessions
@@ -514,13 +530,21 @@ class LibraryDB:
                 book_title,
                 book_author,
                 book_duration,
-                session_start.isoformat(),
-                session_end.isoformat(),
+                start_iso,
+                end_iso,
                 position_start,
                 position_end,
                 furthest_position,
                 listened_seconds,
             ))
+            start_date = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime(?, ?))", (start_iso, offset)
+            ).fetchone()[0]
+            end_date = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime(?, ?))", (end_iso, offset)
+            ).fetchone()[0]
+            for d in {start_date, end_date}:  # dedup if same day
+                self._update_streak_grid_cache_for_date(conn, d, day_start_hour)
 
     def get_daily_book_breakdown(self, date_str: str, day_start_hour: int) -> list[dict]:
         """Returns per-book listening rows for a given day, with cover from books table via LEFT JOIN."""
@@ -848,6 +872,8 @@ class LibraryDB:
             conn.execute("DELETE FROM listening_sessions")
             conn.execute("DELETE FROM book_events")
             conn.execute("UPDATE books SET started_at = NULL, finished_at = NULL")
+        # No sessions remain, so every grid cell is 0 — no per-date check needed.
+        self.reset_streak_grid_cache()
 
     def get_book_sessions(self, book_id: int) -> list[dict]:
         """Returns individual sessions for a book, newest first."""
@@ -867,20 +893,46 @@ class LibraryDB:
             """, (book_id,)).fetchall()
         return [dict(r) for r in rows]
 
-    def delete_session(self, session_id: int):
-        """Hard-deletes a single listening session by id."""
+    def delete_session(self, session_id: int, day_start_hour: int = 0):
+        """Hard-deletes a single listening session by id, then re-evaluates its
+        adjusted grid cell(s). Both start-day and end-day are checked so a
+        midnight-spanning session clears both. Single transaction so cache never
+        disagrees with rows."""
+        offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime(session_start, ?)), "
+                "       strftime('%Y-%m-%d', datetime(session_end, ?)) "
+                "FROM listening_sessions WHERE id = ?",
+                (offset, offset, session_id)
+            ).fetchone()
             conn.execute("DELETE FROM listening_sessions WHERE id = ?", (session_id,))
+            if row is not None:
+                for d in {row[0], row[1]}:  # dedup if same day
+                    self._update_streak_grid_cache_for_date(conn, d, day_start_hour)
 
-    def delete_book_stats(self, book_id: int, book_path: str):
-        """Deletes all session and event rows for a specific book."""
+    def delete_book_stats(self, book_id: int, book_path: str, day_start_hour: int = 0):
+        """Deletes all session and event rows for a specific book, then
+        re-evaluates each affected adjusted grid cell. Both start-day and end-day
+        of every session are gathered so midnight-spanning sessions clear both.
+        Single transaction."""
+        offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime(session_start, ?)), "
+                "       strftime('%Y-%m-%d', datetime(session_end, ?)) "
+                "FROM listening_sessions WHERE book_id = ?",
+                (offset, offset, book_id)
+            ).fetchall()
+            dates = {d for r in rows for d in r}  # all distinct start/end days
             conn.execute("DELETE FROM listening_sessions WHERE book_id = ?", (book_id,))
             conn.execute("DELETE FROM book_events WHERE book_id = ?", (book_id,))
             conn.execute(
                 "UPDATE books SET started_at = NULL, finished_at = NULL WHERE path = ?",
                 (book_path,)
             )
+            for d in dates:
+                self._update_streak_grid_cache_for_date(conn, d, day_start_hour)
 
     def get_streaks(self, day_start_hour: int) -> dict:
         """Returns current and longest listening streaks in days."""
@@ -921,7 +973,104 @@ class LibraryDB:
                 run = 1
 
         return {'current': current, 'longest': longest}
-    
+
+    # ---- Streak grid cache (364-day date -> 0|1 grid) ----
+    #
+    # Date attribution adjusts via strftime('%Y-%m-%d', datetime(ts, '-N hours')),
+    # keeping the shift in SQL to avoid Python ISO-parse drift. A session "touches"
+    # a grid cell if EITHER its start OR its end adjusted-date equals that cell —
+    # so a session spanning the day boundary (e.g. 23:50→00:18) marks BOTH days.
+    # This is intentionally broader than get_active_periods (which keys on
+    # session_start only); the grid is a "did I listen at all that day" view, so
+    # both endpoints count. Sessions spanning >1 full day (paused overnight) only
+    # mark their two endpoints, not the interior — acceptable for realistic use.
+    # day_start_hour is always threaded in as a parameter (this class never reads
+    # config — same contract as every other day-boundary method here).
+
+    _STREAK_GRID_DAYS = 364  # today + previous 363 = 52 weeks
+
+    def build_streak_grid_cache(self, day_start_hour: int) -> None:
+        """Full rebuild of the 364-day streak grid.
+
+        Drops rows older than the window, seeds all 364 dates at listened=0,
+        then flips listened=1 for every adjusted date that has >=1 session.
+        Called on first open and on cache-date / day_start_hour mismatch.
+        """
+        offset = f'-{day_start_hour} hours'
+        span = self._STREAK_GRID_DAYS - 1  # 363
+        with self._get_conn() as conn:
+            today = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime('now', 'localtime', ?))",
+                (offset,)
+            ).fetchone()[0]
+            oldest = conn.execute(
+                "SELECT date(?, ?)", (today, f'-{span} days')
+            ).fetchone()[0]
+
+            conn.execute(
+                "DELETE FROM streak_grid_cache WHERE date < ?", (oldest,)
+            )
+            # Seed every day in the window at 0 (idempotent).
+            conn.executemany(
+                "INSERT OR IGNORE INTO streak_grid_cache (date, listened) VALUES (?, 0)",
+                [(d,) for d in (
+                    conn.execute("SELECT date(?, ?)", (today, f'-{n} days')).fetchone()[0]
+                    for n in range(self._STREAK_GRID_DAYS)
+                )]
+            )
+            # Flip active days on — both start and end adjusted-dates count, so a
+            # midnight-spanning session marks both days. Restricted to the window
+            # (IN streak_grid_cache rows) so a stray old session can't resurrect a
+            # pruned row.
+            conn.execute(
+                "UPDATE streak_grid_cache SET listened = 1 WHERE date IN ("
+                "  SELECT strftime('%Y-%m-%d', datetime(session_start, ?))"
+                "  FROM listening_sessions"
+                "  UNION"
+                "  SELECT strftime('%Y-%m-%d', datetime(session_end, ?))"
+                "  FROM listening_sessions"
+                ")",
+                (offset, offset)
+            )
+
+    def get_streak_grid_cache(self) -> dict[str, int]:
+        """Returns the whole grid as {date_str: 0|1}."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT date, listened FROM streak_grid_cache"
+            ).fetchall()
+        return {row['date']: row['listened'] for row in rows}
+
+    def _update_streak_grid_cache_for_date(self, conn, date_str: str,
+                                           day_start_hour: int) -> None:
+        """Re-evaluate one grid cell against current sessions, on an open conn.
+
+        date_str is the adjusted date (already day_start_hour-shifted). The
+        COUNT re-derives the adjusted date in SQL so attribution stays in one
+        place. A session counts toward this cell if its start OR end adjusted-date
+        matches — mirroring build_streak_grid_cache, so midnight-spanning sessions
+        keep both days active. Only writes rows already inside the window (the
+        seeded grid) — a date outside it is silently ignored to avoid resurrecting
+        pruned cells.
+        """
+        offset = f'-{day_start_hour} hours'
+        count = conn.execute(
+            "SELECT COUNT(*) FROM listening_sessions "
+            "WHERE strftime('%Y-%m-%d', datetime(session_start, ?)) = ? "
+            "   OR strftime('%Y-%m-%d', datetime(session_end, ?)) = ?",
+            (offset, date_str, offset, date_str)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE streak_grid_cache SET listened = ? WHERE date = ?",
+            (1 if count > 0 else 0, date_str)
+        )
+
+    def reset_streak_grid_cache(self) -> None:
+        """Sets every grid cell to 0. Used when all sessions are gone
+        (reset_stats) or on day_start_hour change before a rebuild."""
+        with self._get_conn() as conn:
+            conn.execute("UPDATE streak_grid_cache SET listened = 0")
+
     def update_book_metadata(self, path: str, title: str, author: str,
                           narrator: str, year: str) -> bool:
         try:

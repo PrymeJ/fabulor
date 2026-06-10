@@ -3,6 +3,7 @@
 # status_banner, sidebar, vol_container
 import os
 import re
+from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
     QWidget, QPushButton, QVBoxLayout,
@@ -306,8 +307,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             db=self.db,
             get_position_fn=self._get_current_position,
             get_book_fn=lambda: self._current_book,
+            get_day_start_hour_fn=self.config.get_day_start_hour,
             parent=self,
         )
+
+        # Populate the streak grid cache once at startup (table seed + active-day
+        # flip). Backend-only stand-in for the panel-open freshness refresh until
+        # the streak grid UI exists. Must run after self.config exists (above);
+        # reads day_start_hour directly, no SessionRecorder dependency.
+        try:
+            day_start = self.config.get_day_start_hour()
+            today_adjusted = datetime.now() - timedelta(hours=day_start)
+            self.db.build_streak_grid_cache(day_start)
+            self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
+        except Exception:
+            pass
 
         # Single authority for the book-switch transition lifecycle. Owns the
         # switch-specific flags (deadzone, pre-switch slider captures, duration-retry,

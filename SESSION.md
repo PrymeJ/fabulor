@@ -1,3 +1,87 @@
+## Session Summary — 2026-06-11
+
+**Branch:** `main`
+
+**Scope:** Backend `streak_grid_cache` — a persisted 364-day `date -> 0|1` grid for a future
+streak-grid UI panel. Data derives from `listening_sessions`; the cache is maintained incrementally
+on write/delete and fully rebuilt on `day_start_hour` change / startup. **No UI built** — backend only.
+
+### Changes
+
+**`src/fabulor/db.py`**
+- New `streak_grid_cache` table (`date TEXT PRIMARY KEY, listened INTEGER`) in `_create_tables()`.
+- `build_streak_grid_cache(day_start_hour)` — full rebuild: prune < window, seed 364 days at 0, flip active days to 1.
+- `get_streak_grid_cache() -> dict[str,int]`.
+- `_update_streak_grid_cache_for_date(conn, date_str, day_start_hour)` — single-cell re-evaluation on an open conn.
+- `reset_streak_grid_cache()` — all cells to 0.
+- `write_session(..., day_start_hour=0)` updates the touched cell(s) after insert.
+- `delete_session` / `delete_book_stats` take `day_start_hour`; fetch affected dates → delete → re-evaluate, single transaction. `reset_stats` calls `reset_streak_grid_cache`.
+
+**Wiring:** `SessionRecorder` gains a `get_day_start_hour_fn` lambda (matches `get_position_fn`/`get_book_fn`); both `write_session` call sites pass it. `app.py` supplies `self.config.get_day_start_hour` and builds the cache once at startup. `book_detail_panel.py` delete callers and a new `stats_panel._on_day_start_hour_changed` slot thread the value through. `config.py` gains `get/set_streak_grid_cache_date`.
+
+### Design notes — non-obvious decisions (read before touching this)
+
+- **Date attribution is SQL-side**, not Python: `strftime('%Y-%m-%d', datetime(ts, '-N hours'))`,
+  identical to `get_active_periods`. This guarantees the grid agrees with `get_streaks` and avoids
+  ISO-parse drift. `db.py` never reads config — `day_start_hour` is always a **parameter**, matching
+  every other day-boundary method in the class.
+
+- **Midnight-spanning sessions mark BOTH endpoint days.** A session 23:50→00:18 (adjusted) is active
+  on both its start-day and end-day. This makes the grid intentionally **broader** than
+  `get_active_periods` (which keys on `session_start` only) — the grid is a "did I listen at all that
+  day" view. The predicate is unified across all four sites (`build`, `_update_..._for_date`,
+  `write_session`, both delete paths): a session touches a cell if its start OR end adjusted-date
+  equals it. Sessions spanning >1 full day (paused overnight) only mark the two endpoints, not the
+  interior — accepted as out of realistic scope. **If you change attribution in one site, change all
+  four** (same invariant class as `upsert_book`/`upsert_books_batch`).
+
+- **`_update_..._for_date` uses `UPDATE ... WHERE date = ?`, not `INSERT OR REPLACE`.** This is
+  deliberate: an `UPDATE` on a date outside the seeded 364-day window is a silent no-op, which
+  prevents a stray old/out-of-window session from resurrecting a pruned cell. The trade-off is the
+  rollover gap below.
+
+- **Day-rollover gap (deferred — DIFFERENT from the midnight-span fix above).** If the app runs across
+  the adjusted day boundary, a session written *after* the new logical day begins targets a cell that
+  isn't seeded yet, so the `UPDATE` no-ops and that day shows inactive until the next rebuild. Marking
+  both endpoints does **not** fix this — if the row doesn't exist, neither endpoint update lands. The
+  proper fix is the panel-open / startup freshness rebuild (compare stored `streak_grid_cache_date`
+  vs today-adjusted, rebuild on mismatch). Startup rebuild is wired; the **panel-open refresh is a TODO
+  until the streak-grid UI exists**. Self-corrects on next launch or `day_start_hour` change meanwhile.
+
+- **Startup build-call ordering:** `app.py` calls `build_streak_grid_cache` right after the
+  `SessionRecorder` construction. The only hard requirement is "after `self.config = Config()`"; it
+  reads `day_start_hour` directly and has no `SessionRecorder` dependency. Placing it before config
+  init raises `AttributeError` (loud), not a silent default-0.
+
+### Verification
+- DB-level tests (temp DB) pass: seed (364/0), write, historical write, midnight-span write/rebuild/delete, delete-1-of-2-same-day keeps cell, `delete_book_stats`, `reset_stats`. Cross-check: every `get_active_periods` day is a subset of grid-active days (grid is broader by design).
+- Full app launches with no traceback; real DB shows 364 rows and grid-active == sessions-active under the user's real `day_start_hour=10` (exact match).
+
+---
+
+## Session Summary — 2026-06-10 Session 3
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Small fixes — status banner slide animation, and untracking Claude Code's local settings file.
+
+### Changes
+
+**`src/fabulor/app.py`** (commit `85fa700`)
+- Status banner now slides in/out from the bottom window edge instead of `show()`/`hide()`.
+- `_slide_banner_in()` / `_slide_banner_out()` replace the direct visibility calls. Slide-up from `y=height` to resting `y=height-36` over 220ms, `OutCubic`. A single reusable `QPropertyAnimation` on `pos` (`self._banner_anim`); `self._banner_sliding_out` flag + `_on_banner_anim_finished` defer the actual `hide()` until the slide-out completes.
+- `status_hide_timer.timeout` and the `show_banner` False branch both route through `_slide_banner_out`; the True branch through `_slide_banner_in`.
+- `resizeEvent` updates banner width during animation without fighting the `pos` animation.
+
+**`.gitignore` + index** (commits `4c640c9`, `c04b398`)
+- Ignore and untrack `.claude/settings.local.json` (Claude Code local settings) — removed from the git index, left on disk.
+
+### Design notes
+- The banner uses one persistent `QPropertyAnimation`, not a fresh one per show/hide — `_slide_banner_in` calls `.stop()` before re-arming, so rapid show→hide→show doesn't stack animations or leave the banner stranded mid-slide.
+- `hide()` is gated behind `_on_banner_anim_finished` (only when `_banner_sliding_out`), so the widget stays visible for the whole slide-out rather than vanishing on the first frame.
+
+---
+
 ## Session Summary — 2026-06-10 Session 2
 
 **Branch:** `main` (direct commits)

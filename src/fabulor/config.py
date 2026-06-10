@@ -90,6 +90,14 @@ class Config:
     def set_day_start_hour(self, hour: int):
         self.settings.setValue("day_start_hour", hour)
 
+    def get_streak_grid_cache_date(self):
+        """Adjusted date the streak grid cache was last built for, or None."""
+        val = self.settings.value("streak_grid_cache_date")
+        return val if val else None
+
+    def set_streak_grid_cache_date(self, date_str: str):
+        self.settings.setValue("streak_grid_cache_date", date_str)
+
     def get_last_position(self, file_path):
 
         """Returns the saved timestamp for a specific file."""

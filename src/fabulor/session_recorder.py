@@ -9,16 +9,20 @@ class SessionRecorder(QObject):
 
     session_written = Signal()
 
-    def __init__(self, db, get_position_fn, get_book_fn, parent=None):
+    def __init__(self, db, get_position_fn, get_book_fn,
+                 get_day_start_hour_fn=None, parent=None):
         """
-        db              — LibraryDB instance
-        get_position_fn — callable() -> float, returns current playback position
-        get_book_fn     — callable() -> Book | None, returns currently loaded book
+        db                   — LibraryDB instance
+        get_position_fn      — callable() -> float, returns current playback position
+        get_book_fn          — callable() -> Book | None, returns currently loaded book
+        get_day_start_hour_fn — callable() -> int, returns the configured day-start
+                                hour (for streak-grid date attribution at write time)
         """
         super().__init__(parent)
         self._db = db
         self._get_position = get_position_fn
         self._get_book = get_book_fn
+        self._get_day_start_hour = get_day_start_hour_fn or (lambda: 0)
 
         self._session_start: datetime | None = None
         self._session_segment_start: datetime | None = None
@@ -118,6 +122,8 @@ class SessionRecorder(QObject):
             pos_end_str = f"{s_end//3600:02d}:{(s_end%3600)//60:02d}:{s_end%60:02d}"
             print(f"[close_session] book='{book.title}' {pos_start_str}→{pos_end_str} ({pct_end:.1f}%) listened={listened/60:.1f}min")
 
+            day_start_hour = self._get_day_start_hour()
+
             def _write():
                 try:
                     self._db.write_session(
@@ -132,6 +138,7 @@ class SessionRecorder(QObject):
                         position_end=pos_end,
                         furthest_position=furthest,
                         listened_seconds=listened,
+                        day_start_hour=day_start_hour,
                     )
                     if not self._db.get_book_started_at(book.id):
                         self._db.set_started_at(book.id, start)
@@ -216,6 +223,8 @@ class SessionRecorder(QObject):
             if furthest is not None:
                 furthest = float(furthest)
 
+            day_start_hour = self._get_day_start_hour()
+
             def _write():
                 try:
                     self._db.write_session(
@@ -230,6 +239,7 @@ class SessionRecorder(QObject):
                         position_end=furthest if furthest is not None else position_start,
                         furthest_position=furthest,
                         listened_seconds=listened,
+                        day_start_hour=day_start_hour,
                     )
                     if not self._db.get_book_started_at(data["book_id"]):
                         self._db.set_started_at(data["book_id"], session_start)

@@ -1286,6 +1286,7 @@ class StatsPanel(QWidget):
         self.day_start_spin.setRange(0, 23)
         self.day_start_spin.setValue(self.config.get_day_start_hour())
         self.day_start_spin.valueChanged.connect(self.config.set_day_start_hour)
+        self.day_start_spin.valueChanged.connect(self._on_day_start_hour_changed)
         self.day_start_spin.setFixedWidth(56)
         pref_row.addWidget(self.day_start_spin)
         pref_row.addStretch()
@@ -1935,6 +1936,17 @@ class StatsPanel(QWidget):
         bdp = getattr(getattr(self, '_panel_manager', None), 'book_detail_panel', None)
         if bdp and bdp.isVisible():
             bdp._refresh_stats()
+
+    def _on_day_start_hour_changed(self, hour: int):
+        """Day boundary changed — every day's attribution shifts, so fully
+        rebuild the streak grid cache (clear then build) and re-stamp the cache
+        date. Cheap (<=364 rows). hour comes from the signal, not config, so this
+        is independent of slot connection order."""
+        from datetime import timedelta
+        self.db.reset_streak_grid_cache()
+        self.db.build_streak_grid_cache(hour)
+        today_adjusted = datetime.now() - timedelta(hours=hour)
+        self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
 
     def _refresh_time(self):
         rows = self.db.get_hourly_heatmap(n_days=14)

@@ -1040,7 +1040,8 @@ class BookDetailPanel(QWidget):
     def _on_delete_book_stats_confirmed(self):
         self._cancel_delete_history()
         if self._book_path:
-            self.db.delete_book_stats(self._book_data['id'], self._book_path)
+            self.db.delete_book_stats(self._book_data['id'], self._book_path,
+                                      self.config.get_day_start_hour())
             self._refresh_stats()
             self.history_deleted.emit()
 
@@ -1081,7 +1082,7 @@ class BookDetailPanel(QWidget):
         self._confirming_history_row = None
         if row is None:
             return
-        self.db.delete_session(session_id)
+        self.db.delete_session(session_id, self.config.get_day_start_hour())
         self._history_rows = [r for r in self._history_rows if r is not row]
 
         anim = QPropertyAnimation(row, b"maximumHeight", self)
