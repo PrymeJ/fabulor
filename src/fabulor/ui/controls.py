@@ -439,7 +439,7 @@ class ShimmerButton(QPushButton):
         super().__init__(*args, **kwargs)
         self._shimmer_pos = -1.0   # normalised: -1 = off-screen left, 2 = off-screen right
         self._shimmer_anim = QPropertyAnimation(self, b"shimmer_pos", self)
-        self._shimmer_anim.setDuration(500)
+        self._shimmer_anim.setDuration(800)
         self._shimmer_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._shimmer_anim.setStartValue(-1.0)
         self._shimmer_anim.setEndValue(2.0)
@@ -482,7 +482,7 @@ class ShimmerButton(QPushButton):
         grad = QLinearGradient(QPointF(cx - half, h), QPointF(cx + half, 0))
         grad.setColorAt(0.0,  QColor(255, 255, 255, 0))
         grad.setColorAt(0.4,  QColor(255, 255, 255, 0))
-        grad.setColorAt(0.5,  QColor(255, 255, 255, 60))
+        grad.setColorAt(0.5,  QColor(255, 255, 255, 140))
         grad.setColorAt(0.6,  QColor(255, 255, 255, 0))
         grad.setColorAt(1.0,  QColor(255, 255, 255, 0))
 
