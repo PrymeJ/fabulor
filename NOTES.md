@@ -1,4 +1,28 @@
 
+## Semi-transparent session history rows — investigation dead end (2026-06-10)
+
+**Goal:** Make `_HistoryRow` widgets in the Book Detail Panel History tab render semi-transparently like the tag rows in the Tags panel, so the panel background (and cover art behind it) bleeds through.
+
+**Why it looks like it should work:** The panel background is `rgba(bg_main, panel_opacity_hover)` set via QSS. The Tags panel rows use `rgba(bg_deep, 0.6)` in `get_tags_stylesheet` via a class-level `QWidget#tag_list_row` rule — no instance `setStyleSheet` — and they visually appear semi-transparent.
+
+**Approaches tried and why they failed:**
+
+1. **`rgba()` in instance `setStyleSheet` on the row** — an instance stylesheet has higher specificity than a parent/class rule in Qt's QSS cascade. The row's own `setStyleSheet` set a fully opaque background that won every time. Removing the instance stylesheet was necessary but not sufficient.
+
+2. **`rgba()` in `get_stats_stylesheet` as a class rule (`QWidget#history_row_odd` / `even`)** — the stylesheet was generated correctly (verified via unit test: `rgba(19,8,72, 224)`). The row widget resolved the correct semi-transparent color in `palette()`. But visually the rows were still fully opaque. The scroll area viewport was painting an opaque fill on top.
+
+3. **Making the scroll area transparent** — tried `QScrollArea#history_scroll QWidget#qt_scrollarea_viewport { background: transparent }`, `viewport().setAutoFillBackground(False)`, and `viewport().setAttribute(WA_NoSystemBackground, True)`. Palette tests confirmed `autoFill=False` on the viewport, but visual result unchanged. The `WA_StyledBackground` + `WA_NoSystemBackground` combo also didn't help.
+
+4. **Making the container transparent** — added `WA_StyledBackground` to `_history_container` and named it `"history_container"` with a `background: transparent` rule. Container correctly resolved to alpha=0 in tests. Still no visual change on rows, and the changes broke slider fill/bg colors in the stats panel (unintended stylesheet interaction via the shared `get_stats_stylesheet`).
+
+**Root cause hypothesis:** The `QScrollArea` internal viewport widget has special paint handling that isn't fully controlled by QSS or the `WA_*` attributes. The Tags panel works because its scroll area is inside `TagManagerWidget` which has its own stylesheet (`get_tags_stylesheet`) applied directly to it — not shared with other panels. The history scroll area shares `get_stats_stylesheet` with `stats_panel`, making scoped rules fragile.
+
+**Current state:** Solid alternating row colors (`session_history_row_one` / `two` per theme, fallback `library_row_one` / `two`). Alzabo has explicit values. This is the working baseline.
+
+**Possible future path:** Give `BookDetailPanel` its own dedicated stylesheet function instead of sharing `get_stats_stylesheet`. That would allow unscoped `QScrollArea { background: transparent }` rules without risking stats panel regressions. Not pursued — the effort/risk ratio is poor for a cosmetic change.
+
+---
+
 ## TODO (before release): suppress shimmer when speed is already the default (2026-06-10)
 
 `_on_speed_right_clicked` unconditionally plays the shimmer sweep on every right-click. Before release, add a guard: if `round(current, 9) == round(config.get_default_speed(), 9)` (same float-drift tolerance as `sync_btn`), skip both `set_default_speed` and `play_shimmer` — the speed is already the default, so there is nothing to confirm. Or allow one play but not repeated triggering on the same value. Decision deferred.
