@@ -871,10 +871,10 @@ class HourlyHeatmap(QWidget):
                 label_pen.setAlpha(60)
             painter.save()
             painter.setPen(label_pen)
-            painter.translate(cx + 2, self.DATE_LABEL_H - 1)
+            painter.translate(cx, self.DATE_LABEL_H - 3)
             painter.rotate(-90)
             painter.drawText(
-                QRect(0, -self.CELL // 2, self.DATE_LABEL_H - 2, self.CELL),
+                QRect(0, -self.CELL // 2, self.DATE_LABEL_H - 4, self.CELL),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 label
             )
