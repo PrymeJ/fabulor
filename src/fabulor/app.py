@@ -333,7 +333,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.status_hide_timer = QTimer(self)
         self.status_hide_timer.setSingleShot(True)
-        self.status_hide_timer.timeout.connect(self.status_banner.hide)
+        self.status_hide_timer.timeout.connect(self._slide_banner_out)
 
         # Initialize Library Controller
         self.library_controller = LibraryController(
@@ -512,6 +512,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.speed_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
         
         builders.build_status_banner(self)
+        self._banner_anim = QPropertyAnimation(self.status_banner, b"pos")
+        self._banner_anim.setDuration(220)
+        self._banner_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._banner_sliding_out = False
+        self._banner_anim.finished.connect(self._on_banner_anim_finished)
 
         # Pulse Animation for active sleep timer
         self.sleep_opacity_effect = QGraphicsOpacityEffect(self.sleep_trigger_btn)
@@ -749,10 +754,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.status_banner.raise_()
 
         if show_banner is True:
-            self.status_banner.show()
-            self.status_banner.raise_()
+            self._slide_banner_in()
         elif show_banner is False:
-            self.status_banner.hide()
+            self._slide_banner_out()
 
         if show_cancel is True:
             self.cancel_scan_btn.show()
@@ -767,6 +771,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         if auto_hide:
             self.status_hide_timer.start(auto_hide_ms)
+
+    def _on_banner_anim_finished(self):
+        if self._banner_sliding_out:
+            self.status_banner.hide()
+
+    def _slide_banner_in(self):
+        h = self.height()
+        self._banner_sliding_out = False
+        self._banner_anim.stop()
+        self.status_banner.setGeometry(0, h, self.width(), 36)
+        self.status_banner.show()
+        self.status_banner.raise_()
+        self._banner_anim.setStartValue(self.status_banner.pos())
+        self._banner_anim.setEndValue(QPoint(0, h - 36))
+        self._banner_anim.start()
+
+    def _slide_banner_out(self):
+        if not self.status_banner.isVisible():
+            return
+        h = self.height()
+        self._banner_sliding_out = True
+        self._banner_anim.stop()
+        self._banner_anim.setStartValue(self.status_banner.pos())
+        self._banner_anim.setEndValue(QPoint(0, h))
+        self._banner_anim.start()
 
     def _on_revert_finish(self) -> None:
         if self._eof_book_id is not None:
@@ -2005,10 +2034,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.panel_manager.resize_panels()
 
         # Position the status banner at the bottom as an overlay
-        if hasattr(self, 'status_banner'):
-            self.status_banner.setGeometry(0, self.height() - 36, self.width(), 36)
-            if self.status_banner.isVisible():
-                self.status_banner.raise_()
+        if hasattr(self, 'status_banner') and self.status_banner.isVisible():
+            anim = getattr(self, '_banner_anim', None)
+            if anim and anim.state() == QPropertyAnimation.State.Running:
+                self.status_banner.resize(self.width(), 36)
+            else:
+                self.status_banner.setGeometry(0, self.height() - 36, self.width(), 36)
+            self.status_banner.raise_()
 
         self._update_cover_art_scaling()
         # Reposition percentage label
