@@ -866,19 +866,39 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Total listened, sessions, last session, started, finished display correctly
 - [ ] Last session shows date, 24h time, and duration of most recent session
 - [ ] Finished shows "—" / date / "Nx — last [date]" correctly
-- [ ] Listening history header styled bold accent_light
-- [ ] Listening history shows sessions newest-first
-- [ ] Each session row: timestamp range (May 6  03:08 – 03:21) + bar + percentage
-- [ ] Bar shows correct position slice within the book
-- [ ] Bar and furthest position bar use theme colors (no system color fallback)
-- [ ] No scrollbar visible on session list
+- [ ] Listening history header ("Recent history") hidden when there are no sessions; visible otherwise
+- [ ] Recent history shows max 4 sessions; last entry always anchored to same vertical position regardless of count (1–4 entries)
+- [ ] Each session row: timestamp range + delta label (e.g. +98.6%) + bar + percentage
+- [ ] Delta label does not clip at wide values (e.g. +98.6%)
+- [ ] Bar and furthest position bar use theme colors (library_slider_fill / library_slider_bg)
+
+### History tab
+- [ ] All sessions shown newest-first, rows top-aligned with no extra spacing between them
+- [ ] Rows span full tab width; date/delta on left and percentage on right retain 10px internal padding
+- [ ] No scrollbar visible when few sessions; scrollbar appears (or area scrolls) when sessions overflow
+- [ ] Hover a row → X icon slides in from right edge (45px, 150ms OutCubic)
+- [ ] Mouse leaves row without clicking → X slides back out (150ms InOutQuad)
+- [ ] Click X → "Delete this session?" slides in from left of X (X stays visible); 7s auto-dismiss timer starts
+- [ ] While confirmation armed: hovering another row shows its X normally
+- [ ] While confirmation armed: clicking another row's X dismisses previous confirmation AND its X, arms new row
+- [ ] Confirmation auto-dismisses after 7 seconds; row returns to normal
+- [ ] Click "Delete this session?" → row collapses (150ms height animation), rows shift up, container resizes
+- [ ] After delete: Stats tab "Total listened", "Sessions", and recent history widget update correctly
+- [ ] Click outside the confirming row (anywhere in panel) → confirmation AND X both dismiss
+- [ ] Switch to another tab while confirmation armed → confirmation and X dismiss
+- [ ] Close book detail panel while confirmation armed → confirmation and X dismiss, no stale timer
+- [ ] Only one row can be in confirming state at a time
+- [ ] "Delete listening history" button: shows hand cursor when idle; clicking shows confirm label above button, button switches to arrow cursor and stops accepting clicks
+- [ ] "Delete listening history" confirm label: clicking it deletes all history, refreshes stats, auto-dismisses after 7s if not acted on
+- [ ] "Delete listening history" button does not jump or shift position when confirm label appears or disappears
+- [ ] Click outside "Delete listening history" confirm label (but not on button) → confirm dismissed, button re-enabled with hand cursor
+- [ ] Click on button area while confirm label is visible → nothing happens (button stays disabled, confirm stays)
 
 ### Tags tab
 - [ ] Tag chips display all assigned tags
 - [ ] Add tag field with autocomplete works; Enter and + button both add
 - [ ] Remove (✕) button removes tag correctly
 - [ ] Max 5 tags enforced (input flashes red on reject)
-- [ ] Delete listening history button shows inline confirmation label above the button on first click; clicking the label clears data and refreshes stats tab; auto-dismisses after 7 seconds if not acted on
 - [ ] "Tag management" button visible when opened from library or stats
 - [ ] "Tag management" button hidden when opened from tag panel (context='tags')
 - [ ] Clicking "Tag management": all panels dismiss, then tag panel slides in

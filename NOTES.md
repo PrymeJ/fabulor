@@ -1,4 +1,27 @@
 
+## "Delete listening history" button has manually managed cursor states — skip in bulk cursor pass (2026-06-10)
+
+The button in the History tab has two explicit cursor states set in code:
+- `PointingHandCursor` when idle (clickable)
+- `ArrowCursor` while the "Click to delete all history for this book" confirm label is visible (not clickable)
+
+Any bulk pass that sets `PointingHandCursor` globally (via QSS or a sweep of all interactive widgets) must **exclude this button**. Overriding it would break the disabled-state cursor and remove the visual signal that the button is temporarily inert.
+
+Managed in `_on_delete_book_stats` (sets `ArrowCursor`, disables button) and `_cancel_delete_history` (restores `PointingHandCursor`, re-enables button).
+
+---
+
+## eventFilter safe-zone pattern for floating confirm labels (2026-06-10)
+
+When a confirm label is floated absolutely above a button (not in the layout), the eventFilter's click-outside dismissal must include **both** the confirm label **and the button underneath** in the safe zone. Without the button in the safe zone, clicking the button while confirm is visible triggers this sequence:
+
+1. `MouseButtonPress` fires eventFilter → confirm not hit → `_cancel_delete_history()` → confirm hidden, button re-enabled
+2. Click propagates to now-enabled button → `_on_delete_book_stats()` → confirm shown again
+
+The fix: `if not hits(confirm_label) and not hits(button): _cancel_delete_history()`. The button being disabled doesn't help here because the eventFilter fires before Qt's normal event routing.
+
+---
+
 ## `_eof_event_written` resets only in `_on_file_ready` — never in `_on_revert_finish` (2026-06-08)
 
 `_eof_event_written` guards the EOF block (app.py:1361-1363) from writing a

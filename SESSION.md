@@ -1,3 +1,50 @@
+## Session Summary — 2026-06-10 Session 1
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Book Detail Panel — History tab per-session delete feature, Stats tab recent history widget polish, and "Delete listening history" button layout/interaction fixes.
+
+### Changes
+
+**`src/fabulor/ui/book_detail_panel.py`**
+
+- **`_RecentHistoryWidget` (Stats tab):** Replaced scrollable `SessionListWidget` with a fixed-height non-scrollable widget showing max 4 sessions. Header ("Recent history") embedded inside the widget and hidden when no sessions exist. Rows stack from the top; spare space above via `addStretch`. Delta label widened to 39px to prevent clipping of values like `+98.6%`.
+- **`_HistoryRow` (History tab):** New class replacing the plain row widget. Absolutely-positioned overlay (`_overlay`, 45px) slides in from the right on hover to reveal an X icon (`x.svg`). On X click, a separate `_confirm_panel` ("Delete this session?") slides in from the left of the overlay. Two independent `QPropertyAnimation` instances on `geometry`. State machine: `idle → hover → confirming → idle`. `leaveEvent` only dismisses in `hover` state; `confirming` state persists until timeout (7s), explicit dismiss, or confirmation. X icon loaded via `load_themed_icon`. Row background alternates via `session_history_row_one/two` theme keys (fallback to `library_row_one/two`).
+- **History tab layout:** Outer `contentsMargins(0, 10, 0, 10)` — rows go edge to edge. `_history_container` sized to content via `setFixedHeight` after each populate/delete so scroll area clips without stretching rows. `btn_wrapper` carries only the delete button; confirm label floated absolutely above it (child of the tab widget, not in the VBox) so the button never moves when confirm appears/disappears.
+- **"Delete listening history" button:** Confirm label positioned via `_position_delete_history_confirm()` (maps button position into tab coords). Button disabled + cursor set to `ArrowCursor` while confirm is visible; re-enabled + `PointingHandCursor` on dismiss. eventFilter safe-zones both the confirm label and the button so clicking the button while armed doesn't dismiss-then-rearm.
+- **Panel coordination:** `_confirming_history_row` tracks the single armed row. Clicking another row's X dismisses the previous. `hideEvent` and tab-change handler dismiss any active confirmation. `_on_history_delete_confirmed` animates row height to 0, removes row, recalculates container height, refreshes stats.
+- **Bar colors:** `_apply_bar_colors` uses `library_slider_fill` / `library_slider_bg` for all `_RangeBar` instances and history rows.
+
+**`src/fabulor/db.py`**
+- `get_book_sessions`: added `id` to SELECT (was missing, needed for per-session delete).
+- `delete_session(session_id: int)`: new method — hard-deletes a single `listening_sessions` row by primary key.
+
+**`src/fabulor/themes.py`**
+- Documented `session_history_row_one` / `session_history_row_two` keys in group 9. Per-theme values deferred (opacity TBD).
+
+### Key decisions
+- Confirm label floated absolutely (not in layout) to prevent the "Delete listening history" button from jumping when confirm appears/disappears — the scroll area's `stretch=1` was absorbing the height delta, causing a visible shift.
+- eventFilter must include the button in the safe zone alongside the confirm label; otherwise `MouseButtonPress` on the button dismisses confirm first, re-enables the button, then the click fires `_on_delete_book_stats` again, causing dismiss-reshow flicker.
+- Easing curves set by user: `OutCubic` slide-in, `InOutQuad` slide-out — do not change.
+
+### Commits
+- `0e22367` feat: replace scrollable session list with fixed widget of maximum four entries
+- `a0710fa` refactor: move history header into _RecentHistoryWidget
+- `a2e2e6f` wip: add per-session delete with animated confirmation
+- `9239ac7` docs: reorganize session_history theme vars into group 9 and add session_history_bg
+- `fda297d` fix: use library progress bar colors in book details progress and range bars
+- `0145b95` chore: add x SVG icon
+- `1e92e34` fix: adjust history tab margins and widen trash icon reveal area
+- `ac1f279` fix: increase delta label width from 36 to 39 in history row to prevent clipping
+- `680b8b0` fix: increase delta label width from 36 to 39px in recent history widget
+- `ee5e488` fix: tweak history row animation timing and easing curves, and row height
+- `ca3a852` feat: separate confirm panel from trash overlay in history row
+- `c939624` fix: dismiss history confirm on outside click
+- `4e367b8` fix: float confirm label above delete button to prevent layout shift
+- `a0cab22` fix: disable delete history btn during confirm and fix click-outside dismiss
+
+---
+
 ## Session Summary — 2026-06-09 Session 2
 
 **Branch:** `main` (direct commits)
