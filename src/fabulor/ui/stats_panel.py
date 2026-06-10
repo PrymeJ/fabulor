@@ -118,16 +118,25 @@ class BarChartWidget(QWidget):
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
                              label)
 
+        painter.setPen(self.palette().text().color())
+        font = QFont()
+        font.setPointSize(7)
+        painter.setFont(font)
         if max_seconds > 0:
             max_bar_x = bar_gap + max_idx * (bar_w + bar_gap)
-            max_label = self._format_seconds(max_seconds)
-            painter.setPen(self.palette().text().color())
-            font = QFont()
-            font.setPointSize(7)
-            painter.setFont(font)
             painter.drawText(QRect(max_bar_x - 20, 0, bar_w + 40, y_label_h),
                              Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                             max_label)
+                             self._format_seconds(max_seconds))
+        if self._hovered_index != -1 and self._hovered_index != max_idx:
+            hov = self._data[self._hovered_index]
+            if hov['seconds'] > 0:
+                hov_x = bar_gap + self._hovered_index * (bar_w + bar_gap)
+                ratio = hov['seconds'] / max_seconds
+                hov_bar_h = max(2, int(ratio * chart_h))
+                hov_bar_y = y_label_h + chart_h - hov_bar_h
+                painter.drawText(QRect(hov_x - 20, hov_bar_y - y_label_h, bar_w + 40, y_label_h),
+                                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                                 self._format_seconds(hov['seconds']))
 
         painter.end()
 
