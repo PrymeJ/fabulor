@@ -26,9 +26,18 @@
 - [ ] EOF: rapid >| clicks on last chapter — no freeze, no state corruption
 - [x] Speed button left click opens menu
 - [x] Speed-adjusted time calculations (Elapsed/Total change with speed)
-- [x] Speed button right click increases speed || hold right click ?
-- [x] Speed button shift+right click descreases speed
+- [x] Speed button right click sets current speed as global default
+- [x] Speed button right click plays shimmer sweep (bottom-left → top-right glint)
+- [ ] Shimmer: plays once and stops — does not loop or repeat on its own
+- [ ] Shimmer: re-entrant right-clicks restart the sweep cleanly (no double-glint artefact)
+- [ ] Shimmer opacity: `button_speed_shimmer` theme key overrides peak brightness (test with Alzabo theme which has an explicit value)
 - [x] Mouse wheel scroll over speed button adjusts speed
+- [ ] Default speed row: right-clicking at a non-preset speed (e.g. 2.35x via wheel) injects it in sorted position with 3.0x dropped
+- [ ] Default speed row: injected custom button highlighted as selected
+- [ ] Default speed row: closing and reopening the speed panel keeps the custom button (re-evaluated from config, not from prior UI state)
+- [ ] Default speed row: clicking a different preset while custom is shown does not immediately drop the custom — only next panel open re-evaluates
+- [ ] Default speed row: right-clicking at a canonical preset speed (e.g. 2.0x) shows the standard 7-button row with that preset highlighted, no custom injection
+- [ ] Default speed row: whole-number speeds outside canonical list (4x, 5x, 6x, 7x, 8x) show as `N.0x` not `Nx`
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
 

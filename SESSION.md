@@ -1,3 +1,45 @@
+## Session Summary — 2026-06-10 Session 2
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Speed button QoL — right-click-to-set-default, Default speed row custom preset injection, end-of-book sleep mode removal, and speed button shimmer feedback.
+
+### Changes
+
+**`src/fabulor/app.py`**
+- `_on_speed_right_clicked`: replaced increment/decrement logic with `set_default_speed(current)` call; reads `button_speed_shimmer` from theme and applies to `speed_button.shimmer_opacity` before `play_shimmer()`
+- Removed now-unused `QGuiApplication` import
+
+**`src/fabulor/ui/speed_controls.py`**
+- Added `CANONICAL_SPEEDS` and `get_default_speed_presets(default)`: non-preset defaults inject in sorted position with 3.0x dropped to keep the row width fixed
+- Added `_nearest_canonical(val)`: snaps QSettings float drift (accumulated wheel steps) to clean canonical or whole-number values
+- `_rebuild_def_speed_row()`: fully rebuilds Default speed row from config on every call; old custom injection is always discarded and re-evaluated from config
+- `set_default_speed(value)`: saves to config and rebuilds the row
+- `_fmt_speed(val)`: whole-number speeds format as `N.0x`; fractional customs show natural form (`2.35x`)
+- `sync_btn` updated to use `round(..., 9)` comparison to absorb residual float drift
+- Panel open (`panels.py _start_speed_entry`) now calls `_rebuild_def_speed_row()` — panel open is the evaluation point for custom injection, not panel close or preset click
+
+**`src/fabulor/ui/sleep_timer.py`** (prior session, commit `5d4615a`)
+- End-of-book sleep mode removed
+
+**`src/fabulor/ui/controls.py`**
+- Added `ShimmerButton(QPushButton)`: single-pass 45° diagonal glint sweep (bottom-left → top-right) via `QPropertyAnimation` on `shimmer_pos`; peak alpha driven by `shimmer_opacity` attribute (0.0–1.0, default 0.55)
+- `play_shimmer()`: starts the animation; re-entrant safe (stops previous run first)
+
+**`src/fabulor/ui/main_window_builders.py`**
+- `speed_button` changed from `QPushButton` to `ShimmerButton`
+
+**`src/fabulor/themes.py`**
+- Added `button_speed_shimmer` to Group 3 docstring (optional, 0.0–1.0, default 0.55)
+- Added `button_speed_shimmer` to Alzabo theme for testing
+
+### Design notes
+- Panel open is the only evaluation point for whether a non-preset custom button is injected. Clicking a different preset while a custom is showing does not immediately drop the custom — only the next panel open re-evaluates.
+- The speed button outline on right-click (indicating "default set") was implemented in commit `5d4615a` as a fade-out outline rather than a toast/text change.
+- `_nearest_canonical` snaps both canonical-range drift (e.g. `2.5000000000000195`) and whole-number drift outside the canonical list (e.g. `4.000000000000003`).
+
+---
+
 ## Session Summary — 2026-06-10 Session 1
 
 **Branch:** `main` (direct commits)

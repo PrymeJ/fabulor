@@ -1,4 +1,10 @@
 
+## TODO (before release): suppress shimmer when speed is already the default (2026-06-10)
+
+`_on_speed_right_clicked` unconditionally plays the shimmer sweep on every right-click. Before release, add a guard: if `round(current, 9) == round(config.get_default_speed(), 9)` (same float-drift tolerance as `sync_btn`), skip both `set_default_speed` and `play_shimmer` — the speed is already the default, so there is nothing to confirm. Or allow one play but not repeated triggering on the same value. Decision deferred.
+
+---
+
 ## "Delete listening history" button has manually managed cursor states — skip in bulk cursor pass (2026-06-10)
 
 The button in the History tab has two explicit cursor states set in code:
