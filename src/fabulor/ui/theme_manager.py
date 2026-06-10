@@ -125,11 +125,9 @@ class ThemeManager(QObject):
         self._save_on_fade = False
 
     def get_current_theme(self) -> dict:
+        from ..themes import _resolve_theme
         active = self._active_display_theme or self._current_theme_name
-        if isinstance(active, dict):
-            from ..themes import _resolve_theme
-            return _resolve_theme(active)
-        return THEMES.get(active, THEMES["The Color Purple"])
+        return _resolve_theme(active)
     
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
@@ -350,11 +348,8 @@ class ThemeManager(QObject):
             self._apply_stylesheets(theme_name, hover=hover)
             if hasattr(self.main_window, '_refresh_panel_visuals'):
                 self.main_window._refresh_panel_visuals(theme_name)
-            if isinstance(theme_name, dict):
-                from ..themes import _resolve_theme
-                self.theme_applied.emit(_resolve_theme(theme_name))
-            else:
-                self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
+            from ..themes import _resolve_theme
+            self.theme_applied.emit(_resolve_theme(theme_name))
             self.update_theme_list_visuals()
             return
 
@@ -415,11 +410,8 @@ class ThemeManager(QObject):
 
         if hasattr(self.main_window, '_refresh_panel_visuals'):
             self.main_window._refresh_panel_visuals(theme_name)
-        if isinstance(theme_name, dict):
-            from ..themes import _resolve_theme
-            self.theme_applied.emit(_resolve_theme(theme_name))
-        else:
-            self.theme_applied.emit(THEMES.get(theme_name, THEMES["The Color Purple"]))
+        from ..themes import _resolve_theme
+        self.theme_applied.emit(_resolve_theme(theme_name))
         self.update_theme_list_visuals()
 
     def _get_slider_anims(self, slider) -> dict:

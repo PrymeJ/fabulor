@@ -2280,6 +2280,10 @@ def _resolve_theme(theme_name):
         base.update(theme_name)
     else:
         base.update(THEMES.get(theme_name, {}))
+    if "library_slider_fill" not in base:
+        base["library_slider_fill"] = base["accent"]
+    if "library_slider_bg" not in base:
+        base["library_slider_bg"] = base["bg_deep"]
     return base
 
 
