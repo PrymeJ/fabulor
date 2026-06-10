@@ -75,11 +75,11 @@ settings_tab_hover_text:    Text color for unselected tabs when hovered. Fallbac
 settings_theme_names_dimmed: Color for theme names in the Settings panel that are currently unselected/dimmed.
 
 GROUP 9 — STATS, BOOK DETAILS AND TAGS
-tag_list_text:        (Optional) Color for text inside the tag list. Fallback: text.
-tag_list_text_hover:  (Optional) Color for text inside the tag list when hovered. Fallback: accent_light.
-session_history_row_one: Background color for odd rows in the book detail History tab. Fallback: library_row_one.
-session_history_row_two: Background color for even rows in the book detail History tab. Fallback: library_row_two.
-## NOT BEING USED YET ## session_history_bg:   Background color for the book detail History tab. Fallback: library_bg.
+tag_list_text:           (Optional) Color for text inside the tag list. Fallback: text.
+tag_list_text_hover:     (Optional) Color for text inside the tag list when hovered. Fallback: accent_light.
+session_history_row_one: (Optional) Background color for odd rows in the book detail History tab. Fallback: library_row_one → bg_main.
+session_history_row_two: (Optional) Background color for even rows in the book detail History tab. Fallback: library_row_two → bg_main.
+## NOT BEING USED YET ## session_history_bg:      (Optional) Background color for the book detail History tab. Fallback: library_bg.
 
 GROUP 10 — MISC UI
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.

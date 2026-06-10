@@ -1493,7 +1493,7 @@ class _HistoryRow(QWidget):
         if theme:
             key = 'session_history_row_one' if self._row_index % 2 == 0 else 'session_history_row_two'
             fallback_key = 'library_row_one' if self._row_index % 2 == 0 else 'library_row_two'
-            row_bg = theme.get(key) or theme.get(fallback_key, 'transparent')
+            row_bg = theme.get(key) or theme.get(fallback_key) or theme.get('bg_main', 'transparent')
             self.setStyleSheet(f"QWidget#history_row {{ background-color: {row_bg}; }}")
             trash_color = theme.get('accent_light', '#cccccc')
             confirm_color = theme.get('text', '#ffffff')
