@@ -29,7 +29,7 @@
 
 **What is actually happening (hypothesis):** Qt's `drawText` clips the rendered glyph to the bounding rect even when the glyph's ink extends outside it (e.g. a "J" whose hook descends below the baseline, which in rotated-90° space maps to above the rect's left edge). `setClipping(False)` on the painter does not disable this per-glyph clipping — that is internal to Qt's text renderer. The fix likely requires either: (a) painting the text at a position where the glyph's natural ink extent stays inside the rect (i.e. add padding at the rect's start equal to the font's descent), or (b) using a `QPainterPath` to stroke the text outline instead of `drawText`, which respects `setClipping(False)`. Option (a) is the sane path but requires knowing the exact descent in rotated coordinates.
 
-**Current state:** Reverted to `DATE_LABEL_H = 44`, translate at `-3`, `AlignLeft`, `QRect(0, ...)`. The clipping is present and unresolved.
+**Resolution:** The clipping was the rect *height* being too tight, not the widget boundary or the rect's x origin. After rotate(-90), the rect's height maps to horizontal ink space in widget coordinates. `CELL=14` is too narrow for glyphs whose ink extends outside the em square (e.g. "J"'s hook). Fix: `QRect(2, -self.CELL, self.DATE_LABEL_H, self.CELL * 2)` — doubling the height and centering it with `y=-CELL` gives all glyphs enough room. The `x=2` is the 2px margin from the grid edge.
 
 ---
 
