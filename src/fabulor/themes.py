@@ -2922,6 +2922,9 @@ def get_settings_stylesheet(theme_name="default"):
         QPushButton#pattern_button:hover {{
             border: 1px solid {t['accent']};
         }}
+        QPushButton#pattern_button[is_default="true"]:hover {{
+            border: 2px solid {t['accent_light']};
+        }}
         QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn,
         QPushButton#library_rescan_btn {{
             background: transparent;

@@ -20,7 +20,7 @@ class SleepTimerPanel(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
-        self._sleep_mode = None # 'timed', 'end_of_chapter', 'end_of_book'
+        self._sleep_mode = None # 'timed', 'end_of_chapter'
         self._total_timer_duration = 0 # Initial duration in seconds for the active timer
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
         
@@ -37,7 +37,7 @@ class SleepTimerPanel(QWidget):
         # Time Presets Grid
         grid = QGridLayout()
         grid.setSpacing(8)
-        presets_minutes = [2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 75, 90, 120]
+        presets_minutes = [2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 90]
         self._sleep_presets_buttons = []
         for i, val in enumerate(presets_minutes):
             btn = QPushButton(f"{val} min")
@@ -45,22 +45,16 @@ class SleepTimerPanel(QWidget):
             btn.clicked.connect(lambda _, v=val: self.set_sleep_timer(duration_minutes=v))
             grid.addWidget(btn, i // 4, i % 4)
             self._sleep_presets_buttons.append(btn)
+
+        self.end_chap_btn = QPushButton("End of chapter")
+        self.end_chap_btn.setFixedHeight(30)
+        self.end_chap_btn.clicked.connect(lambda: self.set_sleep_timer(mode='end_of_chapter'))
+        grid.addWidget(self.end_chap_btn, 3, 2, 1, 2)
         layout.addLayout(grid)
         layout.addSpacing(2)
-
-        # Special Modes
-        special_modes_layout = QHBoxLayout()
-        self.end_chap_btn = QPushButton("End of chapter")
-        self.end_chap_btn.clicked.connect(lambda: self.set_sleep_timer(mode='end_of_chapter'))
-        special_modes_layout.addWidget(self.end_chap_btn)
-
-        self.end_book_btn = QPushButton("End of book")
-        self.end_book_btn.clicked.connect(lambda: self.set_sleep_timer(mode='end_of_book'))
-        special_modes_layout.addWidget(self.end_book_btn)
-        layout.addLayout(special_modes_layout)
         
 
-        # Custom Time Input
+        # Custom time input
         custom_time_layout = QHBoxLayout()
         self.custom_sleep_input = QLineEdit()
         self.custom_sleep_input.setPlaceholderText("min")
@@ -141,7 +135,7 @@ class SleepTimerPanel(QWidget):
             self.config.set_sleep_mode('timed')
             self.disable_sleep_btn.show()
             self.timer_started.emit()
-        elif mode in ['end_of_chapter', 'end_of_book']:
+        elif mode == 'end_of_chapter':
             self._total_timer_duration = 0
             self._sleep_mode = mode
             self.config.set_sleep_mode(mode)
@@ -245,17 +239,4 @@ class SleepTimerPanel(QWidget):
                     except (ShutdownError, AttributeError, SystemError):
                         pass
                     self.timer_expired.emit()
-        elif self._sleep_mode == 'end_of_book':
-            display_text = "[book]"
-            if not is_paused:
-                if not player_dur:
-                    return
-                if player_pos >= player_dur - 0.5 or is_eof:
-                    self.disable_sleep_timer()
-                    try:
-                        self.player.pause = True
-                    except (ShutdownError, AttributeError, SystemError):
-                        pass
-                    self.timer_expired.emit()
-
         self.display_text_updated.emit(display_text)

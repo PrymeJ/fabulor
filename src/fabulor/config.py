@@ -123,7 +123,7 @@ class Config:
         self.settings.setValue("sleep_duration", minutes)
 
     def get_sleep_mode(self):
-        """Returns the last set sleep mode ('timed', 'end_of_chapter', 'end_of_book')."""
+        """Returns the last set sleep mode ('timed', 'end_of_chapter')."""
         return self.settings.value("sleep_mode", "timed")
 
     def set_sleep_mode(self, mode):
