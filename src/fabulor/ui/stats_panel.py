@@ -164,7 +164,10 @@ class BarChartWidget(QWidget):
     @staticmethod
     def _format_seconds(seconds: float) -> str:
         h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
+        m = round((seconds % 3600) / 60)
+        if m == 60:
+            h += 1
+            m = 0
         if h > 0:
             return f"{h}h {m}m"
         return f"{m}m"
