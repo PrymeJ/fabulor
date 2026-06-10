@@ -1,4 +1,38 @@
 
+## Timeline header date labels — "J" glyph clipped at top edge (2026-06-10, unresolved)
+
+**Goal:** The rotated date labels at the top of `HourlyHeatmap` show months starting with "J" (Jan, Jun, Jul) as "un", "ul" — the top of the "J" glyph is cut off. May, Sep, Oct etc. render fine.
+
+**Setup:** Labels are drawn rotated -90° via `painter.save() / translate / rotate(-90) / drawText / restore`. The translate anchor is at `(cx+2, DATE_LABEL_H - 3)`. After rotation, `AlignLeft` means text grows in the +x direction of the rotated frame, which maps to the -y direction (upward) in widget space. So the *start* of the string (the "J") is nearest the widget's top edge (y=0).
+
+**What the red background diagnostic showed:** The `QRect` passed to `drawText` is fully inside the widget — there is plenty of space above the rect. The "J" is not being clipped by the widget boundary or the rect boundary in any obvious geometric sense. Despite `setClipping(False)` on the painter, the glyph is still truncated.
+
+**Approaches tried and why they all failed:**
+
+1. **Increase top container margin** (`outer.setContentsMargins(8, 12→30, 8, 8)`) — moves the widget down so its y=0 is further from the screen edge. With 30px margin the "J" rendered. But this adds ugly whitespace and doesn't fix the root cause; it just hides it.
+
+2. **Increase `DATE_LABEL_H`** (44→48→50→52→58) — grows the widget header zone and pushes the grid down. Tried in combination with adjusting the translate offset to keep labels visually in place. Never fixed the clipping regardless of value.
+
+3. **Adjust translate y** (`DATE_LABEL_H - 1`, `-3`, `-17`) — shifts the anchor point. Moving it down (larger subtract) pushes text further from the grid. Moving it up (smaller subtract) pushes text closer to y=0 and makes it worse. None fixed "J".
+
+4. **Offset the text rect x** (`QRect(4, ...)`, `QRect(6, ...)`) — in rotated space, positive x maps to downward in widget space, so this pushes the text start away from y=0. Visually this just clipped May and other months too — the rect was now too short for the full text.
+
+5. **Negative x on the text rect** (`QRect(-6, ...)`) — intended to let the "J" glyph bleed past x=0 in rotated space (= above y=0 in widget space). Made no visible difference.
+
+6. **`painter.setClipping(False)`** before the label loop — no effect. Qt clips painter output at the widget boundary regardless of this flag when painting inside a `paintEvent`.
+
+7. **`AlignRight`** — anchors the text end (the day number) near the grid, so "J" starts further from y=0. User confirmed this was already tried independently and still showed "un" not "Jun".
+
+8. **Per-label `j_offset`** — tried shifting J-month labels by 4px via `DATE_LABEL_H - 3 + j_offset` in the translate. No effect.
+
+9. **Font metrics `descent_extra`** — tried computing `fm.descent() - fm.leading()` and using it as either a translate offset or a rect x offset. Didn't fix it; the x/y confusion in rotated space made results unpredictable.
+
+**What is actually happening (hypothesis):** Qt's `drawText` clips the rendered glyph to the bounding rect even when the glyph's ink extends outside it (e.g. a "J" whose hook descends below the baseline, which in rotated-90° space maps to above the rect's left edge). `setClipping(False)` on the painter does not disable this per-glyph clipping — that is internal to Qt's text renderer. The fix likely requires either: (a) painting the text at a position where the glyph's natural ink extent stays inside the rect (i.e. add padding at the rect's start equal to the font's descent), or (b) using a `QPainterPath` to stroke the text outline instead of `drawText`, which respects `setClipping(False)`. Option (a) is the sane path but requires knowing the exact descent in rotated coordinates.
+
+**Current state:** Reverted to `DATE_LABEL_H = 44`, translate at `-3`, `AlignLeft`, `QRect(0, ...)`. The clipping is present and unresolved.
+
+---
+
 ## Semi-transparent session history rows — investigation dead end (2026-06-10)
 
 **Goal:** Make `_HistoryRow` widgets in the Book Detail Panel History tab render semi-transparently like the tag rows in the Tags panel, so the panel background (and cover art behind it) bleeds through.
