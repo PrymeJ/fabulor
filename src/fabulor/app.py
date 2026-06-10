@@ -1430,7 +1430,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     )
                     self.eof_revert_btn.show()
                     self.eof_close_btn.show()
-                    self.session_recorder.close()
+                    self.session_recorder.close(at_eof=True)
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
                     self.stats_panel.refresh_overall()

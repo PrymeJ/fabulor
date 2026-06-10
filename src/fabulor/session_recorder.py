@@ -89,7 +89,7 @@ class SessionRecorder(QObject):
         print(f"[pause_session] listened_so_far={self._session_listened_seconds/60:.1f}min")
         self._pause_timer.start()
 
-    def close(self):
+    def close(self, at_eof: bool = False):
         """Flush the session to DB if >= 60s listened, then reset all state."""
         self._checkpoint_timer.stop()
         self._pause_timer.stop()
@@ -104,7 +104,7 @@ class SessionRecorder(QObject):
         now = datetime.now()
         book = self._get_book()
 
-        if listened >= 60 and book is not None:
+        if (listened >= 60 or at_eof) and book is not None:
             start = self._session_start
             pos_start = self._session_position_start
             live_pos = self._get_position()
