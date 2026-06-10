@@ -4,6 +4,30 @@ from PySide6.QtGui import QColor
 from ..themes import THEMES
 from mpv import ShutdownError
 
+# Canonical presets shown in the "Default speed" row. When a non-preset default
+# is set (e.g. 2.35 via right-clicking the main speed button), it is injected as
+# an ephemeral button in sorted position; 3.0x is dropped to make room so the
+# row still fits. The injected button is never persisted — only the config value
+# decides, at panel-open time, whether injection happens.
+CANONICAL_SPEEDS = [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0]
+
+def _nearest_canonical(val):
+    """Snaps val to the nearest canonical preset (within 1e-6), or to the nearest
+    integer (within 1e-6) for whole-number speeds outside the canonical list."""
+    for c in CANONICAL_SPEEDS:
+        if abs(val - c) < 1e-6:
+            return c
+    rounded = round(val)
+    if abs(val - rounded) < 1e-6:
+        return float(rounded)
+    return val
+
+def get_default_speed_presets(default):
+    default = _nearest_canonical(default)
+    if default in CANONICAL_SPEEDS:
+        return list(CANONICAL_SPEEDS)
+    return sorted([s for s in CANONICAL_SPEEDS if s != 3.0] + [default])
+
 class SpeedControlsPanel(QWidget):
     """Handles UI and logic for playback speed, skip intervals, and smart rewind."""
     speed_changed = Signal(float)
@@ -60,15 +84,9 @@ class SpeedControlsPanel(QWidget):
         def_header = QLabel("Default speed")
         def_header.setObjectName("settings_header")
         layout.addWidget(def_header)
-        def_row = QHBoxLayout()
-        for val in [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0]:
-            btn = QPushButton(f"{val}x")
-            btn.setObjectName("pattern_button")
-            btn.clicked.connect(lambda _, v=val: self._update_def_speed_mode(v))
-            def_row.addWidget(btn)
-            self.def_speed_buttons[val] = btn
-        def_row.addStretch()
-        layout.addLayout(def_row)
+        self._def_row = QHBoxLayout()
+        layout.addLayout(self._def_row)
+        self._rebuild_def_speed_row()
 
         # Increment Step Section
         step_header = QLabel("Step")
@@ -166,6 +184,43 @@ class SpeedControlsPanel(QWidget):
                 self.config.set_book_speed(current_file, value)
             self.speed_changed.emit(value)
 
+    @staticmethod
+    def _fmt_speed(val):
+        """Whole-number speeds keep one decimal so the buttons don't become too thin
+        (1.0 -> '1.0x', 2.0 -> '2.0x', 4.0 -> '4.0x'). A fractional injected custom
+        shows its natural value (2.35 -> '2.35x', 1.1 -> '1.1x')."""
+        if val == int(val):
+            return f"{val:.1f}x"
+        return f"{('%.2f' % val).rstrip('0').rstrip('.')}x"
+
+    def _rebuild_def_speed_row(self):
+        """Rebuilds the Default speed row from the saved config value, injecting a
+        custom button when the default is not a canonical preset. Called at panel
+        open and whenever the default changes, so the row's evaluation point is
+        the config value at that moment — never the previously-shown set."""
+        while self._def_row.count():
+            item = self._def_row.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self.def_speed_buttons = {}
+
+        default = _nearest_canonical(self.config.get_default_speed())
+        for val in get_default_speed_presets(default):
+            btn = QPushButton(self._fmt_speed(val))
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, v=val: self._update_def_speed_mode(v))
+            self._def_row.addWidget(btn)
+            self.def_speed_buttons[val] = btn
+        self._def_row.addStretch()
+        self.update_visuals()
+
+    def set_default_speed(self, value):
+        """Saves a new default speed and rebuilds the row so a non-preset value is
+        injected (replacing any previously-injected custom) and highlighted."""
+        self.config.set_default_speed(float(value))
+        self._rebuild_def_speed_row()
+
     def _update_def_speed_mode(self, val): self.config.set_default_speed(val); self.update_visuals()
     def _update_step_mode(self, val): self.config.set_speed_increment(val); self.update_visuals()
     def _update_undo_mode(self, val): 
@@ -202,7 +257,7 @@ class SpeedControlsPanel(QWidget):
 
         def sync_btn(group, current):
             for val, btn in group.items():
-                btn.setProperty("selected", "true" if float(val) == float(current) else "false")
+                btn.setProperty("selected", "true" if round(float(val), 9) == round(float(current), 9) else "false")
                 btn.style().unpolish(btn); btn.style().polish(btn)
 
         sync_btn(self.def_speed_buttons, self.config.get_default_speed())

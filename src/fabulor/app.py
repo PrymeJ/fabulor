@@ -12,7 +12,7 @@ from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize
 )
-from PySide6.QtGui import QPixmap, QGuiApplication, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
+from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON
@@ -1716,20 +1716,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._update_ui_sync()
 
     def _on_speed_right_clicked(self, pos):
-        """Right click increments, Shift+Right click decrements."""
+        """Right click sets the current playback speed as the default speed."""
         self._hide_popups()
         if not self.player: return
-        
-        step = self.config.get_speed_increment()
-        modifiers = QGuiApplication.keyboardModifiers()
         current = self.player.speed or self.config.get_default_speed()
-        
-        if modifiers & Qt.ShiftModifier:
-            new_speed = max(0.25, current - step)
-        else:
-            new_speed = min(8.0, current + step)
-            
-        self._set_speed(new_speed)
+        if self.speed_panel:
+            self.speed_panel.set_default_speed(current)
 
     def _on_player_speed_changed(self, value):
         """Slot to sync the main UI speed button text with the player engine."""
