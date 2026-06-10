@@ -1722,6 +1722,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         current = self.player.speed or self.config.get_default_speed()
         if self.speed_panel:
             self.speed_panel.set_default_speed(current)
+        self.speed_button.play_shimmer()
 
     def _on_player_speed_changed(self, value):
         """Slot to sync the main UI speed button text with the player engine."""

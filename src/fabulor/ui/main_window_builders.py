@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, 
 from PySide6.QtGui import QPixmap
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
-from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel
+from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton
 from .carousel import CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
 from .library import LibraryPanel
 from .stats_panel import StatsPanel
@@ -192,7 +192,7 @@ def build_controls(mw):
     # Speed button centered above transport controls
     speed_row = QHBoxLayout()
     speed_row.addStretch()
-    mw.speed_button = QPushButton("1.00x")
+    mw.speed_button = ShimmerButton("1.00x")
     mw.speed_button.setObjectName("speed_btn")
     mw.speed_button.setFixedWidth(60)
     mw.speed_button.setFixedHeight(33)

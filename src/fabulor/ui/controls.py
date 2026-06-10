@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
-from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF
+from PySide6.QtGui import QColor, QPainter, QLinearGradient
 
 class ClickSlider(QWidget):
     valueChanged = Signal(int)
@@ -428,3 +428,64 @@ class HoverButton(QPushButton):
             self.rightClicked.emit()
         else:
             super().mousePressEvent(event)
+
+
+class ShimmerButton(QPushButton):
+    """QPushButton that can play a single diagonal shimmer sweep (bottom-left → top-right)
+    via play_shimmer(). The glint is painted on top of the normal button in paintEvent;
+    no stylesheet or geometry is modified."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._shimmer_pos = -1.0   # normalised: -1 = off-screen left, 2 = off-screen right
+        self._shimmer_anim = QPropertyAnimation(self, b"shimmer_pos", self)
+        self._shimmer_anim.setDuration(500)
+        self._shimmer_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._shimmer_anim.setStartValue(-1.0)
+        self._shimmer_anim.setEndValue(2.0)
+        self._shimmer_anim.finished.connect(self._on_shimmer_done)
+
+    def play_shimmer(self):
+        if self._shimmer_anim.state() == QPropertyAnimation.State.Running:
+            self._shimmer_anim.stop()
+        self._shimmer_anim.start()
+
+    def _on_shimmer_done(self):
+        self._shimmer_pos = -1.0
+        self.update()
+
+    def _get_shimmer_pos(self):
+        return self._shimmer_pos
+
+    def _set_shimmer_pos(self, val):
+        self._shimmer_pos = val
+        self.update()
+
+    shimmer_pos = Property(float, _get_shimmer_pos, _set_shimmer_pos)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._shimmer_pos < -0.5 or self._shimmer_pos > 1.5:
+            return
+
+        w, h = self.width(), self.height()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # The glint strip travels along a 45° diagonal (bottom-left → top-right).
+        # We parameterise it as a horizontal centre position that sweeps from -w to 2w,
+        # then tilt the gradient by mapping to diagonal coordinates.
+        cx = self._shimmer_pos * w          # centre x of the glint strip
+        half = w * 0.35                     # half-width of the glint band
+
+        # Gradient runs along the 45° axis: start at (cx-half, h), end at (cx+half, 0)
+        grad = QLinearGradient(QPointF(cx - half, h), QPointF(cx + half, 0))
+        grad.setColorAt(0.0,  QColor(255, 255, 255, 0))
+        grad.setColorAt(0.4,  QColor(255, 255, 255, 0))
+        grad.setColorAt(0.5,  QColor(255, 255, 255, 60))
+        grad.setColorAt(0.6,  QColor(255, 255, 255, 0))
+        grad.setColorAt(1.0,  QColor(255, 255, 255, 0))
+
+        painter.setClipRect(self.rect())
+        painter.fillRect(self.rect(), grad)
+        painter.end()
