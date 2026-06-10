@@ -6,7 +6,7 @@ from datetime import date
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QGridLayout, QSpinBox, QScrollArea, QPushButton
+    QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication
 )
 from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
@@ -1309,7 +1309,7 @@ class StatsPanel(QWidget):
 
         layout.addStretch()
 
-        self._reset_confirm_label = QLabel("Confirm — delete all listening history?")
+        self._reset_confirm_label = QLabel("DO YOU WANT TO DELETE ALL LISTENING HISTORY?")
         self._reset_confirm_label.setObjectName("book_detail_confirm_remove")
         self._reset_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._reset_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1888,6 +1888,32 @@ class StatsPanel(QWidget):
                 break
     # _on_tab_changed fires automatically, which calls _refresh_daily
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        self._cancel_reset_stats()
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and self._reset_confirm_label.isVisible()
+        ):
+            gpos = event.globalPosition().toPoint()
+
+            def hits(w):
+                return w.isVisible() and QRect(
+                    w.mapToGlobal(w.rect().topLeft()),
+                    w.mapToGlobal(w.rect().bottomRight())
+                ).contains(gpos)
+
+            if not hits(self._reset_confirm_label) and not hits(self._reset_stats_btn):
+                self._cancel_reset_stats()
+        return super().eventFilter(obj, event)
+
     def _on_reset_stats(self):
         self._reset_confirm_label.setVisible(True)
         if self._reset_cancel_timer:
@@ -1898,6 +1924,8 @@ class StatsPanel(QWidget):
         self._reset_cancel_timer.start(7000)
 
     def _cancel_reset_stats(self):
+        if self._reset_cancel_timer:
+            self._reset_cancel_timer.stop()
         self._reset_confirm_label.setVisible(False)
 
     def _on_reset_stats_confirmed(self):
