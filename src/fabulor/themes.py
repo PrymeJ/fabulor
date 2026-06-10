@@ -25,6 +25,7 @@ button_play:          (Optional) Icon/text color for the play/pause/restart butt
 button_skip:          (Optional) Icon/text color for the rewind and forward skip buttons. Fallback: button_play.
 button_chapter:       (Optional) Icon/text color for the previous and next chapter buttons. Fallback: button_play.
 slider_progress:      (Optional) Color for the percentage label that sits on top of the overall progress slider.
+button_speed_shimmer:  (Optional) Peak opacity (0.0–1.0) of the diagonal shimmer sweep on the speed button when a new default speed is set via right-click. Lighter button themes may need a higher value so the glint is visible. Fallback: 0.55.
 
 GROUP 4 — PLAYER SLIDERS
 slider_overall_bg:    Background (groove) color of the main book progress bar.
@@ -129,6 +130,7 @@ THEMES = {
         "slider_vol_bg":                 "#084A84",
         "slider_vol_fill":               "#7A9BB5",
         "slider_progress":               "#102F67",
+        "button_speed_shimmer":          0.4,
         "notch_color":                   "#3DE8EB",
         "notch_opacity":                 110,
         "dropdown_curr_chap":            "#942761",

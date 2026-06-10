@@ -1722,6 +1722,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         current = self.player.speed or self.config.get_default_speed()
         if self.speed_panel:
             self.speed_panel.set_default_speed(current)
+        t = self.theme_manager.get_current_theme()
+        self.speed_button.shimmer_opacity = t.get("button_speed_shimmer", 0.55)
         self.speed_button.play_shimmer()
 
     def _on_player_speed_changed(self, value):
