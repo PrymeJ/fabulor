@@ -871,10 +871,13 @@ class HourlyHeatmap(QWidget):
                 label_pen.setAlpha(60)
             painter.save()
             painter.setPen(label_pen)
-            painter.translate(cx, self.DATE_LABEL_H - 3)
+            painter.translate(cx + 2, self.DATE_LABEL_H - 3)
             painter.rotate(-90)
+            # After rotate(-90), rect height maps to horizontal ink space in widget coords.
+            # CELL alone is too tight for glyphs with ink outside the em square (e.g. "J").
+            # CELL * 2 with y=-CELL centers the rect and gives enough room for all glyphs.
             painter.drawText(
-                QRect(0, -self.CELL // 2, self.DATE_LABEL_H - 4, self.CELL),
+                QRect(2, -self.CELL, self.DATE_LABEL_H, self.CELL * 2),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 label
             )
