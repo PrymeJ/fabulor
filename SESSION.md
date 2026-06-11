@@ -1,3 +1,99 @@
+## Session Summary — 2026-06-11 Session 4
+
+**Branch:** `main`
+
+**Scope:** **StreakGrid refinement pass** — alignment, top streak-info, gutter date labels, color
+reworks, and the full Phase-B label-sweep animation. Builds directly on Session 3. All changes in
+`src/fabulor/ui/stats_panel.py`.
+
+### Changes
+
+**Grid alignment** — `StreakGrid.TOP_PAD` 29→**44** (== `HourlyHeatmap.DATE_LABEL_H`) and `BOTTOM_PAD`
+29→**14**, so both grids' cell areas share the same top-left pixel (x=32 via `GUTTER_W`, y=44). Total
+height stays 448 (`44 + 26*15 + 14`). The prompt claimed the top band is 52px "matching DATE_LABEL_H" —
+the actual constant is **44**; used 44.
+
+**Streak info moved to the top band** — fire icon (`fire.svg` via `load_currentcolor_icon`) + current-
+streak number, centered in the 44px top zone; accent when listened-today, dimmed otherwise. The clock
+icon was removed from the grid gutter (the tassel's `clock.svg` is unrelated and untouched).
+
+**Left gutter → row date labels** — `%b %d` ("Jun 10") of each row's leftmost (newest) cell, every 3rd
+row, right-aligned at **9pt** (the 32px gutter can't fit 11pt; widening it would break the 242px width
+shared with the heatmap). Hover-to-reveal-missing-dates is a `# TODO` only.
+
+**Finished indicator → contrasting dark dot** — was a `_label_color` ellipse (near-invisible on filled
+cells). Now `_finished_dot` (`_derive_finished_dot`: same hue, value×0.25 — a dark punch-through that
+reads on filled cells). New `finished_dot_color` `@Property` + `streak_finished_dot` theme override.
+
+**Longest streak → distinct fill, not border** — the 3px inside border is gone; longest-run cells now
+get a warm-shifted fill (`_derive_longest_fill`: hue +35°, sat ×1.15, value +30 — on-theme but distinct
+from plain accent). Renamed throughout: `_longest_border`→`_longest_fill`,
+`longest_border_color`→`longest_fill_color`, `_derive_longest_border`→`_derive_longest_fill`, and the
+theme key `streak_longest_border`→`streak_longest_fill`.
+
+**Label-sweep animation (full Phase B)** — painted geometry (no `QLabel`s), driven by a new
+`_label_progress` float property + `_label_anim` on both widgets, parallel to `animate_conceal`/
+`animate_reveal`. Each gets `animate_labels_out(on_done)` / `animate_labels_in()` plus helpers
+`_label_local` (per-label staggered progress), `_apply_label_clip` (right-anchored horizontal wipe), and
+`_disconnect_label_slot`. `_switch_timeline_view` rewritten: conceal + labels-out run together, a
+2-counter seam flips visibility only when both finish, then reveal + labels-in run together — one
+continuous transition. `_on_tab_changed` pins `label_progress=1.0` on a plain tab open (static labels,
+no sweep).
+
+### Design notes — non-obvious decisions (read before touching this)
+
+- **Cascade direction lives in a `_label_sweep_in` flag, not in paintEvent's geometry.** paintEvent can't
+  tell an out-sweep from an in-sweep by reading `_label_progress` alone (both pass through the same
+  values). `animate_labels_out` sets `_label_sweep_in=False`, `animate_labels_in` sets it True; paintEvent
+  picks `cascade_pos` accordingly. Heatmap columns: OUT → col 0 leads (`cascade_pos=col_i`), IN → col 13
+  leads (`(N_DAYS-1)-col_i`). Streak rows: OUT → top label leads (`rank`), IN → bottom label leads
+  (`(m-1)-rank`). This is what makes a label "enter and exit from opposite sides."
+
+- **The clip formula is identical for in and out — direction comes only from whether `_label_progress`
+  rises or falls.** `_apply_label_clip` always right-anchors: `QRect(x + (w - inked), y, inked, h)`. Out
+  (local falling) makes ink retreat rightward then vanish (reads L→R disappearance); in (local rising)
+  makes ink emerge from the right growing left (reads R→L appearance). Don't "fix" one direction by
+  flipping the anchor — both rely on the same right-anchored rect.
+
+- **Heatmap column-label clip is applied in ROTATED space.** The date labels are drawn inside
+  `save()/translate/rotate(-90)/drawText(QRect(2,-CELL,DATE_LABEL_H,CELL*2))`. The `setClipRect` goes
+  inside that block on the same rect (width = `DATE_LABEL_H`) so the wipe runs along the text baseline,
+  not across the screen-vertical glyph stack. Streak row labels clip in plain widget space.
+
+- **`_label_progress` must rest at 1.0.** Guaranteed by the default and the explicit
+  `set_label_progress(1.0)` in the Timeline tab branch; nothing else writes it below 1.0 except the sweep
+  methods and the seam prime. If labels ever vanish on a normal tab open or theme change, something wrote
+  `_label_progress` and didn't restore it.
+
+- **Seam ordering: arm `animate_labels_in()` + `animate_reveal()` BEFORE `_refresh_time()`.** The seam
+  primes the incoming grid with `set_label_progress(0.0)` (labels hidden) before `setVisible(True)`.
+  `_refresh_time()` → `set_data()` → `update()`; if that paint runs before the in-sweep is armed, the
+  incoming labels flash hidden for one frame. Arming first (each arm call schedules an update; Qt
+  coalesces them in one event-loop turn) closes that window. The 2-counter makes the flip correct
+  regardless of whether conceal (600ms) or labels-out (600ms) finishes first.
+
+- **`set_data` still does NOT self-reveal** (both widgets) — the caller owns the single `animate_reveal()`
+  (Session-3 invariant, unchanged). Do not add a reveal to `set_data`.
+
+- **Default-theme color overlap is intentional and overridable.** Warm longest-fill and the dark
+  finished-dot both derive from accent; on some accents they can land close. Both have theme override keys
+  (`streak_longest_fill`, `streak_finished_dot`) for per-theme resolution — by design, not a bug to chase.
+
+### Verification
+- Headless: both grids 242×448, `StreakGrid.TOP_PAD == HourlyHeatmap.DATE_LABEL_H` (cell origins aligned),
+  `_label_progress` rests at 1.0 on both. Color derivations sane (cyan accent → indigo longest-fill,
+  near-black finished-dot).
+- Both switch directions: phase-1 durations conceal 600 / labels-out 600; seam fires once; after the
+  switch the incoming grid is fully shown (`label_progress`/`reveal` → 1.0) with `_label_sweep_in=True`,
+  heatmap reveal duration restored to 1000; `set_data` doesn't double-reveal. No disconnect warnings from
+  the label-sweep code.
+- Visual PNG renders confirm: top fire+number, gutter row labels (correct dates, unclipped at 9pt),
+  warm longest-fill (no border), dark dots visible on filled cells, and the staggered R→L/bottom-leading
+  wipe mid-sweep.
+- App restarts cleanly under the live `entr -r` dev loop.
+
+---
+
 ## Session Summary — 2026-06-11 Session 3
 
 **Branch:** `main`
