@@ -263,7 +263,17 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 
 ### Stats Panel
 - Day/Week/Month tabs with `BookDayRow` and `SessionListWidget`
-- Timeline tab (heatmap, deferred via `singleShot(0, _refresh_time)`)
+- Timeline tab — two swappable views (deferred via `singleShot(0, _refresh_time)`):
+  - `HourlyHeatmap` — 24h × 14-day intensity grid.
+  - `StreakGrid` — 364-day calendar (26×14, today top-left), consumes the `streak_grid_cache` backend.
+    Listened cells filled accent; longest consecutive run gets a `accent.lighter(150)` inside border
+    (per-theme override `streak_longest_border`); finished dates get a centered dot; left gutter shows
+    the current-streak clock icon + number. Longest-run dates are computed in-widget
+    (`_compute_longest_run`) — `get_streaks()` returns only counts.
+  - `TasselOverlay` — a sliver tab pinned top-left that toggles the two views (clock↔calendar icon);
+    `setVisible` swap with an `animate_conceal`→`animate_reveal` transition. Both grids + the tassel are
+    children of the Timeline tab widget; `_show_streak_grid` (seeded from `config.get_default_timeline_view()`)
+    is the live flag. ⚙ tab has a "Default timeline view" Streak/Heatmap setting (persists default only).
 - Finished books tab
 - Tag manager (⚙ tab): `TagManagerWidget` — list view and tag panel view
   - DB methods: `get_all_tags`, `get_books_by_tag`, `rename_tag`, `delete_tag`, `get_unique_tag_count`
@@ -343,6 +353,18 @@ mpv hangs silently when seeked within ~2s of EOF — no error, no event, no reco
 
 ### DO NOT join `book_events` directly into a query that aggregates `listening_sessions`
 The join produces a cartesian product (sessions × finished events per book) before GROUP BY, inflating `SUM(listened_seconds)` by the finished event count. Always use a correlated scalar subquery: `(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) FROM book_events be WHERE be.book_id = b.id) as is_finished`. Applies to `get_daily_book_breakdown`, `get_books_listened_in_period`, and any future query with the same shape.
+
+### DO NOT query `books.finished_at` for finished state — it is never written
+`books.finished_at` exists in the schema but is only ever reset to NULL (`reset_stats`/`delete_book_stats`); nothing populates it. The authoritative source is `book_events` with `event_type = 'finished'`. All finished-book queries use it (`get_finished_book_data`, `get_recently_finished`, `get_streak_grid_finished_dates`). Querying `books.finished_at` returns silently empty.
+
+### DO NOT keep `StreakGrid` from cross-checking its longest run against `get_streaks()['longest']`
+`get_streaks(day_start_hour)` returns only counts (`current`/`longest`), not which days. `StreakGrid._compute_longest_run(cache)` derives the longest-run **date set** independently (ISO sort + consecutive scan; most-recent wins on tie via `>=`). The invariant `len(self._longest_dates) == streak_info['longest']` must hold — two independent paths over the same `listening_sessions`-derived data (SQL count vs. Python scan over `streak_grid_cache`). A divergence means the cache and `get_streaks` have drifted (an attribution change applied to some sites but not the four `streak_grid_cache` write sites — see SESSION.md 2026-06-11 Session 1). That mismatch is the diagnostic; do NOT clamp one to the other to hide it.
+
+### DO NOT fold `animate_conceal` duration logic into `HourlyHeatmap.animate_reveal`
+`animate_conceal` (on both `HourlyHeatmap` and `StreakGrid`) is **additive-only**: it reuses the `reveal_progress` property in reverse (1.0→0.0, 600ms) and is the streak↔heatmap transition's drain phase. `HourlyHeatmap.animate_reveal` and `paintEvent` stay byte-for-byte unchanged. `animate_conceal` restores the 1000ms reveal duration in its `finished` callback so the following construct wave runs full-length, and tracks its pending slot in `self._conceal_slot` (disconnect only when present — avoids `Failed to disconnect (None)`). The asymmetric duration restore is the whole point; do NOT share a `setDuration(600)` between the two methods. Relatedly: `StreakGrid.set_data` must NOT call `animate_reveal()` — the caller (`_switch_timeline_view` / `_on_tab_changed`) fires exactly one reveal on the visible grid, else the tab-change reveal double-fires and hitches.
+
+### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
+clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
 
 ### DO NOT remove animation-state guards in `_sync_progress_sliders` / `_sync_chapter_ui`
 Both check whether animation is running before setValue. Removing causes jitter from 200ms timer fighting animation.
@@ -424,7 +446,7 @@ src/fabulor/
     ├── theme_manager.py      # ThemeManager — overlay, snapback, rotation; reads _bg_suppressed on theme change
     ├── panels.py             # PanelManager — all panel open/close flows
     ├── book_detail_panel.py  # Book detail (stats, history, tags, cover header, inline edit)
-    ├── stats_panel.py        # Stats panel, SessionListWidget, _RangeBar
+    ├── stats_panel.py        # Stats panel, SessionListWidget, _RangeBar, HourlyHeatmap, StreakGrid, TasselOverlay
     ├── tag_manager.py        # TagManagerWidget — tag list, tag panel, book grid, color picker
     ├── title_bar.py          # Custom title bar
     ├── speed_controls.py     # Speed panel

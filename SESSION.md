@@ -1,4 +1,128 @@
-## Session Summary — 2026-06-11
+## Session Summary — 2026-06-11 Session 3
+
+**Branch:** `main`
+
+**Scope:** **StreakGrid UI** — the 364-day streak-grid panel that consumes the Session-1
+`streak_grid_cache` backend, plus a tassel toggle between it and the existing `HourlyHeatmap`, and a
+⚙ default-view setting. Two phases: A (core — both grids render, tassel toggles via `setVisible`,
+setting persists) and B (animated conceal→reveal transition on switch).
+
+### Changes
+
+**`src/fabulor/ui/icon_utils.py`** — `load_currentcolor_icon(name, color, size)`: regex-based tint for
+SVGs that use `fill="currentColor"` (clock.svg / calendar.svg). Mirrors `render_logo_placeholder`'s
+`re.sub(r'fill="(?!none)[^"]*"', ...)` approach; `lru_cache`d.
+
+**`src/fabulor/config.py`** — `get/set_default_timeline_view()` (default `'heatmap'`, other value
+`'streak'`). QSettings key `default_timeline_view`.
+
+**`src/fabulor/db.py`** — `get_streak_grid_finished_dates() -> set[str]`: ISO calendar dates (no
+`day_start_hour` offset — a finished date is a calendar date, not a session boundary) in the last 364
+days with a `book_events` `finished` event.
+
+**`src/fabulor/ui/stats_panel.py`**
+- `StreakGrid(QWidget)` — 26×14 day grid, **today top-left, older right-then-down**
+  (`day_index = r*N_COLS + c`). Geometry pinned to **242×448** (== `HourlyHeatmap`) so the two swap
+  without reflow: `CELL=14`, `GAP=1`, `GUTTER_W=32`, `TOP_PAD=BOTTOM_PAD=29` (390 grid + 58 pad = 448).
+  Listened cells filled accent; longest-streak cells get a 3px inside border (`accent.lighter(150)`,
+  per-theme override `streak_longest_border`); finished dates get a centered dot; left gutter holds the
+  current-streak clock icon + number (dimmed when not active). Reuses the same `reveal_progress`
+  `QPropertyAnimation` wave as `HourlyHeatmap` (divisors generalized to `N_COLS-1`/`N_ROWS-1`).
+- `TasselOverlay(QWidget)` — ~20×56 strip, absolutely positioned at `move(2, REST_Y=-49)` so only a
+  ~7px sliver shows below the tab bar (child clipping does the rest). `play()`: slide down 200ms → hold
+  1200ms → fire the view switch at the **start of the retreat** → slide back up 200ms. `_busy` guards
+  re-entry. Icon is clock when showing streak (→ heatmap), calendar when showing heatmap (→ streak).
+- Wiring: `_build_time_tab` adds both grids + the tassel; `_show_streak_grid` (seeded from the config
+  default) drives visibility; `_refresh_time` branches on it; `_on_tab_changed` reveals the **visible**
+  grid; `on_theme_changed` recolors both grids + tassel; ⚙ tab gets a "Default timeline view"
+  Streak/Heatmap `pattern_button` pair (persists default only — does NOT switch the live view).
+
+### Design notes — non-obvious decisions (read before touching this)
+
+- **`load_themed_icon` actually DOES tint `currentColor` SVGs — but `load_currentcolor_icon` is still
+  the right call.** The plan assumed `load_themed_icon` (which only swaps `fill="#000000"`) would render
+  clock/calendar fully untinted. Empirically it doesn't: its `<style>`-injection fallback
+  (`if '<style' not in svg_data and 'stroke=' not in svg_data`) lands a `path { fill: color }` rule that
+  Qt's SVG renderer applies over `currentColor`, so the icons come out tinted. The new function is
+  preferred anyway because it recolors `currentColor` **explicitly via regex** instead of relying on
+  that fragile fallback firing — but do NOT "simplify" by reverting clock/calendar to `load_themed_icon`
+  on the theory that it's equivalent; the explicit path is intentional and the fallback's behavior is
+  incidental, not contractual.
+
+- **`books.finished_at` is never written — it's dead.** It exists in the schema but is only ever reset
+  to NULL (`reset_stats` / `delete_book_stats`); nothing populates it. The authoritative "a book was
+  finished" source is `book_events` with `event_type='finished'`, which is what every finished-book
+  query uses (`get_finished_book_data`, `get_recently_finished`, and now
+  `get_streak_grid_finished_dates`). Do NOT query `books.finished_at` for finished state — it will be
+  silently empty.
+
+- **The longest streak's DATES are computed client-side; `get_streaks()` returns only COUNTS.**
+  `get_streaks(day_start_hour)` gives `{'current', 'longest'}` integers — it does not say *which* days
+  form the longest run. `StreakGrid._compute_longest_run(cache)` derives the set of ISO date strings by
+  sorting the listened dates (ISO sorts chronologically) and scanning for the longest consecutive run;
+  on a tie, **most-recent wins** (`>=` keeps the later set). **Cross-check invariant:**
+  `len(self._longest_dates)` must equal `streak_info['longest']` — they are computed from the same
+  `listening_sessions`-derived data by two independent paths (SQL streak count vs. Python run scan over
+  the cache). Verified equal against the real DB (both 16). If they ever diverge, the cache and
+  `get_streaks` have drifted apart (e.g. an attribution change applied to one but not the other — see
+  the Session-1 "change all four sites" note) — that mismatch is the signal, do not paper over it by
+  clamping one to the other.
+
+- **`animate_conceal()` is ADDITIVE-only on `HourlyHeatmap`.** It reuses the existing `reveal_progress`
+  property in reverse (1.0→0.0, 600ms) and was added as a NEW method on both grids. `HourlyHeatmap`'s
+  existing `animate_reveal` and `paintEvent` are **byte-for-byte unchanged** (the CLAUDE.md-adjacent
+  "don't touch the reveal/paint logic" intent). `animate_conceal` restores the 1000ms reveal duration
+  in its `finished` callback, so a normal conceal→swap→reveal sequence runs the reveal at full length;
+  it tracks its pending finished-slot in `self._conceal_slot` and disconnects only when one exists
+  (avoids the `Failed to disconnect (None)` warning). If you add more conceal call sites, do NOT inline
+  a `setDuration(600)` into `animate_reveal` to "share" the logic — the asymmetric duration restore is
+  what keeps reveal at 1000ms; the two methods must stay separate.
+
+- **Double-reveal avoidance:** `StreakGrid.set_data` does NOT call `animate_reveal()` — the caller owns
+  reveal timing, exactly like the `HourlyHeatmap`/`_refresh_time` split. If `set_data` self-revealed,
+  the `_on_tab_changed` Timeline branch (which also reveals) would restart the wave from 0.0 mid-flight,
+  causing a visible hitch. Both `_switch_timeline_view` and `_on_tab_changed` fire exactly one explicit
+  `animate_reveal()` on the visible grid.
+
+### Verification
+- Headless (offscreen Qt) against the real DB: `StreakGrid` is exactly 242×448; cache 364 cells,
+  longest-run set size == `get_streaks()['longest']` (16 == 16), finished dates populated (20); both
+  grids paint without error; tassel sized 20×56 at `REST_Y=-49`; ⚙ setting round-trips
+  streak↔heatmap. Visual PNG renders confirm cell fills, longest-streak borders, finished dots, gutter
+  icon+number, and the tassel sliver/extended icon.
+- Phase B: full conceal(600)→swap→reveal(1000) cycle settles to rp 0.0 (outgoing) / 1.0 (incoming),
+  durations restore to 1000ms, no disconnect warnings; reverse switch mirrors.
+- App restarts cleanly under the `entr -r` dev loop after every edit (no crash loop).
+
+---
+
+## Session Summary — 2026-06-11 Session 2
+
+**Branch:** `main` (direct commits)
+
+**Scope:** Small standalone fixes/additions committed individually — stats-panel polish, a time-formatter
+bug fix, a new quote, and the clock/calendar SVG assets (later consumed by Session 3's tassel).
+
+### Changes
+
+- **`chore: add calendar and clock SVG icons`** (`103d88f`) — `assets/icons/calendar.svg`,
+  `assets/icons/clock.svg`. Both use `fill="currentColor"` (see Session 3 for the tinting consequence).
+- **`feat: add Their Eyes Were Watching God quote`** (`dff51ed`) — one entry in `book_quotes.py`.
+- **`feat: dismiss "Reset all stats" confirmation on click outside`** (`8257546`) — the ⚙-tab reset
+  confirmation now cancels on an outside click (app-level event filter), matching the dismiss-on-outside
+  pattern used elsewhere, instead of lingering until an explicit second click. `stats_panel.py`.
+- **`fix: correct minute rounding overflow in time formatter`** (`c4b9a8a`) — `_format_duration` could
+  round seconds up to `60` minutes and display e.g. `1h 60m`; the carry is now folded into the hour.
+- **`feat: show time label on hovered bar in chart`** (`dc23499`) — the bar chart surfaces the hovered
+  bar's time label inline. `stats_panel.py`.
+
+### Notes
+- All five are independent and self-contained; no shared design decision links them beyond living in the
+  stats area. The two SVGs are inert until Session 3 wires them into `TasselOverlay`.
+
+---
+
+## Session Summary — 2026-06-11 Session 1
 
 **Branch:** `main`
 

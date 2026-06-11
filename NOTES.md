@@ -1,4 +1,41 @@
 
+## StreakGrid — four facts that will confuse whoever touches it next (2026-06-11)
+
+The streak-grid panel (`StreakGrid` + `TasselOverlay` in `stats_panel.py`) has four non-obvious points.
+Full narrative is in SESSION.md (2026-06-11 Session 3); this is the quick "why is it like this" reference.
+
+1. **`load_themed_icon` tints `currentColor` SVGs anyway — but use `load_currentcolor_icon` regardless.**
+   clock.svg / calendar.svg use `fill="currentColor"`, not `fill="#000000"`. We expected the existing
+   `load_themed_icon` (which only swaps `#000000`) to render them untinted — it doesn't, because its
+   `<style>`-injection fallback (`if '<style' not in svg_data and 'stroke=' not in svg_data`) lands a
+   `path { fill: color }` rule that Qt applies over `currentColor`. So both loaders produce a tinted icon.
+   The new `load_currentcolor_icon` recolors `currentColor` **explicitly via regex** and is the preferred
+   path for these icons — the `load_themed_icon` success is incidental to that fallback firing, not a
+   contract. Don't revert clock/calendar to `load_themed_icon` "because it works the same."
+
+2. **`books.finished_at` is dead — query `book_events` (`event_type='finished'`) for finished state.**
+   `books.finished_at` is in the schema but never written (only reset to NULL). Every finished-book query
+   uses `book_events`; `get_streak_grid_finished_dates()` does too. Querying `books.finished_at` returns
+   silently empty.
+
+3. **Longest-streak DATES are computed in the widget; `get_streaks()` returns only COUNTS.**
+   `get_streaks(day_start_hour)` → `{'current','longest'}` ints, not which days. `StreakGrid` derives the
+   date set itself (`_compute_longest_run` over the cache; ISO sort + consecutive-run scan; most-recent
+   wins on a tie via `>=`). **Cross-check invariant:** `len(self._longest_dates) == streak_info['longest']`
+   — two independent paths over the same `listening_sessions` data (SQL count vs. Python run scan over the
+   cache). They were equal (16==16) against the real DB. A divergence means the cache and `get_streaks`
+   have drifted (an attribution change applied to one site but not the four cache sites — see the
+   Session-1 "change all four" note). That mismatch is the diagnostic; do not clamp one to the other.
+
+4. **`animate_conceal()` is additive-only; keep it separate from `animate_reveal()`.**
+   `HourlyHeatmap.animate_reveal` and `paintEvent` are byte-for-byte unchanged. `animate_conceal` is a NEW
+   method on both grids that reuses `reveal_progress` in reverse (1.0→0.0, 600ms) and **restores 1000ms in
+   its `finished` callback** so the following construct wave runs full-length. Do NOT fold a
+   `setDuration(600)` into `animate_reveal` to share code — the asymmetric restore is the whole point.
+   It tracks its pending slot in `self._conceal_slot` and disconnects only when present (no
+   `Failed to disconnect (None)` warning). Relatedly, `StreakGrid.set_data` does NOT self-reveal — the
+   caller fires exactly one `animate_reveal()`, else the tab-change reveal double-fires and hitches.
+
 ## Timeline header date labels — "J" glyph clipped at top edge (2026-06-10, unresolved)
 
 **Goal:** The rotated date labels at the top of `HourlyHeatmap` show months starting with "J" (Jan, Jun, Jul) as "un", "ul" — the top of the "J" glyph is cut off. May, Sep, Oct etc. render fine.
