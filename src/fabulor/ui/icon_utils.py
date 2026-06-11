@@ -28,6 +28,25 @@ def load_themed_icon(name: str, color: str, size: int, opacity: float = 1.0) -> 
     return pixmap
 
 
+@functools.lru_cache(maxsize=64)
+def load_currentcolor_icon(name: str, color: str, size: int) -> QPixmap:
+    """Tint an SVG that uses fill="currentColor" (e.g. clock.svg, calendar.svg).
+    load_themed_icon only swaps fill="#000000"; for currentColor icons its
+    <style> fallback loses to the path's inline attribute, so they render
+    untinted. This regex approach recolors any non-`none` fill/stroke while
+    leaving `fill="none"` and `fill-opacity` rects transparent."""
+    data = (ICONS_DIR / name).read_text()
+    data = re.sub(r'fill="(?!none)[^"]*"',   f'fill="{color}"',   data)
+    data = re.sub(r'stroke="(?!none)[^"]*"', f'stroke="{color}"', data)
+    renderer = QSvgRenderer(QByteArray(data.encode()))
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    renderer.render(painter)
+    painter.end()
+    return pm
+
+
 def render_logo_placeholder(color: str, size: int) -> QPixmap:
     """Render fabulor.svg recolored to `color` into a `size`×`size` QPixmap."""
     try:
