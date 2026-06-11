@@ -29,4 +29,5 @@ BOOK_QUOTES = [
     ("May the days be aimless. Let the seasons drift. Do not advance the action according to a plan.", "White Noise", 20, 14, "white", "center"),
     ("I do things like get in a taxi and say, \"The library, and step on it.\"", "Infinite Jest", 19, 14, "white", "right"),
     ("You think you're a god. I see a thing with endless power and little wisdom, and prefer my deities the other way around.", "Kings of Heaven", 20, 14, "white", "center"),
+    ("Ships at a distance have every man’s wish on board.", "Their Eyes Were Watching God", 19, 14, "white", "right"),
 ]
