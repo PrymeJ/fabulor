@@ -86,9 +86,16 @@ class Config:
 
     def get_day_start_hour(self):
         return self._safe_int("day_start_hour", 0)
-    
+
     def set_day_start_hour(self, hour: int):
         self.settings.setValue("day_start_hour", hour)
+
+    def get_default_timeline_view(self) -> str:
+        """Returns 'heatmap' (default) or 'streak'."""
+        return self.settings.value("default_timeline_view", "heatmap")
+
+    def set_default_timeline_view(self, value: str) -> None:
+        self.settings.setValue("default_timeline_view", value)
 
     def get_streak_grid_cache_date(self):
         """Adjusted date the streak grid cache was last built for, or None."""

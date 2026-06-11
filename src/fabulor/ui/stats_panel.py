@@ -8,12 +8,16 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication
 )
-from PySide6.QtCore import Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
+from PySide6.QtCore import (
+    Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property,
+    QPropertyAnimation, QEasingCurve,
+)
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
+from .icon_utils import load_currentcolor_icon
 
 # Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
 # to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
@@ -809,6 +813,29 @@ class HourlyHeatmap(QWidget):
         self._reveal_anim.setEndValue(1.0)
         self._reveal_anim.start()
 
+    def animate_conceal(self, on_done=None):
+        """Reverse wave (reveal_progress -> 0) draining the grid. Additive — does
+        not alter animate_reveal or paintEvent. Restores the 1000ms reveal
+        duration in the finished callback so a normal conceal->reveal sequence
+        runs the reveal at full length."""
+        self._reveal_anim.stop()
+        prev = getattr(self, '_conceal_slot', None)
+        if prev is not None:
+            self._reveal_anim.finished.disconnect(prev)
+            self._conceal_slot = None
+        self._reveal_anim.setDuration(600)
+        self._reveal_anim.setStartValue(self._reveal_progress)
+        self._reveal_anim.setEndValue(0.0)
+        if on_done is not None:
+            def _f():
+                self._reveal_anim.finished.disconnect(_f)
+                self._conceal_slot = None
+                self._reveal_anim.setDuration(1000)
+                on_done()
+            self._conceal_slot = _f
+            self._reveal_anim.finished.connect(_f)
+        self._reveal_anim.start()
+
     from PySide6.QtCore import Property as _Property
     footer_alpha = _Property(float, get_footer_alpha, set_footer_alpha)
     reveal_progress = _Property(float, get_reveal_progress, set_reveal_progress)
@@ -1063,6 +1090,359 @@ class HourlyHeatmap(QWidget):
         return None
 
 
+class StreakGrid(QWidget):
+    """364-day streak calendar. One cell per day: today is the top-left cell,
+    days get older moving right then down (day_index = row*N_COLS + col).
+    Listened days are filled with the accent color; the longest consecutive run
+    gets a brighter inside border; days a book was finished show a centered dot.
+    The left gutter holds the current-streak icon + number.
+
+    Geometry mirrors HourlyHeatmap so the two can be swapped in place without
+    reflowing the Timeline tab: same CELL, GAP, gutter width, and total 242x448.
+    """
+
+    N_ROWS = 26
+    N_COLS = 14
+    GAP = 1
+    CELL = 14
+    GUTTER_W = 32          # == HourlyHeatmap.HOUR_LABEL_W
+    TOP_PAD = 29
+    BOTTOM_PAD = 29        # 390 grid + 58 padding == 448 (HourlyHeatmap height)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._accent = QColor("#9B59B6")
+        self._label_color = QColor("#9B59B6")
+        self._longest_border = self._derive_longest_border(self._accent)
+        self._cache: dict[str, int] = {}
+        self._streak: dict = {}
+        self._finished: set[str] = set()
+        self._longest_dates: set[str] = set()
+        self._today: date | None = None
+        self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
+
+        self._reveal_anim = QPropertyAnimation(self, b"reveal_progress")
+        self._reveal_anim.setDuration(1000)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.Linear)
+
+        self._update_size()
+
+    def _update_size(self):
+        w = self.GUTTER_W + self.N_COLS * (self.CELL + self.GAP)
+        h = self.TOP_PAD + self.N_ROWS * (self.CELL + self.GAP) + self.BOTTOM_PAD
+        self.setFixedSize(w, h)
+
+    # --- reveal wave (same mechanism as HourlyHeatmap) ---
+    def get_reveal_progress(self) -> float:
+        return self._reveal_progress
+
+    def set_reveal_progress(self, v: float):
+        self._reveal_progress = v
+        self.update()
+
+    def animate_reveal(self):
+        """Staggered construct wave — alternating columns, left-to-right."""
+        self._reveal_anim.stop()
+        self._reveal_anim.setDuration(1000)
+        self._reveal_anim.setStartValue(0.0)
+        self._reveal_anim.setEndValue(1.0)
+        self._reveal_anim.start()
+
+    def animate_conceal(self, on_done=None):
+        """Reverse wave (reveal_progress -> 0) draining the grid. Restores the
+        1000ms reveal duration before firing on_done so the next construct wave
+        runs at full length."""
+        self._reveal_anim.stop()
+        prev = getattr(self, '_conceal_slot', None)
+        if prev is not None:
+            self._reveal_anim.finished.disconnect(prev)
+            self._conceal_slot = None
+        self._reveal_anim.setDuration(600)
+        self._reveal_anim.setStartValue(self._reveal_progress)
+        self._reveal_anim.setEndValue(0.0)
+        if on_done is not None:
+            def _f():
+                self._reveal_anim.finished.disconnect(_f)
+                self._conceal_slot = None
+                self._reveal_anim.setDuration(1000)
+                on_done()
+            self._conceal_slot = _f
+            self._reveal_anim.finished.connect(_f)
+        self._reveal_anim.start()
+
+    reveal_progress = Property(float, get_reveal_progress, set_reveal_progress)
+
+    # --- color hooks (per-theme override pattern, mirrors HourlyHeatmap) ---
+    @Property(QColor)
+    def accent_color(self):
+        return self._accent
+
+    @accent_color.setter
+    def accent_color(self, color: QColor):
+        self._accent = color
+        self.update()
+
+    @Property(QColor)
+    def label_color(self):
+        return self._label_color
+
+    @label_color.setter
+    def label_color(self, color: QColor):
+        self._label_color = color
+        self.update()
+
+    @Property(QColor)
+    def longest_border_color(self):
+        return self._longest_border
+
+    @longest_border_color.setter
+    def longest_border_color(self, color: QColor):
+        self._longest_border = color
+        self.update()
+
+    def set_accent_color(self, color: QColor):
+        self._accent = color
+        self._label_color = color
+        self._longest_border = self._derive_longest_border(color)
+        self.update()
+
+    @staticmethod
+    def _derive_longest_border(accent: QColor) -> QColor:
+        # Brighter same-hue variant — stays on-theme, reads as a highlight.
+        return accent.lighter(150)
+
+    # --- data ---
+    def set_data(self, cache: dict, streak_info: dict,
+                 finished_dates: set, today: date):
+        """Store grid data and compute the longest run. Does NOT trigger
+        animate_reveal() — the caller owns reveal timing (mirrors the heatmap
+        path), so the Timeline-tab reveal isn't double-fired."""
+        self._cache = dict(cache)
+        self._streak = dict(streak_info)
+        self._finished = set(finished_dates)
+        self._today = today
+        self._longest_dates = self._compute_longest_run(self._cache)
+        self.update()
+
+    @staticmethod
+    def _compute_longest_run(cache: dict) -> set:
+        """Longest run of consecutive listened days. On a tie, the most-recent
+        run wins (>= keeps the later set). Returns a set of ISO date strings;
+        matched against each cell's date in paintEvent, so orientation-independent."""
+        listened = sorted(d for d, v in cache.items() if v)   # ISO sorts chronologically
+        best: set = set()
+        run: list = []
+        prev: date | None = None
+        for ds in listened:
+            try:
+                d = date.fromisoformat(ds)
+            except ValueError:
+                continue
+            if prev is not None and (d - prev).days == 1:
+                run.append(ds)
+            else:
+                run = [ds]
+            if len(run) >= len(best):
+                best = set(run)
+            prev = d
+        return best
+
+    def paintEvent(self, event):
+        from datetime import timedelta
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        if self._today is None:
+            painter.end()
+            return
+
+        N_COLS, N_ROWS = self.N_COLS, self.N_ROWS
+        col_div = max(1, N_COLS - 1)
+        row_div = max(1, N_ROWS - 1)
+
+        # --- left gutter: current-streak icon + number ---
+        current = int(self._streak.get('current', 0))
+        today_iso = self._today.isoformat()
+        active = self._cache.get(today_iso, 0) == 1     # listened today => active
+        gutter_color = QColor(self._label_color)
+        if not active:
+            gutter_color.setAlpha(90)
+        gutter_cx = self.GUTTER_W // 2
+        grid_mid_y = self.TOP_PAD + (N_ROWS * (self.CELL + self.GAP)) // 2
+        icon_pm = load_currentcolor_icon("clock.svg", gutter_color.name(), 16)
+        if not active:
+            # name() drops alpha; re-apply dimming by painting at reduced opacity.
+            painter.setOpacity(0.45)
+        painter.drawPixmap(gutter_cx - 8, grid_mid_y - 20, icon_pm)
+        painter.setOpacity(1.0)
+        num_font = QFont()
+        num_font.setPointSize(13)
+        num_font.setBold(True)
+        painter.setFont(num_font)
+        painter.setPen(gutter_color)
+        painter.drawText(
+            QRect(0, grid_mid_y - 2, self.GUTTER_W, 20),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+            str(current)
+        )
+
+        # --- cells ---
+        for r in range(N_ROWS):
+            # Vertical stagger flips direction every column.
+            for c in range(N_COLS):
+                day_index = r * N_COLS + c       # 0 = today (top-left)
+                cell_date = self._today - timedelta(days=day_index)
+                iso = cell_date.isoformat()
+
+                x = self.GUTTER_W + c * (self.CELL + self.GAP)
+                y = self.TOP_PAD + r * (self.CELL + self.GAP)
+
+                h_delay = (c / col_div) * 0.25
+                eff_row = r if c % 2 == 0 else (N_ROWS - 1 - r)
+                v_delay = (eff_row / row_div) * 0.65
+                anim_alpha = max(0.0, min(1.0, (self._reveal_progress - (h_delay + v_delay)) * 15))
+
+                listened = self._cache.get(iso, 0) == 1
+                color = QColor(self._accent)
+                if listened:
+                    color.setAlpha(int(255 * anim_alpha))
+                else:
+                    base_a = 30 if iso in self._cache else 12
+                    color.setAlpha(int(base_a * anim_alpha))
+                painter.fillRect(x, y, self.CELL, self.CELL, color)
+
+                if iso in self._longest_dates and anim_alpha > 0:
+                    border = QColor(self._longest_border)
+                    border.setAlpha(int(255 * anim_alpha))
+                    pen = QPen(border)
+                    pen.setWidth(3)
+                    painter.save()
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    # 3px inside border: inset by half the pen width.
+                    painter.drawRect(x + 1, y + 1, self.CELL - 3, self.CELL - 3)
+                    painter.restore()
+
+                if iso in self._finished and anim_alpha > 0:
+                    dot = QColor(self._label_color)
+                    dot.setAlpha(int(255 * anim_alpha))
+                    painter.save()
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(dot)
+                    cx = x + self.CELL // 2
+                    cy = y + self.CELL // 2
+                    painter.drawEllipse(QPoint(cx, cy), 2, 2)
+                    painter.restore()
+
+        painter.end()
+
+
+class TasselOverlay(QWidget):
+    """Narrow vertical strip pinned at the top-left of the Timeline tab, mostly
+    tucked under the tab bar (only a ~7px sliver shows at rest). Click animates
+    it down to reveal a centered icon, holds, then retreats — the view switch
+    fires at the start of the retreat."""
+
+    TASSEL_W = 20
+    TASSEL_H = 56
+    REST_Y = -(TASSEL_H - 7)    # only ~7px peeks below the tab bar
+    EXT_Y = 4
+    HOLD_MS = 1200
+    SLIDE_MS = 200
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.TASSEL_W, self.TASSEL_H)
+        self._bg = QColor("#9B59B6")
+        self._icon: QPixmap | None = None
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._slide = QPropertyAnimation(self, b"pos")
+        self._slide.setDuration(self.SLIDE_MS)
+        self._slide.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._on_switch = None
+        self._busy = False
+
+    def set_colors(self, accent: QColor):
+        # Desaturated flat fill so the tassel reads as a tab, not a focal point.
+        h, s, v, a = accent.getHsv()
+        self._bg = QColor.fromHsv(h, int(s * 0.35), v, a)
+        self.update()
+
+    def set_icon(self, pm: QPixmap):
+        self._icon = pm
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._bg)
+        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 5, 5)
+        if self._icon is not None:
+            # Icon sits in the lower portion that's revealed when extended.
+            iw = self._icon.width()
+            ih = self._icon.height()
+            ix = (self.TASSEL_W - iw) // 2
+            iy = self.TASSEL_H - ih - 6
+            painter.drawPixmap(ix, iy, self._icon)
+        painter.end()
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+
+    def play(self, on_switch):
+        """Slide down (reveal) -> hold -> at retreat start call on_switch() ->
+        slide back up. Ignores clicks while a cycle is in flight."""
+        if self._busy:
+            return
+        self._busy = True
+        self._on_switch = on_switch
+        self.raise_()
+        x = self.x()
+        self._slide.stop()
+        self._slide.setStartValue(QPoint(x, self.REST_Y))
+        self._slide.setEndValue(QPoint(x, self.EXT_Y))
+        try:
+            self._slide.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._slide.finished.connect(self._on_extended)
+        self._slide.start()
+
+    def _on_extended(self):
+        try:
+            self._slide.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        QTimer.singleShot(self.HOLD_MS, self._retreat)
+
+    def _retreat(self):
+        # Fire the switch as the tassel starts tucking in, so the panel is
+        # already changing while the tassel retreats.
+        if self._on_switch is not None:
+            self._on_switch()
+            self._on_switch = None
+        x = self.x()
+        self._slide.stop()
+        self._slide.setStartValue(QPoint(x, self.EXT_Y))
+        self._slide.setEndValue(QPoint(x, self.REST_Y))
+        try:
+            self._slide.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._slide.finished.connect(self._on_retreated)
+        self._slide.start()
+
+    def _on_retreated(self):
+        try:
+            self._slide.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        self._busy = False
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -1179,6 +1559,15 @@ class StatsPanel(QWidget):
             self._bar_chart.set_accent_color(self._accent_color)
         if hasattr(self, '_heatmap'):
             self._heatmap.set_accent_color(self._accent_color)
+        if hasattr(self, '_streak_grid'):
+            self._streak_grid.set_accent_color(self._accent_color)
+            border = theme.get("streak_longest_border")     # per-theme override hook
+            if border:
+                self._streak_grid.longest_border_color = QColor(border)
+            self._streak_grid.update()
+        if hasattr(self, '_tassel'):
+            self._tassel.set_colors(self._accent_color)
+            self._update_tassel_icon()
         if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
             self.tabs.setTabIcon(5, self._make_settings_icon(theme))
         # Re-render placeholder pixmaps on all existing rows so the color
@@ -1308,6 +1697,22 @@ class StatsPanel(QWidget):
         layout.addLayout(accel_row)
         self._update_accel_scroll_buttons()
 
+        timeline_header = QLabel("Default timeline view")
+        timeline_header.setObjectName("settings_header")
+        layout.addWidget(timeline_header)
+
+        timeline_row = QHBoxLayout()
+        self._timeline_view_buttons = {}
+        for state in ["Streak", "Heatmap"]:
+            btn = QPushButton(state)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=state: self._set_default_timeline_view(s))
+            timeline_row.addWidget(btn)
+            self._timeline_view_buttons[state] = btn
+        timeline_row.addStretch()
+        layout.addLayout(timeline_row)
+        self._update_timeline_view_buttons()
+
         layout.addStretch()
 
         self._reset_confirm_label = QLabel("DO YOU WANT TO DELETE ALL LISTENING HISTORY?")
@@ -1339,6 +1744,19 @@ class StatsPanel(QWidget):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
+    def _set_default_timeline_view(self, state: str):
+        # Persists the default only; does NOT switch the live view (takes effect
+        # on the next Timeline tab open).
+        self.config.set_default_timeline_view("streak" if state == "Streak" else "heatmap")
+        self._update_timeline_view_buttons()
+
+    def _update_timeline_view_buttons(self):
+        cur = "Streak" if self.config.get_default_timeline_view() == "streak" else "Heatmap"
+        for state, btn in self._timeline_view_buttons.items():
+            btn.setProperty("selected", "true" if state == cur else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
     def _on_tag_changed(self):
         if hasattr(self, '_tag_manager'):
             self._tag_manager.refresh()
@@ -1357,8 +1775,51 @@ class StatsPanel(QWidget):
         self._heatmap = HourlyHeatmap()
         self._heatmap.set_accent_color(self._accent_color)
         outer.addWidget(self._heatmap, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+
+        self._streak_grid = StreakGrid()
+        self._streak_grid.set_accent_color(self._accent_color)
+        outer.addWidget(self._streak_grid, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         outer.addStretch()
+
+        # Which view opens by default (persisted); the tassel toggles transiently.
+        self._show_streak_grid = (self.config.get_default_timeline_view() == "streak")
+        self._heatmap.setVisible(not self._show_streak_grid)
+        self._streak_grid.setVisible(self._show_streak_grid)
+
+        # Tassel overlay — absolutely positioned, mostly tucked under the tab bar.
+        self._tassel = TasselOverlay(widget)
+        self._tassel.set_colors(self._accent_color)
+        self._tassel.move(2, TasselOverlay.REST_Y)
+        self._update_tassel_icon()
+        self._tassel.clicked.connect(self._on_tassel_clicked)
+        self._tassel.raise_()
         return widget
+
+    def _update_tassel_icon(self):
+        # Showing streak -> clock icon (click goes to heatmap);
+        # showing heatmap -> calendar icon (click goes to streak).
+        name = "clock.svg" if self._show_streak_grid else "calendar.svg"
+        self._tassel.set_icon(load_currentcolor_icon(name, self._accent_color.name(), 14))
+
+    def _on_tassel_clicked(self):
+        self._tassel.play(self._switch_timeline_view)   # switch fires at retreat start
+
+    def _switch_timeline_view(self):
+        # Drain the current grid, then swap + construct-wave the incoming one.
+        going_to_streak = not self._show_streak_grid
+        current = self._streak_grid if self._show_streak_grid else self._heatmap
+
+        def _swap():
+            current.setVisible(False)
+            self._show_streak_grid = going_to_streak
+            nxt = self._streak_grid if going_to_streak else self._heatmap
+            nxt.setVisible(True)
+            self._update_tassel_icon()
+            self._refresh_time()        # populates the incoming grid (no self-reveal)
+            nxt.animate_reveal()        # explicit construct wave — no double-fire
+            self._tassel.raise_()
+
+        current.animate_conceal(on_done=_swap)
 
     def _build_daily_tab(self) -> QWidget:
         widget = QWidget()
@@ -1850,7 +2311,9 @@ class StatsPanel(QWidget):
             self._refresh_monthly()
         elif self.tabs.tabText(index) == "Timeline":
             QTimer.singleShot(0, self._refresh_time)
-            self._heatmap.animate_reveal()
+            grid = self._streak_grid if getattr(self, "_show_streak_grid", False) else self._heatmap
+            grid.animate_reveal()
+            self._tassel.raise_()
         elif self.tabs.tabText(index) == "⚙":
             if hasattr(self, '_tag_manager'):
                 self._tag_manager.refresh()
@@ -1949,8 +2412,14 @@ class StatsPanel(QWidget):
         self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
 
     def _refresh_time(self):
-        rows = self.db.get_hourly_heatmap(n_days=14)
-        self._heatmap.set_data(rows, datetime.now().date())
+        if getattr(self, "_show_streak_grid", False):
+            cache = self.db.get_streak_grid_cache()
+            streak = self.db.get_streaks(self.config.get_day_start_hour())
+            finished = self.db.get_streak_grid_finished_dates()
+            self._streak_grid.set_data(cache, streak, finished, datetime.now().date())
+        else:
+            rows = self.db.get_hourly_heatmap(n_days=14)
+            self._heatmap.set_data(rows, datetime.now().date())
 
     def _invalidate_period_cache(self):
         self._cached_active_days = None

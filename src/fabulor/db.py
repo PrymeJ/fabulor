@@ -1041,6 +1041,18 @@ class LibraryDB:
             ).fetchall()
         return {row['date']: row['listened'] for row in rows}
 
+    def get_streak_grid_finished_dates(self) -> set[str]:
+        """ISO date strings (calendar dates, no day_start_hour offset) within the
+        last 364 days on which at least one book was finished. Sourced from
+        book_events (event_type='finished') — books.finished_at is never written."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT strftime('%Y-%m-%d', be.event_time) AS d "
+                "FROM book_events be WHERE be.event_type='finished' "
+                "AND date(be.event_time) >= date('now','-364 days')"
+            ).fetchall()
+        return {row['d'] for row in rows if row['d']}
+
     def _update_streak_grid_cache_for_date(self, conn, date_str: str,
                                            day_start_hour: int) -> None:
         """Re-evaluate one grid cell against current sessions, on an open conn.
