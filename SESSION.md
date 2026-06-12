@@ -1,4 +1,37 @@
-## Session Summary — 2026-06-13 — CLAUDE.md "What's Built" Audit (docs only)
+## Session Summary — 2026-06-13 Session 2 — Stats: period-tab playback-finish visibility + StreakGrid day_start_hour anchor
+
+**Branch:** `main`
+
+**Scope:** Two bug fixes in `db.py` and `stats_panel.py`. No UI changes, no schema changes, no new signals.
+
+### Issue A — Day/Week/Month tabs missing books finished at EOF without a qualifying session
+
+A book that plays to the end but never accumulates ≥60s in a single session (e.g. the last few minutes of a book picked up right at the end) wrote a `book_events` row with `event_type='finished', source='playback'` but left no `listening_sessions` row for that day. `get_active_periods` only queried `listening_sessions`, so the period never appeared in the nav list and the book was invisible in the stats tab for that day.
+
+**Fix — `db.py` `get_active_periods`:**
+Added an optional `include_playback_finished: bool = False` parameter. When `True`, the SQL UNIONs `book_events WHERE event_type='finished' AND source='playback'` using the identical `strftime(fmt, datetime(event_time, '-N hours'))` offset already used for session dates. Manual finishes (`source='manual'`, from the detail-panel toggle) are explicitly excluded. `get_streaks()` (line ~1035) calls `get_active_periods` with the default `False` — its session-day input is unchanged.
+
+**Fix — `stats_panel.py` (4 call sites):**
+`_refresh_daily`, `_refresh_weekly`, `_refresh_monthly`, and `_on_bar_date_clicked` now pass `include_playback_finished=True`. For a finished-only period where `rows` (session-backed minutes) is empty, the total-duration label is blanked rather than showing a misleading "0m". The book appears in the existing `FinishedScrollRow` strip at the bottom of the tab, which is the appropriate display path.
+
+**Cache invalidation:** No stale-cache risk. The EOF-finish path in `app.py` calls `stats_panel.refresh_all()` directly (not via `session_written`, which only fires for ≥60s sessions). `refresh_all()` calls `_invalidate_period_cache()` before all refresh methods, so the new query always runs on fresh data.
+
+### Issue B — StreakGrid cells off by one for non-zero `day_start_hour`
+
+`_refresh_time` passed `datetime.now().date()` (midnight calendar date) as the `today` anchor to `StreakGrid.set_data()`. The cache rows are attributed to `day_start_hour`-adjusted dates via `strftime('%Y-%m-%d', datetime(ts, '-N hours'))`. For any non-zero `day_start_hour`, a session recorded between midnight and the boundary landed on the correct cache row but the wrong visual cell.
+
+**Fix — `stats_panel.py` `_refresh_time`:**
+Replaced `datetime.now().date()` with `(datetime.now() - timedelta(hours=day_start)).date()` — the same inline adjustment used at `db.py:784`, `db.py:1031`, `app.py:320`, and `stats_panel.py:2615` (one line above). No new helper introduced; inline expression is the established canonical pattern throughout the codebase.
+
+Heatmap anchor (`datetime.now().date()` passed to `_heatmap.set_data`) is unchanged — heatmap data is wall-clock bucketed and was already correct.
+
+### Known debt added
+
+- Five inline copies of `(datetime.now() - timedelta(hours=N)).date()` noted in CLAUDE.md Pending/Known Debt as a future extract-to-helper candidate.
+
+---
+
+## Session Summary — 2026-06-13 Session 1 — CLAUDE.md "What's Built" Audit (docs only)
 
 **Branch:** `main`
 
