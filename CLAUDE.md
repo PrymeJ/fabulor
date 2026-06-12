@@ -277,6 +277,7 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 - Finished books tab
 - Tag manager (⚙ tab): `TagManagerWidget` — list view and tag panel view
   - DB methods: `get_all_tags`, `get_books_by_tag`, `rename_tag`, `delete_tag`, `get_unique_tag_count`
+  - Tag-panel reserved row (`_reserved_row`, the `QStackedLayout` holding empty / color-picker / delete-confirm pages) is fixed at **21px** (`tag_manager.py:336`), not overridden anywhere. (Pass 8 #2 corrected a stale "32px" figure that was only ever in an audit checklist, never the code or any doc.)
 - Period cache: `_cached_active_days/weeks/months`, invalidated in `refresh_all`/`refresh_current_tab`
 - `_add_row_safely` helper: hide-before-insert, show-after, wrapped in `setUpdatesEnabled(False/True)` — fixes first-visit flash
 - `_inject_active_covers(rows)` — enriches row dicts with `"active_cover_path"` from `book_covers` before widget construction. Must be called at every `BookDayRow`/`FinishedBookThumb` construction site.
