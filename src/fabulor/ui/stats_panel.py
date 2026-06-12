@@ -2644,7 +2644,7 @@ class StatsPanel(QWidget):
             self._refresh_weekly()
         elif name == "Month":
             self._refresh_monthly()
-        elif name == "Hour":
+        elif name == "Timeline":
             self._refresh_time()
 
     def _inject_active_covers(self, rows: list[dict]) -> list[dict]:
