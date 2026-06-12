@@ -1544,6 +1544,15 @@ class TasselOverlay(QWidget):
         self._slide.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._on_switch = None
         self._busy = False
+        self._slide_slot = None
+
+    def _disconnect_slide(self):
+        if self._slide_slot is not None:
+            try:
+                self._slide.finished.disconnect(self._slide_slot)
+            except (RuntimeError, TypeError):
+                pass
+            self._slide_slot = None
 
     def set_colors(self, accent: QColor):
         # Desaturated flat fill so the tassel reads as a tab, not a focal point.
@@ -1585,18 +1594,13 @@ class TasselOverlay(QWidget):
         self._slide.stop()
         self._slide.setStartValue(QPoint(x, self.REST_Y))
         self._slide.setEndValue(QPoint(x, self.EXT_Y))
-        try:
-            self._slide.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._disconnect_slide()
+        self._slide_slot = self._on_extended
         self._slide.finished.connect(self._on_extended)
         self._slide.start()
 
     def _on_extended(self):
-        try:
-            self._slide.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._disconnect_slide()
         QTimer.singleShot(self.HOLD_MS, self._retreat)
 
     def _retreat(self):
@@ -1609,18 +1613,13 @@ class TasselOverlay(QWidget):
         self._slide.stop()
         self._slide.setStartValue(QPoint(x, self.EXT_Y))
         self._slide.setEndValue(QPoint(x, self.REST_Y))
-        try:
-            self._slide.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._disconnect_slide()
+        self._slide_slot = self._on_retreated
         self._slide.finished.connect(self._on_retreated)
         self._slide.start()
 
     def _on_retreated(self):
-        try:
-            self._slide.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        self._disconnect_slide()
         self._busy = False
 
 
