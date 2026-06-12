@@ -547,7 +547,7 @@ Three fragilities with a shared root. Fix together in one deliberate structural 
 `player.book_ready` connects to both `_on_file_ready` and `_on_file_loaded_populate_chapters`. Both check `library_panel._is_animating` and set their own deferred flags (`_file_ready_deferred`, `_chaps_deferred`). `_drain_deferred_file_ready` handles both. The two independent flags are functional but fragile — if one fires but the other fails to drain (e.g. due to a VT file-load ordering race), state is inconsistent.
 
 **P6-D — `QTimer.singleShot(320ms)` in `_on_open_tag_manager_from_detail` (known debt):**
-Line ~1713: `QTimer.singleShot(320, self.panel_manager._open_tags_flow)`. 320ms is a magic number covering the longest panel close animation. The correct fix is an `all_panels_hidden` signal from `PanelManager`, emitted when the last running close animation completes. See NOTES entry "hide_all_panels then open: timer vs signal" for full design.
+`app.py:1075` (was ~1713): `QTimer.singleShot(320, self.panel_manager._open_tags_flow)`. 320ms is a magic number covering the longest panel *position* close animation (300ms) + 20ms margin. The correct fix is an `all_panels_hidden` signal from `PanelManager`, emitted when the last running close animation completes. **Design must decide whether `blur_animation` (500ms) counts toward "hidden" — see the "hide_all_panels then open: timer vs signal" entry below for the full design and the blur caveat.** Single site, no duplication (confirmed REVIEW_PASS8 #6).
 
 **Fix trigger:** When mini player mode is built, panel construction order will be rationalized anyway. Fix all three then.
 
@@ -657,15 +657,23 @@ Setting `WA_TranslucentBackground` on a `QWidget` subclass that also uses `WA_St
 
 **Why the timer was used:** `hide_all_panels` runs multiple close animations in parallel with no shared completion point. Adding the count-down mechanism was a larger change than warranted for a single use case. If a second "hide-all-then-open" flow is added anywhere, the signal approach becomes mandatory.
 
-**Where to fix:** `panels.py` — `hide_all_panels` and each `_on_*_hidden` method. `app.py` — replace `singleShot(320, ...)` with a one-shot `all_panels_hidden` connection.
+**⚠ Blur caveat — decide this when designing the signal (REVIEW_PASS8 #6):** the close flow runs TWO kinds of animation in parallel: the panel *position* slide (300ms; tags 200ms) AND `blur_animation` (**500ms**, `app.py:556`). The 320ms timer only clears the *position* slide — at T+320ms the blur fade is still running, and `_any_panel_animating()` (`panels.py:544`) counts blur, so "all panels hidden" is NOT literally true at 320ms. The reopen works anyway because it only needs the panel off-screen (position done at 300ms); blur is cosmetic and the reopen re-drives it. **So the `all_panels_hidden` signal must choose:** (a) fire when the last *position* animation completes (≈ current 320ms behavior, ignore blur) — simplest, preserves today's timing; or (b) wait for blur too (~500ms) — "truly idle" but ~180ms slower to reopen, a deliberate behavior change. Recommend (a): exclude `blur_animation` from the count, because the reopen contract is "panel off-screen," not "no pixels moving." Whichever is chosen, document it at the signal definition so the next person doesn't re-derive this.
+
+**Where to fix:** `panels.py` — `hide_all_panels` and each `_on_*_hidden` method (track a started-count, decrement per `_on_*_hidden`, emit at zero; decide blur per the caveat above). `app.py` — replace `singleShot(320, ...)` with a one-shot `all_panels_hidden` connection.
 
 ## `QStackedLayout` for mutually exclusive UI slots (2026-05-25)
 
 When multiple widgets need to occupy the same fixed space with only one visible at a time, `QStackedLayout` inside a fixed-height container is the correct pattern. `.show()`/`.hide()` on siblings in a regular layout shifts surrounding content as each sibling collapses; `QStackedLayout` holds the reserved space constant regardless of which page is current. Pattern: create a `QWidget` with `setFixedHeight(N)`, assign a `QStackedLayout` to it, add all candidate pages (including a blank `QWidget` as the "empty" page), default to `setCurrentWidget(empty_page)`, and switch via `setCurrentWidget`. Store the layout reference on `self` for access from other methods.
 
+**Concrete value (tag manager):** the reserved row in `tag_manager.py` is `self._reserved_row`, a `QWidget` with **`setFixedHeight(21)`** (`tag_manager.py:336`) wrapping the `QStackedLayout` whose three pages are `_reserved_empty` / `_color_picker_row` / `_confirm_delete_label`. The height is **21px, not 32** — REVIEW_PASS8 #2 flagged a checklist that said 32px; that figure was never in any project doc, and the code has correctly been 21 all along. Recording the real value here so future audits reference 21 and don't re-flag a non-issue. No call site overrides it.
+
 ## `_set_tag_color` — must not call `refresh()` or `_open_tag()` (2026-05-25)
 
 Tag color change requires exactly three operations: DB write (`db.set_tag_color`), detail dot update (`_update_detail_dot`), list row dot update (`_update_list_dot`). `refresh()` rebuilds the entire tag list widget tree and reloads all cover images — correct for tag renames and deletions, but grossly unnecessary for a color change where no count, name, or book membership changes. `_open_tag()` would re-query books and rebuild the book grid. Any future change to `_set_tag_color` must preserve this constraint: patch in-place, do not rebuild.
+
+## Deferred (low/UX): tag action button `check → delete` 2s timer can silently revert a slow edit (2026-06-12)
+
+After a successful rename, `_on_rename` sets the action button to `check` then arms an **unguarded** `QTimer.singleShot(2000, lambda: self._set_action_mode("delete"))` (`tag_manager.py:622`). If the user starts a *new* rename within those 2s, `_on_tag_name_changed` moves the button to `save`, but the still-pending singleShot fires at T+2s and forces it back to `delete` — **silently reverting the in-progress edit's button state**. Phrased precisely: a user who types a single character and then pauses (entirely plausible for short tag names) will see their input's save-affordance disappear before the next keystroke restores it. It is NOT a correctness bug — the edit field text is untouched and the next keystroke re-sets `save` — but it is a real UX papercut, not a benign "self-heal." Deferred as low-priority debt. Fix when touched: capture the timer (or a generation token) and cancel/invalidate it in `_on_tag_name_changed` when the state moves to `save`. Was REVIEW_PASS8 finding #1.
 
 ## `terminate()` regression pattern — four-step sequence is atomic (2026-05-22)
 
