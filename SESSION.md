@@ -1,3 +1,33 @@
+## Session Summary — 2026-06-13 — CLAUDE.md "What's Built" Audit (docs only)
+
+**Branch:** `main`
+
+**Scope:** Documentation only. No tracked source touched — replaced the stale "Implemented Features (complete)" section in `CLAUDE.md` with a fresh, full-codebase feature audit.
+
+### Doc rewrite — `## What's Built` replaces `## Implemented Features (complete)`
+
+Ran a 5-agent parallel Explore sweep (Sonnet) over the codebase, then synthesized the reports into a replacement section myself:
+- Agent 1 — `app.py` (shell, UI states, carousel, bg suppression, 200ms timer, interface classes, wiring).
+- Agent 2 — `player.py`, `session_recorder.py`, `config.py` (playback modes, seek/undo/EOF, session lifecycle, every config key).
+- Agent 3 — `book_detail_panel.py`, `cover_panel.py`, `stats_panel.py`, `tag_manager.py`.
+- Agent 4 — `library.py`, `theme_manager.py`, `panels.py`, `chapter_list.py`, `controls.py`, `audio_controls.py`, `carousel.py`, `icon_utils.py`, `text_context_menu.py`.
+- Agent 5 — `library_controller.py`, `scanner.py`, `cover_manager.py`, `db.py`, `book_quotes.py`, `assets.py`.
+
+Section renamed `## What's Built`, organized by subsystem, factual and terse. Net **+175 / −152** lines. Added previously-undocumented subsystems: app-shell UI states/wiring, carousel, controls/widgets, audio controls, icon utils, context menu, panels, the full DB query inventory, scanner internals, cover manager, the config key map, and session checkpoint recovery.
+
+**Three factual corrections** vs. the old section (each verified directly against source, not just agent report):
+1. Cover preview is **208×266** (`cover_panel.py:242`), not 205×270.
+2. StreakGrid longest-run highlight is a **derived `_longest_fill` color** (hue/sat/value shift, `_derive_longest_fill`) with per-theme overrides `streak_longest_fill` / `streak_finished_dot` — not an `accent.lighter(150)` border with a `streak_longest_border` override.
+3. `write_session` / `write_book_event` **still dual-write `book_path` + `book_id`** (`session_recorder.py:139`, `db.py`) — the old "Session Recording" block wrongly claimed `book_path` was no longer written.
+
+### Non-issue — StreakGrid Critical Architecture Rule
+
+Mid-session I flagged that the `DO NOT keep StreakGrid from cross-checking…` rule (CLAUDE.md ~L384) might still carry the stale border wording. On re-read it does **not** — the rule describes the longest-run *date set* and the `len(self._longest_dates) == streak_info['longest']` invariant, with no reference to the visual fill/border mechanism. The stale `accent.lighter(150)` / `streak_longest_border` text lived only in the feature section (now fixed). No rule edit made; user confirmed skip.
+
+Commits: `b2638ed` (CLAUDE.md What's Built), this entry (SESSION.md).
+
+---
+
 ## Session Summary — 2026-06-12 Session 2 — Manual Finished Toggle + Stats Refresh Bugs
 
 **Branch:** `main`
