@@ -168,6 +168,18 @@ class LibraryDB:
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_book_events_book_id ON book_events (book_id)")
 
+            # Migrate: add 'source' to book_events. Distinguishes a 'finished' event
+            # written by playback (reaching EOF) from one set manually via the detail-
+            # panel toggle. Backfills to 'playback' — every pre-existing finished event
+            # came from EOF. The streak grid counts only source='playback' finishes
+            # (a manual finish is bookkeeping, not listening), so manual finishes are
+            # invisible to the grid (no fill, no dot); all other finished queries count
+            # both. See review/DESIGN_finished_toggle.md.
+            if "source" not in be_cols:
+                conn.execute(
+                    "ALTER TABLE book_events ADD COLUMN source TEXT NOT NULL DEFAULT 'playback'"
+                )
+
             bt_cols = {row[1] for row in conn.execute("PRAGMA table_info(book_tags)").fetchall()}
             if "book_id" not in bt_cols:
                 conn.execute("ALTER TABLE book_tags ADD COLUMN book_id INTEGER REFERENCES books(id)")
@@ -848,17 +860,25 @@ class LibraryDB:
         return [dict(r) for r in rows]
     
     def write_book_event(self, book_path: str, event_type: str, book_id: int | None = None,
-                         day_start_hour: int = 0):
+                         day_start_hour: int = 0, source: str = 'playback'):
+        """Writes a book_event. source distinguishes a playback (EOF) finish from a
+        manual (detail-panel toggle) finish: only source='playback' finishes light
+        the streak grid (a manual finish is bookkeeping, not listening). The cache
+        recompute below already filters to playback, so a manual finish touches no
+        cell — it shows in the Finished tab / filter / detail icon but is invisible
+        to the streak grid (no fill, no dot)."""
         with self._get_conn() as conn:
             event_time = datetime.now().isoformat()
             conn.execute("""
-                INSERT INTO book_events (book_id, book_path, event_type, event_time)
-                VALUES (?, ?, ?, ?)
-            """, (book_id, book_path, event_type, event_time))
-            # A 'finished' event lights its day in the streak grid (finished ⟹
-            # listened), even with no qualifying session. Same adjusted-date as
-            # sessions so the dot and fill share a cell. Other event types don't
-            # touch the grid.
+                INSERT INTO book_events (book_id, book_path, event_type, event_time, source)
+                VALUES (?, ?, ?, ?, ?)
+            """, (book_id, book_path, event_type, event_time, source))
+            # A playback 'finished' event lights its day in the streak grid
+            # (finished ⟹ listened), even with no qualifying session. Same
+            # adjusted-date as sessions so the dot and fill share a cell. A manual
+            # finish is streak-neutral — _update_streak_grid_cache_for_date counts
+            # only source='playback', so re-evaluating the cell here leaves a
+            # manual-only day dark. Non-finished events don't touch the grid.
             if event_type == 'finished':
                 adj_date = conn.execute(
                     "SELECT strftime('%Y-%m-%d', datetime(?, ?))",
@@ -884,6 +904,27 @@ class LibraryDB:
                 return
             conn.execute("DELETE FROM book_events WHERE id = ?", (row["id"],))
             self._update_streak_grid_cache_for_date(conn, row["d"], day_start_hour)
+
+    def clear_finished(self, book_id: int, day_start_hour: int = 0) -> None:
+        """Deletes ALL 'finished' events for a book — the detail-panel toggle-off
+        ('Mark unfinished' = status reset, a boolean, vs the banner revert which
+        deletes only the most recent). Re-evaluates every affected day's streak cell
+        so any playback-finish days darken if nothing else backs them; manual-finish
+        days were never lit, so clearing them is a no-op on the grid."""
+        offset = f'-{day_start_hour} hours'
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT strftime('%Y-%m-%d', datetime(event_time, ?)) AS d "
+                "FROM book_events WHERE book_id = ? AND event_type = 'finished'",
+                (offset, book_id)
+            ).fetchall()
+            conn.execute(
+                "DELETE FROM book_events WHERE book_id = ? AND event_type = 'finished'",
+                (book_id,)
+            )
+            for r in rows:
+                if r["d"]:
+                    self._update_streak_grid_cache_for_date(conn, r["d"], day_start_hour)
 
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
@@ -980,7 +1021,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             fin_rows = conn.execute(
                 "SELECT DISTINCT strftime('%Y-%m-%d', datetime(event_time, ?)) "
-                "FROM book_events WHERE event_type = 'finished'",
+                "FROM book_events WHERE event_type = 'finished' AND source = 'playback'",
                 (offset,)
             ).fetchall()
         active_set.update(r[0] for r in fin_rows if r[0])
@@ -1076,7 +1117,7 @@ class LibraryDB:
                 "  FROM listening_sessions"
                 "  UNION"
                 "  SELECT strftime('%Y-%m-%d', datetime(event_time, ?))"
-                "  FROM book_events WHERE event_type = 'finished'"
+                "  FROM book_events WHERE event_type = 'finished' AND source = 'playback'"
                 ")",
                 (offset, offset, offset)
             )
@@ -1099,7 +1140,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT DISTINCT strftime('%Y-%m-%d', datetime(be.event_time, ?)) AS d "
-                "FROM book_events be WHERE be.event_type='finished' "
+                "FROM book_events be WHERE be.event_type='finished' AND be.source='playback' "
                 "AND date(be.event_time) >= date('now','-364 days')",
                 (offset,)
             ).fetchall()
@@ -1130,7 +1171,7 @@ class LibraryDB:
         if count == 0:
             count = conn.execute(
                 "SELECT COUNT(*) FROM book_events "
-                "WHERE event_type = 'finished' "
+                "WHERE event_type = 'finished' AND source = 'playback' "
                 "  AND strftime('%Y-%m-%d', datetime(event_time, ?)) = ?",
                 (offset, date_str)
             ).fetchone()[0]

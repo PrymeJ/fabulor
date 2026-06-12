@@ -93,8 +93,16 @@ class SessionRecorder(QObject):
         print(f"[pause_session] listened_so_far={self._session_listened_seconds/60:.1f}min")
         self._pause_timer.start()
 
-    def close(self, at_eof: bool = False):
-        """Flush the session to DB if >= 60s listened, then reset all state."""
+    def close(self):
+        """Flush the session to DB if >= 60s listened, then reset all state.
+
+        The 60s threshold is honest — a sub-60s listen writes NO session, even at
+        EOF. Finished status lives in book_events (written separately by the EOF
+        flow / a future mark-finished toggle) and is reversible without a session
+        row, so EOF no longer needs to force a session. Forcing one polluted
+        Day/Week/Month/Overall/Timeline with 0-minute entries and falsely extended
+        the streak from listening (the streak day still lights from the finished
+        book_event via finished ⟹ listened, which is correct)."""
         self._checkpoint_timer.stop()
         self._pause_timer.stop()
         self._seek_credit_timer.stop()
@@ -108,7 +116,7 @@ class SessionRecorder(QObject):
         now = datetime.now()
         book = self._get_book()
 
-        if (listened >= 60 or at_eof) and book is not None:
+        if listened >= 60 and book is not None:
             start = self._session_start
             pos_start = self._session_position_start
             live_pos = self._get_position()

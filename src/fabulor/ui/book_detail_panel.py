@@ -4,7 +4,8 @@ from datetime import datetime
 from enum import Enum, auto
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget,
-    QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton
+    QPushButton, QScrollArea, QGridLayout, QLineEdit, QCompleter, QToolButton,
+    QStackedLayout
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator
@@ -94,6 +95,9 @@ class BookDetailPanel(QWidget):
         self._confirming_remove: bool = False
         self._remove_cancel_timer: QTimer | None = None
         self._delete_history_cancel_timer: QTimer | None = None
+        self._is_finished: bool = False
+        self._confirming_finished: bool = False
+        self._finished_cancel_timer: QTimer | None = None
         self._context: str = ""
         self._tag_display_tags: list = []
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
@@ -195,10 +199,33 @@ class BookDetailPanel(QWidget):
         self._meta_action_btn.installEventFilter(self)
         self._meta_action_btn.setStyleSheet("QToolButton { background: transparent; border: none; margin-right: -4px; padding-right: -4px; margin-bottom: -4px; padding-bottom: -4px;}")
 
-        self._finished_label = QLabel()
+        # Finished status icon doubles as the mark/unmark control. At rest it shows
+        # the check only when finished; on hover (handled in eventFilter) it reveals
+        # a dimmed check even when NOT finished, so the empty slot becomes a
+        # discoverable affordance. Click → confirm over the narrator label (mirrors
+        # the remove-confirm-over-duration pattern). Always visible so hover fires;
+        # _update_finished_icon controls whether a glyph is painted at rest.
+        self._finished_label = _ClickableLabel()
         self._finished_label.setObjectName("book_detail_finished_icon")
         self._finished_label.setFixedSize(16, 24)
-        self._finished_label.setVisible(False)
+        self._finished_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._finished_label.clicked.connect(self._on_finished_clicked)
+        self._finished_label.installEventFilter(self)
+
+        self._confirm_finished_label = _ClickableLabel("")
+        self._confirm_finished_label.setObjectName("book_detail_confirm_finished")
+        self._confirm_finished_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._confirm_finished_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._confirm_finished_label.clicked.connect(self._on_confirm_finished)
+        # Wrap in a container with a left stretch so the label sits right-aligned at
+        # content width — matching _confirm_remove_label's layout in dur_save_row.
+        self._confirm_finished_container = QWidget()
+        self._confirm_finished_container.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        _cfc_layout = QHBoxLayout(self._confirm_finished_container)
+        _cfc_layout.setContentsMargins(0, 0, 0, 0)
+        _cfc_layout.setSpacing(0)
+        _cfc_layout.addStretch()
+        _cfc_layout.addWidget(self._confirm_finished_label)
 
         dur_save_row = QHBoxLayout()
         dur_save_row.setContentsMargins(0, 0, 0, 0)
@@ -207,9 +234,21 @@ class BookDetailPanel(QWidget):
         dur_save_row.addStretch()
         dur_save_row.addWidget(self._confirm_remove_label)
 
+        # Narrator slot: a QStackedLayout so the narrator and the finished-confirm
+        # label each own the FULL row width when current (an HBox split made the
+        # narrator elide at rest). The confirm shows in the narrator's place during
+        # a mark/unmark confirm — mirrors the remove-confirm-over-duration intent,
+        # but stacked (not side-by-side) so neither steals the other's width.
+        self._narrator_stack = QStackedLayout()
+        self._narrator_stack.setContentsMargins(0, 0, 0, 0)
+        self._narrator_stack.setStackingMode(QStackedLayout.StackingMode.StackOne)
+        self._narrator_stack.addWidget(self._narrator_label)
+        self._narrator_stack.addWidget(self._confirm_finished_container)
+        self._narrator_stack.setCurrentWidget(self._narrator_label)
+
         meta_block.addWidget(self._title_label)
         meta_block.addWidget(self._author_label)
-        meta_block.addWidget(self._narrator_label)
+        meta_block.addLayout(self._narrator_stack)
         meta_block.addWidget(self._year_label)
         meta_block.addLayout(dur_save_row)
         meta_block.addStretch()
@@ -725,13 +764,88 @@ class BookDetailPanel(QWidget):
             self._unlock_timer.timeout.connect(lambda: self._set_meta_state(_MetaActionState.HIDDEN))
             self._unlock_timer.start()
     def _update_finished_icon(self, finished: bool) -> None:
-        if not finished:
-            self._finished_label.setVisible(False)
+        self._is_finished = finished
+        # The label is always visible (so it can receive hover even when empty),
+        # but it only paints a glyph at rest when finished. Hover paints a dimmed
+        # check in the not-finished case via _on_finished_hover.
+        self._finished_label.setVisible(True)
+        color = self._theme.get("accent", "#888888")
+        if finished:
+            self._finished_label.setPixmap(load_themed_icon("check.svg", color, 16, 0.7))
+        else:
+            self._finished_label.clear()
+
+    def _on_finished_hover(self, hover: bool) -> None:
+        # Don't fight a confirm-in-progress, and don't override the solid finished
+        # glyph on hover-out. Only the NOT-finished resting state changes on hover:
+        # reveal a dimmed check to advertise "click to mark finished".
+        if self._confirming_finished or self._book_path is None:
             return
         color = self._theme.get("accent", "#888888")
-        pixmap = load_themed_icon("check.svg", color, 16, 0.7)
-        self._finished_label.setPixmap(pixmap)
-        self._finished_label.setVisible(True)
+        if self._is_finished:
+            # subtle brighten on hover, restore on leave
+            self._finished_label.setPixmap(load_themed_icon("check.svg", color, 16, 0.9 if hover else 0.7))
+        else:
+            if hover:
+                self._finished_label.setPixmap(load_themed_icon("check.svg", color, 16, 0.30))
+            else:
+                self._finished_label.clear()
+
+    def _on_finished_clicked(self) -> None:
+        # Archived/excluded books are fully editable (metadata, cover, sessions) —
+        # finished status is no exception, so no _is_archived guard here.
+        if self._confirming_finished or self._book_path is None:
+            return
+        # Mutually exclusive with the remove-confirm (both overlay header labels).
+        if self._confirming_remove:
+            self._cancel_remove()
+        self._confirming_finished = True
+        self._confirm_finished_label.setText(
+            "Click to mark this book unfinished" if self._is_finished else "Click to mark this book finished"
+        )
+        self._narrator_stack.setCurrentWidget(self._confirm_finished_container)
+        color = self._theme.get("accent", "#888888")
+        self._finished_label.setPixmap(load_themed_icon("check.svg", color, 16, 0.35))
+        if self._finished_cancel_timer:
+            self._finished_cancel_timer.stop()
+        self._finished_cancel_timer = QTimer(self)
+        self._finished_cancel_timer.setSingleShot(True)
+        self._finished_cancel_timer.timeout.connect(self._cancel_finished_confirm)
+        self._finished_cancel_timer.start(7000)
+
+    def _on_confirm_finished(self) -> None:
+        if not self._confirming_finished or self._book_path is None:
+            return
+        book_id = self._book_data.get('id')
+        dsh = self.config.get_day_start_hour()
+        if self._is_finished:
+            # Toggle-off = status reset = clear ALL finished events (vs the banner
+            # revert which deletes only the most recent). Manual finishes are
+            # streak-invisible, so this only darkens days a playback-finish backed.
+            if book_id is not None:
+                self.db.clear_finished(book_id, dsh)
+        else:
+            # Manual finish: source='manual' so it sets status everywhere
+            # (Finished tab / filter / icon) but does NOT touch the streak grid.
+            self.db.write_book_event(self._book_path, 'finished', book_id=book_id,
+                                     day_start_hour=dsh, source='manual')
+        self._cancel_finished_confirm()
+        self._refresh_stats()           # repaints this panel's finished icon + stats
+        self.history_deleted.emit()      # fan-out: stats panel + library refresh (Finished tab/filter)
+
+    def _cancel_finished_confirm(self) -> None:
+        self._confirming_finished = False
+        self._narrator_stack.setCurrentWidget(self._narrator_label)
+        # StackOne re-shows the narrator page on switch — but a no-narrator book
+        # keeps its narrator label hidden (empty slot), so re-apply that visibility
+        # rather than leaving an empty line behind.
+        if not self._editing:
+            self._narrator_label.setVisible(bool(self._book_data.get('narrator')))
+        if self._finished_cancel_timer:
+            self._finished_cancel_timer.stop()
+            self._finished_cancel_timer = None
+        # Restore the resting glyph (solid if finished, empty if not).
+        self._update_finished_icon(self._is_finished)
 
     def _on_meta_action_clicked(self):
         """Handles metadata action button click based on current state."""
@@ -763,6 +877,7 @@ class BookDetailPanel(QWidget):
         if self._editing:
             self._exit_edit_mode(save=False)
         self._cancel_remove()
+        self._cancel_finished_confirm()
         self._dismiss_history_confirm()
         super().hideEvent(event)
 
@@ -780,6 +895,13 @@ class BookDetailPanel(QWidget):
                 self._on_meta_action_hover(hover=True)
             elif event.type() == QEvent.Type.Leave:
                 self._on_meta_action_hover(hover=False)
+            return False
+
+        if obj is self._finished_label:
+            if event.type() == QEvent.Type.Enter:
+                self._on_finished_hover(hover=True)
+            elif event.type() == QEvent.Type.Leave:
+                self._on_finished_hover(hover=False)
             return False
 
         if self._editing and event.type() == QEvent.Type.KeyPress:
@@ -801,6 +923,11 @@ class BookDetailPanel(QWidget):
                 confirm_safe = (self._confirm_remove_label, self._remove_btn)
                 if not any(hits(w) for w in confirm_safe):
                     self._cancel_remove()
+
+            if self._confirming_finished:
+                fin_safe = (self._confirm_finished_label, self._finished_label)
+                if not any(hits(w) for w in fin_safe):
+                    self._cancel_finished_confirm()
 
             if self._delete_history_confirm_label.isVisible():
                 if not hits(self._delete_history_confirm_label) and not hits(self._delete_history_btn):
@@ -1250,7 +1377,7 @@ class BookDetailPanel(QWidget):
         self._style_completer_popup()
         self._update_remove_btn_icon()
         self._set_meta_state(self._meta_state)
-        self._update_finished_icon(self._finished_label.isVisible())
+        self._update_finished_icon(self._is_finished)
         self._cover_panel.on_theme_changed(theme)
         self._rebuild_tag_display(self._tag_display_tags)
         self._ctx_menu.apply_theme(theme)

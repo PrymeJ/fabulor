@@ -3027,6 +3027,13 @@ def get_stats_stylesheet(theme_name="default"):
             border: 2px solid {t['accent']};
             padding: 0px 0px;
         }}
+        QLabel#book_detail_confirm_finished {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 0px 0px;
+        }}
         QLineEdit#book_detail_title,
         QLineEdit#book_detail_author,
         QLineEdit#book_detail_narrator,
