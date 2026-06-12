@@ -47,9 +47,9 @@
 ## Block A — Finished-book flow (B2)
 
 ### A1. Natural EOF writes the finished event
-- [ ] Play a book through to its true end (let `pos` reach `dur - 1.5`; don't just seek near the end and stop short — a stall at `dur - 3` will NOT finish).
-- [ ] **Expect:** sticky banner "Marked as finished." with **revert** + **close (✕)** buttons; play icon → restart.
-- [ ] **DB:** finished-events query shows a new row, `book_id` **non-NULL**, correct `book_path`.
+- [x] Play a book through to its true end (let `pos` reach `dur - 1.5`; don't just seek near the end and stop short — a stall at `dur - 3` will NOT finish).
+- [x] **Expect:** sticky banner "Marked as finished." with **revert** + **close (✕)** buttons; play icon → restart.
+- [x] **DB:** finished-events query shows a new row, `book_id` **non-NULL**, correct `book_path`.
 
 ### A2. EOF arrival mode — playing vs. paused-at-end
 - [ ] Reach EOF by **playing through** → banner appears.
@@ -133,6 +133,13 @@ For each, finish a book to bring the banner up, then perform the trigger; **expe
 ### B7. Crash recovery — threshold + double-apply boundaries
 - [ ] **< 60s checkpoint:** force a checkpoint to exist representing `< 60s` listened (kill shortly after a 30s tick but before 60s of real listening). Reopen → **no** session written, checkpoint discarded (mirrors the live 60s rule).
 - [ ] **Double-apply guard:** kill the app right at a clean-close moment (close triggers a write thread). Reopen → confirm **one** session row for that listening period, not two (a recovered checkpoint + an in-flight close must not both land).
+
+### B8. Finished day with NO qualifying session lights the cell (2026-06-12 fix — finished ⟹ listened)
+- [ ] Finish a book on a day where **no session reached 60s** (e.g. finish quickly, or via a short listen that gets discarded). The simplest repro: jump near the end and let it hit EOF without accruing 60s of listening.
+- [ ] **Expect:** that day's cell is **filled** AND carries the finished dot **on the same cell** (not a dot on an empty/adjacent cell), AND the day counts toward the streak number.
+- [ ] **DB:** `streak_grid_cache` has `listened=1` for that adjusted date; `get_streaks` current/longest reflect it.
+- [ ] **Revert** that finish (no session backing the day) → cell **darkens** (`_update_streak_grid_cache_for_date` finds no session and no other finished event).
+- [ ] **Existing-data self-heal:** if you had finished-but-dark days before this fix, they should light up on the **next app launch** (startup runs `build_streak_grid_cache`) — no manual step.
 
 ---
 

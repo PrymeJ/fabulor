@@ -2614,7 +2614,7 @@ class StatsPanel(QWidget):
         if getattr(self, "_show_streak_grid", False):
             cache = self.db.get_streak_grid_cache()
             streak = self.db.get_streaks(self.config.get_day_start_hour())
-            finished = self.db.get_streak_grid_finished_dates()
+            finished = self.db.get_streak_grid_finished_dates(self.config.get_day_start_hour())
             self._streak_grid.set_data(cache, streak, finished, datetime.now().date())
         else:
             rows = self.db.get_hourly_heatmap(n_days=14)

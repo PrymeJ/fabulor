@@ -847,24 +847,43 @@ class LibraryDB:
             """, (limit,)).fetchall()
         return [dict(r) for r in rows]
     
-    def write_book_event(self, book_path: str, event_type: str, book_id: int | None = None):
+    def write_book_event(self, book_path: str, event_type: str, book_id: int | None = None,
+                         day_start_hour: int = 0):
         with self._get_conn() as conn:
+            event_time = datetime.now().isoformat()
             conn.execute("""
                 INSERT INTO book_events (book_id, book_path, event_type, event_time)
                 VALUES (?, ?, ?, ?)
-            """, (book_id, book_path, event_type, datetime.now().isoformat()))
+            """, (book_id, book_path, event_type, event_time))
+            # A 'finished' event lights its day in the streak grid (finished ⟹
+            # listened), even with no qualifying session. Same adjusted-date as
+            # sessions so the dot and fill share a cell. Other event types don't
+            # touch the grid.
+            if event_type == 'finished':
+                adj_date = conn.execute(
+                    "SELECT strftime('%Y-%m-%d', datetime(?, ?))",
+                    (event_time, f'-{day_start_hour} hours')
+                ).fetchone()[0]
+                self._update_streak_grid_cache_for_date(conn, adj_date, day_start_hour)
 
-    def unfinish_book(self, book_id: int) -> None:
-        """Deletes the most recent 'finished' event for a book."""
+    def unfinish_book(self, book_id: int, day_start_hour: int = 0) -> None:
+        """Deletes the most recent 'finished' event for a book, then re-evaluates
+        that day's streak cell — if the finish was the only thing lighting the day
+        (no qualifying session, no other finished event), the cell darkens. Mirrors
+        write_book_event's finished ⟹ listened invariant in reverse."""
+        offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
-            conn.execute("""
-                DELETE FROM book_events
-                WHERE id = (
-                    SELECT id FROM book_events
-                    WHERE book_id = ? AND event_type = 'finished'
-                    ORDER BY event_time DESC LIMIT 1
-                )
-            """, (book_id,))
+            row = conn.execute(
+                "SELECT id, strftime('%Y-%m-%d', datetime(event_time, ?)) AS d "
+                "FROM book_events "
+                "WHERE book_id = ? AND event_type = 'finished' "
+                "ORDER BY event_time DESC LIMIT 1",
+                (offset, book_id)
+            ).fetchone()
+            if row is None:
+                return
+            conn.execute("DELETE FROM book_events WHERE id = ?", (row["id"],))
+            self._update_streak_grid_cache_for_date(conn, row["d"], day_start_hour)
 
     def reset_stats(self):
         """Deletes all listening sessions and book events, resets started_at and finished_at on all books."""
@@ -914,7 +933,9 @@ class LibraryDB:
     def delete_book_stats(self, book_id: int, book_path: str, day_start_hour: int = 0):
         """Deletes all session and event rows for a specific book, then
         re-evaluates each affected adjusted grid cell. Both start-day and end-day
-        of every session are gathered so midnight-spanning sessions clear both.
+        of every session are gathered so midnight-spanning sessions clear both;
+        'finished' event days are gathered too so a finished-but-no-session day
+        darkens correctly (finished ⟹ listened, reversed on delete).
         Single transaction."""
         offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
@@ -925,6 +946,12 @@ class LibraryDB:
                 (offset, offset, book_id)
             ).fetchall()
             dates = {d for r in rows for d in r}  # all distinct start/end days
+            fin_rows = conn.execute(
+                "SELECT strftime('%Y-%m-%d', datetime(event_time, ?)) "
+                "FROM book_events WHERE book_id = ? AND event_type = 'finished'",
+                (offset, book_id)
+            ).fetchall()
+            dates.update(r[0] for r in fin_rows if r[0])  # finished days too
             conn.execute("DELETE FROM listening_sessions WHERE book_id = ?", (book_id,))
             conn.execute("DELETE FROM book_events WHERE book_id = ?", (book_id,))
             conn.execute(
@@ -935,20 +962,34 @@ class LibraryDB:
                 self._update_streak_grid_cache_for_date(conn, d, day_start_hour)
 
     def get_streaks(self, day_start_hour: int) -> dict:
-        """Returns current and longest listening streaks in days."""
+        """Returns current and longest listening streaks in days.
+
+        A day counts toward a streak if it has a session OR a 'finished' book_event
+        (finished ⟹ listened), using the same day_start_hour adjustment as the
+        streak-grid cache. This keeps get_streaks() consistent with the cache and
+        with StreakGrid._compute_longest_run — a finished-but-no-session day fills
+        its cell AND extends the streak, never one without the other."""
         from datetime import date, timedelta, datetime
 
         now = datetime.now()
         adjusted_today = (now - timedelta(hours=day_start_hour)).date()
         adjusted_yesterday = adjusted_today - timedelta(days=1)
 
-        active_days = self.get_active_periods('day', day_start_hour)
-        if not active_days:
+        offset = f'-{day_start_hour} hours'
+        active_set = set(self.get_active_periods('day', day_start_hour))
+        with self._get_conn() as conn:
+            fin_rows = conn.execute(
+                "SELECT DISTINCT strftime('%Y-%m-%d', datetime(event_time, ?)) "
+                "FROM book_events WHERE event_type = 'finished'",
+                (offset,)
+            ).fetchall()
+        active_set.update(r[0] for r in fin_rows if r[0])
+        if not active_set:
             return {'current': 0, 'longest': 0}
 
         # Convert to date objects, sorted newest first
         dates = sorted(
-            [date.fromisoformat(d) for d in active_days],
+            [date.fromisoformat(d) for d in active_set],
             reverse=True
         )
 
@@ -1021,7 +1062,11 @@ class LibraryDB:
             # Flip active days on — both start and end adjusted-dates count, so a
             # midnight-spanning session marks both days. Restricted to the window
             # (IN streak_grid_cache rows) so a stray old session can't resurrect a
-            # pruned row.
+            # pruned row. A 'finished' book_event ALSO lights its day: a book taken
+            # to finished is a listened day even if no session cleared the 60s
+            # threshold — otherwise the grid shows a finished dot on an unlit cell.
+            # Finished events use the SAME day_start_hour adjustment as sessions so
+            # the dot and the fill land on the same cell (see get_streak_grid_finished_dates).
             conn.execute(
                 "UPDATE streak_grid_cache SET listened = 1 WHERE date IN ("
                 "  SELECT strftime('%Y-%m-%d', datetime(session_start, ?))"
@@ -1029,8 +1074,11 @@ class LibraryDB:
                 "  UNION"
                 "  SELECT strftime('%Y-%m-%d', datetime(session_end, ?))"
                 "  FROM listening_sessions"
+                "  UNION"
+                "  SELECT strftime('%Y-%m-%d', datetime(event_time, ?))"
+                "  FROM book_events WHERE event_type = 'finished'"
                 ")",
-                (offset, offset)
+                (offset, offset, offset)
             )
 
     def get_streak_grid_cache(self) -> dict[str, int]:
@@ -1041,15 +1089,19 @@ class LibraryDB:
             ).fetchall()
         return {row['date']: row['listened'] for row in rows}
 
-    def get_streak_grid_finished_dates(self) -> set[str]:
-        """ISO date strings (calendar dates, no day_start_hour offset) within the
-        last 364 days on which at least one book was finished. Sourced from
-        book_events (event_type='finished') — books.finished_at is never written."""
+    def get_streak_grid_finished_dates(self, day_start_hour: int = 0) -> set[str]:
+        """ISO date strings within the last 364 days on which at least one book was
+        finished. Sourced from book_events (event_type='finished') — books.finished_at
+        is never written. Uses the SAME day_start_hour adjustment as the listened-cell
+        cache so the finished dot and the listened fill land on the same grid cell
+        (a finished day is always a listened day — see build_streak_grid_cache)."""
+        offset = f'-{day_start_hour} hours'
         with self._get_conn() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT strftime('%Y-%m-%d', be.event_time) AS d "
+                "SELECT DISTINCT strftime('%Y-%m-%d', datetime(be.event_time, ?)) AS d "
                 "FROM book_events be WHERE be.event_type='finished' "
-                "AND date(be.event_time) >= date('now','-364 days')"
+                "AND date(be.event_time) >= date('now','-364 days')",
+                (offset,)
             ).fetchall()
         return {row['d'] for row in rows if row['d']}
 
@@ -1061,7 +1113,10 @@ class LibraryDB:
         COUNT re-derives the adjusted date in SQL so attribution stays in one
         place. A session counts toward this cell if its start OR end adjusted-date
         matches — mirroring build_streak_grid_cache, so midnight-spanning sessions
-        keep both days active. Only writes rows already inside the window (the
+        keep both days active. A 'finished' book_event on this adjusted date ALSO
+        keeps the cell lit — so deleting the last session on a day a book was
+        finished does NOT darken it (finished ⟹ listened, consistent with
+        build_streak_grid_cache). Only writes rows already inside the window (the
         seeded grid) — a date outside it is silently ignored to avoid resurrecting
         pruned cells.
         """
@@ -1072,6 +1127,13 @@ class LibraryDB:
             "   OR strftime('%Y-%m-%d', datetime(session_end, ?)) = ?",
             (offset, date_str, offset, date_str)
         ).fetchone()[0]
+        if count == 0:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM book_events "
+                "WHERE event_type = 'finished' "
+                "  AND strftime('%Y-%m-%d', datetime(event_time, ?)) = ?",
+                (offset, date_str)
+            ).fetchone()[0]
         conn.execute(
             "UPDATE streak_grid_cache SET listened = ? WHERE date = ?",
             (1 if count > 0 else 0, date_str)

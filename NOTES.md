@@ -14,6 +14,34 @@ fires from a `QPropertyAnimation.finished` callback (UI thread), so the existing
 correct. The recorder is NOT involved in deletes (`db.delete_session` is called straight from the
 panel) — do not route deletion notifications through `SessionRecorder`. Was REVIEW_PASS7 finding #9.
 
+## StreakGrid invariant: a 'finished' day is ALWAYS a listened day (2026-06-12)
+
+**Bug fixed:** the grid could show a finished dot on an UN-filled cell — a book taken to
+finished on a day with no session ≥ 60s lit the dot (`book_events`) but not the fill
+(`streak_grid_cache`, which is session-only). Worse, even after filling the cell, the day didn't
+count toward the streak number (`get_streaks` reads sessions only).
+
+**Rule now enforced everywhere:** `finished ⟹ listened`. A 'finished' `book_event` marks its day
+as listened in the cache, counts toward `get_streaks()` current/longest, counts in
+`StreakGrid._compute_longest_run`, AND the dot shares the filled cell. All using the **same
+day_start_hour adjustment as sessions** — finished dates used to be raw calendar dates (different
+cell for a non-midnight day-start); they are now adjusted dates so dot and fill always coincide.
+
+**The six touch-points (keep them consistent — this is the new sync invariant):**
+1. `build_streak_grid_cache` — the `listened=1` UNION includes finished adjusted-dates.
+2. `_update_streak_grid_cache_for_date` — if no session backs the day, falls through to a finished-event check before darkening (so deleting the last session on a finished day keeps it lit).
+3. `write_book_event(event_type='finished', day_start_hour=…)` — marks the cell at finish time (immediate, no rebuild needed).
+4. `unfinish_book(book_id, day_start_hour=…)` — re-evaluates the day; darkens if nothing else backs it.
+5. `delete_book_stats` — gathers finished-event days (not just session days) into its recompute set.
+6. `get_streaks` — unions finished adjusted-dates into its day set; `get_streak_grid_finished_dates(day_start_hour)` uses the adjusted date for the dot.
+
+**Date-space:** ONE space now — day_start_hour-adjusted — across sessions, finished events, cache,
+streaks, and dot. Do NOT reintroduce a raw-calendar finished date; it desyncs dot from fill.
+**Existing data self-heals:** `build_streak_grid_cache` runs on every app startup (`app.py:319`),
+so finished-but-dark days from before this fix light up on next launch — no migration.
+Cross-check still holds: `len(StreakGrid._longest_dates) == get_streaks()['longest']` (both now
+include finished days; if they diverge, an attribution change hit some sites but not all six above).
+
 ## StreakGrid — four facts that will confuse whoever touches it next (2026-06-11)
 
 The streak-grid panel (`StreakGrid` + `TasselOverlay` in `stats_panel.py`) has four non-obvious points.

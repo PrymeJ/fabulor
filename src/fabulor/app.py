@@ -813,7 +813,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_revert_finish(self) -> None:
         if self._eof_book_id is not None:
-            self.db.unfinish_book(self._eof_book_id)
+            self.db.unfinish_book(self._eof_book_id, self.config.get_day_start_hour())
             self._eof_book_id = None
             self.eof_revert_btn.hide()
             self.eof_close_btn.hide()
@@ -1433,7 +1433,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 pos = dur
                 self._set_play_icon("restart")
                 if not self._eof_event_written and self._current_book is not None:
-                    self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id)
+                    self.db.write_book_event(self._current_book.path, 'finished', book_id=self._current_book.id, day_start_hour=self.config.get_day_start_hour())
                     self._eof_event_written = True
                     self._eof_book_id = self._current_book.id if self._current_book else None
                     self._update_status_banner_ui(
