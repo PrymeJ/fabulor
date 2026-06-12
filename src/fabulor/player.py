@@ -54,7 +54,6 @@ class Player(QObject):
         self.config = config
         self.instance = None  # deferred
         self._eof = False
-        self._paused_time = None # For UI deadzone logic
         self._is_seeking = False # For UI deadzone logic
         self._undo_pos = None # For undo seek logic
         self._last_undo_click_time = 0 # For undo seek logic
@@ -422,8 +421,21 @@ class Player(QObject):
         if self._pending_local_pos is not None:
             pending = self._pending_local_pos
             self._pending_local_pos = None
-            self._seek_target = pending
-            self.instance.command_async('seek', pending, 'absolute+exact')
+            # Defensive EOF guard: mpv hangs silently if seeked within ~2s of a
+            # file's duration. `pending` is a local offset into the just-switched
+            # VT file; a cross-file seek normally lands near that file's start so
+            # this is not hit in practice, but the guard keeps the path safe if
+            # future VT logic ever lets the target land near EOF. Mirrors the
+            # same-file branch in seek_async. On skip, clear seek state so the
+            # slider isn't left waiting on a seek that never issues.
+            target_file = (self._virtual_timeline[self._current_vt_index]
+                           if self._virtual_timeline is not None else None)
+            if target_file is not None and target_file['duration'] - pending < 2.0:
+                self._is_seeking = False
+                self._seek_target = None
+            else:
+                self._seek_target = pending
+                self.instance.command_async('seek', pending, 'absolute+exact')
         if self._virtual_timeline is not None:
             self._is_vt_file_switch = False
             self.file_switched.emit()
@@ -700,23 +712,6 @@ class Player(QObject):
             self.instance = None
             instance.terminate()
             instance.wait_for_shutdown()
-
-    def get_stable_position(self):
-        """Handles 'deadzone' logic during pause/seek to prevent jitter in UI labels."""
-        mpv_pos = self.time_pos
-        if mpv_pos is None: return 0
-
-        if self.pause:
-            if self._is_seeking:
-                # Show seek target immediately; let _on_time_pos_change clear _is_seeking
-                # once mpv lands. Don't touch _paused_time yet — it's still the pre-seek pos.
-                return self._seek_target if self._seek_target is not None else (self._paused_time or mpv_pos)
-            if self._paused_time is None or abs(mpv_pos - self._paused_time) > 1.0:
-                self._paused_time = mpv_pos
-            return self._paused_time
-
-        self._paused_time = None
-        return mpv_pos
 
     # Logical Seek helpers
     def previous_chapter(self):

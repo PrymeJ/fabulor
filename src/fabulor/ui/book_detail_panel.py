@@ -1217,6 +1217,21 @@ class BookDetailPanel(QWidget):
             self._set_meta_state(_MetaActionState.LOCKED)
         else:
             self._set_meta_state(_MetaActionState.HIDDEN)
+        # Reload the cover from its source file rather than re-wrapping the
+        # currently-displayed pixmap. `to_grayscale` is lossy: re-applying it to
+        # an already-grayscaled pixmap is fine when archiving, but when
+        # UN-archiving (e.g. a location re-add resurrects this book while the
+        # panel is open) the displayed pixmap is already gray and the original
+        # colour is gone — so re-wrapping it could never restore colour. Loading
+        # from disk lets _apply_cover decide grayscale vs colour from the fresh
+        # _is_archived state. Falls back to the existing pixmap if no cover file.
+        cover_path = self.db.get_active_cover_path(self._book_path)
+        if cover_path and os.path.exists(cover_path):
+            fresh = QPixmap()
+            fresh.load(cover_path)
+            if not fresh.isNull():
+                self._apply_cover(fresh)
+                return
         cover_pixmap = self._cover_label.pixmap()
         if cover_pixmap and not cover_pixmap.isNull():
             self._apply_cover(QPixmap(cover_pixmap))
