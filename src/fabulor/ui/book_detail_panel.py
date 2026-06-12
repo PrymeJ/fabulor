@@ -1094,6 +1094,13 @@ class BookDetailPanel(QWidget):
             row.deleteLater()
             self._resize_history_container()
             self._refresh_stats()
+            # Per-session delete must refresh the *other* surfaces too. db.delete_session
+            # already invalidated the streak-grid cache cell in-transaction, but the
+            # stats panel's StreakGrid (mounted underneath this overlay when opened from
+            # a stats row) won't re-query on its own. history_deleted is already wired to
+            # stats_panel.refresh_all + library_panel.refresh (the bulk "delete all
+            # history" path uses it); reuse it here. Closes REVIEW_PASS7 finding #9.
+            self.history_deleted.emit()
 
         anim.finished.connect(_finish)
         anim.start()

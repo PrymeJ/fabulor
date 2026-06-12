@@ -1,4 +1,19 @@
 
+## Per-session delete must emit `history_deleted` to refresh the stats StreakGrid (2026-06-12)
+
+The "delete all history for this book" button (`_on_delete_book_stats_confirmed`) emits
+`BookDetailPanel.history_deleted`, which is wired to `stats_panel.refresh_all` **and**
+`library_panel.refresh` (`main_window_builders.py:556-557`). The **per-session** delete
+(`_on_history_delete_confirmed`, the 2026-06-10 `_HistoryRow` flow) originally did NOT emit it — it
+only called `_refresh_stats()` (the book-detail panel's own widgets). `db.delete_session` correctly
+invalidates the streak-grid cache cell in-transaction, but the stats panel's `StreakGrid` (mounted
+underneath the book-detail overlay when opened from a stats row) never re-queried, so a deleted day
+could keep showing as listened until a tab change. Fix: emit `self.history_deleted.emit()` in the
+per-session delete's `_finish` callback too — reuses the existing fan-out, no new signal. The emit
+fires from a `QPropertyAnimation.finished` callback (UI thread), so the existing direct connection is
+correct. The recorder is NOT involved in deletes (`db.delete_session` is called straight from the
+panel) — do not route deletion notifications through `SessionRecorder`. Was REVIEW_PASS7 finding #9.
+
 ## StreakGrid — four facts that will confuse whoever touches it next (2026-06-11)
 
 The streak-grid panel (`StreakGrid` + `TasselOverlay` in `stats_panel.py`) has four non-obvious points.
