@@ -168,161 +168,184 @@ so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 
 ---
 
-## Implemented Features (complete)
+## What's Built
 
-### Player
-- Single-file M4B playback with embedded chapter markers
-- CUE file chapter support for single-file M4B/M4A books
-  - Global setting in Settings → Library: "Embedded" (default) | ".cue"
-  - `_resolve_playlist()` detects `.cue` in folder, calls `_parse_cue()` on worker thread
-  - `_parse_cue()` validates: FILE stem match, first timestamp = 0.0, strictly increasing, all within file duration (from DB). Reads with `utf-8-sig` to handle Windows ripper BOM.
-  - On success: `_chapter_list` populated, `_virtual_timeline` stays `None`. On failure: silent fallback to embedded.
-  - `_chapter_list` being non-`None` is the cue-mode flag — no separate boolean needed.
-- Multi-file MP3/M4A/FLAC book support via Virtual Timeline (VT)
-  - `_resolve_playlist()` in player.py, run on a QThreadPool worker (async)
-  - Reads `book_files` DB table (populated at scan time) to build `_virtual_timeline`, plays the first file directly. If `book_files` is empty (no audio files found), falls back to playing the folder path as-is.
-  - Gate/ungate pattern: `_play_gated` / `_held_play` / `ungate_play()` in player.py
-  - `instance.play()` fires only from `_on_library_hidden` after slide animation completes
-- Virtual timeline (VT): `_virtual_timeline`, `_file_offset`, `_chapter_list`, `_current_vt_index`, `_pending_local_pos`, `_is_vt_file_switch`, `_last_vt_chapter`
-  - Signals: `book_ready`, `file_switched` (do not reconnect `file_loaded` to `_on_file_ready`)
-- Property caching: `time_pos`, `duration`, `pause`, `speed` cached via observe_property
-- Async seeking: `Player.seek_async(pos)` uses `command_async('seek', pos, 'absolute+exact')`
-  - All UI-driven seeks (slider, chapter, right-click, undo, VT cross-file, chapter nav) use `seek_async`
-  - Smart rewind also uses `seek_async` (unified 2026-05-28 — was `time_pos =` on non-VT, now consistent)
-  - Skip buttons, position restore remain on sync `time_pos =` path
-  - Chapter navigation always uses position-based walk + `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)` — never `self.chapter = idx`
-- Stop-and-load seek for single VBR MP3 files: `seek_async` intercepts seeks > `_MP3_SEEK_THRESHOLD` (60s) on single `.mp3` files and calls `_mp3_stop_and_load()` instead of `command_async`. Uses `loadfile start=X` which positions via the Xing/TOC header rather than stream scanning. Playback state restored in `_on_file_loaded` early-return block. `book_ready` is NOT re-emitted during reload. `_mp3_seek_visual_lock` suppresses play/pause icon flicker during the reload window. VT, M4B, and CUE paths are unaffected.
-  - MP3 seek state variables: `_play_target` (resolved file path for current book), `_mp3_seek_reload_pending` (guards `_on_file_loaded` early-return and prevents concurrent reloads), `_mp3_seek_was_playing` (pre-reload pause state for restore), `_mp3_seek_visual_lock` (suppresses icon updates during reload window). All reset in `load_book`.
-  - VT same-file stop-and-load: `_mp3_stop_and_load` takes optional `file_path` and `local_pos`. `_cached_time_pos` must be set to `local_pos` (not global `target_pos`) so the `time_pos` getter (`_file_offset + _cached_time_pos`) returns the correct global value. Setting it to global `target_pos` double-counts `_file_offset`.
-  - Concurrent reload guard: both call sites in `seek_async` include `and not self._mp3_seek_reload_pending`. Stacked `loadfile` calls cause the second `_on_file_loaded` to bypass the early-return and emit `book_ready`, triggering DB position restore.
-- `_CHAPTER_BOUNDARY_EPSILON = 0.35` — compensates for mpv's ~23ms undershoot at chapter boundaries and float drift in mpv's internal boundary representation. Lives at seek time, not save time.
-- Chapter changed signal path: `_on_time_pos_change` drives `chapter_changed` universally for all book types via position walk — VT (walks `_chapter_list` against global pos), CUE (walks `_chapter_list`), embedded M4B (walks `self.instance.chapter_list`). `_on_chapter_change` is fully suppressed (always returns). `seek_async` also emits `chapter_changed` immediately for CUE mode (where `_chapter_list` is set) as an optimistic paused-case update.
-- Per-book speed memory, global speed default, volume control
-- Smart rewind on resume
-- Undo (one level, position-at-jump stored, triggered if distance > 60s × speed)
-- `keep_open='always'` — EOF detection via `_on_pause_test` near-EOF position check, not `end-file`
+A factual reference of what the app does, by subsystem. Reflects the code as audited 2026-06-13.
+
+### Player — playback modes
+
+All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool` worker; result delivered to the Qt thread via the internal `_playlist_resolved` signal, then `_on_playlist_resolved`). Audio extensions: `.m4b`, `.mp3`, `.flac`, `.m4a`.
+
+- **Single-file M4B/M4A, embedded chapters** — one audio file, `chapter_list_source == 'embedded'` (default). mpv owns the chapter boundaries natively (`instance.chapter_list`); `_chapter_list` stays `None`.
+- **Single-file M4B/M4A, CUE chapters** — same single-file condition but source is `'cue'`. `_select_cue_file` matches a `.cue` by the Title part of the `"Author - Title"` folder name (exact then substring). `_parse_cue` validates: FILE stem matches the audio stem, first timestamp = 0.0, strictly increasing, no chapter ≥ file duration, ≥ 2 chapters; reads with `utf-8-sig` (Windows ripper BOM). On success `_chapter_list` is populated and `_virtual_timeline` stays `None` — that combination is the CUE-mode flag. On failure: silent fallback to embedded.
+- **Multi-file (MP3/M4A/FLAC) via Virtual Timeline (VT)** — folder has multiple audio files and `db.get_book_files` returns rows. `_virtual_timeline` is a list of `{file_path, cumulative_start, duration}`; `_chapter_list` is synthesized from each file row's `cumulative_start_ms` + `title`; `_book_duration` is the sum. Plays the first file directly. If `book_files` is empty, falls back to playing the folder path as-is. State: `_file_offset`, `_current_vt_index`, `_pending_local_pos`, `_is_vt_file_switch`, `_last_vt_chapter`.
+- **Single MP3** — one `.mp3`, no `_chapter_list`.
+- **No audio files** — `_resolve_playlist` returns the raw folder path; `_on_playlist_resolved` sees a directory and emits `load_failed("no audio files in folder")`.
+
+### Player — playback behaviors
+
+- **Gate/ungate** — `load_book` sets `_play_gated = True` before resolving. If resolve finishes while gated, the result is held in `_held_play`; `ungate_play()` (called from `_on_library_hidden` after the library slide finishes) clears the gate and fires `instance.play()`. Lets panel animations finish before audio starts.
+- **Property caching** — `time_pos`, `duration`, `pause`, `speed` cached via `observe_property` (`_cached_*`). `time_pos` getter adds `_file_offset` under VT; `duration` getter returns `_book_duration` under VT, else `_cached_duration`.
+- **Async seeking** — `seek_async(pos)` issues `command_async('seek', pos, 'absolute+exact')` for in-file seeks, triggers a VT file switch for cross-file seeks, or routes to `_mp3_stop_and_load` for long MP3 seeks. Used by all UI-driven seeks (slider, chapter, right-click, undo, VT cross-file, chapter nav) **and** smart rewind. Skip buttons and position restore stay on the sync `time_pos =` path.
+- **MP3 stop-and-load** — for VBR single `.mp3`: `seek_async` intercepts displacements > `_MP3_SEEK_THRESHOLD` (60s) and calls `_mp3_stop_and_load`, which pauses and issues `loadfile … start=X` (positions via Xing/TOC header, not stream-scan). VT same-file variant additionally gates on file size > `_VT_MP3_SIZE_THRESHOLD` (40 MB) and `2.0 < local_pos < duration − 5.0`. State vars (all reset in `load_book`): `_play_target`, `_mp3_seek_reload_pending` (guards the `_on_file_loaded` early-return + blocks concurrent reloads), `_mp3_seek_was_playing`, `_mp3_seek_visual_lock` (suppresses play/pause icon flicker). `book_ready` is NOT re-emitted during reload. VT same-file sets `_cached_time_pos = local_pos` (not global), else the `time_pos` getter double-counts `_file_offset`. Both `seek_async` call sites include `and not self._mp3_seek_reload_pending`.
+- **Chapter navigation** — `previous_chapter` / `next_chapter` / `seek_within_chapter` all do a position-based forward walk over `chapter_list` and `seek_async(target + _CHAPTER_BOUNDARY_EPSILON)`; never `self.chapter = idx` (exception: embedded-M4B chapter-list clicks, where mpv owns boundaries). `previous_chapter` threshold is `2.0 × speed`s past chapter start (within → previous chapter; outside → restart current). `next_chapter` is a no-op at EOF.
+- **`_CHAPTER_BOUNDARY_EPSILON = 0.35`** — compensates for mpv's ~23 ms boundary undershoot + float drift. Applied as a `<= value + epsilon` tolerance in every position→chapter walk; lives at seek time, not save time.
+- **`chapter_changed` driving** — `_on_time_pos_change` is the universal driver for all book types (VT walks `_chapter_list` against global pos; CUE walks `_chapter_list`; embedded M4B walks `instance.chapter_list`), emitting only when the index changes. `_on_chapter_change` (the mpv `chapter` observer) is fully suppressed (always returns). `seek_async` also emits `chapter_changed` synchronously for CUE mode as an optimistic paused-case update. On seek settle (`abs(global_pos − _seek_target) < 1.0`) both `_last_*_chapter` reset to −1 to force one clean emit.
+- **Smart rewind on resume** — `apply_smart_rewind(last_pause_ts, wait_min, rewind_sec)` only fires if away ≥ `wait_min` minutes; rewinds `rewind_sec × speed`, clamped to current chapter start; via `seek_async`. Config `smart_rewind_wait` / `smart_rewind_duration` (0 = disabled).
+- **Undo (one level)** — `save_seek_position(old_pos, duration_limit)` stores `_undo_pos` if unset or if more than `duration_limit`s since last undo click. `undo_seek()` seeks back via `seek_async` and clears `_undo_pos`. `duration_limit == 0` disables (config `undo_duration`, default 3s).
+- **EOF / keep_open** — mpv runs `keep_open='always'`, so nothing auto-advances/closes. `_on_end_file(reason 0)` and a secondary `_on_pause_test` check (pause True and `pos ≥ dur − 1.5`) both call `_advance_or_finish()`: VT advances to the next file (sets `_eof` on the last), non-VT sets `_eof` immediately.
+- **Seek guards** — near-EOF: `seek_async` returns early if `dur − pos < 2.0` (single-file) / `target_file['duration'] − local_pos < 2.0` (VT same-file); stop-and-load keeps its own 5s buffer. mpv hangs silently when seeked within ~2s of EOF.
+- **Per-book speed / volume** — speed keyed `speed_{path}` in QSettings (None → `default_speed`). Volume is log-scaled: `_base_volume × _fade_ratio` (the fade ratio is the sleep-timer multiplier 0.0–1.0).
+- **Signals** — `book_ready` (non-VT: from `_on_file_loaded`; VT: from `ungate_play` / `_on_playlist_resolved`, before `instance.play`), `file_switched` (VT cross-file), `chapter_changed(int)`, `load_failed(str)`. `file_loaded` is declared but driven by mpv's event, not re-emitted here.
+
+### App shell (`app.py`, `MainWindow`)
+
+`MainWindow` is a `QWidget` (not `QMainWindow`), frameless, fixed 300×564.
+
+- **Three UI states**, reconciled by `LibraryController.apply_current_state()` (called at startup, on book select/remove, on library-status change):
+  - **Empty library** — scan prompt + rotating literary quote (`book_quotes`, 60s `quote_timer`); player chrome and Library button hidden; bg image suppressed; carousel may show DB covers.
+  - **No book selected (books exist)** — transport/sliders hidden via `_set_interface_visible(False)`; `no_book_section` ("go to library") shown; bg suppressed; carousel shown.
+  - **Has book** — full chrome via `_set_interface_visible(True)`; bg restored; carousel hidden; `_load_cover_art` runs.
+- **Carousel** — `CoverCarousel` built lazily in `_show_carousel()` (guards: not already shown, no current file, `no_book_section` visible). Slides in (220 ms OutCubic), stacked under `visual_area`. Paused/resumed around theme fades via `_on_fade_state_changed`. `_hide_carousel` tears it down; it never touches bg suppression (owned by the state machine).
+- **`_set_bg_suppressed`** — sets `_bg_suppressed` (read by `ThemeManager._apply_stylesheets`), toggles `visual_area.setAutoFillBackground`, and regenerates `content_container`'s stylesheet with `get_player_stylesheet(theme, suppress_bg_image=…)` (uses `_active_display_theme` when a cover theme is live, to avoid a pool-color flash). Re-asserts transparent chapter-slider colors when `_chapter_ui_active` is False.
+- **Right-click suppression after folder dialog** — `_get_new_folder_path` restarts `_dialog_close_time` (`QElapsedTimer`); `_on_drag_area_pressed` ignores right-clicks within 500 ms of the dialog closing. Drag-area right-click is also only forwarded when `db.get_book_count() > 0`.
+- **Drag-area press** — `visual_area.mousePressEvent` is monkey-patched to `_on_drag_area_pressed`: left-click closes open panels, else toggles play/pause; empty library short-circuits. (No window-move logic lives here.)
+- **Cover scaling** — `_update_cover_art_scaling()` implements four fit modes (`fit` KeepAspectRatio / `stretch` IgnoreAspectRatio / `crop` center-crop / `top` top-aligned on black canvas), all sized to `COVER_AREA_HEIGHT` (module constant), not the live label height. No-cover books render a themed `fabulor.svg` placeholder. Cover-theme application defers while a panel is open (`_pending_cover_pixmap` → `_apply_pending_cover_theme`).
+- **200 ms `ui_timer` (`_update_ui_sync`)** — the heartbeat. Reads time/dur/pause/speed/eof; feeds `session_recorder.update_furthest_position`; on EOF synthesizes `pos = dur`, sets the restart icon, writes one `'finished'` event, shows the revert/close banner, and closes the session. Delegates to `_sync_playback_state`, `_sync_ui_render`, `_sync_progress_sliders` (skips setValue during flow anim / seeking / `flow_pending_progress`), `_sync_chapter_ui` (derives chapter from `pos`, skips during reload / no chapters / `flow_pending_chapter` / seeking), `_sync_persistence` (saves position every 0.1%, skips during drag / deadzone). Stopped during the flow animation; resumed via `_resume_ui_timer`.
+- **Keyboard** — `C` opens the chapter dropdown; `T` rotates theme (2s cooldown, pends if mid-cooldown); `Q` rotates the no-book quote (testing-only).
+- **Wheel zones** — over `visual_area`: volume ±5 (2s overlay); over `speed_button`: speed ±`speed_increment`, clamped 0.25–8.0; over `chapter_progress_slider`: seek by `max(10, chap_dur × 0.05)` with undo capture.
+- **Module-level interface classes** — thin one-way facades so controllers don't hold a raw `MainWindow`: `UIInterface` + `AppInterface` + `BrowserInterface` (→ `LibraryController`); `VisualsInterface` + `PanelInterface` + `UICallbackInterface` + `LibraryInterface` + `PlayerInterface` (→ `SettingsController`).
+- **Startup** (`__init__`) — build core objects → seed streak-grid cache → `_setup_ui` → wire timers/signals → instantiate `LibraryController` → restore last book (validated against active locations + `os.path.exists`) → `_check_library_status` → `ui_timer.start(200)` → instantiate `SettingsController` → `show()` → defer `start_idle_preload` by 4 s.
+- **Teardown** — `_on_book_removed` zeroes labels/sliders, stops animations, deactivates chapter UI, clears cover; `closeEvent` saves volume + last book/position, terminates the player, stops/joins the scanner, closes the recorder.
 
 ### UI — Player view
-- Cover art display with four fit modes (fit/stretch/crop/top), driven by `_cover_fit_mode`
-- Chapter list overlay (child widget of MainWindow, not popup)
-  - Fade in/out (600ms), expand/collapse, keyboard nav, digit jump with 800ms debounce
-  - Digit modes: by_name (word-boundary regex) / by_index (1-based), auto-play/jump-only configurable
-- Progress slider with chapter notch markers and notch reveal animation
-- Chapter progress slider
-- Flow animation on book switch (progress and chapter sliders animate between positions)
-- Theme-aware UI timer guards: `_sync_progress_sliders` and `_sync_chapter_ui` skip setValue during animation
-- `self._switch.in_deadzone` flag (`book_switch.py`) — prevents stale position display during library panel slide-out (was `_mpv_ready`)
-- Scrolling labels for title/author (ScrollingLabel)
-- Speed controls panel
-- Sleep timer panel
-- Sidebar with stats, settings, cover, book detail access
 
-### Book Detail Panel (implemented — web Claude sometimes thinks it's not)
-- Header: inline editable title, author, narrator, year fields (QLineEdit styled as labels)
-  - `_ElidingLineEdit` with 3px left margin, `setCursorPosition(0)` in read-only mode
-  - App-level event filter for click-outside detection
-  - Metadata lock feature: four independent locks (title_locked, author_locked, narrator_locked, year_locked) persist changes across rescans
-  - Unified metadata action button (`_meta_action_btn`, 24×24 QToolButton in right column below close button)
-    - DIRTY state: save icon, click to save changes and set locks
-    - LOCKED state: lock icon, click to unlock all four fields
-    - UNLOCKED state: lock-open icon, auto-hides after 2.5s
-    - HIDDEN state: button invisible when no locks and not editing
-  - Click-outside dismissal: reverts to pre-edit state (LOCKED if locked before, HIDDEN if not)
-- Stats tab: furthest position `_RangeBar`, remaining time (speed-aware), last session row, recent history `SessionListWidget`
-- History tab: full `SessionListWidget` (same data, separate widget)
-- Tags tab: FlowLayout chip display, add field with QCompleter, remove buttons
-  - Per-book limit: 5 tags. Global limit: 50 unique tags.
-  - `_tag_display_label` always visible with `setFixedHeight(38)` — tag row always reserves height
-  - Completer popup styled directly via `_style_completer_popup()` (lazy init, styled on first keystroke)
-- Header cover: 80×120 fixed-width, updated on active cover or fit mode change
-- Duration label: wall-clock by default, toggles to speed-adjusted on click
-  - Cursor disabled (arrow) and toggle disabled when speed is 1.0x (uses tolerance `abs(speed - 1.0) < 1e-9`)
-  - Sourced from `config.get_book_speed()` with fallback to `config.get_default_speed()`
+- Cover art (four fit modes, above). Themed SVG placeholder for no-cover books.
+- **Chapter list overlay** (`chapter_list.py`, `ChapterList`) — `QListWidget` child positioned absolutely; fade in 450 ms / out 300 ms (opacity → 0.94); `ROW_HEIGHT 24`, default `VISIBLE_ROWS 5`. Expand/collapse (button shown only when count > visible; Left/Right arrows toggle). Keyboard: Up/Down nav, Enter activate (no force-play), Space activate (force-play), Esc/`C` close. Digit jump: buffer + 800 ms debounce; `by_index` (1-based) or `by_name` (word-boundary regex); autoplay configurable. Activation uses `seek_async(+epsilon)` for VT/CUE, native `chapter = idx` for embedded M4B.
+- Progress slider with chapter notch markers + notch reveal animation; separate chapter-progress slider; flow animation on book switch (both sliders animate between positions); UI-timer guards skip setValue during animation.
+- `self._switch.in_deadzone` (`book_switch.py`) prevents stale position display during the library slide-out.
+- Scrolling title/author labels (`ScrollingLabel`). Speed-controls panel, sleep-timer panel, sidebar (stats/settings/cover/detail access).
 
-### Cover Panel (implemented)
-- Up to 4 user cover slots (sort_order 1–4) + 1 locked scanner cover (sort_order=0)
-- `_left_col` fixed height: `n × 72 + max(n-1, 0) × 6`, updated via `_update_left_col_height()`
-- Preview: 205×270 fixed. Top/Crop rendered as w×w square centered in w×h canvas (letterbox bars)
-- Overlay suppressed when sole cover is locked
-- Fit mode propagates to main window on active cover change
-- `_load_cover_art` has early-return for no-cover books → shows "author - title"
-  - `library_controller.apply_library_state` does NOT pass `show_metadata=False` when `has_book=True` — do not restore this, it was a bug
+### Book Detail Panel (`book_detail_panel.py`)
 
-### Library Panel
-- Qt model/view: `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)`
-- Five view modes: 1/2/3-per-row grid, square, list (no list-mode `setIndexWidget`)
-- `_cover_cache` keyed by `book.id` (int), not `book.path`
-- `CoverLoaderSignals.cover_loaded` signal: `Signal(int, QImage)` — int is book_id, QImage converted to QPixmap on main thread
-- Viewport-aware cover loading (`_load_visible_covers` uses binary search on visualRect)
-- Idle preloader: batches of 3, 50ms intervals, starts 4s after launch, pauses on interaction
-- Search: plain text, `#tag` prefix, `>NNNN`/`<NNNN` year filters, range combos
-  - No-match: red background on search field, fallback to all books
-  - Incomplete year filter (`<` or `>` with partial digits) never shows red
-- Sort by title/author/recent/progress/duration/year with asc/desc toggle
-- `_on_sort_changed` and `_toggle_sort_direction` fire `singleShot(0, _load_visible_covers)` after sort
+`QTabWidget` (`stats_tabs`) with four tabs + a header:
 
-### Stats Panel
-- Day/Week/Month tabs with `BookDayRow` and `SessionListWidget`
-- Timeline tab — two swappable views (deferred via `singleShot(0, _refresh_time)`):
-  - `HourlyHeatmap` — 24h × 14-day intensity grid.
-  - `StreakGrid` — 364-day calendar (26×14, today top-left), consumes the `streak_grid_cache` backend.
-    Listened cells filled accent; longest consecutive run gets a `accent.lighter(150)` inside border
-    (per-theme override `streak_longest_border`); finished dates get a centered dot; left gutter shows
-    the current-streak clock icon + number. Longest-run dates are computed in-widget
-    (`_compute_longest_run`) — `get_streaks()` returns only counts.
-  - `TasselOverlay` — a sliver tab pinned top-left that toggles the two views (clock↔calendar icon);
-    `setVisible` swap with an `animate_conceal`→`animate_reveal` transition. Both grids + the tassel are
-    children of the Timeline tab widget; `_show_streak_grid` (seeded from `config.get_default_timeline_view()`)
-    is the live flag. ⚙ tab has a "Default timeline view" Streak/Heatmap setting (persists default only).
-- Finished books tab
-- Tag manager (⚙ tab): `TagManagerWidget` — list view and tag panel view
-  - DB methods: `get_all_tags`, `get_books_by_tag`, `rename_tag`, `delete_tag`, `get_unique_tag_count`
-  - Tag-panel reserved row (`_reserved_row`, the `QStackedLayout` holding empty / color-picker / delete-confirm pages) is fixed at **21px** (`tag_manager.py:336`), not overridden anywhere. (Pass 8 #2 corrected a stale "32px" figure that was only ever in an audit checklist, never the code or any doc.)
-- Period cache: `_cached_active_days/weeks/months`, invalidated in `refresh_all`/`refresh_current_tab`
-- `_add_row_safely` helper: hide-before-insert, show-after, wrapped in `setUpdatesEnabled(False/True)` — fixes first-visit flash
-- `_inject_active_covers(rows)` — enriches row dicts with `"active_cover_path"` from `book_covers` before widget construction. Must be called at every `BookDayRow`/`FinishedBookThumb` construction site.
-- `on_cover_changed(book_path, cover_path)` — targeted refresh: walks visible tab's rows via `_iter_day_rows`/`_iter_finished_thumbs`, calls `refresh_cover` on matching widgets only. No tab rebuild.
-- `BookDayRow.refresh_cover` and `FinishedBookThumb.refresh_cover` — evict cache entry, re-trigger worker. On empty `cover_path` (last cover removed), restore placeholder immediately without spawning a worker.
+- **Header** — four inline-editable `_ElidingLineEdit` fields (title/author/narrator/year, read-only at rest, click to edit; year has a `-?\d*` validator; narrator+year always shown in edit mode). Escape / click-outside cancels via the app event filter. 80px-wide / 120px-max header cover (`_render_logo_placeholder` fallback, grayscale for archived books). `_finished_label` (always visible) toggles manual finish/unfinish with a 7s confirm. `_remove_btn` excludes the book (7s confirm); archived books show `_ghost_label` instead.
+- **Metadata locks** — `_locks` dict (title/author/narrator/year). The unified `_meta_action_btn` (24×24) is driven by `_MetaActionState`: `HIDDEN` / `DIRTY` (save icon → save + lock changed fields) / `LOCKED` (lock icon → clear all locks) / `UNLOCKED` (lock-open, auto-reverts after 2500 ms).
+- **Stats tab** — furthest-position `_RangeBar` + %; a grid of Remaining (speed-aware) / Total listened / Sessions / Last session / Started / Finished; a non-scrolling `_RecentHistoryWidget` (up to 4 recent sessions).
+- **History tab** — full scrollable `_HistoryRow` list; per-row hover-reveal trash → slide-in "Delete this session?" confirm; "Delete listening history" with a 7s confirm; emits `history_deleted`.
+- **Tags tab** — `FlowLayout` chip container + input with a debounced (200 ms) case-insensitive `QCompleter`; per-book limit 5 (input hidden at 5); a tag display strip above the tabs (clickable colored dots → `tag_filter_requested` in library context).
+- **Cover tab** — embeds a `CoverPanel`.
+- **Duration label** (`_ClickableLabel`) — wall-clock by default; click toggles to speed-adjusted ("Xh Ym at N.Nx"); cursor/toggle disabled at 1.0×.
+- Signals: `close_requested`, `history_deleted`, `metadata_saved`, `tags_changed`, `active_cover_changed(book_path, cover_path)`, `book_removed`, `tag_filter_requested(str)`, `open_tag_manager_requested`.
 
-### Theme System
-- 50+ named themes in themes.py. Per-component stylesheets (never `main_window.setStyleSheet()` globally)
-- `ThemeManager._apply_stylesheets(theme_name, hover=False)` dispatches to 7 components
-- Cover-art based dynamic theme via colorthief (with pool / exclusive modes)
-- Theme hover preview with 200ms snapback
-- Theme rotation (manual, timed, panel-aware deferral via `_pending_rotation`)
-- Overlay fade (750ms) — `snap_theme_forward()` on panel open; `abort_theme_fade()` on panel close
-  - `user_initiated` flag: automatic changes snap when Themes tab (index 0) is active
-  - Themes tab remains QSS-driven (per-element animation ruled out — see SESSION.md 2026-05-10)
-  - `_SNAPBACK_FADE_MS = 200`, `_THEME_SWITCH_FADE_MS = 750`, `_PANEL_ANIM_GUARD_MS = 700` at top of theme_manager.py
+### Cover Panel (`cover_panel.py`)
+
+- Up to 4 user covers (slots 1–4) + 1 locked scanner cover (slot 0). Add via `QFileDialog` (`.jpg/.jpeg/.png`, validated ≤ 5 MB), saved as JPEG; first user cover auto-activates. Locked covers can't be deleted; `_add_btn` hidden at 4 user covers.
+- `CoverThumbnail` 72×72 with a 17px bottom hover overlay (× delete / ✓ set-active, both suppressed when not applicable; overlay fully suppressed when the sole cover is locked); 2px accent border on the active cover.
+- Preview `QLabel` fixed **208×266**, four fit modes (`fit` letterbox / `stretch` / `top` top-anchored crop / `crop` center-crop), persisted per cover via `db.set_fit_mode`. Fit buttons (exclusive `QButtonGroup`) hidden until a cover is selected.
+- `_left_col` height = `n × 72 + max(n−1, 0) × 6`. Active-cover change persists via `db.set_active_cover` and emits `active_cover_changed(file_path)` (`""` when none remain).
+
+### Library Panel (`library.py`)
+
+- `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)` + `LibraryPanel`. Shared module-level `_cover_cache` keyed by `book.id` (int).
+- **Five view modes** (`VIEW_MODES`): 1-per-row, 2-per-row, 3-per-row, Square, List. Display names are randomized literary puns (reshuffle on `hideEvent`). List mode draws an animated left-edge stripe (`_pulse_timer` 40 ms) on the playing book and supports hover-fade (Off/Slow/Normal/Fast); 1- and 2-per-row support hover text-scroll.
+- **Sort** (`SORT_KEY_MAP`): Title, Author, Last Played, Progress, Duration, Year, Finished. "Progress"/"Finished" appear only when such books exist (`has_books_with_progress` / `has_finished_books`). Direction toggle (`↑`/`↓`) defaults per key via `_SORT_DIRECTION_DEFAULTS`, persisted to config.
+- **Search/filter** — plain text (title/author/narrator/exact 4-digit year), `#tag` prefix (`get_paths_for_tag_prefix`; `#` alone = all), year filters `>NNNN` (≥) / `<NNNN` (≤) / ranges (both orderings). No-match: search field turns dark-red and the model falls back to the full list (never empty); incomplete year expressions never show red. Right-click clears the field; persistence is per-classification (`persist_filter_tag/year/text`).
+- **Cover loading** — `_load_visible_covers` binary-searches visual rects (±5 row pad), dispatches `CoverLoaderWorker` (caps to 226×344). Idle preloader: `start_idle_preload` queues in sort order, `PRELOAD_BATCH_SIZE = 3` every `PRELOAD_INTERVAL_MS = 50` ms, starts 4s after launch, pauses on interaction. `_on_cover_loaded` skips the `dataChanged` emit while `_is_animating`.
+- `BookDelegate._resolve_playback` returns `(pos, dur, dur_disp, pct, has_progress, speed)`; `has_progress` (gated on `progress > MIN_PROGRESS` = 1.0s) is what shows the elapsed/bar/percentage and applies per-book speed to the displayed duration. Clicking the time label toggles remaining/total. All delegate colors are injected `Property(QColor)` for theme animation.
+
+### Stats Panel (`stats_panel.py`)
+
+- **Tabs**: Overall, Timeline, Day, Week, Month, ⚙.
+  - **Overall** — `BarChartWidget` (last 7 days; click a bar → Day tab at that date); stat grid (Listening time, Books started, Sessions, Longest/Last/Average session, Current/Longest streak); "Recently finished" `FinishedScrollRow` (≤ 20, hidden when empty).
+  - **Timeline** — both `HourlyHeatmap` and `StreakGrid` built, one visible (default from `config.get_default_timeline_view()`); `TasselOverlay` toggles them with a conceal→reveal transition.
+  - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), `BookDayRow` list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`.
+  - **⚙** — day-start hour `QSpinBox` (0–23, rebuilds streak cache), period scroll-acceleration toggle, default-timeline-view toggle, "Reset all stats" (7s confirm).
+- **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal (1000 ms) / conceal (600 ms) + cascading column labels.
+- **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small centered dot (`_finished` set, `streak_finished_dot` per-theme override); the longest consecutive run is highlighted with a **derived `_longest_fill` color** (hue/sat/value shift, `streak_longest_fill` override), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + count (dimmed when today not yet listened). Same wave animation as the heatmap.
+- **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon ↔ calendar icon. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out.
+- **Widgets**: `BookDayRow` (48×48 cover, elided title/author, `pct_start · pct_end | +delta`; archived dimmed, finished/deleted styled), `FinishedBookThumb` (47×47 crop), `SessionListWidget` (scrollable session rows: timestamp / delta% / `_RangeBar` / end%), `_RangeBar` (flat start→end fill bar with animatable colors; also used by the detail panel).
+- **Data flow** — period caches (`_cached_active_days/weeks/months`) invalidated on tab change / `refresh_all`. `_inject_active_covers(rows)` adds `active_cover_path` from `book_covers` (must run at every `BookDayRow`/`FinishedBookThumb` site). `on_cover_changed(book_path, cover_path)` does a targeted refresh of the visible tab only (`_iter_day_rows` / `_iter_finished_thumbs` → `refresh_cover`); empty cover restores the placeholder without a worker.
+
+### Tag Manager (`tag_manager.py`, `TagManagerWidget`)
+
+- Two alternating child widgets (not a `QStackedWidget`): **list view** (tag rows: colored dot, name ≤ 20 chars, book-count badge) and **tag panel** (back, name edit, reserved 21px row, book grid).
+- **Rename** — typing flips the single `_action_btn` to save mode; Enter/click → `db.rename_tag`; success shows a check for 2000 ms; name-taken shows a red save icon (`save_error`); Escape/click-outside reverts.
+- **Delete** — trash → reserved row shows a "Click to delete the tag" confirm (7s), grid locked; confirm → `db.delete_tag`.
+- **Color** — clicking the dot shows a 9-swatch + neutral picker (`db.set_tag_color`); mutually exclusive with delete-confirm.
+- **Remove book from tag** — left-click a `_TagBookThumb` → `db.remove_book_tag` (deletes the tag if it was the last book); right-click → `detail_requested`.
+- `TAG_COLORS`: 9 named (coral/peach/lemon/lime/mint/sky/lavender/rose/white) + neutral. `MAX_TAG_LENGTH = 20`. Per-book limit 5, global 50 unique (enforced in `db.add_book_tag`). `_TagBookGrid` 5 columns; `set_locked` routes clicks through the parent. Completer popup styled by `_style_completer_popup` on each keystroke + theme change.
+
+### Theme System (`theme_manager.py`)
+
+- 50+ named themes (`themes.py`); per-component stylesheets — never `main_window.setStyleSheet()` globally. `_apply_stylesheets(theme_name, hover)` dispatches to: base/main window, title bar, `content_container` (`get_player_stylesheet`, `suppress_bg_image` flag), library (skipped during hover), chapter list (skipped during hover), settings/speed/sleep panels, stats + book-detail panels, sidebar; then `_reload_button_icons` + `_set_chapter_ui_active`.
+- **Hover preview + snapback** — hover applies at half the fade duration; un-hover snaps back to the cover theme (if active) or current theme at `_SNAPBACK_FADE_MS = 200`.
+- **Overlay fade** — `_fade_overlay` `QLabel` + `_fade_anim` (opacity 1→0, `_THEME_SWITCH_FADE_MS = 750`). When the Themes tab is inactive, sliders are punched out of the overlay mask and their `bg_color`/`fill_color`/`notch_color` animate separately; time/chapter labels are frozen (`FreezableLabel`) before the grab to prevent ghosting. `snap_theme_forward()` (panel open) and `abort_theme_fade()` (panel close) short-circuit the fade.
+- **Rotation** — `rotation_timer` every `interval` minutes; `_rotate_theme` skips in `exclusive` cover mode and defers (`_pending_rotation`) while a panel is open (`_fire_pending_rotation` retries 3s after close). Selection excludes the current theme + recent (`deque(maxlen=10)`), relaxes below `_MIN_POOL = 4`, then inverse-distance-weights by perceptual distance (`_EXCLUSION_THRESHOLD = 0.5`). Automatic changes snap instantly when the Themes tab is active. `_PANEL_ANIM_GUARD_MS = 700`.
+- **Cover-art dynamic theme** — `apply_cover_theme(pixmap)` (modes `off` / `with_pool` / `exclusive`); `clear_cover_theme` reverts. `_cover_pool_btn`: left-click toggles off↔with_pool, right-click activates immediately.
+
+### Panels (`panels.py`, `PanelManager`)
+
+- Manages sidebar, library, settings, speed, sleep, stats, tags, book-detail, and chapter-list visibility. All slide via `QPropertyAnimation` on position; re-entry guarded.
+- Library slides full-width from the left (sets `_is_animating` to suppress cover emits; `refresh()` on shown). Settings/speed/sleep/stats/tags slide from the left at 90% width, fixed 500px height. **Book detail uniquely enters from the right.** Optional blur animation (`blur_effect.blurRadius` 0↔10) per `config.get_blur_enabled`.
+- Sidebar uses a queued-open pattern (closes first, then dispatches the panel). `_on_library_hidden` ends the deadzone (`mw._switch.library_revealed`), calls `ungate_play`, then drains deferred file-ready events or applies the pending cover theme.
+
+### Controls & widgets (`controls.py`, `audio_controls.py`, `carousel.py`, `icon_utils.py`, `text_context_menu.py`)
+
+- **`ClickSlider`** — animatable `bg_color`/`fill_color`/`notch_color`/`notch_opacity`/`animatedValue` properties; `animate_to` (200–600 ms distance-scaled); `when_animations_done` chains flow then reveal; chapter-notch reveal animation (`revealedCount`, mirrored to seek direction, alternating tick halves); optional center mark + snap-to-center; right-click emits a ratio and snaps to markers.
+- **`FreezableLabel`** — `setText` is a no-op while frozen (pins labels during theme fades). **`ScrollingLabel`** (extends it) — horizontal marquee with Slow/Normal/Off modes, animatable `text_color`, `clicked`. **`HoverButton`** — `hovered`/`unhovered`/`rightClicked`. **`ShimmerButton`** — `play_shimmer()` runs an 800 ms diagonal glint.
+- **`AudioSettingsTab`** — normalisation, voice boost, stereo/mono, channel swap, L/R balance slider (−100..100, snap-to-center). Each change calls `player.apply_audio_processing(...)`; a reset button appears only when something is non-default.
+- **`CoverCarousel`** — decorative scrolling strip, fixed 300px wide; static when ≤ 3 covers, else gapless looping scroll (`_TICK_MS = 33`, time-delta based); staggered reveal (first at 375 ms, then every 75 ms) with a fade-in; 1px top/bottom stripe lines; `set_stripe_color` / `stop` / `start`.
+- **`icon_utils`** — `render_logo_placeholder` (themed `fabulor.svg`), `render_logo_placeholder_bordered`, `load_themed_icon` (LRU 64; swaps `#000000` fills/strokes — for black-paint icons), `load_currentcolor_icon` (LRU 64; regex-replaces all non-`none` fills/strokes — for `currentColor` SVGs like clock/calendar).
+- **`ContextIconMenu`** — single shared frameless popup with Cut/Copy/Paste/Delete (each enabled by selection/clipboard/read-only state), themed, clamped within the window.
 
 ### Settings Panel
-- Themes tab, Controls tab, Audio tab (WAL + other DB settings), Library tab
-- Controls tab: chapter digit mode (by_name/by_index), auto-play/jump-only toggle
-- Library tab: naming pattern, folder management, chapter source (Embedded / .cue)
 
-### Session Recording
-- DB: `listening_sessions`, `book_events` tables. WAL mode. Index on `book_id`.
-- `listening_sessions`, `book_events`, and `book_tags` use `book_id INTEGER REFERENCES books(id)` as their book FK. `book_path` columns are retained but deprecated — not written or queried, not dropped. Orphaned rows (path no longer in `books`) keep `book_id = NULL` and still surface in stats via LEFT JOIN.
-- 60s wall-clock threshold, 3min pause timeout, 15s seek credit
-- `started_at`, `finished_at` on books table
+- Themes tab, Controls tab (chapter digit mode by_name/by_index, autoplay/jump-only toggle), Audio tab, Library tab (naming pattern, folder management, chapter source Embedded/.cue). Bound dynamically via `SettingsController` through the five interface facades.
 
-#### SessionRecorder (`session_recorder.py`)
-All session state and persistence logic lives in `SessionRecorder(QObject)`, not `MainWindow`. `MainWindow` holds `self.session_recorder` and delegates all lifecycle calls to it. `_current_book` stays on `MainWindow` — the recorder receives it via `get_book_fn=lambda: self._current_book`.
+### Library state machine, scan & covers (`library_controller.py`, `library/`)
 
-**Public API:**
-- `open()` — start a new session (first play after no active session)
-- `resume()` — resume after a short pause (< 3 min window)
-- `pause()` — accumulate segment time, start 3-min timeout
-- `close()` — flush to DB if ≥ 60s listened, reset all state
-- `update_furthest_position(pos)` — called from the 200ms UI loop; replaces inline furthest-pos tracking that was in `_update_ui_sync`
-- `notify_seek(new_pos)` — called from slider released handlers; replaces duplicated seek-credit logic
-- `is_active` — property, True when session is open
+- **`compute_library_state`** → `{mode, has_book, has_locations, has_indexed_books}`. `mode` is `empty` (no locations OR no visible indexed books), `scanning` (locations + indexed + scanner running), or `ready`. `has_book` derives from `app.get_current_file()`; `has_indexed_books` from `get_visible_book_count()`.
+- **`apply_library_state`** branches: **empty** (hide chrome/Library button/carousel, suppress bg, rotate quote, set prompt by sub-state: no-locations / scanning / no-books); **no-book** (show Library button, hide prompts, show metadata "go to library", suppress bg, show reshuffled carousel); **has-book** (show Library button, hide carousel, restore bg, delegate metadata visibility to `_load_cover_art`).
+- **`apply_current_state`** is the sole compute+apply entry point (no scan side effects). **`_check_library_status(manual, force_refresh)`** = `apply_current_state` + `handle_background_tasks` (starts a scan when manual, force, or no indexed books, and not already scanning).
+- **Location flows** — add (`_on_scan_now_clicked`): abspath-normalize, dedupe against sub/parent existing locations, `add_scan_location`, then **synchronous** `restore_books_under_path` (un-soft-deletes `is_deleted=1, is_excluded=0` books under the path), refresh, `_check_library_status(manual=True)`. Remove: `remove_scan_location` (soft-delete), unload the current book if it was under a removed folder, refresh. Excluded books stay hidden through both.
+- **Scanner** (`scanner.py`) — `LibraryScanner` owns a `QThread`; `ScannerWorker` does the work, cancellable via a `threading.Event`. Phase 1 discovers one-level-deep book folders (any audio extension). Phase 2 builds `known_paths` from `get_all_book_paths()` (ALL rows regardless of flags) — on a non-force scan, known (incl. excluded/deleted) paths are skipped and NOT resurrected; a force scan re-extracts everything and `upsert_books_batch` resets both flags. Extracts cover (external image file → embedded tag), narrator/title/author/year (tag priority chains → folder-name fallback), `book_files` (multi-file only), summed duration; generates a 226×344 JPEG thumbnail under the cache dir and upserts a locked scanner cover (slot 0) if none exists.
+- **Cover manager** (`cover_manager.py`) — `get_covers_dir` (user data dir), `save_cover_image`, `delete_cover_file`, `validate_cover_file` (size-only ≤ 5 MB).
 
-**Signal:** `session_written` lives on `SessionRecorder`, not `MainWindow`. Connect via `self.session_recorder.session_written.connect(...)`.
+### Database (`db.py`)
 
-**DB migration status:**
-- `set_started_at` / `get_book_started_at` — fully migrated to `book_id` (no `book_path` lookup). No other call sites outside `session_recorder.py`.
-- `write_session` / `write_book_event` — still dual-write `book_path` + `book_id`. `book_path` columns not yet dropped — pending final column drop pass.
+- SQLite, WAL per connection, `sqlite3.Row` factory, auto-commit/rollback context manager.
+- **Tables**: `scan_locations`; `books` (+ `progress`, `year`, `started_at`/`finished_at`, `chapter_source`, soft-delete `is_deleted`/`is_excluded`, four `*_locked` flags); `listening_sessions` (+ `book_id` FK, `furthest_position`); `book_events` (+ `book_id`, `event_type`, `source`); `book_tags` (`book_id`); `tags` (name PK, color); `book_covers` (locked/active/fit_mode/sort_order); `book_files` (sort_order, duration_ms, cumulative_start_ms, title); `streak_grid_cache` (date PK, listened) — a 364-row rolling window.
+- **Soft-delete flags** — `is_deleted` set by `remove_scan_location`, cleared by `restore_books_under_path` (only when `is_excluded=0`) or any upsert; `is_excluded` set by `set_book_excluded`, untouched by removal/restore, cleared only by a force-rescan upsert. "Visible" = both 0. `get_book_count()` (all rows, for stats) vs `get_visible_book_count()` (library); `get_all_book_paths()` is unfenced (drives the scanner's `known_paths`).
+- **Upserts** — `upsert_book` / `upsert_books_batch` share identical SQL (execute vs executemany). ON CONFLICT guards: title/author updated only if not `*_locked`; narrator/year additionally NULLIF-guarded against empty/null; `progress` via `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)`; `is_deleted`/`is_excluded` always reset to 0. The two must stay in lockstep.
+- **Sessions/events** — `write_session` dual-writes `book_path` + `book_id` and updates the streak grid for the start and end dates; `write_book_event` writes events (only `source='playback'` finished events light a grid cell). `unfinish_book` / `clear_finished` / `delete_session` / `delete_book_stats` all re-evaluate the affected grid cells. `set_started_at` only writes when NULL.
+- **Stats queries** — `get_book_stats`, `get_overall_stats`, `get_last_n_days` (zero-fills gaps in Python), `get_active_periods`, `get_listening_time_per_period`, `get_books_listened_in_period`, `get_daily_book_breakdown`, `get_finished_in_period`, `get_recently_finished`, `get_streaks`, `get_hourly_heatmap` (splits sessions across clock-hour boundaries in Python, caps 3600s/hour, wall-clock with no day-start offset). Stats queries are intentionally unfenced by the soft-delete flags and use `COALESCE(b.title, ls.book_title)` over LEFT JOINs so deleted books keep their title. Per-book period positions use correlated subqueries (and `has_finished_books` uses `EXISTS`) to avoid cartesian fan-out.
+- **Streak grid** — `build_streak_grid_cache` seeds 364 dates at 0 then flips any date with a qualifying session (start OR end) or `source='playback'` finished event to 1; `_update_streak_grid_cache_for_date` does incremental updates; all date attribution uses a SQL `day_start_hour` offset (passed in, never read from config). **Invariant: a finished day is always a listened day** — a playback-finish lights its cell even with no session; manual (`source='manual'`) finishes never touch the grid (visible in Finished tab/detail only).
+- **Tags** — `add_book_tag` (lowercased, ≤ 20 chars; per-book 5, global 50 limits), `remove_book_tag`, `get_all_tags` (LEFT JOIN color), `get_books_by_tag`, `get_paths_for_tag_prefix`, `rename_tag`, `delete_tag`, `set_tag_color`, `get_tag_suggestions`. **Covers** — `get_active_cover[_path]`, `get_covers_for_book`, `upsert_cover`, `set_active_cover` (maintains the single-active invariant manually), `set_fit_mode`, `delete_cover`.
+
+### Session Recording (`session_recorder.py`)
+
+`SessionRecorder(QObject)` owns all session state/persistence; `MainWindow` holds one and delegates. `_current_book` stays on `MainWindow` (passed via `get_book_fn`); day-start hour via `get_day_start_hour_fn`.
+
+- **Lifecycle**: `open()` (start, seed furthest position, start checkpoint timer), `resume()` (after a short pause), `pause()` (accumulate the segment, start the 3-min `_pause_timer`), `close()` (accumulate, flush to DB if `listened ≥ 60`, reset). `is_active` property.
+- **Thresholds**: 60s wall-clock minimum (else discarded), 3-min pause timeout (auto-close), 15s **seek credit** — a forward seek past the furthest sets `_post_seek_pending_position` and starts `_seek_credit_timer`; staying 15s promotes it (a backward seek cancels). `notify_seek(new_pos)` from slider-released handlers feeds this; `update_furthest_position(pos)` from the 200 ms loop advances the furthest only when no seek credit is pending.
+- **Persistence**: `write_session` dual-writes `book_id` + `book_path` + title/author/duration + start/end/positions + `furthest_position` + `listened_seconds` + `day_start_hour`; sets `started_at` if unset; runs on a daemon thread and emits **`session_written`** (lives on the recorder, not `MainWindow`). A `session_checkpoint.json` is written every 30s and recovered on startup (writes a session if ≥ 60s, without emitting `session_written`).
+
+### Config (`config.py`)
+
+`QSettings("Fabulor", "Fabulor")`; `_safe_int`/`_safe_float` guard list-typed returns.
+
+- **Playback**: `volume` (100), `skip_duration` (10s), `long_skip_duration` (1 min), `smart_rewind_wait`/`smart_rewind_duration` (0 = off), `speed_increment` (0.1), `default_speed` (1.0), `speed_{path}` (per-book, None), `pos_{path}` (0.0), `last_book` (""), `sleep_duration` (30 min), `sleep_mode` ("timed" | "end_of_chapter"), `sleep_fade_duration` (0s), `undo_duration` (3s), `chapter_list_source` ("embedded" | "cue").
+- **Audio**: `voice_boost_enabled`, `norm_enabled`, `mono_enabled`, `channels_swapped`, `balance` (0.0).
+- **Library**: `naming_pattern` ("Author - Title"), `library_sort_key`/`library_sort_ascending`/`library_view_mode`, `persist_filter_enabled`/`persist_filter_tag`/`persist_filter_text`/`persist_filter_year`.
+- **UI/Theme**: `theme`, `blur_enabled`, `theme_fade_duration` (750 ms), `theme_rotation_interval` (0 = off), `cover_art_theme_mode` ("off"|"with_pool"|"exclusive"), `show_remaining_time` (true), `scroll_mode`, `hover_fade_mode`, `chapter_hints_mode`, `chapter_notches_enabled`, `chapter_notch_animation_enabled`, `chapter_digit_mode` ("by_name"), `chapter_digit_autoplay`.
+- **Stats/Timeline**: `day_start_hour` (0), `default_timeline_view` ("heatmap"|"streak"), `streak_grid_cache_date`, `stats_accel_scroll`.
+
+### Assets & quotes
+
+- `assets.py` — `get_asset_path(relative)` resolves into the bundled `assets/` dir; `ICON_PATH` for the app icon.
+- `book_quotes.py` — `BOOK_QUOTES`: 32 `(text, title, text_size, title_size, color, text_align)` literary quotes; `LibraryController._rotate_quote` picks one and renders it as HTML in the empty state.
 
 ---
 
@@ -486,4 +509,4 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-03 — file tree synced with tracked sources (added session_recorder.py, book_quotes.py, assets.py, library/cover_manager.py, models/, ui/audio_controls.py, ui/carousel.py, ui/icon_utils.py, ui/text_context_menu.py; corrected models/book.py path; updated descriptions for themes.py suppress_bg_image, theme_manager.py _bg_suppressed, tag_manager.py, stats_panel.py, controls.py FreezableLabel); bg-image suppression invariant added to Critical Architecture Rules.*
+*Last updated: 2026-06-13 — replaced the stale "Implemented Features (complete)" section with a full "What's Built" audit (5-agent factual sweep over app.py, player.py, session_recorder.py, config.py, db.py, scanner.py, cover_manager.py, library_controller.py, and all ui/ panels). Corrections vs. the old section: cover preview is 208×266 (not 205×270); StreakGrid longest-run uses a derived `_longest_fill` color with `streak_longest_fill`/`streak_finished_dot` per-theme overrides (not an `accent.lighter(150)` border / `streak_longest_border`); `write_session`/`write_book_event` still dual-write `book_path` + `book_id` (the old section claimed `book_path` was no longer written). Added previously-undocumented subsystems: app-shell UI states/wiring, carousel, controls/widgets, audio controls, icon utils, context menu, panels, full DB query inventory, scanner internals, cover manager, config key map, checkpoint recovery.*
