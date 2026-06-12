@@ -622,18 +622,33 @@ class LibraryDB:
         'year':  '%Y',
     }
 
-    def get_active_periods(self, granularity: str, day_start_hour: int) -> list[str]:
+    def get_active_periods(self, granularity: str, day_start_hour: int,
+                           include_playback_finished: bool = False) -> list[str]:
+        """Periods with at least one session. With include_playback_finished, a
+        period also counts if a playback (EOF) finish landed in it — so a book
+        finished without a qualifying session still surfaces in Day/Week/Month.
+        Manual (source='manual') finishes never create a period. get_streaks()
+        relies on the default False to keep its session-day input unchanged (it
+        unions playback-finished dates itself)."""
         if granularity not in self._GRANULARITY_FORMATS:
             raise ValueError(f"Invalid granularity: {granularity!r}")
         fmt = self._GRANULARITY_FORMATS[granularity]
         offset = f'-{day_start_hour} hours'
-        with self._get_conn() as conn:
-            cursor = conn.execute(
-                "SELECT DISTINCT strftime(?, datetime(session_start, ?)) AS period"
-                " FROM listening_sessions"
-                " ORDER BY period DESC",
-                (fmt, offset)
+        sql = (
+            "SELECT DISTINCT strftime(?, datetime(session_start, ?)) AS period"
+            " FROM listening_sessions"
+        )
+        params = [fmt, offset]
+        if include_playback_finished:
+            sql += (
+                " UNION"
+                " SELECT DISTINCT strftime(?, datetime(event_time, ?))"
+                " FROM book_events WHERE event_type = 'finished' AND source = 'playback'"
             )
+            params += [fmt, offset]
+        sql += " ORDER BY period DESC"
+        with self._get_conn() as conn:
+            cursor = conn.execute(sql, params)
             return [row['period'] for row in cursor.fetchall()]
 
     def get_listening_time_per_period(self, granularity: str, day_start_hour: int) -> list[dict]:

@@ -2136,7 +2136,8 @@ class StatsPanel(QWidget):
 
     def _refresh_daily(self):
         if self._cached_active_days is None:
-            self._cached_active_days = self.db.get_active_periods('day', self.config.get_day_start_hour())
+            self._cached_active_days = self.db.get_active_periods(
+                'day', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_days = self._cached_active_days
         while self._day_rows_layout.count() > 1:
             item = self._day_rows_layout.takeAt(0)
@@ -2174,7 +2175,9 @@ class StatsPanel(QWidget):
         self._day_rows_layout.invalidate()
         self._day_rows_widget.updateGeometry()
 
-        self._day_total_label.setText(self._format_duration(total_seconds))
+        # Blank, not "0m", when the day exists only via a playback finish
+        # (no qualifying session rows) — the book shows in the Finished strip.
+        self._day_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
         day_start = self.config.get_day_start_hour()
         finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
@@ -2291,7 +2294,8 @@ class StatsPanel(QWidget):
     def _refresh_weekly(self):
         from datetime import datetime, timedelta
         if self._cached_active_weeks is None:
-            self._cached_active_weeks = self.db.get_active_periods('week', self.config.get_day_start_hour())
+            self._cached_active_weeks = self.db.get_active_periods(
+                'week', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_weeks = self._cached_active_weeks
         while self._week_rows_layout.count() > 1:
             item = self._week_rows_layout.takeAt(0)
@@ -2332,7 +2336,7 @@ class StatsPanel(QWidget):
         self._week_rows_layout.invalidate()
         self._week_rows_widget.updateGeometry()
 
-        self._week_total_label.setText(self._format_duration(total_seconds))
+        self._week_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
         finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
         self._week_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
@@ -2448,7 +2452,8 @@ class StatsPanel(QWidget):
     def _refresh_monthly(self):
         from datetime import datetime
         if self._cached_active_months is None:
-            self._cached_active_months = self.db.get_active_periods('month', self.config.get_day_start_hour())
+            self._cached_active_months = self.db.get_active_periods(
+                'month', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_months = self._cached_active_months
         while self._month_rows_layout.count() > 1:
             item = self._month_rows_layout.takeAt(0)
@@ -2487,7 +2492,7 @@ class StatsPanel(QWidget):
         self._month_rows_layout.invalidate()
         self._month_rows_widget.updateGeometry()
 
-        self._month_total_label.setText(self._format_duration(total_seconds))
+        self._month_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
         finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
         self._month_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
@@ -2538,7 +2543,8 @@ class StatsPanel(QWidget):
 
     def _on_bar_date_clicked(self, date_str: str):
     # Find the date in active_days and set index
-        self._active_days = self.db.get_active_periods('day', self.config.get_day_start_hour())
+        self._active_days = self.db.get_active_periods(
+            'day', self.config.get_day_start_hour(), include_playback_finished=True)
         if date_str in self._active_days:
             self._current_day_index = self._active_days.index(date_str)
         else:
@@ -2611,10 +2617,16 @@ class StatsPanel(QWidget):
 
     def _refresh_time(self):
         if getattr(self, "_show_streak_grid", False):
+            from datetime import timedelta
+            day_start = self.config.get_day_start_hour()
             cache = self.db.get_streak_grid_cache()
-            streak = self.db.get_streaks(self.config.get_day_start_hour())
-            finished = self.db.get_streak_grid_finished_dates(self.config.get_day_start_hour())
-            self._streak_grid.set_data(cache, streak, finished, datetime.now().date())
+            streak = self.db.get_streaks(day_start)
+            finished = self.db.get_streak_grid_finished_dates(day_start)
+            # Anchor the grid's "today" cell on the day_start_hour-adjusted date
+            # (same shift as the cache rows and get_streaks), not the midnight
+            # calendar date — else a post-midnight session lands one cell off.
+            adjusted_today = (datetime.now() - timedelta(hours=day_start)).date()
+            self._streak_grid.set_data(cache, streak, finished, adjusted_today)
         else:
             rows = self.db.get_hourly_heatmap(n_days=14)
             self._heatmap.set_data(rows, datetime.now().date())
