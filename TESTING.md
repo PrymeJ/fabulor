@@ -62,7 +62,10 @@
 - [ ] Finishing a book while in the main window (no panels open): Library/Stats/Book-Detail show the update on next visit (lazy — no refresh cost paid while not visible)
 - [ ] Closing a session without finishing the book while Book Detail Panel is open: stats (last session, history, totals) update immediately
 - [ ] Reverting a finished status while Book Detail Panel is open for that book: finished checkmark disappears immediately
-- [ ] Finished checkmark icon (Book Detail Panel, narrator row): shows only for books with `finished_count > 0`, sits at 0.7 opacity, no hover state, aligned under the lock/save button regardless of that button's visibility (no overlap or position shift when it's hidden)
+- [ ] Finished checkmark icon (Book Detail Panel, narrator row): shows only for books with `finished_count > 0`, sits at 0.7 opacity, aligned under the lock/save button regardless of that button's visibility (no overlap or position shift when it's hidden)
+- [ ] Stats Timeline tab (streak grid or heatmap): completing a 60s+ session in the main window, then opening stats to Timeline — grid updates immediately without needing a tab round-trip
+- [ ] Stats Timeline tab: completing a session while stats panel is open on Day tab — switching to Timeline shows fresh data (no manual refresh needed)
+- [ ] Stats Timeline tab: completing a session while stats panel is open on Timeline tab — grid updates immediately (regression: was already working, must stay working)
 
 ## Flow animation (book switch)
 
@@ -843,6 +846,22 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Unlocked fields are overwritten by a rescan as normal
 - [ ] Click-outside while editing reverts to pre-edit state (locked → lock icon, unlocked → hidden)
 - [ ] Archived books: metadata action button is always hidden regardless of lock state
+
+### Finished toggle (check icon, narrator row)
+- [ ] Unfinished book: check icon slot is visible but empty at rest; hovering reveals a 30%-opacity dimmed check
+- [ ] Finished book: check icon shows at 0.7 opacity at rest; hovering brightens to 0.9 opacity
+- [ ] Clicking the check icon on an unfinished book shows "Click to mark this book finished" confirm over the narrator label
+- [ ] Clicking the check icon on a finished book shows "Click to mark this book unfinished" confirm over the narrator label
+- [ ] Clicking anywhere outside the confirm label and check icon dismisses without acting
+- [ ] Confirm auto-dismisses after 7 seconds without acting
+- [ ] Closing the panel while confirming dismisses without acting
+- [ ] Confirming mark-finished: check icon fills in immediately; book appears in Finished tab/filter/stats immediately (history_deleted fan-out)
+- [ ] Confirming mark-finished: streak grid is NOT lit for today — a manual finish is streak-neutral (source='manual', invisible to streak queries)
+- [ ] Confirming mark-unfinished: check icon clears immediately; book removed from Finished tab/filter/stats immediately
+- [ ] Confirming mark-unfinished: if the book was previously finished via EOF (source='playback'), that day's streak cell re-evaluates — may darken if no session backed it
+- [ ] Mark-finished and mark-unfinished are mutually exclusive with the remove-from-library confirm (one dismisses the other)
+- [ ] Finished toggle works for archived (excluded) books — no guard blocks it
+- [ ] Finished toggle works for a book currently playing (no interference with session recording)
 
 ### Book removal (trash button)
 - [ ] Trash button visible for normal (non-excluded) books

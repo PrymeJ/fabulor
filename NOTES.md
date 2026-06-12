@@ -1,4 +1,8 @@
 
+## `refresh_current_tab()` dispatch must use the live tab name, not the old one (2026-06-13)
+
+`refresh_current_tab()` dispatches by `tabs.tabText(currentIndex())`. When a tab is renamed, every dispatch branch in every dispatch function must be updated in the same commit — there is no compile-time check. The Timeline tab was renamed from `"Hour"` to `"Timeline"` in `addTab` and `_on_tab_changed` but the `refresh_current_tab()` branch was missed, silently skipping `_refresh_time()` on every panel-open and session-write while that tab was active. If a tab name changes in the future, grep for the old string across the whole file before committing.
+
 ## Per-session delete must emit `history_deleted` to refresh the stats StreakGrid (2026-06-12)
 
 The "delete all history for this book" button (`_on_delete_book_stats_confirmed`) emits

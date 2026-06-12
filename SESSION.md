@@ -1,4 +1,51 @@
-## Session Summary — 2026-06-12 Invariant Audit + Defensive Seek Guard
+## Session Summary — 2026-06-12 Session 2 — Manual Finished Toggle + Stats Refresh Bugs
+
+**Branch:** `main`
+
+**Scope:** Three features/bugs across `book_detail_panel.py`, `db.py`, `session_recorder.py`, `themes.py`, `stats_panel.py`, `app.py`. Three failed fix attempts were reverted cleanly; two bugs found and fixed.
+
+### Feature — Manual finished toggle (book_detail_panel.py, db.py, session_recorder.py, themes.py)
+
+`_finished_label` is now a clickable `_ClickableLabel` (always visible, zero-width glyph when not finished). Clicking reveals a 7-second confirm over the narrator label via a `QStackedLayout` (`_narrator_stack`) — mirrors the remove-confirm pattern but stacked (not side-by-side) so neither label steals the other's width. A container widget with a left-stretch `QHBoxLayout` right-aligns the confirm at content width.
+
+Confirm path: mark finished → `db.write_book_event(..., source='manual')` (streak-neutral); mark unfinished → `db.clear_finished(book_id, dsh)` (deletes ALL finished events, re-evaluates streak cache per-day). Both paths call `_refresh_stats()` + emit `history_deleted` for the stats/library fan-out.
+
+Hover affordance: not-finished state paints a 30%-opacity dimmed check on hover, restoring to empty on leave. Finished state brightens from 0.7 → 0.9 opacity on hover.
+
+**DB schema change:** `book_events` gains a `source TEXT NOT NULL DEFAULT 'playback'` column (migration via `ALTER TABLE … ADD COLUMN`; backfills all prior rows as `'playback'`). All four streak-grid queries (`build_streak_grid_cache`, `get_streak_grid_finished_dates`, `_update_streak_grid_cache_for_date`, `get_streaks`) now filter `AND source = 'playback'` so manual finishes are invisible to the grid (no fill, no dot, no streak count).
+
+**`session_recorder.close()` cleanup:** The `at_eof: bool = False` parameter and the `if listened >= 60 or at_eof` branch were removed. The force-write at EOF was polluting Day/Week/Month/Timeline with 0-minute sessions and artificially extending streaks. The streak grid is correctly lit by the `write_book_event('finished', source='playback')` path; no session write is needed.
+
+**Confirm layout fix:** `_confirm_finished_label` wrapped in a container widget with `QHBoxLayout` + left stretch, matching `_confirm_remove_label`'s layout. Without the container, `QStackedLayout` gave the label the full row width with no right-alignment.
+
+**`_update_finished_icon` signature change:** `_is_finished: bool` state field added to `BookDetailPanel`; `_update_finished_icon(finished: bool)` stores it and controls the glyph. Theme-change path now calls `_update_finished_icon(self._is_finished)` instead of the stale `self._finished_label.isVisible()` check.
+
+Commits: `8f1a996`
+
+### Bug fix — Stats Timeline tab not refreshing on session write or panel open (stats_panel.py)
+
+`refresh_current_tab()` had a stale `elif name == "Hour":` branch from when the Timeline tab was renamed `"Timeline"` (in `addTab` and `_on_tab_changed`). The rename missed this dispatch, so opening the panel on the Timeline tab or writing a session while it was active silently matched no branch and skipped `_refresh_time()` entirely. Fix: one-word rename `"Hour"` → `"Timeline"`.
+
+Three prior fix attempts were reverted after each failed:
+1. Removed `isVisible()` guards in `_on_session_written` / EOF path — user correctly pushed back; guards are load-bearing for performance; root cause was elsewhere.
+2. Changed `refresh_overall()` → `refresh_all()` at EOF — correct that `refresh_all` calls `_refresh_time()`, but `refresh_current_tab()` was still broken so panel-open on Timeline still didn't refresh.
+3. Added explicit `_refresh_time()` calls from `_on_session_written` and `_start_stats_entry` when current tab ≠ Timeline — these ran against a hidden widget (`_streak_grid.setVisible(False)` when heatmap is active); `update()` on a hidden widget is a no-op in Qt; reverted.
+
+Diagnostic instrumentation (temporary prints across `_on_session_written`, `refresh_all`, `_refresh_time`, `StreakGrid.set_data`, `HourlyHeatmap.set_data`) confirmed: `stats_panel.isVisible()` was False for the panel-closed case (expected), and the Timeline-open case already worked. The "Hour" mismatch was found by reading `refresh_current_tab()` directly after ruling out the other theories.
+
+Commit: `88d89a8`
+
+### Bug fix — TasselOverlay `RuntimeWarning: Failed to disconnect (None)` (stats_panel.py)
+
+`TasselOverlay._slide.finished.disconnect()` (bare, no-argument form) was called in four places — including from `_on_extended` after the signal had already been disconnected by `stop()`. Qt raises `RuntimeWarning` when disconnecting with no slots connected; the `try/except` was catching it silently but the warning still surfaced.
+
+Fix: `_slide_slot: callable | None` field tracks the currently-connected slot. `_disconnect_slide()` helper disconnects only when a slot is recorded and sets it back to `None`. Each `connect()` site records the slot; each `disconnect` site uses the helper. No disconnects fire when nothing is connected.
+
+Commit: `57d211b`
+
+---
+
+## Session Summary — 2026-06-12 Session 1 — Invariant Audit + Defensive Seek Guard
 
 **Branch:** `main`
 
