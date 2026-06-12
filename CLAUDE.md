@@ -3,8 +3,9 @@
 ## What this file is for
 
 This is a reference document for Claude and Claude Code. It records **what has been built**, key
-architectural decisions, and current state. GEMINI.md is the canonical design spec — read it for
-the full project description and Gemini-specific constraints. This file answers "where are we now?"
+architectural decisions, and current state — it is the single authoritative source for the
+architecture rules and project state. (GEMINI.md was removed 2026-06-12 when Gemini left the
+workflow; do not reference it.) This file answers "where are we now?"
 
 ---
 
@@ -121,10 +122,10 @@ They are two independent soft-delete flags on `books`. `is_deleted = 1` is set b
 The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
 
 ### DO NOT keep upsert_book and upsert_books_batch out of sync
-Both methods share identical SQL logic — any schema or ON CONFLICT guard change in one MUST be applied to the other. They differ only in execute vs executemany. The `CASE WHEN books.X_locked = 1` guards for title, author, narrator, year are load-bearing: they prevent rescans from overwriting user-edited metadata. Skipping this sync causes silent data loss on rescans.
+Both methods share identical SQL logic — any schema or ON CONFLICT guard change in one MUST be applied to the other. They differ only in execute vs executemany. The `CASE WHEN books.X_locked` guards for title, author, narrator, year are load-bearing: they prevent rescans from overwriting user-edited metadata. Skipping this sync causes silent data loss on rescans. (Implementation uses the bare-truthy form `CASE WHEN books.title_locked THEN ...`, not `= 1` — equivalent in SQLite since the column is `INTEGER NOT NULL DEFAULT 0`.)
 
 ### DO NOT remove the CASE WHEN books.X_locked guards from upsert ON CONFLICT
-The guards `CASE WHEN books.title_locked = 1 THEN excluded.title ELSE updated.title END` (and narrator/author/year equivalents) protect user-edited metadata from being overwritten by rescans. They must survive any future refactor.
+The guards `CASE WHEN books.title_locked THEN books.title ELSE excluded.title END` (and narrator/author/year equivalents) protect user-edited metadata from being overwritten by rescans. They must survive any future refactor. (The guard reads `books.title` on the locked branch and `excluded.title` on the unlocked branch; the bare-truthy `WHEN books.title_locked` is equivalent to `= 1` in SQLite.)
 
 ### DO NOT add separate save/lock widgets to BookDetailPanel
 The metadata action button state is driven exclusively by `_MetaActionState` enum. Do not add `_save_label` or `_lock_btn` widgets — use `_set_meta_state()` to manage appearance.
@@ -139,19 +140,18 @@ For chaptered→chaptered switches, the chapter slider must remain visible and a
 
 ## Tech Stack
 
-PySide6 (Qt) + mpv via python-mpv. Python. SQLite. Mutagen for metadata. See GEMINI.md for full
-stack details.
+PySide6 (Qt) + mpv via python-mpv. Python. SQLite. Mutagen for metadata.
 
 ---
 
 ## Collaboration Model
 
 - **Claude**: architecture, decisions, code review, documentation, root-cause investigation
-- **Gemini**: pipeline scripts, folder naming conventions — kept in lane by GEMINI.md guardrails
 - **Windsurf / Copilot**: code generation
 - **GPT**: critique
 
-Claude does not need hard constraint rules like GEMINI.md — the working model is "flag, confirm, then act."
+(Gemini was previously used for pipeline scripts / folder-naming conventions, kept in lane by a
+GEMINI.md guardrail file; both were retired 2026-06-12.) The working model is "flag, confirm, then act."
 
 ## Conventions
 
@@ -410,8 +410,8 @@ The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { 
   - Sleep timer — sleep feature prevents session recording during the sleep window. Deferred.
 - **`path_to_index()`** is in `library.py` (`LibraryPanel`, not `BookModel`).
 - **VT open issues (multi-file MP3) — fully deferred:**
-  - Progress slider race on book switch with VT books — timing between `_on_playlist_resolved`, `ungate_play`, and slider animation needs verification.
-  - M4B chapter stuck intermittently — chapter display freezes at a chapter boundary in some M4B books; root cause not yet isolated.
+  - Progress slider race on book switch — **traced** (review/Review_260612_6.md §7, NOTES.md): not a missing guard. The authoritative `_on_file_ready` set is protected by three composable guards (`slider_animating`, `is_seeking`, `_switch.flow_pending_progress`); the residual is a guard-release-ordering timing overlap that self-corrects on the next 200ms tick. Lever (if determinism wanted): hold the timer resume until both the flow animation finished AND the restore seek settled.
+  - M4B chapter stuck intermittently — **traced** (review/Review_260612_6.md §6, NOTES.md): NOT a Fabulor state-leak. `load_book` resets all VT/chapter state before the M4B loads. The freeze originates in mpv-native `chapter_list` readiness/timing for specific M4Bs (the `_on_time_pos_change` M4B branch is gated on `self.instance.chapter_list` being populated). Next step: instrument native chapter-list readiness for the affected files — do not re-audit the reset path.
   - Rapid book switch (VT → any) regression: test that the newly selected book's progress slider shows the correct position and not 0%. Symptom of a double-handler invocation resetting progress; fixed via disconnect-before-connect in `load_book`, but should be part of regression runs.
 
 ---

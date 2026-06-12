@@ -1,3 +1,90 @@
+## Session Summary — 2026-06-12 Invariant Audit + Defensive Seek Guard
+
+**Branch:** `main`
+
+**Scope:** Multi-pass Critical-Architecture-Rule audit (REVIEW_PASS1–6.md in project root) plus
+defensive code changes, doc syncs, and follow-up triage of the audit findings. Audit passes are
+read-only reports; only the items below touched tracked source.
+
+### Code change — VT cross-file pending-seek EOF guard (`player.py`)
+
+`Player._on_file_loaded` consumes `_pending_local_pos` after a VT cross-file switch and previously
+issued `command_async('seek', pending, ...)` with **no** guard against the "seek within ~2s of a
+file's duration → silent mpv hang" rule. It was the one seek path lacking its own guard (Pass 3
+finding #2). It is unreachable in practice — a cross-file seek lands near the *start* of the target
+file — but the guard was added defensively so future VT changes can't turn it into a landmine:
+
+```python
+target_file = (self._virtual_timeline[self._current_vt_index]
+               if self._virtual_timeline is not None else None)
+if target_file is not None and target_file['duration'] - pending < 2.0:
+    self._is_seeking = False
+    self._seek_target = None
+else:
+    self._seek_target = pending
+    self.instance.command_async('seek', pending, 'absolute+exact')
+```
+
+It checks against the **just-switched VT file's** duration (`_virtual_timeline[_current_vt_index]`),
+mirroring the same-file branch in `seek_async`, and clears seek state on skip so the slider isn't
+left waiting on a seek that never issues. This extends the CLAUDE.md "DO NOT seek to a position
+within 2 seconds of a file's duration" rule's guard inventory — that path is now covered too.
+`ast.parse` clean.
+
+### Doc syncs (CLAUDE.md)
+
+Two cosmetic rule-text mismatches reconciled to the actual SQL (the upsert `X_locked` guards):
+- "out of sync" rule: `CASE WHEN books.X_locked = 1` → `CASE WHEN books.X_locked` (bare-truthy form
+  the code actually uses; equivalent in SQLite for an `INTEGER NOT NULL DEFAULT 0` column).
+- "remove guards" rule: `ELSE updated.title` → `ELSE excluded.title` (the rule named a nonexistent
+  `updated` alias) and noted the truthy-form equivalence.
+
+### Audit results (read-only, no source changes)
+
+PASS1 (invariants), PASS2 (DB/upsert), PASS3 (player/session), PASS4 (theme/stylesheet), PASS5
+(EOF/finished, sort/filter, archived UI): **all checks (a) present & correct, zero (b) violations.**
+Notes carried forward as follow-ups (not bugs): un-archive can't restore color in an open detail
+panel (lossy `to_grayscale`, narrow trigger); `closeEvent` doesn't explicitly clear `_eof_book_id`
+(benign — process exits). Two audit-checklist naming drifts confirmed implementation-correct
+(`get_base_stylesheet` owns the revert-btn QSS via banner→main_window ownership; the FinishedScrollRow
+staleness guard is `_current_sig`, richer than the named `_current_ids`).
+
+### Follow-up actions (post-audit triage)
+
+Three findings were small/clear enough to knock out rather than defer:
+
+**Pass 5 medium — un-archive can't restore cover colour (`book_detail_panel.py`).** `_refresh_archived_state`
+re-applied the **already-displayed** pixmap (`self._cover_label.pixmap()`), then re-ran `_apply_cover` →
+`to_grayscale`. Archiving was fine (idempotent grayscale), but un-archiving (e.g. a location re-add
+resurrecting a book while the detail panel is open) could never restore colour — `to_grayscale` is lossy
+and the source colour was gone. Fixed: reload the cover from `db.get_active_cover_path(self._book_path)`
+on disk (mirroring the panel's load path) and let `_apply_cover` decide grayscale-vs-colour from the
+fresh `_is_archived` state; fall back to the displayed pixmap only when there's no cover file. `os`
+already imported; compiles clean.
+
+**Pass 6 #4 — `get_stable_position` dead code removed (`player.py`).** The method had zero call sites
+(no dynamic dispatch, no tests) — the live paused/seeking display is handled inline in app.py's
+`_update_ui_sync`. Removed the method, and the now-orphaned `self._paused_time = None` init line it was
+the sole owner of (Player no longer reads/writes `_paused_time`; the live deadzone `_paused_time` is a
+separate attribute on MainWindow). `py_compile` clean.
+
+**Pass 6 #6/#7 — debt entries rewritten from "intermittent / not root-caused" to the trace conclusions.**
+Updated both NOTES.md ("Player / VT — Deferred Bug Investigations") and CLAUDE.md (Pending/Known Debt)
+so the next person doesn't re-trace:
+- *Progress-slider book-switch race:* not a missing guard — three composable guards (`slider_animating`,
+  `is_seeking`, `_switch.flow_pending_progress`) hold the window; residual is a guard-release-ordering
+  timing overlap that self-corrects next tick. Lever if determinism wanted: hold the timer resume until
+  both the flow animation finished AND the restore seek settled.
+- *M4B chapter-stuck after VT:* NOT a Fabulor state-leak — `load_book` resets all VT/chapter state
+  before the M4B loads. Originates in mpv-native `chapter_list` readiness/timing for specific M4Bs
+  (the `_on_time_pos_change` M4B branch is gated on `self.instance.chapter_list` being populated). Next
+  step: instrument native chapter-list readiness for the affected files; do not re-audit the reset path.
+
+No CLAUDE.md `_current_sig`/`_current_ids` correction was needed — CLAUDE.md never named the guard;
+the drift was only in the Pass 5 audit-checklist wording, already documented correctly in review/Review_260612_5.md.
+
+---
+
 ## Session Summary — 2026-06-11 Session 4
 
 **Branch:** `main`
