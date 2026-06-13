@@ -27,19 +27,35 @@ The single `_CHAPTER_BOUNDARY_EPSILON` (0.35) was doing two conflicting jobs at 
 
 `_EMBEDDED_CHAPTER_SEEK_OFFSET` is negative, so a Prev/Next resolving to chapter 0 (nominal ≈ 0.0) produced a **negative absolute seek**. mpv treats negative/zero absolute seeks as undefined and landed at EOF — "previous chapter" near book start jumped to 100% and marked the book finished. Added `if pos < 0.05: pos = 0.05` at the top of `seek_async` to floor every target inside the file. This also self-heals the `_eof`-contamination "next is stuck" symptom (a bad seek had been setting `_eof`, after which `next_chapter`'s `if self._eof: return` did nothing).
 
-### Verified working
+### Verified working (first commit, `41cd5b2`)
 
 Paused & playing Next/Prev (first word plays, no stick), Prev mid-chapter → chapter start, Prev near book start (no EOF jump), undo lands correctly.
 
-### Known remaining (deferred this session, by decision)
+---
 
-- **Embedded-M4B chapter-LIST click** freezes the chapter slider/labels. That path uses `self.chapter = idx` (native mpv) per the CLAUDE.md exception and does **not** route through `seek_async`, so neither the offset nor the paused compensation reaches it. User chose to leave the rule uncrossed for now. Audio/overall-slider are correct; only the chapter slider + chapter time labels freeze (clicking the slider revives it).
-- **Notch-click while paused** can still clip on books that have audio at the very chapter start (these always start playback, so the paused compensation's benefit is partial). Minor — inaudible on most books.
-- **Position creep on repeated app restarts** — the restore path (`app.py:1334`, `seek_async(progress + _CHAPTER_BOUNDARY_EPSILON)`) still adds the legacy epsilon on each restore. Pre-existing; separate item.
+## Session 3 (cont.) — Chapter-list-click freeze fix + full doc pass (commit `95db6b6`)
 
-### Follow-ups
+### Chapter-list click freeze — FIXED
 
-NOTES.md and CLAUDE.md updates deferred until the remaining items above are addressed. The CLAUDE.md `_CHAPTER_BOUNDARY_EPSILON` rule needs revision to reflect the three-constant split and the paused-vs-playing asymmetry.
+The deferred item above (embedded-M4B chapter-list click freezing the chapter slider/labels) was traced and fixed. Root cause was **not** seek precision: native `self.chapter = idx` (the embedded click path) sets `instance.chapter` but never `_seek_target`; `_on_chapter_list_selected` set `is_seeking = True` unconditionally; `_sync_chapter_ui`/`_update_chapter_label_from_index` early-return while `is_seeking`; and `is_seeking` clears ONLY in `_on_time_pos_change` when `_seek_target is not None`. So the flag never cleared → permanent freeze (a manual slider drag → `seek_async` → `_seek_target` set → revived).
+
+**Fix:** new public `Player.activate_chapter_index(idx)` seeks to `chapter_list[idx]['time'] + _chapter_seek_offset()` via `seek_async`. `_activate_item` now calls it for ALL book types — embedded native-nav branch dropped, plus `ChapterList`'s private `_virtual_timeline`/`_chapter_list` access removed (resolves a long-standing NOTES coupling violation). Redundant `is_seeking = True` removed from `_on_chapter_list_selected`. **This crossed the former CLAUDE.md "embedded clicks must use `self.chapter = idx`" rule** — that exception (git `e243193`, 2026-05-17) existed only because the *then-current* `seek_async + 0.35` drifted, made obsolete by the −0.09 offset. Native `chapter` *getter* (smart-rewind) unaffected. Decision evolved from "leave uncrossed" (first commit) to crossing it, after confirming the precision rationale was obsolete.
+
+**Pre-implementation safety checks done** (from plan review): offset-sign verified deterministically (embedded target < nominal by 0.09; VT/CUE > nominal by 0.35 — single `+ _chapter_seek_offset()` form, no sign flip); grepped for synchronous `is_seeking` readers in the slot's call path (none — all readers are in the async 200ms UI timer); smart-rewind getter read confirmed valid post-seek; rapid-click overwrite confirmed.
+
+**Verified (7/7):** embedded freeze fixed (paused & playing), sliver gone, VT/CUE clicks unchanged, Prev/Next/undo regressions clean, smart-rewind timing, rapid successive clicks land on the last-clicked chapter.
+
+### Doc pass (this entry's final step)
+
+- **CLAUDE.md:** all chapter-nav rule references revised (3 rule blocks + the "What's Built" chapter-nav bullet + the `_CHAPTER_BOUNDARY_EPSILON` bullet rewritten as the three-constant model; stale `pos + 0.35` walk references corrected to `_CHAPTER_WALK_TOLERANCE`/0.5; the disproven "~0.25s short" rationale replaced with the measured overshoot/undershoot asymmetry). Embedded native-click exception removed.
+- **NOTES.md:** two new top entries — the measured mpv overshoot/undershoot physics + three-constant split, and the chapter-list freeze root cause. Coupling-violation entry marked resolved.
+- **TESTING.md:** new "Chapter-seek precision & freeze (embedded M4B)" section under Playback (first-word fidelity, paused stuck-slider, negative-seek floor, undo/notch, chapter-list freeze, VT/CUE must-not-break).
+
+### Still deferred (next up)
+
+- **VT first-word audio clipping** — same class as the M4B clip, different cause (VT boundaries are file starts from summed mutagen durations vs mpv's decoded sample count). VT nav/clicks still use `+0.35`.
+- **Notch-click paused clip** on books with audio at the very chapter start (paused compensation's benefit is partial since notch-click starts playback). Minor.
+- **Position creep on repeated app restarts** — restore path (`app.py:1334`, `seek_async(progress + _CHAPTER_BOUNDARY_EPSILON)`) still adds the legacy epsilon per restore. Pre-existing.
 
 ---
 

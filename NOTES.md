@@ -1,4 +1,77 @@
 
+## Chapter-seek precision: mpv overshoots ~0.09s playing, undershoots ~0.37s paused (2026-06-13)
+
+The single biggest non-obvious finding of the Session 3+4 chapter-seek work. **mpv's exact seek
+(`command_async('seek', pos, 'absolute+exact')`) does NOT land on `pos`.** Measured across 5
+embedded M4Bs / 67 chapter seeks (temporary `[CHAP-MEASURE]` instrumentation, since removed):
+
+- **Playing:** lands ~**+0.09s** PAST the target (1–2 AAC frames of overshoot). Consistent across
+  files; the spread is frame-quantization (~0.046s steps at 1024/22050Hz), not per-file variance.
+- **Paused:** lands ~**−0.37s** SHORT of the target, and the `time-pos` observer reports unstable
+  intermediate values while paused (e.g. `settled=28101` for a `nominal=1289` seek — do not trust a
+  single post-seek `time_pos` sample while paused).
+
+This overturns the old documented rationale ("mpv chapter floats land ~0.25s short of nominal").
+Switching to `exact`/`hr-seek` is a **no-op** — the code already uses `absolute+exact`; the residual
+is decoder/frame landing, not keyframe snapping. Do not re-propose it.
+
+**Why the old single `_CHAPTER_BOUNDARY_EPSILON = 0.35` "worked" and what it cost:** it was doing
+two jobs at once — a read-side position→chapter-index walk tolerance AND a seek-target epsilon.
+As a walk tolerance, 0.35 *barely* covered the ~0.37 paused undershoot (which is why paused Next/Prev
+got stuck "occasionally" — the undershoot sometimes exceeded 0.35). As a seek epsilon, +0.35 on top
+of mpv's own +0.09 overshoot skipped ~0.44s of every chapter's opening audio ("Part 3"→"3",
+"Nineteen"→"teen"). The user's prior manual sweep finding "0.35 is the only reliable value" was the
+walk-tolerance constraint, not an audio sweet spot.
+
+**The three-constant split (player.py):**
+- `_CHAPTER_WALK_TOLERANCE = 0.5` — ALL position→index walks (`time <= pos + X`) in player.py and
+  app.py. Must exceed the ~0.37 paused undershoot; 0.5 is still far below the ~2s minimum real
+  chapter spacing, so it can't misattribute to an adjacent chapter.
+- `_EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09` — embedded-M4B chapter-nav seek targets (via
+  `_chapter_seek_offset()`). Cancels mpv's playing-overshoot.
+- `_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37` — forward correction added to the mpv seek **command only**
+  when paused + embedded, inside `seek_async`. `_seek_target`/`_cached_time_pos` keep the logical
+  (uncompensated) position so the walk/UI stay correct. Guarded so it doesn't push into the near-EOF
+  deadzone.
+- `_CHAPTER_BOUNDARY_EPSILON = 0.35` — now ONLY the VT/CUE seek-target epsilon. Do NOT reuse for
+  walks or embedded seeks.
+
+**`seek_async` target floor (`if pos < 0.05: pos = 0.05`):** the negative embedded offset turns a
+Prev/Next that resolves to chapter 0 (nominal ≈ 0) into a NEGATIVE absolute seek. mpv treats a
+negative/zero absolute seek as undefined and **lands at EOF** — observed as "previous chapter near
+book start jumps to 100% and marks the book finished." The floor prevents this and also self-heals
+the secondary "next is stuck" symptom (a bad seek had set `_eof`, after which `next_chapter`'s
+`if self._eof: return` did nothing).
+
+VT first-word clipping (multi-file) is the same *class* of issue but a different *cause* (VT chapter
+boundaries are file starts from summed mutagen durations vs mpv's decoded sample count) and is
+**deferred** — VT clicks/nav still use `+0.35`.
+
+## Chapter-list click freeze was a stuck `is_seeking` flag, not a seek problem (2026-06-13)
+
+Embedded-M4B chapter-list clicks froze the chapter slider + chapter time labels (audio and the
+overall slider were fine) until a manual slider click revived them. Root cause: the embedded click
+navigated via native `self.player.chapter = idx`, whose setter sets `instance.chapter` and
+`_eof = False` but NOT `_seek_target`. `_on_chapter_list_selected` set `is_seeking = True`
+unconditionally; `_sync_chapter_ui` and `_update_chapter_label_from_index` early-return while
+`is_seeking` is True; and `is_seeking` is cleared ONLY by `_on_time_pos_change` when
+`_seek_target is not None` (`_on_chapter_change` is fully suppressed). Native chapter assignment never
+set `_seek_target`, so the clear condition could never fire → permanent freeze. A manual slider drag
+calls `seek_async` (which sets `_seek_target`), which is why it "revived" the UI.
+
+**Fix:** new public `Player.activate_chapter_index(idx)` seeks to
+`chapter_list[idx]['time'] + self._chapter_seek_offset()` via `seek_async` (mode-aware offset). All
+book types now route chapter-list clicks through it; the embedded native-nav branch is gone, as is
+`ChapterList`'s reach into `_virtual_timeline`/`_chapter_list` (the coupling violation previously
+flagged in NOTES is now RESOLVED — `_activate_item` calls one public method, no private-attr access).
+Removed the redundant `is_seeking = True` from `_on_chapter_list_selected` (`seek_async` sets it
+synchronously, before the slot fires, with `_seek_target` set). This crossed the former CLAUDE.md
+"embedded clicks must use `self.chapter = idx`" rule — that exception (git `e243193`, 2026-05-17)
+existed only because the *then-current* `seek_async + 0.35` drifted, which the −0.09 model fixed.
+The native `chapter` **getter** is still read by `apply_smart_rewind` (clamp to chapter start) and
+remains valid: mpv updates its native chapter from playback position regardless of how the seek was
+issued. CLAUDE.md (all references) revised in the same commit.
+
 ## `refresh_current_tab()` dispatch must use the live tab name, not the old one (2026-06-13)
 
 `refresh_current_tab()` dispatches by `tabs.tabText(currentIndex())`. When a tab is renamed, every dispatch branch in every dispatch function must be updated in the same commit — there is no compile-time check. The Timeline tab was renamed from `"Hour"` to `"Timeline"` in `addTab` and `_on_tab_changed` but the `refresh_current_tab()` branch was missed, silently skipping `_refresh_time()` on every panel-open and session-write while that tab was active. If a tab name changes in the future, grep for the old string across the whole file before committing.

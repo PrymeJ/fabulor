@@ -41,6 +41,44 @@
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
 
+## Chapter-seek precision & freeze (embedded M4B) — Session 3+4, 2026-06-13
+
+Background: mpv's exact seek overshoots a chapter boundary by ~0.09s while **playing** and
+undershoots by ~0.37s while **paused**. Three constants handle this (`player.py`):
+`_EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09` (embedded seek targets), `_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37`
+(forward correction on paused embedded seeks), `_CHAPTER_WALK_TOLERANCE = 0.5` (position→index walks).
+VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
+
+### First-word audio fidelity (embedded M4B)
+- [ ] Next chapter (playing) into a chapter that opens with a hard word/number ("Part 3", "Nineteen"): the **full first word** plays — not "3" / "teen" (no ~0.44s clip)
+- [ ] Next chapter (paused) then play: first word still intact
+- [ ] Prev chapter (playing & paused): lands at the chapter start, first word intact, no previous-chapter tail bleed
+- [ ] Prev mid-chapter: goes to the **beginning of the current chapter** (not the previous chapter's end)
+
+### Paused-navigation stuck-slider (the bug `_CHAPTER_WALK_TOLERANCE` fixes)
+- [ ] Paused: press Next several times rapidly — chapter slider + both chapter time labels advance on **every** press (no sticking, no needing to click the slider to unstick)
+- [ ] Paused: press Prev several times rapidly — advances every press
+- [ ] Playing: Next/Prev never stick (regression — was already working)
+
+### Negative-seek floor (chapter 0 / book start)
+- [ ] Prev chapter at chapter 0/1 near book start: stays at/near 0%, does **NOT** jump to 100% / EOF / "finished" (the negative-absolute-seek-lands-at-EOF bug; `seek_async` floors targets at 0.05)
+- [ ] After such a Prev, Next is **not** stuck (no stale `_eof` contamination)
+
+### Undo / right-click notch (paused embedded)
+- [ ] Pause at a chapter beginning → seek elsewhere → click Undo: returns to the saved position, **not** the end of the previous chapter (paused undershoot compensated)
+- [ ] Right-click a chapter notch while paused: lands on the seeked position (note: starts playback; on books with audio at the very chapter start a small clip may remain — known minor, deferred)
+
+### Chapter-list click — freeze fix (2026-06-13)
+- [ ] Embedded M4B, **paused**: click various chapters in the chapter-list overlay — chapter slider + both chapter time labels update **immediately** (no freeze, no need to click the slider to revive). Audio lands on the chapter; first word plays
+- [ ] Embedded M4B, **playing**: same, immediate update
+- [ ] Rapid successive clicks (click chapter 3, then chapter 7 before the first settles): ends on **chapter 7**, slider not frozen, audio on 7
+- [ ] Smart-rewind after a chapter-list click: clamps sanely to a chapter start (exercises the native `chapter` getter read, which is still valid post-seek)
+- [ ] "Sliver" artifact gone — short chapters no longer leave a frozen sliver on the chapter slider after a click
+
+### VT / CUE chapter-list click (must-not-break regression)
+- [ ] VT (multi-file): chapter-list clicks across file boundaries load the correct chapter; slider/labels track — identical to before (uses unchanged `+0.35`). NOTE: VT first-word audio clip is a **known, separately-deferred** issue — do not expect this change to fix it
+- [ ] CUE: chapter-list clicks unchanged
+
 ## Finish-book status banner (revert/dismiss)
 
 - [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
