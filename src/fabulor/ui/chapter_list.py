@@ -3,7 +3,6 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate,
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QMouseEvent, QKeyEvent, QColor
 from mpv import ShutdownError
-from fabulor.player import _CHAPTER_BOUNDARY_EPSILON
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
@@ -313,13 +312,13 @@ class ChapterList(QListWidget):
             if not (0 <= idx < len(chapters)):
                 return
             old_pos = self.player.time_pos or 0.0
-            target_time = chapters[idx].get('time', 0.0)
-            if self.player._virtual_timeline is not None or self.player._chapter_list is not None:
-                # VT books and CUE books: seek by time (chapters are our data, not mpv's)
-                self.player.seek_async(target_time + _CHAPTER_BOUNDARY_EPSILON)
-            else:
-                # Embedded M4B: let mpv navigate by its own chapter index
-                self.player.chapter = idx
+            # All book types (embedded M4B, CUE, VT) navigate by seeking to the chapter
+            # boundary via Player.activate_chapter_index, which applies the mode-aware
+            # seek offset internally. This routes through seek_async (sets _seek_target)
+            # so the chapter slider/labels' is_seeking guard clears on settle — embedded
+            # M4B previously used native `self.chapter = idx`, which never set
+            # _seek_target and left the chapter UI frozen until a manual slider click.
+            self.player.activate_chapter_index(idx)
             actual_title = chapters[idx].get('title') or f"Chapter {idx+1}"
             self.fade_out()
             self.chapter_changed.emit(actual_title)

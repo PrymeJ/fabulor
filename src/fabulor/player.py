@@ -765,6 +765,23 @@ class Player(QObject):
             return _EMBEDDED_CHAPTER_SEEK_OFFSET
         return _CHAPTER_BOUNDARY_EPSILON
 
+    def activate_chapter_index(self, idx: int) -> float | None:
+        """Navigate to chapter `idx` by seeking to its boundary. Public entry point
+        for chapter-list clicks across ALL book types (embedded M4B, CUE, VT), so the
+        UI does not branch on private attributes. Uses the same canonical target form
+        as previous_chapter/next_chapter — `nominal + self._chapter_seek_offset()` —
+        where the offset is mode-aware (embedded: -0.09 to cancel mpv's overshoot;
+        VT/CUE: +_CHAPTER_BOUNDARY_EPSILON). Routing through seek_async (rather than
+        the native `self.chapter = idx`) sets _seek_target, so the UI's is_seeking
+        guard clears on settle and the chapter slider/labels refresh. Returns the
+        seek target, or None if idx is out of range."""
+        chaps = self.chapter_list or []
+        if not (0 <= idx < len(chaps)):
+            return None
+        target = chaps[idx].get('time', 0.0) + self._chapter_seek_offset()
+        self.seek_async(target)
+        return target
+
     # Logical Seek helpers
     def previous_chapter(self):
         if self._virtual_timeline is not None and self._chapter_list:

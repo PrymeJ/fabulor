@@ -2193,7 +2193,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self._trigger_undo(old_pos)
 
     def _on_chapter_list_selected(self, title, old_pos, force_play):
-        self.player.is_seeking = True
+        # No is_seeking set here: activate_chapter_index -> seek_async (called in
+        # _activate_item before this slot fires) already sets is_seeking AND
+        # _seek_target, so the chapter-UI guard clears on settle. Setting it here
+        # without a _seek_target was the old freeze (native chapter = idx path).
         if force_play:
             self.player.pause = False
             if self.current_file:
