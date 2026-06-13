@@ -1,3 +1,48 @@
+## Session Summary — 2026-06-13 Session 3 — Embedded-M4B chapter-seek precision (first-word clipping)
+
+**Branch:** `main`
+
+**Scope:** `player.py` + `app.py`. Decouple the overloaded `_CHAPTER_BOUNDARY_EPSILON` into three calibrated constants. Measurement-driven (temporary instrumentation, since removed). No schema, no signals, no new UI.
+
+### Problem
+
+Embedded-M4B chapter navigation clipped the start of each chapter: "Part 3" → "3", "Nineteen" → "teen". The user's prior manual sweep had found 0.35 was "the only reliable value" — which turned out to be true for a reason orthogonal to the audio (see below).
+
+### Method — measure before fixing
+
+A prior proposal to "switch to `exact`/`hr-seek` seeking" was a **no-op**: both seek paths already use `command_async('seek', pos, 'absolute+exact')`. Keyframe snapping was not the cause. Rather than guess, added temporary `[CHAP-MEASURE]` instrumentation logging nominal chapter boundary vs. settled `time_pos` across 5 M4Bs / 67 chapter seeks. Results overturned the assumed "undershoot" model:
+
+- **Playing:** mpv's exact seek **overshoots** the nominal boundary by ~0.09s (1–2 AAC frames) on its own. The old `+0.35` epsilon then piled on top → ~0.44s of the chapter's opening skipped.
+- **Paused:** mpv's exact seek **undershoots** its target by ~0.37s, and its `time-pos` observer reports unstable intermediate values (e.g. `settled=28101` for a `nominal=1289` seek).
+
+The single `_CHAPTER_BOUNDARY_EPSILON` (0.35) was doing two conflicting jobs at once — a read-side chapter-walk tolerance **and** a seek-target epsilon. The reason 0.35 was "the only reliable value" historically: it was the read-side walk tolerance that kept paused Next/Prev from sticking (the paused undershoot is ~0.37, so 0.35 only *barely* covered it — which is why the bug surfaced "occasionally"), while simultaneously shoving every seek 0.35s forward and clipping audio.
+
+### Fix — three calibrated constants (`player.py`)
+
+- **`_CHAPTER_WALK_TOLERANCE = 0.5`** — position→chapter-index walks only (all the `time <= pos + X` loops in `player.py` and `app.py`'s `_sync_chapter_ui`/label paths). Must exceed the ~0.37s paused undershoot or the walk resolves the chapter just left → paused Next/Prev re-targets the same chapter and the slider freezes ("stuck"). 0.5 clears it with margin and is still far below the ~2s minimum real chapter spacing, so it can never misattribute to an adjacent chapter.
+- **`_EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09`** — embedded-M4B chapter-nav seek targets (`previous_chapter`/`next_chapter` non-VT branch, via new `_chapter_seek_offset()` helper). Cancels mpv's natural +0.09 overshoot so the first word plays. VT (loads at file sample 0) and CUE keep `_CHAPTER_BOUNDARY_EPSILON` unchanged.
+- **`_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37`** — forward correction added to the **mpv seek command only** when paused (embedded only), in `seek_async`. Compensates the paused undershoot so undo / chapter-notch / paused nav land on target instead of in the previous chapter's tail. `_seek_target`/`_cached_time_pos` keep the logical (uncompensated) position so the walk and UI stay correct. Guarded against pushing into the near-EOF deadzone.
+
+### Negative-seek floor (`seek_async`)
+
+`_EMBEDDED_CHAPTER_SEEK_OFFSET` is negative, so a Prev/Next resolving to chapter 0 (nominal ≈ 0.0) produced a **negative absolute seek**. mpv treats negative/zero absolute seeks as undefined and landed at EOF — "previous chapter" near book start jumped to 100% and marked the book finished. Added `if pos < 0.05: pos = 0.05` at the top of `seek_async` to floor every target inside the file. This also self-heals the `_eof`-contamination "next is stuck" symptom (a bad seek had been setting `_eof`, after which `next_chapter`'s `if self._eof: return` did nothing).
+
+### Verified working
+
+Paused & playing Next/Prev (first word plays, no stick), Prev mid-chapter → chapter start, Prev near book start (no EOF jump), undo lands correctly.
+
+### Known remaining (deferred this session, by decision)
+
+- **Embedded-M4B chapter-LIST click** freezes the chapter slider/labels. That path uses `self.chapter = idx` (native mpv) per the CLAUDE.md exception and does **not** route through `seek_async`, so neither the offset nor the paused compensation reaches it. User chose to leave the rule uncrossed for now. Audio/overall-slider are correct; only the chapter slider + chapter time labels freeze (clicking the slider revives it).
+- **Notch-click while paused** can still clip on books that have audio at the very chapter start (these always start playback, so the paused compensation's benefit is partial). Minor — inaudible on most books.
+- **Position creep on repeated app restarts** — the restore path (`app.py:1334`, `seek_async(progress + _CHAPTER_BOUNDARY_EPSILON)`) still adds the legacy epsilon on each restore. Pre-existing; separate item.
+
+### Follow-ups
+
+NOTES.md and CLAUDE.md updates deferred until the remaining items above are addressed. The CLAUDE.md `_CHAPTER_BOUNDARY_EPSILON` rule needs revision to reflect the three-constant split and the paused-vs-playing asymmetry.
+
+---
+
 ## Session Summary — 2026-06-13 Session 2 — Stats: period-tab playback-finish visibility + StreakGrid day_start_hour anchor
 
 **Branch:** `main`
