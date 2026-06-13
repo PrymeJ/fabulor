@@ -30,13 +30,41 @@ try:
 except ImportError:
     mutagen = None
 
-# Tolerance added to time_pos when walking chapter_list to find the current
-# chapter, and as a seek epsilon when targeting a chapter boundary. M4B chapter
-# metadata floats land ~0.25s short of nominal values; seeks undershoot by one
-# AAC frame (~23ms). 0.35s clears both with margin. If a format with worse
-# drift appears, change this one constant — it appears in previous_chapter(),
-# the VT chapter walk in _on_time_pos_change, and _sync_chapter_ui in app.py.
+# Tolerance for walking chapter_list to map a position -> chapter index (display
+# labels AND the current-chapter detection in next/previous_chapter). Must exceed
+# mpv's PAUSED-seek undershoot: while paused, an exact seek lands ~0.37s SHORT of
+# its target (measured 2026-06-13). If this tolerance is below that, the nav walk
+# resolves the chapter we just left, so paused Next/Prev gets stuck re-targeting
+# the same chapter and the slider freezes. 0.5 clears the ~0.37s undershoot with
+# margin and is still far below the minimum real chapter spacing (~2s), so it can
+# never misattribute to an adjacent chapter. This is a read-side lookup tolerance
+# only — NOT a seek offset (see _EMBEDDED_CHAPTER_SEEK_OFFSET).
+_CHAPTER_WALK_TOLERANCE = 0.5
+
+# Legacy seek-target epsilon for VT/CUE chapter-boundary seeks (kept unchanged to
+# preserve their audio landing). Embedded M4B uses _EMBEDDED_CHAPTER_SEEK_OFFSET
+# instead. Do not reuse this for position->index walks — use
+# _CHAPTER_WALK_TOLERANCE for those.
 _CHAPTER_BOUNDARY_EPSILON = 0.35
+
+# SEEK-side offset applied to embedded-M4B chapter-nav targets only. Measured
+# 2026-06-13 across 5 M4Bs (67 chapter seeks): mpv's exact seek overshoots the
+# nominal boundary by ~0.09s (1-2 AAC frames) on its own. Adding the old +0.35
+# display epsilon to seek targets skipped ~0.44s of every chapter's opening
+# ("Part 3" -> "3", "Nineteen" -> "teen"). Seeking to nominal - 0.09 lets mpv's
+# natural overshoot cancel it, landing ~on the true boundary. Embedded M4B only —
+# VT (file-start, lands at sample 0) and CUE keep _CHAPTER_BOUNDARY_EPSILON.
+_EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09
+
+# Forward correction added to an embedded-M4B seek target ONLY when paused. Measured
+# 2026-06-13: while playing, mpv's exact seek lands accurately; while PAUSED it
+# undershoots its target by ~0.37s (and its time-pos observer reports unstable
+# intermediate values). Any paused seek to a boundary (undo, chapter-notch wheel,
+# chapter nav) therefore lands in the previous chapter's tail unless compensated.
+# This is applied to the mpv seek command only — _seek_target / _cached_time_pos
+# keep the logical (uncompensated) position so the chapter walk and UI stay correct.
+# Embedded M4B only; VT/CUE paused-seek behaviour was not characterised.
+_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37
 _MP3_SEEK_THRESHOLD: float = 60.0  # long seeks on single VBR MP3 use stop-and-load
 _VT_MP3_SIZE_THRESHOLD: int = 40 * 1024 * 1024  # 40 MB — VT files above this use stop-and-load
 
@@ -140,7 +168,7 @@ class Player(QObject):
         elif self.chapter_list and value is not None:
             curr = 0
             for i, chap in enumerate(self.chapter_list):
-                if chap.get('time', 0) <= value + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= value + _CHAPTER_WALK_TOLERANCE:
                     curr = i
             if curr != self._last_nonvt_chapter:
                 self._last_nonvt_chapter = curr
@@ -538,6 +566,13 @@ class Player(QObject):
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
         if not self.instance:
             return
+        # Floor the target. _EMBEDDED_CHAPTER_SEEK_OFFSET is negative, so a nav to
+        # chapter 0 (nominal ~0.0) would otherwise produce a negative absolute seek;
+        # mpv treats a negative/zero absolute seek as undefined and can land at EOF
+        # (observed: "previous chapter" near book start jumping to 100%/finished).
+        # A small positive floor keeps the seek inside the file at the very start.
+        if pos < 0.05:
+            pos = 0.05
         if self._virtual_timeline is not None:
             target_idx = self._resolve_vt_index(pos)
             target_file = self._virtual_timeline[target_idx]
@@ -577,7 +612,15 @@ class Player(QObject):
                     and not self._mp3_seek_reload_pending):
                 self._mp3_stop_and_load(pos)
                 return
-            self.instance.command_async('seek', pos, 'absolute+exact')
+            # Paused embedded-M4B seeks undershoot by ~0.37s; nudge the mpv command
+            # forward to land on target. Logical state below keeps the true pos.
+            seek_pos = pos
+            if self._chapter_list is None and self._cached_pause:
+                seek_pos = pos + _PAUSED_SEEK_UNDERSHOOT_COMP
+                dur = self._cached_duration
+                if dur and dur - seek_pos < 2.0:
+                    seek_pos = pos  # don't push the compensated target into the EOF deadzone
+            self.instance.command_async('seek', seek_pos, 'absolute+exact')
             self._eof = False
             self.is_seeking = True
             self._seek_target = pos
@@ -585,7 +628,7 @@ class Player(QObject):
             if self._chapter_list:
                 curr = 0
                 for i, chap in enumerate(self._chapter_list):
-                    if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
+                    if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
                         curr = i
                 if curr != self._last_nonvt_chapter:
                     self._last_nonvt_chapter = curr
@@ -713,13 +756,22 @@ class Player(QObject):
             instance.terminate()
             instance.wait_for_shutdown()
 
+    def _chapter_seek_offset(self) -> float:
+        """Seek-side offset for a chapter-boundary target. Embedded M4B uses
+        _EMBEDDED_CHAPTER_SEEK_OFFSET (mpv overshoots ~0.09s on its own, so we seek
+        slightly early to land on the boundary). CUE/VT keep the legacy
+        _CHAPTER_BOUNDARY_EPSILON. Embedded = _chapter_list is None and no VT."""
+        if self._chapter_list is None and self._virtual_timeline is None:
+            return _EMBEDDED_CHAPTER_SEEK_OFFSET
+        return _CHAPTER_BOUNDARY_EPSILON
+
     # Logical Seek helpers
     def previous_chapter(self):
         if self._virtual_timeline is not None and self._chapter_list:
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
             threshold = 2.0 * (self.speed or 1.0)
@@ -737,17 +789,18 @@ class Player(QObject):
             chap_list = self.chapter_list or []
             curr_chap = 0
             for i, chap in enumerate(chap_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
                 if curr_chap > 0:
-                    target = chap_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                    nominal = chap_list[curr_chap - 1].get('time', 0)
+                    target = nominal + self._chapter_seek_offset()
                     self.seek_async(target)
                     return target
             else:
-                target = chap_start + _CHAPTER_BOUNDARY_EPSILON
+                target = chap_start + self._chapter_seek_offset()
                 self.seek_async(target)
                 return target
 
@@ -758,7 +811,7 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             if curr_chap >= len(self._chapter_list) - 1:
                 return
@@ -770,12 +823,13 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(chap_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             if not chap_list or curr_chap >= len(chap_list) - 1:
                 return
             next_chap = curr_chap + 1
-            target = chap_list[next_chap].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+            nominal = chap_list[next_chap].get('time', 0)
+            target = nominal + self._chapter_seek_offset()
             self.seek_async(target)
             return target
 
@@ -791,7 +845,7 @@ class Player(QObject):
             curr_time = self.time_pos or 0
             curr_chap = 0
             for i, chap in enumerate(self._chapter_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             dur = self.duration
             start = self._chapter_list[curr_chap].get('time', 0)
@@ -806,7 +860,7 @@ class Player(QObject):
             chap_list = self.chapter_list or []
             curr_chap = 0
             for i, chap in enumerate(chap_list):
-                if chap.get('time', 0) <= curr_time + _CHAPTER_BOUNDARY_EPSILON:
+                if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             if chap_list and curr_chap < len(chap_list):
                 dur = self.duration

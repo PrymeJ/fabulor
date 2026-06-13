@@ -16,7 +16,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
-from .player import Player, _CHAPTER_BOUNDARY_EPSILON
+from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
 from .themes import THEMES, _resolve_theme, get_player_stylesheet
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
@@ -1242,7 +1242,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             chap_dur_val = self.player.duration or 0
             if chap_list and chap_dur_val:
                 for i, chap in enumerate(chap_list):
-                    if chap.get('time', 0) <= new_progress + _CHAPTER_BOUNDARY_EPSILON:
+                    if chap.get('time', 0) <= new_progress + _CHAPTER_WALK_TOLERANCE:
                         curr_chap_idx = i
                 start = chap_list[curr_chap_idx].get('time', 0)
                 end = chap_list[curr_chap_idx + 1].get('time', chap_dur_val) if curr_chap_idx + 1 < len(chap_list) else chap_dur_val
@@ -1498,7 +1498,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if pos is not None:
                 curr_chap = 0
                 for i, chap in enumerate(chap_list):
-                    if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
+                    if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
                         curr_chap = i
                 self._update_chapter_label_from_index(curr_chap)
 
@@ -1626,7 +1626,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # of when mpv's internal chapter property settles after a seek.
         curr_chap = 0
         for i, chap in enumerate(chap_list):
-            if chap.get('time', 0) <= pos + _CHAPTER_BOUNDARY_EPSILON:
+            if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
                 curr_chap = i
         if curr_chap < len(chap_list):
             # Update chapter progress
@@ -2323,7 +2323,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if chap_list:
                 curr_chap_idx = 0
                 for i, chap in enumerate(chap_list):
-                    if chap.get('time', 0) <= current_pos + _CHAPTER_BOUNDARY_EPSILON:
+                    if chap.get('time', 0) <= current_pos + _CHAPTER_WALK_TOLERANCE:
                         curr_chap_idx = i
                 chap_start = chap_list[curr_chap_idx].get('time', 0)
                 if curr_chap_idx + 1 < len(chap_list):
