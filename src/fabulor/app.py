@@ -1328,10 +1328,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         book_data = self.db.get_book(self.current_file)
         if book_data and book_data.progress > 0:
             self.player.is_seeking = True
-            if self.player._virtual_timeline is not None:
-                self.player.seek_async(book_data.progress)
-            else:
-                self.player.seek_async(book_data.progress + _CHAPTER_BOUNDARY_EPSILON)
+            # Restore to the exact saved position for all book types. This is NOT
+            # chapter navigation — there is no boundary to clear — so no epsilon is
+            # added. The old non-VT `+ _CHAPTER_BOUNDARY_EPSILON` caused position
+            # creep: the 200ms persistence sync saved the epsilon-inflated landing,
+            # which became the next restore's input, nudging ~0.35s forward every
+            # restart until EOF. The VT branch never added it and never crept.
+            self.player.seek_async(book_data.progress)
         else:
             # No position to restore — clear the _is_seeking flag set by load_book.
             # Without this, _on_time_pos_change won't auto-clear it (since _seek_target
