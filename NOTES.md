@@ -1,4 +1,45 @@
 
+## Playing-seek chapter-UI oscillation — pre-existing, the next thing to fix (2026-06-13)
+
+Isolated while verifying the position-creep fix. Clicking Next/Prev or a chapter-list entry **while
+playing** makes the chapter slider jump to the chapter's END and bounce between chapters before
+settling; the chapter label flickers identically. Related symptoms in the same family: short chapters
+show a load-time "sliver" on the chapter slider; chapter-list clicks clip the first word; right-click
+on a progress-bar notch lands slightly early (tail of the previous chapter).
+
+**Proven pre-existing, NOT a creep-fix regression:** all symptoms reproduce on committed baseline
+`95db6b6` with the restore-epsilon change stashed out. Confirmed by the user against that baseline.
+
+**Working hypothesis (for whoever picks this up — do NOT just tune another epsilon):** same root as
+the earlier paused stuck-chapter bug. The chapter-position walk (`time <= pos + _CHAPTER_WALK_TOLERANCE`)
+resolves the wrong chapter *during an in-flight seek*, because the seek transit passes through
+intermediate `time_pos` values: paused → mpv undershoots the target; playing → mpv overshoots
+*through* the target (sweeping past the next chapter boundary and back). `_sync_chapter_ui`
+early-returns while `is_seeking`, which SHOULD freeze the UI during transit — but the settle condition
+in `_on_time_pos_change` (`abs(global_pos − _seek_target) < 1.0`) clears `is_seeking` too early when
+playing overshoots, unfreezing the chapter UI mid-transit so it renders the overshoot position
+(chapter end / wrong chapter) for a few ticks before the real settle. The chapter-relative slider
+value `(pos − chap_start)/chap_dur` then reads ~1.0 (slider at far right) during that window.
+
+The fix should be at the **settle/guard layer** (how `is_seeking` gates the chapter UI during a
+playing seek), not another offset. Candidate single root for ALL of: sliver, first-word clip,
+playing oscillation, notch-early. This is mpv-seek-behavior territory we've been circumventing for
+weeks — aim for a fix we own (gate the chapter UI on true settle, not the 1.0s proximity), not a new
+magic number. Also: at restore `_cached_duration` is `None` (observed `dur=None`), so the restore
+seek fires before duration is known — likely a contributor to the load-time sliver specifically.
+
+## Position creep on restart was an epsilon on the restore seek (2026-06-13, FIXED `3bb14cf`)
+
+`_restore_position` added `+_CHAPTER_BOUNDARY_EPSILON` (0.35) to the non-VT restore seek. Restore is
+NOT chapter navigation — no boundary to clear — so this was wrong. The save path
+(`_save_current_progress` / `_sync_persistence`) saves the true `time_pos`; on restart the seek landed
+at `progress + 0.35`, the 200ms sync saved that inflated landing, and it became the next restore's
+input → ~0.35s forward every restart until EOF. The VT branch (`seek_async(progress)`, no epsilon)
+never crept — direct proof non-VT needed none. Fix: collapse both branches to a single
+`seek_async(book_data.progress)`. The `_CHAPTER_BOUNDARY_EPSILON` import stays — still used by the
+VT-gated flow-animation display offset at app.py:1250 (unrelated). This fixed ONLY the creep; the
+load-time sliver/clip are the separate pre-existing oscillation family above.
+
 ## Chapter-seek precision: mpv overshoots ~0.09s playing, undershoots ~0.37s paused (2026-06-13)
 
 The single biggest non-obvious finding of the Session 3+4 chapter-seek work. **mpv's exact seek

@@ -55,7 +55,11 @@ The deferred item above (embedded-M4B chapter-list click freezing the chapter sl
 
 - **VT first-word audio clipping** — same class as the M4B clip, different cause (VT boundaries are file starts from summed mutagen durations vs mpv's decoded sample count). VT nav/clicks still use `+0.35`.
 - **Notch-click paused clip** on books with audio at the very chapter start (paused compensation's benefit is partial since notch-click starts playback). Minor.
-- **Position creep on repeated app restarts** — restore path (`app.py:1334`, `seek_async(progress + _CHAPTER_BOUNDARY_EPSILON)`) still adds the legacy epsilon per restore. Pre-existing.
+- **Position creep on repeated app restarts** — **FIXED** (commit `3bb14cf`). `_restore_position` added `+_CHAPTER_BOUNDARY_EPSILON` to the non-VT restore seek; the 200ms persistence sync saved the inflated landing, which became the next restore's input → ~0.35s/restart drift to EOF. Restore is not chapter nav (no boundary to clear), and the VT branch never added it. Collapsed both branches to a single `seek_async(book_data.progress)`. Import retained (still used by the VT-gated flow-animation offset at app.py:1250).
+
+### Playing-seek chapter-UI oscillation — NEW, pre-existing (deferred to next investigation)
+
+While verifying the creep fix, a **distinct and bigger** bug was isolated. Clicking Next/Prev (or a chapter-list entry) **while playing** makes the chapter slider shoot to the chapter's END and bounce between chapters before settling on the correct one; the chapter label flickers the same way. Short chapters show a load-time "sliver"; chapter-list clicks clip the first word; right-click on a notch lands a touch early (end of previous chapter). **Proven pre-existing:** ALL of these reproduce on the committed baseline (`95db6b6`) with the creep fix stashed out — they are NOT caused by the restore-epsilon removal. Likely the same root as the earlier paused stuck-chapter bug: the chapter-position walk resolving the wrong chapter during an in-flight seek (paused → undershoot; playing → overshoot through the target), with `is_seeking` clearing mid-transit (settle `abs(pos − _seek_target) < 1.0` fires early when playing overshoots). Candidate single root for sliver + clip + oscillation + notch-early. Deferred to its own focused root-cause pass — NOT another epsilon tune. Also noted: at restore, `_cached_duration` is `None` (RESTORE-DBG: `dur=None`), so the restore seek happens before duration is known — may factor into the load-time sliver.
 
 ---
 
