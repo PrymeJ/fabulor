@@ -67,12 +67,6 @@ _EMBEDDED_CHAPTER_SEEK_OFFSET = -0.09
 _PAUSED_SEEK_UNDERSHOOT_COMP = 0.37
 _MP3_SEEK_THRESHOLD: float = 60.0  # long seeks on single VBR MP3 use stop-and-load
 _VT_MP3_SIZE_THRESHOLD: int = 40 * 1024 * 1024  # 40 MB — VT files above this use stop-and-load
-# After a seek settles, mpv emits one stale time_pos ~0.56-0.87s BACKWARD (into the
-# previous chapter) before resuming forward. Measured 2026-06-15. A global-position
-# regression beyond this tolerance while not seeking is that artifact and is dropped.
-# 0.3 clears normal forward jitter (~0.05-0.2s) with margin and catches every observed
-# stale sample. See _on_time_pos_change.
-_STALE_BACKWARD_TOLERANCE: float = 0.3
 
 class Player(QObject):
     chapter_changed = Signal(int)
@@ -94,7 +88,6 @@ class Player(QObject):
         self._base_volume = 100.0 # User's set volume (log scale)
         self._fade_ratio = 1.0   # Sleep timer fade (0.0 to 1.0)
         self._cached_time_pos: float | None = None
-        self._last_global_pos: float | None = None  # last accepted global pos; rejects stale backward time_pos
         self._cached_duration: float | None = None
         self._cached_pause: bool = True
         self._cached_speed: float = 1.0
@@ -142,21 +135,6 @@ class Player(QObject):
             self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_time_pos_change(self, name, value):
-        # Reject mpv's stale BACKWARD time_pos sample emitted right after a seek settles
-        # (~0.56-0.87s back, into the previous chapter), which otherwise sticks the chapter
-        # UI on the previous chapter (paused) or bounces the slider to its end (playing).
-        # Compare in GLOBAL space: global position only climbs (a VT file switch advances
-        # _file_offset, so it climbs across files too) — so a global regression while not
-        # seeking is the artifact. Legitimate backward motion (Prev/rewind/slider/undo/
-        # smart-rewind) is in-flight with is_seeking=True, so excluded. Drop the sample
-        # entirely: don't update _cached_time_pos / _last_global_pos, don't walk chapters.
-        if value is not None:
-            gpos = value + (self._file_offset or 0)
-            if (not self._is_seeking and self._seek_target is None
-                    and self._last_global_pos is not None
-                    and gpos < self._last_global_pos - _STALE_BACKWARD_TOLERANCE):
-                return
-            self._last_global_pos = gpos
         self._cached_time_pos = value
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
@@ -405,7 +383,6 @@ class Player(QObject):
         # Clear cached mpv state so stale values from previous book can't leak
         # into saves before the new book's file is loaded.
         self._cached_time_pos = None
-        self._last_global_pos = None
         self._cached_duration = None
         self._seek_target = None
 
