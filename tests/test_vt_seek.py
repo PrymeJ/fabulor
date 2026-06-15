@@ -103,37 +103,51 @@ def test_local_target_would_NOT_settle_proving_the_bug():
 
 
 # --------------------------------------------------------------------------- #
-# Boundary no-op nav must NOT strand is_seeking (the soak-found freeze).
-# previous_chapter() at chapter 0 / next_chapter() past the last chapter must not
-# leave is_seeking=True with _seek_target=None. The player nav methods set those via
-# seek_async ONLY when they actually seek; nothing should set is_seeking on a no-op.
+# Nav must never strand is_seeking (the soak-found freeze): is_seeking=True is only
+# ever paired with a non-None _seek_target (seek_async sets both together, ONLY when it
+# actually seeks). A genuine no-op (next_chapter past the last chapter) must seek nothing
+# and set neither.
 # --------------------------------------------------------------------------- #
 def _chaptered_player(chapter_times):
-    """Non-VT chaptered player (embedded-M4B-like): _chapter_list set, no VT, no mpv
-    needed because the boundary path returns BEFORE any seek_async."""
+    """Non-VT chaptered player (embedded-M4B-like): _chapter_list set, no VT."""
     p = Player(db=None, config=None)
     p._virtual_timeline = None
     p._chapter_list = [{"time": t} for t in chapter_times]
     p.instance = _FakeMpv()
+    p._cached_duration = chapter_times[-1] + 100.0  # past the last chapter, for EOF guard
     return p
 
 
-def test_previous_chapter_at_chapter0_does_not_strand_is_seeking():
+def test_previous_chapter_in_first_chapter_rewinds_to_start_without_stranding():
+    """In the FIRST chapter, Prev rewinds to the book start (0:00) — the 2s
+    restart-vs-previous threshold does not apply (no previous chapter to step to). It
+    DOES seek, so is_seeking is set, but WITH a matching _seek_target (not stranded)."""
     p = _chaptered_player([0.0, 100.0, 200.0])
-    # Within ~first 2s of chapter 0 → "go to previous chapter" branch, but there is
-    # no previous chapter → previous_chapter() must NOT seek and must NOT set is_seeking.
-    p._cached_time_pos = 0.5
+    p._cached_time_pos = 0.5   # within the old 2s dead zone
     p._cached_speed = 1.0
     assert p._is_seeking is False
-    p.previous_chapter()
-    assert p._is_seeking is False        # not stranded
-    assert p._seek_target is None
-    assert p.instance.commands == []     # no seek issued at the boundary
+    ret = p.previous_chapter()
+    assert ret == 0.0                       # rewinds to book start
+    assert p.instance.commands != []        # a seek WAS issued (no longer a no-op)
+    # freeze invariant: is_seeking set ⟹ _seek_target set (settle can clear them together)
+    assert p._is_seeking is True
+    assert p._seek_target is not None
+
+
+def test_previous_chapter_first_chapter_past_threshold_also_rewinds_to_start():
+    """Even past 2s into the first chapter, Prev goes to 0:00 (restart current = start)."""
+    p = _chaptered_player([0.0, 100.0, 200.0])
+    p._cached_time_pos = 50.0
+    p._cached_speed = 1.0
+    ret = p.previous_chapter()
+    assert ret == 0.0
+    assert p._is_seeking is True
+    assert p._seek_target is not None
 
 
 def test_next_chapter_past_last_does_not_strand_is_seeking():
     p = _chaptered_player([0.0, 100.0, 200.0])
-    # In the last chapter → next_chapter() is a no-op; must not set is_seeking.
+    # In the last chapter → next_chapter() is a genuine no-op; must not set is_seeking.
     p._cached_time_pos = 250.0
     p._cached_speed = 1.0
     assert p._is_seeking is False

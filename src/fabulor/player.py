@@ -108,6 +108,7 @@ class Player(QObject):
         self._mp3_seek_target: float = 0.0
         self._mp3_seek_was_playing: bool = False
         self._mp3_seek_visual_lock: bool = False
+        self._dbg_play_gen: int = 0  # TEMP Step-0 instrumentation: per-play() id
 
     @staticmethod
     def format_time(seconds):
@@ -135,6 +136,12 @@ class Player(QObject):
             self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_time_pos_change(self, name, value):
+        # TEMP Step-0: post-settle offset stream (shows stale _file_offset persisting).
+        if value is not None and self._virtual_timeline is not None:
+            print(f"[TPC] t={time.monotonic():.3f} value={value:.3f} foff={self._file_offset:.1f} "
+                  f"gpos={value + (self._file_offset or 0):.3f} seek={self._is_seeking} "
+                  f"tgt={self._seek_target} vtidx={self._current_vt_index} "
+                  f"vtsw={self._is_vt_file_switch}", flush=True)
         self._cached_time_pos = value
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
@@ -193,6 +200,10 @@ class Player(QObject):
                 self._file_offset = next_file['cumulative_start']
                 self._is_vt_file_switch = True
                 self._pending_local_pos = None
+                self._dbg_play_gen += 1  # TEMP Step-0
+                print(f"[PLAY-ISSUE] t={time.monotonic():.3f} gen={self._dbg_play_gen} "
+                      f"src=advance vt_index={next_idx} cum_start={next_file['cumulative_start']:.1f} "
+                      f"path={os.path.basename(next_file['file_path'])}", flush=True)  # TEMP
                 self.instance.play(next_file['file_path'])
                 if self.instance.pause:
                     self.instance.pause = False
@@ -439,6 +450,15 @@ class Player(QObject):
         # Suppressing it entirely avoids the snap-back on chapter navigation.
         return
     def _on_file_loaded(self, event):
+        # TEMP Step-0: log the arrival edge with mpv's actually-loaded path.
+        try:
+            _loaded = self.instance.path
+        except Exception:
+            _loaded = '<unavailable>'
+        print(f"[FILE-LOADED] t={time.monotonic():.3f} "
+              f"mpv_path={os.path.basename(_loaded) if _loaded else _loaded} "
+              f"cur_vt_index={self._current_vt_index} foff={self._file_offset:.1f} "
+              f"pending_local={self._pending_local_pos} is_vt_switch={self._is_vt_file_switch}", flush=True)
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
@@ -621,6 +641,10 @@ class Player(QObject):
                 self._current_vt_index = target_idx
                 self._file_offset = target_file['cumulative_start']
                 self._is_vt_file_switch = True
+                self._dbg_play_gen += 1  # TEMP Step-0
+                print(f"[PLAY-ISSUE] t={time.monotonic():.3f} gen={self._dbg_play_gen} "
+                      f"src=seek_async vt_index={target_idx} cum_start={target_file['cumulative_start']:.1f} "
+                      f"path={os.path.basename(target_file['file_path'])}", flush=True)  # TEMP
                 self.instance.play(target_file['file_path'])
         else:
             dur = self._cached_duration
@@ -811,16 +835,21 @@ class Player(QObject):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
+            # In the FIRST chapter there is no "previous chapter" to step back to, so the
+            # 2s restart-vs-previous threshold does not apply: Prev always rewinds to the
+            # book start (0:00). Without this, sitting in the first 2s of chapter 0 made
+            # Prev a no-op, leaving 0:01 awkward to clear to 0:00.
+            if curr_chap == 0:
+                self.seek_async(0.0)
+                return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
-                if curr_chap > 0:
-                    target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
-                    self.seek_async(target)
-                    return target
+                target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                self.seek_async(target)
+                return target
             else:
                 self.seek_async(chap_start)
                 return chap_start
-            return curr_time
         else:
             curr_time = self.time_pos or 0
             chap_list = self.chapter_list or []
@@ -829,13 +858,17 @@ class Player(QObject):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
+            # First chapter: no previous chapter, so the 2s threshold doesn't apply —
+            # Prev always rewinds to the book start (0:00). (See VT branch above.)
+            if curr_chap == 0:
+                self.seek_async(0.0)
+                return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
-                if curr_chap > 0:
-                    nominal = chap_list[curr_chap - 1].get('time', 0)
-                    target = nominal + self._chapter_seek_offset()
-                    self.seek_async(target)
-                    return target
+                nominal = chap_list[curr_chap - 1].get('time', 0)
+                target = nominal + self._chapter_seek_offset()
+                self.seek_async(target)
+                return target
             else:
                 target = chap_start + self._chapter_seek_offset()
                 self.seek_async(target)
