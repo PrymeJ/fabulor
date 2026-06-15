@@ -1,3 +1,38 @@
+## Session Summary — 2026-06-15 — VT/nav chapter-UI freezes + first pytest harness (long measure-first session)
+
+**Branch:** `main`. **Commits (not pushed):** `3bb14cf` creep fix · `f15f1fa` test harness · `29b266c` two freeze fixes + VT test · `0beee70` shelved seek-state experiment. (Plus `4ae0783`/`92902cd` reverting an earlier bounce/stick fix — see below.)
+
+### Outcome — what actually shipped
+
+1. **Position creep on restart — FIXED (`3bb14cf`).** `_restore_position` added `+_CHAPTER_BOUNDARY_EPSILON` to the non-VT restore seek; restore is not chapter nav, the 200ms persistence sync saved the inflated landing, and it compounded ~0.35s/restart. Collapsed both branches to `seek_async(book_data.progress)`.
+
+2. **VT cross-file seek coordinate-space freeze — FIXED (`29b266c`).** `_on_file_loaded`'s cross-file follow-up stored `_seek_target = pending` (LOCAL) while the settle compares GLOBAL (`value + _file_offset`) → `abs(global − local) ≈ cumulative_start` → never `< 1.0` → `is_seeking` stuck True forever → permanent frozen chapter slider + remaining-time. Fix: store `pending + target_file['cumulative_start']` (GLOBAL); mpv command stays LOCAL. Uses the timeline entry (self-consistent with `_current_vt_index`), plus a permanent `[VT-DESYNC]` tripwire that logs if VT loads ever stop being serialized.
+
+3. **Boundary `is_seeking` freeze — FIXED (`29b266c`).** `handle_prev`/`handle_next`/`_on_prev_right_click` set `self.player.is_seeking = True` UNCONDITIONALLY after the nav call. At chapter[0] Prev (and last-chapter Next) the nav method no-ops without `seek_async`, so `_seek_target` is never set → `is_seeking` stranded True with `_seek_target` None → never settles → permanent freeze (M4B too, not just VT). Removed the redundant set; the nav methods set `is_seeking` via `seek_async` only when they actually seek. Same class as the earlier chapter-list-click fix.
+
+4. **First pytest harness — ADDED (`f15f1fa`).** `_on_time_pos_change` is a near-pure state machine (no mpv, no QApplication, signals emit synchronously). `tests/` + `requirements-dev.txt` (pytest dev-only) + `conftest.py` (src on path). Seek-state invariant tests + (in `29b266c`) `tests/test_vt_seek.py` proving the VT coordinate fix RED→GREEN against the real captured `vtidx=0`/`vtidx=27` cases, plus boundary contract guards. 19 tests green.
+
+### The measure-first arc (why this session was long — and the discipline that paid off)
+
+The bounce/stick "playing-seek oscillation" was attacked first with an elaborate hypothesis (settle gate clears early). **Instrumentation disproved it** (`dist=0.0` clean settles), revealing the real cause: a stale BACKWARD `time_pos` sample after a clean settle. That fix (`b6a4023`) shipped, then **regressed VT backward-seek + play/pause icon + chapter[1]→[0] click**, and was **reverted** (`4ae0783`/`92902cd`). The revert restored a known-good baseline (creep fixed; bounce/stick present-but-not-breaking).
+
+Then, rather than re-guess, built the **pytest harness** and ran a **deciding experiment**: a single seek-state object (`NotSeeking | Seeking(target,gen)`) replayed against the REAL freeze capture. The real log **disproved** the seek-state diagnosis (capture ended `seek=False tgt=None` while UI frozen → not an `is_seeking` desync). A **both-edges capture** (`[PLAY-ISSUE]`/`[FILE-LOADED]`/`[TPC]`) then proved **VT loads are strictly serialized** (no overlapping-seek clobber) — retiring the entire PendingLoad/gen/FIFO/seek-state machinery as solving a non-problem. The both-edges log pinpointed the two actual freezes (coord-space + boundary), each then fixed minimally and confirmed by soak. A red-team caught that the one-line coord fix could mirror-image the bug if `_file_offset` were stale at line 485; traced + validated against real capture values that it is correct.
+
+**Lesson reinforced:** measure before building. Three rounds of state-machine design were collapsed into a ~one-line fix + a redundant-set removal by capturing the real event stream instead of reasoning about it.
+
+### Still open / untouched (explicit — nothing from "yesterday" is fixed)
+
+- **Playing-seek oscillation / slider-all-the-way-right / stuck-in-chapter** (the bounce/stick family) — REVERTED, unfixed. User re-soaking; often doesn't show in short tests.
+- **Short-chapter sliver** — the anti-drift mechanism now visible on short chapters; a prior pass fix was reverted for regressions; trickier than it looks. Untouched.
+- **Transient self-resolving offset glitch** on natural VT file advance — one stale old-file `time_pos` sample pairs with the new `_file_offset` for one tick (self-corrects). Separate, minor, tracked.
+- **VT first-word clipping** (mutagen-vs-mpv duration mismatch); right-click notch reliability.
+
+### Instrumentation status
+
+Temp `[TPC]`/`[PLAY-ISSUE]`/`[FILE-LOADED]`/`_dbg_play_gen` in `player.py` is **kept in the working tree (uncommitted)** for ongoing soak (user request). The committed `29b266c` is fixes-only. The permanent `[VT-DESYNC]` tripwire IS committed (insurance). Shelved seek-state design lives in `experiments/seek_state_desync/` (`0beee70`), labeled not-wired. Soak logs: `/tmp/fabulor_VTfreeze_capture.log`, `/tmp/fabulor_vtboth.log`, `/tmp/fabulor_vtfix.log`.
+
+---
+
 ## Session Summary — 2026-06-13 Session 3 — Embedded-M4B chapter-seek precision (first-word clipping)
 
 **Branch:** `main`

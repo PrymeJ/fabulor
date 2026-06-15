@@ -1,4 +1,50 @@
 
+## VT loads are STRICTLY SERIALIZED — no overlapping-seek clobber (2026-06-15)
+
+Proven by a both-edges capture (`[PLAY-ISSUE]` at each `play()`, `[FILE-LOADED]` at `_on_file_loaded`):
+every `play()` produces its matching `file-loaded` ~12–18ms later, IN issue order, before the next
+`play()` is issued. So the rapid-backward-seek "overlapping cross-file seeks clobber `_file_offset`/
+`_seek_target`" theory does NOT occur in practice. This retired a large amount of explored machinery
+(a single seek-state object, PendingLoad records keyed by index, generation counters, FIFO-vs-path
+disambiguation) — all of it solving a clobber that can't happen while loads are serial. If a future
+mpv version or refactor ever makes loads async/batched, the committed `[VT-DESYNC]` tripwire in
+`_on_file_loaded` will fire (loaded path != `_virtual_timeline[_current_vt_index]` path), and the
+shelved design in `experiments/seek_state_desync/` becomes relevant. Until then: `_current_vt_index`
+and `_file_offset` set speculatively in `seek_async` before `play()` ARE correct at `_on_file_loaded`
+time, because nothing overlapped to change them.
+
+## VT cross-file seek froze because `_seek_target` was stored LOCAL, settle compares GLOBAL (2026-06-15, FIXED `29b266c`)
+
+Permanent chapter-UI freeze on VT books after a cross-file seek (e.g. rapid backward seek). Root
+cause: `_on_file_loaded`'s cross-file follow-up set `self._seek_target = pending` where `pending` is a
+LOCAL offset into the new file, but the settle in `_on_time_pos_change` is
+`abs((value + _file_offset) − _seek_target) < 1.0` — i.e. it expects `_seek_target` in GLOBAL space.
+So `abs(global − local) ≈ the file's cumulative_start` (e.g. 110107), never `< 1.0`, `is_seeking`
+stuck True forever, chapter slider + remaining-time frozen. Signature in the log: `seek=True tgt=0.35`
+while `gpos` is in the thousands. Fix: `self._seek_target = pending + target_file['cumulative_start']`
+(GLOBAL); the mpv `command_async('seek', pending, ...)` stays LOCAL. Uses the timeline entry
+(self-consistent with the index that drives the seek) not the bare `_file_offset` field. Validated:
+`tests/test_vt_seek.py` is RED with the old LOCAL line and GREEN after, against the real captured
+`vtidx=0` (target 0.35) and `vtidx=27` (target 0.35+108000) cases. The same coordinate-space bug was
+identifiable in the very first agent trace weeks ago; it got buried under an offset-clobber theory and
+re-surfaced only when the real both-edges capture was read.
+
+## Boundary nav stranded `is_seeking` → freeze; the unconditional app-level set was the bug (2026-06-15, FIXED `29b266c`)
+
+Separate permanent freeze (reproduces on M4B AND VT). `handle_prev`/`handle_next`/`_on_prev_right_click`
+in app.py set `self.player.is_seeking = True` UNCONDITIONALLY after calling the player nav method. At
+the **chapter[0] Prev boundary** (within ~first 2s, where the "go to previous chapter" branch runs but
+there is no previous chapter) and the **last-chapter Next** boundary, `previous_chapter()`/
+`next_chapter()` no-op WITHOUT calling `seek_async`, so `_seek_target` is never set. The unconditional
+`is_seeking = True` then strands the flag: `is_seeking=True, _seek_target=None` → the settle
+(`...and self._seek_target is not None`) can never run → permanent freeze. Log signature: `seek=True
+tgt=None` while `value` climbs freely. Fix: REMOVE the redundant app-level `is_seeking = True`; the
+nav methods set `is_seeking` via `seek_async` ONLY when they actually seek. This is the SAME class as
+the chapter-list-click freeze fixed earlier (`_on_chapter_list_selected` already carries the warning
+comment). User-confirmed by soak (markers: "chapter[0] within first second, left-click Prev → freeze;
+wait 2s → correct; right-click Prev always works"). Harness adds contract guards that the nav methods
+at a boundary leave `is_seeking` False.
+
 ## Playing-seek chapter-UI oscillation — pre-existing, the next thing to fix (2026-06-13)
 
 Isolated while verifying the position-creep fix. Clicking Next/Prev or a chapter-list entry **while
@@ -27,6 +73,17 @@ playing oscillation, notch-early. This is mpv-seek-behavior territory we've been
 weeks — aim for a fix we own (gate the chapter UI on true settle, not the 1.0s proximity), not a new
 magic number. Also: at restore `_cached_duration` is `None` (observed `dur=None`), so the restore
 seek fires before duration is known — likely a contributor to the load-time sliver specifically.
+
+**⚠️ UPDATE (2026-06-15): the "settle clears too early" hypothesis above was DISPROVEN by
+measurement.** Instrumentation showed playing seeks settle cleanly at `dist=0.0` — the gate does NOT
+clear early. The actual cause of the bounce is a **stale BACKWARD `time_pos` sample mpv emits AFTER a
+clean settle** (~0.56–0.87s back, into the previous chapter); the 200ms tick occasionally renders it.
+A fix for that (`b6a4023`, drop a backward global jump while not seeking) was committed and then
+**REVERTED** (`4ae0783`) because it regressed VT backward-seek + play/pause icon + chapter[1]→[0]
+click (the early-`return` starved the settle/cache pipeline). So this family is **still unfixed**, and
+the hypothesis to carry forward is the stale-backward-sample one, NOT settle-clears-early. Do not
+re-implement the early-return drop without handling the starvation (don't skip the settle/cache update
+for a dropped sample).
 
 ## Position creep on restart was an epsilon on the restore seek (2026-06-13, FIXED `3bb14cf`)
 

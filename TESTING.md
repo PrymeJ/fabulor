@@ -41,6 +41,30 @@
 - [x] Smart Rewind: Selection persists, respects chapter boundaries, and triggers on resume 
      (if away_duration >= (wait_min * 60) in player.py to test)
 
+## Automated tests (pytest) — 2026-06-15
+
+First automated tests exist. Run: `source fabulorenv/bin/activate && pytest tests/ -q` (pytest is
+dev-only, in `requirements-dev.txt`). `tests/` drives `Player._on_time_pos_change`/seek-state directly
+with NO mpv and NO QApplication (it's a near-pure state machine). Covers: seek-settle clears
+is_seeking (forward + backward, VT + non-VT), cache never freezes, chapter walk/emit, VT file-switch,
+the VT cross-file coordinate fix (RED→GREEN), and boundary-nav no-op contract guards. Keep these green
+on any seek-path change — they catch the desync class that caused repeated regressions this session.
+
+## VT / nav chapter-UI freezes — 2026-06-15 (both FIXED, soak-confirmed)
+
+- [ ] **VT cross-file seek (rapid backward seek to start):** chapter slider + remaining-time keep
+  tracking; NO permanent freeze. (Was: `_seek_target` stored LOCAL while settle expects GLOBAL →
+  is_seeking stuck forever.)
+- [ ] **Chapter[0] Prev, left-click within first ~2s:** no freeze (goes to/stays at chapter start);
+  wait >2s then Prev → correctly goes to chapter beginning; right-click Prev → 00:00:00 always works.
+- [ ] **Last chapter Next / Next-mash past the last chapter:** no-op cleanly, NO freeze.
+- [ ] **Pause at last chapter → Next:** no-op, no freeze (clicking the slider was the old recovery).
+- [ ] **M4B (not just VT):** the chapter[0]-Prev and last-chapter-Next boundary cases also must not
+  freeze — the boundary fix is format-agnostic.
+- [ ] Regression: normal forward VT advance, single cross-file seek, same-file seek — unaffected.
+- [ ] `[VT-DESYNC]` never printed to stdout during normal use (it only fires if VT loads stop being
+  serialized — a real desync, not expected).
+
 ## Chapter-seek precision & freeze (embedded M4B) — Session 3+4, 2026-06-13
 
 Background: mpv's exact seek overshoots a chapter boundary by ~0.09s while **playing** and
