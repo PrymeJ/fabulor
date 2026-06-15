@@ -462,7 +462,27 @@ class Player(QObject):
                 self._is_seeking = False
                 self._seek_target = None
             else:
-                self._seek_target = pending
+                # _seek_target must be GLOBAL: the settle in _on_time_pos_change compares
+                # abs((value + _file_offset) - _seek_target) < 1.0. Storing the LOCAL
+                # `pending` here (the previous behaviour) made that distance ~the file's
+                # cumulative_start, so a cross-file seek NEVER settled and is_seeking stuck
+                # True forever → permanent chapter-UI freeze (captured 2026-06-15, VT books).
+                # The mpv command stays LOCAL (`pending`); only the logical target is global.
+                # Use the timeline entry (self-consistent with _current_vt_index) not the bare
+                # _file_offset field, so it can't drift if that field is ever stale.
+                target_offset = target_file['cumulative_start'] if target_file is not None else (self._file_offset or 0)
+                # Tripwire: this fix assumes _current_vt_index identifies the file mpv just
+                # loaded (true while VT loads are serialized — verified 2026-06-15). If that
+                # ever stops holding, fail loudly here rather than silently re-freeze.
+                try:
+                    _loaded = self.instance.path
+                except Exception:
+                    _loaded = None
+                if _loaded and target_file is not None and os.path.basename(_loaded) != os.path.basename(target_file['file_path']):
+                    print(f"[VT-DESYNC] loaded={os.path.basename(_loaded)} != "
+                          f"target_idx={self._current_vt_index} "
+                          f"path={os.path.basename(target_file['file_path'])} — VT load no longer serialized!", flush=True)
+                self._seek_target = pending + target_offset
                 self.instance.command_async('seek', pending, 'absolute+exact')
         if self._virtual_timeline is not None:
             self._is_vt_file_switch = False

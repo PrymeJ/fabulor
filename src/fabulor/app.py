@@ -2166,7 +2166,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player and self.current_file:
             old_pos = self.player.time_pos
             self.player.seek_async(0)
-            self.player.is_seeking = True
+            # No is_seeking set here: seek_async sets is_seeking AND _seek_target
+            # together. A redundant unconditional set here strands is_seeking=True
+            # with _seek_target=None whenever the seek is a no-op (boundary), which
+            # the settle can never clear -> permanent freeze. (Same class as the
+            # chapter-list-click fix; see _on_chapter_list_selected.)
             self._trigger_undo(old_pos)
 
     def handle_prev(self):
@@ -2176,7 +2180,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             old_pos = self.player.time_pos or 0.0
             target = self.player.previous_chapter()
-            self.player.is_seeking = True
+            # No is_seeking set here: previous_chapter() calls seek_async (which sets
+            # is_seeking + _seek_target together) ONLY when it actually seeks. At the
+            # chapter[0] boundary it no-ops without seeking; an unconditional is_seeking
+            # = True here would then strand the flag (with _seek_target=None) and the
+            # settle could never clear it -> permanent chapter-UI freeze (captured
+            # 2026-06-15, M4B + VT). Let seek_async own the flag.
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:
@@ -2189,7 +2198,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.player:
             old_pos = self.player.time_pos or 0.0
             target = self.player.next_chapter()
-            self.player.is_seeking = True
+            # No is_seeking set here (same reason as handle_prev): next_chapter()
+            # seeks only when it advances; at the last-chapter boundary it no-ops, and
+            # an unconditional is_seeking = True would strand the flag -> freeze.
             if target is not None:
                 speed = self.player.speed or 1.0
                 if abs(target - old_pos) > 60 * speed:
