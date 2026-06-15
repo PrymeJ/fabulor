@@ -1,3 +1,29 @@
+## Session Summary — 2026-06-15 Session 2 — Chapter sliver fix + first-chapter Prev rewind
+
+**Branch:** `fix/chapter-sliver` (branched from `main` to keep soak instrumentation committed without polluting main). **Commit:** `c3fa908` (not pushed).
+
+### Outcome — what shipped
+
+1. **Paused chapter-slider "sliver" — FIXED (`c3fa908`).** At a freshly-landed chapter start the chapter slider showed a thin fill ("sliver") while paused. Root cause: VT/CUE nav target is `nominal + _CHAPTER_BOUNDARY_EPSILON` (0.35), so `c_elapsed = pos − chap_start ≈ 0.35`, rendering as a visible fill fraction on short chapters. Invisible during live playback (pos advances and swallows it within a frame — sliver is paused-only). Fix is display-only: `_sliver_clamp(pause, c_elapsed)` helper in `app.py` reads slider value as 0 when `pause and c_elapsed < _CHAPTER_SLIVER_EPS`. Threshold = `_CHAPTER_BOUNDARY_EPSILON + 0.25` = 0.60, tied to the constant so it tracks any retune. Applied at both compute sites: the 200ms `_sync_chapter_ui` setValue and the flow-anim `new_chap_val`. Released instantly on play (gate opens; pos already moving, no jump, no animation). Labels untouched (already floor to 00:00). Measured paused settle jitter ~0.0004s (soak logs), so 0.25 headroom is ~600× the real landing error. 7 headless tests in `tests/test_sliver_clamp.py` including upper-boundary pin and `_CHAPTER_SLIVER_EPS > _CHAPTER_BOUNDARY_EPSILON` regression guard.
+
+2. **First-chapter Prev rewinds to 0:00 — FIXED (`c3fa908`).** `previous_chapter`'s `2.0 × speed`s restart-vs-previous threshold made Prev a no-op in the first 2s of chapter 0 (`curr_chap > 0` guard dead-ended). In chapter 0 there is no previous chapter so the threshold is meaningless — now `curr_chap == 0` always `seek_async(0.0)` → rewinds to book start in both VT and non-VT branches. `seek_async` 0.05 floor still applies (avoids the negative-seek-at-EOF bug); freeze invariant preserved (`is_seeking` set WITH matching `_seek_target`). `tests/test_vt_seek.py` updated: old "chapter-0 Prev is a no-op" contract replaced with "chapter-0 Prev rewinds to start without stranding." 27 tests green total.
+
+3. **Branch strategy for soak instrumentation.** Rather than strip-commit-restore the `[TPC]`/`[PLAY-ISSUE]`/`[FILE-LOADED]` instrumentation each time, all work (fix + tests + instrumentation) committed together on `fix/chapter-sliver`. Cherry-pick or squash a clean fixes-only commit onto `main` once soak completes and instrumentation is removed.
+
+### Design arc — the three-review tightening
+
+Initial plan used a flat 0.45s clamp. Three red-team review rounds sharpened it: (1) the VT/CUE nav target stacks `_CHAPTER_BOUNDARY_EPSILON` into `_seek_target` (confirmed in player.py:670), making 0.45 have near-zero margin — raised to 0.60 tied to the constant; (2) `_cached_pause` trustworthiness confirmed — chapter-nav-while-paused has no pause transition, so no race; (3) `load_book` resets `_cached_pause = True` explicitly, so the flow-path read is stable at book load. Jitter claim verified from soak logs (not assumed). Upper-boundary test added to pin the exact threshold. The paused-gated design (vs. unconditional clamp) came from the user's observation that slivers are never visible during live playback — a key constraint that simplified the fix.
+
+### Deferred
+
+- **Load-time transient sliver:** on book load at a chapter start, slider can show a brief sliver then self-correct on the next tick. Transient, cosmetic, self-healing. Tied to flow-path pause/value settle ordering at load. Deferred (see NOTES.md).
+- **Playing-seek oscillation / slider-right / stuck-in-chapter** (reverted, soaking).
+- **Transient VT advance glitch, VT first-word clipping, right-click notch** — unchanged.
+
+### Instrumentation status
+
+`[TPC]`/`[PLAY-ISSUE]`/`[FILE-LOADED]`/`_dbg_play_gen` committed on `fix/chapter-sliver` intentionally (soak build). Strip before merging to main.
+
 ## Session Summary — 2026-06-15 — VT/nav chapter-UI freezes + first pytest harness (long measure-first session)
 
 **Branch:** `main`. **Commits (not pushed):** `3bb14cf` creep fix · `f15f1fa` test harness · `29b266c` two freeze fixes + VT test · `0beee70` shelved seek-state experiment. (Plus `4ae0783`/`92902cd` reverting an earlier bounce/stick fix — see below.)
