@@ -1,0 +1,3 @@
+# Dev-only dependencies (NOT required to run the app — see requirements.txt for runtime).
+# Install with: pip install -r requirements-dev.txt
+pytest==9.1.0
