@@ -1,3 +1,47 @@
+## Session Summary — 2026-06-15 — Seek family closeout: position creep + chapter-UI bounce/stick
+
+**Branch:** `main`
+
+**Scope:** `app.py` (creep) + `player.py` (bounce/stick) + docs. Two fixes, both measurement-driven.
+
+### Position creep on restart — FIXED (`3bb14cf`)
+
+`_restore_position` added `+_CHAPTER_BOUNDARY_EPSILON` (0.35) to the non-VT restore seek. Restore is
+NOT chapter navigation (no boundary to clear); the 200ms persistence sync then saved the inflated
+landing, which became the next restore's input → ~0.35s/restart drift to EOF. The VT branch never
+added it and never crept. Collapsed both branches to `seek_async(book_data.progress)`. Import retained
+(still used by the VT-gated flow-animation offset at app.py:1250).
+
+### Chapter-UI bounce/stick — FIXED (`b6a4023`), measure-first win
+
+The "playing oscillation / paused stick" was traced by `[SEEK-TL]` instrumentation that **disproved**
+the going-in hypothesis (a too-loose settle gate). Real cause: every seek lands exactly on target
+(`dist=0.0`) and `is_seeking` clears correctly — then mpv emits ONE stale `time_pos` sample ~0.56-0.87s
+BACKWARD (into the previous chapter) before resuming forward. Paused: that stale sample is the last
+one → chapter slider/label STICK on the previous chapter at ~996-999. Playing: forward samples
+overwrite it, but the 200ms tick occasionally renders it → transient bounce.
+
+Fix: a guard in `_on_time_pos_change` drops a backward GLOBAL-position jump (`> _STALE_BACKWARD_
+TOLERANCE` = 0.3) while `not is_seeking and _seek_target is None`. **Global space (not local) is
+load-bearing** — global pos only climbs (VT file switch advances `_file_offset` across files), so a
+regression is unambiguously the artifact; a local compare would treat a VT boundary as backward and
+cascade-freeze the new file. New `_last_global_pos` field, reset in `load_book`. Verified: 32 drops,
+all the genuine ~0.31-0.34s sample, all paused, ZERO during VT switches, zero forward false positives.
+
+**Process note:** the originally-approved fix was a 7-mandate settle-gate state machine (agreement
+gate, `_seek_target_chapter` lockstep, marshalled QTimer, monotonic N-count). Running the
+instrumentation first collapsed it to a one-guard fix against a single non-physical sample. Three
+rounds of red-team on the small fix caught and designed out a VT cascade-freeze (→ global space) and a
+verification contradiction (brief-self-heal PASS vs persistent-freeze FAIL).
+
+### Still deferred (own tracked items)
+
+Load-time chapter "sliver"; VT `_seek_target` coordinate-space latent inconsistency (round-1 finding);
+right-click notch reliability; VT first-word clipping. Smart-rewind regression not yet re-tested
+(user to verify in extended soak).
+
+---
+
 ## Session Summary — 2026-06-13 Session 3 — Embedded-M4B chapter-seek precision (first-word clipping)
 
 **Branch:** `main`
