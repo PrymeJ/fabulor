@@ -109,6 +109,7 @@ class Player(QObject):
         self._mp3_seek_was_playing: bool = False
         self._mp3_seek_visual_lock: bool = False
         self._dbg_play_gen: int = 0  # TEMP Step-0 instrumentation: per-play() id
+        self._is_embedded_m4b: bool = False
 
     @staticmethod
     def format_time(seconds):
@@ -136,12 +137,13 @@ class Player(QObject):
             self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_time_pos_change(self, name, value):
-        # TEMP Step-0: post-settle offset stream (shows stale _file_offset persisting).
-        if value is not None and self._virtual_timeline is not None:
+        # TEMP Step-0: post-settle stream (VT and M4B both — oscillation is M4B).
+        if value is not None:
             print(f"[TPC] t={time.monotonic():.3f} value={value:.3f} foff={self._file_offset:.1f} "
                   f"gpos={value + (self._file_offset or 0):.3f} seek={self._is_seeking} "
                   f"tgt={self._seek_target} vtidx={self._current_vt_index} "
-                  f"vtsw={self._is_vt_file_switch}", flush=True)
+                  f"vtsw={self._is_vt_file_switch} pause={self._cached_pause} "
+                  f"vt={self._virtual_timeline is not None} emb={self._is_embedded_m4b}", flush=True)
         self._cached_time_pos = value
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
@@ -168,10 +170,10 @@ class Player(QObject):
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
                 self.chapter_changed.emit(curr)
-        # Non-VT: self._chapter_list is None — chapter data lives in mpv's native list.
-        # self.chapter_list (property) abstracts over both cases: returns self._chapter_list
-        # for VT books, falls back to self.instance.chapter_list for non-VT. The
-        # inconsistency with the VT branch above is intentional.
+        # Non-VT: self.chapter_list (property) returns _chapter_list for embedded M4B
+        # (cached snapshot set by cache_chapter_list() at load) or _chapter_list for CUE,
+        # so instance.chapter_list is never read live during playback. The inconsistency
+        # with the VT branch above (which reads _chapter_list directly) is intentional.
         elif self.chapter_list and value is not None:
             curr = 0
             for i, chap in enumerate(self.chapter_list):
@@ -383,6 +385,7 @@ class Player(QObject):
         self._file_offset = 0.0
         self._book_duration = None
         self._chapter_list = None
+        self._is_embedded_m4b = False
         self._current_vt_index = 0
         self._pending_local_pos = None
         self._is_vt_file_switch = False
@@ -659,7 +662,7 @@ class Player(QObject):
             # Paused embedded-M4B seeks undershoot by ~0.37s; nudge the mpv command
             # forward to land on target. Logical state below keeps the true pos.
             seek_pos = pos
-            if self._chapter_list is None and self._cached_pause:
+            if self._is_embedded_m4b and self._cached_pause:
                 seek_pos = pos + _PAUSED_SEEK_UNDERSHOOT_COMP
                 dur = self._cached_duration
                 if dur and dur - seek_pos < 2.0:
@@ -724,7 +727,19 @@ class Player(QObject):
         if self._chapter_list is not None:
             return self._chapter_list
         return self.instance.chapter_list if self.instance else []
-    
+
+    def cache_chapter_list(self):
+        """Snapshot instance.chapter_list into _chapter_list for embedded M4B books.
+        Called once at load from app.py after mpv signals file-loaded (stable point).
+        Eliminates the live C-layer read race where _sync_chapter_ui reads transiently
+        inconsistent boundary data from the mpv thread during/after a seek."""
+        if self._chapter_list is None and self._virtual_timeline is None and self.instance:
+            raw = self.instance.chapter_list
+            if raw:
+                self._chapter_list = list(raw)  # snapshot — detached from mpv's memory
+                self._is_embedded_m4b = True
+                print(f"[CACHE-CHAP] cached {len(self._chapter_list)} chapters for embedded M4B", flush=True)  # TEMP
+
     @property
     def speed(self): return self._cached_speed
     @speed.setter
@@ -804,8 +819,8 @@ class Player(QObject):
         """Seek-side offset for a chapter-boundary target. Embedded M4B uses
         _EMBEDDED_CHAPTER_SEEK_OFFSET (mpv overshoots ~0.09s on its own, so we seek
         slightly early to land on the boundary). CUE/VT keep the legacy
-        _CHAPTER_BOUNDARY_EPSILON. Embedded = _chapter_list is None and no VT."""
-        if self._chapter_list is None and self._virtual_timeline is None:
+        _CHAPTER_BOUNDARY_EPSILON. Embedded M4B detected via _is_embedded_m4b flag."""
+        if self._is_embedded_m4b:
             return _EMBEDDED_CHAPTER_SEEK_OFFSET
         return _CHAPTER_BOUNDARY_EPSILON
 
