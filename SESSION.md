@@ -1,3 +1,28 @@
+## Session Summary — 2026-06-16 — VU-meter oscillation fix + branch merge
+
+**Branch:** `fix/chapter-sliver` → merged to `main`. Two commits this session: instrumentation
+commit `5d330eb` (cache fix + soak instruments), then strip + docs commit.
+
+### Outcome — what shipped
+
+- **`cache_chapter_list()` on `Player`** — snapshots `instance.chapter_list` once at file-loaded
+  time into `_chapter_list`, eliminating the live mpv C-layer read during playback for embedded M4B.
+  Called from `_on_file_loaded_populate_chapters` after `dur` is confirmed.
+- **`_is_embedded_m4b` flag** — replaces two `_chapter_list is None` proxy checks that would have
+  inverted after the cache: `seek_async` paused undershoot comp and `_chapter_seek_offset()` −0.09
+  offset. Both now gate on `_is_embedded_m4b`, reset to `False` in `__init__` and `load_book`.
+- **`[CHAP-UI]` Step-0 instrument** ran during soak — no spike tick observed; instrumentation
+  stripped before merge. Hypothesis A vs B unresolved from log, but fix eliminated the race.
+- **NOTES.md** updated with root cause, sentinel swap rationale, and soak result.
+
+### What wasn't fixed / deferred
+
+- Load-time transient sliver (from previous session) — still deferred.
+- VT books not soaked for VU-meter (only embedded M4B tested). Expected safe: VT/CUE always used
+  `_chapter_list` directly; the cache path is guarded by `_virtual_timeline is None`.
+
+---
+
 ## Session Summary — 2026-06-15 Session 2 — Chapter sliver fix + first-chapter Prev rewind
 
 **Branch:** `fix/chapter-sliver` (branched from `main` to keep soak instrumentation committed without polluting main). **Commit:** `c3fa908` (not pushed).

@@ -1665,11 +1665,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             start = chap_list[curr_chap].get('time', 0)
             end = chap_list[curr_chap+1].get('time', dur) if curr_chap + 1 < len(chap_list) else dur
             chap_dur = end - start
-            # TEMP Step-0: diagnose VU-meter spike — chap_dur/c_elapsed on embedded M4B while playing
-            if not self.player._virtual_timeline and not self.player.pause:
-                print(f"[CHAP-UI] pos={pos:.3f} start={start:.3f} end={end:.3f} "
-                      f"chap_dur={chap_dur:.3f} c_elapsed={max(0, pos - start):.3f} "
-                      f"guard_fires={chap_dur > 0}", flush=True)
             # Guard: skip setValue while flow animation is running so the timer
             # doesn't fight the animation. Preserve this check on any refactor.
             chap_animating = (hasattr(self.chapter_progress_slider, '_flow_anim')

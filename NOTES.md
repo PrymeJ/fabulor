@@ -1,4 +1,35 @@
 
+## VU-meter oscillation on embedded M4B FIXED (2026-06-16)
+
+**Symptom:** clicking Next/Prev or a chapter-list item **while playing** caused the chapter slider
+to spike full-right (~100%), chapter labels to show "00:00:00 / -00:00:00", and the chapter name to
+flash the wrong chapter — all for one 200ms tick before self-correcting. Only while playing; never
+while paused.
+
+**Root cause:** `player.chapter_list` (property) fell back to `self.instance.chapter_list` for
+embedded M4B — a live read from the mpv C layer on every call. During/after a seek, mpv's C thread
+updates chapter boundary data asynchronously; one tick where `_sync_chapter_ui` reads a transient
+state produces either near-zero `chap_dur` (labels write "00:00:00"; slider `setValue` is already
+guarded by `chap_dur > 0` at line 1678 so it skips) or `c_elapsed ≈ chap_dur` with stale boundary
+(slider full-right). While paused, mpv's C thread is quiescent after settle — no race.
+
+**Hypothesis confirmed:** the `[CHAP-UI]` Step-0 instrument ran during a multi-hour soak with no
+spike tick ever appearing, which means the cache eliminated the race entirely before it could be
+observed. The specific hypothesis (A: near-zero chap_dur / B: stale boundary) was never confirmed
+from a log line — the fix held for all soaked seeks. The `setValue` guard at line 1678 is an
+independent safety net that remains.
+
+**Fix:** `cache_chapter_list()` in `player.py` snapshots `instance.chapter_list` into `_chapter_list`
+once at file-loaded time (called from `_on_file_loaded_populate_chapters` after `dur` is confirmed).
+The `chapter_list` property already prefers `_chapter_list` when non-None → all reads during playback
+hit the stable Python list, never the live C layer.
+
+**Sentinel swap:** two code sites previously used `_chapter_list is None` as a proxy for "this is
+embedded M4B" — `seek_async` (paused undershoot comp) and `_chapter_seek_offset()` (−0.09 offset).
+After the cache, `_chapter_list` is non-None for embedded M4B too, so both were switched to a
+dedicated `_is_embedded_m4b` flag set by `cache_chapter_list()`. The `chapter_list` property's own
+early-return (`if self._chapter_list is not None`) is unchanged and correct.
+
 ## Chapter-slider paused "sliver" FIXED; load-time transient sliver DEFERRED (2026-06-15)
 
 **Fixed (paused sliver):** at a freshly-landed chapter start, the chapter slider showed a thin fill

@@ -108,7 +108,6 @@ class Player(QObject):
         self._mp3_seek_target: float = 0.0
         self._mp3_seek_was_playing: bool = False
         self._mp3_seek_visual_lock: bool = False
-        self._dbg_play_gen: int = 0  # TEMP Step-0 instrumentation: per-play() id
         self._is_embedded_m4b: bool = False
 
     @staticmethod
@@ -137,13 +136,6 @@ class Player(QObject):
             self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_time_pos_change(self, name, value):
-        # TEMP Step-0: post-settle stream (VT and M4B both — oscillation is M4B).
-        if value is not None:
-            print(f"[TPC] t={time.monotonic():.3f} value={value:.3f} foff={self._file_offset:.1f} "
-                  f"gpos={value + (self._file_offset or 0):.3f} seek={self._is_seeking} "
-                  f"tgt={self._seek_target} vtidx={self._current_vt_index} "
-                  f"vtsw={self._is_vt_file_switch} pause={self._cached_pause} "
-                  f"vt={self._virtual_timeline is not None} emb={self._is_embedded_m4b}", flush=True)
         self._cached_time_pos = value
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
@@ -202,10 +194,6 @@ class Player(QObject):
                 self._file_offset = next_file['cumulative_start']
                 self._is_vt_file_switch = True
                 self._pending_local_pos = None
-                self._dbg_play_gen += 1  # TEMP Step-0
-                print(f"[PLAY-ISSUE] t={time.monotonic():.3f} gen={self._dbg_play_gen} "
-                      f"src=advance vt_index={next_idx} cum_start={next_file['cumulative_start']:.1f} "
-                      f"path={os.path.basename(next_file['file_path'])}", flush=True)  # TEMP
                 self.instance.play(next_file['file_path'])
                 if self.instance.pause:
                     self.instance.pause = False
@@ -644,10 +632,6 @@ class Player(QObject):
                 self._current_vt_index = target_idx
                 self._file_offset = target_file['cumulative_start']
                 self._is_vt_file_switch = True
-                self._dbg_play_gen += 1  # TEMP Step-0
-                print(f"[PLAY-ISSUE] t={time.monotonic():.3f} gen={self._dbg_play_gen} "
-                      f"src=seek_async vt_index={target_idx} cum_start={target_file['cumulative_start']:.1f} "
-                      f"path={os.path.basename(target_file['file_path'])}", flush=True)  # TEMP
                 self.instance.play(target_file['file_path'])
         else:
             dur = self._cached_duration
@@ -738,7 +722,6 @@ class Player(QObject):
             if raw:
                 self._chapter_list = list(raw)  # snapshot — detached from mpv's memory
                 self._is_embedded_m4b = True
-                print(f"[CACHE-CHAP] cached {len(self._chapter_list)} chapters for embedded M4B", flush=True)  # TEMP
 
     @property
     def speed(self): return self._cached_speed
