@@ -42,7 +42,7 @@ Initial plan used a flat 0.45s clamp. Three red-team review rounds sharpened it:
 ### Deferred
 
 - **Load-time transient sliver:** on book load at a chapter start, slider can show a brief sliver then self-correct on the next tick. Transient, cosmetic, self-healing. Tied to flow-path pause/value settle ordering at load. Deferred (see NOTES.md).
-- **Playing-seek oscillation / slider-right / stuck-in-chapter** (reverted, soaking).
+- **Playing-seek oscillation / slider-right / stuck-in-chapter** — resolved by the M4B cache fix (2026-06-16); no recurrence observed in multi-hour soak. See NOTES.md.
 - **Transient VT advance glitch, VT first-word clipping, right-click notch** — unchanged.
 
 ### Instrumentation status
@@ -73,7 +73,7 @@ Then, rather than re-guess, built the **pytest harness** and ran a **deciding ex
 
 ### Still open / untouched (explicit — nothing from "yesterday" is fixed)
 
-- **Playing-seek oscillation / slider-all-the-way-right / stuck-in-chapter** (the bounce/stick family) — REVERTED, unfixed. User re-soaking; often doesn't show in short tests.
+- **Playing-seek oscillation / slider-all-the-way-right / stuck-in-chapter** (the bounce/stick family) — REVERTED at this point, unfixed. Subsequently resolved by the M4B cache fix (2026-06-16) — same root cause as the VU-meter spike.
 - **Short-chapter sliver** — the anti-drift mechanism now visible on short chapters; a prior pass fix was reverted for regressions; trickier than it looks. Untouched.
 - **Transient self-resolving offset glitch** on natural VT file advance — one stale old-file `time_pos` sample pairs with the new `_file_offset` for one tick (self-corrects). Separate, minor, tracked.
 - **VT first-word clipping** (mutagen-vs-mpv duration mismatch); right-click notch reliability.

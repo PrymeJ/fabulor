@@ -109,45 +109,24 @@ comment). User-confirmed by soak (markers: "chapter[0] within first second, left
 wait 2s → correct; right-click Prev always works"). Harness adds contract guards that the nav methods
 at a boundary leave `is_seeking` False.
 
-## Playing-seek chapter-UI oscillation — pre-existing, the next thing to fix (2026-06-13)
+## Playing-seek chapter-UI oscillation — RESOLVED by M4B cache fix (2026-06-16)
 
-Isolated while verifying the position-creep fix. Clicking Next/Prev or a chapter-list entry **while
-playing** makes the chapter slider jump to the chapter's END and bounce between chapters before
-settling; the chapter label flickers identically. Related symptoms in the same family: short chapters
-show a load-time "sliver" on the chapter slider; chapter-list clicks clip the first word; right-click
-on a progress-bar notch lands slightly early (tail of the previous chapter).
+Isolated while verifying the position-creep fix (2026-06-13). Clicking Next/Prev or a chapter-list
+entry **while playing** made the chapter slider jump to the chapter's END and bounce between chapters
+before settling; the chapter label flickered identically.
 
-**Proven pre-existing, NOT a creep-fix regression:** all symptoms reproduce on committed baseline
-`95db6b6` with the restore-epsilon change stashed out. Confirmed by the user against that baseline.
+**Resolution (2026-06-16):** no bounce/stick observed during multi-hour soak after the embedded M4B
+`cache_chapter_list()` fix landed. The two symptoms (VU-meter spike full-right and bounce/stick) were
+the same bug: `player.chapter_list` for embedded M4B was a live C-layer read on every call; during a
+playing seek mpv's C thread updated boundary data mid-read, producing transient `chap_dur ≈ 0` or
+wrong `c_elapsed`. The cache eliminated the race entirely. The stale-backward-sample hypothesis below
+was the best theory at the time but the cache fix made it moot.
 
-**Working hypothesis (for whoever picks this up — do NOT just tune another epsilon):** same root as
-the earlier paused stuck-chapter bug. The chapter-position walk (`time <= pos + _CHAPTER_WALK_TOLERANCE`)
-resolves the wrong chapter *during an in-flight seek*, because the seek transit passes through
-intermediate `time_pos` values: paused → mpv undershoots the target; playing → mpv overshoots
-*through* the target (sweeping past the next chapter boundary and back). `_sync_chapter_ui`
-early-returns while `is_seeking`, which SHOULD freeze the UI during transit — but the settle condition
-in `_on_time_pos_change` (`abs(global_pos − _seek_target) < 1.0`) clears `is_seeking` too early when
-playing overshoots, unfreezing the chapter UI mid-transit so it renders the overshoot position
-(chapter end / wrong chapter) for a few ticks before the real settle. The chapter-relative slider
-value `(pos − chap_start)/chap_dur` then reads ~1.0 (slider at far right) during that window.
-
-The fix should be at the **settle/guard layer** (how `is_seeking` gates the chapter UI during a
-playing seek), not another offset. Candidate single root for ALL of: sliver, first-word clip,
-playing oscillation, notch-early. This is mpv-seek-behavior territory we've been circumventing for
-weeks — aim for a fix we own (gate the chapter UI on true settle, not the 1.0s proximity), not a new
-magic number. Also: at restore `_cached_duration` is `None` (observed `dur=None`), so the restore
-seek fires before duration is known — likely a contributor to the load-time sliver specifically.
-
-**⚠️ UPDATE (2026-06-15): the "settle clears too early" hypothesis above was DISPROVEN by
-measurement.** Instrumentation showed playing seeks settle cleanly at `dist=0.0` — the gate does NOT
-clear early. The actual cause of the bounce is a **stale BACKWARD `time_pos` sample mpv emits AFTER a
-clean settle** (~0.56–0.87s back, into the previous chapter); the 200ms tick occasionally renders it.
-A fix for that (`b6a4023`, drop a backward global jump while not seeking) was committed and then
-**REVERTED** (`4ae0783`) because it regressed VT backward-seek + play/pause icon + chapter[1]→[0]
-click (the early-`return` starved the settle/cache pipeline). So this family is **still unfixed**, and
-the hypothesis to carry forward is the stale-backward-sample one, NOT settle-clears-early. Do not
-re-implement the early-return drop without handling the starvation (don't skip the settle/cache update
-for a dropped sample).
+**History (kept for reference):** the earlier "settle clears too early" hypothesis was disproven by
+instrumentation (`dist=0.0` clean settles). The updated hypothesis was a stale BACKWARD `time_pos`
+sample mpv emits after a clean settle (~0.56–0.87s back). A fix (`b6a4023`, drop backward global
+jumps while not seeking) was reverted (`4ae0783`) because it regressed VT backward-seek + play/pause
+icon + chapter[1]→[0] click. That revert is still in the tree and correct — do not re-apply it.
 
 ## Position creep on restart was an epsilon on the restore seek (2026-06-13, FIXED `3bb14cf`)
 
