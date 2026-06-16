@@ -46,6 +46,27 @@ from .book_switch import BookSwitchState
 # Re-imported here so existing references in this module keep working unchanged.
 from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon
 
+# Chapter-slider "sliver" suppression (paused-only display fix).
+# A chapter-nav seek lands at `_seek_target = nominal + offset`, where for VT/CUE the
+# offset is `_CHAPTER_BOUNDARY_EPSILON` (0.35). So at a freshly-landed chapter start,
+# `c_elapsed = pos - chap_start ~= 0.35` — which renders as a thin fill ("sliver") on
+# the chapter slider WHILE PAUSED (live playback advances pos and swallows it within a
+# frame, so it is never visible while playing). `_sliver_clamp` reads the slider value
+# as 0 only when paused AND within this residue window. Tied to the boundary epsilon so
+# the threshold tracks it automatically if that constant is ever retuned. Measured paused
+# settle jitter is ~0.0004s, so 0.25s headroom is ~600x the real landing error.
+_CHAPTER_SLIVER_EPS = _CHAPTER_BOUNDARY_EPSILON + 0.25  # 0.35 + 0.25 = 0.60
+
+
+def _sliver_clamp(pause: bool, c_elapsed: float) -> float:
+    """Display-only: collapse the sub-second chapter-start landing residue to 0 on the
+    chapter slider while paused. Returns 0.0 when paused and within the residue window,
+    else the real elapsed. Does NOT touch pos, labels, or audio. Pure for headless test."""
+    if pause and c_elapsed < _CHAPTER_SLIVER_EPS:
+        return 0.0
+    return c_elapsed
+
+
 class UIInterface:
     def __init__(self, main):
         self._main = main
@@ -1210,6 +1231,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self._switch.chaps_dur_retried = False
             else:
                 self._switch.chaps_dur_retried = False
+            # Cache instance.chapter_list for embedded M4B now that dur is confirmed.
+            # Eliminates the live C-layer read race in _sync_chapter_ui mid-seek.
+            if dur:
+                self.player.cache_chapter_list()
             if dur and self.player.chapter_list:
                 self.chapter_list_widget.populate(dur, self.player.speed or 1.0)
                 self._refresh_notches()
@@ -1249,7 +1274,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 cd = end - start
                 seek_offset = 0.0 if self.player._virtual_timeline is not None else _CHAPTER_BOUNDARY_EPSILON
                 c_elapsed = max(0, (new_progress + seek_offset) - start)
-                new_chap_val = int((c_elapsed / cd) * 1000) if cd > 0 else 0
+                # Don't flow to a paused chapter-start sliver on a book that resumes at a
+                # chapter boundary. depends on load_book's _cached_pause reset above — do
+                # not reorder this computation above that reset (it would read stale pause).
+                slider_elapsed = _sliver_clamp(self.player.pause, c_elapsed)
+                new_chap_val = int((slider_elapsed / cd) * 1000) if cd > 0 else 0
             else:
                 new_chap_val = 0
         if pre_chap != new_chap_val:
@@ -1651,7 +1680,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.chap_duration_label.setText(self.player.format_time((end - start) / speed))
                 # The chap_animating guard (book-switch flow animation) must stay.
                 if chap_dur > 0 and not chap_animating:
-                    self.chapter_progress_slider.setValue(int((c_elapsed / chap_dur) * 1000))
+                    # Suppress the paused chapter-start "sliver" (the ~0.35s VT/CUE
+                    # landing residue rendered as a thin fill). Released the instant
+                    # playback starts — pos is moving, so no jump. Labels keep the real
+                    # c_elapsed (they already floor to 00:00 below 1s).
+                    slider_elapsed = _sliver_clamp(self.player.pause, c_elapsed)
+                    self.chapter_progress_slider.setValue(int((slider_elapsed / chap_dur) * 1000))
 
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:

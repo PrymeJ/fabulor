@@ -1,4 +1,68 @@
 
+## VU-meter oscillation on embedded M4B FIXED (2026-06-16)
+
+**Symptom:** clicking Next/Prev or a chapter-list item **while playing** caused the chapter slider
+to spike full-right (~100%), chapter labels to show "00:00:00 / -00:00:00", and the chapter name to
+flash the wrong chapter — all for one 200ms tick before self-correcting. Only while playing; never
+while paused.
+
+**Root cause:** `player.chapter_list` (property) fell back to `self.instance.chapter_list` for
+embedded M4B — a live read from the mpv C layer on every call. During/after a seek, mpv's C thread
+updates chapter boundary data asynchronously; one tick where `_sync_chapter_ui` reads a transient
+state produces either near-zero `chap_dur` (labels write "00:00:00"; slider `setValue` is already
+guarded by `chap_dur > 0` at line 1678 so it skips) or `c_elapsed ≈ chap_dur` with stale boundary
+(slider full-right). While paused, mpv's C thread is quiescent after settle — no race.
+
+**Hypothesis confirmed:** the `[CHAP-UI]` Step-0 instrument ran during a multi-hour soak with no
+spike tick ever appearing, which means the cache eliminated the race entirely before it could be
+observed. The specific hypothesis (A: near-zero chap_dur / B: stale boundary) was never confirmed
+from a log line — the fix held for all soaked seeks. The `setValue` guard at line 1678 is an
+independent safety net that remains.
+
+**Fix:** `cache_chapter_list()` in `player.py` snapshots `instance.chapter_list` into `_chapter_list`
+once at file-loaded time (called from `_on_file_loaded_populate_chapters` after `dur` is confirmed).
+The `chapter_list` property already prefers `_chapter_list` when non-None → all reads during playback
+hit the stable Python list, never the live C layer.
+
+**Sentinel swap:** two code sites previously used `_chapter_list is None` as a proxy for "this is
+embedded M4B" — `seek_async` (paused undershoot comp) and `_chapter_seek_offset()` (−0.09 offset).
+After the cache, `_chapter_list` is non-None for embedded M4B too, so both were switched to a
+dedicated `_is_embedded_m4b` flag set by `cache_chapter_list()`. The `chapter_list` property's own
+early-return (`if self._chapter_list is not None`) is unchanged and correct.
+
+## Chapter-slider paused "sliver" FIXED; load-time transient sliver DEFERRED (2026-06-15)
+
+**Fixed (paused sliver):** at a freshly-landed chapter start, the chapter slider showed a thin fill
+("sliver") while paused — the VT/CUE nav target is `nominal + _CHAPTER_BOUNDARY_EPSILON` (0.35), so
+`c_elapsed = pos − chap_start ≈ 0.35`, rendered as a few-percent fill on a short chapter. Visible ONLY
+while paused (live playback advances `pos` and swallows it within a frame). Fix is display-only:
+`_sliver_clamp(pause, c_elapsed)` in `app.py` reads the slider value as 0 when paused AND
+`c_elapsed < _CHAPTER_SLIVER_EPS` (= `_CHAPTER_BOUNDARY_EPSILON + 0.25` = 0.60, tied to the constant so
+it tracks any retune). Applied at both the 200ms `_sync_chapter_ui` setValue and the flow-anim
+`new_chap_val`. Released instantly on play (gate opens, `pos` already moving → no jump, no animation).
+Labels untouched (already floor to 00:00). Measured paused settle jitter ~0.0004s, so 0.25 headroom is
+~600× the real landing error (soak logs `/tmp/fabulor_{run,vtfix,vtboth}.log`). Headless tests:
+`tests/test_sliver_clamp.py`.
+
+**Deferred (load-time transient sliver):** on book load at a chapter start, the slider can show a brief
+sliver then self-correct on the next tick. This is the one-frame flow-path residual (pause/value settle
+ordering at load), NOT the paused artifact above — it's transient, cosmetic, self-healing, and tied to
+the delicate `load_book` cache-reset / flow-animation ordering we deliberately don't want to disturb.
+Deferred. If chased later: the `_sliver_clamp` at the flow-anim site depends on `load_book`'s
+`_cached_pause = True` reset running first — do not reorder the computation above that reset.
+
+## First-chapter Prev rewinds to 0:00 (drop the 2s threshold in chapter 0) (2026-06-15)
+
+In the FIRST chapter there is no previous chapter, so `previous_chapter`'s `2.0 × speed`s
+restart-vs-previous threshold doesn't apply. Previously, sitting in the first 2s of chapter 0 made Prev
+a no-op (the `curr_chap > 0` branch dead-ended), leaving e.g. 0:01 awkward to clear to 0:00 without the
+right-click progress-reset (which casual users won't know). Now `curr_chap == 0` always
+`seek_async(0.0)` → rewinds to book start (both VT and non-VT branches). The `seek_async` 0.05 floor
+still applies (true-0/negative absolute seek can land mpv at EOF — see the floor rule), so it lands at
+0.05s ≈ 00:00 (and the sliver clamp reads it as 0). Freeze invariant preserved: `seek_async` sets
+`is_seeking` WITH a matching `_seek_target`, so no stranding. Tests updated in `tests/test_vt_seek.py`
+(the old "chapter-0 Prev is a no-op" contract was intentionally replaced).
+
 ## VT loads are STRICTLY SERIALIZED — no overlapping-seek clobber (2026-06-15)
 
 Proven by a both-edges capture (`[PLAY-ISSUE]` at each `play()`, `[FILE-LOADED]` at `_on_file_loaded`):

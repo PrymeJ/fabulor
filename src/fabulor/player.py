@@ -108,6 +108,7 @@ class Player(QObject):
         self._mp3_seek_target: float = 0.0
         self._mp3_seek_was_playing: bool = False
         self._mp3_seek_visual_lock: bool = False
+        self._is_embedded_m4b: bool = False
 
     @staticmethod
     def format_time(seconds):
@@ -161,10 +162,10 @@ class Player(QObject):
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
                 self.chapter_changed.emit(curr)
-        # Non-VT: self._chapter_list is None — chapter data lives in mpv's native list.
-        # self.chapter_list (property) abstracts over both cases: returns self._chapter_list
-        # for VT books, falls back to self.instance.chapter_list for non-VT. The
-        # inconsistency with the VT branch above is intentional.
+        # Non-VT: self.chapter_list (property) returns _chapter_list for embedded M4B
+        # (cached snapshot set by cache_chapter_list() at load) or _chapter_list for CUE,
+        # so instance.chapter_list is never read live during playback. The inconsistency
+        # with the VT branch above (which reads _chapter_list directly) is intentional.
         elif self.chapter_list and value is not None:
             curr = 0
             for i, chap in enumerate(self.chapter_list):
@@ -372,6 +373,7 @@ class Player(QObject):
         self._file_offset = 0.0
         self._book_duration = None
         self._chapter_list = None
+        self._is_embedded_m4b = False
         self._current_vt_index = 0
         self._pending_local_pos = None
         self._is_vt_file_switch = False
@@ -439,6 +441,15 @@ class Player(QObject):
         # Suppressing it entirely avoids the snap-back on chapter navigation.
         return
     def _on_file_loaded(self, event):
+        # TEMP Step-0: log the arrival edge with mpv's actually-loaded path.
+        try:
+            _loaded = self.instance.path
+        except Exception:
+            _loaded = '<unavailable>'
+        print(f"[FILE-LOADED] t={time.monotonic():.3f} "
+              f"mpv_path={os.path.basename(_loaded) if _loaded else _loaded} "
+              f"cur_vt_index={self._current_vt_index} foff={self._file_offset:.1f} "
+              f"pending_local={self._pending_local_pos} is_vt_switch={self._is_vt_file_switch}", flush=True)
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
@@ -635,7 +646,7 @@ class Player(QObject):
             # Paused embedded-M4B seeks undershoot by ~0.37s; nudge the mpv command
             # forward to land on target. Logical state below keeps the true pos.
             seek_pos = pos
-            if self._chapter_list is None and self._cached_pause:
+            if self._is_embedded_m4b and self._cached_pause:
                 seek_pos = pos + _PAUSED_SEEK_UNDERSHOOT_COMP
                 dur = self._cached_duration
                 if dur and dur - seek_pos < 2.0:
@@ -700,7 +711,18 @@ class Player(QObject):
         if self._chapter_list is not None:
             return self._chapter_list
         return self.instance.chapter_list if self.instance else []
-    
+
+    def cache_chapter_list(self):
+        """Snapshot instance.chapter_list into _chapter_list for embedded M4B books.
+        Called once at load from app.py after mpv signals file-loaded (stable point).
+        Eliminates the live C-layer read race where _sync_chapter_ui reads transiently
+        inconsistent boundary data from the mpv thread during/after a seek."""
+        if self._chapter_list is None and self._virtual_timeline is None and self.instance:
+            raw = self.instance.chapter_list
+            if raw:
+                self._chapter_list = list(raw)  # snapshot — detached from mpv's memory
+                self._is_embedded_m4b = True
+
     @property
     def speed(self): return self._cached_speed
     @speed.setter
@@ -780,8 +802,8 @@ class Player(QObject):
         """Seek-side offset for a chapter-boundary target. Embedded M4B uses
         _EMBEDDED_CHAPTER_SEEK_OFFSET (mpv overshoots ~0.09s on its own, so we seek
         slightly early to land on the boundary). CUE/VT keep the legacy
-        _CHAPTER_BOUNDARY_EPSILON. Embedded = _chapter_list is None and no VT."""
-        if self._chapter_list is None and self._virtual_timeline is None:
+        _CHAPTER_BOUNDARY_EPSILON. Embedded M4B detected via _is_embedded_m4b flag."""
+        if self._is_embedded_m4b:
             return _EMBEDDED_CHAPTER_SEEK_OFFSET
         return _CHAPTER_BOUNDARY_EPSILON
 
@@ -811,16 +833,21 @@ class Player(QObject):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = self._chapter_list[curr_chap].get('time', 0)
+            # In the FIRST chapter there is no "previous chapter" to step back to, so the
+            # 2s restart-vs-previous threshold does not apply: Prev always rewinds to the
+            # book start (0:00). Without this, sitting in the first 2s of chapter 0 made
+            # Prev a no-op, leaving 0:01 awkward to clear to 0:00.
+            if curr_chap == 0:
+                self.seek_async(0.0)
+                return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
-                if curr_chap > 0:
-                    target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
-                    self.seek_async(target)
-                    return target
+                target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                self.seek_async(target)
+                return target
             else:
                 self.seek_async(chap_start)
                 return chap_start
-            return curr_time
         else:
             curr_time = self.time_pos or 0
             chap_list = self.chapter_list or []
@@ -829,13 +856,17 @@ class Player(QObject):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
+            # First chapter: no previous chapter, so the 2s threshold doesn't apply —
+            # Prev always rewinds to the book start (0:00). (See VT branch above.)
+            if curr_chap == 0:
+                self.seek_async(0.0)
+                return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
-                if curr_chap > 0:
-                    nominal = chap_list[curr_chap - 1].get('time', 0)
-                    target = nominal + self._chapter_seek_offset()
-                    self.seek_async(target)
-                    return target
+                nominal = chap_list[curr_chap - 1].get('time', 0)
+                target = nominal + self._chapter_seek_offset()
+                self.seek_async(target)
+                return target
             else:
                 target = chap_start + self._chapter_seek_offset()
                 self.seek_async(target)
