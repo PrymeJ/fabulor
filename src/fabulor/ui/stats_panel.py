@@ -749,6 +749,50 @@ class FinishedScrollRow(QWidget):
         bar.setValue(bar.value() - event.angleDelta().y() // 2)
 
 
+# --- Grid transition style (A/B toggle, gutters unaffected) ---
+# "wave" : original behaviour — diagonal Mexico-wave alpha stagger (per-cell
+#          delay = horizontal lead + vertical zigzag), pure alpha fade.
+# "rows" : curtain sweep — one row revealed/concealed at a time, straight
+#          top->bottom on reveal, bottom->top on conceal (mirrors the gutter
+#          cascade direction). No diagonal/zigzag component. Deliberately
+#          underwhelming — kept as the "worst case" baseline option.
+# "pop"  : same diagonal wave timing as "wave", but cells also scale up from
+#          a center-anchored inset rect as they reveal (and shrink back on
+#          conceal) instead of only fading alpha. Current default.
+# Other candidates tried and rejected: "ripple" (radial from center — left
+# the panel empty too long), "cols"/"cols_zig" (symmetric column curtain,
+# with/without zigzag — too slow, and speeding up felt off). Wave's longer
+# diagonal path is what makes it read as intricate; nothing else tried matched it.
+GRID_TRANSITION_STYLE = "pop"
+
+
+def _grid_cell_anim(progress: float, row: int, col: int, n_rows: int, n_cols: int,
+                     style: str = GRID_TRANSITION_STYLE) -> tuple[float, float]:
+    """Returns (alpha_frac, scale_frac) for a cell at (row, col), both in 0..1,
+    given the current global reveal/conceal progress (0..1) and grid extents.
+    alpha_frac drives fillRect alpha; scale_frac (1.0 unless the style scales)
+    drives an inset shrink so the cell pops in/out instead of just fading."""
+    row_div = max(1, n_rows - 1)
+    col_div = max(1, n_cols - 1)
+
+    if style == "rows":
+        # Straight row-at-a-time sweep — no column component at all.
+        delay = (row / row_div) * 0.85
+        alpha = max(0.0, min(1.0, (progress - delay) * 15))
+        return alpha, 1.0
+
+    # "wave" and "pop" share the existing diagonal-zigzag timing.
+    h_delay = (col / col_div) * 0.25
+    eff_row = row if col % 2 == 0 else (n_rows - 1 - row)
+    v_delay = (eff_row / row_div) * 0.65
+    delay = h_delay + v_delay
+    alpha = max(0.0, min(1.0, (progress - delay) * 15))
+
+    if style == "pop":
+        return alpha, alpha
+    return alpha, 1.0
+
+
 class HourlyHeatmap(QWidget):
     """Heatmap: columns = days (newest left), rows = hours 0–23 top to bottom.
     Always shows N_DAYS columns including empty days.
@@ -1034,20 +1078,12 @@ class HourlyHeatmap(QWidget):
         for col_i, date_str in enumerate(self._dates):
             x = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP)
             has_data = self._col_totals.get(date_str, 0) > 0
-            
-            # Horizontal stagger: wave moves across columns (takes ~25% of animation)
-            h_delay = (col_i / (self.N_DAYS - 1)) * 0.25
 
             for hour in range(24):
                 y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP)
-                
-                # Vertical stagger: flips direction every column (takes ~65% of animation)
-                eff_row = hour if col_i % 2 == 0 else (23 - hour)
-                v_delay = (eff_row / 23) * 0.65
-                
-                delay = h_delay + v_delay
-                # Multiply by 15 to make the "reveal front" narrow and punchy
-                anim_alpha = max(0.0, min(1.0, (self._reveal_progress - delay) * 15))
+
+                anim_alpha, anim_scale = _grid_cell_anim(
+                    self._reveal_progress, hour, col_i, 24, self.N_DAYS)
 
                 c = self._cells.get((date_str, hour))
                 if c:
@@ -1061,7 +1097,12 @@ class HourlyHeatmap(QWidget):
 
                 if self._hovered == (date_str, hour) and c:
                     color = color.lighter(140)
-                painter.fillRect(x, y, self.CELL, self.CELL, color)
+                if anim_scale >= 1.0:
+                    painter.fillRect(x, y, self.CELL, self.CELL, color)
+                elif anim_scale > 0.0:
+                    inset = (self.CELL * (1.0 - anim_scale)) / 2.0
+                    painter.fillRect(QRectF(x + inset, y + inset,
+                                             self.CELL - 2 * inset, self.CELL - 2 * inset), color)
 
         # Total-minutes footer — rotated -90°, below the grid, fades in/out on column hover
         if self._footer_date and self._footer_alpha > 0 and self._col_totals.get(self._footer_date, 0) > 0:
@@ -1451,8 +1492,6 @@ class StreakGrid(QWidget):
             return
 
         N_COLS, N_ROWS = self.N_COLS, self.N_ROWS
-        col_div = max(1, N_COLS - 1)
-        row_div = max(1, N_ROWS - 1)
 
         from PySide6.QtGui import QFontMetrics
 
@@ -1516,7 +1555,6 @@ class StreakGrid(QWidget):
 
         # --- cells ---
         for r in range(N_ROWS):
-            # Vertical stagger flips direction every column.
             for c in range(N_COLS):
                 day_index = r * N_COLS + c       # 0 = today (top-left)
                 cell_date = self._today - timedelta(days=day_index)
@@ -1525,10 +1563,8 @@ class StreakGrid(QWidget):
                 x = self.GUTTER_W + c * (self.CELL + self.GAP)
                 y = self.TOP_PAD + r * (self.CELL + self.GAP)
 
-                h_delay = (c / col_div) * 0.25
-                eff_row = r if c % 2 == 0 else (N_ROWS - 1 - r)
-                v_delay = (eff_row / row_div) * 0.65
-                anim_alpha = max(0.0, min(1.0, (self._reveal_progress - (h_delay + v_delay)) * 15))
+                anim_alpha, anim_scale = _grid_cell_anim(
+                    self._reveal_progress, r, c, N_ROWS, N_COLS)
 
                 listened = self._cache.get(iso, 0) == 1
                 is_longest = iso in self._longest_dates
@@ -1544,9 +1580,16 @@ class StreakGrid(QWidget):
                     color = QColor(self._accent)
                     base_a = 30 if iso in self._cache else 12
                     color.setAlpha(int(base_a * anim_alpha))
-                painter.fillRect(x, y, self.CELL, self.CELL, color)
+                if anim_scale >= 1.0:
+                    painter.fillRect(x, y, self.CELL, self.CELL, color)
+                elif anim_scale > 0.0:
+                    inset = (self.CELL * (1.0 - anim_scale)) / 2.0
+                    painter.fillRect(QRectF(x + inset, y + inset,
+                                             self.CELL - 2 * inset, self.CELL - 2 * inset), color)
 
-                if is_longest and anim_alpha > 0:
+                # Border/dot only once the cell has fully popped to size — avoids
+                # a full-size border floating over a still-shrunk "pop" fill.
+                if is_longest and anim_alpha > 0 and anim_scale >= 0.999:
                     border = QColor(self._accent)
                     border.setAlpha(int(255 * anim_alpha))
                     painter.save()
@@ -1563,7 +1606,7 @@ class StreakGrid(QWidget):
                     painter.drawRect(rectf)
                     painter.restore()
 
-                if iso in self._finished and anim_alpha > 0:
+                if iso in self._finished and anim_alpha > 0 and anim_scale >= 0.999:
                     # Contrasting dark punch-through so the dot reads on filled cells.
                     dot = QColor(self._finished_dot)
                     dot.setAlpha(int(255 * anim_alpha))
