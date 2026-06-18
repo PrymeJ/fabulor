@@ -2361,6 +2361,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             if new_speed != current:
                 self._set_speed(new_speed)
             event.accept()
+        elif self.progress_slider.underMouse():
+            if not self.player or not self.current_file:
+                return
+            if not self.player.chapter_list:
+                return  # no chapters — no-op
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.handle_next()
+            else:
+                self.handle_prev()
+            event.accept()
         elif self.chapter_progress_slider.underMouse():
             if not self.player or not self.current_file:
                 return

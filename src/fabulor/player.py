@@ -441,15 +441,6 @@ class Player(QObject):
         # Suppressing it entirely avoids the snap-back on chapter navigation.
         return
     def _on_file_loaded(self, event):
-        # TEMP Step-0: log the arrival edge with mpv's actually-loaded path.
-        try:
-            _loaded = self.instance.path
-        except Exception:
-            _loaded = '<unavailable>'
-        print(f"[FILE-LOADED] t={time.monotonic():.3f} "
-              f"mpv_path={os.path.basename(_loaded) if _loaded else _loaded} "
-              f"cur_vt_index={self._current_vt_index} foff={self._file_offset:.1f} "
-              f"pending_local={self._pending_local_pos} is_vt_switch={self._is_vt_file_switch}", flush=True)
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
