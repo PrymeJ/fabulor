@@ -11,6 +11,13 @@
 - [ ] Prev/next while paused: chapter slider snaps to start of new chapter immediately
 - [ ] Prev/next while playing: chapter slider snaps to start of new chapter immediately
 - [ ] Prev/next pressed rapidly while playing: no stuck slider state
+- [ ] **First chapter — Prev button:** anywhere in chapter 0 → rewinds to 0:00 (no grace period, no dead-end no-op)
+- [ ] **First chapter — wheel scroll down on progress slider:** same as Prev — rewinds to 0:00
+- [ ] **Last chapter — Next button:** no-op, no seek, no state corruption
+- [ ] **Last chapter — wheel scroll up on progress slider:** no-op, no seek, no state corruption
+- [ ] **Progress slider wheel scroll (chaptered book):** scroll up → next chapter; scroll down → previous chapter; chapter slider and labels update immediately
+- [ ] **Progress slider wheel scroll (chapterless book):** no-op — no seek, no chapter jump, no error
+- [ ] **Progress slider wheel scroll at EOF:** scroll up → no-op (already on last chapter or at EOF)
 - [ ] Chapter Navigation: Right-click on progress bar snaps to closest notch correctly
 - [ ] Chapter Navigation: Digit key 'By name' jump respects word boundaries (e.g., "6" finds "Chapter 6" not "Chapter 16")
 - [ ] Chapter Navigation: Digit key 'By index' jump uses 1-based indexing correctly

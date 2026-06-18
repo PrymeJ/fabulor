@@ -1,3 +1,22 @@
+## Session Summary — 2026-06-17 — Mouse wheel chapter navigation on progress slider
+
+**Branch:** `main`. **Commit:** `874cc41`.
+
+### What shipped
+
+- **Mouse wheel on the main progress slider navigates chapters.** Scroll up → next chapter; scroll
+  down → previous chapter. No chapters → no-op. First-chapter backward rewinds to 0:00 (same as the
+  Prev button). Last-chapter forward is a no-op. Delegates entirely to `handle_next()`/`handle_prev()`
+  so all guards are inherited: undo threshold (60s × speed), `seek_async` owns `is_seeking`/`_seek_target`
+  (no freeze risk), `0.05s` floor prevents negative seek landing at EOF.
+- **Stripped last remaining TEMP print** — `[FILE-LOADED]` from `player.py`'s `_on_file_loaded`.
+
+### Deferred / unchanged
+
+- Sensitivity / timing of the wheel scroll — may need tuning; deferred to user testing.
+
+---
+
 ## Session Summary — 2026-06-16 — VU-meter oscillation fix + branch merge
 
 **Branch:** `fix/chapter-sliver` → merged to `main`. Two commits this session: instrumentation
