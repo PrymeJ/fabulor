@@ -9,10 +9,10 @@ from PySide6.QtWidgets import (
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication
 )
 from PySide6.QtCore import (
-    Qt, QRect, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property,
+    Qt, QRect, QRectF, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -1490,11 +1490,7 @@ class StreakGrid(QWidget):
                 anim_alpha = max(0.0, min(1.0, (self._reveal_progress - (h_delay + v_delay)) * 15))
 
                 listened = self._cache.get(iso, 0) == 1
-                if iso in self._longest_dates:
-                    # Longest run gets a distinct warm-shifted fill (not a border).
-                    color = QColor(self._longest_fill)
-                    color.setAlpha(int(255 * anim_alpha))
-                elif listened:
+                if listened:
                     color = QColor(self._accent)
                     color.setAlpha(int(255 * anim_alpha))
                 else:
@@ -1503,6 +1499,24 @@ class StreakGrid(QWidget):
                     color.setAlpha(int(base_a * anim_alpha))
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
 
+                if iso in self._longest_dates and anim_alpha > 0:
+                    # Longest run reads as an inset border, not a distinct fill.
+                    border = QColor(self._longest_fill)
+                    border.setAlpha(int(255 * anim_alpha))
+                    painter.save()
+                    pen_w = 2
+                    pen = QPen(border, pen_w)
+                    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    # Qt strokes QRect edges with a +1 bias on the right/bottom vs.
+                    # top/left when unantialiased; using a QRectF inset by half the
+                    # pen width on all sides keeps the stroke visually symmetric.
+                    half = pen_w / 2
+                    rectf = QRectF(x + half, y + half, self.CELL - pen_w, self.CELL - pen_w)
+                    painter.drawRect(rectf)
+                    painter.restore()
+
                 if iso in self._finished and anim_alpha > 0:
                     # Contrasting dark punch-through so the dot reads on filled cells.
                     dot = QColor(self._finished_dot)
@@ -1510,9 +1524,12 @@ class StreakGrid(QWidget):
                     painter.save()
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(dot)
-                    cx = x + self.CELL // 2
-                    cy = y + self.CELL // 2
-                    painter.drawEllipse(QPoint(cx, cy), 2, 2)
+                    # Sharp centered square, matching the grid's unantialiased
+                    # crisp-edge rendering.
+                    dot_sz = 4
+                    dx = x + (self.CELL - dot_sz) // 2
+                    dy = y + (self.CELL - dot_sz) // 2
+                    painter.drawRect(dx, dy, dot_sz, dot_sz)
                     painter.restore()
 
         painter.end()
