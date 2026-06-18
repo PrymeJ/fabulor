@@ -774,6 +774,7 @@ class HourlyHeatmap(QWidget):
         self._footer_date: str | None = None  # column the fade is tracking
         self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
         self._label_progress: float = 1.0      # 1.0 = labels fully shown (at rest)
+        self._label_sweep_in: bool = False
 
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve
         # Animation for footer label
@@ -841,9 +842,14 @@ class HourlyHeatmap(QWidget):
             self._reveal_anim.finished.connect(_f)
         self._reveal_anim.start()
 
-    # --- column-label sweep (Phase B; mirror of StreakGrid's row-label sweep) ---
-    _LABEL_LEAD_FRACTION = 0.5
-    _LABEL_SHARP = 3.0
+    # --- column-label cascade (Phase B; mirror of StreakGrid's row-label cascade) ---
+    # Each label fades in/out in place (no internal wipe); only the per-column
+    # start-time stagger is animated. Cascade direction mirrors between the two
+    # transitions: appearing (labels_in) starts at col 0 (newest, e.g. Jun 18) and
+    # sweeps rightward (toward older columns); disappearing (labels_out) starts at
+    # the oldest column and sweeps leftward back toward col 0 — the true mirror of
+    # the appear direction, not the same sweep played in reverse.
+    _LABEL_STAGGER_FRACTION = 0.5   # fraction of total duration spent staggering starts
 
     def get_label_progress(self) -> float:
         return self._label_progress
@@ -853,17 +859,25 @@ class HourlyHeatmap(QWidget):
         self.update()
 
     def _label_local(self, cascade_pos: int, m: int) -> float:
-        stagger = (cascade_pos / max(1, m - 1)) * self._LABEL_LEAD_FRACTION
-        return max(0.0, min(1.0, (self._label_progress - stagger) * self._LABEL_SHARP))
-
-    @staticmethod
-    def _apply_label_clip(painter, rect, local: float):
-        """Right-anchored horizontal wipe (see StreakGrid._apply_label_clip).
-        For the rotated column labels this is applied in rotated coordinate space,
-        so the wipe runs along the text baseline."""
-        w = rect.width()
-        inked = round(local * w)
-        painter.setClipRect(QRect(rect.x() + (w - inked), rect.y(), inked, rect.height()))
+        """Opacity fraction (0..1) for a label at the given cascade rank, given
+        the current global _label_progress. Each label ramps over its own slice
+        of the timeline, staggered evenly by rank; _label_progress rises 0->1
+        for an entrance and falls 1->0 for an exit, and the per-label ramp
+        tracks it directly (no inversion needed — the leading label simply
+        owns the slice nearest progress's start value in either direction)."""
+        per_col = self._LABEL_STAGGER_FRACTION / max(1, m - 1)
+        start = cascade_pos * per_col
+        span = 1.0 - self._LABEL_STAGGER_FRACTION
+        if span <= 0:
+            return 1.0 if self._label_progress >= start else 0.0
+        if self._label_sweep_in:
+            return max(0.0, min(1.0, (self._label_progress - start) / span))
+        # Exit: progress falls 1->0. The leading label (cascade_pos=0) must
+        # reach 0 first, so its window is the *last* slice of the 1->0 sweep
+        # (i.e. anchored from the top), while the trailing label holds at 1.0
+        # the longest (anchored from the bottom).
+        end = 1.0 - start
+        return max(0.0, min(1.0, (self._label_progress - (end - span)) / span))
 
     def _disconnect_label_slot(self):
         prev = getattr(self, '_label_slot', None)
@@ -872,7 +886,8 @@ class HourlyHeatmap(QWidget):
             self._label_slot = None
 
     def animate_labels_out(self, on_done=None):
-        """Cascade the column labels out (1 -> 0). Leftmost column leads (H->S phase 1)."""
+        """Cascade the column labels out (1 -> 0). Oldest column leads, sweeping
+        leftward toward col 0 — mirrors animate_labels_in's direction."""
         self._label_anim.stop()
         self._disconnect_label_slot()
         self._label_sweep_in = False
@@ -889,10 +904,11 @@ class HourlyHeatmap(QWidget):
         self._label_anim.start()
 
     def animate_labels_in(self):
-        """Cascade the column labels in (0 -> 1), riding alongside the reveal wave."""
+        """Cascade the column labels in (0 -> 1), riding alongside the reveal
+        wave. Col 0 (newest) leads, sweeping rightward."""
         self._label_anim.stop()
         self._disconnect_label_slot()
-        self._label_sweep_in = True   # col 13 leads (Jun 11 last)
+        self._label_sweep_in = True
         self._label_anim.setDuration(1000)
         self._label_anim.setStartValue(0.0)
         self._label_anim.setEndValue(1.0)
@@ -960,9 +976,11 @@ class HourlyHeatmap(QWidget):
         grid_bottom = self.DATE_LABEL_H + 24 * (self.CELL + self.GAP)
 
         # Date labels — rotated -90°, dimmed for empty days
-        # Cascade order: OUT (sweep-in False) -> col 0 leads; IN (sweep-in True) -> col 13 leads.
+        # Cascade order: IN (sweep-in True) -> col 0 (newest) leads, sweeping right;
+        #                OUT (sweep-in False) -> oldest column leads, sweeping left
+        #                back toward col 0 — the true mirror of the IN direction.
         n_cols = self.N_DAYS
-        sweep_in = getattr(self, '_label_sweep_in', False)
+        sweep_in = self._label_sweep_in
         for col_i, date_str in enumerate(self._dates):
             cx = self.HOUR_LABEL_W + col_i * (self.CELL + self.GAP) + self.CELL // 2
             try:
@@ -971,11 +989,13 @@ class HourlyHeatmap(QWidget):
             except ValueError:
                 label = date_str
             has_data = self._col_totals.get(date_str, 0) > 0
-            label_pen = QColor(self._label_color)
-            if not has_data:
-                label_pen.setAlpha(60)
-            cascade_pos = (n_cols - 1 - col_i) if sweep_in else col_i
+            cascade_pos = col_i if sweep_in else (n_cols - 1 - col_i)
             local = self._label_local(cascade_pos, n_cols)
+            if local <= 0.0:
+                continue
+            label_pen = QColor(self._label_color)
+            base_alpha = 60 if not has_data else 255
+            label_pen.setAlpha(round(base_alpha * local))
             painter.save()
             painter.setPen(label_pen)
             painter.translate(cx + 2, self.DATE_LABEL_H - 3)
@@ -983,8 +1003,6 @@ class HourlyHeatmap(QWidget):
             # After rotate(-90), rect height maps to horizontal ink space in widget coords.
             # CELL alone is too tight for glyphs with ink outside the em square (e.g. "J").
             # CELL * 2 with y=-CELL centers the rect and gives enough room for all glyphs.
-            # Clip in rotated space so the label-sweep wipe runs along the text baseline.
-            self._apply_label_clip(painter, QRect(2, -self.CELL, self.DATE_LABEL_H, self.CELL * 2), local)
             painter.drawText(
                 QRect(2, -self.CELL, self.DATE_LABEL_H, self.CELL * 2),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -992,10 +1010,20 @@ class HourlyHeatmap(QWidget):
             )
             painter.restore()
 
-        # Hour labels on the left — every 3 hours as "00:00"
-        for hour in range(0, 24, 3):
+        # Hour labels on the left — every 3 hours as "00:00".
+        # Cascade order mirrors StreakGrid's row-label cascade: IN -> top (00:00)
+        # leads, cascading downward; OUT -> bottom leads, cascading upward.
+        hours = list(range(0, 24, 3))
+        n_hours = len(hours)
+        for rank, hour in enumerate(hours):
             y = self.DATE_LABEL_H + hour * (self.CELL + self.GAP) + 1
-            painter.setPen(self._label_color)
+            cascade_pos = rank if sweep_in else (n_hours - 1 - rank)
+            local = self._label_local(cascade_pos, n_hours)
+            if local <= 0.0:
+                continue
+            label_color = QColor(self._label_color)
+            label_color.setAlpha(round(255 * local))
+            painter.setPen(label_color)
             painter.drawText(
                 QRect(0, y, self.HOUR_LABEL_W - 3, self.CELL),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -1192,6 +1220,7 @@ class StreakGrid(QWidget):
         self._today: date | None = None
         self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
         self._label_progress: float = 1.0      # 1.0 = labels fully shown (at rest)
+        self._label_sweep_in: bool = False
 
         self._reveal_anim = QPropertyAnimation(self, b"reveal_progress")
         self._reveal_anim.setDuration(1000)
@@ -1247,9 +1276,12 @@ class StreakGrid(QWidget):
 
     reveal_progress = Property(float, get_reveal_progress, set_reveal_progress)
 
-    # --- label sweep (row date labels; mirror of HourlyHeatmap's column-label sweep) ---
-    _LABEL_LEAD_FRACTION = 0.5    # next label starts ~halfway through the previous
-    _LABEL_SHARP = 3.0            # per-label wipe sharpness (0.5 + 1/SHARP <= 1.0)
+    # --- label cascade (row date labels; mirror of HourlyHeatmap's column-label cascade) ---
+    # Each label fades in/out in place (no internal wipe); only the per-row
+    # start-time stagger is animated. Enter: top row leads, cascading downward.
+    # Exit: bottom row leads, cascading upward (top row last) — the mirror image
+    # of the enter direction, not the same sweep played in reverse.
+    _LABEL_STAGGER_FRACTION = 0.5   # fraction of total duration spent staggering starts
 
     def get_label_progress(self) -> float:
         return self._label_progress
@@ -1261,19 +1293,18 @@ class StreakGrid(QWidget):
     label_progress = Property(float, get_label_progress, set_label_progress)
 
     def _label_local(self, cascade_pos: int, m: int) -> float:
-        """Fraction of a label currently inked, from the global _label_progress and
-        the label's cascade rank. Mirrors the cell wave's (progress - delay)*sharp."""
-        stagger = (cascade_pos / max(1, m - 1)) * self._LABEL_LEAD_FRACTION
-        return max(0.0, min(1.0, (self._label_progress - stagger) * self._LABEL_SHARP))
-
-    @staticmethod
-    def _apply_label_clip(painter, rect, local: float):
-        """Right-anchored horizontal wipe: out (local falling) retreats rightward
-        then vanishes (reads L->R); in (local rising) emerges from the right growing
-        left (reads R->L). Same formula; direction comes from local's direction."""
-        w = rect.width()
-        inked = round(local * w)
-        painter.setClipRect(QRect(rect.x() + (w - inked), rect.y(), inked, rect.height()))
+        """Opacity fraction (0..1) for a label at the given cascade rank, given
+        the current global _label_progress. Mirrors HourlyHeatmap._label_local —
+        see its docstring for the enter/exit window placement rationale."""
+        per_col = self._LABEL_STAGGER_FRACTION / max(1, m - 1)
+        start = cascade_pos * per_col
+        span = 1.0 - self._LABEL_STAGGER_FRACTION
+        if span <= 0:
+            return 1.0 if self._label_progress >= start else 0.0
+        if self._label_sweep_in:
+            return max(0.0, min(1.0, (self._label_progress - start) / span))
+        end = 1.0 - start
+        return max(0.0, min(1.0, (self._label_progress - (end - span)) / span))
 
     def _disconnect_label_slot(self):
         prev = getattr(self, '_label_slot', None)
@@ -1282,7 +1313,7 @@ class StreakGrid(QWidget):
             self._label_slot = None
 
     def animate_labels_out(self, on_done=None):
-        """Cascade the row labels out (1 -> 0). Top row leads (S->H phase 1)."""
+        """Cascade the row labels out (1 -> 0). Bottom row leads, cascading upward."""
         self._label_anim.stop()
         self._disconnect_label_slot()
         self._label_sweep_in = False
@@ -1299,10 +1330,11 @@ class StreakGrid(QWidget):
         self._label_anim.start()
 
     def animate_labels_in(self):
-        """Cascade the row labels in (0 -> 1), riding alongside the reveal wave."""
+        """Cascade the row labels in (0 -> 1), riding alongside the reveal wave.
+        Top row leads, cascading downward."""
         self._label_anim.stop()
         self._disconnect_label_slot()
-        self._label_sweep_in = True   # bottom label leads (H->S phase 2)
+        self._label_sweep_in = True
         self._label_anim.setDuration(1000)
         self._label_anim.setStartValue(0.0)
         self._label_anim.setEndValue(1.0)
@@ -1455,26 +1487,30 @@ class StreakGrid(QWidget):
             num_str
         )
 
-        # --- left gutter: row date labels (every 3rd row), with label-sweep clip ---
+        # --- left gutter: row date labels (every 3rd row) ---
         # TODO: hover to reveal the missing/skipped row dates (rows without a label).
-        # Cascade order: OUT (sweep-in False) -> top row leads (S->H phase 1);
-        #                IN  (sweep-in True)  -> bottom label leads (H->S phase 2).
+        # Cascade order: IN (sweep-in True) -> top row leads, cascading downward;
+        #                OUT (sweep-in False) -> bottom row leads, cascading upward
+        #                (top row last) — the mirror of the IN direction.
         label_font = QFont()
         label_font.setPointSize(9)          # 9pt fits "Jun 10" in the 32px gutter
         painter.setFont(label_font)
         drawn = list(range(0, N_ROWS, 3))
         m = len(drawn)
-        sweep_in = getattr(self, '_label_sweep_in', False)
+        sweep_in = self._label_sweep_in
         for rank, r in enumerate(drawn):
             label_date = self._today - timedelta(days=r * N_COLS)   # leftmost (newest) cell of the row
             label = label_date.strftime('%b %d')
             y = self.TOP_PAD + r * (self.CELL + self.GAP)
             rect = QRect(0, y, self.GUTTER_W - 3, self.CELL)
-            cascade_pos = (m - 1 - rank) if sweep_in else rank
+            cascade_pos = rank if sweep_in else (m - 1 - rank)
             local = self._label_local(cascade_pos, m)
+            if local <= 0.0:
+                continue
             painter.save()
-            self._apply_label_clip(painter, rect, local)
-            painter.setPen(self._label_color)
+            label_color = QColor(self._label_color)
+            label_color.setAlpha(round(255 * local))
+            painter.setPen(label_color)
             painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
             painter.restore()
 
