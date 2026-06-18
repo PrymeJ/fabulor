@@ -213,7 +213,8 @@ THEMES = {
         "settings_tab_hover_bg":         "#2EAA4A",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#0A0F0A",
-        "settings_theme_names_dimmed":   "#4A624A"
+        "settings_theme_names_dimmed":   "#698B69",
+        "streak_grid_outline":           "#98CD85",
     },
     "Anomander": {
         "bg_deep":                       "#000000",
@@ -696,7 +697,9 @@ THEMES = {
         "dropdown_curr_chap":            "#5B8AFF",
         "sidebar_text_hover":            "#6B9AFF",
         "sidebar_opacity":               0.85,
-        "settings_theme_names_dimmed":   "#8FEBE6"
+        "settings_theme_names_dimmed":   "#8FEBE6",
+        "streak_grid_outline":           "#0D3F77",
+        "streak_grid_dot":               "#759FDB"
     },
     "Fifth Season": {
         "bg_deep":                       "#0A0A0A",
@@ -852,7 +855,9 @@ THEMES = {
         "settings_tab_hover_bg":         "#E8943A",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#0A1228",
-        "settings_theme_names_dimmed":   "#586688"
+        "settings_theme_names_dimmed":   "#586688",
+        "streak_grid_outline":           "#0e2451",
+        "streak_grid_dot":               "#eddd89"
     },
     "Goldfinch": {
         "bg_deep":                       "#1E1816",
@@ -1668,7 +1673,9 @@ THEMES = {
         "dropdown_curr_chap":            "#AC668B",
         "sidebar_text_hover":            "#7A9BB5",
         "sidebar_opacity":               0.88,
-        "settings_theme_names_dimmed":   "#CDE1E1"
+        "settings_theme_names_dimmed":   "#CDE1E1",
+        "streak_grid_outline":           "#D0D192",
+        "streak_grid_dot":               "#444444"
     },
     "Sitting in the Wing Chair": {
         "bg_deep":                       "#1E1814",

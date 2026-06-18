@@ -1354,16 +1354,17 @@ class StreakGrid(QWidget):
 
     @staticmethod
     def _derive_longest_fill(accent: QColor) -> QColor:
-        # Painted as a 2px border ON TOP of the accent-filled cell, which is
-        # itself shown at varying alpha (dim for unlistened, full for
-        # listened) — any color derived as a small tweak of accent ends up
-        # close to one of those two shades on some themes. Rotate to a
-        # moderate hue offset (~70deg — distinct from accent without being
-        # a jarring near-opposite) at restrained saturation/value so it
-        # reads as a calmer, still on-theme contrast rather than a neon pop.
+        # Now the CELL FILL for the longest run (accent is the border). A hue
+        # rotation works for the 58 hand-picked named themes but cover-art
+        # themes derive accent dynamically from artwork, so a fixed rotation
+        # can land anywhere on the wheel. Instead stay on the same hue and
+        # lighten/desaturate — a subdued tint of the accent itself — which
+        # tracks the cover's palette reliably while still reading as a
+        # distinct, lighter cell against the plain accent-filled ones.
         h, s, v, a = accent.getHsv()
-        new_h = (h + 70) % 360 if h >= 0 else 70
-        return QColor.fromHsv(new_h, 160, 190, a)
+        new_s = max(0, int(s * 0.55)) if s else 0
+        new_v = min(255, v + 60) if v >= 0 else 200
+        return QColor.fromHsv(h if h >= 0 else 0, new_s, new_v, a)
 
     @staticmethod
     def _derive_finished_dot(accent: QColor) -> QColor:
@@ -1494,7 +1495,13 @@ class StreakGrid(QWidget):
                 anim_alpha = max(0.0, min(1.0, (self._reveal_progress - (h_delay + v_delay)) * 15))
 
                 listened = self._cache.get(iso, 0) == 1
-                if listened:
+                is_longest = iso in self._longest_dates
+                if is_longest:
+                    # Longest run swaps the fill/border roles: the distinct
+                    # derived color fills the cell, accent becomes the border.
+                    color = QColor(self._longest_fill)
+                    color.setAlpha(int(255 * anim_alpha))
+                elif listened:
                     color = QColor(self._accent)
                     color.setAlpha(int(255 * anim_alpha))
                 else:
@@ -1503,9 +1510,8 @@ class StreakGrid(QWidget):
                     color.setAlpha(int(base_a * anim_alpha))
                 painter.fillRect(x, y, self.CELL, self.CELL, color)
 
-                if iso in self._longest_dates and anim_alpha > 0:
-                    # Longest run reads as an inset border, not a distinct fill.
-                    border = QColor(self._longest_fill)
+                if is_longest and anim_alpha > 0:
+                    border = QColor(self._accent)
                     border.setAlpha(int(255 * anim_alpha))
                     painter.save()
                     pen_w = 2
