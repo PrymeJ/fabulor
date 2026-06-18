@@ -1570,6 +1570,7 @@ class TasselOverlay(QWidget):
         self._slide.setDuration(self.SLIDE_MS)
         self._slide.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._on_switch = None
+        self._on_retreated_cb = None
         self._busy = False
         self._slide_slot = None
 
@@ -1609,13 +1610,17 @@ class TasselOverlay(QWidget):
     def mousePressEvent(self, event):
         self.clicked.emit()
 
-    def play(self, on_switch):
-        """Slide down (reveal) -> hold -> at retreat start call on_switch() ->
-        slide back up. Ignores clicks while a cycle is in flight."""
+    def play(self, on_switch, on_retreated=None):
+        """Slide down (reveal) -> hold -> at retreat start call on_switch()
+        if given -> slide back up -> at rest call on_retreated() if given.
+        Ignores clicks while a cycle is in flight. Callers that need the
+        switch to fire on click rather than at retreat can pass None for
+        on_switch and invoke their callback separately."""
         if self._busy:
             return
         self._busy = True
         self._on_switch = on_switch
+        self._on_retreated_cb = on_retreated
         self.raise_()
         x = self.x()
         self._slide.stop()
@@ -1648,6 +1653,10 @@ class TasselOverlay(QWidget):
     def _on_retreated(self):
         self._disconnect_slide()
         self._busy = False
+        if self._on_retreated_cb is not None:
+            cb = self._on_retreated_cb
+            self._on_retreated_cb = None
+            cb()
 
 
 class StatsPanel(QWidget):
@@ -1658,6 +1667,7 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._tassel_icon_color = QColor("#000000")
         self._placeholder_color = "#888888"
         self._active_days: list[str] = []
         self._current_day_index: int = 0
@@ -1757,6 +1767,7 @@ class StatsPanel(QWidget):
         from ..themes import _resolve_theme
         theme = _resolve_theme(theme)
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
+        self._tassel_icon_color = QColor(theme.get("accent_dark", theme.get("bg_main", "#000000")))
         self._placeholder_color = theme.get(
             'placeholder_stats',
             theme.get('placeholder_cover',
@@ -2008,11 +2019,15 @@ class StatsPanel(QWidget):
     def _update_tassel_icon(self):
         # Showing streak -> clock icon (click goes to heatmap);
         # showing heatmap -> calendar icon (click goes to streak).
-        name = "clock.svg" if self._show_streak_grid else "calendar.svg"
-        self._tassel.set_icon(load_currentcolor_icon(name, self._accent_color.name(), 14))
+        name = "clock.svg" if self._show_streak_grid else "fire.svg"
+        self._tassel.set_icon(load_currentcolor_icon(name, self._tassel_icon_color.name(), 14))
 
     def _on_tassel_clicked(self):
-        self._tassel.play(self._switch_timeline_view)   # switch fires at retreat start
+        # Bookmark animation only; transition fires immediately below. The icon
+        # updates only once the bookmark is fully retreated (invisible at rest),
+        # so it's always showing the *next* destination when next clicked.
+        self._tassel.play(None, on_retreated=self._update_tassel_icon)
+        self._switch_timeline_view()
 
     def _switch_timeline_view(self):
         # Phase 1: drain the current grid AND cascade its labels out, simultaneously.
@@ -2033,7 +2048,8 @@ class StatsPanel(QWidget):
             nxt = self._streak_grid if going_to_streak else self._heatmap
             nxt.set_label_progress(0.0)   # PRIME: incoming labels hidden so labels-in sweeps them on
             nxt.setVisible(True)
-            self._update_tassel_icon()
+            # Tassel icon updates separately, once it's fully retreated (see
+            # _on_tassel_clicked) — not here, to avoid an icon swap mid-animation.
             # Arm labels-in and reveal BEFORE _refresh_time(): set_data -> update() would
             # otherwise paint one frame at _label_progress=0.0 (hidden labels). Both arm
             # calls schedule an update; Qt coalesces them in the same event-loop turn.
