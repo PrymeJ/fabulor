@@ -80,6 +80,8 @@ tag_list_text_hover:     (Optional) Color for text inside the tag list when hove
 session_history_row_one: (Optional) Background color for odd rows in the book detail History tab. Fallback: library_row_one → bg_main.
 session_history_row_two: (Optional) Background color for even rows in the book detail History tab. Fallback: library_row_two → bg_main.
 ## NOT BEING USED YET ## session_history_bg:      (Optional) Background color for the book detail History tab. Fallback: library_bg.
+streak_grid_outline:     (Optional) Override for the longest-run inset border color in the Timeline streak grid. Fallback: derived from accent (warm relative hue shift + sat/value bump). Use when the derived color doesn't read well against a theme's cell fill.
+streak_grid_dot:         (Optional) Override for the finished-day marker (small centered square) in the Timeline streak grid. Fallback: derived from accent (same hue, low value, dark punch-through). Use when the derived color doesn't read well against a theme's cell fill.
 
 GROUP 10 — MISC UI
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.

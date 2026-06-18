@@ -1354,12 +1354,16 @@ class StreakGrid(QWidget):
 
     @staticmethod
     def _derive_longest_fill(accent: QColor) -> QColor:
-        # Warm relative hue shift (~+35deg) + sat/value bump — distinct from the
-        # plain accent fill while staying on-theme.
+        # Painted as a 2px border ON TOP of the accent-filled cell, which is
+        # itself shown at varying alpha (dim for unlistened, full for
+        # listened) — any color derived as a small tweak of accent ends up
+        # close to one of those two shades on some themes. Rotate to a
+        # moderate hue offset (~70deg — distinct from accent without being
+        # a jarring near-opposite) at restrained saturation/value so it
+        # reads as a calmer, still on-theme contrast rather than a neon pop.
         h, s, v, a = accent.getHsv()
-        new_h = (h + 35) % 360 if h >= 0 else 35
-        new_s = min(255, int(s * 1.15)) if s else 200
-        return QColor.fromHsv(new_h, new_s, min(255, v + 30), a)
+        new_h = (h + 70) % 360 if h >= 0 else 70
+        return QColor.fromHsv(new_h, 160, 190, a)
 
     @staticmethod
     def _derive_finished_dot(accent: QColor) -> QColor:
@@ -1758,10 +1762,10 @@ class StatsPanel(QWidget):
             self._heatmap.set_accent_color(self._accent_color)
         if hasattr(self, '_streak_grid'):
             self._streak_grid.set_accent_color(self._accent_color)
-            fill = theme.get("streak_longest_fill")          # per-theme override hook
-            if fill:
-                self._streak_grid.longest_fill_color = QColor(fill)
-            dot = theme.get("streak_finished_dot")           # per-theme override hook
+            outline = theme.get("streak_grid_outline")        # per-theme override hook
+            if outline:
+                self._streak_grid.longest_fill_color = QColor(outline)
+            dot = theme.get("streak_grid_dot")                # per-theme override hook
             if dot:
                 self._streak_grid.finished_dot_color = QColor(dot)
             self._streak_grid.update()
