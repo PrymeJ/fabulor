@@ -242,7 +242,8 @@ THEMES = {
         "library_row_two":               "#0C0C0C",
         "library_item_hover_alpha":      0.15,
         "settings_tab_hover_text":       "#000000",
-        "settings_theme_names_dimmed":   "#FFA807"
+        "settings_theme_names_dimmed":   "#FFA807",
+        "streak_grid_outline":           "#FFBF00"
     },
     "Blood Meridian": {
         "bg_deep":                       "#2F1A0F",
@@ -797,6 +798,8 @@ THEMES = {
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#F2D8D8",
         "settings_theme_names_dimmed":   "#CA7E7E",
+        "streak_grid_outline":           "#000000",
+        "streak_grid_dot":               "#FF6262",
         "placeholder_cover":             "#D42020",
         "gradient_bg_start":             "#0A0505",
         "gradient_bg_end":               "#1A0A0F",
@@ -1834,16 +1837,19 @@ THEMES = {
         "accent":                        "#7B2CBF",
         "accent_light":                  "#9D4EDD",
         "accent_dark":                   "#5A189A",
+        "slider_progress":               "#F3BBF0",
         "slider_overall_bg":             "#4B0082",
-        "slider_overall_fill":           "#BA7BBA",
+        "slider_overall_fill":           "#CD6Eb0",
         "slider_chapter_bg":             "#330066",
         "slider_chapter_fill":           "#950E95",
         "slider_vol_bg":                 "#220044",
         "slider_vol_fill":               "#7B2CBF",
-        "dropdown_curr_chap":            "#C8A2C8",
+        "dropdown_curr_chap":            "#4B0082",
         "sidebar_text_hover":            "#9D4EDD",
         "sidebar_opacity":               0.6,
-        "settings_theme_names_dimmed":   "#6B2FAD"
+        "settings_theme_names_dimmed":   "#BA21E7",
+        "streak_grid_outline":           "#D759B1",
+        "streak_grid_dot":               "#4F076F"
     },
     "The Eyrie": {
         "bg_deep":                       "#1E2A30",
