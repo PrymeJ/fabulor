@@ -1,4 +1,76 @@
 
+## Percentage label tween oscillation FIXED; tassel click hang FIXED; streak grid catch-up reveal added (2026-06-19)
+
+**Percentage label oscillation — truncate-vs-round mismatch, not a timing race.** The progress
+percentage label's book-load count-up animation (added 2026-06-18) animated toward
+`new_val / 10`, where `new_val = int((new_progress/dur)*1000)` — `int()` truncates toward zero, so
+a true value like 739.97 becomes 739, displaying "73.9%". The live 200ms tick that resumes right
+after the flow instead computes `percent = (pos/dur)*100` and formats it with `f"{percent:.1f}%"`,
+which *rounds* — for the same ~739.97-ish true percentage, that's "74.0%". Every book whose saved
+progress's true percentage rounds up in its last digit reproduced this, consistently, every time —
+not intermittently, which in hindsight should have been the tell that it wasn't a race. First
+attempt was a settle-delay guard (`_pct_label_settling`, cleared 250ms after the tween finished) on
+the theory that the live tick was racing the tween's completion. Confirmed wrong by testing it: the
+jump was bit-for-bit identical with the delay in place. Real fix: compute the tween's end value
+directly as `round((new_progress/dur)*100, 1)` in `_animate_percentage_label`, matching the live
+tracker's own rounding exactly, instead of re-deriving a coarser value from the slider's truncated
+`new_val`. The settle-delay plumbing was removed entirely once the root-cause fix made it
+unnecessary — it's a math/formatting consistency issue, not a timing one, so no delay of any length
+would have fixed it.
+
+**Tassel click hang — caller didn't check the busy guard it relied on.** Rapid-clicking the
+Timeline tassel while a heatmap↔streak transition was already running could hang the view
+indefinitely (reported via screenshot: bookmark visible but frozen, both grids blank, no further
+clicks doing anything). `TasselOverlay.play()` already had a `_busy` flag that correctly no-oped on
+repeat clicks for the bookmark slide animation itself (added in an earlier session). But
+`StatsPanel._on_tassel_clicked` called `self._switch_timeline_view()` unconditionally on every
+click, regardless of whether `play()` had actually done anything that time — so every extra click
+during the busy window independently kicked off another full `_switch_timeline_view()` cycle: a new
+`animate_conceal()`/`animate_labels_out()` pair racing against the one(s) already in flight, another
+`_show_streak_grid` flip, multiple `_seam()` closures fighting over the same grid's
+`setVisible`/`set_label_progress` calls. Enough overlapping cycles left both grids hidden with no
+surviving callback able to flip either back to visible — the hang. Fix: added a public
+`TasselOverlay.is_busy` property (`return self._busy`) and `_on_tassel_clicked` returns immediately
+if it's `True`, before touching either the bookmark or the grid transition. General lesson for this
+codebase: a guard living inside one method (`play()`'s `_busy` check) does not protect a caller that
+also independently triggers side effects alongside that method — the caller needs to check the same
+guard itself if it wants the same protection.
+
+**Streak grid catch-up reveal.** The newest `current - previous` day-cells (`day_index` 0 through
+`N-1`, where `day_index=0` is today) now render as plain "not listened" — regardless of what's
+actually in `_cache`/`_longest_dates`/`_finished` — for the full duration of the counter's leg 1
+count-up to the old value and the pause that follows, via two new `StreakGrid` fields
+(`_pending_reveal_days`, `_revealed_days`) checked in `paintEvent` as a `still_pending` gate. Once
+leg 2 starts, cells pop in one at a time in the exact same frame as each integer increment of the
+counter — both are driven by one discrete `QTimer` (`_run_streak_leg2`), not two independently-timed
+animations, specifically so they can't drift a tick apart from each other. This required replacing
+leg 2's previous continuous `QPropertyAnimation` tween with a stepped timer entirely. Total leg-2
+duration: `raw = LEG2_BASE_MS + (sqrt(days) - 1) * LEG2_SCALE_MS`, capped at `LEG2_CAP_MS` (1200ms);
+1 day lands exactly on `LEG2_BASE_MS` (250ms, matching the original single-tick feel). Per user
+feedback, anything beyond `LEG2_SPEEDUP_AFTER_DAYS` (3) is further compressed: the time *past* the
+3-day mark runs at `LEG2_SPEEDUP_FACTOR` (0.25, i.e. 75% faster than the raw curve for that portion
+— tuned down from an initial 0.8/~20%-faster after visual testing showed it wasn't enough), so the
+curve stays continuous at the boundary instead of jumping. Net effect: 9 days ≈ 565ms (was 850ms
+pre-tune), 25 days ≈ 715ms, 100 days ≈ 1090ms (still under the 1200ms cap). `catch_up_streak_count`
+(the panel-slide-reopen path) explicitly zeroes
+`_pending_reveal_days`/`_revealed_days` before calling into the same leg-2 timer, so the grid itself
+is never touched there — the established "never animate the grid on a slide-reopen" rule still
+holds; only the counter shows the catch-up tick in that case.
+
+**Deferred (minor): background-refresh race with an in-flight catch-up reveal.** If
+`StatsPanel.refresh_all()` (a background data refresh, e.g. from the session-write live-refresh
+path) runs while `StreakGrid`'s leg-2 reveal is mid-flight, `set_data()` refreshes
+`_cache`/`_longest_dates`/`_finished` from the database but does not touch
+`_pending_reveal_days`/`_revealed_days` at all (by design — those fields are owned exclusively by
+`animate_streak_count`/`catch_up_streak_count`/`_run_streak_leg2`). Confirmed by the user to behave
+exactly as predicted: a narrow timing collision, cosmetic only (the dimmed cells can briefly look
+stale relative to the freshly-loaded cache until the reveal timer finishes or the next refresh
+corrects it). Accepted as-is for now — not worth the added state-reconciliation complexity for how
+rarely the two events overlap. Candidate fix if it's ever worth doing: on detecting an interrupting
+`set_data()` call while `_pending_reveal_days > self._revealed_days`, reveal all remaining pending
+cells at once (snap `_revealed_days = _pending_reveal_days`) before applying the new data, rather
+than trying to keep the staged per-day reveal in sync with a cache that just changed under it.
+
 ## Timeline tab visual rework: grid pop transition, label cascades, streak counter (2026-06-18)
 
 **Grid transition style.** Replaced the cell reveal/conceal alpha-only fade with a "pop": cells

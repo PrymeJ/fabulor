@@ -741,6 +741,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Left-gutter labels (Heatmap hours, Streak dates): entering cascades top-to-bottom; exiting cascades bottom-to-top
 - [ ] Opening the Stats panel with Timeline already the active tab shows the grid statically at rest — no cell/label animation plays (slide-reopen must never animate the grid)
 - [ ] Switching tabs away from and back to Timeline (panel already open) re-plays the full reveal/cascade animation
+- [ ] Rapid-clicking the tassel repeatedly while a heatmap↔streak transition is mid-flight: clicks are ignored (no-op) until the bookmark is fully retreated — view never hangs with both grids blank
 
 ### Timeline tab — streak counter
 
@@ -752,6 +753,16 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Streak unchanged across an app restart: opening Timeline shows a plain 0 → N count, no pause
 - [ ] Carry behavior (e.g. 9→10, 19→20, 29→30): counts as ordinary integers, no digit-by-digit artifacts
 - [ ] Pause-then-tick only ever appears once per genuine streak change — repeated tab switches afterward show the new value with no further pause until the streak changes again
+- [ ] Listen to add exactly 1 day to the streak: during leg 1 + pause, today's cell stays dimmed/not-listened-looking even though it's actually listened; once leg 2 ticks, today's cell pops in (with correct longest-run border / finished-dot if applicable) in the same instant the number increments
+- [ ] Multi-day catch-up (e.g. after several days away, deltas via manual testing): each new day-cell pops in one at a time, oldest of the new days first, in lockstep with each counter increment — not all at once, not out of order
+- [ ] Multi-day catch-up total duration feels proportionally quick (capped well under ~1.2s) even for double-digit day deltas — does not visibly drag
+
+### Progress slider — percentage label count-up
+
+- [ ] Switching books: percentage label counts up/down in lockstep with the progress slider's flow animation (same duration, finishes together)
+- [ ] The label's final displayed value exactly matches what the live tracker shows on the very next 200ms tick — no visible jump/correction right as the animation ends (regression check for the truncate-vs-round bug)
+- [ ] Test with a book whose saved progress's true percentage has a fractional part that would round up in the last digit (e.g. true ~73.97%) — label settles on the rounded value (74.0%), not the truncated one (73.9%)
+- [ ] Cold app start (restoring last book): percentage label animates 0 → saved progress, same as a mid-session book switch
 
 ### Daily tab
 - [ ] Most recent active day loads automatically on tab activation

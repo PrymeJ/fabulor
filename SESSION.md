@@ -1,3 +1,51 @@
+## Session Summary — 2026-06-19 — Percentage label tween fix, tassel hang fix, streak grid catch-up reveal
+
+**Branch:** `main`. **Commits:** `b75f9bf`, `ce47831`, `627cb7e`, `e31d27a`.
+
+### What shipped
+
+- **Percentage label tween — fixed an oscillation bug found right after shipping the prior session's
+  count-up animation.** The tween animated toward the progress slider's int()-truncated 0-1000-scale
+  target (e.g. 739 → "73.9%"), but the live 200ms tick that resumes right after rounds the same true
+  percentage with `%.1f` (→ "74.0%") — a guaranteed one-tick jump on every book where the saved
+  progress's true percentage rounds up in its last digit. First attempted fix (a settle-delay guard)
+  didn't work because the bug isn't a timing race — confirmed by testing the delay and seeing the
+  identical jump regardless. Real fix: compute the tween's end value directly as
+  `round((new_progress/dur)*100, 1)`, matching the live tracker's own rounding exactly, instead of
+  re-deriving a coarser value from the slider's truncated target.
+- **Tassel click hang — fixed.** Rapid-clicking the Timeline tassel while a heatmap↔streak transition
+  was mid-flight could hang the view indefinitely. `TasselOverlay.play()` already correctly no-oped
+  on repeat clicks for the bookmark animation itself, but `_on_tassel_clicked` called
+  `_switch_timeline_view()` unconditionally regardless — so every extra click queued up another
+  overlapping conceal/reveal cycle racing over the same grid visibility state. Added a public
+  `TasselOverlay.is_busy` property and gated the click handler on it.
+- **Streak grid catch-up reveal** — the newest `current - previous` day-cells now stay dimmed
+  (rendered as plain "not listened," suppressing the longest-run border and finished-dot too)
+  throughout the counter's leg 1 + pause, then pop in one at a time as leg 2 ticks — driven by the
+  same discrete per-day timer as the counter so the number and the grid change in the same frame.
+  This required replacing leg 2's continuous tween with a stepped timer. Total duration scales
+  sub-linearly with day count (sqrt-based, capped at 1200ms) so a 1-day change still feels like the
+  original snappy tick; anything beyond 3 days runs 75% faster than the raw curve for that portion
+  (user-tuned down from an initial 20%-faster) so a multi-week catch-up doesn't drag. `catch_up_streak_count` (panel slide-reopen
+  path) explicitly zeroes the pending-reveal state, so the grid itself is never touched there —
+  preserving the established never-animate-on-reopen rule.
+- Removed the `_DEBUG_STREAK_PREV_OVERRIDE`/`_DEBUG_STREAK_CUR_OVERRIDE` debug hooks used to test
+  the above without needing real multi-day streak data.
+- Theme update: Rose Code (`themes.py`).
+
+### Deferred
+
+- **Background-refresh race with an in-flight catch-up reveal** (minor, accepted as-is for now): if
+  `refresh_all()` (a background data refresh) runs while `StreakGrid`'s leg-2 reveal is mid-flight,
+  `set_data()` refreshes `_cache`/`_longest_dates` but `_pending_reveal_days`/`_revealed_days` are
+  left stale from the in-progress cycle — narrow timing collision, cosmetic only (briefly stale dim
+  cells), confirmed to behave exactly as described, not fixed this session. See NOTES.md for the
+  candidate fix (reveal all pending cells at once on interruption) if it's ever worth doing.
+- **Tassel bookmark icon** — currently missing its tassel/ribbon graphic; deferred to a future
+  session per the user.
+
+---
+
 ## Session Summary — 2026-06-18 — Timeline tab visual rework (streak grid styling, label cascades, grid transition, streak counter)
 
 **Branch:** `main`. **Commits:** `21d219d`, `0c0678d`, `7bef3de`, `81fef95`, `a429ed2`, `172c573`, `c89fff6`.

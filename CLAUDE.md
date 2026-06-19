@@ -446,6 +446,30 @@ one deliberate place where the streak number's animation rule diverges from the 
 "never animate on slide-reopen" rule — the grid stays fully static every time, the number gets a
 narrow exception so a real change is never silently dropped.
 
+### DO NOT animate a UI count-up toward a target derived from a coarser/truncated value than what live tracking will show
+`_animate_percentage_label`'s tween must compute its end value as `round((new_progress/dur)*100, 1)`
+— the SAME rounding the live 200ms tracker uses (`f"{percent:.1f}%"`) — not by re-deriving a percent
+from the progress slider's `new_val` (`int((new_progress/dur)*1000)`, which TRUNCATES to the
+slider's coarser 0-1000 scale). A true value like 739.97 truncates to slider tick 739 ("73.9%") but
+rounds to "74.0%" — every book whose saved progress rounds up in its last digit reproduced a
+guaranteed one-tick jump the instant the live tracker resumed after the tween. This is a
+truncate-vs-round MATH mismatch, not a timing race — a settle-delay guard was tried first and
+confirmed not to fix it (the jump was identical with or without the delay). Any future animated
+label that shares a "coarse slider scale" data source with a "precise live display" must independently
+verify both sides actually agree on rounding before assuming a delay/guard will paper over a gap.
+
+### DO NOT trust a callee's busy/no-op guard to protect a caller's OWN side effects
+`TasselOverlay.play()`'s `_busy` flag correctly no-ops repeat calls for the bookmark slide animation
+itself, but `StatsPanel._on_tassel_clicked` also independently calls `_switch_timeline_view()` on
+every click — and that call was NOT gated on anything, so rapid clicking queued up multiple
+overlapping `_switch_timeline_view()` cycles (each its own `animate_conceal`/`animate_labels_out`
+pair) racing over the same grid visibility state, which could hang the Timeline view indefinitely
+with both grids left hidden. Fixed via a public `TasselOverlay.is_busy` property that
+`_on_tassel_clicked` checks itself before doing anything. General rule: if a caller triggers a side
+effect ALONGSIDE calling a method that has its own internal busy/idempotency guard, the guard
+living inside that method does not protect the caller's side effect — the caller must check the
+same busy state itself (via an exposed property, not by assuming the callee's no-op will be enough).
+
 ### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
 clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
 
@@ -569,7 +593,15 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-18 — Timeline tab visual rework: `StreakGrid` longest-run fill/border roles
+*Last updated: 2026-06-19 — fixed a percentage-label tween oscillation (truncate-vs-round mismatch
+against the live tracker, not a timing race — see CLAUDE.md rule above and NOTES.md); fixed a
+Timeline tassel click hang (caller didn't check `TasselOverlay.is_busy` before independently
+triggering its own side effect — see CLAUDE.md rule above); added a streak-grid catch-up reveal that
+dims the newest changed day-cells and pops them in one-by-one in lockstep with the counter's leg-2
+tick (leg 2 is now a discrete per-day step timer, not a continuous tween); removed the
+`_DEBUG_STREAK_*_OVERRIDE` test hooks. Added two new rules above.*
+
+*Previously: 2026-06-18 — Timeline tab visual rework: `StreakGrid` longest-run fill/border roles
 swapped (derived tint fill, accent border; `streak_grid_outline`/`streak_grid_dot` replace the old
 `streak_longest_fill`/`streak_finished_dot` theme key names); grid reveal/conceal transition is now
 `_grid_cell_anim` style `"pop"` (scale + alpha, not plain fade) shared by `HourlyHeatmap`/`StreakGrid`;
