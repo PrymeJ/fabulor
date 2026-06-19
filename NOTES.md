@@ -1,4 +1,60 @@
 
+## Main-window theme fade interrupt (sidebar mid-fade) FIXED; full color-animation rework DEFERRED (2026-06-19 Session 2)
+
+**Symptom:** press `T` (theme rotate), then right-click the drag area to open the sidebar while the
+fade is still running → a slider (progress and/or chapter) stays painted in the OLD theme's color
+while everything else is already the NEW theme. Hard to hit deliberately, and self-corrects on the
+next theme change, but real.
+
+**Root cause (two parts, from instrumented logs).** The non-Themes-tab fade
+(`_do_fade_with_slider_animation`) excludes the sliders from the overlay snapshot and instead
+animates their `bg_color`/`fill_color`/`notch_color` `@Property` values from old→new. Those animations
+are kicked off from a deferred `QTimer.singleShot(0, _start_color_anims)` (deferred so the new QSS has
+polished first). (1) If a panel/sidebar opens in the window between the fade starting and that
+deferred callback firing, the callback still runs and *re-resets* the sliders to the OLD start colors
+before animating — and if the fade is then torn down, they're stranded there. (2) There was no
+main-window-appropriate way to *complete* an in-flight fade on interrupt — `snap_theme_forward` exists
+but is Settings-panel-oriented (it re-applies stylesheets in a way tuned for the Themes-tab preview)
+and was never intended for the main window; calling it there (an earlier attempted fix) did not
+resolve the stranding.
+
+**Why the sliders specifically (not the rest of the UI).** `ClickSlider.paintEvent` paints directly
+from its `@Property` colors (`self._bg_color` etc.), NOT from QSS at paint time. The new-theme colors
+reach those properties only via `_apply_stylesheets` → Qt `polish()` reading the
+`qproperty-bg_color`/etc. declarations in `get_player_stylesheet`. So once the fade's color animation
+has overridden the `@Property` and is then stopped mid-flight, the slider keeps the stranded value
+until something re-polishes it. The rest of the UI (buttons, panels, labels) reads its colors from QSS
+at paint time, so it was already correct the instant `_apply_stylesheets` ran.
+
+**Fix:** `ThemeManager.complete_main_fade()` — stops the main `_fade_anim` and any running slider color
+animations, hides the overlay, unfreezes the fade labels, then re-applies the stylesheet for
+`_active_display_theme`, which re-polishes the slider `@Property` colors to the correct new-theme
+values (overriding whatever the stopped animation left). A new `_fade_in_flight` flag (set when a
+fade starts, cleared in `_on_fade_finished` and `complete_main_fade`) ALSO guards the deferred
+`_start_color_anims` so it returns early once the fade is completed/interrupted — closing the
+re-strand window in cause (1). `_toggle_sidebar` (the sidebar is the gateway to every panel, and the
+target of the drag-area right-click) calls `complete_main_fade()` before sliding; it's a no-op if no
+fade is running. Future panel hotkeys (`l`/`s`/etc., planned) would hit the identical race and should
+make the same call.
+
+**DEFERRED — the deeper friction (full per-element color-animation rework).** The real reason theme
+changes are restricted to "main window only, no panel open" is that the main-window theme transition
+is a heavyweight FULL-WINDOW animated fade: an overlay snapshot of the whole window + frozen time/
+chapter labels (text pinned so it can't change under the overlay and ghost) + the slider color
+tweens. That heaviness is what risks morph/ghost artifacts if anything is moving (a panel sliding)
+during the fade. If theme changes were *only* cheap per-element `@Property` color animations (nothing
+positional, no overlay, no frozen labels), they could run freely even with a panel open — the
+original desired behavior. That rework was started in a prior session and abandoned as enormous:
+every QSS-styled widget (buttons and their hover/pressed/disabled states, panel chrome, the Themes-tab
+pool items with their regular/underline/bold variants, gradients, cover-art-derived colors) would
+need converting from QSS-driven coloring to custom-paint `@Property` coloring, because QSS pseudo-
+states (`:hover`/`:pressed`/`:disabled`) have no equivalent in custom-paint land and would each be
+reimplemented by hand. Rough estimate 40–80h+ with high regression risk against a system that works.
+The cheaper middle path (snap panel chrome instantly while keeping slider tweens, dropping the overlay
+for the panel-open case) was floated and **rejected by the user**: instant theme snaps look jarring/
+violent — the overlay fade exists precisely to avoid that, and snapping would be a worse experience,
+not a better one. So: the overlay fade stays; `complete_main_fade` is the pragmatic interrupt fix.
+
 ## Percentage label tween oscillation FIXED; tassel click hang FIXED; streak grid catch-up reveal added (2026-06-19)
 
 **Percentage label oscillation — truncate-vs-round mismatch, not a timing race.** The progress

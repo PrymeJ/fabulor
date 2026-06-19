@@ -1155,6 +1155,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [x] Hover works
 - [x] Hover preview reverts on dismiss
 - [x] All clicks on buttons dismisses and performs
+- [ ] Press `T` to rotate theme, then immediately right-click the drag area to open the sidebar while the fade is still running: the new theme applies fully and cleanly — no slider left painted in the previous theme's color (regression check for the mid-fade interrupt strand)
+- [ ] Same with rapid `T` spam followed by a well-timed right-click: no half-this-half-that "mulatto" theme that persists; any transient resolves on the next tick
 
 ## Cover art based theme
 

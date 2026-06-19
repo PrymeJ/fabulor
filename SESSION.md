@@ -1,3 +1,37 @@
+## Session Summary — 2026-06-19 Session 2 — Theme fade interrupt fix (sidebar mid-fade)
+
+**Branch:** `main`. **Commit:** `ba88847`.
+
+### What shipped
+
+- **Main-window theme fade no longer strands sliders when interrupted by a panel/sidebar opening.**
+  Pressing `T` (theme rotate) then right-clicking the drag area to open the sidebar while the fade
+  was still running could leave a slider painted in the OLD theme's color while the rest of the UI
+  was already the NEW theme ("mulatto theme"). Two root causes, traced from instrumented logs: (1)
+  the fade's slider color animation is started from a deferred `QTimer.singleShot(0, ...)`, which
+  could run *after* the interrupt and re-reset the sliders back to the old start colors and animate
+  from there; (2) there was no clean completion path for the main-window fade — `snap_theme_forward`
+  exists but is Settings-panel-oriented and explicitly wrong for the main window. Added
+  `ThemeManager.complete_main_fade()` (stops the fade + slider anims, hides overlay, unfreezes labels,
+  re-applies the stylesheet so slider `qproperty` colors re-polish to the correct new-theme values)
+  plus a `_fade_in_flight` flag that also guards the deferred `_start_color_anims` so it no-ops once
+  the fade is completed. `_toggle_sidebar` calls `complete_main_fade()` (no-op if no fade running);
+  the same call will cover future panel hotkeys (`l`/`s`/etc.) which would hit the identical race.
+
+### Notes / direction
+
+- The deeper friction (recorded in NOTES.md): the main-window theme change is a heavyweight full-
+  window animated fade (overlay snapshot + frozen labels + slider color tweens). That heaviness — not
+  the colors — is what creates the morph/ghost risk that forced "no theme change while a panel is
+  open." A pure per-element `@Property` color-animation rework (so themes could change freely with a
+  panel open, no overlay) was started in a prior session and abandoned as enormous (40–80h+: every
+  QSS-styled widget × hover/pressed/disabled states would need converting to custom-paint). Snapping
+  panels instantly instead of fading was floated and **rejected** — instant theme snaps look jarring
+  (the overlay fade exists specifically to avoid that). So the current overlay fade stays; this
+  session's `complete_main_fade` is the pragmatic fix for the interrupt, not a rework.
+
+---
+
 ## Session Summary — 2026-06-19 — Percentage label tween fix, tassel hang fix, streak grid catch-up reveal
 
 **Branch:** `main`. **Commits:** `b75f9bf`, `ce47831`, `627cb7e`, `e31d27a`.
