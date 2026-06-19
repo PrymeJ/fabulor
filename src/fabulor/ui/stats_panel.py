@@ -1993,6 +1993,7 @@ class TasselOverlay(QWidget):
         self._cord_color = QColor("#000000")
         self._head_color = QColor("#000000")
         self._fringe_color = QColor("#000000")
+        self._show_tassel = True   # cord/head/fringe decoration only — the tab is ALWAYS shown/clickable
         self._icon: QPixmap | None = None
         self.setMouseTracking(True)   # so mouseMoveEvent fires for the cursor logic
         self._slide = QPropertyAnimation(self, b"pos")
@@ -2055,8 +2056,27 @@ class TasselOverlay(QWidget):
         for both mousePressEvent and the cursor in mouseMoveEvent, so the hand
         cursor never lies about where a click works. Fixed at the rest position
         (sway slack absorbs the small movement), so it doesn't track under the
-        pointer."""
-        return self._tab_rect.contains(pt) or self._tassel_rect.contains(pt)
+        pointer. When the tassel decoration is hidden (set_show_tassel(False)),
+        only the tab counts — there's nothing drawn at _tassel_rect to click."""
+        if self._tab_rect.contains(pt):
+            return True
+        return self._show_tassel and self._tassel_rect.contains(pt)
+
+    def set_show_tassel(self, show: bool):
+        """Toggles the decorative cord/head/fringe only. The bookmark tab
+        itself (the view-switch nav control) is never affected — it's the
+        sole hit-target this widget exists for; the tassel is decoration on
+        top of it."""
+        if show == self._show_tassel:
+            return
+        self._show_tassel = show
+        if not show:
+            self._sway_timer.stop()
+            self._kick_active = False
+            self._kick_t = 0.0
+        elif self.isVisible():
+            self._sway_timer.start()
+        self.update()
 
     def _disconnect_slide(self):
         if self._slide_slot is not None:
@@ -2131,6 +2151,12 @@ class TasselOverlay(QWidget):
             painter.drawPixmap(ix, iy, self._icon)
 
         # --- tassel: cord -> bound head -> fanned fringe (swings with sway) ---
+        # Purely decorative — gated on _show_tassel ("Show tassel" in the
+        # Stats ⚙ tab). The tab drawn above is NEVER gated: it's the sole
+        # click target this widget exists for and must always render/work.
+        if not self._show_tassel:
+            painter.end()
+            return
         sway = self._current_sway()
         # The head is where the cord ends and the fringe begins; sway displaces
         # it (and the fringe below it) sideways, the anchor stays put.
@@ -2204,7 +2230,7 @@ class TasselOverlay(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if not self._sway_timer.isActive():
+        if self._show_tassel and not self._sway_timer.isActive():
             self._sway_timer.start()
 
     def hideEvent(self, event):
@@ -2602,6 +2628,22 @@ class StatsPanel(QWidget):
         layout.addLayout(timeline_row)
         self._update_timeline_view_buttons()
 
+        tassel_header = QLabel("Show tassel")
+        tassel_header.setObjectName("settings_header")
+        layout.addWidget(tassel_header)
+
+        tassel_row = QHBoxLayout()
+        self._show_tassel_buttons = {}
+        for state in ["On", "Off"]:
+            btn = QPushButton(state)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, s=state: self._set_show_tassel(s == "On"))
+            tassel_row.addWidget(btn)
+            self._show_tassel_buttons[state] = btn
+        tassel_row.addStretch()
+        layout.addLayout(tassel_row)
+        self._update_show_tassel_buttons()
+
         layout.addStretch()
 
         self._reset_confirm_label = QLabel("DO YOU WANT TO DELETE ALL LISTENING HISTORY?")
@@ -2629,6 +2671,19 @@ class StatsPanel(QWidget):
     def _update_accel_scroll_buttons(self):
         enabled = self.config.get_stats_accel_scroll()
         for state, btn in self._accel_scroll_buttons.items():
+            btn.setProperty("selected", "true" if (state == "On") == enabled else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _set_show_tassel(self, enabled: bool):
+        self.config.set_show_tassel(enabled)
+        self._update_show_tassel_buttons()
+        if hasattr(self, '_tassel'):
+            self._tassel.set_show_tassel(enabled)
+
+    def _update_show_tassel_buttons(self):
+        enabled = self.config.get_show_tassel()
+        for state, btn in self._show_tassel_buttons.items():
             btn.setProperty("selected", "true" if (state == "On") == enabled else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
@@ -2684,6 +2739,7 @@ class StatsPanel(QWidget):
         self._update_tassel_icon()
         self._tassel.clicked.connect(self._on_tassel_clicked)
         self._tassel.raise_()
+        self._tassel.set_show_tassel(self.config.get_show_tassel())
         return widget
 
     def _update_tassel_icon(self):

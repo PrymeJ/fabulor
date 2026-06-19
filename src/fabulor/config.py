@@ -319,3 +319,9 @@ class Config:
 
     def set_stats_accel_scroll(self, enabled: bool):
         self.settings.setValue("stats_accel_scroll", str(enabled).lower())
+
+    def get_show_tassel(self) -> bool:
+        return self.settings.value("show_tassel", "true") == "true"
+
+    def set_show_tassel(self, enabled: bool):
+        self.settings.setValue("show_tassel", str(enabled).lower())
