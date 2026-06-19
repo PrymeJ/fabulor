@@ -123,6 +123,7 @@ class ThemeManager(QObject):
         self._panel_guard_timer.setInterval(_PANEL_ANIM_GUARD_MS)
 
         self._save_on_fade = False
+        self._fade_in_flight = False
 
     def get_current_theme(self) -> dict:
         from ..themes import _resolve_theme
@@ -156,6 +157,7 @@ class ThemeManager(QObject):
                         anim.stop()
 
     def _on_fade_finished(self):
+        self._fade_in_flight = False
         self._fade_overlay.hide()
         self._unfreeze_fade_labels()
         if self._save_on_fade:
@@ -315,7 +317,7 @@ class ThemeManager(QObject):
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True):
         """Update the appearance with a subtle fade transition."""
-        
+
         if fade_ms is None:
             fade_ms = _THEME_SWITCH_FADE_MS if not hover else self.config.get_theme_fade_duration()
 
@@ -394,6 +396,8 @@ class ThemeManager(QObject):
             self._fade_overlay.raise_()
 
             self._save_on_fade = save
+            self._fade_in_flight = True
+            self._fade_sliders = []   # themes-tab path animates no sliders separately
             self._fade_anim.setDuration(fade_ms)
             self._fade_anim.start()
             self._theme_fade_anim = self._fade_anim
@@ -517,8 +521,19 @@ class ThemeManager(QObject):
         # Apply new stylesheet — qproperty colors land on next event loop tick
         self._apply_stylesheets(theme_name, hover=hover)
 
+        # Track the in-flight fade so it can be completed cleanly if a panel
+        # opens before it finishes (see complete_main_fade). _fade_in_flight
+        # also gates the deferred _start_color_anims below — if the fade was
+        # already completed/cancelled in this same event-loop turn, the
+        # deferred callback must NOT then re-reset the sliders to the OLD
+        # start colors and re-animate (which was the stranding bug).
+        self._fade_in_flight = True
+        self._fade_sliders = list(sliders)
+
         # Defer color animation until QSS has applied
         def _start_color_anims():
+            if not self._fade_in_flight:
+                return  # fade already completed/interrupted; do not re-strand sliders
             remaining_ms = max(50, fade_ms - 16)
             for s in sliders:
                 sid = id(s)
@@ -546,6 +561,37 @@ class ThemeManager(QObject):
                     anim.start()
 
         QTimer.singleShot(0, _start_color_anims)
+
+    def complete_main_fade(self):
+        """Instantly finish an in-flight main-window theme fade, leaving every
+        slider on its correct NEW-theme color. Safe to call any time (no-op if
+        no fade is in flight). This is the main-window counterpart to the
+        Settings-panel-oriented snap_theme_forward — it must be called whenever
+        a panel/sidebar opens mid-fade, because opening a panel while the fade's
+        slider color animation is mid-flight (or its deferred start is still
+        queued) otherwise strands the slider at an old/intermediate color while
+        the rest of the UI is already the new theme. The new-theme slider colors
+        live in the applied QSS (as qproperty-bg_color/etc.), so re-applying the
+        stylesheet for _active_display_theme re-polishes them to the correct
+        values, overriding whatever the stopped animation left behind."""
+        if not getattr(self, '_fade_in_flight', False):
+            return
+        self._fade_in_flight = False
+        if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
+        # Stop any slider color animations where they are — the repolish below
+        # is what actually sets the final color, so their stopped value is moot.
+        if hasattr(self, '_slider_anims'):
+            for anims in self._slider_anims.values():
+                for anim in anims.values():
+                    if anim.state() == QPropertyAnimation.Running:
+                        anim.stop()
+        if hasattr(self, '_fade_overlay'):
+            self._fade_overlay.hide()
+        self._unfreeze_fade_labels()
+        # Re-polish the slider qproperty colors to the new theme (overrides any
+        # stranded intermediate value left by a stopped animation).
+        self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
 
     def _apply_stylesheets(self, theme_name, hover=False):
         mw = self.main_window

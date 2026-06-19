@@ -48,8 +48,19 @@ class PanelManager:
         """Slides the sidebar in or out."""
         if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
             return
-            
-        sidebar_y = 32 + 24 
+        # Opening the sidebar (the gateway to every panel, and the target of a
+        # right-click on the drag area / future panel hotkeys) while a main-
+        # window theme fade is in flight must complete that fade cleanly first
+        # — otherwise the fade's slider color animation is left stranded at an
+        # old/intermediate color while the rest of the UI is already the new
+        # theme ("mulatto theme"). complete_main_fade is a no-op if no fade is
+        # running. See NOTES.md 2026-06-19. NOTE: this is the main-window path —
+        # do NOT substitute snap_theme_forward here (that's Settings-oriented).
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm:
+            tm.complete_main_fade()
+
+        sidebar_y = 32 + 24
         width = self.sidebar.width()
 
         if not self.sidebar_expanded:
