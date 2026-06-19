@@ -169,6 +169,7 @@ GEMINI.md guardrail file; both were retired 2026-06-12.) The working model is "f
 - **SESSION.md entries are always prepended** (newest at the top), not appended.
 - **All git commit messages must start with a verb** (e.g. `feat:`, `fix:`, `docs:`, `refactor:`).
 - **After completing a task, flag if SESSION.md, NOTES.md, CLAUDE.md, or TESTING.md would benefit from an update** — but only when there is something specific and non-obvious worth recording, not as a reflexive offer after every change.
+- **Deferred work goes in `TODO.md`** (added 2026-06-19), not buried in NOTES.md prose or an external scratchpad. Short dated entries: what, why deferred, what it's blocked on. NOTES.md stays for root-cause writeups of things already done; TODO.md is for things not yet started.
 
 ---
 
