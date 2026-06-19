@@ -97,6 +97,18 @@ class Config:
     def set_default_timeline_view(self, value: str) -> None:
         self.settings.setValue("default_timeline_view", value)
 
+    def get_last_shown_streak(self) -> int | None:
+        """The streak value as of the last time the count-up animation
+        actually ran (StreakGrid.animate_streak_count). None means it has
+        never run — treated as "no prior value" (no pause-then-tick), not as 0,
+        so a fresh install doesn't read a 0->N jump as a no-op count straight
+        to N (see StreakGrid.animate_streak_count's previous-is-None handling)."""
+        value = self.settings.value("last_shown_streak", None)
+        return None if value is None else int(value)
+
+    def set_last_shown_streak(self, value: int) -> None:
+        self.settings.setValue("last_shown_streak", value)
+
     def get_streak_grid_cache_date(self):
         """Adjusted date the streak grid cache was last built for, or None."""
         val = self.settings.value("streak_grid_cache_date")

@@ -1262,6 +1262,8 @@ class StreakGrid(QWidget):
         self._reveal_progress: float = 1.0     # 1.0 = fully shown (default)
         self._label_progress: float = 1.0      # 1.0 = labels fully shown (at rest)
         self._label_sweep_in: bool = False
+        self._streak_count: int = 0            # displayed count
+        self._last_animated_streak: int | None = None  # value shown as of the last animate_streak_count()
 
         self._reveal_anim = QPropertyAnimation(self, b"reveal_progress")
         self._reveal_anim.setDuration(1000)
@@ -1270,7 +1272,31 @@ class StreakGrid(QWidget):
         self._label_anim = QPropertyAnimation(self, b"label_progress")
         self._label_anim.setEasingCurve(QEasingCurve.Type.Linear)
 
+        # Streak count-up: up to two legs, run sequentially. Leg 1: 0 ->
+        # previously-shown value, always linear/even-paced, no slowdown (an
+        # eased curve like OutCubic reads as an unwanted pause even when
+        # nothing actually changed). Leg 2 (only when the streak increased):
+        # previous -> current, short and snappy after an explicit pause —
+        # reads as a distinct "tick over" rather than a continuation of leg 1.
+        self._STREAK_LEG1_MS = 800
+        self._STREAK_PAUSE_MS = 550
+        self._STREAK_LEG2_MS = 250
+        self._streak_count_anim = QPropertyAnimation(self, b"streak_count")
+        self._streak_count_anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._streak_leg1_slot = None
+        self._streak_leg2_timer: QTimer | None = None
+        self._streak_leg2_anim: QPropertyAnimation | None = None
+
         self._update_size()
+
+    def get_streak_count(self) -> int:
+        return self._streak_count
+
+    def set_streak_count(self, v: int):
+        self._streak_count = v
+        self.update()
+
+    streak_count = Property(int, get_streak_count, set_streak_count)
 
     def _update_size(self):
         w = self.GUTTER_W + self.N_COLS * (self.CELL + self.GAP)
@@ -1450,14 +1476,135 @@ class StreakGrid(QWidget):
     def set_data(self, cache: dict, streak_info: dict,
                  finished_dates: set, today: date):
         """Store grid data and compute the longest run. Does NOT trigger
-        animate_reveal() — the caller owns reveal timing (mirrors the heatmap
-        path), so the Timeline-tab reveal isn't double-fired."""
+        animate_reveal(), animate_labels_in(), or animate_streak_count() —
+        the caller owns all transition timing (mirrors the heatmap path), so
+        a plain panel slide-reopen (refresh_current_tab -> _refresh_time ->
+        set_data, no animate_* calls) shows everything statically at rest,
+        exactly like the grid cells and labels already do."""
         self._cache = dict(cache)
         self._streak = dict(streak_info)
         self._finished = set(finished_dates)
         self._today = today
         self._longest_dates = self._compute_longest_run(self._cache)
+        if self._streak_count_anim.state() != QPropertyAnimation.State.Running:
+            # Keep showing whatever was last animated to until a caller
+            # explicitly asks for a new count-up (see animate_streak_count).
+            self._streak_count = self._displayed_streak_target()
         self.update()
+
+    # DEBUG: set to an int to override the current-streak target for visual
+    # testing — e.g. pass previous=9 to animate_streak_count() alongside this
+    # set to 10 to see carry behavior. None = use the real streak.
+    _DEBUG_STREAK_CUR_OVERRIDE: int | None = None
+
+    def _displayed_streak_target(self) -> int:
+        target = int(self._streak.get('current', 0))
+        if self._DEBUG_STREAK_CUR_OVERRIDE is not None:
+            target = self._DEBUG_STREAK_CUR_OVERRIDE
+        return target
+
+    def _disconnect_streak_leg1_slot(self):
+        prev = self._streak_leg1_slot
+        if prev is not None:
+            try:
+                self._streak_count_anim.finished.disconnect(prev)
+            except (RuntimeError, TypeError):
+                pass
+            self._streak_leg1_slot = None
+
+    def animate_streak_count(self, previous: int | None = None):
+        """Count up to the current streak, in up to two legs:
+        Leg 1 (always): 0 -> previous, linear, constant speed, no slowdown.
+        Leg 2 (only if the streak increased since last shown): a short pause,
+        then a quick snappy tick from previous -> current.
+        If the streak hasn't changed since the last call, leg 1 alone runs
+        0 -> current (skips leg 2 — there's nothing to tick over to).
+
+        previous: the streak value as of the last time this animation
+        actually ran. Defaults to self._last_animated_streak (this-session
+        memory only); callers that need it to survive an app restart — i.e.
+        StatsPanel, via config.get_last_shown_streak()/set_last_shown_streak()
+        — must pass it explicitly. Without a persisted previous value, the
+        very first animate_streak_count() call of a new session would always
+        treat current as "unchanged" and skip the pause-then-tick leg even
+        when the streak genuinely grew since the last time it was shown.
+
+        Callers: _on_tab_changed (tab click) and the view-switch seam — never
+        the bare set_data/refresh_current_tab path, so a panel slide-reopen
+        never animates."""
+        current = self._displayed_streak_target()
+        if previous is None:
+            previous = self._last_animated_streak
+        if previous is None:
+            previous = current   # first-ever reveal: no prior value to distinguish from
+
+        self._streak_count_anim.stop()
+        self._disconnect_streak_leg1_slot()
+        if self._streak_leg2_timer is not None:
+            self._streak_leg2_timer.stop()
+            self._streak_leg2_timer = None
+
+        grew = current > previous
+        leg1_target = previous if grew else current
+        self._streak_count_anim.setDuration(self._STREAK_LEG1_MS)
+        self._streak_count_anim.setStartValue(0)
+        self._streak_count_anim.setEndValue(leg1_target)
+
+        if grew:
+            def _on_leg1_finished():
+                self._disconnect_streak_leg1_slot()
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(lambda: self._run_streak_leg2(previous, current))
+                timer.start(self._STREAK_PAUSE_MS)
+                self._streak_leg2_timer = timer
+            self._streak_leg1_slot = _on_leg1_finished
+            self._streak_count_anim.finished.connect(_on_leg1_finished)
+
+        self._last_animated_streak = current
+        self._streak_count_anim.start()
+
+    def catch_up_streak_count(self, previous: int | None):
+        """Panel slide-reopen catch-up: the panel was already open on the
+        Timeline tab in a prior session/switch (so QTabWidget.currentChanged
+        never fires — _on_tab_changed is the only place that normally calls
+        animate_streak_count, and the slide-reopen path deliberately never
+        triggers grid/label animation). If the persisted previous value
+        differs from the freshly-loaded current, that increment would
+        otherwise go uncalled-out: set_data already snapped the display
+        straight to current with no comparison. This shows previous
+        immediately (no count-up, no grid touch), then after the same pause
+        used elsewhere, ticks up to current with the leg-2 snap. A no-op
+        (straight snap to current) if previous is None/unchanged/decreased —
+        there's nothing to tick over to."""
+        current = self._displayed_streak_target()
+        self._streak_count_anim.stop()
+        self._disconnect_streak_leg1_slot()
+        if self._streak_leg2_timer is not None:
+            self._streak_leg2_timer.stop()
+            self._streak_leg2_timer = None
+
+        self._last_animated_streak = current
+        if previous is None or current <= previous:
+            self.set_streak_count(current)
+            return
+
+        self.set_streak_count(previous)
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._run_streak_leg2(previous, current))
+        timer.start(self._STREAK_PAUSE_MS)
+        self._streak_leg2_timer = timer
+
+    def _run_streak_leg2(self, previous: int, current: int):
+        self._streak_leg2_timer = None
+        leg2 = QPropertyAnimation(self, b"streak_count")
+        leg2.setEasingCurve(QEasingCurve.Type.Linear)
+        leg2.setDuration(self._STREAK_LEG2_MS)
+        leg2.setStartValue(previous)
+        leg2.setEndValue(current)
+        leg2.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        self._streak_leg2_anim = leg2   # keep a ref alive until Qt deletes it
 
     @staticmethod
     def _compute_longest_run(cache: dict) -> set:
@@ -1496,7 +1643,8 @@ class StreakGrid(QWidget):
         from PySide6.QtGui import QFontMetrics
 
         # --- top band: fire icon + current-streak number, centered ---
-        current = int(self._streak.get('current', 0))
+        # Displayed value is the animated count (0 -> current), not the raw
+        # streak value directly — see _animate_streak_count / set_streak_count.
         today_iso = self._today.isoformat()
         active = self._cache.get(today_iso, 0) == 1     # listened today => streak active
         info_color = QColor(self._accent)                # accent when active; dimmed when not
@@ -1505,7 +1653,7 @@ class StreakGrid(QWidget):
         info_font = QFont()
         info_font.setPointSize(13)
         info_font.setBold(True)
-        num_str = str(current)
+        num_str = str(self._streak_count)
         numw = QFontMetrics(info_font).horizontalAdvance(num_str)
         icon_sz = 16
         gap = 4
@@ -2134,7 +2282,7 @@ class StatsPanel(QWidget):
             # calls schedule an update; Qt coalesces them in the same event-loop turn.
             nxt.animate_labels_in()
             nxt.animate_reveal()          # explicit construct wave — set_data does NOT self-reveal
-            self._refresh_time()          # populates the incoming grid
+            self._refresh_time(streak_mode="full")   # populates the incoming grid
             self._tassel.raise_()
 
         current.animate_conceal(on_done=_seam)
@@ -2634,7 +2782,7 @@ class StatsPanel(QWidget):
         elif self.tabs.tabText(index) == "Month":
             self._refresh_monthly()
         elif self.tabs.tabText(index) == "Timeline":
-            QTimer.singleShot(0, self._refresh_time)
+            QTimer.singleShot(0, lambda: self._refresh_time(streak_mode="full"))
             grid = self._streak_grid if getattr(self, "_show_streak_grid", False) else self._heatmap
             grid.set_label_progress(1.0)   # labels shown statically on a plain tab open (no sweep)
             grid.animate_reveal()
@@ -2737,7 +2885,20 @@ class StatsPanel(QWidget):
         today_adjusted = datetime.now() - timedelta(hours=hour)
         self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
 
-    def _refresh_time(self):
+    def _refresh_time(self, streak_mode: str = "none"):
+        """streak_mode:
+        "full"     - the grid cells/labels are also animating (tab click,
+                     view-switch seam). Full 0->previous->[pause]->current
+                     count-up.
+        "catch_up" - plain panel slide-reopen, Timeline already the active
+                     tab (so _on_tab_changed never fires this session). Grid
+                     cells/labels stay static per the no-animate-on-reopen
+                     rule, but the streak number alone still needs to call
+                     out an increment that happened while the panel was
+                     closed: snaps to previous, pauses, ticks to current.
+        "none"     - plain panel slide-reopen onto a tab other than Timeline,
+                     or any other refresh with no streak transition to show.
+                     set_data() snaps the number straight to current."""
         if getattr(self, "_show_streak_grid", False):
             from datetime import timedelta
             day_start = self.config.get_day_start_hour()
@@ -2749,6 +2910,18 @@ class StatsPanel(QWidget):
             # calendar date — else a post-midnight session lands one cell off.
             adjusted_today = (datetime.now() - timedelta(hours=day_start)).date()
             self._streak_grid.set_data(cache, streak, finished, adjusted_today)
+            if streak_mode in ("full", "catch_up"):
+                # Persisted across app restarts — see Config.get/set_last_shown_streak.
+                # Written immediately after the call: both animate_streak_count() and
+                # catch_up_streak_count() read it synchronously before any animation
+                # actually plays, so persisting now (not after the animation finishes)
+                # correctly marks "shown" for next time regardless of session length.
+                prev_shown = self.config.get_last_shown_streak()
+                if streak_mode == "full":
+                    self._streak_grid.animate_streak_count(previous=prev_shown)
+                else:
+                    self._streak_grid.catch_up_streak_count(prev_shown)
+                self.config.set_last_shown_streak(int(streak.get('current', 0)))
         else:
             rows = self.db.get_hourly_heatmap(n_days=14)
             self._heatmap.set_data(rows, datetime.now().date())
@@ -2778,7 +2951,13 @@ class StatsPanel(QWidget):
         elif name == "Month":
             self._refresh_monthly()
         elif name == "Timeline":
-            self._refresh_time()
+            # Panel slide-reopen with Timeline already active: currentChanged
+            # never fires (the tab index didn't change), so this is the only
+            # refresh — grid cells/labels stay static (no animate_reveal /
+            # animate_labels_in call here), but the streak number still needs
+            # to call out any increment that happened while the panel was
+            # closed. See _refresh_time's streak_mode docstring.
+            self._refresh_time(streak_mode="catch_up")
 
     def _inject_active_covers(self, rows: list[dict]) -> list[dict]:
         for row in rows:
