@@ -732,6 +732,27 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Changing day-start hour reflects immediately on all tabs without restart
 - [ ] Reset all stats prompts confirmation, clears all data, refreshes all tabs
 
+### Timeline tab — grid transitions and label cascades
+
+- [ ] Tassel click switches Heatmap ↔ Streak view; bookmark slides down, holds, retreats
+- [ ] Tassel icon updates only once the bookmark is fully retreated (never mid-slide)
+- [ ] Grid cells "pop" in/out (scale + alpha) during the reveal/conceal transition, not a plain fade
+- [ ] Top date labels (Heatmap): entering sweeps left-to-right (Jun 18 first); exiting sweeps right-to-left (Jun 18 last) — true mirror, not the same sweep reversed
+- [ ] Left-gutter labels (Heatmap hours, Streak dates): entering cascades top-to-bottom; exiting cascades bottom-to-top
+- [ ] Opening the Stats panel with Timeline already the active tab shows the grid statically at rest — no cell/label animation plays (slide-reopen must never animate the grid)
+- [ ] Switching tabs away from and back to Timeline (panel already open) re-plays the full reveal/cascade animation
+
+### Timeline tab — streak counter
+
+- [ ] First-ever open of a session (real tab click, or view-switch to Streak): counts up 0 → current streak, linear pace, no slowdown
+- [ ] Switching back to Streak again in the same session with no streak change: counts 0 → current again with no pause (since previous == current)
+- [ ] Listen to extend the streak, then switch tabs away and back to Timeline (Streak view) in the same session: counts 0 → old value, brief pause, quick tick up to new value
+- [ ] Close the app with Streak view showing a streak of N, listen to extend it, reopen the app, open Stats (lands back on Timeline/Streak since that was the last tab): number shows old value N briefly, pauses, ticks to N+1 — even though the grid cells/labels stay static (slide-reopen)
+- [ ] Same scenario but landing on a non-Timeline tab on reopen: no streak animation anywhere until Timeline is actually opened
+- [ ] Streak unchanged across an app restart: opening Timeline shows a plain 0 → N count, no pause
+- [ ] Carry behavior (e.g. 9→10, 19→20, 29→30): counts as ordinary integers, no digit-by-digit artifacts
+- [ ] Pause-then-tick only ever appears once per genuine streak change — repeated tab switches afterward show the new value with no further pause until the streak changes again
+
 ### Daily tab
 - [ ] Most recent active day loads automatically on tab activation
 - [ ] Left/right arrows page through active days only, disabled (dimmed) at boundaries

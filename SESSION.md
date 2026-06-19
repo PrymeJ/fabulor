@@ -1,3 +1,53 @@
+## Session Summary — 2026-06-18 — Timeline tab visual rework (streak grid styling, label cascades, grid transition, streak counter)
+
+**Branch:** `main`. **Commits:** `21d219d`, `0c0678d`, `7bef3de`, `81fef95`, `a429ed2`, `172c573`, `c89fff6`.
+
+### What shipped
+
+- **Streak grid longest-run styling** — replaced the distinct-fill-color highlight with a swapped
+  fill/border treatment: the longest run now fills with a derived lighter/desaturated tint of the
+  accent and borders in the plain accent color (regular cells unaffected). The fill derivation went
+  through several iterations (hue rotation → value/lightness contrast → moderate hue offset → final
+  same-hue lighten/desaturate tint) because a fixed hue rotation works for the 58 hand-picked named
+  themes but breaks on cover-art-derived themes where `accent` comes from artwork at runtime. Added
+  `streak_grid_outline`/`streak_grid_dot` per-theme override keys (GROUP 9 in `themes.py`) as the
+  escape hatch for any theme where the auto-derivation still doesn't read well. Finished-day marker
+  fixed from a `drawEllipse` call (rasterized as a square on the unantialiased grid) to a sharp
+  centered 4×4 square.
+- **Label cascade mirroring + opacity rework** — top date labels (Heatmap) and left-gutter labels
+  (Heatmap hours, Streak dates) now fade in/out in place per-label instead of an internal clip-rect
+  wipe, with enter and exit as true mirrors of each other (not the same sweep reversed). Caught and
+  fixed a subtle math bug where both directions shared one opacity formula and clamping silently
+  masked the asymmetry — see NOTES.md for the anchor-window fix. Also fixed an `AttributeError`
+  crash from `_label_sweep_in` never being initialized before first paint.
+- **Tassel icon timing + color** — the heatmap/calendar icon swap now happens once the bookmark is
+  fully retreated (invisible at rest) instead of mid-transition at the seam, so it always shows the
+  *next* destination on the next click. Recolored from accent to accent_dark/bg_main (user-applied),
+  and the heatmap-view icon swapped from `calendar.svg` (a plain rectangle at 14px) to `fire.svg`.
+- **Grid transition style: "pop"** — cells now scale up from a center-anchored inset as they reveal
+  (shrink back on conceal), riding the same diagonal wave timing as before, via a shared
+  `_grid_cell_anim` helper used by both `HourlyHeatmap` and `StreakGrid`. Tried and rejected three
+  other styles (`ripple`, `cols`, `cols_zig` — see NOTES.md for why); kept a `"rows"` curtain-sweep
+  variant in code as an internal "worst case" comparison baseline, never exposed as a user option.
+- **Streak counter animation** — the streak number counts up (linear, no easing) instead of
+  appearing statically, with a second short "tick" leg when the streak has grown since it was last
+  shown, separated by a pause. Required persisting the last-shown value across app restarts
+  (`Config.get_last_shown_streak`/`set_last_shown_streak`) — an in-memory-only value reset every
+  launch and silently skipped the pause on the session's first reveal even when the streak had
+  genuinely grown overnight. Also fixed a real gap this surfaced: reopening the Stats panel with
+  Timeline already the active tab never fires `QTabWidget.currentChanged`, so the streak number was
+  jumping straight to its new value with no animation at all in that specific case — added a
+  `catch_up_streak_count()` path that shows the old value then ticks to the new one, without
+  touching the grid (which correctly stays fully static on any slide-reopen).
+
+### Deferred
+
+- Matching the pause-then-tick effect inside the grid itself (dim the newest N day-cells, reveal
+  them one at a time in lockstep with the counter). Scoped as a separate future pass — see NOTES.md
+  for the complexity estimate.
+
+---
+
 ## Session Summary — 2026-06-17 — Mouse wheel chapter navigation on progress slider
 
 **Branch:** `main`. **Commit:** `874cc41`.

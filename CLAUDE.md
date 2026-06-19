@@ -277,9 +277,9 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
   - **Timeline** — both `HourlyHeatmap` and `StreakGrid` built, one visible (default from `config.get_default_timeline_view()`); `TasselOverlay` toggles them with a conceal→reveal transition.
   - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), `BookDayRow` list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`.
   - **⚙** — day-start hour `QSpinBox` (0–23, rebuilds streak cache), period scroll-acceleration toggle, default-timeline-view toggle, "Reset all stats" (7s confirm).
-- **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal (1000 ms) / conceal (600 ms) + cascading column labels.
-- **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small centered dot (`_finished` set, `streak_finished_dot` per-theme override); the longest consecutive run is highlighted with a **derived `_longest_fill` color** (hue/sat/value shift, `streak_longest_fill` override), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + count (dimmed when today not yet listened). Same wave animation as the heatmap.
-- **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon ↔ calendar icon. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out.
+- **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal/conceal cell transition uses the shared `_grid_cell_anim` helper, style `"pop"` (cells scale up from a center-anchored inset as they reveal, shrink back on conceal — not a plain alpha fade); top date labels and left-gutter hour labels cascade via per-label opacity fade with enter/exit as true mirrors (left-to-right entering top labels / right-to-left exiting; top-to-bottom entering gutter labels / bottom-to-top exiting).
+- **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small sharp centered 4×4 square dot (`_finished` set, `streak_grid_dot` per-theme override); the longest consecutive run **fills with a derived lighter/desaturated tint of accent and borders in plain accent** (`streak_grid_outline` per-theme override for the border color — fill/border roles were swapped from the original distinct-fill design), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + an animated count: linear count-up 0 → previously-shown value, then (only if the streak grew since last shown) a paused snappy tick up to the new value — see `animate_streak_count`/`catch_up_streak_count` and the two CLAUDE.md rules above on persistence and the panel-reopen catch-up exception. Same `_grid_cell_anim` "pop" transition as the heatmap.
+- **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon (Streak) ↔ fire icon (Heatmap; was `calendar.svg`, swapped 2026-06-18 — rendered as a plain rectangle at 14px). Icon recolors via `accent_dark`/`bg_main` theme keys (was `accent`) and updates only once the bookmark is fully retreated at rest, not mid-transition — see `TasselOverlay.play(on_switch, on_retreated=...)`. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out.
 - **Widgets**: `BookDayRow` (48×48 cover, elided title/author, `pct_start · pct_end | +delta`; archived dimmed, finished/deleted styled), `FinishedBookThumb` (47×47 crop), `SessionListWidget` (scrollable session rows: timestamp / delta% / `_RangeBar` / end%), `_RangeBar` (flat start→end fill bar with animatable colors; also used by the detail panel).
 - **Data flow** — period caches (`_cached_active_days/weeks/months`) invalidated on tab change / `refresh_all`. `_inject_active_covers(rows)` adds `active_cover_path` from `book_covers` (must run at every `BookDayRow`/`FinishedBookThumb` site). `on_cover_changed(book_path, cover_path)` does a targeted refresh of the visible tab only (`_iter_day_rows` / `_iter_finished_thumbs` → `refresh_cover`); empty cover restores the placeholder without a worker.
 
@@ -401,6 +401,50 @@ The join produces a cartesian product (sessions × finished events per book) bef
 
 ### DO NOT fold `animate_conceal` duration logic into `HourlyHeatmap.animate_reveal`
 `animate_conceal` (on both `HourlyHeatmap` and `StreakGrid`) is **additive-only**: it reuses the `reveal_progress` property in reverse (1.0→0.0, 600ms) and is the streak↔heatmap transition's drain phase. `HourlyHeatmap.animate_reveal` and `paintEvent` stay byte-for-byte unchanged. `animate_conceal` restores the 1000ms reveal duration in its `finished` callback so the following construct wave runs full-length, and tracks its pending slot in `self._conceal_slot` (disconnect only when present — avoids `Failed to disconnect (None)`). The asymmetric duration restore is the whole point; do NOT share a `setDuration(600)` between the two methods. Relatedly: `StreakGrid.set_data` must NOT call `animate_reveal()` — the caller (`_switch_timeline_view` / `_on_tab_changed`) fires exactly one reveal on the visible grid, else the tab-change reveal double-fires and hitches.
+
+### DO NOT give the label-cascade enter/exit `_label_local` the same opacity-window formula
+`HourlyHeatmap`/`StreakGrid`'s per-label cascade (top date labels, left-gutter date/hour labels) must
+use a DIFFERENT window-placement formula for entering vs. exiting, not the same formula run with
+`_label_progress` going the other direction. Enter anchors each label's fade-in window from the START
+of the timeline (`start` to `start + span`); exit must anchor from the END (`end - span` to `end`,
+where `end = 1.0 - start`). Reusing the enter formula for exit (just feeding it a falling
+`_label_progress`) silently breaks because clamping (`max(0, min(1, ...))`) masks the asymmetry: the
+"leading" label ends up holding at full opacity until late in the exit animation instead of fading
+first, which reads as the wrong cascade direction even though the per-label rank assignment
+(`cascade_pos`) is correct. This was found and fixed 2026-06-18 — see NOTES.md "Timeline tab visual
+rework" for the verification approach (hand-computed opacity at several progress values per rank
+before trusting it visually). Also: `_label_sweep_in` must be initialized in `__init__` (both
+classes) — it was previously only ever set inside `animate_labels_in`/`animate_labels_out`, so the
+very first paint before either had run raised `AttributeError`.
+
+### DO NOT keep the streak count-up's "previous shown" value in-memory only
+`StreakGrid.animate_streak_count(previous=...)` needs to know the streak value as of the last time it
+actually animated, to decide whether to run the pause-then-tick second leg. That value MUST be
+persisted via `Config.get_last_shown_streak()`/`set_last_shown_streak()` (QSettings-backed), not kept
+only in `StreakGrid._last_animated_streak` (in-memory instance state). An in-memory-only value resets
+to `None` on every app launch, so the session's first reveal always falls into the "no prior value,
+skip the pause" branch — even when the streak genuinely grew while the app was closed. `None` (not
+`0`) is the correct "never tracked" sentinel: defaulting to `0` would make a pre-feature upgrade with
+a real non-zero streak misread "never tracked" as "previous was 0" and spuriously play a 0→N
+pause-then-tick that implies growth from nothing.
+
+### DO NOT let the Stats panel's Timeline slide-reopen skip the streak catch-up tick
+`QTabWidget.currentChanged` only fires when the active tab index changes. If the Stats panel slides
+open with Timeline already the remembered active tab (the normal case — panel was last closed on
+Timeline/Streak), `_on_tab_changed` never runs that session; the only code path is
+`refresh_current_tab() -> _refresh_time() -> StreakGrid.set_data()`, which correctly never animates the
+grid (slide-reopen must never animate grid cells/labels — established rule, see the `animate_conceal`
+rule above). Without an explicit exception, that same flow also silently swallowed the streak
+count-up: `set_data()` snapped the number straight to its new value with zero comparison against the
+persisted previous value, so a streak that grew while the panel was closed showed the new number with
+no visual call-out at all. Fix: `StatsPanel._refresh_time(streak_mode=...)` takes `"full"` (tab click /
+view-switch seam — runs the normal two-leg `animate_streak_count()`), `"catch_up"` (wired only from
+`refresh_current_tab`'s Timeline branch — calls `StreakGrid.catch_up_streak_count(previous)`, which
+snaps to the old value and ticks to the new one WITHOUT touching the grid at all), or `"none"`
+(background refreshes like `refresh_all` — leaves `set_data()`'s plain snap untouched). This is the
+one deliberate place where the streak number's animation rule diverges from the grid's blanket
+"never animate on slide-reopen" rule — the grid stays fully static every time, the number gets a
+narrow exception so a real change is never silently dropped.
 
 ### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
 clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
@@ -525,6 +569,17 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-13 (Session 3) — chapter-seek precision rework: split the overloaded `_CHAPTER_BOUNDARY_EPSILON` into three measured constants (`_CHAPTER_WALK_TOLERANCE` 0.5, `_EMBEDDED_CHAPTER_SEEK_OFFSET` −0.09, `_PAUSED_SEEK_UNDERSHOOT_COMP` 0.37); revised all chapter-nav rules; removed the embedded-M4B native-click exception (embedded chapter-list clicks now route through `Player.activate_chapter_index` → `seek_async`, fixing the chapter-UI freeze). Corrected the disproven "~0.25s short" rationale (mpv overshoots ~0.09s playing, undershoots ~0.37s paused).*
+*Last updated: 2026-06-18 — Timeline tab visual rework: `StreakGrid` longest-run fill/border roles
+swapped (derived tint fill, accent border; `streak_grid_outline`/`streak_grid_dot` replace the old
+`streak_longest_fill`/`streak_finished_dot` theme key names); grid reveal/conceal transition is now
+`_grid_cell_anim` style `"pop"` (scale + alpha, not plain fade) shared by `HourlyHeatmap`/`StreakGrid`;
+top/gutter label cascades reworked to per-label opacity with true mirrored enter/exit (fixed a
+clamping bug that silently broke the exit direction — see CLAUDE.md rule above and NOTES.md); tassel
+icon swap deferred until fully retreated, recolored, and `calendar.svg` replaced with `fire.svg`;
+added an animated, two-leg, restart-persisted streak counter with a dedicated panel-reopen
+catch-up path. Added three new rules above (label-cascade window asymmetry, streak-previous
+persistence, panel-reopen catch-up exception).*
+
+*Previously: 2026-06-13 (Session 3) — chapter-seek precision rework: split the overloaded `_CHAPTER_BOUNDARY_EPSILON` into three measured constants (`_CHAPTER_WALK_TOLERANCE` 0.5, `_EMBEDDED_CHAPTER_SEEK_OFFSET` −0.09, `_PAUSED_SEEK_UNDERSHOOT_COMP` 0.37); revised all chapter-nav rules; removed the embedded-M4B native-click exception (embedded chapter-list clicks now route through `Player.activate_chapter_index` → `seek_async`, fixing the chapter-UI freeze). Corrected the disproven "~0.25s short" rationale (mpv overshoots ~0.09s playing, undershoots ~0.37s paused).*
 
 *Previously: 2026-06-13 — replaced the stale "Implemented Features (complete)" section with a full "What's Built" audit (5-agent factual sweep over app.py, player.py, session_recorder.py, config.py, db.py, scanner.py, cover_manager.py, library_controller.py, and all ui/ panels). Corrections vs. the old section: cover preview is 208×266 (not 205×270); StreakGrid longest-run uses a derived `_longest_fill` color with `streak_longest_fill`/`streak_finished_dot` per-theme overrides (not an `accent.lighter(150)` border / `streak_longest_border`); `write_session`/`write_book_event` still dual-write `book_path` + `book_id` (the old section claimed `book_path` was no longer written). Added previously-undocumented subsystems: app-shell UI states/wiring, carousel, controls/widgets, audio controls, icon utils, context menu, panels, full DB query inventory, scanner internals, cover manager, config key map, checkpoint recovery.*

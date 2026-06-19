@@ -1,4 +1,85 @@
 
+## Timeline tab visual rework: grid pop transition, label cascades, streak counter (2026-06-18)
+
+**Grid transition style.** Replaced the cell reveal/conceal alpha-only fade with a "pop": cells
+also scale up from a center-anchored inset as they reveal (and shrink back on conceal), using the
+same diagonal Mexico-wave timing as before. Implemented as a shared `_grid_cell_anim(progress, row,
+col, n_rows, n_cols, style)` helper in `stats_panel.py` so `HourlyHeatmap` and `StreakGrid` can't
+drift apart. A `GRID_TRANSITION_STYLE` module constant selects the style; `"pop"` is the shipped
+default, `"rows"` (a deliberately underwhelming row-curtain sweep) is kept in code as an internal
+comparison baseline only — never exposed as a user-facing option. Tried and rejected: `"ripple"`
+(radial wave from center — left the panel empty too long before anything appeared) and `"cols"`/
+`"cols_zig"` (symmetric column curtain converging on center, with/without a wave-style zigzag — too
+slow, and speeding it up felt off). None matched the original wave's diagonal path for visual
+interest; the wave's longer travel distance is what makes it read as intricate. The longest-run
+border and finished-day dot are gated on `anim_scale >= 0.999` so they never float over a still-
+shrunk "pop" cell.
+
+**Label cascades (top dates, left-gutter dates/hours) — mirrored, not reversed.** Each label now
+fades in/out in place (opacity ramp) instead of the old internal clip-rect wipe, with an even
+per-label stagger (`_LABEL_STAGGER_FRACTION` split across columns/rows) replacing the old lead-
+fraction/sharp formula. The critical fix: enter and exit must be TRUE MIRRORS of each other, not the
+same sweep played in reverse. The first implementation reused one opacity-ramp formula for both
+directions and relied on clamping to mask the asymmetry — this silently made the "leading" label
+hold at full opacity until late in the exit animation instead of fading first, which read as wrong
+direction even though the cascade-rank assignment was correct. Fix: the exit formula anchors each
+label's fade window from the END of the timeline (`end - span` to `end`) instead of reusing the
+enter formula's start-anchored window. Verified by hand-computing local opacity at several progress
+values for both cascade ranks before trusting it visually (see git history for the throwaway
+verification script). Top labels: enter sweeps left-to-right (col 0/newest leads), exit sweeps
+right-to-left (oldest leads). Left-gutter labels (Heatmap hours, Streak dates): enter top-to-bottom,
+exit bottom-to-top. A second real bug surfaced after the math fix: `_label_sweep_in` was only ever
+set inside `animate_labels_in`/`animate_labels_out`, never initialized in `__init__`, so the very
+first paint before either had run raised `AttributeError` — fixed by initializing it `False` in both
+`HourlyHeatmap.__init__` and `StreakGrid.__init__`.
+
+**Streak counter animation — two legs, persisted across restarts.** The streak number now counts
+up instead of appearing statically. Leg 1: linear (NOT eased — `OutCubic` was tried first and its
+natural deceleration near the end was indistinguishable from a deliberate "pause before the last
+tick," which is misleading when the streak hasn't actually changed) 0 → previously-shown value, 800ms
+(`_STREAK_LEG1_MS`). Leg 2 (only if the streak grew since it was last shown): a 550ms pause
+(`_STREAK_PAUSE_MS`, raised from an initial 400ms — 1-day deltas at 400ms were not perceptible) then
+a snappy 250ms (`_STREAK_LEG2_MS`) linear tick from previous → current. If the streak is unchanged
+(or decreased) since last shown, leg 2 is skipped entirely — single count straight to current, no
+pause. The "previous" value MUST be persisted (`Config.get_last_shown_streak()` /
+`set_last_shown_streak()`, QSettings-backed) rather than kept only in an in-memory
+`StreakGrid._last_animated_streak` — an in-memory-only value resets to `None` on every app launch,
+so the very first reveal of a new session always fell into the "no prior value, skip the pause"
+branch even when the streak had genuinely grown since the app was last closed. Returns `None` (not
+`0`) when never set, so a fresh install or pre-feature upgrade with a real non-zero streak doesn't
+misread "never tracked" as "previous was 0" and spuriously animate a 0→N count with a pause that
+implies growth from nothing.
+
+**Panel-reopen catch-up gap (the trickiest part).** `QTabWidget.currentChanged` only fires when the
+active tab index actually changes. If the Stats panel slides open with Timeline already the
+remembered active tab (normal case: panel was last closed on Timeline/Streak), `_on_tab_changed`
+never runs this session — the only code path that executes is the plain `refresh_current_tab() ->
+_refresh_time() -> StreakGrid.set_data()` slide-reopen flow, which (correctly, by design) never
+triggers `animate_reveal()`/`animate_labels_in()` on the grid. Before this fix, that same flow also
+silently swallowed the streak count-up: `set_data()` just snapped the displayed number straight to
+the new value with no comparison against the persisted previous value at all, so a streak that grew
+while the app/panel was closed showed the new number immediately with no visual call-out — and the
+user only ever saw the pause-then-tick by accident, on the next *manual* tab switch (which doesn't
+re-derive "previous" correctly either, since at that point the display already shows the new value).
+Fix: `_refresh_time()` takes a `streak_mode` parameter (`"full"` | `"catch_up"` | `"none"`) instead
+of a single animate-or-not boolean. `"catch_up"` is wired only from `refresh_current_tab`'s Timeline
+branch (the slide-reopen path) and calls `StreakGrid.catch_up_streak_count(previous)`: snaps the
+display straight to the persisted previous value (no count-up, no grid touch at all — the hard "no
+animation on slide-reopen" rule still applies to the grid), then after the same pause used
+elsewhere, ticks up to current via the existing leg-2 logic. `"full"` (tab click, view-switch seam)
+runs the normal two-leg `animate_streak_count()`. `"none"` (background refreshes like `refresh_all`)
+leaves `set_data()`'s plain snap untouched, no persistence write. This is the only place where the
+streak number's animation rule deliberately diverges from the grid's: the grid stays fully static on
+every slide-reopen, the number gets one exception so a real change is never silently swallowed.
+
+**Deferred:** matching the pause-then-tick effect inside the grid itself — dimming the
+`current - previous` newest day-cells and revealing them one at a time, in lockstep with the
+counter's leg 2 tick, while still drawing the longest-run border and finished-dot correctly on
+already-revealed cells. Estimated moderate-to-high complexity (new per-cell "pending reveal" state,
+likely replacing leg 2's continuous tween with a discrete step timer, careful interaction with the
+existing `is_longest`/`_finished`/pop-scale logic) — explicitly scoped as a separate future pass, not
+attempted here.
+
 ## VU-meter oscillation on embedded M4B FIXED (2026-06-16)
 
 **Symptom:** clicking Next/Prev or a chapter-list item **while playing** caused the chapter slider
