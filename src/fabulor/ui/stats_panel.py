@@ -1295,7 +1295,7 @@ class StreakGrid(QWidget):
         self._STREAK_LEG2_SCALE_MS = 300
         self._STREAK_LEG2_CAP_MS = 1200
         self._STREAK_LEG2_SPEEDUP_AFTER_DAYS = 3   # 1-3 days keep the original pace
-        self._STREAK_LEG2_SPEEDUP_FACTOR = 0.25     # ~20% faster for anything beyond
+        self._STREAK_LEG2_SPEEDUP_FACTOR = 0.25     # time past the boundary runs at 25% (75% faster)
         self._streak_count_anim = QPropertyAnimation(self, b"streak_count")
         self._streak_count_anim.setEasingCurve(QEasingCurve.Type.Linear)
         self._streak_leg1_slot = None
