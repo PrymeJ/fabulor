@@ -1,4 +1,71 @@
 
+## Streak count / grid cell mismatch (2026-06-19 Session 4)
+
+**Symptom (user-reported):** while testing different `day_start_hour` settings, the streak grid's
+lit-cell count and the displayed streak number disagreed. Concretely: a session running
+04:53→06:02 on 2026-06-10, `day_start_hour` 5 or 6. The session's adjusted start-date is 06-09
+(04:53 falls before the 5am/6am boundary) and its adjusted end-date is 06-10 (06:02 falls after
+it) — so the session was genuinely listened to across parts of *both* adjusted-days.
+
+**First diagnosis (wrong, reverted):** assumed the streak grid was the bug, on the theory that the
+Day tab and `get_active_periods` are start-date only, so the grid (which lights a cell on EITHER a
+session's start OR end adjusted-date) should be made start-only too, "to match." This was
+implemented, then the user caught the actual intent before it landed: **the grid was correct.** A
+session spanning the day_start_hour boundary really was listened to on both of those adjusted-days
+— lighting both cells reflects reality, the same way a session spanning real midnight should light
+both calendar days. The Day tab intentionally shows it as one entry on its start-date only (see
+"Day/Week/Month session-splitting, scoped out" below) — that's a deliberate, different design
+choice for that view, not a bug to be reconciled by changing the grid. The grid-only-start-date
+change was fully reverted (`build_streak_grid_cache`, `_update_streak_grid_cache_for_date` both
+restored to their original start∪end behavior).
+
+**Actual root cause:** `get_streaks` (which computes the streak NUMBER/label, not the grid cells)
+builds its day-set from `get_active_periods('day', ...)` — start-date only, by design, since
+`get_active_periods` also drives the Day/Week/Month period navigator and must stay start-only
+there — plus a separate finished-event query. It never unioned session **end**-dates. So for a
+session spanning the boundary, the grid correctly lit two cells, but `get_streaks`'s day-set (and
+therefore the streak count) only ever credited the start-date — undercounting relative to what the
+grid visibly showed. This is exactly the cross-check invariant already documented in CLAUDE.md
+("`StreakGrid` cross-checking its longest run against `get_streaks()['longest']`") — the two paths
+had drifted because an end-date source was present in one (the grid) and absent in the other
+(`get_streaks`).
+
+**Fix:** added a session_end-date query directly inside `get_streaks` (NOT inside
+`get_active_periods` — that function's start-only contract is load-bearing for Day/Week/Month nav
+and must not change) and unioned its results into `active_set`, alongside the existing
+session-start set (from `get_active_periods`) and the finished-event set. `get_streaks`'s day-set is
+now built from the same three sources as `build_streak_grid_cache` (start, end, finished) — start
+and end via separate queries since `get_active_periods` can't be reused for the end-date half
+without breaking its start-only contract elsewhere.
+
+**Verification:** scripted repro — write one session 04:53→06:02, rebuild the grid and call
+`get_streaks` at `day_start_hour` 4/5/6. At 5 and 6 (where the session spans the boundary), both
+the grid's lit-cell count and `get_streaks()['longest']` now read 2; at 4 (where the whole session
+falls after the boundary, no spanning) both read 1. Matched exactly at all three offsets after the
+fix; before the fix `get_streaks()['longest']` read 1 at all three offsets regardless of how many
+cells were actually lit.
+
+**Day/Week/Month session-splitting — considered, scoped out:** the same boundary-spanning session
+also raises the question of whether the Day tab should show it on both adjusted-days too (split
+proportionally, the way the Hourly Heatmap already splits sessions across clock-hour cells). This
+was deliberately NOT done: it would require splitting `listened_seconds`, `position_start`/
+`position_end`, `furthest_position`, and the per-book `is_finished` flag proportionally across two
+rows, touching `get_daily_book_breakdown`'s aggregate `SUM`/`MAX` columns, the Book Detail Panel's
+per-book stats grid, and the delete-session/delete-book-stats cascade (deleting one half of a split
+session would need to correctly re-derive both affected days). Large blast radius for a genuinely
+rare case (only sessions that straddle the configured `day_start_hour`, not all spanning sessions).
+The Day tab stays start-date-only by design; a spanning session shows as one entry, attributed to
+its start day, with its full (unsplit) duration and position range — same as before this session's
+fixes, unchanged.
+
+**Lesson:** before "fixing" a discrepancy between two views that are SUPPOSED to represent different
+granularities of the same data (a coarse "did I listen at all that day" grid vs. a precise per-book
+Day-tab listing), confirm which one is actually wrong by reasoning about what real listening
+behavior should produce — not by assuming the two should always show identical numbers. The
+correct fix here was almost the opposite of the first instinct: bring the under-counting path
+(`get_streaks`) up to match the correct one (the grid), not bring the grid down to match the
+under-counting Day tab.
+
 ## TasselOverlay: dangling tassel design iteration (2026-06-19 Session 3)
 
 **Goal:** make the Timeline bookmark tab feel like a real bookmark by adding a decorative

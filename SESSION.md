@@ -1,3 +1,50 @@
+## Session Summary — 2026-06-19 Session 4 — Per-part tassel theme keys + streak count/grid mismatch fix
+
+**Branch:** `main`.
+
+### What shipped
+
+- **Tassel theming split into five independently overridable keys** (`themes.py` GROUP 9):
+  `bookmark_body`, `bookmark_icon`, `tassel_cord`, `tassel_head`, `tassel_fringe`. Fallback chain:
+  `tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light`; `bookmark_body`/`bookmark_icon`
+  keep their pre-existing derivations as fallbacks (accent desaturated 35% / accent_dark→bg_main).
+  `TasselOverlay` now stores `_cord_color`/`_head_color`/`_fringe_color` separately (was one shared
+  `_cord_color`) and `set_colors`/`set_tassel_colors` replace the old single-color setters.
+  Fixed a `tassel_fringe` fallback bug found while wiring this up: it was reading
+  `slider_overall_fill` instead of the intended `accent_light`.
+- **Fixed a real streak-count/grid mismatch — after a wrong first attempt that was caught and
+  reverted before landing.** User testing `day_start_hour` found the streak grid's lit-cell count
+  and the displayed streak number disagreeing for a session spanning the day boundary (e.g.
+  04:53→06:02 with `day_start_hour=5`). First instinct (wrong): assumed the grid was the bug —
+  lighting both the session's start- and end-adjusted-day cells — and made it start-date only to
+  match the Day tab. User caught this before it landed: a session genuinely spanning the boundary
+  *should* light both cells (that's correct), and the Day tab is intentionally start-only by
+  design, not a target to reconcile the grid against. Reverted that change entirely. The actual bug
+  was in `get_streaks` (the streak count, not the grid): it built its day-set from
+  `get_active_periods` (start-only, by design — also drives Day/Week/Month nav) plus finished
+  events, but never unioned session end-dates, so the count undercounted relative to what the grid
+  showed. Fixed by adding an end-date query directly inside `get_streaks` and unioning it in,
+  mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly — without
+  touching `get_active_periods`. Verified via a scripted repro at `day_start_hour` 4/5/6: grid
+  lit-cell count and `get_streaks()['longest']` now match exactly at all three. Full writeup in
+  NOTES.md "Streak count / grid cell mismatch," including why full Day/Week/Month
+  session-splitting (the heatmap's proportional-split model) was considered and explicitly scoped
+  out as too large a change for this fix.
+- Replaced the (now-reverted) CLAUDE.md rule with one describing the correct fix and direction.
+
+### Process note
+
+The theming question ("can cord/head/fringe be colored separately?") surfaced the fact that they
+were already drawn as separate `QPainter` calls — splitting the color was mechanical. The
+streak-count bug went through a full wrong-then-right cycle in one session: the first fix was
+plausible-sounding (make the two paths agree by picking one rule) but solved it in the wrong
+direction, and the user's domain reasoning ("if I listen at 23:55 for 10 minutes, I listened on
+both days — that's correct") is what corrected it. Worth remembering for any future "these two
+views disagree" bug: confirm which view is actually wrong via real-world reasoning about the data
+before picking a direction to converge them.
+
+---
+
 ## Session Summary — 2026-06-19 Session 3 — Dangling tassel on the Timeline bookmark
 
 **Branch:** `main`. **Commits:** `5cfa613`, `ba2cf27`.

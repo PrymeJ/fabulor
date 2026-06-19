@@ -730,6 +730,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Clicking a bar navigates to Daily tab and loads that date
 - [ ] Day-start hour spinner persists across restarts
 - [ ] Changing day-start hour reflects immediately on all tabs without restart
+- [ ] Streak grid lit-cell count and the displayed streak number agree at every day-start-hour value — test with a session that straddles the configured day-start hour (e.g. a session from ~5 min before to ~1hr after the boundary): the grid should light BOTH adjusted-day cells (correct — the session was genuinely listened to on both), and the streak number/label must count both of those days too, not just the start day (regression: `get_streaks` used to only credit the session's start-date, undercounting relative to the grid — see NOTES.md "Streak count / grid cell mismatch"). The Day tab is expected to show the session as ONE entry on its start date only — that's by design, not a bug.
 - [ ] Reset all stats prompts confirmation, clears all data, refreshes all tabs
 
 ### Timeline tab — grid transitions and label cascades
@@ -753,8 +754,10 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Clicking the tassel body (head or fringe, not just the thin tab) switches the Heatmap↔Streak view
 - [ ] Clicking in the empty space around the tassel does nothing (no view switch, no hand cursor)
 - [ ] Switching away from the Timeline tab and back, or closing/reopening the Stats panel: tassel sway stops while hidden (no background CPU use) and resumes cleanly on return
-- [ ] Cycling themes (`T`): cord/head/fringe recolor via `accent_dark`/`bg_main`, stay legible against varied backgrounds
+- [ ] Cycling themes (`T`): cord/head/fringe recolor via `accent_dark`/`bg_main` (or per-theme `tassel_cord`/`tassel_head`/`tassel_fringe` overrides if set), stay legible against varied backgrounds
 - [ ] Tab itself is still unaffected: still peeks ~7px at rest, same slide distance/timing, same icon behavior as before this feature
+- [ ] Setting only `tassel_fringe` in a theme recolors cord, head, AND fringe together (cord/head fall back to it); setting `tassel_cord`/`tassel_head` individually overrides only that one part
+- [ ] Setting `bookmark_body` or `bookmark_icon` in a theme overrides the tab fill / icon color independently of the tassel parts
 
 ### Timeline tab — streak counter
 

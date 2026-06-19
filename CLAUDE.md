@@ -336,7 +336,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Upserts** — `upsert_book` / `upsert_books_batch` share identical SQL (execute vs executemany). ON CONFLICT guards: title/author updated only if not `*_locked`; narrator/year additionally NULLIF-guarded against empty/null; `progress` via `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)`; `is_deleted`/`is_excluded` always reset to 0. The two must stay in lockstep.
 - **Sessions/events** — `write_session` dual-writes `book_path` + `book_id` and updates the streak grid for the start and end dates; `write_book_event` writes events (only `source='playback'` finished events light a grid cell). `unfinish_book` / `clear_finished` / `delete_session` / `delete_book_stats` all re-evaluate the affected grid cells. `set_started_at` only writes when NULL.
 - **Stats queries** — `get_book_stats`, `get_overall_stats`, `get_last_n_days` (zero-fills gaps in Python), `get_active_periods`, `get_listening_time_per_period`, `get_books_listened_in_period`, `get_daily_book_breakdown`, `get_finished_in_period`, `get_recently_finished`, `get_streaks`, `get_hourly_heatmap` (splits sessions across clock-hour boundaries in Python, caps 3600s/hour, wall-clock with no day-start offset). Stats queries are intentionally unfenced by the soft-delete flags and use `COALESCE(b.title, ls.book_title)` over LEFT JOINs so deleted books keep their title. Per-book period positions use correlated subqueries (and `has_finished_books` uses `EXISTS`) to avoid cartesian fan-out.
-- **Streak grid** — `build_streak_grid_cache` seeds 364 dates at 0 then flips any date with a qualifying session (start OR end) or `source='playback'` finished event to 1; `_update_streak_grid_cache_for_date` does incremental updates; all date attribution uses a SQL `day_start_hour` offset (passed in, never read from config). **Invariant: a finished day is always a listened day** — a playback-finish lights its cell even with no session; manual (`source='manual'`) finishes never touch the grid (visible in Finished tab/detail only).
+- **Streak grid** — `build_streak_grid_cache` seeds 364 dates at 0 then flips any date with a qualifying session (start OR end adjusted-date) or `source='playback'` finished event to 1; `_update_streak_grid_cache_for_date` does incremental updates; all date attribution uses a SQL `day_start_hour` offset (passed in, never read from config). **Invariant: a finished day is always a listened day** — a playback-finish lights its cell even with no session; manual (`source='manual'`) finishes never touch the grid (visible in Finished tab/detail only). `get_streaks` (the streak count) mirrors this same start∪end∪finished day-set — see CLAUDE.md rule below.
 - **Tags** — `add_book_tag` (lowercased, ≤ 20 chars; per-book 5, global 50 limits), `remove_book_tag`, `get_all_tags` (LEFT JOIN color), `get_books_by_tag`, `get_paths_for_tag_prefix`, `rename_tag`, `delete_tag`, `set_tag_color`, `get_tag_suggestions`. **Covers** — `get_active_cover[_path]`, `get_covers_for_book`, `upsert_cover`, `set_active_cover` (maintains the single-active invariant manually), `set_fit_mode`, `delete_cover`.
 
 ### Session Recording (`session_recorder.py`)
@@ -398,6 +398,46 @@ The join produces a cartesian product (sessions × finished events per book) bef
 
 ### DO NOT keep `StreakGrid` from cross-checking its longest run against `get_streaks()['longest']`
 `get_streaks(day_start_hour)` returns only counts (`current`/`longest`), not which days. `StreakGrid._compute_longest_run(cache)` derives the longest-run **date set** independently (ISO sort + consecutive scan; most-recent wins on tie via `>=`). The invariant `len(self._longest_dates) == streak_info['longest']` must hold — two independent paths over the same **listened-day set** (SQL `get_streaks` union vs. Python scan over `streak_grid_cache`). As of 2026-06-12 a "listened day" is `session OR 'finished' book_event` (finished ⟹ listened), so **both** paths must include finished adjusted-dates: `get_streaks` unions them into its day set; the cache write sites add them to `streak_grid_cache`. A divergence means the two drifted — an attribution change applied to some of the six finished⟹listened sites but not all (`build_streak_grid_cache`, `_update_streak_grid_cache_for_date`, `write_book_event`, `unfinish_book`, `delete_book_stats`, `get_streaks` — see NOTES.md "StreakGrid invariant: a 'finished' day is ALWAYS a listened day"). That mismatch is the diagnostic; do NOT clamp one to the other to hide it.
+
+### DO NOT make `get_streaks` use start-date-only attribution — it must union session_end, matching the grid
+The streak grid (`build_streak_grid_cache`/`_update_streak_grid_cache_for_date`) has always
+correctly lit a cell if a session's start OR end adjusted-date matches it — a session spanning the
+day_start_hour boundary (e.g. 23:55→00:05, or 04:53→06:02 with `day_start_hour=5`) genuinely was
+listened to on both of those adjusted-days, and the grid cells were right to reflect that. The bug
+(found 2026-06-19, see NOTES.md "Streak count / grid cell mismatch") was that `get_streaks` — which
+drives the streak NUMBER, not the cells — built its day-set from `get_active_periods` (start-date
+only, by design: it also drives Day/Week/Month nav and must stay start-only there) plus finished
+events, but never unioned session end-dates. So a spanning session lit two grid cells while the
+streak count/label only credited one of those days. Fixed by adding a session_end-date query
+directly inside `get_streaks` (NOT by changing `get_active_periods`, which must remain start-only
+for the period navigator) and unioning it into `active_set` alongside the existing finished-event
+union — mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly. Do
+NOT "fix" this again by making the grid start-only to match `get_active_periods` — that direction
+was tried and reverted; the grid was correct, the streak count was the thing missing data. The
+Day/Week/Month tabs are explicitly start-date-only and intentionally do NOT show a spanning
+session twice — see NOTES.md for why full session-splitting there was scoped out as too large a
+change for too small a benefit.
+
+### DO NOT add a key to "The Color Purple" without checking `_NO_BASE_INHERIT_KEYS` (themes.py)
+Every theme is resolved by `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with
+the requested theme's own dict — "The Color Purple" is the base template every other theme
+inherits from for any key it doesn't set itself. This is correct for plain literal-value keys
+(a theme that doesn't set `bg_deep` should get Purple's), but WRONG for any key whose intended
+"unset" behavior is a *derived* per-theme fallback rather than Purple's literal value — e.g.
+`streak_grid_outline`/`streak_grid_dot` (meant to fall back to a value derived from that theme's
+own `accent`, via `StreakGrid._derive_longest_fill`/`_derive_finished_dot`) and `slider_progress`
+(meant to fall back to `text_on_light_bg` → `text`). Without exclusion, Purple's literal value
+would silently inherit into every theme that doesn't define its own, masking the derived fallback
+entirely. `_NO_BASE_INHERIT_KEYS` (a tuple near `_resolve_theme`) lists every such key; `_resolve_theme`
+pops them from the copied base before overlaying. **Any new optional/fallback-driven theme key
+that "The Color Purple" itself ever defines a value for MUST be added to `_NO_BASE_INHERIT_KEYS` in
+the same change** — added 2026-06-19 (Session 4): the five tassel/bookmark keys
+(`bookmark_body`/`bookmark_icon`/`tassel_cord`/`tassel_head`/`tassel_fringe`) do NOT need to be in
+the tuple today because "The Color Purple" doesn't set any of them yet — but if it ever does (e.g.
+giving the reference theme an explicit tassel color), that addition must land together with adding
+those keys to `_NO_BASE_INHERIT_KEYS`, or every other theme that relies on the
+`tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light` fallback chain will silently start
+showing Purple's literal tassel color instead.
 
 ### DO NOT fold `animate_conceal` duration logic into `HourlyHeatmap.animate_reveal`
 `animate_conceal` (on both `HourlyHeatmap` and `StreakGrid`) is **additive-only**: it reuses the `reveal_progress` property in reverse (1.0→0.0, 600ms) and is the streak↔heatmap transition's drain phase. `HourlyHeatmap.animate_reveal` and `paintEvent` stay byte-for-byte unchanged. `animate_conceal` restores the 1000ms reveal duration in its `finished` callback so the following construct wave runs full-length, and tracks its pending slot in `self._conceal_slot` (disconnect only when present — avoids `Failed to disconnect (None)`). The asymmetric duration restore is the whole point; do NOT share a `setDuration(600)` between the two methods. Relatedly: `StreakGrid.set_data` must NOT call `animate_reveal()` — the caller (`_switch_timeline_view` / `_on_tab_changed`) fires exactly one reveal on the visible grid, else the tab-change reveal double-fires and hitches.
@@ -604,7 +644,24 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-19 Session 3 — added a decorative dangling tassel to `TasselOverlay` (cord
+*Last updated: 2026-06-19 Session 4 — split `bookmark_body`/`bookmark_icon`/`tassel_cord`/
+`tassel_head`/`tassel_fringe` into independently overridable theme keys (GROUP 9, themes.py), with
+the fallback chain: `tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light`;
+`bookmark_body`/`bookmark_icon` keep their original derivations as fallbacks (accent desaturated
+35% / accent_dark→bg_main). Fixed a `tassel_fringe` fallback bug (was reading
+`slider_overall_fill` instead of `accent_light`) found while wiring this up. Separately, fixed a
+real streak-count bug — but the first attempt at it was wrong and reverted. A user testing
+`day_start_hour` found the streak grid and streak number disagreeing. First diagnosis (wrong):
+assumed the grid was the bug, made it start-date only to match `get_streaks`/Day tab. User caught
+this — a session genuinely spanning the day_start_hour boundary SHOULD light two grid cells
+(that's correct, matches reality); the actual bug was that `get_streaks` (the streak count/label)
+only credited the session's start-date, never its end-date, so the number undercounted relative to
+the cells. Reverted the grid change; fixed `get_streaks` instead to union session end-dates into
+its day-set, mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly.
+`get_active_periods` (Day/Week/Month nav) deliberately stays start-only — full session-splitting
+for Day/Week/Month was scoped out as too large a change for this. Added one new CLAUDE.md rule.*
+
+*Previously: 2026-06-19 Session 3 — added a decorative dangling tassel to `TasselOverlay` (cord
 looping vertically into a bound head, fanning into a fringe; idle micro-sway + decaying activation
 kick). Went through three live correction rounds against the running app: a "pendulum with a
 circle" first draft was rebuilt into a real tassel anatomy; a cursor/click-region mismatch (hand
