@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize
+    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize, QVariantAnimation
 )
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -1209,9 +1209,45 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         elif pre != new_val:
             self.progress_slider.animate_to(new_val, old_value=pre)
             # _resume_ui_timer fires via _flow_anim.finished
+            self._animate_percentage_label(pre, new_val, new_progress, dur)
         else:
             self.progress_slider.setValue(new_val)
+            end_percent = round((new_progress / dur) * 100, 1) if dur else new_val / 10
+            self.progress_percentage_label.setText(f"{end_percent:.1f}%")
             self._resume_ui_timer()
+
+    def _animate_percentage_label(self, start_val: int, end_val: int, new_progress: float, dur: float):
+        """Counts the percentage label from start_val/10 to end_val/10 (both on
+        the slider's 0-1000 scale) in lockstep with progress_slider.animate_to —
+        same distance-scaled duration formula (see ClickSlider.animate_to), so
+        the two finish together. No pause, no easing beyond the slider's own
+        InOutCubic — a plain parallel tween, not a reveal animation.
+
+        end_val (new_val in the caller) is int()-truncated to the slider's
+        0-1000 scale, e.g. 739 for a true value of 739.97. The live 200ms tick
+        that resumes right after instead computes percent = (pos/dur)*100 and
+        rounds it with "%.1f" — for the same 739.97-ish true percentage that's
+        74.0, not 73.9. The mismatch is truncate-vs-round, not a timing race,
+        so a settle-delay cannot fix it (confirmed by testing one — the jump
+        was identical with or without it). Fix: animate to the same rounded
+        percent the live tracker will show, computed once here from the exact
+        new_progress/dur the caller already has, instead of re-deriving a
+        coarser value from end_val."""
+        if hasattr(self, '_pct_label_anim') and self._pct_label_anim.state() == QPropertyAnimation.State.Running:
+            self._pct_label_anim.stop()
+        span = self.progress_slider.maximum() - self.progress_slider.minimum()
+        distance = abs(end_val - start_val) / max(1, span)
+        duration = int(200 + distance * 400)
+        end_percent = round((new_progress / dur) * 100, 1) if dur else end_val / 10
+        anim = QVariantAnimation(self)
+        anim.setDuration(duration)
+        anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        anim.setStartValue(start_val / 10.0)
+        anim.setEndValue(end_percent)
+        anim.valueChanged.connect(
+            lambda v: self.progress_percentage_label.setText(f"{v:.1f}%"))
+        self._pct_label_anim = anim
+        anim.start()
 
     def _on_file_loaded_populate_chapters(self):
         if getattr(self.library_panel, '_is_animating', False):
@@ -1634,7 +1670,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.total_time_label.setText(f"-{self.player.format_time(remaining)}")
                 else:
                     self.total_time_label.setText(self.player.format_time(dur / speed))
-                self.progress_percentage_label.setText(f"{percent:.1f}%")
+                pct_label_animating = (hasattr(self, '_pct_label_anim')
+                                        and self._pct_label_anim.state()
+                                        == QPropertyAnimation.State.Running)
+                if not pct_label_animating:
+                    self.progress_percentage_label.setText(f"{percent:.1f}%")
 
     def _sync_chapter_ui(self, pos, dur, speed):
         if self.player and self.player.mp3_seek_reload_pending:
