@@ -1577,7 +1577,9 @@ THEMES = {
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#2A2030",
         "settings_theme_names_dimmed":   "#9B78A3",
-        "tag_list_text":                 "#E6B9CA"
+        "tag_list_text":                 "#E6B9CA",
+        "streak_grid_outline":           "#ded6c0",
+        "streak_grid_dot":               "#881878",
     },
     "Shade of the Evening": {
         "bg_deep":                       "#0A0A1A",
