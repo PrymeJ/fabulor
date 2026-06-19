@@ -1871,26 +1871,28 @@ class TasselOverlay(QWidget):
     SLIDE_MS = 200
 
     # --- tassel geometry (cord + head + fringe), widget-local coords ---
-    SWAY_PAD = 18        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
-    CORD_W = 2           # cord stroke width
+    SWAY_PAD = 20        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
+    CORD_W = 3           # cord stroke width
     # Anchor: top-centre of the tab, as if the cord threads through a hole there.
     _ANCHOR_X = TASSEL_W // 2
     _ANCHOR_Y = 3
     # The tassel hangs down-and-right so its body lands in the visible band
-    # below the tab bar (the tab itself is mostly tucked at rest).
-    _HEAD_X = TASSEL_W + 4    # head sits just off the tab's right edge
-    _HEAD_Y = 50              # widget-y of the head top; ~y=1 on screen at rest
+    # below the tab bar (the tab itself is mostly tucked at rest). Head sits
+    # only slightly right of the anchor (shorter, more vertical cord) rather
+    # than far off the tab's right edge.
+    _HEAD_X = TASSEL_W - 2    # head sits just past the tab's right edge
+    _HEAD_Y = 40              # widget-y of the head top; shorter cord drop
     _HEAD_W = 9               # bound head (wrapped knot) width
     _HEAD_H = 7               # bound head height
     _FRINGE_LEN = 13          # length of the hanging threads
-    _FRINGE_SPREAD = 7        # how far the skirt fans out at the bottom (half-width)
+    _FRINGE_SPREAD = 5        # how far the skirt fans out at the bottom (half-width)
     _FRINGE_COUNT = 7         # number of thread lines
 
     # --- sway physics constants ---
     _TICK_MS = 33                 # ~30fps, matches CoverCarousel._TICK_MS
     _DT = _TICK_MS / 1000.0       # tick duration in seconds
     IDLE_AMP = 1.2                # px, barely-noticeable perpetual sway
-    IDLE_STEP = 0.06              # _idle_phase increment/tick (~3.5s per full cycle)
+    IDLE_STEP = 0.03              # _idle_phase increment/tick (~3.5s per full cycle)
     KICK_AMP = 6.0                # px, activation swing amplitude
     KICK_DECAY = 2.2              # exp decay rate (per second)
     KICK_FREQ = 16.0              # rad/s swing frequency (~3 visible cycles before settling)
@@ -2036,14 +2038,23 @@ class TasselOverlay(QWidget):
         head_top = self._HEAD_Y
         head_bottom = self._HEAD_Y + self._HEAD_H
 
-        # Cord: from the anchor (threaded through the tab top) curving to the
-        # head. Control point pushed past the head so it BENDS, not just tilts.
+        # Cord: a real loop (like a ribbon threaded through the bookmark hole
+        # and tied at the top) — not just a bow. The path swings OUT past the
+        # head's x-position and slightly UP first, then hooks back down INTO
+        # the head from nearly straight above, so the cord arrives vertical
+        # rather than diagonal. c1 pushes the curve outward/upward from the
+        # anchor (the widest point of the loop). c2 sits directly above
+        # head_top_pt (same x — not off to the side) so the curve's tangent at
+        # the endpoint points straight down into the head.
         anchor = QPointF(self._ANCHOR_X, self._ANCHOR_Y)
         head_top_pt = QPointF(head_cx, head_top)
-        ctrl = QPointF((self._ANCHOR_X + head_cx) / 2 + sway * 1.3,
-                       (self._ANCHOR_Y + head_top) / 2)
+        loop_out = self.SWAY_PAD - 6   # how far the loop swings out past the head
+        c1 = QPointF(self._ANCHOR_X + loop_out + sway * 0.6,
+                     self._ANCHOR_Y - 2)
+        c2 = QPointF(head_cx,
+                     head_top - self._HEAD_H * 0.8)
         cord = QPainterPath(anchor)
-        cord.quadTo(ctrl, head_top_pt)
+        cord.cubicTo(c1, c2, head_top_pt)
         pen = QPen(self._cord_color, self.CORD_W)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
