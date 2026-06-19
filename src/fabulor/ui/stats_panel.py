@@ -1930,23 +1930,40 @@ class TasselOverlay(QWidget):
 
     clicked = Signal()
 
+    # Explicit two-tier hue roll (replaces a single wide triangular distribution
+    # — measured: triangular(30, 130, 45) has a much longer right tail than left
+    # (85deg of span above the mode vs. 15deg below), so the realized rolls
+    # skewed loud overall despite 45 being the single most likely value;
+    # 100-roll sample came back median 64.5 / mean 67.2, nowhere near "mostly
+    # sane." A flat low-probability gate into its own separate range is the
+    # explicit, easy-to-reason-about fix: roll the gate first, THEN roll
+    # within whichever tier it lands in.
+    _HUE_WILD_CHANCE = 0.04        # chance of landing in the wild tier at all
+    _HUE_WILD_RANGE = (90, 130)    # wild tier: flat (no skew needed, it's rare already)
+
     @staticmethod
     def _roll_fringe_caps(rng: random.Random) -> tuple[int, int, float]:
         """Rolls this launch's fringe-variation CAPS (the gacha stage) before
-        rolling individual threads against them. Each cap is sampled from a
-        triangular distribution — skewed toward the tested-sane mode, with a
-        rare chance of landing near the louder end. _FRINGE_VARY_FRACTION's
-        ceiling is then derived from how loud the hue roll came out (a tame
-        hue roll cap's how flamboyant the fraction can get; a wild hue roll
-        permits — but doesn't force — a louder fraction too), and the actual
-        fraction is itself triangular-sampled below that ceiling, skewed low.
-        Returns (hue_vary, light_vary, vary_fraction)."""
-        hue_vary = round(rng.triangular(30, 130, 45))
+        rolling individual threads against them. hue_vary: 96% of the time a
+        sane triangular(30, 70, 45) roll; 4% of the time a flat roll in the
+        separate _HUE_WILD_RANGE (90-130) — an explicit two-tier gate rather
+        than one continuous distribution, so the wild tier's rarity doesn't
+        get diluted by tail mass (see the class comment above). light_vary
+        stays a single triangular(30, 50, 45) — that one already behaved.
+        _FRINGE_VARY_FRACTION's ceiling derives from where hue_vary landed in
+        its OWN tier's range (sane tier maps to [0.45, 0.70]; wild tier maps
+        to [0.70, 0.90]), and the actual fraction is triangular-sampled below
+        that ceiling, skewed low. Returns (hue_vary, light_vary, vary_fraction)."""
         light_vary = round(rng.triangular(30, 50, 45))
-        # Map hue_vary's position in its [30, 130] range onto a fraction
-        # ceiling in [0.45, 0.90] (the tested sane and "blasted" extremes).
-        hue_frac = (hue_vary - 30) / (130 - 30)
-        fraction_ceiling = 0.45 + hue_frac * (0.90 - 0.45)
+        if rng.random() < TasselOverlay._HUE_WILD_CHANCE:
+            wild_low, wild_high = TasselOverlay._HUE_WILD_RANGE
+            hue_vary = round(rng.uniform(wild_low, wild_high))
+            hue_frac = (hue_vary - wild_low) / (wild_high - wild_low)
+            fraction_ceiling = 0.70 + hue_frac * (0.90 - 0.70)
+        else:
+            hue_vary = round(rng.triangular(30, 70, 45))
+            hue_frac = (hue_vary - 30) / (70 - 30)
+            fraction_ceiling = 0.45 + hue_frac * (0.70 - 0.45)
         vary_fraction = rng.triangular(0.45, fraction_ceiling, 0.45)
         return hue_vary, light_vary, vary_fraction
 
