@@ -1020,11 +1020,16 @@ class LibraryDB:
     def get_streaks(self, day_start_hour: int) -> dict:
         """Returns current and longest listening streaks in days.
 
-        A day counts toward a streak if it has a session OR a 'finished' book_event
+        A day counts toward a streak if it has a session (by start OR end
+        adjusted-date — a session spanning the day_start_hour boundary lights
+        both, same as build_streak_grid_cache) OR a 'finished' book_event
         (finished ⟹ listened), using the same day_start_hour adjustment as the
         streak-grid cache. This keeps get_streaks() consistent with the cache and
         with StreakGrid._compute_longest_run — a finished-but-no-session day fills
-        its cell AND extends the streak, never one without the other."""
+        its cell AND extends the streak, never one without the other. The
+        session-end union mirrors build_streak_grid_cache exactly (get_active_periods
+        itself stays start-only — it also drives Day/Week/Month nav, which is
+        intentionally start-only and must not change)."""
         from datetime import date, timedelta, datetime
 
         now = datetime.now()
@@ -1034,11 +1039,17 @@ class LibraryDB:
         offset = f'-{day_start_hour} hours'
         active_set = set(self.get_active_periods('day', day_start_hour))
         with self._get_conn() as conn:
+            end_rows = conn.execute(
+                "SELECT DISTINCT strftime('%Y-%m-%d', datetime(session_end, ?)) "
+                "FROM listening_sessions",
+                (offset,)
+            ).fetchall()
             fin_rows = conn.execute(
                 "SELECT DISTINCT strftime('%Y-%m-%d', datetime(event_time, ?)) "
                 "FROM book_events WHERE event_type = 'finished' AND source = 'playback'",
                 (offset,)
             ).fetchall()
+        active_set.update(r[0] for r in end_rows if r[0])
         active_set.update(r[0] for r in fin_rows if r[0])
         if not active_set:
             return {'current': 0, 'longest': 0}
