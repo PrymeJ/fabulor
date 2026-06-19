@@ -248,7 +248,8 @@ THEMES = {
         "library_item_hover_alpha":      0.15,
         "settings_tab_hover_text":       "#000000",
         "settings_theme_names_dimmed":   "#FFA807",
-        "streak_grid_outline":           "#FFBF00"
+        "streak_grid_outline":           "#FFBF00",
+        "tassel_fringe":                 "#FFBF00"
     },
     "Blood Meridian": {
         "bg_deep":                       "#2F1A0F",
@@ -326,7 +327,9 @@ THEMES = {
         "library_author":                "#D71087",
         "settings_theme_names_dimmed":   "#CA94CB",
         "streak_grid_outline":           "#89DAEA",
-        "streak_grid_dot":               "#722589"
+        "streak_grid_dot":               "#722589",
+        "tassel_cord":                   "#3BA5BA",
+        "tassel_head":                   "#A826C9"
     },
     "Camorr": {
         "bg_deep":                       "#0F1419",

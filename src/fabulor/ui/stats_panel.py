@@ -2,6 +2,7 @@
 # FinishedBookThumb, FinishedScrollRow, StatsPanel
 import math
 import os
+import random
 import re
 from datetime import date
 from datetime import datetime
@@ -1888,8 +1889,37 @@ class TasselOverlay(QWidget):
     _FRINGE_SPREAD = 6        # how far the skirt fans out at the bottom (half-width)
     _FRINGE_COUNT = 17        # number of thread lines
 
+    # Individual-thread variation (length + color), so the fringe reads as
+    # separate fibers rather than a flat, uniform skirt. Only a minority of
+    # threads get treatment — applying it to all of them would just look like
+    # a shorter/differently-colored skirt, not "a few threads stand out."
+    # Picked once per app launch (random.Random() with no fixed seed, in
+    # __init__) and never re-rolled afterwards — varying ACROSS launches adds
+    # welcome variety without the per-paint/per-tab-visit flicker that would
+    # read as a bug rather than a feature.
+    #
+    # As of 2026-06-20 the per-thread CAPS themselves are also rolled once per
+    # launch ("gacha" roll — see _roll_fringe_caps), skewed toward sane values
+    # via random.triangular(low, high, mode) with a rare chance of a much
+    # louder result. _FRINGE_LEN_VARY_PX stays a fixed constant (tested: more
+    # than ~2px reads as "worn down" rather than "fibrous," no benefit to
+    # randomizing it). The values below are the tested sane baseline / mode
+    # anchors that _roll_fringe_caps's triangular distributions are built
+    # around — they are no longer used directly at runtime.
+    _FRINGE_VARY_FRACTION = 0.45   # ~45% of threads get length/color treatment
+    _FRINGE_LEN_VARY_PX = 2        # max shortening for a varied thread (px) — fixed, not rolled
+    _FRINGE_HUE_VARY = 30          # max hue shift, degrees, for a varied thread
+    _FRINGE_LIGHT_VARY = 50        # max value(brightness) shift for a varied thread
+
+    # tassel_head's accent-derived fallback (used only when a theme doesn't
+    # set its own tassel_head) gets a much narrower, flat (non-gacha) jitter —
+    # "mostly a darker version of accent, sometimes a slightly different hue,"
+    # deliberately NOT tied to the fringe's louder per-launch roll.
+    _HEAD_VALUE_SCALE_RANGE = (0.35, 0.55)   # accent value (brightness) multiplier
+    _HEAD_HUE_VARY = 15                      # max hue jitter, degrees
+
     # --- sway physics constants ---
-    _TICK_MS = 33                 # ~30fps, matches CoverCarousel._TICK_MS
+    _TICK_MS = 33                 # ~30fps, mastches CoverCarousel._TICK_MS
     _DT = _TICK_MS / 1000.0       # tick duration in seconds
     IDLE_AMP = 1.2                # px, barely-noticeable perpetual sway
     IDLE_STEP = 0.03              # _idle_phase increment/tick (~3.5s per full cycle)
@@ -1899,6 +1929,39 @@ class TasselOverlay(QWidget):
     _KICK_CLEAR_PX = 0.3          # clear the kick once its ENVELOPE falls below this
 
     clicked = Signal()
+
+    @staticmethod
+    def _roll_fringe_caps(rng: random.Random) -> tuple[int, int, float]:
+        """Rolls this launch's fringe-variation CAPS (the gacha stage) before
+        rolling individual threads against them. Each cap is sampled from a
+        triangular distribution — skewed toward the tested-sane mode, with a
+        rare chance of landing near the louder end. _FRINGE_VARY_FRACTION's
+        ceiling is then derived from how loud the hue roll came out (a tame
+        hue roll cap's how flamboyant the fraction can get; a wild hue roll
+        permits — but doesn't force — a louder fraction too), and the actual
+        fraction is itself triangular-sampled below that ceiling, skewed low.
+        Returns (hue_vary, light_vary, vary_fraction)."""
+        hue_vary = round(rng.triangular(30, 130, 45))
+        light_vary = round(rng.triangular(30, 50, 45))
+        # Map hue_vary's position in its [30, 130] range onto a fraction
+        # ceiling in [0.45, 0.90] (the tested sane and "blasted" extremes).
+        hue_frac = (hue_vary - 30) / (130 - 30)
+        fraction_ceiling = 0.45 + hue_frac * (0.90 - 0.45)
+        vary_fraction = rng.triangular(0.45, fraction_ceiling, 0.45)
+        return hue_vary, light_vary, vary_fraction
+
+    @staticmethod
+    def derive_head_fallback(accent: QColor, value_scale: float, hue_delta: int) -> QColor:
+        """tassel_head's fallback when a theme doesn't set its own: mostly a
+        darker version of accent (value_scale, ~0.35-0.55x), with a small,
+        flat (non-gacha) hue jitter — deliberately separate from the fringe's
+        louder per-launch roll. Pure function so StatsPanel can roll
+        value_scale/hue_delta once per launch independent of TasselOverlay's
+        own lifecycle (on_theme_changed may run before self._tassel exists)."""
+        h, s, v, a = accent.getHsv()
+        new_h = (h + hue_delta) % 360 if h >= 0 else h   # h == -1 for achromatic accent
+        new_v = max(0, min(255, round(v * value_scale)))
+        return QColor.fromHsv(new_h, s, new_v, a)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1922,6 +1985,24 @@ class TasselOverlay(QWidget):
         self._on_retreated_cb = None
         self._busy = False
         self._slide_slot = None
+
+        # Per-thread fringe variation, picked once for this app launch (not
+        # re-rolled per tab visit or per paint — see the constants above).
+        # _fringe_variation[i] = (len_delta_px, hue_delta_deg, value_delta) or
+        # None for an untouched thread (the majority).
+        rng = random.Random()
+        hue_vary, light_vary, vary_fraction = self._roll_fringe_caps(rng)
+        self._fringe_variation: list[tuple[float, int, int] | None] = []
+        for _ in range(self._FRINGE_COUNT):
+            if rng.random() < vary_fraction:
+                self._fringe_variation.append((
+                    rng.uniform(0, self._FRINGE_LEN_VARY_PX),
+                    rng.randint(-hue_vary, hue_vary),
+                    rng.randint(-light_vary, light_vary),
+                ))
+            else:
+                self._fringe_variation.append(None)
+
 
         # Sway state — idle (perpetual) and kick (transient, decaying) are kept
         # separate and summed only at paint, so the idle sway runs uninterrupted
@@ -2072,17 +2153,34 @@ class TasselOverlay(QWidget):
         painter.drawRoundedRect(head_rect, 2.5, 2.5)
 
         # Fringe: a fan of fine threads hanging from the head, widening into a
-        # skirt at the bottom. The sway tilts the whole fan.
+        # skirt at the bottom. The sway tilts the whole fan. A minority of
+        # threads (see _fringe_variation, picked once at launch) are slightly
+        # shorter and/or hue/brightness-shifted, so the skirt reads as
+        # individual fibers rather than one flat-colored shape.
         fringe_pen = QPen(self._fringe_color, 1)
         fringe_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(fringe_pen)
         n = self._FRINGE_COUNT
+        base_h, base_s, base_v, base_a = self._fringe_color.getHsv()
         for i in range(n):
             frac = (i / (n - 1)) - 0.5 if n > 1 else 0.0   # -0.5..0.5
+            variation = self._fringe_variation[i] if i < len(self._fringe_variation) else None
+            length = self._FRINGE_LEN
+            if variation is not None:
+                len_delta, hue_delta, value_delta = variation
+                length -= len_delta
+                fringe_pen.setColor(QColor.fromHsv(
+                    (base_h + hue_delta) % 360,
+                    base_s,
+                    max(0, min(255, base_v + value_delta)),
+                    base_a,
+                ))
+            else:
+                fringe_pen.setColor(self._fringe_color)
+            painter.setPen(fringe_pen)
             top = QPointF(head_cx + frac * (self._HEAD_W - 2), head_bottom)
             # Threads splay outward and the whole skirt leans with the sway.
             bottom = QPointF(head_cx + frac * 2 * self._FRINGE_SPREAD + sway * 0.5,
-                             head_bottom + self._FRINGE_LEN)
+                             head_bottom + length)
             painter.drawLine(top, bottom)
 
         painter.end()
@@ -2195,6 +2293,15 @@ class StatsPanel(QWidget):
         self._tassel_cord_color = QColor("#000000")
         self._tassel_head_color = QColor("#000000")
         self._tassel_fringe_color = QColor("#000000")
+        # tassel_head's accent-derived fallback jitter, rolled once per app
+        # launch (only used when a theme doesn't set its own tassel_head —
+        # see TasselOverlay.derive_head_fallback). Rolled here, not in
+        # TasselOverlay, because on_theme_changed can run before self._tassel
+        # exists.
+        head_rng = random.Random()
+        self._head_value_scale = head_rng.uniform(*TasselOverlay._HEAD_VALUE_SCALE_RANGE)
+        self._head_hue_delta = head_rng.randint(
+            -TasselOverlay._HEAD_HUE_VARY, TasselOverlay._HEAD_HUE_VARY)
         self._placeholder_color = "#888888"
         self._active_days: list[str] = []
         self._current_day_index: int = 0
@@ -2306,7 +2413,9 @@ class StatsPanel(QWidget):
         # tassel_fringe (so setting only tassel_fringe recolors the whole tassel).
         fringe_color = QColor(theme.get("tassel_fringe", accent_light))
         self._tassel_cord_color = QColor(theme.get("tassel_cord", fringe_color))
-        self._tassel_head_color = QColor(theme.get("tassel_head", fringe_color))
+        head_fallback = TasselOverlay.derive_head_fallback(
+            self._accent_color, self._head_value_scale, self._head_hue_delta)
+        self._tassel_head_color = QColor(theme.get("tassel_head", head_fallback))
         self._tassel_fringe_color = fringe_color
         self._placeholder_color = theme.get(
             'placeholder_stats',
