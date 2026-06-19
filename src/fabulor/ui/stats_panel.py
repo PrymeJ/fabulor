@@ -1837,6 +1837,19 @@ class TasselOverlay(QWidget):
     def mousePressEvent(self, event):
         self.clicked.emit()
 
+    @property
+    def is_busy(self) -> bool:
+        """True from the moment a play() cycle starts until the bookmark is
+        fully retreated at rest. Callers that trigger a parallel transition
+        alongside the bookmark animation (see StatsPanel._on_tassel_clicked)
+        must check this BEFORE doing anything — play() itself already no-ops
+        on repeat clicks, but a caller that unconditionally kicks off its own
+        side effect regardless of play()'s return would still re-trigger that
+        side effect on every click, even though the bookmark visually ignored
+        it. Multiple overlapping StatsPanel transitions racing over the same
+        grid visibility/state is what produced the indefinite hang."""
+        return self._busy
+
     def play(self, on_switch, on_retreated=None):
         """Slide down (reveal) -> hold -> at retreat start call on_switch()
         if given -> slide back up -> at rest call on_retreated() if given.
@@ -2250,6 +2263,14 @@ class StatsPanel(QWidget):
         self._tassel.set_icon(load_currentcolor_icon(name, self._tassel_icon_color.name(), 14))
 
     def _on_tassel_clicked(self):
+        # Ignore repeat clicks until the bookmark is fully back at rest —
+        # without this, _switch_timeline_view() fired on every click regardless
+        # of whether the bookmark animation itself was busy (play() no-ops on
+        # repeat but this caller didn't check), so rapid clicking queued up
+        # multiple overlapping conceal/reveal cycles racing over the same grid
+        # visibility state and could hang the view indefinitely.
+        if self._tassel.is_busy:
+            return
         # Bookmark animation only; transition fires immediately below. The icon
         # updates only once the bookmark is fully retreated (invisible at rest),
         # so it's always showing the *next* destination when next clicked.
