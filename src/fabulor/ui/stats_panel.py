@@ -1264,6 +1264,14 @@ class StreakGrid(QWidget):
         self._label_sweep_in: bool = False
         self._streak_count: int = 0            # displayed count
         self._last_animated_streak: int | None = None  # value shown as of the last animate_streak_count()
+        # Leg-2 grid tie-in: while a pause-then-tick is in flight, the newest
+        # _pending_reveal_days day-cells (day_index 0..N-1) render as plain
+        # "not yet listened" regardless of self._cache, until _revealed_days
+        # catches up — driven in lockstep with the counter by the same timer
+        # (see _run_streak_leg2). 0 pending = paint everything from _cache as
+        # normal (the default, at-rest state).
+        self._pending_reveal_days: int = 0
+        self._revealed_days: int = 0
 
         self._reveal_anim = QPropertyAnimation(self, b"reveal_progress")
         self._reveal_anim.setDuration(1000)
@@ -1278,14 +1286,21 @@ class StreakGrid(QWidget):
         # nothing actually changed). Leg 2 (only when the streak increased):
         # previous -> current, short and snappy after an explicit pause —
         # reads as a distinct "tick over" rather than a continuation of leg 1.
+        # Leg 2 is a discrete one-step-per-day timer (not a continuous tween)
+        # so the number and the grid's per-cell reveal stay in lockstep; total
+        # duration scales sub-linearly with day count (see _run_streak_leg2).
         self._STREAK_LEG1_MS = 800
         self._STREAK_PAUSE_MS = 550
-        self._STREAK_LEG2_MS = 250
+        self._STREAK_LEG2_BASE_MS = 250
+        self._STREAK_LEG2_SCALE_MS = 300
+        self._STREAK_LEG2_CAP_MS = 1200
+        self._STREAK_LEG2_SPEEDUP_AFTER_DAYS = 3   # 1-3 days keep the original pace
+        self._STREAK_LEG2_SPEEDUP_FACTOR = 0.25     # ~20% faster for anything beyond
         self._streak_count_anim = QPropertyAnimation(self, b"streak_count")
         self._streak_count_anim.setEasingCurve(QEasingCurve.Type.Linear)
         self._streak_leg1_slot = None
         self._streak_leg2_timer: QTimer | None = None
-        self._streak_leg2_anim: QPropertyAnimation | None = None
+        self._streak_leg2_step_timer: QTimer | None = None
 
         self._update_size()
 
@@ -1492,16 +1507,8 @@ class StreakGrid(QWidget):
             self._streak_count = self._displayed_streak_target()
         self.update()
 
-    # DEBUG: set to an int to override the current-streak target for visual
-    # testing — e.g. pass previous=9 to animate_streak_count() alongside this
-    # set to 10 to see carry behavior. None = use the real streak.
-    _DEBUG_STREAK_CUR_OVERRIDE: int | None = None
-
     def _displayed_streak_target(self) -> int:
-        target = int(self._streak.get('current', 0))
-        if self._DEBUG_STREAK_CUR_OVERRIDE is not None:
-            target = self._DEBUG_STREAK_CUR_OVERRIDE
-        return target
+        return int(self._streak.get('current', 0))
 
     def _disconnect_streak_leg1_slot(self):
         prev = self._streak_leg1_slot
@@ -1543,12 +1550,25 @@ class StreakGrid(QWidget):
         if self._streak_leg2_timer is not None:
             self._streak_leg2_timer.stop()
             self._streak_leg2_timer = None
+        if self._streak_leg2_step_timer is not None:
+            self._streak_leg2_step_timer.stop()
+            self._streak_leg2_step_timer = None
 
         grew = current > previous
         leg1_target = previous if grew else current
         self._streak_count_anim.setDuration(self._STREAK_LEG1_MS)
         self._streak_count_anim.setStartValue(0)
         self._streak_count_anim.setEndValue(leg1_target)
+
+        # Grid tie-in: set BEFORE leg 1 starts (not at leg-2 start), so the
+        # newest cells stay dimmed for the full duration of the count-up to
+        # the OLD value and the pause — only popping in once leg 2 actually
+        # ticks. Only the "full" path (this method) touches the grid;
+        # catch_up_streak_count deliberately never does (slide-reopen must
+        # never animate the grid).
+        self._pending_reveal_days = (current - previous) if grew else 0
+        self._revealed_days = 0
+        self.update()
 
         if grew:
             def _on_leg1_finished():
@@ -1583,6 +1603,14 @@ class StreakGrid(QWidget):
         if self._streak_leg2_timer is not None:
             self._streak_leg2_timer.stop()
             self._streak_leg2_timer = None
+        if self._streak_leg2_step_timer is not None:
+            self._streak_leg2_step_timer.stop()
+            self._streak_leg2_step_timer = None
+        # Never touch the grid on this path — slide-reopen must never animate
+        # grid cells, only the catch-up tick (see _run_streak_leg2's
+        # pending_days=0 short-circuit).
+        self._pending_reveal_days = 0
+        self._revealed_days = 0
 
         self._last_animated_streak = current
         if previous is None or current <= previous:
@@ -1597,14 +1625,50 @@ class StreakGrid(QWidget):
         self._streak_leg2_timer = timer
 
     def _run_streak_leg2(self, previous: int, current: int):
+        """Steps the counter (and, if _pending_reveal_days > 0, one grid cell
+        per step) from previous to current, one integer at a time. Total
+        duration scales sub-linearly with the day count so a 1-day catch-up
+        still feels like the old snappy tick (1 day == LEG2_BASE_MS exactly):
+        raw = LEG2_BASE_MS + (sqrt(days) - 1) * LEG2_SCALE_MS, capped at
+        LEG2_CAP_MS. Days 1-LEG2_SPEEDUP_AFTER_DAYS keep that pace unmodified;
+        beyond that the time PAST the boundary is compressed by
+        LEG2_SPEEDUP_FACTOR (continuous at the boundary, not a jump), so a
+        large gap (e.g. weeks away) doesn't take proportionally forever and
+        reads ~20% snappier than the raw curve. A discrete step timer (not
+        a continuous QPropertyAnimation) is used specifically so the displayed
+        number and the revealed grid cell change in the exact same frame —
+        two independently-timed animations could drift a tick apart."""
         self._streak_leg2_timer = None
-        leg2 = QPropertyAnimation(self, b"streak_count")
-        leg2.setEasingCurve(QEasingCurve.Type.Linear)
-        leg2.setDuration(self._STREAK_LEG2_MS)
-        leg2.setStartValue(previous)
-        leg2.setEndValue(current)
-        leg2.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
-        self._streak_leg2_anim = leg2   # keep a ref alive until Qt deletes it
+        days = current - previous
+        if days <= 0:
+            self.set_streak_count(current)
+            return
+
+        def _raw_total(d):
+            return self._STREAK_LEG2_BASE_MS + (d ** 0.5 - 1) * self._STREAK_LEG2_SCALE_MS
+        raw = _raw_total(days)
+        if days > self._STREAK_LEG2_SPEEDUP_AFTER_DAYS:
+            # Days 1-3 keep the original pace; anything beyond is compressed
+            # ~20% (applied only to the time PAST the day-3 mark, so the
+            # curve stays continuous at the boundary instead of jumping).
+            anchor = _raw_total(self._STREAK_LEG2_SPEEDUP_AFTER_DAYS)
+            raw = anchor + (raw - anchor) * self._STREAK_LEG2_SPEEDUP_FACTOR
+        total_ms = min(self._STREAK_LEG2_CAP_MS, raw)
+        step_ms = max(1, int(total_ms / days))
+
+        def _step():
+            new_count = self._streak_count + 1
+            self.set_streak_count(new_count)
+            if self._pending_reveal_days > 0:
+                self._revealed_days = min(self._pending_reveal_days, self._revealed_days + 1)
+                self.update()
+            if new_count >= current:
+                self._streak_leg2_step_timer.stop()
+
+        timer = QTimer(self)
+        timer.timeout.connect(_step)
+        self._streak_leg2_step_timer = timer
+        timer.start(step_ms)
 
     @staticmethod
     def _compute_longest_run(cache: dict) -> set:
@@ -1714,8 +1778,12 @@ class StreakGrid(QWidget):
                 anim_alpha, anim_scale = _grid_cell_anim(
                     self._reveal_progress, r, c, N_ROWS, N_COLS)
 
-                listened = self._cache.get(iso, 0) == 1
-                is_longest = iso in self._longest_dates
+                # Leg-2 tie-in: a not-yet-revealed newest cell paints as plain
+                # "not listened" regardless of the real cache/longest-run/
+                # finished data, until _revealed_days catches up to it.
+                still_pending = day_index < (self._pending_reveal_days - self._revealed_days)
+                listened = (not still_pending) and self._cache.get(iso, 0) == 1
+                is_longest = (not still_pending) and iso in self._longest_dates
                 if is_longest:
                     # Longest run swaps the fill/border roles: the distinct
                     # derived color fills the cell, accent becomes the border.
@@ -1754,7 +1822,7 @@ class StreakGrid(QWidget):
                     painter.drawRect(rectf)
                     painter.restore()
 
-                if iso in self._finished and anim_alpha > 0 and anim_scale >= 0.999:
+                if (not still_pending) and iso in self._finished and anim_alpha > 0 and anim_scale >= 0.999:
                     # Contrasting dark punch-through so the dot reads on filled cells.
                     dot = QColor(self._finished_dot)
                     dot.setAlpha(int(255 * anim_alpha))
