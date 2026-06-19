@@ -1,5 +1,6 @@
 # THEME_ANIM_TODO: ElidedLabel, SessionListWidget, BookDayRow, 
 # FinishedBookThumb, FinishedScrollRow, StatsPanel
+import math
 import os
 import re
 from datetime import date
@@ -9,10 +10,10 @@ from PySide6.QtWidgets import (
     QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication
 )
 from PySide6.QtCore import (
-    Qt, QRect, QRectF, Signal, QSize, QPoint, QEvent, QThreadPool, QTimer, Property,
+    Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -1844,8 +1845,24 @@ class TasselOverlay(QWidget):
     """Narrow vertical strip pinned at the top-left of the Timeline tab, mostly
     tucked under the tab bar (only a ~7px sliver shows at rest). Click animates
     it down to reveal a centered icon, holds, then retreats — the view switch
-    fires at the start of the retreat."""
+    fires at the start of the retreat.
 
+    A decorative TASSEL (cord + bound head + fanned fringe) hangs from the top
+    of the tab, threaded through it like a real bookmark ribbon, and drapes
+    down into the visible band below the tab bar. The cord swings (idle micro-
+    sway + a decaying kick on activation). The whole tassel reads as part of
+    the bookmark, not a separate pendulum.
+
+    Click model: a single fixed hit-region (_hit_region) — the tab rect plus a
+    tight box around the resting tassel — is the SOLE source of truth for BOTH
+    the click test (mousePressEvent) AND the hand cursor (mouseMoveEvent). The
+    cursor only shows the hand where a click actually works; there is no dead
+    space that lies about being clickable. The region is fixed at the rest
+    position (sway is small enough to stay within its slack), so it doesn't
+    move under the cursor."""
+
+    # --- tab geometry (unchanged: the tab is still 20x56, peeks 7px, slides
+    # the same distance — REST_Y/EXT_Y derive from TASSEL_H and must NOT change) ---
     TASSEL_W = 20
     TASSEL_H = 56
     REST_Y = -(TASSEL_H - 7)    # only ~7px peeks below the tab bar
@@ -1853,14 +1870,47 @@ class TasselOverlay(QWidget):
     HOLD_MS = 1200
     SLIDE_MS = 200
 
+    # --- tassel geometry (cord + head + fringe), widget-local coords ---
+    SWAY_PAD = 18        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
+    CORD_W = 2           # cord stroke width
+    # Anchor: top-centre of the tab, as if the cord threads through a hole there.
+    _ANCHOR_X = TASSEL_W // 2
+    _ANCHOR_Y = 3
+    # The tassel hangs down-and-right so its body lands in the visible band
+    # below the tab bar (the tab itself is mostly tucked at rest).
+    _HEAD_X = TASSEL_W + 4    # head sits just off the tab's right edge
+    _HEAD_Y = 50              # widget-y of the head top; ~y=1 on screen at rest
+    _HEAD_W = 9               # bound head (wrapped knot) width
+    _HEAD_H = 7               # bound head height
+    _FRINGE_LEN = 13          # length of the hanging threads
+    _FRINGE_SPREAD = 7        # how far the skirt fans out at the bottom (half-width)
+    _FRINGE_COUNT = 7         # number of thread lines
+
+    # --- sway physics constants ---
+    _TICK_MS = 33                 # ~30fps, matches CoverCarousel._TICK_MS
+    _DT = _TICK_MS / 1000.0       # tick duration in seconds
+    IDLE_AMP = 1.2                # px, barely-noticeable perpetual sway
+    IDLE_STEP = 0.06              # _idle_phase increment/tick (~3.5s per full cycle)
+    KICK_AMP = 6.0                # px, activation swing amplitude
+    KICK_DECAY = 2.2              # exp decay rate (per second)
+    KICK_FREQ = 16.0              # rad/s swing frequency (~3 visible cycles before settling)
+    _KICK_CLEAR_PX = 0.3          # clear the kick once its ENVELOPE falls below this
+
     clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(self.TASSEL_W, self.TASSEL_H)
+        # Widget is wider (right) and taller (down) than the tab so the tassel
+        # has room. Left edge stays at x=0 so the caller's .move(2, REST_Y) and
+        # the TASSEL_W/TASSEL_H-derived REST_Y/EXT_Y are intact.
+        total_w = self.TASSEL_W + self.SWAY_PAD
+        tassel_bottom = self._HEAD_Y + self._HEAD_H + self._FRINGE_LEN + 4
+        total_h = max(self.TASSEL_H, tassel_bottom)
+        self.setFixedSize(total_w, total_h)
         self._bg = QColor("#9B59B6")
+        self._cord_color = QColor("#000000")
         self._icon: QPixmap | None = None
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)   # so mouseMoveEvent fires for the cursor logic
         self._slide = QPropertyAnimation(self, b"pos")
         self._slide.setDuration(self.SLIDE_MS)
         self._slide.setEasingCurve(QEasingCurve.Type.InOutQuad)
@@ -1868,6 +1918,43 @@ class TasselOverlay(QWidget):
         self._on_retreated_cb = None
         self._busy = False
         self._slide_slot = None
+
+        # Sway state — idle (perpetual) and kick (transient, decaying) are kept
+        # separate and summed only at paint, so the idle sway runs uninterrupted
+        # while a kick decays on top of it.
+        self._idle_phase = 0.0
+        self._kick_t = 0.0
+        self._kick_active = False
+        self._sway_timer = QTimer(self)   # parented so Qt cleans it up
+        self._sway_timer.setInterval(self._TICK_MS)
+        self._sway_timer.timeout.connect(self._on_sway_tick)
+
+    @property
+    def _tab_rect(self) -> QRect:
+        """The tab's sub-rect within the (larger) widget — the source of truth
+        for the tab fill in paintEvent."""
+        return QRect(0, 0, self.TASSEL_W, self.TASSEL_H)
+
+    @property
+    def _tassel_rect(self) -> QRect:
+        """Tight box bounding the resting tassel body (head + fringe), with a
+        little slack for sway. Kept separate from the tab so the empty top-
+        right corner (right of the tab, above the tassel) is NOT clickable."""
+        slack = int(self.KICK_AMP) + 2
+        left = self._HEAD_X - slack
+        right = self._HEAD_X + self._HEAD_W + self._FRINGE_SPREAD + slack
+        top = self._HEAD_Y - 2
+        bottom = self._HEAD_Y + self._HEAD_H + self._FRINGE_LEN + 2
+        return QRect(left, top, right - left, bottom - top)
+
+    def _in_hit_region(self, pt: QPoint) -> bool:
+        """Clickable + hand-cursor test: inside the tab OR inside the tassel
+        body — but NOT the empty corners between them. The SOLE source of truth
+        for both mousePressEvent and the cursor in mouseMoveEvent, so the hand
+        cursor never lies about where a click works. Fixed at the rest position
+        (sway slack absorbs the small movement), so it doesn't track under the
+        pointer."""
+        return self._tab_rect.contains(pt) or self._tassel_rect.contains(pt)
 
     def _disconnect_slide(self):
         if self._slide_slot is not None:
@@ -1883,27 +1970,140 @@ class TasselOverlay(QWidget):
         self._bg = QColor.fromHsv(h, int(s * 0.35), v, a)
         self.update()
 
+    def set_cord_color(self, color: QColor):
+        self._cord_color = QColor(color)
+        self.update()
+
     def set_icon(self, pm: QPixmap):
         self._icon = pm
         self.update()
 
+    # --- sway driver ---
+    def _on_sway_tick(self):
+        # Safety net: stop repainting if we're not actually visible, even if a
+        # hideEvent was never delivered (tab-stack propagation is not assumed).
+        if not self.isVisible():
+            return
+        self._idle_phase += self.IDLE_STEP
+        if self._idle_phase > 2 * math.pi:
+            self._idle_phase -= 2 * math.pi
+        if self._kick_active:
+            self._kick_t += self._DT
+            # Clear on the ENVELOPE (not the composited value, which zero-crosses
+            # every half-cycle and would clear at the first crossing).
+            envelope = self.KICK_AMP * math.exp(-self.KICK_DECAY * self._kick_t)
+            if envelope < self._KICK_CLEAR_PX:
+                self._kick_active = False
+                self._kick_t = 0.0
+        self.update()
+
+    def _kick(self):
+        """Fresh swing impulse. A reset mid-decay snaps to full amplitude (a new
+        impulse, not added-to-velocity) — intended for MVP, not a bug."""
+        self._kick_t = 0.0
+        self._kick_active = True
+        if not self._sway_timer.isActive() and self.isVisible():
+            self._sway_timer.start()
+
+    def _current_sway(self) -> float:
+        sway = self.IDLE_AMP * math.sin(self._idle_phase)
+        if self._kick_active:
+            sway += (self.KICK_AMP * math.exp(-self.KICK_DECAY * self._kick_t)
+                     * math.sin(self.KICK_FREQ * self._kick_t))
+        return sway
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        # --- tab (unchanged appearance; drawn in _tab_rect, the shared region) ---
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(self._bg)
-        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 5, 5)
+        painter.drawRoundedRect(self._tab_rect.adjusted(0, 0, -1, -1), 5, 5)
         if self._icon is not None:
-            # Icon sits in the lower portion that's revealed when extended.
+            # Icon sits in the lower portion of the TAB that's revealed when extended.
             iw = self._icon.width()
             ih = self._icon.height()
             ix = (self.TASSEL_W - iw) // 2
             iy = self.TASSEL_H - ih - 6
             painter.drawPixmap(ix, iy, self._icon)
+
+        # --- tassel: cord -> bound head -> fanned fringe (swings with sway) ---
+        sway = self._current_sway()
+        # The head is where the cord ends and the fringe begins; sway displaces
+        # it (and the fringe below it) sideways, the anchor stays put.
+        head_cx = self._HEAD_X + self._HEAD_W / 2 + sway
+        head_top = self._HEAD_Y
+        head_bottom = self._HEAD_Y + self._HEAD_H
+
+        # Cord: from the anchor (threaded through the tab top) curving to the
+        # head. Control point pushed past the head so it BENDS, not just tilts.
+        anchor = QPointF(self._ANCHOR_X, self._ANCHOR_Y)
+        head_top_pt = QPointF(head_cx, head_top)
+        ctrl = QPointF((self._ANCHOR_X + head_cx) / 2 + sway * 1.3,
+                       (self._ANCHOR_Y + head_top) / 2)
+        cord = QPainterPath(anchor)
+        cord.quadTo(ctrl, head_top_pt)
+        pen = QPen(self._cord_color, self.CORD_W)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(cord)
+
+        # Bound head: a small rounded knot (the wrapped binding of the tassel).
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._cord_color)
+        head_rect = QRectF(head_cx - self._HEAD_W / 2, head_top,
+                           self._HEAD_W, self._HEAD_H)
+        painter.drawRoundedRect(head_rect, 2.5, 2.5)
+
+        # Fringe: a fan of fine threads hanging from the head, widening into a
+        # skirt at the bottom. The sway tilts the whole fan.
+        fringe_pen = QPen(self._cord_color, 1)
+        fringe_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(fringe_pen)
+        n = self._FRINGE_COUNT
+        for i in range(n):
+            frac = (i / (n - 1)) - 0.5 if n > 1 else 0.0   # -0.5..0.5
+            top = QPointF(head_cx + frac * (self._HEAD_W - 2), head_bottom)
+            # Threads splay outward and the whole skirt leans with the sway.
+            bottom = QPointF(head_cx + frac * 2 * self._FRINGE_SPREAD + sway * 0.5,
+                             head_bottom + self._FRINGE_LEN)
+            painter.drawLine(top, bottom)
+
         painter.end()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._sway_timer.isActive():
+            self._sway_timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._sway_timer.stop()
+        self._kick_active = False
+        self._kick_t = 0.0
+
     def mousePressEvent(self, event):
-        self.clicked.emit()
+        # The bookmark tab AND the tassel body are clickable; the empty corners
+        # between/around them are not. Same source of truth the cursor uses, so
+        # the hand never lies about where a click works.
+        if self._in_hit_region(event.position().toPoint()):
+            self.clicked.emit()
+        else:
+            event.ignore()
+
+    def mouseMoveEvent(self, event):
+        # Hand cursor ONLY where a click actually does something; default arrow
+        # elsewhere on the widget (so no dead space shows a misleading hand).
+        if self._in_hit_region(event.position().toPoint()):
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.unsetCursor()
+
+    def leaveEvent(self, event):
+        self.unsetCursor()
 
     @property
     def is_busy(self) -> bool:
@@ -1938,6 +2138,7 @@ class TasselOverlay(QWidget):
         self._slide_slot = self._on_extended
         self._slide.finished.connect(self._on_extended)
         self._slide.start()
+        self._kick()   # swing impulse on slide-down (orthogonal to _busy/callbacks)
 
     def _on_extended(self):
         self._disconnect_slide()
@@ -1946,6 +2147,7 @@ class TasselOverlay(QWidget):
     def _retreat(self):
         # Fire the switch as the tassel starts tucking in, so the panel is
         # already changing while the tassel retreats.
+        self._kick()   # swing impulse on retreat (orthogonal to _busy/callbacks)
         if self._on_switch is not None:
             self._on_switch()
             self._on_switch = None
@@ -2096,6 +2298,7 @@ class StatsPanel(QWidget):
             self._streak_grid.update()
         if hasattr(self, '_tassel'):
             self._tassel.set_colors(self._accent_color)
+            self._tassel.set_cord_color(self._tassel_icon_color)
             self._update_tassel_icon()
         if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
             self.tabs.setTabIcon(5, self._make_settings_icon(theme))
@@ -2318,6 +2521,7 @@ class StatsPanel(QWidget):
         # Tassel overlay — absolutely positioned, mostly tucked under the tab bar.
         self._tassel = TasselOverlay(widget)
         self._tassel.set_colors(self._accent_color)
+        self._tassel.set_cord_color(self._tassel_icon_color)
         self._tassel.move(2, TasselOverlay.REST_Y)
         self._update_tassel_icon()
         self._tassel.clicked.connect(self._on_tassel_clicked)
