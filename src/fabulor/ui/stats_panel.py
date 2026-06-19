@@ -1871,7 +1871,7 @@ class TasselOverlay(QWidget):
     SLIDE_MS = 200
 
     # --- tassel geometry (cord + head + fringe), widget-local coords ---
-    SWAY_PAD = 20        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
+    SWAY_PAD = 21        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
     CORD_W = 3           # cord stroke width
     # Anchor: top-centre of the tab, as if the cord threads through a hole there.
     _ANCHOR_X = TASSEL_W // 2
@@ -1881,12 +1881,12 @@ class TasselOverlay(QWidget):
     # only slightly right of the anchor (shorter, more vertical cord) rather
     # than far off the tab's right edge.
     _HEAD_X = TASSEL_W - 2    # head sits just past the tab's right edge
-    _HEAD_Y = 40              # widget-y of the head top; shorter cord drop
+    _HEAD_Y = 30              # widget-y of the head top; shorter cord drop
     _HEAD_W = 9               # bound head (wrapped knot) width
     _HEAD_H = 7               # bound head height
-    _FRINGE_LEN = 13          # length of the hanging threads
-    _FRINGE_SPREAD = 5        # how far the skirt fans out at the bottom (half-width)
-    _FRINGE_COUNT = 7         # number of thread lines
+    _FRINGE_LEN = 22          # length of the hanging threads
+    _FRINGE_SPREAD = 6        # how far the skirt fans out at the bottom (half-width)
+    _FRINGE_COUNT = 17        # number of thread lines
 
     # --- sway physics constants ---
     _TICK_MS = 33                 # ~30fps, matches CoverCarousel._TICK_MS
@@ -1911,6 +1911,8 @@ class TasselOverlay(QWidget):
         self.setFixedSize(total_w, total_h)
         self._bg = QColor("#9B59B6")
         self._cord_color = QColor("#000000")
+        self._head_color = QColor("#000000")
+        self._fringe_color = QColor("#000000")
         self._icon: QPixmap | None = None
         self.setMouseTracking(True)   # so mouseMoveEvent fires for the cursor logic
         self._slide = QPropertyAnimation(self, b"pos")
@@ -1966,14 +1968,14 @@ class TasselOverlay(QWidget):
                 pass
             self._slide_slot = None
 
-    def set_colors(self, accent: QColor):
-        # Desaturated flat fill so the tassel reads as a tab, not a focal point.
-        h, s, v, a = accent.getHsv()
-        self._bg = QColor.fromHsv(h, int(s * 0.35), v, a)
+    def set_colors(self, body: QColor):
+        self._bg = QColor(body)
         self.update()
 
-    def set_cord_color(self, color: QColor):
-        self._cord_color = QColor(color)
+    def set_tassel_colors(self, cord: QColor, head: QColor, fringe: QColor):
+        self._cord_color = QColor(cord)
+        self._head_color = QColor(head)
+        self._fringe_color = QColor(fringe)
         self.update()
 
     def set_icon(self, pm: QPixmap):
@@ -2064,14 +2066,14 @@ class TasselOverlay(QWidget):
 
         # Bound head: a small rounded knot (the wrapped binding of the tassel).
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._cord_color)
+        painter.setBrush(self._head_color)
         head_rect = QRectF(head_cx - self._HEAD_W / 2, head_top,
                            self._HEAD_W, self._HEAD_H)
         painter.drawRoundedRect(head_rect, 2.5, 2.5)
 
         # Fringe: a fan of fine threads hanging from the head, widening into a
         # skirt at the bottom. The sway tilts the whole fan.
-        fringe_pen = QPen(self._cord_color, 1)
+        fringe_pen = QPen(self._fringe_color, 1)
         fringe_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(fringe_pen)
         n = self._FRINGE_COUNT
@@ -2188,7 +2190,11 @@ class StatsPanel(QWidget):
         self.setObjectName("stats_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._accent_color = QColor("#9B59B6")
+        self._tassel_body_color = QColor("#9B59B6")
         self._tassel_icon_color = QColor("#000000")
+        self._tassel_cord_color = QColor("#000000")
+        self._tassel_head_color = QColor("#000000")
+        self._tassel_fringe_color = QColor("#000000")
         self._placeholder_color = "#888888"
         self._active_days: list[str] = []
         self._current_day_index: int = 0
@@ -2288,7 +2294,20 @@ class StatsPanel(QWidget):
         from ..themes import _resolve_theme
         theme = _resolve_theme(theme)
         self._accent_color = QColor(theme.get("accent", "#9B59B6"))
-        self._tassel_icon_color = QColor(theme.get("accent_dark", theme.get("bg_main", "#000000")))
+        # bookmark_body/bookmark_icon are independently overridable; their
+        # fallbacks reproduce the original derivations exactly.
+        accent_light = theme.get("accent_light", "#9B59B6")
+        bookmark_body_fallback = QColor.fromHsv(
+            self._accent_color.hue(), int(self._accent_color.saturation() * 0.35),
+            self._accent_color.value(), self._accent_color.alpha())
+        self._tassel_body_color = QColor(theme.get("bookmark_body", bookmark_body_fallback))
+        self._tassel_icon_color = QColor(theme.get("bookmark_icon", theme.get("accent_dark", theme.get("bg_main", "#000000"))))
+        # tassel_fringe falls back to accent_light; cord/head fall back to
+        # tassel_fringe (so setting only tassel_fringe recolors the whole tassel).
+        fringe_color = QColor(theme.get("tassel_fringe", accent_light))
+        self._tassel_cord_color = QColor(theme.get("tassel_cord", fringe_color))
+        self._tassel_head_color = QColor(theme.get("tassel_head", fringe_color))
+        self._tassel_fringe_color = fringe_color
         self._placeholder_color = theme.get(
             'placeholder_stats',
             theme.get('placeholder_cover',
@@ -2308,8 +2327,9 @@ class StatsPanel(QWidget):
                 self._streak_grid.finished_dot_color = QColor(dot)
             self._streak_grid.update()
         if hasattr(self, '_tassel'):
-            self._tassel.set_colors(self._accent_color)
-            self._tassel.set_cord_color(self._tassel_icon_color)
+            self._tassel.set_colors(self._tassel_body_color)
+            self._tassel.set_tassel_colors(
+                self._tassel_cord_color, self._tassel_head_color, self._tassel_fringe_color)
             self._update_tassel_icon()
         if hasattr(self, 'tabs') and hasattr(self, '_settings_svg_path'):
             self.tabs.setTabIcon(5, self._make_settings_icon(theme))
@@ -2531,8 +2551,9 @@ class StatsPanel(QWidget):
 
         # Tassel overlay — absolutely positioned, mostly tucked under the tab bar.
         self._tassel = TasselOverlay(widget)
-        self._tassel.set_colors(self._accent_color)
-        self._tassel.set_cord_color(self._tassel_icon_color)
+        self._tassel.set_colors(self._tassel_body_color)
+        self._tassel.set_tassel_colors(
+            self._tassel_cord_color, self._tassel_head_color, self._tassel_fringe_color)
         self._tassel.move(2, TasselOverlay.REST_Y)
         self._update_tassel_icon()
         self._tassel.clicked.connect(self._on_tassel_clicked)

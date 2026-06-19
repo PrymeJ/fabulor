@@ -82,6 +82,11 @@ session_history_row_two: (Optional) Background color for even rows in the book d
 ## NOT BEING USED YET ## session_history_bg:      (Optional) Background color for the book detail History tab. Fallback: library_bg.
 streak_grid_outline:     (Optional) Override for the longest-run inset border color in the Timeline streak grid. Fallback: derived from accent (warm relative hue shift + sat/value bump). Use when the derived color doesn't read well against a theme's cell fill.
 streak_grid_dot:         (Optional) Override for the finished-day marker (small centered square) in the Timeline streak grid. Fallback: derived from accent (same hue, low value, dark punch-through). Use when the derived color doesn't read well against a theme's cell fill.
+bookmark_body:           (Optional) Override for the Timeline view-switch bookmark tab's fill color. Fallback: derived from accent (desaturated 35%).
+bookmark_icon:           (Optional) Override for the clock/fire icon color on the bookmark tab. Fallback: accent_dark → bg_main.
+tassel_cord:             (Optional) Color of the dangling tassel's cord (the bent line from the bookmark to the head). Fallback: tassel_fringe.
+tassel_head:             (Optional) Color of the dangling tassel's bound head (the small knot the cord ends in). Fallback: tassel_fringe.
+tassel_fringe:           (Optional) Color of the dangling tassel's fringe (the fanned threads below the head). Fallback: accent_light.
 
 GROUP 10 — MISC UI
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
@@ -264,7 +269,8 @@ THEMES = {
         "dropdown_curr_chap":            "#8B0000",
         "sidebar_text_hover":            "#A52A2A",
         "sidebar_opacity":               0.72,
-        "settings_theme_names_dimmed":   "#E47575"
+        "settings_theme_names_dimmed":   "#E47575",
+        "streak_grid_dot":               "#740E0E"
     },
     "Blue Moranth": {
         "bg_deep":                       "#001219",
@@ -294,7 +300,8 @@ THEMES = {
         "library_item_hover_alpha":      0.5,
         "library_title":                 "#3EA5EA",
         "library_author":                "#10D742",
-        "settings_theme_names_dimmed":   "#8DCECF"
+        "settings_theme_names_dimmed":   "#8DCECF",
+        "streak_grid_dot":               "#2A0664"
     },
     "Brave New World": {
         "bg_deep":                       "#3A2F5F",
@@ -317,7 +324,9 @@ THEMES = {
         "sidebar_opacity":               0.7,
         "library_bg":                    "#240B2E",
         "library_author":                "#D71087",
-        "settings_theme_names_dimmed":   "#CA94CB"
+        "settings_theme_names_dimmed":   "#CA94CB",
+        "streak_grid_outline":           "#89DAEA",
+        "streak_grid_dot":               "#722589"
     },
     "Camorr": {
         "bg_deep":                       "#0F1419",
@@ -523,7 +532,9 @@ THEMES = {
         "library_elapsed":               "#F0A9CF",
         "library_total":                 "#F0A9CF",
         "library_percentage":            "#F0A9CF",
-        "settings_theme_names_dimmed":   "#D8C0D4"
+        "settings_theme_names_dimmed":   "#D8C0D4",
+        "streak_grid_outline":               "#D87A37",
+        "streak_grid_dot":               "#520A52"
     },
     "Dorian Grey": {
         "bg_deep":                       "#222222",
@@ -929,7 +940,8 @@ THEMES = {
         "dropdown_curr_chap":            "#B88462",
         "sidebar_text_hover":            "#B88462",
         "sidebar_opacity":               0.85,
-        "settings_theme_names_dimmed":   "#E4C7B7"
+        "settings_theme_names_dimmed":   "#E4C7B7",
+        "streak_grid_dot":               "#5d3b15"
     },
     "Gravity's Rainbow": {
         "bg_deep":                       "#1A0033",
@@ -970,12 +982,14 @@ THEMES = {
         "library_total":                 "#00C8FF",
         "library_percentage":            "#D97DEC",
         "settings_theme_names_dimmed":   "#E94F4F",
+        "streak_grid_outline":           "#FAF99C",
+        "streak_grid_dot":               "#7F049E",
         "gradient_bg_start":             "#D328D3",
         "gradient_bg_end":               "#1900FF",
         "gradient_bg_angle":             115
     },
     "Hear Me Roar": {
-        "bg_deep":                       "#230903",
+        "bg_deep":                       "#3F1712",
         "bg_main":                       "#A40202",
         "bg_sidebar":                    "#461004",
         "bg_dropdown":                   "#451208",
@@ -1008,7 +1022,10 @@ THEMES = {
         "library_total":                 "#DF7C2B",
         "library_percentage":            "#DF7C2B",
         "search_error_text":             "#CC0000",
-        "settings_theme_names_dimmed":   "#F47272"
+        "settings_theme_names_dimmed":   "#F47272",
+        "streak_grid_outline":           "#FAF99C",
+        "streak_grid_dot":               "#821435"
+
     },
     "Highgarden": {
         "bg_deep":                       "#1A2A1A",
@@ -1203,6 +1220,7 @@ THEMES = {
         "sidebar_text_hover":            "#F05948",
         "sidebar_opacity":               0.7,
         "settings_theme_names_dimmed":   "#CCF6F9",
+        "streak_grid_dot":               "#544A57",
         "placeholder_cover":             "#222D38",
         "placeholder_stats":             "#B3D5DE",
         "placeholder_tags":              "#EAADA6"
@@ -1253,7 +1271,9 @@ THEMES = {
         "settings_tab_hover_bg":         "#C86A8A",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#1A1428",
-        "settings_theme_names_dimmed":   "#6A5A78"
+        "settings_theme_names_dimmed":   "#E5B4D0",
+        "streak_grid_outline":           "#591048",
+        "streak_grid_dot":               "#e6d3b5"
     },
     "Piranesi": {
         "bg_deep":                       "#1A1E20",
@@ -1400,6 +1420,10 @@ THEMES = {
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#D8E4EC",
         "settings_theme_names_dimmed":   "#5A6A76",
+        "tassel_cord":                   "#160c42",
+        "tassel_head":                   "#dad3b1",
+        "tassel_fringe":                 "#91bdcd",
+        "streak_grid_dot":               "#3D4855",
         "gradient_bg_start":             "#141A1E",
         "gradient_bg_end":               "#2A3A42",
         "gradient_bg_angle":             115
@@ -1431,7 +1455,9 @@ THEMES = {
         "sidebar_opacity":               0.7,
         "settings_tab_hover_opacity":    0.9,
         "settings_tab_hover_text":       "#0B0A0A",
-        "settings_theme_names_dimmed":   "#AFDFEE"
+        "settings_theme_names_dimmed":   "#73C4DC",
+        "streak_grid_outline":           "#A336FC",
+        "streak_grid_dot":               "#541357"
     },
     "Rebma": {
         "bg_deep":                       "#1A2624",
@@ -1616,6 +1642,12 @@ THEMES = {
         "library_slider_fill":           "#0731AB",
         "library_input_bg":              "#0A0A1A",
         "settings_theme_names_dimmed":   "#41BAEA",
+        "streak_grid_outline":           "#5083C2",
+        "streak_grid_dot":               "#E9DCB3",
+        "bookmark_icon":                 "#0002B2",
+        "tassel_cord":                   "#462558",
+        "tassel_head":                   "#C03B69",
+        "tassel_fringe":                 "#7376E2",   
         "gradient_bg_start":             "#0A0A1A",
         "gradient_bg_end":               "#1A2860",
         "gradient_bg_angle":             135,
@@ -1701,7 +1733,11 @@ THEMES = {
         "dropdown_curr_chap":            "#CC6C54",
         "sidebar_text_hover":            "#CC6C54",
         "sidebar_opacity":               0.82,
-        "settings_theme_names_dimmed":   "#ECECAE"
+        "settings_theme_names_dimmed":   "#ECECAE",
+        "bookmark_icon":                 "#5d2c1e",
+        "tassel_cord":                   "#c5988a",
+        "tassel_head":                   "#ea7b36",
+        "tassel_fringe":                 "#d8bd4f",
     },
     "Slow Regard": {
         "bg_deep":                       "#3A2A1E",
@@ -1841,7 +1877,7 @@ THEMES = {
         "accent_dark":                   "#5A189A",
         "slider_progress":               "#F3BBF0",
         "slider_overall_bg":             "#4B0082",
-        "slider_overall_fill":           "#CD6Eb0",
+        "slider_overall_fill":           "#CD6EB0",
         "slider_chapter_bg":             "#330066",
         "slider_chapter_fill":           "#950E95",
         "slider_vol_bg":                 "#220044",
@@ -1851,7 +1887,7 @@ THEMES = {
         "sidebar_opacity":               0.6,
         "settings_theme_names_dimmed":   "#BA21E7",
         "streak_grid_outline":           "#D759B1",
-        "streak_grid_dot":               "#4F076F"
+        "streak_grid_dot":               "#4F076F",
     },
     "The Eyrie": {
         "bg_deep":                       "#1E2A30",
@@ -2016,7 +2052,8 @@ THEMES = {
         "settings_tab_hover_bg":         "#3AB8B0",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#0A1A24",
-        "settings_theme_names_dimmed":   "#4A6A68"
+        "settings_theme_names_dimmed":   "#4A6A68",
+        "streak_grid_dot":               "#0C5E33"
     },
     "Urras": {
         "bg_deep":                       "#001219",
@@ -2054,7 +2091,8 @@ THEMES = {
         "library_slider_fill":           "#CDC3A3",
         "library_input_bg":              "#06263F",
         "library_input_text":            "#E9D8A6",
-        "settings_theme_names_dimmed":   "#D3EBEC"
+        "settings_theme_names_dimmed":   "#D3EBEC",
+        "streak_grid_dot":               "#155D19"
     },
     "Violeta": {
         "bg_deep":                       "#140A1A",
@@ -2147,7 +2185,8 @@ THEMES = {
         "dropdown_curr_chap":            "#8B4513",
         "sidebar_text_hover":            "#F39C12",
         "sidebar_opacity":               0.8,
-        "settings_theme_names_dimmed":   "#BCB6BB"
+        "settings_theme_names_dimmed":   "#BCB6BB",
+        "streak_grid_dot":               "#7b231b"
     },
     "Waste Lands": {
         "bg_deep":                       "#1A1A1A",
@@ -2291,8 +2330,19 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
         return f"rgba({_hex_to_rgb(fallback_color)}, {opacity})"
     return fallback_color
 
+# Keys that must never inherit from The Color Purple's base template: each
+# theme either derives them from its own accent color (streak_grid_outline,
+# streak_grid_dot — see StreakGrid._derive_longest_fill/_derive_finished_dot)
+# or falls back to one of its own other keys (slider_progress -> text_on_light_bg
+# -> text). Letting them inherit from the base template made The Color Purple's
+# explicit value leak into every theme that doesn't set its own.
+_NO_BASE_INHERIT_KEYS = ("streak_grid_outline", "streak_grid_dot", "slider_progress")
+
+
 def _resolve_theme(theme_name):
     base = THEMES["The Color Purple"].copy()
+    for key in _NO_BASE_INHERIT_KEYS:
+        base.pop(key, None)
     if isinstance(theme_name, dict):
         base.update(theme_name)
     else:
