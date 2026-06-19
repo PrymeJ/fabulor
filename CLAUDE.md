@@ -279,7 +279,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
   - **⚙** — day-start hour `QSpinBox` (0–23, rebuilds streak cache), period scroll-acceleration toggle, default-timeline-view toggle, "Reset all stats" (7s confirm).
 - **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal/conceal cell transition uses the shared `_grid_cell_anim` helper, style `"pop"` (cells scale up from a center-anchored inset as they reveal, shrink back on conceal — not a plain alpha fade); top date labels and left-gutter hour labels cascade via per-label opacity fade with enter/exit as true mirrors (left-to-right entering top labels / right-to-left exiting; top-to-bottom entering gutter labels / bottom-to-top exiting).
 - **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small sharp centered 4×4 square dot (`_finished` set, `streak_grid_dot` per-theme override); the longest consecutive run **fills with a derived lighter/desaturated tint of accent and borders in plain accent** (`streak_grid_outline` per-theme override for the border color — fill/border roles were swapped from the original distinct-fill design), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + an animated count: linear count-up 0 → previously-shown value, then (only if the streak grew since last shown) a paused snappy tick up to the new value — see `animate_streak_count`/`catch_up_streak_count` and the two CLAUDE.md rules above on persistence and the panel-reopen catch-up exception. Same `_grid_cell_anim` "pop" transition as the heatmap.
-- **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon (Streak) ↔ fire icon (Heatmap; was `calendar.svg`, swapped 2026-06-18 — rendered as a plain rectangle at 14px). Icon recolors via `accent_dark`/`bg_main` theme keys (was `accent`) and updates only once the bookmark is fully retreated at rest, not mid-transition — see `TasselOverlay.play(on_switch, on_retreated=...)`. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out.
+- **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon (Streak) ↔ fire icon (Heatmap; was `calendar.svg`, swapped 2026-06-18 — rendered as a plain rectangle at 14px). Icon recolors via `accent_dark`/`bg_main` theme keys (was `accent`) and updates only once the bookmark is fully retreated at rest, not mid-transition — see `TasselOverlay.play(on_switch, on_retreated=...)`. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out. A decorative tassel (cubic-Bezier cord looping from the tab's top-centre, vertically into a bound "head" rect, fanning into a 7-thread fringe — added 2026-06-19 Session 3, `_cord_color` from `accent_dark`/`bg_main`) hangs alongside the tab: a perpetual ~30fps idle micro-sway plus a decaying "kick" on slide-down/retreat, gated by `showEvent`/`hideEvent` + an `isVisible()` tick guard. The widget itself is wider/taller than the tab to give the tassel room, but `_tab_rect`/`REST_Y`/`EXT_Y`/the 7px peek are unchanged; clicking and the hand cursor are both driven by `_in_hit_region()` (tab rect OR a tight tassel-body box — see the CLAUDE.md rule above) so the cursor never shows over dead space.
 - **Widgets**: `BookDayRow` (48×48 cover, elided title/author, `pct_start · pct_end | +delta`; archived dimmed, finished/deleted styled), `FinishedBookThumb` (47×47 crop), `SessionListWidget` (scrollable session rows: timestamp / delta% / `_RangeBar` / end%), `_RangeBar` (flat start→end fill bar with animatable colors; also used by the detail panel).
 - **Data flow** — period caches (`_cached_active_days/weeks/months`) invalidated on tab change / `refresh_all`. `_inject_active_covers(rows)` adds `active_cover_path` from `book_covers` (must run at every `BookDayRow`/`FinishedBookThumb` site). `on_cover_changed(book_path, cover_path)` does a targeted refresh of the visible tab only (`_iter_day_rows` / `_iter_finished_thumbs` → `refresh_cover`); empty cover restores the placeholder without a worker.
 
@@ -470,6 +470,17 @@ effect ALONGSIDE calling a method that has its own internal busy/idempotency gua
 living inside that method does not protect the caller's side effect — the caller must check the
 same busy state itself (via an exposed property, not by assuming the callee's no-op will be enough).
 
+### DO NOT let `TasselOverlay`'s hand cursor and clickable region diverge
+`TasselOverlay.__init__` does NOT call `setCursor(PointingHandCursor)` on the whole widget — that
+was the original (2026-06-19) implementation and it was a real UX bug: the widget is wider/taller
+than its actual clickable area (the tab rect plus the tight tassel body box, via
+`_in_hit_region()`), so a blanket cursor showed a hand over dead space where clicking did nothing.
+The cursor is instead set dynamically in `mouseMoveEvent`, calling `setCursor`/`unsetCursor` based
+on the exact same `_in_hit_region()` test that `mousePressEvent` uses. Any future change to the
+clickable region (`_tab_rect`, `_tassel_rect`) must keep reading through `_in_hit_region()` from
+both methods — do not special-case the cursor logic or the click logic separately, or they will
+silently drift apart again.
+
 ### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
 clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
 
@@ -593,7 +604,17 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-19 — fixed a percentage-label tween oscillation (truncate-vs-round mismatch
+*Last updated: 2026-06-19 Session 3 — added a decorative dangling tassel to `TasselOverlay` (cord
+looping vertically into a bound head, fanning into a fringe; idle micro-sway + decaying activation
+kick). Went through three live correction rounds against the running app: a "pendulum with a
+circle" first draft was rebuilt into a real tassel anatomy; a cursor/click-region mismatch (hand
+cursor over dead space) was fixed via a shared `_in_hit_region()`; the cord's Bezier was corrected
+twice (bulge, then approach angle) to read as a draped loop landing vertically in the head rather
+than a straight or diagonal line. Geometry invariants (`_tab_rect`, 7px peek, slide targets)
+verified numerically at every round via headless offscreen-Qt scripts. Added one new CLAUDE.md
+rule (cursor/click region must share one source of truth).*
+
+*Previously: 2026-06-19 Session 2 — fixed a percentage-label tween oscillation (truncate-vs-round mismatch
 against the live tracker, not a timing race — see CLAUDE.md rule above and NOTES.md); fixed a
 Timeline tassel click hang (caller didn't check `TasselOverlay.is_busy` before independently
 triggering its own side effect — see CLAUDE.md rule above); added a streak-grid catch-up reveal that

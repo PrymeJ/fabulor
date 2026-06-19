@@ -743,6 +743,19 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Switching tabs away from and back to Timeline (panel already open) re-plays the full reveal/cascade animation
 - [ ] Rapid-clicking the tassel repeatedly while a heatmap↔streak transition is mid-flight: clicks are ignored (no-op) until the bookmark is fully retreated — view never hangs with both grids blank
 
+### Timeline tab — dangling tassel decoration
+
+- [ ] Cord renders as a draped LOOP (swings out then curves vertically down into the head), not a straight line or a diagonal bow
+- [ ] Bound head + fanned fringe (multiple thread lines) are both visible — not a plain circle/dot
+- [ ] At rest, the tassel sways very subtly and continuously (idle micro-sway) — barely noticeable, not distracting
+- [ ] Clicking the tab: tassel swings more noticeably, decaying over ~2-3 cycles back to idle, on BOTH slide-down and retreat
+- [ ] Hand cursor appears ONLY when hovering over the tab or the tassel body (head/fringe) — never over the empty space around/between them
+- [ ] Clicking the tassel body (head or fringe, not just the thin tab) switches the Heatmap↔Streak view
+- [ ] Clicking in the empty space around the tassel does nothing (no view switch, no hand cursor)
+- [ ] Switching away from the Timeline tab and back, or closing/reopening the Stats panel: tassel sway stops while hidden (no background CPU use) and resumes cleanly on return
+- [ ] Cycling themes (`T`): cord/head/fringe recolor via `accent_dark`/`bg_main`, stay legible against varied backgrounds
+- [ ] Tab itself is still unaffected: still peeks ~7px at rest, same slide distance/timing, same icon behavior as before this feature
+
 ### Timeline tab — streak counter
 
 - [ ] First-ever open of a session (real tab click, or view-switch to Streak): counts up 0 → current streak, linear pace, no slowdown

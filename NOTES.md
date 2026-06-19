@@ -1,4 +1,59 @@
 
+## TasselOverlay: dangling tassel design iteration (2026-06-19 Session 3)
+
+**Goal:** make the Timeline bookmark tab feel like a real bookmark by adding a decorative
+dangling tassel — cord + bound head + fringe — that sways. New animation category for this
+codebase (no prior rotation/curve-based or perpetual-idle animation existed anywhere; everything
+else is position/opacity/color `QPropertyAnimation` or state-gated repeating `QTimer`s).
+
+**Round 1 (built under a full plan-mode design — see the now-resolved plan file): "pendulum with
+a circle," not a tassel.** The first implementation drew a single straight cord ending in a plain
+filled circle, floating to the *side* of the tab like a clock pendulum. Two real problems, both
+caught immediately on the first screenshot: (1) a tassel has three visually distinct parts — cord,
+a bound "head" knot, and a fanned fringe of threads — not a dot; reference photos make this
+unambiguous. (2) `setCursor(PointingHandCursor)` was applied to the WHOLE widget in `__init__`, so
+the hand cursor appeared over dead/empty space (the swing area) where clicking did nothing — a
+real UX bug, not a cosmetic one. **Lesson:** "this beats physics" / "circle ≠ tassel" feedback
+meant the shape itself was wrong at a structural level, not just under-detailed — redrawing more
+detail onto a circle would not have fixed it; the anatomy needed rebuilding from reference images.
+
+**Fix for round 1's issues — `_in_hit_region()`.** A single property is now the SOLE source of
+truth for both `mousePressEvent` (click) and a new `mouseMoveEvent` (cursor): `tab_rect.contains(pt)
+or tassel_rect.contains(pt)`. `mouseMoveEvent` calls `setCursor`/`unsetCursor` based on the same
+test, so the hand cursor can never show over a region where clicking is a no-op. `tassel_rect` is a
+*tight* box around the resting tassel body (head + fringe + sway slack) — NOT the full widget
+bounding box — so the empty corners between the tab and the tassel (and above/right of the tassel)
+correctly do NOT show a hand or accept clicks. Fixed at the rest position (not tracking the live
+sway) so the clickable region doesn't move under the pointer.
+
+**Round 2: cord geometry, two sub-rounds.** A tassel's cord isn't taut — it drapes/loops (visible
+in every reference photo: the cord visibly loops through the bookmark hole before reaching the
+knot). (2a) First attempt used a quadratic Bezier with the control point only modestly offset —
+read as "goes straight" / "pretty much the same thing" even after changing to a cubic, because both
+cubic control points were placed *below* the anchor with only a small horizontal offset: the curve
+never swung out far enough past the head's x-position to read as a loop rather than a slightly-bent
+line. (2b) Second attempt fixed the bulge (control point pushed above-and-right of the anchor, the
+loop's widest point) but then the curve arrived at the head *diagonally from the right*, because the
+second control point was placed to the side of the head rather than above it — "bulge doesn't
+align." **Fix:** the curve's approach angle at an endpoint is set by the control point immediately
+before it, independent of the rest of the path — placing `c2` directly above `head_top_pt` (same x)
+makes the tangent at the endpoint point straight down, so the cord visibly drops into the head
+vertically regardless of how the loop bulges earlier in the path. Also shortened the drop
+(`_HEAD_Y` 50→34) and pulled the head closer to the tab (`_HEAD_X`, `SWAY_PAD` reduced) per
+feedback that the original proportions were too long/far. **Lesson:** when a Bezier "doesn't look
+right," diagnose bulge (shape, mid-path control points) and approach angle (endpoint, the control
+point closest to that endpoint) as separate, independently-tunable concerns — fixing one doesn't
+fix the other, and conflating them wastes iteration rounds.
+
+**What's preserved/unchanged throughout all rounds:** the tab's own `_tab_rect`, its 7px rest-peek,
+`REST_Y`/`EXT_Y` (still derived from the original `TASSEL_H=56`), and the caller's
+`.move(2, REST_Y)` in `_build_time_tab` — verified numerically at every round via a headless
+offscreen-Qt script (`QT_QPA_PLATFORM=offscreen`) computing widget size, hit-region containment,
+and control-point bounds before ever launching the real app. The `showEvent`/`hideEvent` timer
+lifecycle was also verified empirically (not assumed) with a probe subclass mounted in a real
+`QTabWidget`, confirming both `hideEvent` firing AND `isVisible()` flipping `False` on tab-switch-
+away and panel-close, and both recovering on return.
+
 ## Main-window theme fade interrupt (sidebar mid-fade) FIXED; full color-animation rework DEFERRED (2026-06-19 Session 2)
 
 **Symptom:** press `T` (theme rotate), then right-click the drag area to open the sidebar while the

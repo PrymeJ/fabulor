@@ -1,3 +1,49 @@
+## Session Summary — 2026-06-19 Session 3 — Dangling tassel on the Timeline bookmark
+
+**Branch:** `main`. **Commits:** `5cfa613`, `ba2cf27`.
+
+### What shipped
+
+- **`TasselOverlay` now has a procedural dangling tassel** (cord → bound head → fanned fringe)
+  hanging from the top of the bookmark tab, in addition to the existing slide/hold/retreat
+  behavior (unchanged). Replaces an earlier same-day attempt (built under a plan, then corrected
+  live) that read as a "pendulum with a circle" rather than a tassel — see NOTES.md for the full
+  design iteration.
+- **Cord shape**: a cubic Bezier loop (not a straight line or a one-way bow) — leaves the tab's
+  top-centre anchor, swings outward/upward, then arrives **vertically** into the head (the second
+  control point sits directly above the head, same x, so the tangent at the endpoint points
+  straight down). Two rounds of user feedback were needed to get from "near-straight diagonal" to
+  this: first the loop didn't bulge enough to read as a loop at all, then it bulged but landed on
+  the head at a diagonal rather than straight down.
+- **Head**: a small rounded-rect "bound knot." **Fringe**: 7 fine thread lines fanning from the
+  head into a skirt, widening toward the bottom.
+- **Physics**: perpetual barely-noticeable idle sway (`IDLE_AMP=1.2px`) plus a decaying "kick" on
+  slide-down/retreat (~3 visible cycles over ~1.5s, envelope-gated clear — not the composited
+  value, which would clear at the first zero-crossing). One driver `QTimer` at ~30fps, gated by
+  `showEvent`/`hideEvent` (empirically verified to fire correctly on Stats-tab switch and panel
+  close) plus an `isVisible()` belt-and-suspenders guard on every tick.
+- **Click + cursor fix**: the original build let the hand cursor show over the *entire* widget
+  (including dead space) while only the thin 20×56 tab was actually clickable — a real UX bug the
+  user caught immediately. Fixed via `_in_hit_region()`, a single source of truth (tab rect OR a
+  tight tassel-body box, excluding the empty corners between them) used identically by
+  `mousePressEvent` (click) and a new `mouseMoveEvent` (dynamic cursor) — the hand now only ever
+  appears where a click actually works.
+- **Geometry invariant preserved throughout**: the tab's own rect, its 7px rest-peek, and the
+  `move(2, REST_Y)` / `REST_Y` / `EXT_Y` slide targets are all byte-for-byte unchanged — the
+  widget just grew wider (right) and taller (down) to give the tassel room.
+
+### Process note
+
+This feature went through a full plan-mode design pass (multi-round Q&A on shape/anchor/physics,
+two Explore-agent research passes, an Opus-reviewed implementation prompt) before any code was
+written — appropriate for "genuinely new animation category, no prior art in this codebase" per
+the plan's own framing. Even so, the first real implementation still needed three live visual
+correction rounds (pendulum→tassel, click/cursor bug, cord shape×2) once the user could actually
+see it — a reminder that for fiddly procedural-graphics work, planning reduces risk but doesn't
+replace iterating against a screenshot.
+
+---
+
 ## Session Summary — 2026-06-19 Session 2 — Theme fade interrupt fix (sidebar mid-fade)
 
 **Branch:** `main`. **Commit:** `ba88847`.
