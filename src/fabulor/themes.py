@@ -1891,6 +1891,11 @@ THEMES = {
         "settings_theme_names_dimmed":   "#BA21E7",
         "streak_grid_outline":           "#D759B1",
         "streak_grid_dot":               "#4F076F",
+        "bookmark_body":                 "#eb85cb",
+        "bookmark_icon":                 "#3e006e",
+        "tassel_cord":                   "#9843aa",
+        "tassel_head":                   "#f2f0b4",
+
     },
     "The Eyrie": {
         "bg_deep":                       "#1E2A30",
@@ -1939,7 +1944,10 @@ THEMES = {
         "settings_tab_hover_bg":         "#AAC8D8",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#1E2A30",
-        "settings_theme_names_dimmed":   "#6A7A84"
+        "settings_theme_names_dimmed":   "#6A7A84",
+        "streak_grid_dot":               "#E8F0F2",
+        "bookmark_body":                 "#E8F0F2",
+        "tassel_head":                   "#ECD386"
     },
     "The Overlook": {
         "bg_deep":                       "#2E1E14",
@@ -2339,7 +2347,7 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 # or falls back to one of its own other keys (slider_progress -> text_on_light_bg
 # -> text). Letting them inherit from the base template made The Color Purple's
 # explicit value leak into every theme that doesn't set its own.
-_NO_BASE_INHERIT_KEYS = ("streak_grid_outline", "streak_grid_dot", "slider_progress")
+_NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress")
 
 
 def _resolve_theme(theme_name):
