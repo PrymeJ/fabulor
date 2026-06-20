@@ -1918,10 +1918,26 @@ class TasselOverlay(QWidget):
     _HEAD_VALUE_SCALE_RANGE = (0.35, 0.55)   # accent value (brightness) multiplier
     _HEAD_HUE_VARY = 15                      # max hue jitter, degrees
 
+    # Per-thread fringe animation, restricted to the OUTERMOST threads on
+    # each side of the skirt (NOT a random sample across all _FRINGE_COUNT —
+    # a random sample reads as the whole skirt subtly shifting together,
+    # since "random" thread indices are scattered evenly across the fan and
+    # visually blend back into the shared sway; only the threads at the true
+    # left/right edges are spatially isolated enough to read as individuals
+    # "doing their own thing"). Settled on "phase_lag": reuses the existing
+    # shared sway formula, just evaluated at an offset phase per animated
+    # thread — cheap (no new state beyond a phase offset per thread, no new
+    # trig beyond what _current_sway already does: one sin() call per
+    # animated thread, but only a handful, not all _FRINGE_COUNT). An
+    # "independent" mode (own decoupled oscillator per thread) was A/B
+    # tested and dropped — see NOTES.md.
+    _FRINGE_ANIM_EDGE_N = 5            # outermost N threads on EACH side get a phase-lagged sway
+    _FRINGE_ANIM_PHASE_LAG = 1.8       # rad, per-thread stagger (was 0.6 — too subtle to read)
+
     # --- sway physics constants ---
     _TICK_MS = 33                 # ~30fps, mastches CoverCarousel._TICK_MS
     _DT = _TICK_MS / 1000.0       # tick duration in seconds
-    IDLE_AMP = 1.2                # px, barely-noticeable perpetual sway
+    IDLE_AMP = 1.0               # px, barely-noticeable perpetual sway
     IDLE_STEP = 0.03              # _idle_phase increment/tick (~3.5s per full cycle)
     KICK_AMP = 6.0                # px, activation swing amplitude
     KICK_DECAY = 2.2              # exp decay rate (per second)
@@ -2021,6 +2037,19 @@ class TasselOverlay(QWidget):
             else:
                 self._fringe_variation.append(None)
 
+        # Phase-lagged fringe animation: the outermost _FRINGE_ANIM_EDGE_N
+        # threads on EACH side of the skirt (indices 0..N-1 and
+        # (count-N)..count-1 — see the class comment above for why edges, not
+        # a random sample). Picked once per launch, same as the variation
+        # roll above — not tied to it (an edge thread can also independently
+        # roll length/color variation, or not).
+        n = self._FRINGE_COUNT
+        edge_n = min(self._FRINGE_ANIM_EDGE_N, n // 2 if n > 1 else 0)
+        anim_indices = list(range(edge_n)) + list(range(n - edge_n, n))
+        self._fringe_anim_phase_lag: dict[int, float] = {
+            i: rng.uniform(-self._FRINGE_ANIM_PHASE_LAG, self._FRINGE_ANIM_PHASE_LAG)
+            for i in anim_indices
+        }
 
         # Sway state — idle (perpetual) and kick (transient, decaying) are kept
         # separate and summed only at paint, so the idle sway runs uninterrupted
@@ -2134,6 +2163,22 @@ class TasselOverlay(QWidget):
                      * math.sin(self.KICK_FREQ * self._kick_t))
         return sway
 
+    def _fringe_thread_sway(self, i: int, base_sway: float) -> float:
+        """Per-thread sway for fringe thread index i. Threads NOT selected for
+        animation (the majority) just return base_sway unchanged — same
+        motion as the head/cord, no extra cost. The outermost edge threads
+        (see _fringe_anim_phase_lag, picked once at launch) replay the SAME
+        shared formula at an offset phase — cheap, no new oscillator, just a
+        different angle into the existing sin() calls."""
+        lag = self._fringe_anim_phase_lag.get(i)
+        if lag is None:
+            return base_sway
+        sway = self.IDLE_AMP * math.sin(self._idle_phase + lag)
+        if self._kick_active:
+            sway += (self.KICK_AMP * math.exp(-self.KICK_DECAY * self._kick_t)
+                     * math.sin(self.KICK_FREQ * self._kick_t + lag))
+        return sway
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -2222,7 +2267,10 @@ class TasselOverlay(QWidget):
             painter.setPen(fringe_pen)
             top = QPointF(head_cx + frac * (self._HEAD_W - 2), head_bottom)
             # Threads splay outward and the whole skirt leans with the sway.
-            bottom = QPointF(head_cx + frac * 2 * self._FRINGE_SPREAD + sway * 0.5,
+            # A few threads (see _fringe_thread_sway) trail/drift slightly
+            # off the shared sway instead of moving in perfect lockstep.
+            thread_sway = self._fringe_thread_sway(i, sway)
+            bottom = QPointF(head_cx + frac * 2 * self._FRINGE_SPREAD + thread_sway * 0.5,
                              head_bottom + length)
             painter.drawLine(top, bottom)
 
