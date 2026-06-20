@@ -1927,11 +1927,16 @@ class TasselOverlay(QWidget):
     # "doing their own thing"). Settled on "phase_lag": reuses the existing
     # shared sway formula, just evaluated at an offset phase per animated
     # thread — cheap (no new state beyond a phase offset per thread, no new
-    # trig beyond what _current_sway already does: one sin() call per
-    # animated thread, but only a handful, not all _FRINGE_COUNT). An
-    # "independent" mode (own decoupled oscillator per thread) was A/B
-    # tested and dropped — see NOTES.md.
-    _FRINGE_ANIM_EDGE_N = 5            # outermost N threads on EACH side get a phase-lagged sway
+    # trig beyond what _current_sway already does). An "independent" mode
+    # (own decoupled oscillator per thread) was A/B tested and dropped — see
+    # NOTES.md. The lag applies ONLY to the kick (activation swing), never to
+    # idle sway — see _fringe_thread_sway's docstring: lagging idle sway
+    # produced a color-blend shimmer between neighboring differently-hued
+    # threads (confirmed by live A/B testing 2026-06-20), because idle sway
+    # is slow/small enough that the lag reads as a separate competing motion;
+    # the kick is fast/large enough that the same lag reads as personality
+    # instead.
+    _FRINGE_ANIM_EDGE_N = 5            # outermost N threads on EACH side get a phase-lagged KICK
     _FRINGE_ANIM_PHASE_LAG = 1.8       # rad, per-thread stagger (was 0.6 — too subtle to read)
 
     # --- sway physics constants ---
@@ -2167,17 +2172,24 @@ class TasselOverlay(QWidget):
         """Per-thread sway for fringe thread index i. Threads NOT selected for
         animation (the majority) just return base_sway unchanged — same
         motion as the head/cord, no extra cost. The outermost edge threads
-        (see _fringe_anim_phase_lag, picked once at launch) replay the SAME
-        shared formula at an offset phase — cheap, no new oscillator, just a
-        different angle into the existing sin() calls."""
-        lag = self._fringe_anim_phase_lag.get(i)
-        if lag is None:
-            return base_sway
-        sway = self.IDLE_AMP * math.sin(self._idle_phase + lag)
+        (see _fringe_anim_phase_lag, picked once at launch) only get the lag
+        applied to the KICK term, never the idle term — confirmed by live
+        testing (2026-06-20) that lagging idle sway specifically is what
+        produces a color-blend shimmer between neighboring differently-hued
+        threads: idle sway is slow/small enough that the lag between
+        neighbors reads as a separate competing motion, whereas the kick is
+        fast/large enough that the same lag doesn't. So idle stays perfectly
+        uniform across all threads (no shimmer source at rest); only an
+        active kick gets the per-thread phase offset, where it reads as
+        individual threads catching the swing differently rather than as a
+        shimmer."""
         if self._kick_active:
-            sway += (self.KICK_AMP * math.exp(-self.KICK_DECAY * self._kick_t)
-                     * math.sin(self.KICK_FREQ * self._kick_t + lag))
-        return sway
+            lag = self._fringe_anim_phase_lag.get(i)
+            if lag is not None:
+                return (self.IDLE_AMP * math.sin(self._idle_phase)
+                        + self.KICK_AMP * math.exp(-self.KICK_DECAY * self._kick_t)
+                        * math.sin(self.KICK_FREQ * self._kick_t + lag))
+        return base_sway
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -2267,8 +2279,9 @@ class TasselOverlay(QWidget):
             painter.setPen(fringe_pen)
             top = QPointF(head_cx + frac * (self._HEAD_W - 2), head_bottom)
             # Threads splay outward and the whole skirt leans with the sway.
-            # A few threads (see _fringe_thread_sway) trail/drift slightly
-            # off the shared sway instead of moving in perfect lockstep.
+            # A few edge threads (see _fringe_thread_sway) catch the KICK
+            # swing slightly differently — idle sway stays perfectly uniform
+            # (see that method's docstring for why).
             thread_sway = self._fringe_thread_sway(i, sway)
             bottom = QPointF(head_cx + frac * 2 * self._FRINGE_SPREAD + thread_sway * 0.5,
                              head_bottom + length)
