@@ -1865,7 +1865,7 @@ class TasselOverlay(QWidget):
     # --- tab geometry (unchanged: the tab is still 20x56, peeks 7px, slides
     # the same distance — REST_Y/EXT_Y derive from TASSEL_H and must NOT change) ---
     TASSEL_W = 20
-    TASSEL_H = 56
+    TASSEL_H = 55
     REST_Y = -(TASSEL_H - 7)    # only ~7px peeks below the tab bar
     EXT_Y = 4
     HOLD_MS = 1200
@@ -1882,10 +1882,10 @@ class TasselOverlay(QWidget):
     # texture stays visually consistent across rolls.
     _BEAD_OPTIONS = ((6, 1.6), (7, 1.5), (8, 1.4))
     _BEAD_OPTION_WEIGHTS = (0.65, 0.20, 0.15)
-    _HOLE_R = 2.4       # punch-hole radius where the cord threads through the tab
+    _HOLE_R = 2.6        # punch-hole radius where the cord threads through the tab
     # Anchor: top-centre of the tab, as if the cord threads through a hole there.
     _ANCHOR_X = TASSEL_W // 2
-    _ANCHOR_Y = 3
+    _ANCHOR_Y = 4
     # The tassel hangs down-and-right so its body lands in the visible band
     # below the tab bar (the tab itself is mostly tucked at rest). Head sits
     # only slightly right of the anchor (shorter, more vertical cord) rather
