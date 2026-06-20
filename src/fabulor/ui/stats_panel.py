@@ -1882,6 +1882,7 @@ class TasselOverlay(QWidget):
     # texture stays visually consistent across rolls.
     _BEAD_OPTIONS = ((6, 1.6), (7, 1.5), (8, 1.4))
     _BEAD_OPTION_WEIGHTS = (0.65, 0.20, 0.15)
+    _HOLE_R = 2.4       # punch-hole radius where the cord threads through the tab
     # Anchor: top-centre of the tab, as if the cord threads through a hole there.
     _ANCHOR_X = TASSEL_W // 2
     _ANCHOR_Y = 3
@@ -2230,6 +2231,19 @@ class TasselOverlay(QWidget):
         head_cx = self._HEAD_X + self._HEAD_W / 2 + sway
         head_top = self._HEAD_Y
         head_bottom = self._HEAD_Y + self._HEAD_H
+
+        # Punch hole: where the cord threads through the tab, drawn at the
+        # fixed anchor point (it never sways — only the cord/head/fringe
+        # below it do). A small dark hollow ring, painted over the tab fill
+        # but under the cord, so the cord reads as passing through it rather
+        # than just starting at an arbitrary point in space.
+        hole_r = self._HOLE_R
+        hole_center = QPointF(self._ANCHOR_X, self._ANCHOR_Y)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._bg.darker(160))
+        painter.drawEllipse(hole_center, hole_r, hole_r)
+        painter.setBrush(self._bg.darker(220))
+        painter.drawEllipse(hole_center, hole_r * 0.55, hole_r * 0.55)
 
         # Cord: a real loop (like a ribbon threaded through the bookmark hole
         # and tied at the top) — not just a bow. The path swings OUT past the
