@@ -2215,7 +2215,7 @@ class TasselOverlay(QWidget):
             iw = self._icon.width()
             ih = self._icon.height()
             ix = (self.TASSEL_W - iw) // 2
-            iy = self.TASSEL_H - ih - 6
+            iy = self.TASSEL_H - ih - 7
             painter.drawPixmap(ix, iy, self._icon)
 
         # --- tassel: cord -> bound head -> fanned fringe (swings with sway) ---
