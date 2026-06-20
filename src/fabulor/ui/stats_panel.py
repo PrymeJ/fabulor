@@ -1874,6 +1874,14 @@ class TasselOverlay(QWidget):
     # --- tassel geometry (cord + head + fringe), widget-local coords ---
     SWAY_PAD = 21        # extra width to the RIGHT for the tassel + swing (left edge unchanged)
     CORD_W = 3           # cord stroke width
+
+    # Bead count/radius are rolled once per launch (same "gacha" pattern as
+    # the fringe variation caps below): 65% of the time the baseline 6 beads
+    # @ 1.6px, the rest split across slightly-more/slightly-smaller options.
+    # More beads pairs with a smaller radius so the cord's total beaded
+    # texture stays visually consistent across rolls.
+    _BEAD_OPTIONS = ((6, 1.6), (7, 1.5), (8, 1.4))
+    _BEAD_OPTION_WEIGHTS = (0.65, 0.20, 0.15)
     # Anchor: top-centre of the tab, as if the cord threads through a hole there.
     _ANCHOR_X = TASSEL_W // 2
     _ANCHOR_Y = 3
@@ -2030,6 +2038,8 @@ class TasselOverlay(QWidget):
         # _fringe_variation[i] = (len_delta_px, hue_delta_deg, value_delta) or
         # None for an untouched thread (the majority).
         rng = random.Random()
+        self._bead_count, self._bead_r = rng.choices(
+            self._BEAD_OPTIONS, weights=self._BEAD_OPTION_WEIGHTS, k=1)[0]
         hue_vary, light_vary, vary_fraction = self._roll_fringe_caps(rng)
         self._fringe_variation: list[tuple[float, int, int] | None] = []
         for _ in range(self._FRINGE_COUNT):
@@ -2238,12 +2248,31 @@ class TasselOverlay(QWidget):
                      head_top - self._HEAD_H * 0.8)
         cord = QPainterPath(anchor)
         cord.cubicTo(c1, c2, head_top_pt)
-        pen = QPen(self._cord_color, self.CORD_W)
+        pen = QPen(self._cord_color, max(1.0, self.CORD_W - 1.5))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(cord)
+
+        # Beads: small filled dots strung along the cord at even path-length
+        # intervals, giving it a braided/knotted texture instead of reading as
+        # a single smooth plastic strand. A subtle highlight dot (lighter, half
+        # the radius, offset up-left) on each bead sells it as a rounded bead
+        # rather than a flat circle.
+        painter.setPen(Qt.PenStyle.NoPen)
+        bead_h, bead_s, bead_v, bead_a = self._cord_color.getHsv()
+        bead_highlight = QColor.fromHsv(bead_h, max(0, bead_s - 60), min(255, bead_v + 70), bead_a)
+        for i in range(1, self._bead_count + 1):
+            t = i / (self._bead_count + 1)
+            pt = cord.pointAtPercent(t)
+            painter.setBrush(self._cord_color)
+            painter.drawEllipse(pt, self._bead_r, self._bead_r)
+            painter.setBrush(bead_highlight)
+            painter.drawEllipse(
+                QPointF(pt.x() - self._bead_r * 0.35, pt.y() - self._bead_r * 0.35),
+                self._bead_r * 0.4, self._bead_r * 0.4,
+            )
 
         # Bound head: a small rounded knot (the wrapped binding of the tassel).
         painter.setPen(Qt.PenStyle.NoPen)
