@@ -1,3 +1,74 @@
+## Session Summary — 2026-06-20 Session 1 — Fringe variation gacha, Show-tassel toggle, edge phase-lag shimmer fix
+
+**Branch:** `main`. **Commits:** `52e137c`, `543f3ab`, `d79faaf`, `aa46770`, `44c0434`, `53a20cf`,
+`903a274`, `d36dfac`, `49175ae`, `7170861`.
+
+### What shipped
+
+- **`get_streaks` day-attribution fix** (`52e137c`) — same root cause documented under the prior
+  session's "Process note": `get_streaks` undercounted relative to the streak grid for sessions
+  spanning the `day_start_hour` boundary. Unioned session end-dates into its day-set, mirroring
+  `build_streak_grid_cache`'s three sources (start, end, finished) exactly, without touching
+  `get_active_periods` (which stays start-only for Day/Week/Month nav).
+- **Tassel colors split into five independent theme keys** (`543f3ab`) —
+  `bookmark_body`/`bookmark_icon`/`tassel_cord`/`tassel_head`/`tassel_fringe`, documented in
+  CLAUDE.md/TODO.md (`d79faaf`, `aa46770`). `TODO.md` introduced this session for short
+  deferred-work entries (vs. NOTES.md root-cause writeups / SESSION.md logs) — first entry: the
+  `_NO_BASE_INHERIT_KEYS` theme-inheritance refactor, deliberately blocked on the user's planned
+  full per-theme tuning pass.
+- **Per-launch "gacha" roll for fringe variation caps** (`44c0434`, `53a20cf`) — the fringe's
+  per-thread length/hue/brightness variation amounts are themselves randomized once per app launch
+  rather than fixed constants, skewed toward sane values with a rare flamboyant outlier. First pass
+  used a single `triangular(30, 130, 45)`; live rollout sampling (100-roll batches, then 2000 at
+  scale) showed it skewed loud overall despite the sane-looking mode, because the tail span above
+  45 (85°) carries far more cumulative probability than the tail below it (15°) — measured median
+  64.5/mean 67.2, "nowhere near mostly sane." Fixed with an explicit two-tier gate instead of
+  fighting one continuous distribution: 96% of rolls land in a sane `triangular(30, 70, 45)`, 4% in
+  a separate flat `uniform(90, 130)` "wild" tier — `_roll_fringe_caps`. Also added
+  `derive_head_fallback`: `tassel_head`'s fallback (when a theme doesn't set its own) is now a
+  darker, slightly hue-jittered version of `accent` rather than falling back to `tassel_fringe`.
+- **"Show tassel" toggle** (`903a274`) — Stats panel ⚣ tab, default on, `Config.get/set_show_tassel`.
+  First implementation hid the entire `TasselOverlay` via `setVisible()` — wrong: it also removed
+  the Heatmap↔Streak view-switch control, since the tab and the decorative tassel are the same
+  widget. Caught by the user immediately ("Bookmark will need to be there"). Fixed via a
+  `_show_tassel` flag that gates only the cord/head/fringe paint and the `_tassel_rect` portion of
+  `_in_hit_region`; the tab (`_tab_rect`) always renders and stays clickable regardless.
+- **User's own theme-tuning pass** (`d36dfac`) — added `bookmark_body`/`bookmark_icon`/
+  `tassel_cord`/`tassel_head` overrides to "The Color Purple" and "The Eyrie," and correctly
+  extended `_NO_BASE_INHERIT_KEYS` to cover all five tassel keys now that the base template itself
+  sets some of them — exactly the scenario the `_NO_BASE_INHERIT_KEYS` CLAUDE.md rule warns about.
+- **Fringe edge phase-lag, A/B'd down to one mode, then fixed for a shimmer artifact**
+  (`49175ae`, `7170861`) — wanted a few fringe threads to visibly "do their own thing" rather than
+  all 17 swaying in lockstep. First attempt picked a random sample of threads for either a
+  phase-lagged-replay or a fully independent oscillator (A/B'd via a temporary right-click hook) —
+  too subtle to read, and a random sample blends back into the shared sway since the picked indices
+  are scattered evenly across the fan. Switched to targeting the outermost 5 threads on *each* side
+  specifically (spatially isolated, so individual motion is actually visible), dropped the
+  independent-oscillator mode and the A/B hook entirely (phase_lag alone worked, at lower cost).
+  That surfaced a new symptom: idle sway with the lag applied looked like a color-blend shimmer
+  between neighboring differently-hued threads, worse (not better) with antialiasing disabled on
+  the fringe pass — ruling out AA as the cause. Live A/B testing (disable lag entirely → shimmer
+  drops) confirmed the lag itself was the offender, and further testing showed it only shimmers
+  during idle sway, not during the activation kick. Root cause: idle sway is slow/small enough that
+  a per-thread phase offset between neighbors reads as a separate competing motion (shimmer);
+  the kick is fast/large enough that the same offset reads as "personality" instead. Fix: the edge
+  threads' phase lag now applies ONLY to the kick term in `_fringe_thread_sway`; idle sway is
+  identical across all threads. Accepted as final state — residual color blending at high fringe
+  thread count is a minor cosmetic artifact, not pursued further.
+
+### Process note
+
+Two "live A/B against the running app" investigations this session, both following the same
+pattern: build the variant, the user reports a real but non-obvious symptom, isolate the variable
+by disabling one half of the change at a time rather than guessing. The fringe-shimmer chase in
+particular went through three eliminations (AA on/off, then phase-lag in general, then idle-vs-kick
+specifically) before landing on the actual mechanism — worth remembering that "shimmer" / flicker-
+type visual bugs in this codebase are more often a *relative motion between elements* problem than
+a rendering-pipeline (AA/compositing) problem, given this is the second time in this area that
+intuition pointed at rendering and the real cause was motion.
+
+---
+
 ## Session Summary — 2026-06-19 Session 4 — Per-part tassel theme keys + streak count/grid mismatch fix
 
 **Branch:** `main`.
