@@ -1,3 +1,38 @@
+## Session Summary — 2026-06-22 Session 1 — Timeline/sidebar glyph-clipping fixes (heatmap "J", sidebar T/S, StreakGrid descenders)
+
+**Branch:** `main`. **Commits:** `1d97668`, `a61bf8d`, `84458f7`.
+
+### What shipped
+
+- **`HourlyHeatmap` top date labels: shifted 4px left to stop "J" clipping at the right edge**
+  (`stats_panel.py`) — continuation of the 2026-06-21 Session "J" investigation. Root cause and
+  rejected approaches are written up in full in `NOTES.md`; the shipped fix only moves the rotated
+  rect's `y`-offset (which maps to widget-space x after the -90° rotation) by `-4`, touching nothing
+  else, since `HourlyHeatmap` and `StreakGrid` must stay pixel-identical for the `TasselOverlay`
+  transition.
+- **Sidebar button labels: stopped clipping ascenders/descenders on "T"/"S"** (`themes.py`,
+  `main_window_builders.py`) — `#sidebar QPushButton` had `margin-left: -1px`, originally added to
+  keep "PLAYBACK"'s trailing "K" from clipping the right edge, but it pushed tall glyphs ("T" in
+  TAGS/SETTINGS, "S" in SETTINGS/STATS/SLEEP) past the button's own left edge. Fixed by dropping the
+  negative margin (`margin-left: 0px`) and trimming the sidebar layout's right content margin
+  instead (`setContentsMargins(10, 10, 10, 10)` → `(10, 10, 2, 10)`) — the right margin had no
+  functional purpose and gives the same right-edge breathing room without sacrificing the left edge.
+- **`StreakGrid` left-gutter labels: stopped clipping descenders (e.g. "g" in "Aug")**
+  (`stats_panel.py`) — the row-date label rect was `Qt.AlignVCenter`-anchored within a single 14px
+  cell row, but labels are only drawn every 3rd row, so each label visually owns a much taller band
+  (3 cells, or 2 for the last) down to the next label. Re-derived the rect height per label as that
+  full band (`next_r - r` cells) and switched anchoring from `AlignVCenter` to `AlignTop`, with a
+  small calibrated offset (`y - 1`) landing it correctly per live visual confirmation. This is a
+  **vertical-only** fix — the separate, still-open left-edge first-letter clip ("Jan 01" → "an 01")
+  is unrelated (a horizontal `AlignRight`-overflow issue) and remains deferred; see `NOTES.md`/
+  `TODO.md`.
+- An offscreen month/day-of-month sweep script (render `HourlyHeatmap`/`StreakGrid` with
+  `set_data(..., today=<synthetic date>)` for every month, no system-clock changes needed) confirmed
+  the heatmap fix holds across all 12 months and both narrow/wide day-of-month labels, and confirmed
+  the StreakGrid gutter's first-letter clip is not "J"-specific — most months (Sep, Aug, May, Apr,
+  Nov, Oct, …) lose their first letter, not just J-initial months — worth keeping in mind if/when
+  the deferred horizontal fix is attempted.
+
 ## Session Summary — 2026-06-21 Session 2 — Duplicate session write on graceful app close (checkpoint race fix)
 
 **Branch:** `main`. **Commits:** `83df961`.

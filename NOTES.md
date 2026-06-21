@@ -1,3 +1,38 @@
+## StreakGrid gutter labels: descender clipping (e.g. "Aug") fixed; left-edge first-letter clip confirmed broader than "J" (2026-06-22)
+
+**Symptom:** Separate from the left-edge first-letter clip below, the `StreakGrid` left-gutter row
+labels also clipped descenders vertically — e.g. "Aug 28" rendered with the "g"'s descender cut off
+at the bottom of its cell row.
+
+**Root cause:** the label rect (`QRect(0, y, GUTTER_W-3, CELL)`, `Qt.AlignVCenter`) only spanned a
+single 14px cell row, but labels are drawn only every 3rd row (`drawn = range(0, N_ROWS, 3)`) — each
+visible label visually "owns" the unlabeled rows below it too, down to the next label (3 cells, or 2
+for the last band, since `N_ROWS=26` isn't a multiple of 3). Vertically centering in just the one
+14px row left no room for descenders, even though 2-3x that height was available and unused.
+
+**Fix:** compute each label's owned band height from its row to the next label's row
+(`band_h = (next_r - r) * CELL + (next_r - r - 1) * GAP`), anchor with `Qt.AlignTop` instead of
+`Qt.AlignVCenter`, with a small calibrated vertical offset (`y - 1`, tuned against two rounds of
+live visual feedback: first `+2` margin from band top, then `-2`, settled at `-1` net from the
+original `y`). See [stats_panel.py:1757-1771](src/fabulor/ui/stats_panel.py#L1757-L1771). This is
+vertical-only and does not touch the horizontal `AlignRight` mechanics or the rect width — the
+left-edge first-letter clip documented below is untouched by this fix.
+
+**Scope correction on the left-edge clip (still open):** an offscreen sweep across all 12 months
+(synthetic `today` dates passed straight to `set_data()` — no system clock changes needed) showed
+the left-edge first-letter clip is NOT "J"-specific as the 2026-06-21 entry below described from a
+small sample. "Sep"→"ep", "Aug"→"ug", "May"→"ay", "Apr"→"pr", "Nov"→"ov", "Oct"→"ct" all clip their
+first letter the same way "Jan"→"an" does; "Jul" was the one exception observed. The mechanism
+(string wider than the `AlignRight` rect, side-bearing overflow becoming real ink loss) isn't
+glyph-specific — it's about how much of each specific first-letter's left-side ink sits in the
+overflow band, which varies per letter/kerning, not just per "has a descender" rule. Still deferred
+— see TODO.md. The offscreen sweep script is a reusable regression check for any future attempt
+(loop `date(2026, month, day)` for all 12 months × a few day-of-month values, call
+`HourlyHeatmap.set_data([], d)` / `StreakGrid.set_data({}, {...}, set(), d)`, render to `QPixmap`,
+crop to the gutter region).
+
+---
+
 ## HourlyHeatmap top date labels: "J" clipped — fixed; several intermediate approaches tried and reverted (2026-06-21)
 
 **Symptom:** In the Stats panel's Timeline tab, both views had a "J" clipping bug. `HourlyHeatmap`'s
