@@ -1,3 +1,83 @@
+## HourlyHeatmap top date labels: "J" clipped — fixed; several intermediate approaches tried and reverted (2026-06-21)
+
+**Symptom:** In the Stats panel's Timeline tab, both views had a "J" clipping bug. `HourlyHeatmap`'s
+rotated top date labels showed "un 19" / "un 20" / "un 21" instead of "Jun 19" / "Jun 20" / "Jun 21"
+— originally on the rightmost (most recent) column only; `StreakGrid`'s left-gutter row labels
+showed "un 21" / "ul 20" instead of "Jun 21" / "Jul 20". This is a continuation of the unresolved
+2026-06-10 NOTES.md entry "Timeline header date labels — 'J' glyph clipped at top edge", whose
+fix (`QRect(2, -CELL, DATE_LABEL_H, CELL*2)`, doubling the rotated rect's height) turned out to
+only fix the *non-rightmost* columns — the rightmost column has a second, independent clip source
+that the 2026-06-10 fix didn't touch.
+
+**Root cause (heatmap, rightmost column only):** the doubled rect height (`CELL*2=28`, centered at
+`y=-CELL`) needed by the 2026-06-10 fix made the rotated rect's far edge extend past the widget's
+own right boundary for the last column only — `wx_max = (HOUR_LABEL_W + col*(CELL+GAP) + CELL//2 +
+2) + CELL`, which for `col=N_DAYS-1` exceeds the fixed widget width by ~8px. Qt clips painting at
+the widget boundary regardless of the QRect passed to `drawText` (the QRect only controls
+alignment/wrapping, not a hard clip region) — so the "J" of the rightmost label(s) is cut by the
+widget edge, not by the rect. Every other column has a following cell's width to absorb that same
+~8px overhang, so only the last column showed it.
+
+**Root cause (StreakGrid gutter labels, "Jun 21" / "Jul 20"):** unrelated mechanism, same visual
+symptom. The row-date rect is `QRect(0, y, GUTTER_W-3, CELL)` with `Qt.AlignRight` — Qt anchors the
+text's **right** edge to the rect's right edge; the "Mon DD" string (e.g. "Jun 21", advance ~35px at
+9pt) is wider than the 29px rect, so the string's left side already extends past `x=0` for every
+label in the 14-day cycle (confirmed via `QFontMetrics.boundingRect` on all 9 labels — all had
+negative left bounds). For most letters that overflow is invisible: `boundingRect.x()` being
+negative is normal side-bearing whitespace with no dark pixels there. "J" is the exception — its
+descender hook is real ink sitting in exactly that overflow band, so it alone gets clipped at the
+widget's left edge (`x=0`) while "May 10", "Mar 29", etc. render fully despite the same or larger
+nominal overflow.
+
+**Approaches tried and reverted for the StreakGrid gutter (all confirmed bad, in order):**
+1. **Widen the rect's right edge** (`GUTTER_W+3` instead of `GUTTER_W-3`) to shift the whole
+   AlignRight-anchored string rightward, off the left boundary. Fixed "Jun 21"/"Jul 20" in isolated
+   testing, but in the real app — where active/listened cells render at high opacity — the shifted
+   text's *right* edge now reached into the first grid cell column (`x=32`) and got visibly
+   overpainted by the opaque cell fill ("Jun 2" with the "1" eaten). Moving the anchor only relocates
+   which end of the string clips; the string is wider than the available 0–32px slot at 9pt
+   regardless of where it's positioned.
+2. **Shrink font to 8pt (rect unmoved).** Verified-by-math first (wrongly) as sufiscient; in an actual
+   render it still clipped "Jun 21" → "un 21" — the earlier ink-bound calculation for 8pt had been
+   conflated with a combined "8pt + shift" case, not 8pt alone. 8pt alone was not enough margin.
+3. **Shrink font to 7pt (rect unmoved).** This one *did* render every label fully with no clipping
+   and no cell overlap (verified via `tightBoundingRect`/`boundingRect` math and an offscreen
+   render) — but the user rejected it on sight as illegibly small, with too much resulting dead
+   whitespace in the gutter. **Deferred** — needs a different approach (e.g., a shorter date format
+   at a readable size, or restructuring the gutter) the next time this is picked up. Do NOT default
+   back to shrinking this font as "the fix" without re-confirming legibility first.
+4. **User then fully reverted the gutter changes.** StreakGrid's "Jun 21"/"Jul 20" clipping is
+   UNFIXED and deferred — see TODO.md.
+
+**Approaches tried and reverted for the HourlyHeatmap rightmost column (in order):**
+1. **Widen the whole widget by `+CELL`** (`_update_size`: `w = HOUR_LABEL_W + N_DAYS*(CELL+GAP) +
+   CELL`). Fixed the rightmost-column overflow in isolation, but violates the hard constraint that
+   `HourlyHeatmap` and `StreakGrid` must stay pixel-identical in size (242×448) for the
+   heatmap↔streak `TasselOverlay` transition to align cell-for-cell — reverted.
+2. **Shrink the rotated rect's height from `CELL*2` down to a tightly-measured ~16px** (instead of
+   widening the widget) — this approach did NOT regress to the pre-2026-06-10 bug as long as the
+   measured worst-case ink height (~15px across all "Mon DD" labels at 11pt, via
+   `QFontMetrics.tightBoundingRect`) still fits with margin. Combined with also changing the
+   rotation anchor from `cx+2` to `cx`, this brought the rightmost column's overflow to exactly 0 in
+   calculation — **the user then independently reverted this entire session's changes before this
+   approach was committed**, so it is NOT the shipped fix; recorded here only so it isn't
+   re-investigated as if it were untried.
+
+**Shipped fix (heatmap only):** kept the original `CELL*2`-tall rect and the original widget size
+(both untouched), and instead shifted only the rect's `y`-offset in the rotated coordinate frame
+from `-CELL` to `-CELL-4` (`QRect(2, -self.CELL - 4, self.DATE_LABEL_H, self.CELL * 2)` at
+[stats_panel.py:1052-1057](src/fabulor/ui/stats_panel.py#L1052-L1057)). After `rotate(-90)`, the
+rect's local +y axis maps to widget **-x** (leftward); increasing the magnitude of the negative `y`
+offset by 4 shifts every rendered label 4px left in widget space, off the widget's right edge for
+the last column, without touching `cx` (the cell-anchor x, shared with cell positions), the hour
+labels, or the widget's overall size. (An initial pass shifted by `-5`; the user visually confirmed
+that overshot by 1px and asked for `-4`.) Verified via offscreen render: no clipping on any column
+including the rightmost, and the labels no longer encroach on the cell grid. The `StreakGrid` gutter
+clip is a **separate, still-open bug** — see TODO.md — do not assume this fix also covers it; the
+two labels live in different widgets with different alignment/rotation mechanics.
+
+---
+
 ## Session recorded twice on graceful app close (2026-06-21)
 
 **Symptom (user-reported):** closing the app while a listening session is active records that

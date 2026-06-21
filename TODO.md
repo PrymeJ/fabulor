@@ -6,6 +6,18 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-21] StreakGrid left-gutter date labels clip "J" ("Jun 21"/"Jul 20" -> "un 21"/"ul 20").**
+  `AlignRight`-anchored "Mon DD" text at 9pt is wider than the 29px gutter rect; the overflow is
+  normally invisible (side-bearing whitespace) but "J"'s descender hook is real ink that sits in the
+  overflow band and gets clipped at the widget's left edge. See NOTES.md "HourlyHeatmap top date
+  labels: 'J' clipped" (2026-06-21) for the four approaches tried and rejected (widening the rect
+  pushes the other end into the cell grid; 8pt alone still clips; 7pt fixes it but was rejected as
+  illegibly small with too much dead gutter whitespace). **Blocked on:** a format/layout idea that
+  keeps the label readable at a normal size without widening past `GUTTER_W` (shared, fixed-size
+  with `HourlyHeatmap` for the tab transition). Candidate not yet tried: numeric `M/D` format
+  (shorter; digits don't have "J"'s ink-outside-advance-box problem) — flagged to the user, not yet
+  decided on.
+
 - **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
   via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
   own dict — any key a theme doesn't define falls back to Purple's literal value, not to that

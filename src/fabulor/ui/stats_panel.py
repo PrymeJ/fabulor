@@ -1049,8 +1049,11 @@ class HourlyHeatmap(QWidget):
             # After rotate(-90), rect height maps to horizontal ink space in widget coords.
             # CELL alone is too tight for glyphs with ink outside the em square (e.g. "J").
             # CELL * 2 with y=-CELL centers the rect and gives enough room for all glyphs.
+            # The rect's y-axis maps to widget -x (leftward) after rotation, so shifting
+            # it by -4 here moves the rendered label 4px left in widget space, off the
+            # next cell column, without touching cx (cell anchor) or the hour labels.
             painter.drawText(
-                QRect(2, -self.CELL, self.DATE_LABEL_H, self.CELL * 2),
+                QRect(2, -self.CELL - 4, self.DATE_LABEL_H, self.CELL * 2),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 label
             )
