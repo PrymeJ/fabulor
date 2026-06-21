@@ -1758,7 +1758,15 @@ class StreakGrid(QWidget):
             label_date = self._today - timedelta(days=r * N_COLS)   # leftmost (newest) cell of the row
             label = label_date.strftime('%b %d')
             y = self.TOP_PAD + r * (self.CELL + self.GAP)
-            rect = QRect(0, y, self.GUTTER_W - 3, self.CELL)
+            # Each label owns the band down to the next label's row (3 cells,
+            # or 2 for the last band) — not just its own 14px cell. The band
+            # has far more vertical room than a single cell, so anchor the
+            # text to the band's top (with a small margin) instead of
+            # vertically centering it in 14px, which clipped tall glyphs
+            # (e.g. "g" descender in "Aug") against the cell boundary.
+            next_r = drawn[rank + 1] if rank + 1 < len(drawn) else N_ROWS
+            band_h = (next_r - r) * self.CELL + (next_r - r - 1) * self.GAP
+            rect = QRect(0, y - 1, self.GUTTER_W - 3, band_h - 2)
             cascade_pos = rank if sweep_in else (m - 1 - rank)
             local = self._label_local(cascade_pos, m)
             if local <= 0.0:
@@ -1767,7 +1775,7 @@ class StreakGrid(QWidget):
             label_color = QColor(self._label_color)
             label_color.setAlpha(round(255 * local))
             painter.setPen(label_color)
-            painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, label)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, label)
             painter.restore()
 
         # --- cells ---
