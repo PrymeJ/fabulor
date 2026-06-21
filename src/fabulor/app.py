@@ -1982,6 +1982,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _load_cover_art(self, file_path):
         if not file_path:
             self.current_cover_pixmap = QPixmap()
+            self._showing_placeholder = False
             self.cover_art_label.hide()
             self.metadata_label.hide()
             self.theme_manager.clear_cover_theme()
