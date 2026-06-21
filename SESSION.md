@@ -1,3 +1,29 @@
+## Session Summary — 2026-06-21 Session 1 — Stale placeholder cover after location removal (race fix)
+
+**Branch:** `main`.
+
+### What shipped
+
+- **Fixed intermittent stale logo placeholder after removing a book's library location**
+  (`app.py`) — user reported that a book with no cover (showing the themed logo SVG
+  placeholder) could leave that placeholder visibly stuck on screen in the "no book
+  selected" / "no library folders" empty states after its scan location was removed,
+  non-reproducibly. Root cause: `_load_cover_art("")` (the path `_on_book_removed` uses)
+  hid `cover_art_label` but never reset `self._showing_placeholder` back to `False` — that
+  flag was only cleared on the has-cover path, in `_apply_main_cover`. `clear_cover_theme()`
+  → `_on_theme_changed()` can defer itself via `_panel_guard_timer` (a 700ms single-shot
+  retry) when a panel animation is mid-flight at the moment of removal; when the deferred
+  retry later fires, `_reload_button_icons` checks the stale `_showing_placeholder` flag and
+  unconditionally repaints the logo back onto the label — explaining the intermittency
+  (only manifests if a panel animation happens to be in flight at removal time). Fixed with
+  a one-line reset of `_showing_placeholder = False` in `_load_cover_art`'s empty-path
+  branch. Verified deterministically with a throwaway offscreen-`QApplication` script that
+  forced the race directly (toggled `panel_manager._any_panel_animating()` and fired the
+  single-shot guard timer once, rather than relying on click timing) — confirmed it
+  reproduced against the original code and resolved against the fix — then discarded the
+  script per user's call that this bug class is too narrow to justify a new Qt-backed test
+  category. Invariant recorded in `NOTES.md` instead.
+
 ## Session Summary — 2026-06-20 Session 1 — Fringe variation gacha, Show-tassel toggle, edge phase-lag shimmer fix
 
 **Branch:** `main`. **Commits:** `52e137c`, `543f3ab`, `d79faaf`, `aa46770`, `44c0434`, `53a20cf`,
