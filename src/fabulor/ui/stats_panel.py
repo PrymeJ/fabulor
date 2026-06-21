@@ -363,6 +363,21 @@ def _dim_effect():
 _STATS_ROW_HEIGHT = 52
 
 
+def _fixup_scroll_policy(scroll):
+    """Force the vertical scrollbar off when content doesn't actually overflow the
+    viewport by a full row. QScrollArea's default ScrollBarAsNeeded can show a
+    scrollbar for a few px of layout-margin/rounding overflow that isn't a real
+    extra row -- that scrollbar renders but has nothing meaningful to reveal."""
+    content = scroll.widget()
+    if content is None:
+        return
+    overflow = content.sizeHint().height() - scroll.viewport().height()
+    if overflow < _STATS_ROW_HEIGHT:
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    else:
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+
 class BookDayRow(QWidget):
     clicked = Signal(dict)
 
@@ -2977,6 +2992,7 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._day_scroll = scroll
 
         self._day_rows_widget = QWidget()
         self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
@@ -3081,6 +3097,7 @@ class StatsPanel(QWidget):
         self._day_rows_widget.setUpdatesEnabled(True)
         self._day_rows_layout.invalidate()
         self._day_rows_widget.updateGeometry()
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._day_scroll))
 
         # Blank, not "0m", when the day exists only via a playback finish
         # (no qualifying session rows) — the book shows in the Finished strip.
@@ -3150,6 +3167,7 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._week_scroll = scroll
 
         self._week_rows_widget = QWidget()
         self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
@@ -3253,6 +3271,7 @@ class StatsPanel(QWidget):
         self._week_rows_widget.setUpdatesEnabled(True)
         self._week_rows_layout.invalidate()
         self._week_rows_widget.updateGeometry()
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._week_scroll))
 
         self._week_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
@@ -3319,6 +3338,7 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._month_scroll = scroll
 
         self._month_rows_widget = QWidget()
         self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
@@ -3420,6 +3440,7 @@ class StatsPanel(QWidget):
         self._month_rows_widget.setUpdatesEnabled(True)
         self._month_rows_layout.invalidate()
         self._month_rows_widget.updateGeometry()
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._month_scroll))
 
         self._month_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
