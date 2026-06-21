@@ -359,6 +359,10 @@ def _dim_effect():
     return effect
 
 
+# BookDayRow's intrinsic height: 48px cover + 2px top/bottom margin (layout.setContentsMargins(4, 2, 21, 2))
+_STATS_ROW_HEIGHT = 52
+
+
 class BookDayRow(QWidget):
     clicked = Signal(dict)
 
@@ -2977,10 +2981,21 @@ class StatsPanel(QWidget):
         self._day_rows_widget = QWidget()
         self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
         self._day_rows_layout.setContentsMargins(0, 2, 0, 0)
-        self._day_rows_layout.setSpacing(2)
+        self._day_rows_layout.setSpacing(0)
         self._day_rows_layout.addStretch()
 
         scroll.setWidget(self._day_rows_widget)
+
+        def _day_rows_wheel(e):
+            bar = scroll.verticalScrollBar()
+            notches = -1 if e.angleDelta().y() > 0 else 1
+            target = bar.value() + notches * _STATS_ROW_HEIGHT
+            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
+            e.accept()
+        scroll.wheelEvent = _day_rows_wheel
+
         outer.addWidget(scroll, stretch=1)
 
         self._day_finished_section = QWidget()
@@ -3139,10 +3154,21 @@ class StatsPanel(QWidget):
         self._week_rows_widget = QWidget()
         self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
         self._week_rows_layout.setContentsMargins(0, 2, 0, 0)
-        self._week_rows_layout.setSpacing(2)
+        self._week_rows_layout.setSpacing(0)
         self._week_rows_layout.addStretch()
 
         scroll.setWidget(self._week_rows_widget)
+
+        def _week_rows_wheel(e):
+            bar = scroll.verticalScrollBar()
+            notches = -1 if e.angleDelta().y() > 0 else 1
+            target = bar.value() + notches * _STATS_ROW_HEIGHT
+            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
+            e.accept()
+        scroll.wheelEvent = _week_rows_wheel
+
         outer.addWidget(scroll, stretch=1)
 
         self._week_finished_section = QWidget()
@@ -3297,10 +3323,21 @@ class StatsPanel(QWidget):
         self._month_rows_widget = QWidget()
         self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
         self._month_rows_layout.setContentsMargins(0, 2, 0, 0)
-        self._month_rows_layout.setSpacing(2)
+        self._month_rows_layout.setSpacing(0)
         self._month_rows_layout.addStretch()
 
         scroll.setWidget(self._month_rows_widget)
+
+        def _month_rows_wheel(e):
+            bar = scroll.verticalScrollBar()
+            notches = -1 if e.angleDelta().y() > 0 else 1
+            target = bar.value() + notches * _STATS_ROW_HEIGHT
+            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
+            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
+            e.accept()
+        scroll.wheelEvent = _month_rows_wheel
+
         outer.addWidget(scroll, stretch=1)
 
         self._month_finished_section = QWidget()
