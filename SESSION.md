@@ -310,7 +310,6 @@ replace iterating against a screenshot.
 ### Deferred / unchanged
 
 - Sensitivity / timing of the wheel scroll — may need tuning; deferred to user testing.
-
 ---
 
 ## Session Summary — 2026-06-16 — VU-meter oscillation fix + branch merge
