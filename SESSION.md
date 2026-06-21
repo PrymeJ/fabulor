@@ -1,3 +1,31 @@
+## Session Summary — 2026-06-21 Session 2 — Duplicate session write on graceful app close (checkpoint race fix)
+
+**Branch:** `main`. **Commits:** `83df961`.
+
+### What shipped
+
+- **Fixed listening sessions being recorded twice when the app is closed gracefully while a
+  session is active** (`session_recorder.py`, `app.py`) — user reported a session double-write
+  on normal app close (window close button), not reproducible via force-kill, the 3-minute
+  pause timeout, or switching books. Root cause: `SessionRecorder.close()` wrote the session to
+  the DB *and* deleted the crash-recovery checkpoint (`session_checkpoint.json`) inside the same
+  daemon thread; `closeEvent` called `close()` then immediately `event.accept()`, so the process
+  could exit before that daemon thread reached the `unlink` — the DB write usually landed (one
+  row) but the checkpoint survived on disk, and the next startup's `_recover_checkpoint()`
+  re-wrote the same session again (a second row, differing only in `session_end`). The other
+  three paths never hit this because the app stayed alive long enough for the daemon thread's
+  `unlink` to complete. Fixed with two independent guards: `close()` now returns its flush
+  thread instead of deleting the checkpoint itself; `closeEvent` joins that thread with a bounded
+  0.5s timeout (best-effort — lets the write land) and then calls a new, **synchronous and
+  unconditional** `SessionRecorder.clear_checkpoint()` before `event.accept()`, so the checkpoint
+  can never survive a graceful close regardless of whether the join timed out. Verified live
+  against the running app with temporary debug tracing (stack trace in `close()`, enter/exit
+  prints in `closeEvent`) — confirmed `closeEvent`/`close()` each fire exactly once per close and
+  the resulting DB row is singular with no checkpoint file left behind; debug instrumentation was
+  removed after verification. Root-cause writeup in `NOTES.md`; a new CLAUDE.md rule pins the
+  ordering (`join → clear_checkpoint → event.accept()`) and warns against moving the unlink back
+  into the daemon thread or making the clear conditional on the join.
+
 ## Session Summary — 2026-06-21 Session 1 — Stale placeholder cover after location removal (race fix)
 
 **Branch:** `main`.

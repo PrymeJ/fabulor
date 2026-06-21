@@ -1,3 +1,65 @@
+## Session recorded twice on graceful app close (2026-06-21)
+
+**Symptom (user-reported):** closing the app while a listening session is active records that
+session **twice** in `listening_sessions`. It records correctly (once) when force-killing the
+process, when the 3-minute pause timeout fires, or when loading another book mid-session.
+
+**Root cause — a daemon-thread-vs-checkpoint race.** `SessionRecorder` writes a crash-recovery
+checkpoint (`session_checkpoint.json`) every 30s while a session is live; on startup,
+`_recover_checkpoint()` re-writes any checkpoint with `listened >= 60`. In the original
+`close()`, the DB write **and** the checkpoint `unlink` both happened inside the `_write` closure
+running on a **daemon** thread. `closeEvent` called `close()` then immediately `event.accept()`,
+and the process tore down. Daemon threads are killed on process exit — so the in-flight `_write`
+typically *completed its DB write* (the row landed: copy #1) but never reached the `unlink`. The
+checkpoint survived on disk, and the **next startup's `_recover_checkpoint()` re-wrote the same
+session** (copy #2, with a fresh `session_end`).
+
+Why only the graceful-close path:
+- **Load another book / 3-min timeout** — `close()` runs but the app keeps running, so the daemon
+  thread completes the `unlink` before any restart; checkpoint gone, no duplicate.
+- **Force-kill** — no `closeEvent`, so `close()` never runs; the session is written only once, by
+  recovery on the next startup.
+
+Only graceful close left *both* a landed DB write *and* a surviving checkpoint.
+
+**Fix — two independent guards, because the duplicate and a potential lost-write are different
+failure modes:**
+1. The checkpoint `unlink` was removed from the `_write` daemon closure entirely and moved into a
+   new synchronous `SessionRecorder.clear_checkpoint()`.
+2. `close()` now builds the flush thread into a **local** (not `self._flush_thread` — avoids
+   unnecessary shared state) and returns it (`None` on the sub-60s/no-book discard branch).
+   `closeEvent` does: `t = close(); if t: t.join(timeout=0.5); clear_checkpoint(); event.accept()`.
+
+The join gives the DB write a bounded chance to land; the **unconditional** synchronous
+`clear_checkpoint()` makes the duplicate impossible regardless of how the join resolved. Critically,
+the clear must *not* live inside `_write` after the DB write (its original spot) — if it did, a
+join *timeout* could leave the thread killed after the write committed but before the unlink,
+resurrecting the exact bug. Ordering is load-bearing: `join → clear_checkpoint → event.accept()`,
+all before `accept()` (the point of no return).
+
+**Branch table (every case pinned):**
+
+| Join outcome | Write landed? | Result |
+|---|---|---|
+| Completes (normal) | yes | checkpoint cleared → exactly one row |
+| Times out (DB stalled) | yes | checkpoint cleared anyway → one row, no duplicate |
+| Times out (DB stalled) | no | checkpoint cleared, no row → session lost |
+
+The third row is the only loss case and is reachable only if a **single-row** WAL insert exceeds
+500ms — i.e. the DB is locked/broken, where losing one session row is the least of the problem. The
+DB uses `journal_mode=WAL` with `synchronous` at its WAL default `FULL` (fsync per commit), which
+is routinely sub-millisecond for one row; 500ms absorbs an occasional fsync spike under disk
+pressure with comfortable margin. (Orthogonal lever if it ever proves marginal:
+`PRAGMA synchronous=NORMAL`, safe under WAL — not done.) `losing-at-worst` beats `duplicating`; the
+prior behavior was a *guaranteed* duplicate.
+
+The recovery path's own `unlink` (`finally` in `_recover_checkpoint`) is unchanged — it runs at
+startup while the app stays alive, so its daemon thread completes normally.
+
+**Files:** `session_recorder.py` (`close()` returns the thread, no inline unlink; new
+`clear_checkpoint()`), `app.py` (`closeEvent`).
+
+---
 
 ## Streak count / grid cell mismatch (2026-06-19 Session 4)
 
