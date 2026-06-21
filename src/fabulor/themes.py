@@ -3870,7 +3870,7 @@ def get_sidebar_stylesheet(theme_name="default"):
             color: rgb({sidebar_text_rgb});
             background: transparent;
             border: none;
-            margin-left: -1px;
+            margin-left: 0px;
             text-align: left;
             font-weight: bold;
             padding: 0;

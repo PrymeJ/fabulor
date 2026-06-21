@@ -465,7 +465,7 @@ def build_sidebar(mw):
     mw.sidebar.setObjectName("sidebar")
     mw.sidebar.setFixedWidth(70)
     mw.sidebar_layout = QVBoxLayout(mw.sidebar)
-    mw.sidebar_layout.setContentsMargins(10, 10, 10, 10)
+    mw.sidebar_layout.setContentsMargins(10, 10, 2, 10)
 
     mw.library_trigger_btn = QPushButton("LIBRARY")
     mw.library_trigger_btn.setObjectName("sidebar_library_btn")
