@@ -151,13 +151,20 @@ class SessionRecorder(QObject):
                     if not self._db.get_book_started_at(book.id):
                         self._db.set_started_at(book.id, start)
                     self.session_written.emit()
-                    self._checkpoint_path.unlink(missing_ok=True)
                 except Exception:
                     pass
 
-            threading.Thread(target=_write, daemon=True).start()
+            # NOTE: the checkpoint deletion is deliberately NOT done here. On the
+            # graceful-close path the process exits right after close() returns,
+            # killing this daemon thread before it could unlink — leaving a stale
+            # checkpoint that the next startup re-wrote as a duplicate session.
+            # closeEvent now clears the checkpoint synchronously via
+            # clear_checkpoint() after a bounded join on this thread.
+            t = threading.Thread(target=_write, daemon=True)
+            t.start()
         else:
             print(f"[close_session] discarded — listened={listened:.0f}s < 60s threshold")
+            t = None
 
         self._session_start = None
         self._session_segment_start = None
@@ -165,6 +172,21 @@ class SessionRecorder(QObject):
         self._session_position_start = None
         self._session_furthest_position = None
         self._post_seek_pending_position = None
+
+        return t
+
+    def clear_checkpoint(self):
+        """Synchronously delete the crash-recovery checkpoint, if present.
+
+        Called from closeEvent after a bounded join on close()'s flush thread, so
+        the checkpoint is gone the instant close completes regardless of whether
+        the daemon write thread survived process exit. This is what guarantees the
+        next startup's _recover_checkpoint() can never re-write the just-closed
+        session as a duplicate."""
+        try:
+            self._checkpoint_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def update_furthest_position(self, pos: float | None):
         """Called from the UI timer tick. Updates furthest position if pos advances

@@ -2531,7 +2531,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.scanner._worker_thread.quit()
                 self.scanner._worker_thread.wait()
 
-        self.session_recorder.close()
+        # Join the flush thread briefly so the close write lands, then clear the
+        # checkpoint synchronously — both before event.accept() (the point of no
+        # return). The synchronous clear is unconditional: even if the join times
+        # out, the checkpoint must not survive into the next startup, or recovery
+        # re-writes this session as a duplicate. See session_recorder.clear_checkpoint.
+        flush_thread = self.session_recorder.close()
+        if flush_thread is not None:
+            flush_thread.join(timeout=0.5)
+        self.session_recorder.clear_checkpoint()
         event.accept()
 
     def _validate_smart_rewind_settings(self):
