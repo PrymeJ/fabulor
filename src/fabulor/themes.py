@@ -261,7 +261,9 @@ THEMES = {
         "settings_tab_hover_text":       "#000000",
         "settings_theme_names_dimmed":   "#FFA807",
         "streak_grid_outline":           "#FFBF00",
-        "tassel_fringe":                 "#FFBF00"
+        "tassel_fringe":                 "#FFBF00",
+        "carousel_bg":                   "#241203",
+        "carousel_stripe":               "#B07E09",
     },
     "Blood Meridian": {
         "bg_deep":                       "#502914",
@@ -288,6 +290,7 @@ THEMES = {
         "streak_grid_dot":               "#880D0D",
         "bookmark_body":                 "#A52A2A",
         "tassel_fringe":                 "#E51717",
+        "carousel_bg":                   "#3C1111",
     },
     "Blue Moranth": {
         "bg_deep":                       "#001219",
@@ -350,7 +353,9 @@ THEMES = {
         "streak_grid_outline":           "#89DAEA",
         "streak_grid_dot":               "#722589",
         "tassel_cord":                   "#3BA5BA",
-        "tassel_head":                   "#A826C9"
+        "tassel_head":                   "#A826C9",
+        "carousel_bg":                   "#56275A",
+        "carousel_stripe":               "#BF93BF",
     },
     "Camorr": {
         "bg_deep":                       "#0F1419",
@@ -384,7 +389,8 @@ THEMES = {
         "tassel_cord":                   "#055B4E",
         "tassel_head":                   "#CBCC83",
         "tassel_fringe":                 "#00D4B3",
-
+        "carousel_bg":                   "#0F1910",
+        "carousel_stripe":               "#00A98B",
     },
     "Cerulean Sea": {
         "bg_deep":                       "#181C20",
@@ -436,6 +442,7 @@ THEMES = {
         "bookmark_body":                 "#52C8F7",
         "tassel_head":                   "#57148E",
         "tassel_fringe":                 "#7E6FEF",
+        "carousel_stripe":               "#1D93B4",
     },
     "Chatsubo": {
         "bg_deep":                       "#0D001A",
@@ -477,7 +484,8 @@ THEMES = {
         "tassel_cord":                   "#95B057",
         "tassel_head":                   "#FF00FF",
         "tassel_fringe":                 "#B8EFFA",
-
+        "carousel_bg":                   "#2F0636",
+        "carousel_stripe":               "#F2B54D",
     },
     "Cibola Burn": {
         "bg_deep":                       "#1A0A0A",
@@ -588,6 +596,8 @@ THEMES = {
         "streak_grid_dot":               "#520A52",
         "bookmark_body":                 "#D87A37",
         "bookmark_icon":                 "#871133",
+        "carousel_bg":                   "#56275A",
+        "carousel_stripe":               "#D06A8A",
     },
     "Dorian Grey": {
         "bg_deep":                       "#222222",
@@ -634,6 +644,7 @@ THEMES = {
         "settings_tab_hover_text":       "#333333",
         "settings_theme_names_dimmed":   "#B4B4B4",
         "tassel_fringe":                 "#E8EED1",
+        "carousel_stripe":               "#6EBBC1",
         "gradient_bg_start":             "#222222",
         "gradient_bg_end":               "#333333",
         "gradient_bg_angle":             135,
@@ -755,7 +766,9 @@ THEMES = {
         "tassel_cord":                   "#1AA652",
         "tassel_head":                   "#BF0AA1",
         "tassel_fringe":                 "#D0FFD0",
-        "placeholder_cover":             "#88EB88"
+        "placeholder_cover":             "#88EB88",
+        "carousel_bg":                   "#0A1F0A",
+        "carousel_stripe":               "#38D175",
     },
     "Eyes of Ibad": {
         "bg_deep":                       "#0A1128",
@@ -784,7 +797,9 @@ THEMES = {
         "tassel_cord":                   "#648eac",
         "tassel_head":                   "#F6710A",
         "tassel_fringe":                 "#6D0E57",
-        "placeholder_cover":             "#5E85FF"
+        "placeholder_cover":             "#5E85FF",
+        "carousel_bg":                   "#0A1128",
+        "carousel_stripe":               "#0018f3",
     },
     "Fifth Season": {
         "bg_deep":                       "#0A0A0A",
@@ -838,6 +853,7 @@ THEMES = {
         "tassel_cord":                   "#5A8AAA",
         "tassel_fringe":                 "#7D90B6",
         "placeholder_cover":             "#3A6A8A",
+        "carousel_stripe":               "#73BFC7",
     },
     "Fire and Blood": {
         "bg_deep":                       "#0A0505",
@@ -892,6 +908,8 @@ THEMES = {
         "bookmark_body":                 "#D42020",
         "tassel_head":                   "#E77934",
         "placeholder_cover":             "#D42020",
+        "carousel_bg":                   "#4D0008",
+        "carousel_stripe":               "#C40015",
         "gradient_bg_start":             "#0A0505",
         "gradient_bg_end":               "#1A0A0F",
         "gradient_bg_angle":             135,
@@ -956,6 +974,8 @@ THEMES = {
         "bookmark_icon":                 "#223A7B",
         "tassel_head":                   "#223A7B",
         "placeholder_cover":             "#E8943A",
+        "carousel_bg":                   "#0A1228",
+        "carousel_stripe":               "#2D1BE6",
         "gradient_bg_start":             "#0A1228",
         "gradient_bg_end":               "#121D3D",
         "gradient_bg_angle":             135,
@@ -1012,6 +1032,8 @@ THEMES = {
         "tassel_head":                   "#D46A44",
         "tassel_fringe":                 "#835E28",
         "placeholder_cover":             "#EBA94C",
+        "carousel_bg":                   "#271729",
+        "carousel_stripe":               "#A96926",
     },
     "Gormenghast": {
         "bg_deep":                       "#3B2A24",
@@ -1086,6 +1108,8 @@ THEMES = {
         "tassel_cord":                   "#F2FF4B",
         "tassel_head":                   "#5454E0",
         "tassel_fringe":                 "#EC00CB",
+        "carousel_bg":                   "#0e004d",
+        "carousel_stripe":               "#FF00FF",
         "gradient_bg_start":             "#D328D3",
         "gradient_bg_end":               "#1900FF",
         "gradient_bg_angle":             115
@@ -1131,6 +1155,8 @@ THEMES = {
         "bookmark_icon":                 "#A40202",
         "tassel_head":                   "#860404",
         "tassel_fringe":                 "#FF0000",
+        "carousel_bg":                   "#600007",
+        "carousel_stripe":               "#FF9619",  
     },
     "Highgarden": {
         "bg_deep":                       "#1A2A1A",
@@ -1186,6 +1212,7 @@ THEMES = {
         "tassel_head":                   "#476A24",
         "tassel_fringe":                 "#A47D2C",
         "placeholder_cover":             "#B6DF75",
+        "carousel_stripe":               "#D4AA3A",
         "gradient_bg_start":             "#1A2A1A",
         "gradient_bg_end":               "#3E5A3A",
         "gradient_bg_angle":             135,
@@ -1218,7 +1245,8 @@ THEMES = {
         "bookmark_icon":                 "#1DEA9F",
         "tassel_cord":                   "#38DCA0",
         "tassel_head":                   "#73F2C3",
-        "placeholder_cover":             "#00A86B"
+        "placeholder_cover":             "#00A86B",
+        "carousel_stripe":               "#C44B17",
     },
     "Lilac Girls": {
         "bg_deep":                       "#1E1A24",
@@ -1279,6 +1307,7 @@ THEMES = {
         "tassel_head":                   "#960f6A",
         "tassel_fringe":                 "#AB83A7",
         "placeholder_cover":             "#C496B8",
+        "carousel_stripe":               "#cc89b6",
     },
     "Manderley": {
         "bg_deep":                       "#2E2B33",
@@ -1413,7 +1442,9 @@ THEMES = {
         "bookmark_icon":                 "#5A7085",
         "tassel_head":                   "#D22098",
         "tassel_cord":                   "#C61BB5",
-        "tassel_fringe":                 "#8A1A7E"
+        "tassel_fringe":                 "#8A1A7E",
+        "carousel_bg":                   "#1A1428",
+        "carousel_stripe":               "#C38CC5",  
     },
     "Piranesi": {
         "bg_deep":                       "#1A1E20",
@@ -1466,6 +1497,7 @@ THEMES = {
         "bookmark_body":                 "#686258",
         "bookmark_icon":                 "#C8B898",
         "tassel_head":                   "#423D30",
+        "carousel_stripe":               "#d9cc94",
     },
     "Plum Island": {
         "bg_deep":                       "#141E22",
@@ -1513,14 +1545,14 @@ THEMES = {
         "settings_tab_hover_bg":         "#9AA8B8",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#141E22",
-        "settings_theme_names_dimmed":   "#ac84a5",
-        "bookmark_body":                 "#793a79",
+        "settings_theme_names_dimmed":   "#AC84A5",
+        "bookmark_body":                 "#793A79",
         "bookmark_icon":                 "#3A2A4A",
-        "tassel_cord":                   "#827c59",
-        "tassel_head":                   "#dbd489",
-        "tassel_fringe":                 "#b871b8",
-        "placeholder_cover":             "#936e8d"
-
+        "tassel_cord":                   "#827C59",
+        "tassel_head":                   "#DBD489",
+        "tassel_fringe":                 "#B871B8",
+        "placeholder_cover":             "#936E8D",
+        "carousel_stripe":               "#B13F85",
     },
     "Pyke": {
         "bg_deep":                       "#141A1E",
@@ -1575,6 +1607,7 @@ THEMES = {
         "tassel_head":                   "#DAD3B1",
         "tassel_fringe":                 "#9EA6A7",
         "streak_grid_dot":               "#3D4855",
+        "carousel_bg":                   "#1A2933",
         "gradient_bg_start":             "#141A1E",
         "gradient_bg_end":               "#2A3A42",
         "gradient_bg_angle":             115
@@ -1608,7 +1641,8 @@ THEMES = {
         "settings_tab_hover_text":       "#0B0A0A",
         "settings_theme_names_dimmed":   "#73C4DC",
         "streak_grid_outline":           "#A336FC",
-        "streak_grid_dot":               "#541357"
+        "streak_grid_dot":               "#541357",
+        "carousel_stripe":               "#CF0E9C",  
     },
     "Rebma": {
         "bg_deep":                       "#1A2624",
@@ -1656,7 +1690,9 @@ THEMES = {
         "settings_tab_hover_bg":         "#78B8A0",
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#1A2624",
-        "settings_theme_names_dimmed":   "#94c1b4"
+        "settings_theme_names_dimmed":   "#94C1B4",
+        "carousel_bg":                   "#13312C",
+        "carousel_stripe":               "#00A98B",
     },
     "Red Rising": {
         "bg_deep":                       "#2B0000",
@@ -1701,6 +1737,7 @@ THEMES = {
         "tassel_head":                   "#3E0101",
         "tassel_fringe":                 "#8D0B00",
         "placeholder_cover":             "#B80000",
+        "carousel_stripe":               "#CD1909",
     },
     "Rivendell": {
         "bg_deep":                       "#E0E7E9",
@@ -1785,6 +1822,7 @@ THEMES = {
         "tassel_head":                   "#C45A7A",
         "tassel_fringe":                 "#B151C3",
         "placeholder_cover":             "#C45A7A",
+        "carousel_stripe":               "#E48888",
     },
     "Shade of the Evening": {
         "bg_deep":                       "#0A0A1A",
@@ -1860,6 +1898,7 @@ THEMES = {
         "settings_theme_names_dimmed":   "#B1A792",
         "tassel_fringe":                 "#A18F69",
         "placeholder_cover":             "#B19F78",
+        "carousel_stripe":               "#C5B67F",
         "gradient_bg_start":             "#4A3B2D",
         "gradient_bg_end":               "#7E6B58",
         "gradient_bg_angle":             115,
@@ -1901,6 +1940,7 @@ THEMES = {
         "tassel_head":                   "#FFF7BA",
         "tassel_fringe":                 "#61AAE3",
         "placeholder_cover":             "#7A9BB5",
+        "carousel_stripe":               "#67A0CB",
     },
     "Sitting in the Wing Chair": {
         "bg_deep":                       "#1E1814",
@@ -1948,7 +1988,8 @@ THEMES = {
         "sidebar_text_hover":            "#F0BC6C",
         "sidebar_opacity":               0.84,
         "settings_theme_names_dimmed":   "#B87E3A",
-        "placeholder_cover":             "#BF9054"
+        "placeholder_cover":             "#BF9054",
+        "carousel_stripe":               "#C79C73",
     },
     "Storm's End": {
         "bg_deep":                       "#0A0A0A",
@@ -2002,7 +2043,10 @@ THEMES = {
         "bookmark_body":                 "#6C5825",
         "bookmark_icon":                 "#D4AA3A",
         "tassel_head":                   "#84B7B8",
-        "placeholder_cover":             "#D4AA3A"
+        "placeholder_cover":             "#D4AA3A",
+        "carousel_bg":                   "#0A0A0A",
+        "carousel_stripe":               "#D4AA3A",
+
     },
     "Sunspear": {
         "bg_deep":                       "#2E1E14",
@@ -2052,6 +2096,7 @@ THEMES = {
         "settings_tab_hover_opacity":    0.85,
         "settings_tab_hover_text":       "#F2D8C0",
         "settings_theme_names_dimmed":   "#BF8558",
+        "carousel_stripe":               "#C44B17",
         "gradient_bg_start":             "#2E1E14",
         "gradient_bg_end":               "#5A3A28",
         "gradient_bg_angle":             135,
@@ -2183,7 +2228,9 @@ THEMES = {
         "library_input_text":            "#F05632",
         "settings_theme_names_dimmed":   "#F05632",
         "bookmark_body":                 "#BF785C",
-        "tassel_head":                   "#db4825"
+        "tassel_head":                   "#DB4825",
+        "carousel_bg":                   "#6B0F1E",
+        "carousel_stripe":               "#F05632",
     },
     "Tigana": {
         "bg_deep":                       "#121826",
@@ -2210,7 +2257,8 @@ THEMES = {
         "library_title":                 "C0B89C",
         "settings_theme_names_dimmed":   "#8A8268",
         "placeholder_cover":             "#8A8268",
-        "bookmark_body":                 "#C0B89C"
+        "bookmark_body":                 "#C0B89C",
+        "carousel_stripe":               "#67A0CB",
     },
     "Turquoise Days": {
         "bg_deep":                       "#0A1A24",
@@ -2301,7 +2349,8 @@ THEMES = {
         "library_input_bg":              "#06263F",
         "library_input_text":            "#E9D8A6",
         "settings_theme_names_dimmed":   "#D3EBEC",
-        "streak_grid_dot":               "#155D19"
+        "streak_grid_dot":               "#155D19",
+        "carousel_stripe":               "#A6D2C3",  
     },
     "Violeta": {
         "bg_deep":                       "#140A1A",
@@ -2381,6 +2430,8 @@ THEMES = {
         "bookmark_body":                 "#586372",
         "bookmark_icon":                 "#A2B2CC",
         "tassel_head":                   "#144486",
+        "carousel_bg":                   "#1E2229",
+        "carousel_stripe":               "#17c424",
     },
     "Wasp Factory": {
         "bg_deep":                       "#121212",
@@ -2406,6 +2457,8 @@ THEMES = {
         "settings_theme_names_dimmed":   "#BCB6BB",
         "streak_grid_dot":               "#7B231B",
         "bookmark_icon":                 "#8A582D",
+        "carousel_bg":                   "#381D19",
+        "carousel_stripe":               "#B4691D",
 
     },
     "Waste Lands": {
@@ -2433,6 +2486,7 @@ THEMES = {
         "tassel_head":                   "#4b0d45",
         "tassel_fringe":                 "#247078",
         "placeholder_cover":             "#938B64",
+        "carousel_stripe":               "#C7C69F",
     },
     "Winterfell": {
         "bg_deep":                       "#212529",
@@ -2463,6 +2517,7 @@ THEMES = {
         "bookmark_icon":                 "#9BE4E5",
         "tassel_head":                   "#9BE4E5",
         "tassel_fringe":                 "#96B2B3",
+        "carousel_stripe":               "#A3D8D7",
         "gradient_bg_start":             "#343A40",
         "gradient_bg_end":               "#9BE4E5",
         "gradient_bg_angle":             180,
@@ -2521,6 +2576,7 @@ THEMES = {
         "tassel_head":                   "#A07818",
         "tassel_fringe":                 "#775410",
         "placeholder_cover":             "#E8B020",
+        "carousel_stripe":               "#DEC35E",
     },
 }
 
