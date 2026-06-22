@@ -385,7 +385,7 @@ def build_secondary_controls(mw):
 
     mw.vol_container = QWidget()
     vol_container_layout = QVBoxLayout(mw.vol_container)
-    vol_container_layout.setContentsMargins(0, 6, 0, 0) # Volume bar location
+    vol_container_layout.setContentsMargins(0, 8, 0, 0) # Volume bar location
     vol_container_layout.setSpacing(0)
     vol_container_layout.addWidget(mw.volume_slider)
     vol_container_layout.addStretch()
