@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Split from revert.svg (License: MIT, developmentseed: https://github.com/developmentseed/collecticons-lib).
+     This is the checkmark subpath only (absolute start point computed from the
+     original relative "m10.784,4.916" following the arrow subpath's Z), for the
+     finished-banner revert icon's wipe animation (RevertButton in controls.py). -->
+<svg viewBox="0 0 16 16" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <rect width="16" height="16" id="icon-bound" fill="none" />
+  <path fill="currentColor" d="M10.784,4.916l1.485,1.337l-5.169,5.747l-3.244,-3.206l1.406,-1.422l1.754,1.731l3.768,-4.187Z" />
+</svg>

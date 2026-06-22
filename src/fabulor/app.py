@@ -44,7 +44,7 @@ from .book_switch import BookSwitchState
 # Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
 # main_window_builders module can use them without importing app.py).
 # Re-imported here so existing references in this module keep working unchanged.
-from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon
+from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon, _load_svg_pixmap
 
 # Chapter-slider "sliver" suppression (paused-only display fix).
 # A chapter-nav seek lands at `_seek_target = nominal + offset`, where for VT/CUE the
@@ -383,10 +383,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.cancel_scan_btn.clicked.connect(self.library_controller._on_cancel_scan_clicked)
 
         theme = self.theme_manager.get_current_theme()
-        self._eof_revert_icon = _load_svg_icon("revert.svg", color=theme.get('accent', '#ffffff'))
-        self._eof_revert_icon_hover = _load_svg_icon("revert.svg", color=theme.get('accent_light', theme.get('accent', '#ffffff')))
-        self.eof_revert_btn.setIcon(self._eof_revert_icon)
-        self.eof_revert_btn.setIconSize(QSize(20, 20))
+        self._eof_revert_pixmaps = self._build_eof_revert_pixmaps(theme.get('accent', '#ffffff'))
+        self._eof_revert_pixmaps_hover = self._build_eof_revert_pixmaps(theme.get('accent_light', theme.get('accent', '#ffffff')))
+        self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps)
         self.eof_revert_btn.installEventFilter(self)
         self.eof_revert_btn.clicked.connect(self._on_revert_finish)
         self.eof_close_btn.clicked.connect(self._dismiss_eof_prompt)
@@ -832,21 +831,57 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._banner_anim.setEndValue(QPoint(0, h))
         self._banner_anim.start()
 
+    def _build_eof_revert_pixmaps(self, color: str):
+        """Returns (base_pixmap, checkmark_pixmap) for the finished-banner revert
+        icon, both rendered in `color` at the button's icon size. The base is the
+        circular-arrow only (no checkmark) — what remains once RevertButton's wipe
+        animation has masked the checkmark away. See revert_arrow.svg/revert_check.svg
+        (split from the original revert.svg) and RevertButton in ui/controls.py."""
+        size = QSize(20, 20)
+        base = _load_svg_pixmap("revert_arrow.svg", color=color, size=size)
+        check = _load_svg_pixmap("revert_check.svg", color=color, size=size)
+        return base, check
+
     def _on_revert_finish(self) -> None:
-        if self._eof_book_id is not None:
-            self.db.unfinish_book(self._eof_book_id, self.config.get_day_start_hour())
+        if self._eof_book_id is None:
+            return
+        # Disabled (not hidden) for the duration of the wipe: hiding eof_close_btn
+        # here would let the status_banner's QHBoxLayout (addStretch on both sides
+        # of status_label + eof_revert_btn) reflow and shift that centered group
+        # sideways mid-animation. Both buttons are actually hidden together with
+        # the text swap in _finish_revert, once the layout is being rewritten
+        # anyway, so there is exactly one reflow instead of two.
+        self.eof_revert_btn.setEnabled(False)
+        self.eof_close_btn.setEnabled(False)
+
+        def _finish_revert():
+            book_id = self._eof_book_id
+            if book_id is None:
+                return
+            self.db.unfinish_book(book_id, self.config.get_day_start_hour())
             self._eof_book_id = None
             self.eof_revert_btn.hide()
+            self.eof_revert_btn.setEnabled(True)
             self.eof_close_btn.hide()
+            self.eof_close_btn.setEnabled(True)
+            # show_banner intentionally omitted (left None): the banner is already
+            # visible from the "Marked as finished." prompt, so re-passing True
+            # would re-run _slide_banner_in, which forces the banner off-screen
+            # before sliding it back up — a jarring dismiss-then-reappear for a
+            # banner that never actually left.
             self._update_status_banner_ui(
                 text="Finished status reverted.",
-                show_banner=True,
                 show_cancel=False,
                 auto_hide=True,
                 auto_hide_ms=5000,
             )
             self.stats_panel.refresh_all()
             self.library_panel.refresh()
+
+        def _on_wipe_finished():
+            QTimer.singleShot(450, _finish_revert)
+
+        self.eof_revert_btn.play_wipe(on_finished=_on_wipe_finished)
 
     def _dismiss_eof_prompt(self) -> None:
         """Hide the finished-prompt without touching the DB — the book stays
@@ -1510,7 +1545,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         show_cancel=False,
                         auto_hide=False,
                     )
+                    self.eof_revert_btn.reset_wipe()
+                    self.eof_revert_btn.setEnabled(True)
                     self.eof_revert_btn.show()
+                    self.eof_close_btn.setEnabled(True)
                     self.eof_close_btn.show()
                     self.session_recorder.close()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
@@ -1627,10 +1665,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.next_button.setIcon(_next)
         self._update_skip_icons()
         if hasattr(self, 'eof_revert_btn'):
-            self._eof_revert_icon = _load_svg_icon("revert.svg", color=t.get('accent', '#ffffff'))
-            self._eof_revert_icon_hover = _load_svg_icon("revert.svg", color=t.get('accent_light', t.get('accent', '#ffffff')))
-            self.eof_revert_btn.setIcon(
-                self._eof_revert_icon_hover if self.eof_revert_btn.underMouse() else self._eof_revert_icon
+            self._eof_revert_pixmaps = self._build_eof_revert_pixmaps(t.get('accent', '#ffffff'))
+            self._eof_revert_pixmaps_hover = self._build_eof_revert_pixmaps(t.get('accent_light', t.get('accent', '#ffffff')))
+            self.eof_revert_btn.set_icons(
+                *(self._eof_revert_pixmaps_hover if self.eof_revert_btn.underMouse() else self._eof_revert_pixmaps)
             )
         if self._carousel is not None:
             bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
@@ -2480,9 +2518,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Global event filter to handle dismissing popups on clicks outside."""
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
             if event.type() == QEvent.Enter:
-                self.eof_revert_btn.setIcon(self._eof_revert_icon_hover)
+                self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps_hover)
             elif event.type() == QEvent.Leave:
-                self.eof_revert_btn.setIcon(self._eof_revert_icon)
+                self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps)
 
         try:
             if event.type() == QEvent.MouseButtonPress:

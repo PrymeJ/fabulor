@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
 from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF
-from PySide6.QtGui import QColor, QPainter, QLinearGradient
+from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPainterPath, QPolygonF, QPixmap
 
 class ClickSlider(QWidget):
     valueChanged = Signal(int)
@@ -489,4 +489,116 @@ class ShimmerButton(QPushButton):
 
         painter.setClipRect(self.rect())
         painter.fillRect(self.rect(), grad)
+        painter.end()
+
+
+class RevertButton(QPushButton):
+    """Finished-banner revert icon button. Paints a base ("arrow-only") pixmap plus
+    a "checkmark" pixmap that is wiped away by a diagonal mask sweeping from the
+    icon's top-left corner to its bottom-right corner, driven by the animatable
+    wipe_progress property (0.0 = checkmark fully visible, 1.0 = fully masked).
+    Caller drives the sweep via play_wipe() / reset_wipe() and supplies the two
+    pixmaps via set_icons(); the normal QPushButton icon is intentionally unused
+    so the checkmark can be clipped independently of the arrow underneath."""
+
+    # Checkmark glyph bounding box within revert_check.svg's 16x16 viewBox
+    # (computed from its path data), used to scale the wipe sweep to the
+    # glyph's actual extent instead of the full icon canvas — otherwise most
+    # of the 0->1 progress range crosses empty space around the checkmark
+    # and the visible part of the sweep collapses into the last ~20%.
+    _CHECK_BBOX = (3.856, 4.916, 12.269, 12.0)  # x0, y0, x1, y1 in a 16x16 viewBox
+    _CHECK_MARGIN = 1.5  # viewBox units of slack on each side of the glyph
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._icon_base = QPixmap()
+        self._icon_check = QPixmap()
+        self._wipe_progress = 0.0
+        self._wipe_anim = QPropertyAnimation(self, b"wipe_progress", self)
+        self._wipe_anim.setDuration(550)
+        self._wipe_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._wipe_anim.setStartValue(0.0)
+        self._wipe_anim.setEndValue(1.0)
+
+    def set_icons(self, base_pixmap, check_pixmap):
+        self._icon_base = base_pixmap
+        self._icon_check = check_pixmap
+        self.update()
+
+    def reset_wipe(self):
+        self._wipe_anim.stop()
+        self._wipe_progress = 0.0
+        self.update()
+
+    def play_wipe(self, on_finished=None):
+        self._wipe_anim.stop()
+        if on_finished is not None:
+            try:
+                self._wipe_anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self._wipe_anim.finished.connect(on_finished)
+        self._wipe_progress = 0.0
+        self._wipe_anim.start()
+
+    def _get_wipe_progress(self):
+        return self._wipe_progress
+
+    def _set_wipe_progress(self, val):
+        self._wipe_progress = val
+        self.update()
+
+    wipe_progress = Property(float, _get_wipe_progress, _set_wipe_progress)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._icon_base.isNull():
+            return
+
+        rect = self.rect()
+        x = (rect.width() - self._icon_base.width()) // 2
+        y = (rect.height() - self._icon_base.height()) // 2
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.drawPixmap(x, y, self._icon_base)
+
+        if not self._icon_check.isNull() and self._wipe_progress < 1.0:
+            w, h = self._icon_check.width(), self._icon_check.height()
+            # Diagonal wipe: a cut line sweeps across the checkmark's own bounding
+            # box (not the full icon canvas) as wipe_progress goes 0->1, masking it
+            # away from its top-left tip toward its bottom-right edge. Scoping the
+            # sweep to the glyph's extent (plus a small margin) keeps the whole
+            # 0->1 range visually active — sweeping across the full 16x16 canvas
+            # spent ~80% of the animation crossing empty space around the glyph,
+            # which read as an abrupt, barely-visible collapse near the end.
+            vb0_x, vb0_y, vb1_x, vb1_y = self._CHECK_BBOX
+            margin = self._CHECK_MARGIN
+            scale = w / 16.0  # revert_check.svg's viewBox is 16x16
+            x0 = (vb0_x - margin) * scale
+            y0 = (vb0_y - margin) * scale
+            x1 = (vb1_x + margin) * scale
+            y1 = (vb1_y + margin) * scale
+
+            # The cut line is the anti-diagonal x+y=s, sweeping s from the bbox's
+            # top-left corner sum (x0+y0) to its bottom-right corner sum (x1+y1) as
+            # wipe_progress goes 0->1 — so the whole animation range crosses the
+            # glyph's own extent instead of mostly empty canvas. The polygon itself
+            # is still built against the full canvas (w, h): the unwiped region is
+            # everything on the bottom-right side of the cut line.
+            s = (x0 + y0) + self._wipe_progress * ((x1 + y1) - (x0 + y0))
+            top_x = min(max(s, 0.0), w)
+            top_y = max(s - top_x, 0.0)
+            left_y = min(max(s, 0.0), h)
+            left_x = max(s - left_y, 0.0)
+            poly = QPolygonF([
+                QPointF(top_x, top_y), QPointF(w, 0), QPointF(w, h), QPointF(0, h), QPointF(left_x, left_y),
+            ])
+            path = QPainterPath()
+            path.addPolygon(poly)
+            painter.save()
+            painter.translate(x, y)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, self._icon_check)
+            painter.restore()
         painter.end()

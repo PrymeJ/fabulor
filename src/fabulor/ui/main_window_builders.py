@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, 
 from PySide6.QtGui import QPixmap, QFont, QFontMetrics
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
-from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton
+from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton, RevertButton
 from .carousel import CAROUSEL_STRIPE_W, CAROUSEL_STRIPE_PAD, CAROUSEL_COVER_W
 from .library import LibraryPanel
 from .stats_panel import StatsPanel
@@ -56,7 +56,7 @@ def build_status_banner(mw):
     mw.status_label = QLabel("")
     mw.status_label.setAlignment(Qt.AlignCenter)
 
-    mw.eof_revert_btn = QPushButton()
+    mw.eof_revert_btn = RevertButton()
     mw.eof_revert_btn.setObjectName("eof_revert_btn")
     mw.eof_revert_btn.setFixedSize(22, 22)
     mw.eof_revert_btn.setCursor(Qt.PointingHandCursor)

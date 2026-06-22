@@ -24,7 +24,7 @@ _ASSETS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
 COVER_AREA_HEIGHT = 280
 
 
-def _load_svg_icon(name, color="white"):
+def _load_svg_pixmap(name, color="white", size=None):
     try:
         path = os.path.join(_ICONS_DIR, name)
         with open(path) as f:
@@ -35,13 +35,16 @@ def _load_svg_icon(name, color="white"):
         data = re.sub(r'(stroke:)(?!none)[^;}"]*',     rf'\g<1>{color}',     data)
         ba = QByteArray(data.encode())
         renderer = QSvgRenderer(ba)
-        size = renderer.defaultSize()
-        pixmap = QPixmap(size)
+        pixmap = QPixmap(size if size is not None else renderer.defaultSize())
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
         renderer.render(painter)
         painter.end()
-        return QIcon(pixmap)
+        return pixmap
     except Exception as e:
         print(f"Warning: could not load icon {name}: {e}")
-        return QIcon()
+        return QPixmap()
+
+
+def _load_svg_icon(name, color="white"):
+    return QIcon(_load_svg_pixmap(name, color))
