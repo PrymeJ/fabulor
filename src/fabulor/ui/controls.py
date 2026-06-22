@@ -565,34 +565,27 @@ class RevertButton(QPushButton):
 
         if not self._icon_check.isNull() and self._wipe_progress < 1.0:
             w, h = self._icon_check.width(), self._icon_check.height()
-            # Diagonal wipe: a cut line sweeps across the checkmark's own bounding
-            # box (not the full icon canvas) as wipe_progress goes 0->1, masking it
-            # away from its top-left tip toward its bottom-right edge. Scoping the
-            # sweep to the glyph's extent (plus a small margin) keeps the whole
+            # Right-to-left wipe: a vertical cut line sweeps across the checkmark's
+            # own bounding box (not the full icon canvas) as wipe_progress goes
+            # 0->1, erasing it starting from its right edge — reading as the
+            # checkmark being crossed out / undone, rather than drawn-on. Scoping
+            # the sweep to the glyph's extent (plus a small margin) keeps the whole
             # 0->1 range visually active — sweeping across the full 16x16 canvas
-            # spent ~80% of the animation crossing empty space around the glyph,
-            # which read as an abrupt, barely-visible collapse near the end.
+            # would spend most of the animation crossing empty space around the
+            # glyph, collapsing it abruptly near the end instead of smoothly.
             vb0_x, vb0_y, vb1_x, vb1_y = self._CHECK_BBOX
             margin = self._CHECK_MARGIN
             scale = w / 16.0  # revert_check.svg's viewBox is 16x16
             x0 = (vb0_x - margin) * scale
-            y0 = (vb0_y - margin) * scale
             x1 = (vb1_x + margin) * scale
-            y1 = (vb1_y + margin) * scale
 
-            # The cut line is the anti-diagonal x+y=s, sweeping s from the bbox's
-            # top-left corner sum (x0+y0) to its bottom-right corner sum (x1+y1) as
-            # wipe_progress goes 0->1 — so the whole animation range crosses the
-            # glyph's own extent instead of mostly empty canvas. The polygon itself
-            # is still built against the full canvas (w, h): the unwiped region is
-            # everything on the bottom-right side of the cut line.
-            s = (x0 + y0) + self._wipe_progress * ((x1 + y1) - (x0 + y0))
-            top_x = min(max(s, 0.0), w)
-            top_y = max(s - top_x, 0.0)
-            left_y = min(max(s, 0.0), h)
-            left_x = max(s - left_y, 0.0)
+            # Cut line x=s sweeps from the bbox's right edge (x1) to its left edge
+            # (x0) as wipe_progress goes 0->1. Unwiped (still visible) region is
+            # everything left of the cut line, built against the full canvas height.
+            s = x1 - self._wipe_progress * (x1 - x0)
+            cut_x = min(max(s, 0.0), w)
             poly = QPolygonF([
-                QPointF(top_x, top_y), QPointF(w, 0), QPointF(w, h), QPointF(0, h), QPointF(left_x, left_y),
+                QPointF(0, 0), QPointF(cut_x, 0), QPointF(cut_x, h), QPointF(0, h),
             ])
             path = QPainterPath()
             path.addPolygon(poly)
