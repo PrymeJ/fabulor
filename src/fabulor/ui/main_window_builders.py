@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QGraphicsOpacityEffect, QTabWidget, QListWidget,
 )
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSize, QObject, QEvent
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QFont, QFontMetrics
 
 from .title_bar import TitleBar, RightClickButton, ThemeItem
 from .controls import ClickSlider, ScrollingLabel, HoverButton, FreezableLabel, ShimmerButton
@@ -697,12 +697,22 @@ def build_themes_tab(mw):
     interval_label = QLabel("Interval (min)")
     interval_label.setObjectName("theme_hint")
     interval_row.addWidget(interval_label)
+    interval_row.addSpacing(13)
 
     intervals = [(2, "2"), (5, "5"), (10, "10"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
     for mins, text in intervals:
         lbl = QLabel(text)
         lbl.setObjectName("theme_interval_label")
         lbl.setCursor(Qt.PointingHandCursor)
+        lbl.setAlignment(Qt.AlignCenter)
+        # Fixed at the BOLD variant's width (always >= regular width) so the
+        # selected/unselected toggle (font-weight change) never reflows siblings.
+        # font-size must match the QSS rule (theme_interval_label, 12px) since the
+        # stylesheet's font-size overrides whatever point size lbl.font() reports here.
+        bold_font = QFont(lbl.font())
+        bold_font.setPixelSize(12)
+        bold_font.setBold(True)
+        lbl.setFixedWidth(QFontMetrics(bold_font).horizontalAdvance(text))
         lbl.mousePressEvent = lambda _, m=mins: mw.theme_manager.set_rotation_interval(m)
         mw.theme_manager.interval_widgets[mins] = lbl
         interval_row.addWidget(lbl)
