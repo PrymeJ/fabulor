@@ -369,10 +369,13 @@ _STATS_ROW_HEIGHT = 52
 # viewport, the right-aligned clock_lbl/prog_lbl visibly shifted left/right between rows/refreshes
 # even with no scrollbar-visibility change. Fixed by giving title_lbl/author_lbl a hard
 # setFixedWidth equal to the elision budget, computed to exactly fill the row layout's
-# fixed-width budget: margins(4+21) + cover(48) + spacing(6) + content_block, where
+# fixed-width budget: margins(4+4) + cover(48) + spacing(6) + content_block, where
 # content_block = title_lbl + spacing(6) + clock_lbl(50) == author_lbl + spacing(6) + prog_lbl(98).
-_STATS_TITLE_WIDTH = 117
-_STATS_AUTHOR_WIDTH = 69
+# The row's right margin was previously 21px (a leftover gutter reservation for a
+# conditionally-shown scrollbar); now that the scrollbar gutter lives in the QScrollArea itself
+# (always-on, see _fixup_scroll_policy), the row's own right margin only needs to match the left.
+_STATS_TITLE_WIDTH = 134
+_STATS_AUTHOR_WIDTH = 86
 
 
 def _fixup_scroll_policy(scroll):
@@ -413,7 +416,7 @@ class BookDayRow(QWidget):
                             row_data.get("is_excluded", 0))
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 21, 2)
+        layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(6)
 
         # Cover thumbnail 48x48
