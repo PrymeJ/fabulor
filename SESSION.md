@@ -1,3 +1,67 @@
+## Session Summary — 2026-06-22 Session 3 — Finish-banner revert icon: wipe animation + layout stability
+
+**Branch:** `main`. **Commits:** `db5adf0`, `8e5538d`, `0b70613`, `3c3da56`.
+
+### What shipped
+
+- **Revert icon (↺) now plays a checkmark wipe-erase on click** (`controls.py`, new
+  `RevertButton`; `ui_helpers.py`, new `_load_svg_pixmap`) — `revert.svg` was split into
+  `revert_arrow.svg` (circular arrow only) and `revert_check.svg` (checkmark only) so the
+  checkmark can be masked independently of the arrow underneath. `RevertButton` paints the arrow
+  as a base layer and clips the checkmark with an animated cut line driven by a `wipe_progress`
+  property (0→1, 550ms `InOutQuad`). The cut line is a vertical sweep from the checkmark glyph's
+  own right edge to its left edge (right-to-left), not a sweep across the full 16×16 icon canvas —
+  an earlier diagonal top-left→bottom-right version (also tried, then corrected per user feedback
+  to be right-to-left instead) spent most of its progress range crossing empty space around the
+  glyph (which only occupies the canvas's upper-right portion) and collapsed abruptly in the last
+  ~20%, reading as barely visible. Scoping the sweep to the glyph's measured bounding box
+  (`_CHECK_BBOX`, derived from the SVG path data, plus a margin) keeps the whole animation visually
+  active. Right-to-left was chosen specifically to read as "crossing out/undoing a completed
+  action" rather than as a reveal.
+- **`_on_revert_finish` (`app.py`) now sequences the DB write after the animation, not before** —
+  click plays the wipe, waits 450ms, then writes `db.unfinish_book` and swaps the banner text to
+  "Finished status reverted." Previously the DB write and text swap happened instantly on click.
+- **Fixed three layout/UX regressions found via live testing against the running app, each
+  through the same root cause: changes to the status banner's `QHBoxLayout` reflowing its centered
+  `[status_label, eof_revert_btn]` group:**
+  1. *Icon/button shifted sideways on click* — `eof_close_btn.hide()` was called immediately on
+     click, before the text swap; removing it from the layout shrank the centered group early,
+     then again when `eof_revert_btn` was hidden later — two separate reflows. Fixed by disabling
+     (not hiding) both buttons through the wipe+pause, with the actual hide/text-swap landing
+     together in one place.
+  2. *Banner appeared to dismiss and reappear when the text swapped* — `_update_status_banner_ui`
+     was called with `show_banner=True` for the post-revert text, which (because the banner was
+     already visible) re-ran `_slide_banner_in()` — that method unconditionally forces the banner
+     off-screen via `setGeometry` before animating back in, regardless of current visibility.
+     Fixed by omitting `show_banner` (leaving it `None`) when only the text needs to change.
+  3. *Close (✕) button disappeared once reverted, leaving no way to dismiss except the 5s
+     auto-hide* — and *(found one round later)* the revert icon itself was also being hidden,
+     which the user had to point out wasn't what was wanted: the icon should stay as a visual
+     anchor for the "reverted" state, just disabled. Fixed by keeping `eof_close_btn` permanently
+     visible/enabled across both banner states, re-pointing its `clicked` handler between
+     `_dismiss_eof_prompt` (pre-revert: also retires the revert offer) and a new
+     `_dismiss_status_banner` (post-revert: plain slide-out, no DB-affecting state to clear) via a
+     `_set_eof_close_handler` helper; and keeping `eof_revert_btn` visible-but-disabled
+     (showing the now-wiped arrow-only icon) after the revert instead of hiding it.
+  4. *Remaining shift between the two banner texts* — even with the hide/show timing fixed, the
+     centered group's total width still depended on `status_label`'s text length, so the icon's
+     x-position differed between "Marked as finished." and "Finished status reverted.". Fixed by
+     giving `status_label` a `setMinimumWidth` sized (via `QFontMetrics`, matching the QSS's 15px
+     font-size) to the longer of the two strings — a minimum rather than a hard fixed width, so
+     other unrelated banner messages (scan progress, error text) can still grow past it without
+     clipping. Verified the icon's geometry is pixel-identical between both texts via an offscreen
+     `QApplication` layout probe (not just visual inspection).
+
+### Process note
+
+The wipe direction and the icon-hiding regression were both caught only by the user testing the
+running app and describing what they saw ("wipes right to left... barely noticeable", "the close
+button disappears", "there is no icon next to 'Finished status reverted.'") — code-level
+self-review had missed all three. The checkmark-bbox-vs-full-canvas diagnosis was confirmed by
+rendering the icon at 120px (the in-app 20px size was too small to visually verify the masking
+math) and inspecting frame-by-frame screenshots at multiple `wipe_progress` values before trusting
+the geometry.
+
 ## Session Summary — 2026-06-22 Session 2 — Day/Week/Month stats row layout stability (clipping, dead scrollbar, content-driven label drift, interval selector reflow)
 
 **Branch:** `main`. **Commits:** `fbce19b`, `03ede1a`, `94a6af4`, `80af3fe`, `3a361c8`.

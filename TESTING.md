@@ -113,11 +113,18 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 ## Finish-book status banner (revert/dismiss)
 
 - [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
-- [ ] Revert button: removes the finished status, hides both eof buttons, banner dismisses
+- [ ] Revert button click: plays a right-to-left wipe erasing the checkmark from the icon (≈550ms), pauses briefly, then the banner text swaps to "Finished status reverted."
+- [ ] Revert button: icon and close (✕) button do not shift position when the text swaps between "Marked as finished." and "Finished status reverted." (status_label minimum-width fix)
+- [ ] Revert button: during the wipe + pause, the icon is disabled (not clickable) but stays visible — no flicker or disappearance
+- [ ] Revert button: after the text swap, the icon stays visible showing the arrow-only (no checkmark) icon, disabled — does not hide or vanish
+- [ ] Revert button: db update (unfinish) only lands after the wipe + pause completes, not on the initial click
 - [ ] Revert button: stats panel and library Finished view no longer show the book as finished (without needing to reopen)
-- [ ] Close (✕) button: dismisses the banner and hides both eof buttons without reverting finished status
-- [ ] Banner auto-hides after 10s if neither button is pressed; finished status remains and eof buttons hide along with it
-- [ ] Re-finishing a previously-reverted book shows the banner again and re-marks it as finished
+- [ ] Close (✕) button while "Marked as finished." is showing: dismisses the banner and hides both eof buttons without reverting finished status
+- [ ] Close (✕) button while "Finished status reverted." is showing (i.e. after a revert): dismisses the banner via a plain slide-out (no DB change — already reverted); button must NOT be missing/unresponsive at this point
+- [ ] Banner auto-hides after 10s if neither button is pressed (pre-revert); finished status remains and eof buttons hide along with it
+- [ ] Banner auto-hides after 5s once "Finished status reverted." is showing, if the close button isn't clicked first
+- [ ] Banner does not visibly slide out and back in when the text swaps from "Marked as finished." to "Finished status reverted." (it should update in place, no dismiss-then-reappear)
+- [ ] Re-finishing a previously-reverted book shows the banner again with the checkmark icon fully restored (reset_wipe) and re-marks it as finished
 - [ ] Hover state: eof_revert_btn icon changes from accent to accent_light color; cursor is a pointing hand on both buttons
 - [ ] No tooltip flicker or cursor flicker on either button (HoverButton/tooltip feedback-loop regression check)
 - [ ] Starting a scan while the finish banner is shown: banner is taken over by scan progress, both eof buttons disappear (do not linger alongside the cancel button)
