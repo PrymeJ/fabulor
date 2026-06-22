@@ -388,7 +388,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps)
         self.eof_revert_btn.installEventFilter(self)
         self.eof_revert_btn.clicked.connect(self._on_revert_finish)
-        self.eof_close_btn.clicked.connect(self._dismiss_eof_prompt)
+        self._set_eof_close_handler(self._dismiss_eof_prompt)
 
         self.scan_now_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
         self.add_folder_btn.clicked.connect(self.library_controller._on_scan_now_clicked)
@@ -842,17 +842,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         check = _load_svg_pixmap("revert_check.svg", color=color, size=size)
         return base, check
 
+    def _set_eof_close_handler(self, handler) -> None:
+        """(Re)points eof_close_btn's click at `handler`. The button is shared by
+        two banner states with different dismiss semantics: the "Marked as
+        finished." prompt (_dismiss_eof_prompt — retires the revert offer without
+        touching the DB) and the post-revert "Finished status reverted." banner
+        (a plain slide-out — there is no DB-affecting action left to retire)."""
+        if getattr(self, '_eof_close_handler', None) is not None:
+            self.eof_close_btn.clicked.disconnect(self._eof_close_handler)
+        self.eof_close_btn.clicked.connect(handler)
+        self._eof_close_handler = handler
+
     def _on_revert_finish(self) -> None:
         if self._eof_book_id is None:
             return
-        # Disabled (not hidden) for the duration of the wipe: hiding eof_close_btn
-        # here would let the status_banner's QHBoxLayout (addStretch on both sides
-        # of status_label + eof_revert_btn) reflow and shift that centered group
-        # sideways mid-animation. Both buttons are actually hidden together with
-        # the text swap in _finish_revert, once the layout is being rewritten
-        # anyway, so there is exactly one reflow instead of two.
+        # eof_close_btn stays visible/enabled throughout (just re-pointed below)
+        # so the banner is always dismissable, including during the wipe+pause.
+        # eof_revert_btn is only disabled (not hidden) for the wipe's duration:
+        # hiding it here would let the status_banner's QHBoxLayout (addStretch on
+        # both sides of status_label + eof_revert_btn) reflow and shift that
+        # centered group sideways mid-animation. It's hidden once, in
+        # _finish_revert, alongside the text swap that's rewriting the layout anyway.
         self.eof_revert_btn.setEnabled(False)
-        self.eof_close_btn.setEnabled(False)
+        self._set_eof_close_handler(self._dismiss_status_banner)
 
         def _finish_revert():
             book_id = self._eof_book_id
@@ -862,8 +874,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._eof_book_id = None
             self.eof_revert_btn.hide()
             self.eof_revert_btn.setEnabled(True)
-            self.eof_close_btn.hide()
-            self.eof_close_btn.setEnabled(True)
             # show_banner intentionally omitted (left None): the banner is already
             # visible from the "Marked as finished." prompt, so re-passing True
             # would re-run _slide_banner_in, which forces the banner off-screen
@@ -882,6 +892,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             QTimer.singleShot(450, _finish_revert)
 
         self.eof_revert_btn.play_wipe(on_finished=_on_wipe_finished)
+
+    def _dismiss_status_banner(self) -> None:
+        """Plain dismiss for banner states with no DB-affecting action left to
+        retire (currently: the post-revert "Finished status reverted." banner).
+        Contrast _dismiss_eof_prompt, which also clears _eof_book_id."""
+        self._update_status_banner_ui(show_banner=False)
 
     def _dismiss_eof_prompt(self) -> None:
         """Hide the finished-prompt without touching the DB — the book stays
@@ -1550,6 +1566,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.eof_revert_btn.show()
                     self.eof_close_btn.setEnabled(True)
                     self.eof_close_btn.show()
+                    self._set_eof_close_handler(self._dismiss_eof_prompt)
                     self.session_recorder.close()
                     if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
                         self.stats_panel.refresh_all()
