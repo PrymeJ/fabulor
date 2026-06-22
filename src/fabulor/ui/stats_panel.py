@@ -362,20 +362,40 @@ def _dim_effect():
 # BookDayRow's intrinsic height: 48px cover + 2px top/bottom margin (layout.setContentsMargins(4, 2, 21, 2))
 _STATS_ROW_HEIGHT = 52
 
+# BookDayRow's title/author labels previously had only an elision CAP (max_px), not a fixed
+# width -- so short text produced a narrower label, shrinking the row's total width below the
+# viewport, while long text (elided right up to the cap) produced a wider label. Either way the
+# row's total intrinsic width varied per row, and since the row widget isn't clipped to the
+# viewport, the right-aligned clock_lbl/prog_lbl visibly shifted left/right between rows/refreshes
+# even with no scrollbar-visibility change. Fixed by giving title_lbl/author_lbl a hard
+# setFixedWidth equal to the elision budget, computed to exactly fill the row layout's
+# fixed-width budget: margins(4+21) + cover(48) + spacing(6) + content_block, where
+# content_block = title_lbl + spacing(6) + clock_lbl(50) == author_lbl + spacing(6) + prog_lbl(98).
+_STATS_TITLE_WIDTH = 117
+_STATS_AUTHOR_WIDTH = 69
+
 
 def _fixup_scroll_policy(scroll):
-    """Force the vertical scrollbar off when content doesn't actually overflow the
-    viewport by a full row. QScrollArea's default ScrollBarAsNeeded can show a
-    scrollbar for a few px of layout-margin/rounding overflow that isn't a real
-    extra row -- that scrollbar renders but has nothing meaningful to reveal."""
+    """Keep the vertical scrollbar's gutter reserved at a constant width at all
+    times (policy stays ScrollBarAlwaysOn -- set once at construction, never
+    toggled) so viewport width -- and therefore every row's right-aligned content
+    -- never shifts between refreshes, regardless of row count or scrollbar
+    visibility. Only the handle's visibility/usability changes: hidden via QSS
+    (object property) when content doesn't overflow the viewport by a full row,
+    so the dead-but-visible scrollbar from a few px of rounding overflow never
+    renders, without changing layout width."""
     content = scroll.widget()
     if content is None:
         return
     overflow = content.sizeHint().height() - scroll.viewport().height()
-    if overflow < _STATS_ROW_HEIGHT:
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    else:
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    bar = scroll.verticalScrollBar()
+    needs_bar = overflow >= _STATS_ROW_HEIGHT
+    if bar.property("inert") == (not needs_bar):
+        return
+    bar.setProperty("inert", not needs_bar)
+    bar.setEnabled(needs_bar)
+    bar.style().unpolish(bar)
+    bar.style().polish(bar)
 
 
 class BookDayRow(QWidget):
@@ -441,7 +461,8 @@ class BookDayRow(QWidget):
         # Row 0: Title and Clock Time
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
-        title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=136)
+        title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=_STATS_TITLE_WIDTH)
+        title_lbl.setFixedWidth(_STATS_TITLE_WIDTH)
         if self._is_archived:
             title_lbl.setObjectName("stats_book_title_deleted")
         elif is_finished:
@@ -468,7 +489,8 @@ class BookDayRow(QWidget):
         # Row 1: Author and Percentages
         author_row = QHBoxLayout()
         author_row.setContentsMargins(0, 0, 0, 0)
-        author_lbl = ElidedLabel(row_data.get("book_author", ""), max_px=88)
+        author_lbl = ElidedLabel(row_data.get("book_author", ""), max_px=_STATS_AUTHOR_WIDTH)
+        author_lbl.setFixedWidth(_STATS_AUTHOR_WIDTH)
         author_lbl.setObjectName("stats_book_author")
         f_author = author_lbl.font()
         f_author.setPointSize(f_author.pointSize() - 2)
@@ -2992,6 +3014,11 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Always-on policy reserves a constant-width gutter regardless of row
+        # count -- see _fixup_scroll_policy, which only toggles the handle's
+        # visibility/usability, never the policy, so viewport width (and every
+        # row's right-aligned content) never shifts between refreshes.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._day_scroll = scroll
 
         self._day_rows_widget = QWidget()
@@ -3167,6 +3194,7 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._week_scroll = scroll
 
         self._week_rows_widget = QWidget()
@@ -3338,6 +3366,7 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self._month_scroll = scroll
 
         self._month_rows_widget = QWidget()

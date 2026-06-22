@@ -3577,6 +3577,12 @@ def get_stats_stylesheet(theme_name="default"):
         QScrollBar::sub-page:vertical {{
             background: none;
         }}
+        QScrollBar:vertical[inert="true"] {{
+            background: transparent;
+        }}
+        QScrollBar::handle:vertical[inert="true"] {{
+            background: transparent;
+        }}
         QWidget#tag_manager_row {{
             border-radius: 4px;
         }}
