@@ -1,3 +1,61 @@
+## Session Summary — 2026-06-22 Session 2 — Day/Week/Month stats row layout stability (clipping, dead scrollbar, content-driven label drift, interval selector reflow)
+
+**Branch:** `main`. **Commits:** `fbce19b`, `03ede1a`, `94a6af4`, `80af3fe`, `3a361c8`.
+
+### What shipped
+
+- **Day/Week/Month tabs: 6th row no longer clips, wheel scroll now snaps to row boundaries**
+  (`stats_panel.py`) — with exactly 6 books the bottom row (e.g. "Black Cake") was clipped because
+  6 rows × 52px + 5 × 2px inter-row spacing overflowed the viewport by 10px. Tightened inter-row
+  spacing 2px → 0px across all three tabs' `_*_rows_layout` (saves exactly 10px). Also added a
+  `wheelEvent` override on each tab's `QScrollArea` that snaps the scrollbar value to
+  `_STATS_ROW_HEIGHT` (52px) multiples, clamped to the nearest row-aligned maximum (not the raw
+  `bar.maximum()`, which isn't itself a multiple of 52 and was letting the final downward flick
+  land mid-row) — confirmed clean at both ends in Day/Week/Month.
+- **Exactly-6-row case showed a dead, non-functional scrollbar** — content barely overflowing the
+  viewport by a few px of layout-margin rounding (not a real extra row) tripped Qt's default
+  `ScrollBarAsNeeded`. First attempt toggled the policy `AlwaysOff`/`AsNeeded` per refresh based on
+  measured overflow — this introduced a worse bug (next item) and was superseded.
+- **Root cause of row content drift between dates/tabs** (user caught this with side-by-side
+  screenshots showing labels misaligned even with *no* scrollbar involved) — `title_lbl`/`author_lbl`
+  in `BookDayRow` only had an elision *cap* (`max_px`) via the custom `ElidedLabel`, not a hard
+  `setFixedWidth`. Short text shrank the label below its cap; text elided right up to the cap grew
+  it back up — either way the row's total intrinsic width varied per row/refresh, and since the row
+  isn't clipped to the viewport, the right-aligned duration/percentage labels visibly shifted
+  left/right by row. Confirmed empirically: an isolated single-row reproduction looked stable, but a
+  live debug print of `_day_rows_widget.width()` during real navigation showed it oscillating
+  252/254/266px against a constant 252px viewport. Fixed by giving both labels a real
+  `setFixedWidth` sized to exactly fill the row's fixed-width budget (134px title / 86px author,
+  derived algebraically from the row's margins + cover + spacing + the two fixed-width stat labels).
+  Also reworked the scrollbar-gutter approach to stop being a second source of width variance: the
+  policy now stays permanently `ScrollBarAlwaysOn` (reserves a constant gutter) instead of toggling,
+  and only the handle's visibility/usability toggles via a new QSS `[inert="true"]` property rule
+  (`themes.py`) — so a dead-but-visible scrollbar never renders without affecting layout width.
+- **Right margin rebalanced** — the row's right margin (21px) was a leftover gutter reservation from
+  when the scrollbar was conditionally shown; now that the `QScrollArea` itself always reserves the
+  gutter, trimmed to 4px (matching the left) and grew the title/author widths by the freed 17px.
+  Landed on a final asymmetry the user explicitly accepted as the best achievable tradeoff: 6px to
+  the scrollbar when shown vs. 18px of empty space when not shown — moving further left to balance
+  the scrollbar case would leave an even larger ~22px gap in the no-scrollbar case, which would look
+  worse. No code change from this; documented as accepted, not deferred.
+- **Theme rotation interval selector (Settings → Themes) no longer reflows on selection**
+  (`main_window_builders.py`) — the 7 interval labels (2/5/10/30/60/120/Off) had no fixed width, so
+  the selected state's `font-weight: bold` (`themes.py`) widened the label and pushed every label to
+  its right in the shared `QHBoxLayout`. Fixed by giving each label `setFixedWidth` computed via
+  `QFontMetrics` against the **bold** variant (always ≥ the regular width) at the QSS's actual 12px
+  font-size, center-aligned. This left the option group flush-left with an unbalanced trailing
+  gap (since the group got wider); added a 13px fixed spacer after "Interval (min)" (tuned live from
+  an initial 18px guess, then -5px) to recenter the group within the row.
+
+### Process note
+
+Several of these fixes were found, tested, and corrected through live back-and-forth with the user
+comparing real screenshots — two rounds (scrollbar-gutter race, then the actual label-width root
+cause) were initially misdiagnosed from code-reading alone and only confirmed/disproven by the
+user's side-by-side screenshot comparisons and a live debug-print capture relayed manually (the
+`entr` dev-loop's stdout wasn't redirectable to a file Claude could read directly — the user pasted
+the `[DEBUG]` lines from their terminal instead).
+
 ## Session Summary — 2026-06-22 Session 1 — Timeline/sidebar glyph-clipping fixes (heatmap "J", sidebar T/S, StreakGrid descenders)
 
 **Branch:** `main`. **Commits:** `1d97668`, `a61bf8d`, `84458f7`.
