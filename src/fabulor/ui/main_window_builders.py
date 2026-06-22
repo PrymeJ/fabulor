@@ -55,6 +55,17 @@ def build_status_banner(mw):
 
     mw.status_label = QLabel("")
     mw.status_label.setAlignment(Qt.AlignCenter)
+    # Minimum width pinned to the longer of the two EOF-prompt strings ("Marked
+    # as finished." / "Finished status reverted.") so that swapping between them
+    # doesn't change the centered [status_label, eof_revert_btn] group's total
+    # width — which would otherwise shift eof_revert_btn sideways when the text
+    # changes. A minimum (not a hard fixed width) lets other, longer banner
+    # messages (e.g. scan progress) still grow past it without clipping.
+    # font-size must match the QSS rule (QWidget#status_banner QLabel, 15px)
+    # since the stylesheet overrides whatever point size .font() reports here.
+    _status_font = QFont(mw.status_label.font())
+    _status_font.setPixelSize(15)
+    mw.status_label.setMinimumWidth(QFontMetrics(_status_font).horizontalAdvance("Finished status reverted."))
 
     mw.eof_revert_btn = RevertButton()
     mw.eof_revert_btn.setObjectName("eof_revert_btn")

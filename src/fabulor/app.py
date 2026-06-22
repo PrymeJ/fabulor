@@ -858,11 +858,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         # eof_close_btn stays visible/enabled throughout (just re-pointed below)
         # so the banner is always dismissable, including during the wipe+pause.
-        # eof_revert_btn is only disabled (not hidden) for the wipe's duration:
-        # hiding it here would let the status_banner's QHBoxLayout (addStretch on
-        # both sides of status_label + eof_revert_btn) reflow and shift that
-        # centered group sideways mid-animation. It's hidden once, in
-        # _finish_revert, alongside the text swap that's rewriting the layout anyway.
+        # eof_revert_btn stays visible too (showing the wiped, arrow-only icon as
+        # the "reverted" state's visual anchor) — only disabled, since there's
+        # nothing left to click. It is deliberately never hidden: hiding it would
+        # shrink the status_banner's QHBoxLayout's centered [status_label,
+        # eof_revert_btn] group, shifting status_label sideways relative to where
+        # it sits while the icon is showing.
         self.eof_revert_btn.setEnabled(False)
         self._set_eof_close_handler(self._dismiss_status_banner)
 
@@ -872,8 +873,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 return
             self.db.unfinish_book(book_id, self.config.get_day_start_hour())
             self._eof_book_id = None
-            self.eof_revert_btn.hide()
-            self.eof_revert_btn.setEnabled(True)
             # show_banner intentionally omitted (left None): the banner is already
             # visible from the "Marked as finished." prompt, so re-passing True
             # would re-run _slide_banner_in, which forces the banner off-screen
