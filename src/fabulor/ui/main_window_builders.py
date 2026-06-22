@@ -391,6 +391,11 @@ def build_secondary_controls(mw):
     vol_container_layout.addStretch()
     mw.vol_stack.addWidget(mw.vol_container)
 
+    mw.muted_icon_label = QLabel()
+    mw.muted_icon_label.setObjectName("muted_icon_label")
+    mw.muted_icon_label.setAlignment(Qt.AlignCenter)
+    mw.vol_stack.addWidget(mw.muted_icon_label)
+
     book_info_layout.addWidget(mw.current_time_label)
     book_info_layout.addWidget(mw.vol_stack)
     book_info_layout.addStretch(1)
@@ -410,6 +415,10 @@ def build_secondary_controls(mw):
     mw.vol_hide_timer = QTimer(mw)
     mw.vol_hide_timer.setSingleShot(True)
     mw.vol_hide_timer.timeout.connect(mw._fade_out_volume)
+
+    mw.muted_icon_flash_timer = QTimer(mw)
+    mw.muted_icon_flash_timer.setSingleShot(True)
+    mw.muted_icon_flash_timer.timeout.connect(mw._settle_vol_stack)
 
 
 def build_carousel_covers(mw):

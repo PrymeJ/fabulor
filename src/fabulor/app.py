@@ -585,7 +585,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.timer_started.connect(self._on_sleep_timer_started)
         self.sleep_panel.timer_stopped.connect(self._on_sleep_timer_stopped)
         self.sleep_panel.timer_expired.connect(self._on_sleep_timer_expired)
-        self.sleep_panel.display_text_updated.connect(self.sleep_timer_label.setText)
+        self.sleep_panel.display_text_updated.connect(self._on_sleep_display_text_updated)
         self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
         self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
@@ -596,6 +596,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
+        self._settle_vol_stack()
 
         QTimer.singleShot(4000, self.library_panel.start_idle_preload)
 
@@ -1680,6 +1681,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.next_button.setText("")
             self.next_button.setIcon(_next)
         self._update_skip_icons()
+        if hasattr(self, 'muted_icon_label'):
+            muted_color = t.get('slider_vol_fill', t['text'])
+            self.muted_icon_label.setPixmap(_load_svg_pixmap("muted.svg", muted_color, QSize(14, 14)))
         if hasattr(self, 'eof_revert_btn'):
             self._eof_revert_pixmaps = self._build_eof_revert_pixmaps(t.get('accent', '#ffffff'))
             self._eof_revert_pixmaps_hover = self._build_eof_revert_pixmaps(t.get('accent_light', t.get('accent', '#ffffff')))
@@ -2511,6 +2515,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer."""
         self.vol_hide_timer.stop()
+        self.muted_icon_flash_timer.stop()
         self.vol_stack.setCurrentIndex(1)
         if self.vol_opacity.opacity() < 1.0:
             self.vol_fade_anim.stop()
@@ -2528,7 +2533,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_vol_fade_finished(self):
         if self.vol_opacity.opacity() == 0:
+            self._settle_vol_stack()
+
+    def _settle_vol_stack(self):
+        """Picks the vol_stack page to rest on: the muted icon if volume is 0
+        and no sleep timer is active, else the sleep timer label (which may
+        be empty text). Callers that must not disturb an in-progress volume
+        overlay should check vol_stack.currentIndex() == 1 themselves first."""
+        muted = self.volume_slider.value() == 0
+        sleep_active = bool(self.sleep_timer_label.text())
+        if muted and not sleep_active:
+            self.vol_stack.setCurrentIndex(2)
+        else:
             self.vol_stack.setCurrentIndex(0)
+
+    def _on_sleep_display_text_updated(self, text):
+        if self.vol_stack.currentIndex() == 1:
+            # Volume overlay is showing — it takes precedence; the sleep
+            # label text is already up to date underneath it and will be
+            # picked up by the post-fade settle.
+            self.sleep_timer_label.setText(text)
+            return
+        was_muted_icon_showing = self.vol_stack.currentIndex() == 2
+        self.sleep_timer_label.setText(text)
+        if text and was_muted_icon_showing:
+            # A sleep timer just became active while the muted icon was
+            # resting — let it flash briefly before the sleep label takes over.
+            self.muted_icon_flash_timer.start(3000)
+        else:
+            self._settle_vol_stack()
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
