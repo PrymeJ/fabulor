@@ -40,7 +40,9 @@
   quirks) were tested and ruled out before the real cause was found.
 - **Minor:** volume slider's vertical position nudged 2px down (`cd8fd33`); three themes (Eye of
   Ibad, Fifth Season, The Overlook) had unrelated color/contrast touch-ups (`6038986`); `muted.svg`'s
-  source icon was swapped mid-session, before the icon was wired up in code (`884ab37` → `7bda945`).
+  source icon was swapped mid-session, before the icon was wired up in code (`884ab37` → `7bda945`) —
+  the first icon drew a speaker with an explicit "x" to denote mute, judged too blunt; the
+  replacement is subtler, a plain speaker with no sound lines, still easily read at a glance.
 
 ### Process note
 

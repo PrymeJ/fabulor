@@ -6,6 +6,31 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible.** Only
+  `visual_area` (the cover art) currently handles volume wheel events (`wheelEvent` in `app.py`).
+  Scrolling directly over the volume slider or the muted icon while either is visible/showing is a
+  no-op, which is surprising — muscle memory expects scrolling over a volume control to adjust it,
+  especially right after it's been shown. Needs care: if the empty space *around* where the slider
+  appears (within `vol_stack`'s 104×24 box) also accepts scroll, that could itself feel inconsistent
+  once the box is empty/hidden again. Decide the exact hit-region before implementing.
+- **[2026-06-23] Slider→muted-icon transition is abrupt.** When volume hits 0% with no sleep timer
+  active, `_show_volume_overlay` jumps straight to the muted icon with no transition (see
+  `ed563a4`/`81734d3` — this was a deliberate choice to skip the slider preview, not an oversight).
+  Visually it reads as a hard cut. Idea floated: a quick two-sided mask/wipe that conceals the
+  volume bar first, then reveals the muted icon, rather than an instant swap. Needs a concrete
+  animation design before implementing — not just "add a fade."
+- **[2026-06-23] Clicking the muted icon (and a future `M` key) should restore volume — to what
+  value?** Naive "restore to 100%" is probably wrong. Likely wants the same kind of "value before
+  manipulation started" capture that `Player.save_seek_position`/`undo_seek` already use for
+  seeking (one-level undo, captured at the start of a manipulation). Needs its own capture point
+  for volume — probably at the first wheel/drag/key event of a manipulation "session," not on every
+  change. Design this alongside the `M` key shortcut, not before — see git history around
+  `ed563a4` for the muted-icon work this builds on.
+- **[2026-06-23] Arrow-key volume control (if/when added) must integrate with the auto-hide timer
+  the same way wheel/click/drag do.** Whatever wires up arrow keys for volume needs to call through
+  the same path as `_on_volume_changed`/`_show_volume_overlay` (see `64e75cc`), not a separate one —
+  otherwise the overlay could disappear mid-keypress the same way dragging used to before that fix.
+
 - **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
   via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
   own dict — any key a theme doesn't define falls back to Purple's literal value, not to that
