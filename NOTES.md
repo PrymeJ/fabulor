@@ -1,3 +1,59 @@
+## `book_info_layout` 2px centering drift: missing `setSpacing(0)`, not an icon/font/style issue (2026-06-23)
+
+**Symptom:** the volume slider, sleep-timer countdown label, and new muted-volume icon — all three
+pages of the `vol_stack` `QStackedWidget` — read as shifted right relative to the play button and
+the chapter name label above them. Visually subtle (a few px) but real, confirmed by the user with
+two identical squares drawn in an image editor and placed against each widget's own left/right
+margins.
+
+**Wrong diagnoses tried first, in order, each disproven before moving to the next:**
+1. The muted icon's SVG had an asymmetric `viewBox` (`viewBox="-3.5 0 24 24"`) — measuring the
+   rendered glyph's bounding box at high resolution showed it was in fact centered within ~1%, so
+   this wasn't the cause. A "nudge the icon a few px left" workaround was applied anyway (tuned by
+   eye to 6px, since the *layout* bug was still present and uncorrected at that point) and later
+   fully reverted once the real fix landed — see below.
+2. "Optical centering" (the icon's solid speaker body reads as visually heavier than its thinner
+   left side, even with a centered bounding box) — plausible-sounding, and the rendered icon really
+   does look asymmetric at small sizes, but this was the wrong explanation: it doesn't explain why
+   the volume *slider* and the sleep *label* — both completely different render paths with no
+   shape-weight component — showed the exact same rightward drift.
+3. `QPushButton` (the sleep-timer label) text-centering quirks under Fusion style, stylesheet
+   specificity, `SE_PushButtonContents` content-rect margins — multiple isolated PySide6 scripts
+   were built to test `QStyleOptionButton`/`subElementRect`/raw pixel renders of the button alone,
+   and every one of them came back correctly centered. This was real evidence, but it was evidence
+   about a synthetic reconstruction, not the actual running app — the gap between the two turned out
+   to be the actual bug.
+
+**Root cause:** `book_info_layout` (`main_window_builders.py`, the row containing
+`current_time_label | vol_stack | total_time_label`) never called `setSpacing(0)`, so Qt's default
+inter-item spacing (Fusion style default, several px) was inserted at every gap between consecutive
+layout items — including the two `addStretch(1)` spacer items flanking `vol_stack`. Spacer items and
+real widgets don't necessarily get identical treatment from the default spacing in every Qt layout
+configuration, and the net effect measured here was a 4px asymmetry: `vol_stack`'s left margin from
+the window edge measured 100px, its right margin measured 96px (confirmed via real `QWidget.geometry()`
+and `mapTo()` dumps from a temporary debug keypress handler in `app.py`, not from any isolated
+synthetic script). The sibling `chapter_info_layout` row (which centers "Chapter 1" correctly, and
+was the reference the user kept comparing against) has only 3 items with the centered widget itself
+stretching — no `addStretch()` spacer items at all — so it never hit this asymmetry.
+
+**Fix:** `book_info_layout.setSpacing(0)`, plus adding a matching `addStretch(1)` before
+`current_time_label`'s sibling `vol_stack` (previously there was a stretch only *after* `vol_stack`,
+left-packing the row instead of centering it) — see
+[main_window_builders.py:401-407](src/fabulor/ui/main_window_builders.py#L401-L407). Confirmed fixed
+via the same debug-geometry dump: `vol_stack` now sits at x=98 with a symmetric 98px margin on both
+sides of a 300px window. The muted-icon nudge workaround from diagnosis #1 was removed entirely once
+this landed — the icon needed zero compensation once the real layout bug was fixed.
+
+**Lesson for future layout-centering bugs:** when a `QHBoxLayout` mixes `addStretch()` spacers with
+real widgets and a row reads as off-center by a small, consistent amount, check `setSpacing()` on
+that specific layout before suspecting the painted content (icons, fonts, button styles) — and when
+synthetic reconstructions keep disagreeing with a user's direct visual report, get real
+`geometry()`/`mapTo()` numbers from the running app rather than continuing to refine the
+reconstruction. A temporary keypress-triggered debug dump (this session used `G`, removed after the
+fix) is fast to wire up and far more conclusive than re-deriving Qt's layout math by hand.
+
+---
+
 ## StreakGrid gutter labels: both descender clipping ("Aug") AND left-edge first-letter clipping ("Jan"/most months) fixed by the same band-height change (2026-06-22)
 
 **Symptom:** Two distinct-looking clips on the `StreakGrid` left-gutter row labels turned out to

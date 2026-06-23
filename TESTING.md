@@ -353,6 +353,28 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [x] Chapter notches functional along with their settings, only animate when a book is loaded
 - [x] Volume slider functional
 - [x] Volume slider draggable
+- [ ] Volume overlay (slider) auto-hide timer resets on click, not just on wheel scroll
+- [ ] Volume overlay (slider) auto-hide timer resets on drag, not just on wheel scroll
+- [ ] Pressing the volume slider without moving it (press-and-hold) extends the auto-hide timer
+- [ ] Volume slider, sleep-timer label, and muted icon are all pixel-aligned with the play button/chapter label center (no visible left/right drift — see NOTES.md margin bug if this regresses)
+
+## Muted-volume icon (isolated, no sleep timer)
+
+- [ ] Scrolling volume down to 0% (no sleep timer active) shows the muted icon immediately — no slider preview, no fade delay
+- [ ] Scrolling volume up from 0% shows the normal slider overlay (2s visible + fade), not the icon
+- [ ] Dragging the volume slider to exactly 0% (no sleep timer active) shows the muted icon immediately after release
+- [ ] Muted icon is centered in its indicator slot (compare against the play button/chapter label — see Sliders section above)
+- [ ] Muted icon recolors correctly on theme change (`slider_vol_fill` key; check a theme that overrides it and one that falls back to `text`)
+- [ ] Muted icon disappears the instant volume is raised above 0%
+
+## Muted-volume icon + sleep timer interaction
+
+- [ ] Mute first (volume to 0%, no timer), then start a sleep timer — countdown label appears immediately, muted icon does NOT flash or linger
+- [ ] Start a sleep timer first, then mute — slider overlay still previews normally (2s + fade) at 0%, then settles back to the countdown label, never to the muted icon
+- [ ] While a sleep timer is active and volume is 0%, the indicator always shows the countdown, never the muted icon, for the entire duration of the timer
+- [ ] Let an active sleep timer expire/get cancelled while volume is still at 0% — muted icon appears immediately once the countdown clears
+- [ ] Unmuting while a sleep timer is active never reveals the muted icon at any point (no flash during the transition)
+- [ ] Toggling mute on/off repeatedly while a sleep timer counts down — countdown text never gets stuck hidden behind the volume overlay or the muted icon
 
 ## UI
 
@@ -360,10 +382,11 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [x] Current chapter corresponds to progress bar position
 - [x] Book time: Elapsed (Fixed width, left)
 - [x] Book time: Total/Remaining toggle (Fixed width, right, persists)
-- [ ] Book time total/remaining label shows hand cursor on hover
+- [ ] Book time total/remaining label shows hand cursor on hover, only over the rendered text (not the empty reserved space to its left)
+- [ ] Book time total/remaining label click only toggles when clicking the rendered text itself — clicking the empty space left of the text (within the fixed-width box) does nothing
 - [x] Chapter time: Elapsed (Fixed width, left)
 - [x] Chapter time: Total/Remaining toggle (Fixed width, right, synced with book toggle)
-- [ ] Chapter time total/remaining label shows hand cursor on hover
+- [ ] Chapter time total/remaining label click only toggles when clicking the rendered text itself — clicking the empty space left of the text does nothing (no hand cursor on this one by design — never had one)
 - [x] Chapter name opens drop-up (click or press c)
 - [x] Chapter name click closes drop-up when open
 - [x] Chapter names in drop-up responsive

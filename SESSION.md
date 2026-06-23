@@ -1,3 +1,61 @@
+## Session Summary — 2026-06-23 Session 1 — Muted-volume icon, sleep-timer precedence, and a real centering bug behind both
+
+**Branch:** `main`. **Commits:** `cd8fd33`, `884ab37`, `6038986`, `7bda945`, `28e95c1`, `ed563a4`,
+`64e75cc`, `81734d3`.
+
+### What shipped
+
+- **New muted-volume icon** (`muted.svg`, `app.py`, `main_window_builders.py`) — `vol_stack` (the
+  `QStackedWidget` shared by the volume-overlay slider and the sleep-timer label) gained a third
+  page: a themed icon shown whenever volume is 0. Colored via the `slider_vol_fill` theme key,
+  falling back to `text`.
+- **Sleep timer always takes precedence over the muted icon** — whether muting happens before or
+  after a sleep timer starts, the countdown label wins and the muted icon never shows while a timer
+  is active. Muting with no timer running jumps straight to the icon, skipping the volume slider's
+  normal 2s-visible-then-fade preview. An earlier flash-then-yield design (show the icon briefly,
+  then hand off to the sleep label) was implemented, found to never reliably hand back control, and
+  was removed rather than patched — see `_settle_vol_stack`/`_on_sleep_display_text_updated`
+  (`app.py`).
+- **Volume slider's auto-hide timer now resets on every real interaction** — previously only mouse
+  wheel scrolling reset the 2s auto-hide timer; clicking or dragging the slider only emitted
+  `valueChanged` (relevant only when the value actually changes) and could let the overlay fade out
+  mid-drag. `_on_volume_changed` now re-triggers `_show_volume_overlay` on every value change, and a
+  new `_on_volume_slider_pressed` (wired to `sliderPressed`) extends the timer even when pressing
+  without moving.
+- **Time-label click area and hover cursor now match the rendered text, not the fixed-width box**
+  (`total_time_label`, `chap_duration_label`) — both labels reserve 80px/48px to fit worst-case hour
+  counts the text essentially never reaches; clicking anywhere in that reserved empty space used to
+  toggle remaining/total time, and `total_time_label` showed a hand cursor across the whole box.
+  `_label_click_in_text` (a small shared helper) now gates both the click handler and a new
+  `mouseMoveEvent`-driven cursor swap to the text's actual `fontMetrics()` width.
+- **Root-caused and fixed a real 2px layout-centering bug in `book_info_layout`** that was the
+  actual cause of the muted icon (and, on inspection, the volume slider and sleep label too) reading
+  as off-center relative to the play button/chapter label above it. `book_info_layout` had no
+  explicit `setSpacing(0)`, so Qt's default inter-item spacing was distributed asymmetrically
+  between the two `addStretch()` spacers and the real widgets — confirmed via real widget-geometry
+  dumps (a temporary `G` keypress handler), not visual inspection alone. Fixed by `setSpacing(0)`
+  plus giving `current_time_label` a matching leading stretch, mirroring the already-symmetric
+  `chapter_info_layout` structure. See NOTES.md for the full debugging path — several plausible but
+  wrong diagnoses (SVG viewBox asymmetry, optical icon-weight illusion, QPushButton text-centering
+  quirks) were tested and ruled out before the real cause was found.
+- **Minor:** volume slider's vertical position nudged 2px down (`cd8fd33`); three themes (Eye of
+  Ibad, Fifth Season, The Overlook) had unrelated color/contrast touch-ups (`6038986`); `muted.svg`'s
+  source icon was swapped mid-session, before the icon was wired up in code (`884ab37` → `7bda945`).
+
+### Process note
+
+This session is a case study in not trusting synthetic reconstructions over the user's direct visual
+evidence. The user reported an off-center icon; rather than accept that and investigate the real
+widget tree, several rounds were spent re-deriving box math in isolated PySide6 scripts that kept
+coming back "centered" — including one round where a debugging script's own measurement was misread
+against the wrong reference point. The user's own measurement method (two identical squares,
+copy-pasted in an image editor, placed against each widget's own left/right margins) was simpler and
+more conclusive than any of the code-side reasoning attempted first. The actual fix was found only
+after dumping real `QWidget.geometry()`/`mapTo()` values from the running app on a debug keypress —
+confirming the 4px asymmetry the user had already measured by eye. Lesson: when a user reports a
+layout/visual bug and offers to measure it precisely, get real runtime numbers before re-deriving
+the layout from the source.
+
 ## Session Summary — 2026-06-22 Session 3 — Finish-banner revert icon: wipe animation + layout stability
 
 **Branch:** `main`. **Commits:** `db5adf0`, `8e5538d`, `0b70613`, `3c3da56`.
