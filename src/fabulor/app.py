@@ -1881,6 +1881,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
         if self.player:
             self.player.set_volume_from_slider(value)
+        self._show_volume_overlay()
+
+    def _on_volume_slider_pressed(self):
+        """Pressing/holding the slider (even without moving it) counts as
+        interaction — extend the auto-hide timer so it doesn't fade out
+        from underneath the user's cursor."""
+        if self.vol_stack.currentIndex() == 1:
+            self.vol_hide_timer.start(2000)
 
     def _set_speed(self, value, save=True):
         """Applies a specific speed value."""
@@ -2444,7 +2452,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             
             if new_vol != current:
                 self.volume_slider.setValue(new_vol)
-                self._show_volume_overlay()
             event.accept()
         elif self.speed_button.underMouse():
             if not self.player: return

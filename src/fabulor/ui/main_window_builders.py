@@ -376,6 +376,7 @@ def build_secondary_controls(mw):
     mw.volume_slider.setValue(mw.config.get_volume())
     mw.volume_slider.setFixedHeight(9)
     mw.volume_slider.sliderPressed.connect(mw._hide_popups)
+    mw.volume_slider.sliderPressed.connect(mw._on_volume_slider_pressed)
     mw.volume_slider.valueChanged.connect(mw._on_volume_changed)
 
     mw.vol_stack = QStackedWidget()
