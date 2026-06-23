@@ -2513,9 +2513,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._theme_rotate_cooldown.start()
 
     def _show_volume_overlay(self):
-        """Triggers the volume slider fade-in and starts the auto-hide timer."""
+        """Triggers the volume slider fade-in and starts the auto-hide timer.
+        Skipped when volume just hit 0 with no sleep timer active — that
+        case jumps straight to the muted icon instead of previewing the slider."""
+        if self.volume_slider.value() == 0 and not self.sleep_timer_label.text():
+            self.vol_hide_timer.stop()
+            self.vol_fade_anim.stop()
+            self.vol_opacity.setOpacity(0.0)
+            self._settle_vol_stack()
+            return
         self.vol_hide_timer.stop()
-        self.muted_icon_flash_timer.stop()
         self.vol_stack.setCurrentIndex(1)
         if self.vol_opacity.opacity() < 1.0:
             self.vol_fade_anim.stop()
@@ -2548,19 +2555,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.vol_stack.setCurrentIndex(0)
 
     def _on_sleep_display_text_updated(self, text):
-        if self.vol_stack.currentIndex() == 1:
-            # Volume overlay is showing — it takes precedence; the sleep
-            # label text is already up to date underneath it and will be
-            # picked up by the post-fade settle.
-            self.sleep_timer_label.setText(text)
-            return
-        was_muted_icon_showing = self.vol_stack.currentIndex() == 2
         self.sleep_timer_label.setText(text)
-        if text and was_muted_icon_showing:
-            # A sleep timer just became active while the muted icon was
-            # resting — let it flash briefly before the sleep label takes over.
-            self.muted_icon_flash_timer.start(3000)
-        else:
+        if self.vol_stack.currentIndex() != 1:
+            # Volume overlay (index 1) takes precedence over both the sleep
+            # label and the muted icon; otherwise re-settle now so a sleep
+            # timer starting/stopping immediately shows/hides its countdown
+            # even if the muted icon was resting.
             self._settle_vol_stack()
 
     def eventFilter(self, obj, event):
