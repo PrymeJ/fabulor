@@ -7,7 +7,7 @@ from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex,
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
-from .icon_utils import render_logo_placeholder_bordered
+from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics
 
 # View mode: (internal_key, [display_name_options])
@@ -89,15 +89,15 @@ FONT_SIZES = {
         "percentage": (14, False),
     },
     "3 per row": {
-        "title":      (11, True),   # no-cover placeholder text band
-        "author":     (10, False),
+        "title":      (12, True),   # no-cover placeholder text band
+        "author":     (12, False),
         "elapsed":    (12, False),
         "total":      (12, False),
         "percentage": (12, False),
     },
     "Square": {
-        "title":      (11, True),   # no-cover placeholder text band
-        "author":     (10, False),
+        "title":      (12, True),   # no-cover placeholder text band
+        "author":     (12, False),
         "elapsed":    (12, False),
         "total":      (12, False),
         "percentage": (12, False),
@@ -1568,11 +1568,12 @@ class BookDelegate(QStyledItemDelegate):
         if hovered:
             self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=True)
 
-    def _draw_scrollable_field(self, painter, *, path, field, value, x, y, w, color, field_rects) -> int:
+    def _draw_scrollable_field(self, painter, *, path, field, value, x, y, w, color, field_rects, center=False) -> int:
         """Draw one text field: elide at rest, scroll the active hovered field if it overflows.
         Records field_rects[field] = (x, y, w, line_h, full_w) (caller owns the final
         self._scroll_field_rects[path] = field_rects assignment). Returns the line height.
-        Modeled exactly on the original 1-/2-per-row per-field draw."""
+        When center=True and the text fits (no scroll), it is horizontally centered in w.
+        Modeled on the original 1-/2-per-row per-field draw."""
         self._set_font(painter, mode=self._view_mode, field=field)
         fm = painter.fontMetrics()
         line_h = fm.height()
@@ -1585,6 +1586,8 @@ class BookDelegate(QStyledItemDelegate):
             painter.setClipRect(QRect(x, y, w, line_h))
             painter.drawText(x + int(offset), y + fm.ascent(), value)
             painter.restore()
+        elif center and full_w <= w:
+            painter.drawText(QRect(x, y, w, line_h), Qt.AlignHCenter | Qt.AlignVCenter, value)
         else:
             painter.drawText(x, y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, w))
         return line_h
@@ -1606,27 +1609,35 @@ class BookDelegate(QStyledItemDelegate):
                 self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
             return
 
-        # No cover: reserve a fixed ~34px text band at the bottom for title + author; the
-        # placeholder logo shrinks into the remaining top area. Cell size is unchanged.
-        TEXT_BAND_H = 34
-        image_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4 - TEXT_BAND_H)
-        self._draw_cover(painter, image_rect, cover, book, square=square, bg=self._grid_bg)
+        # No cover: title + author at the top, logo centered below them. The 1px border frames
+        # the WHOLE cell area (a square in Square mode), not just the logo. Cell size unchanged.
+        cell_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
+        painter.fillRect(cell_rect, self._grid_bg)
 
         field_rects = {}
-        text_x = r.x() + 4
-        text_w = r.width() - 8
-        text_y = image_rect.bottom() + 3
+        text_x = cell_rect.x() + 2
+        text_w = cell_rect.width() - 4
+        text_y = cell_rect.y() + 3
         title_h = self._draw_scrollable_field(
             painter, path=book.path, field="title", value=book.title or "",
-            x=text_x, y=text_y, w=text_w, color=self._color_title, field_rects=field_rects)
-        text_y += title_h + 2
-        self._draw_scrollable_field(
+            x=text_x, y=text_y, w=text_w, color=self._color_title, field_rects=field_rects, center=True)
+        text_y += title_h + 1
+        author_h = self._draw_scrollable_field(
             painter, path=book.path, field="author", value=book.author or "",
-            x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects)
+            x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects, center=True)
         self._scroll_field_rects[book.path] = field_rects
 
+        # Logo centered in the area below the text rows.
+        logo_top = text_y + author_h + 2
+        logo_rect = QRect(cell_rect.x(), logo_top, cell_rect.width(), cell_rect.bottom() - logo_top + 1)
+        self._draw_placeholder_logo(painter, logo_rect)
+
+        # 1px border around the whole cell.
+        painter.setPen(QColor(self._placeholder_color))
+        painter.drawRect(cell_rect.adjusted(0, 0, -1, -1))
+
         if hovered:
-            self._draw_hover_overlay(painter, image_rect, book, show_rem, live_pos, live_dur, large=False)
+            self._draw_hover_overlay(painter, cell_rect, book, show_rem, live_pos, live_dur, large=False)
 
     def _paint_list_row(self, painter, option, index, book, hovered, show_rem, live_pos, live_dur):
         r   = option.rect
@@ -1779,16 +1790,34 @@ class BookDelegate(QStyledItemDelegate):
                 painter.drawPixmap(rect.x(), rect.y(), pm)
 
     def _placeholder_pixmap(self, w: int, h: int) -> QPixmap:
-        """Cached bordered-logo placeholder sized to w×h. Cache cleared on theme change."""
+        """Cached bordered-logo placeholder sized to w×h. Cache cleared on theme change.
+        Used by 1-/2-per-row where the logo fills the whole cover rect with its own border."""
         if w <= 0 or h <= 0:
             return QPixmap()
-        key = (self._placeholder_color, w, h)
+        key = ("bordered", self._placeholder_color, w, h)
         pm = self._placeholder_cache.get(key)
         if pm is None:
             icon_size = int(min(w, h) * 0.88)
             pm = render_logo_placeholder_bordered(self._placeholder_color, icon_size, w, h)
             self._placeholder_cache[key] = pm
         return pm
+
+    def _draw_placeholder_logo(self, painter, rect: QRect) -> None:
+        """Draw the themed logo (no border) centered within rect. Used by the 3-per-row/Square
+        no-cover layout, where the border frames the whole cell separately."""
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        icon_size = max(1, int(min(rect.width(), rect.height()) * 0.88))
+        key = ("logo", self._placeholder_color, icon_size)
+        pm = self._placeholder_cache.get(key)
+        if pm is None:
+            pm = render_logo_placeholder(self._placeholder_color, icon_size)
+            self._placeholder_cache[key] = pm
+        if pm.isNull():
+            return
+        dx = rect.x() + (rect.width() - pm.width()) // 2
+        dy = rect.y() + (rect.height() - pm.height()) // 2
+        painter.drawPixmap(dx, dy, pm)
 
     def _draw_hover_overlay(self, painter, cover_rect: QRect, book, show_rem, live_pos, live_dur, *, large: bool):
         from PySide6.QtGui import QLinearGradient, QBrush
