@@ -7,6 +7,7 @@ from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex,
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
+from .icon_utils import render_logo_placeholder_bordered
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics
 
 # View mode: (internal_key, [display_name_options])
@@ -88,11 +89,15 @@ FONT_SIZES = {
         "percentage": (14, False),
     },
     "3 per row": {
+        "title":      (11, True),   # no-cover placeholder text band
+        "author":     (10, False),
         "elapsed":    (12, False),
         "total":      (12, False),
         "percentage": (12, False),
     },
     "Square": {
+        "title":      (11, True),   # no-cover placeholder text band
+        "author":     (10, False),
         "elapsed":    (12, False),
         "total":      (12, False),
         "percentage": (12, False),
@@ -1066,6 +1071,13 @@ class BookDelegate(QStyledItemDelegate):
         self._color_author   = qc(theme.get('library_author',     '#aaaaaa'))
         self._color_narrator = qc(theme.get('library_narrator',   '#888888'))
         self._color_year     = qc(theme.get('library_year', theme.get('library_narrator', '#888888')))
+        # Placeholder logo color (hex string — render_logo_placeholder_bordered takes a str).
+        # Mirrors the player/library fallback chain (NOT placeholder_stats — that's stats-panel tier).
+        self._placeholder_color = theme.get('placeholder_cover',
+            theme.get('library_narrator', theme.get('text', '#888888')))
+        # Reset the rendered-placeholder cache so stale-color pixmaps don't survive a theme switch.
+        # Assigned (not .clear()'d) so the first call from __init__ works before the attr exists.
+        self._placeholder_cache: dict = {}  # (color, w, h) → QPixmap
         self._color_elapsed  = qc(theme.get('library_elapsed',    '#cccccc'))
         self._color_total    = qc(theme.get('library_total',      '#cccccc'))
         self._color_pct      = qc(theme.get('library_percentage', '#aaaaaa'))
@@ -1241,7 +1253,7 @@ class BookDelegate(QStyledItemDelegate):
     _SCROLL_PAUSE_START = 10 # longer initial pause before first scroll
 
     def on_hover_enter(self, path: str) -> None:
-        if self._view_mode not in ("1 per row", "2 per row"):
+        if self._view_mode not in ("1 per row", "2 per row", "3 per row", "Square"):
             return
         self._scroll_hovered_path = path
         # Clear state for any other path
@@ -1262,7 +1274,7 @@ class BookDelegate(QStyledItemDelegate):
             vp.update()
 
     def on_hover_move(self, path: str, viewport_pos) -> None:
-        if self._view_mode not in ("1 per row", "2 per row"):
+        if self._view_mode not in ("1 per row", "2 per row", "3 per row", "Square"):
             return
         rects = self._scroll_field_rects.get(path, {})
         field_under = None
@@ -1543,53 +1555,78 @@ class BookDelegate(QStyledItemDelegate):
         text_y = cover_y + cover_h + 2
 
         field_rects = {}
-        self._set_font(painter, mode=self._view_mode, field="title")
-        fm = painter.fontMetrics()
-        title_val = book.title or ""
-        title_full_w = fm.horizontalAdvance(title_val)
-        field_rects["title"] = (text_x, text_y, text_w, fm.height(), title_full_w)
-        painter.setPen(self._color_title)
-        title_offset = self._scroll_state.get((book.path, "title"), [None])[0] if (book.path, "title") in self._scroll_state else None
-        if title_offset is not None and title_full_w > text_w:
-            painter.save()
-            painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
-            painter.drawText(text_x + int(title_offset), text_y + fm.ascent(), title_val)
-            painter.restore()
-        else:
-            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(title_val, Qt.ElideRight, text_w))
-        text_y += fm.height() + 2
-
-        self._set_font(painter, mode=self._view_mode, field="author")
-        fm = painter.fontMetrics()
-        author_val = book.author or ""
-        author_full_w = fm.horizontalAdvance(author_val)
-        field_rects["author"] = (text_x, text_y, text_w, fm.height(), author_full_w)
-        painter.setPen(self._color_author)
-        author_offset = self._scroll_state.get((book.path, "author"), [None])[0] if (book.path, "author") in self._scroll_state else None
-        if author_offset is not None and author_full_w > text_w:
-            painter.save()
-            painter.setClipRect(QRect(text_x, text_y, text_w, fm.height()))
-            painter.drawText(text_x + int(author_offset), text_y + fm.ascent(), author_val)
-            painter.restore()
-        else:
-            painter.drawText(text_x, text_y + fm.ascent(), fm.elidedText(author_val, Qt.ElideRight, text_w))
+        title_h = self._draw_scrollable_field(
+            painter, path=book.path, field="title", value=book.title or "",
+            x=text_x, y=text_y, w=text_w, color=self._color_title, field_rects=field_rects)
+        text_y += title_h + 2
+        self._draw_scrollable_field(
+            painter, path=book.path, field="author", value=book.author or "",
+            x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects)
         self._scroll_field_rects[book.path] = field_rects
 
         # Hover overlay over cover rect
         if hovered:
             self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=True)
 
+    def _draw_scrollable_field(self, painter, *, path, field, value, x, y, w, color, field_rects) -> int:
+        """Draw one text field: elide at rest, scroll the active hovered field if it overflows.
+        Records field_rects[field] = (x, y, w, line_h, full_w) (caller owns the final
+        self._scroll_field_rects[path] = field_rects assignment). Returns the line height.
+        Modeled exactly on the original 1-/2-per-row per-field draw."""
+        self._set_font(painter, mode=self._view_mode, field=field)
+        fm = painter.fontMetrics()
+        line_h = fm.height()
+        full_w = fm.horizontalAdvance(value)
+        field_rects[field] = (x, y, w, line_h, full_w)
+        painter.setPen(color)
+        offset = self._scroll_state.get((path, field), [None])[0] if (path, field) in self._scroll_state else None
+        if offset is not None and full_w > w:
+            painter.save()
+            painter.setClipRect(QRect(x, y, w, line_h))
+            painter.drawText(x + int(offset), y + fm.ascent(), value)
+            painter.restore()
+        else:
+            painter.drawText(x, y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, w))
+        return line_h
+
     def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
         painter.fillRect(r, self._grid_bg)
         square = (self._view_mode == "Square")
+        has_cover = cover is not None and not cover.isNull()
 
-        # Cover fills cell with 2px margin
-        cover_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
-        self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
+        if has_cover:
+            # Real cover: fills cell with 2px margin, no text (unchanged behavior).
+            cover_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
+            self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
+            # Drop any stale field-rect entry (e.g. book gained a cover after a no-cover paint),
+            # else phantom scroll zones would linger on this real-cover cell until restart.
+            self._scroll_field_rects.pop(book.path, None)
+            if hovered:
+                self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
+            return
+
+        # No cover: reserve a fixed ~34px text band at the bottom for title + author; the
+        # placeholder logo shrinks into the remaining top area. Cell size is unchanged.
+        TEXT_BAND_H = 34
+        image_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4 - TEXT_BAND_H)
+        self._draw_cover(painter, image_rect, cover, book, square=square, bg=self._grid_bg)
+
+        field_rects = {}
+        text_x = r.x() + 4
+        text_w = r.width() - 8
+        text_y = image_rect.bottom() + 3
+        title_h = self._draw_scrollable_field(
+            painter, path=book.path, field="title", value=book.title or "",
+            x=text_x, y=text_y, w=text_w, color=self._color_title, field_rects=field_rects)
+        text_y += title_h + 2
+        self._draw_scrollable_field(
+            painter, path=book.path, field="author", value=book.author or "",
+            x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects)
+        self._scroll_field_rects[book.path] = field_rects
 
         if hovered:
-            self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
+            self._draw_hover_overlay(painter, image_rect, book, show_rem, live_pos, live_dur, large=False)
 
     def _paint_list_row(self, painter, option, index, book, hovered, show_rem, live_pos, live_dur):
         r   = option.rect
@@ -1735,14 +1772,23 @@ class BookDelegate(QStyledItemDelegate):
                         dy = rect.y() + (rect.height() - dh) // 2
                         painter.drawPixmap(QRect(dx, dy, dw, dh), cover, cover.rect())
         else:
-            # Placeholder: first letter of title
-            painter.setPen(QColor(180, 180, 180))
-            f = QFont(painter.font())
-            f.setPixelSize(painter.font().pixelSize() + 6 if painter.font().pixelSize() > 0
-                           else painter.font().pointSize() + 6)
-            f.setBold(True)
-            painter.setFont(f)
-            painter.drawText(rect, Qt.AlignCenter, (book.title or "?")[:1])
+            # Placeholder: themed Fabulor logo with a 1px border, centered on the received rect.
+            # The border is drawn inside the canvas (adjusted(0,0,-1,-1)), so it does not grow rect.
+            pm = self._placeholder_pixmap(rect.width(), rect.height())
+            if not pm.isNull():
+                painter.drawPixmap(rect.x(), rect.y(), pm)
+
+    def _placeholder_pixmap(self, w: int, h: int) -> QPixmap:
+        """Cached bordered-logo placeholder sized to w×h. Cache cleared on theme change."""
+        if w <= 0 or h <= 0:
+            return QPixmap()
+        key = (self._placeholder_color, w, h)
+        pm = self._placeholder_cache.get(key)
+        if pm is None:
+            icon_size = int(min(w, h) * 0.88)
+            pm = render_logo_placeholder_bordered(self._placeholder_color, icon_size, w, h)
+            self._placeholder_cache[key] = pm
+        return pm
 
     def _draw_hover_overlay(self, painter, cover_rect: QRect, book, show_rem, live_pos, live_dur, *, large: bool):
         from PySide6.QtGui import QLinearGradient, QBrush
