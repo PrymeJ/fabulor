@@ -1895,11 +1895,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.speed_panel:
             self.speed_panel.set_speed(value, self.current_file, save)
 
-    def _toggle_remaining_time(self, event):
-        if event.button() == Qt.LeftButton:
-            self.show_remaining_time = not self.show_remaining_time
-            self.config.set_show_remaining_time(self.show_remaining_time)
-            self._update_ui_sync()
+    @staticmethod
+    def _label_click_in_text(lbl, x):
+        """True if x (in lbl's local coords) falls within the label's
+        rendered, right-aligned text rather than its reserved empty space.
+        The box is sized for worst-case hour counts the text rarely reaches."""
+        text_width = lbl.fontMetrics().horizontalAdvance(lbl.text())
+        return x >= lbl.width() - text_width
+
+    def _toggle_remaining_time(self, lbl, event):
+        if event.button() != Qt.LeftButton:
+            return
+        if not self._label_click_in_text(lbl, event.position().x()):
+            return
+        self.show_remaining_time = not self.show_remaining_time
+        self.config.set_show_remaining_time(self.show_remaining_time)
+        self._update_ui_sync()
+
+    def _on_remaining_time_label_hover(self, lbl, event):
+        if self._label_click_in_text(lbl, event.position().x()):
+            lbl.setCursor(Qt.PointingHandCursor)
+        else:
+            lbl.unsetCursor()
 
     def _on_speed_right_clicked(self, pos):
         """Right click sets the current playback speed as the default speed."""

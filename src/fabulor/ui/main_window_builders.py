@@ -319,7 +319,7 @@ def build_secondary_controls(mw):
     mw.chap_duration_label.setFixedWidth(48)
     mw.chap_duration_label.setFixedHeight(24)
     mw.chap_duration_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    mw.chap_duration_label.mousePressEvent = mw._toggle_remaining_time
+    mw.chap_duration_label.mousePressEvent = lambda e: mw._toggle_remaining_time(mw.chap_duration_label, e)
 
     mw.current_chapter_label = ScrollingLabel("")
     mw.current_chapter_label.setObjectName("chapter_selector")
@@ -357,8 +357,9 @@ def build_secondary_controls(mw):
     mw.total_time_label.setFixedWidth(80)
     mw.total_time_label.setFixedHeight(24)
     mw.total_time_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    mw.total_time_label.mousePressEvent = mw._toggle_remaining_time
-    mw.total_time_label.setCursor(Qt.PointingHandCursor)
+    mw.total_time_label.mousePressEvent = lambda e: mw._toggle_remaining_time(mw.total_time_label, e)
+    mw.total_time_label.setMouseTracking(True)
+    mw.total_time_label.mouseMoveEvent = lambda e: mw._on_remaining_time_label_hover(mw.total_time_label, e)
 
     mw.sleep_timer_label = QPushButton("")
     mw.sleep_timer_label.setObjectName("sleep_timer_display")
@@ -397,7 +398,9 @@ def build_secondary_controls(mw):
     mw.muted_icon_label.setAlignment(Qt.AlignCenter)
     mw.vol_stack.addWidget(mw.muted_icon_label)
 
+    book_info_layout.setSpacing(0)
     book_info_layout.addWidget(mw.current_time_label)
+    book_info_layout.addStretch(1)
     book_info_layout.addWidget(mw.vol_stack)
     book_info_layout.addStretch(1)
     book_info_layout.addWidget(mw.total_time_label)
