@@ -1836,14 +1836,41 @@ class BookDelegate(QStyledItemDelegate):
 
         if has_progress:
             # time row + 2px gap + bar row, plus VPAD top and bottom
-            oh = VPAD + fm_time.height() + 8 + BAR_H + VPAD
+            oh_full = VPAD + fm_time.height() + 8 + BAR_H + VPAD
         else:
             # just bar-row height centred on total text, plus VPAD top and bottom
             self._set_font(painter, mode=overlay_mode, field="total")
             fm_total = painter.fontMetrics()
-            oh = VPAD + max(BAR_H, fm_total.height()) + VPAD
+            oh_full = VPAD + max(BAR_H, fm_total.height()) + VPAD
 
-        oh = max(oh, int(cover_rect.height() * 0.18))  # never shrink below ~18%
+        oh_full = max(oh_full, int(cover_rect.height() * 0.18))  # never shrink below ~18%
+
+        # full_rect is sized/positioned exactly as before this fix — it is the coordinate
+        # space all content (text baselines, bar rect) is computed against below, so no
+        # drawn element moves from where it used to render. Only the box we actually paint
+        # (overlay_rect) is cropped shorter at the top, removing the unused leading space
+        # that font line-height reserves above the real glyph ink — the bottom margin was
+        # already correct (geometric, not font-based) on both branches and is untouched.
+        full_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh_full + 1, cover_rect.width(), oh_full)
+        inner = full_rect.adjusted(HPAD, VPAD, -HPAD, -VPAD)
+
+        if has_progress:
+            # Topmost content is the time row's baseline (computed the same way the paint
+            # code below computes it) — find its ink-top directly rather than estimating
+            # leading from font metrics, so the crop is exact regardless of font/string.
+            bar_y_probe  = inner.bottom() - BAR_H
+            time_y_probe = max(inner.y(), bar_y_probe - 4 - fm_time.height())
+            ink_top = time_y_probe + fm_time.ascent() + fm_time.tightBoundingRect("0").top()
+        else:
+            # Must mirror the bottom-anchored formula used in the actual draw below exactly,
+            # or the crop and the real content position disagree.
+            ink_bottom_probe = fm_total.tightBoundingRect("0").bottom()
+            no_prog_y_probe = inner.bottom() - ink_bottom_probe
+            ink_top = no_prog_y_probe + fm_total.tightBoundingRect("0").top()
+
+        desired_overlay_top = ink_top - VPAD
+        oh = max(cover_rect.bottom() - desired_overlay_top + 1, BAR_H + 2 * VPAD)
+        oh = min(oh, oh_full)
         overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
 
         # Semi-transparent gradient background
@@ -1851,8 +1878,6 @@ class BookDelegate(QStyledItemDelegate):
         grad.setColorAt(0.0, QColor(0, 0, 0, 180))
         grad.setColorAt(1.0, QColor(0, 0, 0, 240))
         painter.fillRect(overlay_rect, QBrush(grad))
-
-        inner = overlay_rect.adjusted(HPAD, VPAD, -HPAD, -VPAD)
 
         if has_progress:
             # Rows bottom-up: bar at inner.bottom(), time row above it
@@ -1889,12 +1914,15 @@ class BookDelegate(QStyledItemDelegate):
             painter.drawText(inner.right() - pct_w, pct_y, pct_str)
 
         else:
-            # No progress — total duration vertically centred in inner, right-aligned
+            # No progress — total duration bottom-anchored on tight ink bounds so its visual
+            # bottom margin matches the has_progress bar's flush VPAD margin (both 6px), rather
+            # than landing ~2px short from vertical centring.
             self._set_font(painter, mode=overlay_mode, field="total")
             fm_total = painter.fontMetrics()
             dur_str   = self._fmt(dur_disp)
             dur_w     = fm_total.horizontalAdvance(dur_str)
-            no_prog_y = inner.y() + (inner.height() - fm_total.height()) // 2 + fm_total.ascent() + 2
+            ink_bottom = fm_total.tightBoundingRect(dur_str).bottom()
+            no_prog_y = inner.bottom() - ink_bottom
             painter.setPen(self._color_total)
             painter.drawText(inner.right() - dur_w, no_prog_y, dur_str)
 
