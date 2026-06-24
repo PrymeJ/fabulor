@@ -546,6 +546,20 @@ Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows
 ### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
 Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
 
+### DO NOT remove `_sized_cover_cache`/`_get_sized_cover` as "just an optimization"
+This cache is load-bearing, not a performance nicety layered on top of an already-correct render.
+Confirmed by direct measurement (2026-06-24): the scanner-side fixes alone (cover discovery,
+LANCZOS thumbnail resampling, 320×480 cap) produced **zero visible improvement** in the library
+grid, even after a full force rescan + app restart. The reason is `_draw_cover`'s own
+`painter.drawPixmap(rect, cover, src_rect)` — a single Qt bilinear downscale straight from the
+cached thumbnail (up to 320×480) down to the real cell size (as small as ~88×88) — which erases a
+better source's quality gain regardless of how good that source is. `_get_sized_cover` exists
+specifically to remove that downscale's *magnitude* (pre-shrink close to cell size via LANCZOS
+first, so the final `drawPixmap` is a near-1:1 blit). If this cache is ever removed or bypassed,
+the library grid will silently regress to the exact "no visible difference" state this was built
+to fix — the scanner-side quality work is necessary but was proven, by measurement, insufficient
+on its own.
+
 ### DO NOT change `_get_sized_cover`'s scale mode to `KeepAspectRatioByExpanding`
 `_get_sized_cover` (`BookDelegate`, `library.py`) pre-scales the cached cover to roughly the grid
 cell size before `_draw_cover` runs its square/crop/letterbox branching. It deliberately uses a
