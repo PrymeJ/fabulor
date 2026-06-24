@@ -1,4 +1,95 @@
-## Session Summary — 2026-06-23 Session 1 — Muted-volume icon, sleep-timer precedence, and a real centering bug behind both
+## Session Summary — 2026-06-24 Session 1 — Library cover thumbnail quality: discovery bug, resampling, and the real paint-time fix
+
+**Branch:** `main`. **Commits:** `89f0595`.
+
+### What shipped
+
+- **Cover-discovery fallback** (`scanner.py`) — the scanner previously only recognized external
+  cover images named exactly `cover`/`folder`/`front`/`art`. Now, if no name match is found and the
+  book folder contains exactly one image file, it's used as the cover; with multiple unmatched
+  images, the code leaves it unset and falls through to embedded-tag extraction rather than guess.
+  Verified against the real 380-book library DB: match rate rose from 8/380 (2%) to 354/380 (93%).
+- **Thumbnail resampling rework** (`scanner.py`) — replaced `Qt.SmoothTransformation` (bilinear)
+  into a no-quality-argument JPEG capped at 226×344 with a PIL pipeline: `Format_RGBA8888` →
+  `Image.frombuffer` → LANCZOS resize to a 320×480 cap → RGB → JPEG quality=88. New cache dir
+  `thumbnails_v2` (old `thumbnails/` left orphaned on disk deliberately, for mixed-library safety
+  during the transition).
+- **The above two fixes alone made no visible in-app difference** — confirmed by the user doing an
+  actual old-vs-new comparison, twice, after I'd prematurely claimed success off metadata alone the
+  first time. Root cause: a second, paint-time bilinear downscale in `BookDelegate._draw_cover`
+  (`library.py`) — `painter.drawPixmap(rect, cover, src_rect)` — scales the cached thumbnail down to
+  the actual grid cell size (as small as ~88×88), and that step alone erases any source-quality gain
+  regardless of what feeds it.
+- **Pre-rendered per-cell-size pixmap cache** (`library.py`, `BookDelegate`) — `_sized_cover_cache`
+  keyed by `(book_id, device_w, device_h)`, built lazily by `_get_sized_cover` and consumed by
+  `_draw_cover` before its existing square/crop/letterbox branching, so the final `drawPixmap` is a
+  near-1:1 blit instead of a large algorithmic scale. The actual resize (`_lanczos_scale`) uses the
+  same PIL LANCZOS approach as the scanner fix. Wired eviction into `LibraryPanel.evict_cover` and
+  `refresh_book_cover` so a replaced source cover doesn't leave stale pre-scaled entries behind.
+- **Tuned a contrast/"punch" regression LANCZOS introduced on flat-color graphic covers** (SF
+  Masterworks-style art was the clearest case) — LANCZOS doesn't ring/overshoot at edges the way
+  bilinear does, which reads as more "correct" for text but less punchy on high-contrast art. Added
+  a PIL `UnsharpMask` pass after the resize; first attempt (`percent=60, radius=1.0`) overshot into a
+  "cartoonish"/HDR-filtered look with visible haloing on photographic gradients (skies, faces).
+  Settled on `percent=25, radius=0.8` after the user confirmed it kept the text-legibility gain
+  without the artifact.
+- Verified throughout via actual pixel-level renders at real grid cell size (96×146, 3-per-row) —
+  both synthetic text images and real cached covers ("Under Heaven", "The Shockwave Rider") — not
+  file-size/resolution proxies, and ultimately confirmed live in the running app by the user.
+- **Scope note:** this only touches library grid/list thumbnails. The main player cover
+  (`cover_art_label`, `_update_cover_art_scaling` in `app.py`) is a separate, untouched code path.
+- Full root-cause writeup, including two corrected premature-success claims, in NOTES.md
+  ("Library cover thumbnails looked 'pretty much the same' after a discovery + resampling fix —
+  the real bottleneck was the paint-time downscale, not the source", 2026-06-24).
+
+
+
+## Session Summary — 2026-06-23 Session 2 — No-cover library placeholders, a new theme, and uniform overlay margins
+
+**Branch:** `main`. **Commits:** `904b6a8`, `499a53d`, `43acabe`, `5177d38`.
+
+### What shipped
+
+- **No-cover books in all four library thumbnail modes now show the themed Fabulor logo
+  placeholder** (`904b6a8`) instead of the old first-letter-of-title fallback in `BookDelegate`
+  (`library.py`), matching the placeholder already used by the stats and book-detail panels. 1-
+  and 2-per-row swap the image in place; 3-per-row and Square additionally render title + author
+  text for no-cover books only, reusing the existing hover-scroll/elide machinery via a new shared
+  `_draw_scrollable_field` helper. Cell geometry is unchanged — the logo shrinks to make room for
+  text, not the other way around. Placeholder pixmaps are cached per `(color, w, h)` and the cache
+  is invalidated on theme change so recoloring isn't stale.
+- **Reworked that same 3-per-row/Square no-cover layout** (`499a53d`) after a closer look: moved
+  title + author above the logo instead of below, centered short fields (still elide+scroll on
+  overflow for long ones), and changed the border to frame the **whole cell** (a true square in
+  Square mode) rather than just the shrunken logo image — bringing the hover overlay placement
+  back in line with real-cover books, which paint over the full cell. Added an unbordered
+  `_draw_placeholder_logo` helper (cached by `icon_size`) for this layout, kept separate from the
+  bordered placeholder still used by 1-/2-per-row. Grid title/author font bumped to 12px for
+  readability at the smaller logo size.
+- **New theme: Como Agua** (`43acabe`, `themes.py`) — a new entry in the theme pool, no code
+  changes elsewhere.
+- **Fixed a real top-margin asymmetry in the grid hover overlay** (`5177d38`,
+  `BookDelegate._draw_hover_overlay`, shared by 2-per-row/3-per-row/Square). Root cause: the
+  overlay box height was originally derived from font metrics' `ascent()`/`height()`, which
+  include line-leading that doesn't correspond to actual glyph ink — so the box reserved extra
+  blank space above the text that the (correctly geometric, ink-relative) bottom margin didn't
+  have. Separately, the no-progress (one-line) variant centered its text vertically, while the
+  has-progress (two-line) variant bottom-anchored its bar — giving the two variants different
+  bottom margins from each other on top of the top-margin bug. Fixed by decoupling content
+  position from the painted box: a `full_rect`/`inner` rect (sized/positioned exactly as before,
+  so no drawn element moves) is used for all content math, while a separate, shorter
+  `overlay_rect` is derived by measuring the real content's ink-top via
+  `QFontMetrics.tightBoundingRect()` and cropping only the unused space above it. The no-progress
+  branch was also changed from vertical-centering to bottom-anchoring on tight ink bounds (with
+  text nudged down 2px per a user design call, keeping the box flush with the cell bottom rather
+  than leaving a gap below it), so both variants now share the same 6px top and bottom margin.
+  Verified via headless `QT_QPA_PLATFORM=offscreen` rendering + PIL pixel-row scanning (not just
+  font-metric math, which had already led to one wrong fix attempt) on both 3-per-row and Square.
+  A pre-existing, unrelated 1px discrepancy in 2-per-row's two-line bottom margin (a percentage
+  glyph's own baseline calc extending slightly past the bar) was identified and intentionally left
+  alone as out of scope. `pytest tests/ -q` stayed green (27 passed) throughout.
+
+
 
 **Branch:** `main`. **Commits:** `cd8fd33`, `884ab37`, `6038986`, `7bda945`, `28e95c1`, `ed563a4`,
 `64e75cc`, `81734d3`.

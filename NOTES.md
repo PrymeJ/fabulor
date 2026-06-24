@@ -1,3 +1,87 @@
+## Library cover thumbnails looked "pretty much the same" after a discovery + resampling fix — the real bottleneck was the paint-time downscale, not the source (2026-06-24)
+
+**Starting complaint:** small grid thumbnails (3-per-row/Square, ~88-96px cells) had crumbling
+cover text. User compared against The StoryGraph at a similar thumbnail size and confirmed the
+size itself wasn't unusual — this was a resampling-quality question, not a "we're doing the size
+wrong" one.
+
+**Two real, independent bugs found and fixed first, both in `scanner.py`'s `_extract_metadata`:**
+
+1. **Cover discovery only matched exact filenames** `cover`/`folder`/`front`/`art` (case-insensitive
+   stem). 98% of the library was silently falling back to tiny embedded MP3/M4B tag art instead of
+   available high-res external cover images. Fixed with a fallback: if no name match and the folder
+   has exactly one image file, use it (almost certainly the cover, just unconventionally named); if
+   multiple unmatched images exist, leave unset and fall through to the embedded-tag path rather than
+   guess. Verified via a live survey of the real 380-book library DB: match rate rose from 8/380 (2%)
+   to 354/380 (93%).
+2. **Thumbnail resampling was `Qt.SmoothTransformation` (bilinear) into a no-quality-argument JPEG
+   (~75 default) capped at 226×344** — both lossy and, on HiDPI, already short of the largest grid
+   cell's real pixel needs. Replaced with a PIL pipeline: `QImage.convertToFormat(Format_RGBA8888)`
+   → `Image.frombuffer` → `Image.Resampling.LANCZOS` to a 320×480 cap → `.convert("RGB")` →
+   `.save(..., "JPEG", quality=88, optimize=True)`. New cache dir `thumbnails_v2` (old `thumbnails/`
+   left orphaned on disk, never deleted — mixed-library safety).
+
+**Both fixes landed, force rescan run — user reported "Made no difference."** This was not a
+re-test-it-and-see situation: the user had old thumbnails saved locally and did an actual
+before/after comparison, twice, and was right both times. The first time I'd claimed success off
+metadata alone (resolution, filename match) without doing a real pixel comparison — wrong. The
+second time I mischaracterized an aside the user made about Dolphin-file-manager-vs-app rendering
+softness as if it were in-app evidence of a regression — the user had explicitly said Dolphin
+doesn't matter, and called this out sharply. Both of those are logged in case the pattern repeats:
+**when the user says "no difference," verify pixel-for-pixel at the real render size before
+re-asserting anything — don't lean on file size/resolution proxies, and don't reframe an aside as
+evidence for a claim the user didn't make.**
+
+**Actual root cause:** the discovery + resampling fixes only improve the *source* thumbnail
+(226×344 → 320×480, bilinear → LANCZOS). They never touch the *paint-time* step —
+`BookDelegate._draw_cover`'s `painter.drawPixmap(rect, cover, src_rect)` — which still does one
+more Qt bilinear downscale from the cached thumbnail down to the actual grid cell size (as small as
+~88×88 up to ~292×159 depending on view mode). Feeding that final bilinear step a sharper, larger
+source doesn't survive the step itself. Confirmed by simulating both old and new cached thumbnails
+downscaled to real cell sizes with PIL `BILINEAR` (matching Qt's behavior) and visually comparing —
+they were, as the user said, pretty much the same.
+
+**Fix: pre-render per-cell-size pixmaps so paint time becomes a near-1:1 blit.** Added to
+`BookDelegate` in `library.py`:
+- `_sized_cover_cache: dict` (instance state, not the module-level `_cover_cache`) keyed by
+  `(book_id, device_w, device_h)`.
+- `_get_sized_cover(book, cover, target_w, target_h)` — lazily builds and caches a pre-scaled
+  pixmap bounded to the target size (device-pixel-ratio aware), called from `_draw_cover` before
+  its existing square/crop/letterbox branching. Deliberately a plain aspect-preserving bounded fit
+  (NOT `KeepAspectRatioByExpanding` to the cell) — those branches derive their own crop/inset math
+  from the source pixmap's real proportions, so over-cropping here breaks letterbox specifically.
+  Only shrinks; never upscales a smaller source.
+- `_lanczos_scale(cover, w, h)` — the actual resize, via the same PIL round-trip as the scanner fix
+  (`Format_RGBA8888` before `constBits()`, same packing requirement and corruption risk if reordered).
+- `evict_sized_cover(book_id)` wired into `LibraryPanel.evict_cover` and `refresh_book_cover` so a
+  replaced/refreshed source cover doesn't leave stale pre-scaled entries behind. View-mode switches
+  don't need eviction — the cache key already includes target size, so old-size entries just become
+  unused, same low-volume staleness as the existing `_placeholder_cache`.
+
+**Verified properly this time** — not metadata, actual pixel comparison at real cell size (96×146,
+the 3-per-row dimension), both via a synthetic text image and a real cached cover ("Under Heaven").
+Old bilinear-paint-time path vs. new pre-scaled-LANCZOS path: text was visibly, measurably sharper
+in the new path on both. Then confirmed against the live app by the user directly.
+
+**Second-round finding: plain LANCZOS swap measurably improved text but lost contrast/"punch" on
+flat-color graphic covers** (SF Masterworks-style art was the clearest case — user's own framing:
+"the same trade-off as the Dolphin vs app test — you lose crispness if it becomes more legible").
+Real effect, not a regression in the new code: bilinear's edge ringing/overshoot was incidentally
+reading as punchy contrast; LANCZOS is more correct and doesn't do that. Added a PIL `UnsharpMask`
+pass after the LANCZOS resize in `_lanczos_scale`, RGB channels only (alpha untouched, so transparent
+cover edges aren't affected). First attempt at `radius=1.0, percent=60` overshot — user's words:
+"out of focus, then we slapped an HDR filter on it to salvage it," with visible haloing on
+photographic gradients (skies, faces) where LANCZOS leaves no real edge for the mask to find, so it
+amplifies noise instead. Settled on `radius=0.8, percent=25` — confirmed by the user to keep the
+text legibility gain without the cartoonish/HDR look. **Any future change to this sharpen strength
+must be re-checked against a photographic cover, not just a flat-color graphic one — the latter
+tolerates much more sharpening before artifacts become visible**, which is exactly how the first,
+too-strong value got picked without anyone noticing on the graphic-art test case alone.
+
+**Scope note:** this only touches the library grid/list thumbnails (`BookDelegate` in `library.py`).
+The main player view's cover (`cover_art_label`, `_update_cover_art_scaling` in `app.py`) is a
+separate code path and was not part of this change.
+
 ## `book_info_layout` 2px centering drift: missing `setSpacing(0)`, not an icon/font/style issue (2026-06-23)
 
 **Symptom:** the volume slider, sleep-timer countdown label, and new muted-volume icon — all three

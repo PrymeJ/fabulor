@@ -267,11 +267,11 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 ### Library Panel (`library.py`)
 
-- `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)` + `LibraryPanel`. Shared module-level `_cover_cache` keyed by `book.id` (int).
+- `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)` + `LibraryPanel`. Shared module-level `_cover_cache` keyed by `book.id` (int) holds one native-resolution pixmap per book. `BookDelegate` additionally holds its own per-instance `_sized_cover_cache` keyed by `(book_id, device_w, device_h)` — a LANCZOS-prescaled pixmap per grid-cell size, built lazily by `_get_sized_cover` and consumed by `_draw_cover` so the final paint-time `drawPixmap` is a near-1:1 blit rather than a large bilinear downscale (added 2026-06-24, see CLAUDE.md rule below and NOTES.md for the full root-cause writeup).
 - **Five view modes** (`VIEW_MODES`): 1-per-row, 2-per-row, 3-per-row, Square, List. Display names are randomized literary puns (reshuffle on `hideEvent`). List mode draws an animated left-edge stripe (`_pulse_timer` 40 ms) on the playing book and supports hover-fade (Off/Slow/Normal/Fast); 1- and 2-per-row support hover text-scroll.
 - **Sort** (`SORT_KEY_MAP`): Title, Author, Last Played, Progress, Duration, Year, Finished. "Progress"/"Finished" appear only when such books exist (`has_books_with_progress` / `has_finished_books`). Direction toggle (`↑`/`↓`) defaults per key via `_SORT_DIRECTION_DEFAULTS`, persisted to config.
 - **Search/filter** — plain text (title/author/narrator/exact 4-digit year), `#tag` prefix (`get_paths_for_tag_prefix`; `#` alone = all), year filters `>NNNN` (≥) / `<NNNN` (≤) / ranges (both orderings). No-match: search field turns dark-red and the model falls back to the full list (never empty); incomplete year expressions never show red. Right-click clears the field; persistence is per-classification (`persist_filter_tag/year/text`).
-- **Cover loading** — `_load_visible_covers` binary-searches visual rects (±5 row pad), dispatches `CoverLoaderWorker` (caps to 226×344). Idle preloader: `start_idle_preload` queues in sort order, `PRELOAD_BATCH_SIZE = 3` every `PRELOAD_INTERVAL_MS = 50` ms, starts 4s after launch, pauses on interaction. `_on_cover_loaded` skips the `dataChanged` emit while `_is_animating`.
+- **Cover loading** — `_load_visible_covers` binary-searches visual rects (±5 row pad), dispatches `CoverLoaderWorker` (caps to 320×480, raised from 226×344 on 2026-06-24). Idle preloader: `start_idle_preload` queues in sort order, `PRELOAD_BATCH_SIZE = 3` every `PRELOAD_INTERVAL_MS = 50` ms, starts 4s after launch, pauses on interaction. `_on_cover_loaded` skips the `dataChanged` emit while `_is_animating`.
 - `BookDelegate._resolve_playback` returns `(pos, dur, dur_disp, pct, has_progress, speed)`; `has_progress` (gated on `progress > MIN_PROGRESS` = 1.0s) is what shows the elapsed/bar/percentage and applies per-book speed to the displayed duration. Clicking the time label toggles remaining/total. All delegate colors are injected `Property(QColor)` for theme animation.
 
 ### Stats Panel (`stats_panel.py`)
@@ -546,6 +546,22 @@ Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows
 ### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
 Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
 
+### DO NOT change `_get_sized_cover`'s scale mode to `KeepAspectRatioByExpanding`
+`_get_sized_cover` (`BookDelegate`, `library.py`) pre-scales the cached cover to roughly the grid
+cell size before `_draw_cover` runs its square/crop/letterbox branching. It deliberately uses a
+plain aspect-preserving bounded fit (scale by `max(dev_w/w, dev_h/h)`, same shape as
+`KeepAspectRatio`), NOT `KeepAspectRatioByExpanding` cropped exactly to the cell. This looks like
+the "more correct" choice for a pre-sized thumbnail cache — it isn't: `_draw_cover`'s letterbox
+branch needs the pixmap's real, uncropped proportions to compute its own centered inset; feeding it
+an already-cell-cropped pixmap breaks letterbox specifically while leaving the square/stretch/crop
+branches looking fine, so the bug would only surface on covers whose aspect ratio lands in the
+letterbox bucket (>8% ratio mismatch from the cell). Also do not raise the `UnsharpMask` strength
+in `_lanczos_scale` (currently `radius=0.8, percent=25`) without re-checking against a *photographic*
+cover, not just a flat-color graphic one — a stronger pass (`percent=60` was tried and reverted)
+reads as fine on graphic art but produces visible edge haloing on photographic gradients (skies,
+faces), described by the user as "out of focus, then we slapped an HDR filter on it." Full
+root-cause writeup in NOTES.md, 2026-06-24.
+
 ### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
 `apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
 
@@ -648,7 +664,18 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-19 Session 4 — split `bookmark_body`/`bookmark_icon`/`tassel_cord`/
+*Last updated: 2026-06-24 Session 1 — fixed library grid cover thumbnails crumbling at small sizes.
+Two real bugs landed in `scanner.py` (cover-discovery only matched exact filenames, missing 98% of
+available external covers; bilinear+low-quality-JPEG thumbnail resampling capped at 226×344). Both
+alone made no visible in-app difference — the actual bottleneck was a second, paint-time bilinear
+downscale in `BookDelegate._draw_cover`. Fixed with a per-(book_id, cell-size) pre-scaled pixmap
+cache (`_sized_cover_cache`/`_get_sized_cover` in `library.py`) so paint time is a near-1:1 blit, the
+resize itself done via PIL LANCZOS + a tuned `UnsharpMask` pass to recover contrast LANCZOS trades
+away versus bilinear's edge overshoot. Added one new CLAUDE.md rule (scale-mode + sharpen-strength
+traps in `_get_sized_cover`/`_lanczos_scale`). Full writeup, including two corrected
+premature-success claims, in NOTES.md.*
+
+*Previously: 2026-06-19 Session 4 — split `bookmark_body`/`bookmark_icon`/`tassel_cord`/
 `tassel_head`/`tassel_fringe` into independently overridable theme keys (GROUP 9, themes.py), with
 the fallback chain: `tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light`;
 `bookmark_body`/`bookmark_icon` keep their original derivations as fallbacks (accent desaturated
