@@ -5,6 +5,7 @@ import hashlib
 import platformdirs
 import mutagen
 from pathlib import Path
+from PIL import Image
 from PySide6.QtCore import QObject, Signal, QThread, Qt
 from PySide6.QtGui import QImage
 from ..db import LibraryDB
@@ -127,6 +128,17 @@ class ScannerWorker(QObject):
                     cover_path = str(f)
                     break
 
+        # No conventionally-named cover found. If the folder has exactly one
+        # image file, it's almost certainly the cover (just not named per the
+        # convention above) — use it. With multiple unmatched images (e.g. a
+        # folder mixing numbered interior scans with one real cover), picking
+        # one is a guess; leave cover_path unset and let the embedded-tag
+        # fallback below handle it instead.
+        if not cover_path:
+            image_files = [f for f in all_files if f.suffix.lower() in {'.jpg', '.jpeg', '.png'}]
+            if len(image_files) == 1:
+                cover_path = str(image_files[0])
+
         audio_files = sorted([f for f in all_files if f.suffix.lower() in extensions])
         book_files = []
         cumulative_start_ms = 0
@@ -194,7 +206,7 @@ class ScannerWorker(QObject):
         # Thumbnail Caching
         if cover_path:
             try:
-                cache_dir = Path(platformdirs.user_cache_dir("fabulor", "fabulor")) / "thumbnails"
+                cache_dir = Path(platformdirs.user_cache_dir("fabulor", "fabulor")) / "thumbnails_v2"
                 cache_dir.mkdir(parents=True, exist_ok=True)
 
                 # Unique identifier based on path hash for the cache filename
@@ -217,9 +229,22 @@ class ScannerWorker(QObject):
                         if data: img.loadFromData(data)
 
                 if not img.isNull():
-                    img = img.scaled(226, 344, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    if img.save(str(thumb_path), "JPEG"):
-                        cover_path = str(thumb_path)
+                    # Format_RGBA8888 is mandatory before constBits(): it is the only
+                    # QImage format guaranteed to be tightly packed (bytesPerLine ==
+                    # width*4) with no row padding, which Image.frombuffer requires.
+                    # Do not skip this conversion or reorder it after constBits() —
+                    # either produces silently corrupted (sheared/garbled) thumbnails.
+                    qimg = img.convertToFormat(QImage.Format.Format_RGBA8888)
+                    pil_img = Image.frombuffer(
+                        "RGBA", (qimg.width(), qimg.height()),
+                        bytes(qimg.constBits()), "raw", "RGBA", 0, 1,
+                    )
+                    # LANCZOS over BOX: better edge/text preservation at this ~1.5-2.5x
+                    # downscale ratio. thumbnail() is in-place and aspect-preserving.
+                    pil_img.thumbnail((320, 480), Image.Resampling.LANCZOS)
+                    pil_img = pil_img.convert("RGB")
+                    pil_img.save(str(thumb_path), "JPEG", quality=88, optimize=True)
+                    cover_path = str(thumb_path)
             except Exception:
                 pass
 

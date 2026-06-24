@@ -552,9 +552,9 @@ class LibraryPanel(QFrame):
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
-        if image.width() > 226 or image.height() > 344:
+        if image.width() > 320 or image.height() > 480:
             image = image.scaled(
-                226, 344,
+                320, 480,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -571,6 +571,7 @@ class LibraryPanel(QFrame):
         if book is None:
             return
         _cover_cache.pop(book.id, None)
+        self._delegate.evict_sized_cover(book.id)
         self._trigger_cover_load(book)
 
     # ── Sort / filter ────────────────────────────────────────────────────────
@@ -772,6 +773,7 @@ class LibraryPanel(QFrame):
 
     def evict_cover(self, book_id: int) -> None:
         _cover_cache.pop(book_id, None)
+        self._delegate.evict_sized_cover(book_id)
 
     def get_cached_cover(self, book_id: int):
         return _cover_cache.get(book_id)
@@ -1078,6 +1080,7 @@ class BookDelegate(QStyledItemDelegate):
         # Reset the rendered-placeholder cache so stale-color pixmaps don't survive a theme switch.
         # Assigned (not .clear()'d) so the first call from __init__ works before the attr exists.
         self._placeholder_cache: dict = {}  # (color, w, h) → QPixmap
+        self._sized_cover_cache: dict = {}  # (book_id, w, h) → QPixmap, pre-scaled to one cell size
         self._color_elapsed  = qc(theme.get('library_elapsed',    '#cccccc'))
         self._color_total    = qc(theme.get('library_total',      '#cccccc'))
         self._color_pct      = qc(theme.get('library_percentage', '#aaaaaa'))
@@ -1739,10 +1742,81 @@ class BookDelegate(QStyledItemDelegate):
 
     # ── Drawing helpers ─────────────────────────────────────────────────────
 
+    def _get_sized_cover(self, book, cover: QPixmap, target_w: int, target_h: int) -> QPixmap:
+        """Returns `cover` pre-scaled close to target_w×target_h (device pixels), aspect
+        preserved (NOT expanded/cropped — _draw_cover's square/crop/letterbox branches all
+        derive their own crop/inset math from the source's actual proportions, so this must
+        stay a plain bounded fit, same as KeepAspectRatio). Cached per (book_id, target size).
+        Only shrinks — never upscales a smaller source, which would soften it further."""
+        dpr = cover.devicePixelRatio() or 1.0
+        dev_w = max(1, round(target_w * dpr))
+        dev_h = max(1, round(target_h * dpr))
+        key = (book.id, dev_w, dev_h)
+        sized = self._sized_cover_cache.get(key)
+        if sized is not None:
+            return sized
+        if cover.width() <= dev_w and cover.height() <= dev_h:
+            sized = cover
+        else:
+            # Expand slightly past the bound (scaled to the larger of the two ratios) so the
+            # later crop/letterbox math in _draw_cover still has enough pixels on both axes —
+            # a plain bounded KeepAspectRatio fit can leave one axis short of target.
+            scale = max(dev_w / cover.width(), dev_h / cover.height())
+            new_w = max(1, round(cover.width() * scale))
+            new_h = max(1, round(cover.height() * scale))
+            sized = self._lanczos_scale(cover, new_w, new_h)
+            sized.setDevicePixelRatio(dpr)
+        self._sized_cover_cache[key] = sized
+        return sized
+
+    @staticmethod
+    def _lanczos_scale(cover: QPixmap, w: int, h: int) -> QPixmap:
+        """PIL LANCZOS downscale — same rationale as scanner.py's thumbnail pass: Qt's
+        SmoothTransformation (bilinear) is the actual softness source this whole cache
+        exists to route around, so the one new resize this cache introduces must not
+        reuse it. Format_RGBA8888 before constBits() is mandatory (tightly-packed, no row
+        padding) and must not be reordered — see scanner.py's identical conversion.
+
+        LANCZOS is mathematically more correct than bilinear but, unlike bilinear, doesn't
+        ring/overshoot at edges — on flat-color graphic covers that overshoot is exactly what
+        reads as "punchy" contrast, so a straight LANCZOS swap measurably improves text
+        legibility while looking *less* crisp on high-contrast art (confirmed by user A/B at
+        real cell size). A mild UnsharpMask after the resize restores some of that edge punch
+        without giving up LANCZOS's cleaner text rendering — applied on the RGB channels only,
+        alpha passed through untouched so cover edges/transparency aren't affected. Strength is
+        deliberately conservative (percent=25): an earlier percent=60 pass was confirmed by the
+        user to look "cartoonish"/HDR-filtered — visible haloing on photographic gradients
+        (skies, faces) where LANCZOS leaves no real edge for the mask to find, so it amplifies
+        noise instead. Do not raise percent without re-checking against photographic covers,
+        not just flat-color graphic ones — the latter tolerates much more sharpening before
+        artifacts become visible."""
+        from PIL import Image, ImageFilter
+        qimg = cover.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        pil_img = Image.frombuffer(
+            "RGBA", (qimg.width(), qimg.height()),
+            bytes(qimg.constBits()), "raw", "RGBA", 0, 1,
+        )
+        pil_img = pil_img.resize((max(1, w), max(1, h)), Image.Resampling.LANCZOS)
+        r, g, b, a = pil_img.split()
+        sharpened = Image.merge("RGB", (r, g, b)).filter(
+            ImageFilter.UnsharpMask(radius=0.8, percent=25, threshold=2)
+        )
+        pil_img = Image.merge("RGBA", (*sharpened.split(), a))
+        out = QImage(pil_img.tobytes(), pil_img.width, pil_img.height, QImage.Format.Format_RGBA8888)
+        return QPixmap.fromImage(out.copy())
+
+    def evict_sized_cover(self, book_id: int) -> None:
+        """Drop all cached pre-scaled pixmaps for a book — call whenever its source
+        cover in _cover_cache is replaced or evicted, else stale sizes linger."""
+        stale = [k for k in self._sized_cover_cache if k[0] == book_id]
+        for k in stale:
+            del self._sized_cover_cache[k]
+
     def _draw_cover(self, painter, rect: QRect, cover, book, *, square: bool, bg: QColor = None):
         painter.fillRect(rect, bg if bg is not None else QColor(13, 0, 26))
 
         if cover and not cover.isNull():
+            cover = self._get_sized_cover(book, cover, rect.width(), rect.height())
             if square:
                 # Center-crop to fill rect
                 src_w, src_h = cover.width(), cover.height()
