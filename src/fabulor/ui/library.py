@@ -1074,9 +1074,10 @@ class BookDelegate(QStyledItemDelegate):
         self._color_narrator = qc(theme.get('library_narrator',   '#888888'))
         self._color_year     = qc(theme.get('library_year', theme.get('library_narrator', '#888888')))
         # Placeholder logo color (hex string — render_logo_placeholder_bordered takes a str).
-        # Mirrors the player/library fallback chain (NOT placeholder_stats — that's stats-panel tier).
-        self._placeholder_color = theme.get('placeholder_cover',
-            theme.get('library_narrator', theme.get('text', '#888888')))
+        # placeholder_library is library-grid-tier (optional); falls back through the player tier.
+        self._placeholder_color = theme.get('placeholder_library',
+            theme.get('placeholder_cover',
+                theme.get('library_narrator', theme.get('text', '#888888'))))
         # Reset the rendered-placeholder cache so stale-color pixmaps don't survive a theme switch.
         # Assigned (not .clear()'d) so the first call from __init__ works before the attr exists.
         self._placeholder_cache: dict = {}  # (color, w, h) → QPixmap
