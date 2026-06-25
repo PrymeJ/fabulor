@@ -119,6 +119,21 @@ It must store the instance reference, clear `self.instance`, call `terminate()`,
 ### DO NOT move the checkpoint `unlink` back into `SessionRecorder.close()`'s daemon thread, and DO NOT make `closeEvent`'s `clear_checkpoint()` conditional
 `close()` flushes the session to DB on a daemon thread and RETURNS that thread (or `None` on the sub-60s/no-book discard). The checkpoint deletion is NOT inside that daemon closure — it is a separate synchronous `SessionRecorder.clear_checkpoint()` that `closeEvent` calls **unconditionally** after `flush_thread.join(timeout=0.5)`. Ordering is load-bearing: `t = close(); if t: t.join(timeout=0.5); clear_checkpoint(); event.accept()` — all before `event.accept()` (the point of no return). The original code did the `unlink` inside the daemon `_write` after the DB write; on graceful close the process exits right after `close()` returns, killing that daemon thread before the unlink but AFTER the DB write landed → stale checkpoint → next startup's `_recover_checkpoint()` re-wrote the SAME session as a **duplicate** (FIXED 2026-06-21; see NOTES.md "Session recorded twice on graceful app close"). Two independent guards with two distinct jobs: the **join** gives the DB write a bounded chance to land (it can be lost only if a single-row WAL insert exceeds 500ms — DB-broken territory); the **unconditional synchronous clear** makes the duplicate impossible regardless of how the join resolved. If the clear were left inside `_write` (or made conditional on the join completing), a join *timeout* could strand a checkpoint after a committed write and resurrect the bug. `losing-at-worst` beats `duplicating`; the prior behavior was a guaranteed duplicate. The recovery-path `unlink` in `_recover_checkpoint`'s `finally` is a DIFFERENT path (runs at startup while the app stays alive) — leave it as-is.
 
+### DO NOT call `session_recorder.close()` after nulling `_current_book` / `current_file`
+`SessionRecorder` is constructed with `get_book_fn=lambda: self._current_book` (`app.py`). `close()`
+reads the book through that lambda at call time and gates its entire flush on
+`listened >= 60 and book is not None` — if the book is already `None`, the flush is skipped
+regardless of how long the session ran, and ONLY the misleading "< 60s threshold" log line prints
+(it doesn't distinguish "too short" from "no book"). `_on_book_removed` (the helper called by
+scan-location removal, the book-detail trash button, and confirmed-missing handling) used to null
+`_current_book`/`current_file` BEFORE calling `close()`, silently discarding every active session —
+including multi-hour ones — on any removal of the currently-playing book (FIXED 2026-06-25; see
+NOTES.md "`_on_book_removed` nulled `_current_book` before calling `session_recorder.close()`").
+Correct order, and the one any future teardown helper must follow: call `close()` FIRST (book and
+player both still valid, so the position read is also correct), THEN clear `_current_book` /
+`current_file`, THEN `player.terminate()`. `tests/test_session_recorder.py` pins this contract —
+keep it green on any change to `_on_book_removed` or to `SessionRecorder.close()`'s guard.
+
 ### DO NOT hard-delete from the `books` table
 `remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0 AND is_excluded = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
 

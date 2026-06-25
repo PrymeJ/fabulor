@@ -1,3 +1,27 @@
+## Session Summary — 2026-06-25 — Fixed silent session-discard on book/path removal
+
+**Branch:** `main`.
+
+### What shipped
+
+- **Fixed `_on_book_removed` ordering bug (`app.py`)** — `_current_book`/`current_file` were nulled
+  *before* calling `session_recorder.close()`. `SessionRecorder` reads the book via
+  `get_book_fn=lambda: self._current_book`, and `close()` gates its DB flush on
+  `listened >= 60 and book is not None` — so any removal of the currently-playing book (scan-location
+  removal, book-detail trash button, confirmed-missing handling) silently discarded the active
+  session regardless of length, including multi-hour sessions. Fixed by calling `close()` first,
+  then nulling state, then `terminate()` (unchanged ordering relative to `terminate()`).
+- **Added `tests/test_session_recorder.py`** — pins the flush-on-close contract: valid book + ≥60s
+  listened flushes exactly one session; book `None` at close time discards (freezes the bug's shape
+  so a future refactor can't silently reintroduce it).
+- **Scope deliberately not touched:** the 60s threshold itself (sub-60s sessions intentionally
+  discard on every close path, voluntary or not), `close()`'s signature, every other
+  `session_recorder.close()`/`.pause()` call site.
+- Full writeup in NOTES.md; new CLAUDE.md rule added (DO NOT call `close()` after nulling
+  `_current_book`/`current_file`).
+
+---
+
 ## Session Summary — 2026-06-24 Session 1 — Library cover thumbnail quality: discovery bug, resampling, and the real paint-time fix
 
 **Branch:** `main`. **Commits:** `89f0595`.

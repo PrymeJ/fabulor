@@ -1,3 +1,61 @@
+## `_on_book_removed` nulled `_current_book` before calling `session_recorder.close()`, silently discarding every active session on book/path removal regardless of duration (2026-06-25)
+
+**Symptom path:** any removal of the currently-playing book — scan-location removal
+(`library_controller.py` `_on_remove_locations_clicked` → `app.on_book_removed`), the book-detail
+trash button (`_on_book_detail_removed`), or a confirmed-missing file (`_mark_book_missing`) — all
+funnel into `app.py`'s `_on_book_removed`. The original ordering was:
+
+```python
+self.current_file = ""
+self._current_book = None
+self.session_recorder.close()
+```
+
+**Root cause:** `SessionRecorder` is constructed with `get_book_fn=lambda: self._current_book`
+(`app.py`, `SessionRecorder(...)` call site). `close()` reads the book through that lambda via
+`book = self._get_book()` and gates the entire flush on `listened >= 60 and book is not None`. By
+the time `close()` ran, `_current_book` had already been set to `None` two lines above — so `book`
+was always `None` and the `else` (discard) branch fired unconditionally, independent of how long
+the session had been open. This was *not* the documented 60s-threshold behavior (sub-60s sessions
+intentionally discard on every close path, voluntary or not — that part is correct and untouched);
+this was the book-validity half of the same `and` guard failing every single time, silently
+dropping sessions of any length, including multi-hour ones.
+
+**Why it went unnoticed:** the discard path only prints to stdout
+(`"[close_session] discarded — listened={listened:.0f}s < 60s threshold"`), and that log line is
+misleading in this exact failure mode — `listened` was correctly accumulated and often well over
+60s; the message just doesn't distinguish "discarded because too short" from "discarded because no
+book," since the `book is not None` half of the guard isn't mentioned in the print at all.
+
+**Why the checkpoint didn't backstop it:** the 30s `session_checkpoint.json` exists for crash
+recovery, but `_on_book_removed` returns normally (no crash) and a subsequent graceful app exit
+calls `clear_checkpoint()` synchronously in `closeEvent`, deleting it before the next startup could
+ever recover it. The checkpoint only helps when the process dies before a clean `close()`/
+`clear_checkpoint()` pair runs — it was never going to catch this.
+
+**Fix:** reorder so `close()` is called while both `_current_book` and `current_file` are still
+valid, and the player is still live (`terminate()` runs later in the same method, unchanged):
+
+```python
+self.session_recorder.close()
+self.current_file = ""
+self._current_book = None
+```
+
+`close()`'s own internal `_get_position()` read also depends on the player still being attached —
+this ordering fixes both the book-validity guard and keeps the position read correct, in one move.
+
+**Test added:** `tests/test_session_recorder.py` — constructs a real `SessionRecorder` (needs a
+`QApplication` for its `QTimer`s) against a fake DB, and pins two cases: a valid book + ≥60s
+listened flushes exactly one `write_session` call; a `None` book at close time discards even at
+≥60s (freezing the bug's exact shape, not endorsing it — it documents why the call must happen
+before the book is nulled, not that `None`-book discard is itself desirable behavior).
+
+**Scope explicitly not changed:** the 60s threshold itself, `close()`'s signature, every other
+`session_recorder.close()`/`.pause()` call site. This was purely an ordering bug in one method.
+
+---
+
 ## Library cover thumbnails looked "pretty much the same" after a discovery + resampling fix — the real bottleneck was the paint-time downscale, not the source (2026-06-24)
 
 **Starting complaint:** small grid thumbnails (3-per-row/Square, ~88-96px cells) had crumbling
