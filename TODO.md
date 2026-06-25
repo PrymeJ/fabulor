@@ -6,6 +6,38 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
+  `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
+  already equals the default speed, since there's nothing to reset. See NOTES.md "TODO (before
+  release): suppress shimmer when speed is already the default" (~line 1006).
+- **[2026-06-25] Tag action button's check→delete revert timer can fire mid-edit.** After a tag
+  rename, an unguarded `QTimer.singleShot(2000, ...)` reverts the action button's visual state; if
+  the user starts a new edit within that 2s window, the revert can fire mid-edit and silently undo
+  the in-progress state. Low-priority UX papercut, not a correctness bug. Fix: capture/cancel the
+  timer when a new edit starts. See NOTES.md "tag action button check → delete 2s timer" (~line
+  1568).
+- **[2026-06-25] Cover Panel: no duplicate-cover detection.** Adding the same cover image twice (via
+  `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
+  size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
+  wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
+- **[2026-06-25] Pre-release cleanup pass (bundle into one commit, not piecemeal):**
+  - Remove the `Q`-key quote-rotation shortcut (`app.py`, testing-only — already flagged inline as
+    `# TODO: remove before release — testing only` at app.py:1947).
+  - Remove debug `print()`/timing instrumentation left over from VT debugging in `_close_session`,
+    `_on_file_ready`, `_on_book_selected_from_library`.
+  - Switch the VT playlist-resolution temp files (`ffmetadata`/`concat` in `_resolve_playlist`) from
+    `delete=False` to `delete=True` (or add explicit cleanup) once VT is considered stable — they
+    currently accumulate in `/tmp` across sessions.
+  See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for all three.
+- **[2026-06-25] Re-verify: chapter nav undo/restore near boundaries.** A 2026-05-16 NOTES.md entry
+  ("Deferred — chapter nav undo/restore near boundaries", ~line 2087) lists three bugs: Undo doesn't
+  appear after Next, Undo after Prev drifts the chapter slider to the far right, and
+  `apply_smart_rewind`/Undo restore used raw `time_pos =` assignment in some paths. This predates the
+  Session 3 (2026-06-13) chapter-seek precision rework, which unified chapter nav (including
+  embedded-M4B clicks) onto `seek_async` with calibrated offsets — these bugs may already be fixed as
+  a side effect. Confirm whether they still reproduce before doing any work; if fixed, delete this
+  entry instead of carrying it forward.
+
 - **[2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible.** Only
   `visual_area` (the cover art) currently handles volume wheel events (`wheelEvent` in `app.py`).
   Scrolling directly over the volume slider or the muted icon while either is visible/showing is a

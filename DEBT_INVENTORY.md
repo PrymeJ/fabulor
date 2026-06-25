@@ -20,18 +20,13 @@ Newest entries at the top within each section, matching SESSION.md/NOTES.md conv
 ## Theme system
 
 - **Theme transitions** — long-term path is per-element `@Property(QColor)` animation; Themes tab QSS complexity makes it non-trivial today. `THEME_ANIM_TODO` comments mark instrumented widgets. See CLAUDE.md "Pending / Known Debt".
-
-## Session recording
-
-- **VT file switches not threaded into session recording** — `session_recorder.close/open` wiring doesn't account for mid-book VT file transitions; `file_switched` isn't fed in. Fully deferred. See CLAUDE.md "Pending / Known Debt".
-- **Sleep timer suppresses session recording during the sleep window** — fully deferred. See CLAUDE.md "Pending / Known Debt".
-- **Sleep timer state not persisted across restarts** — `get_sleep_duration`/`get_sleep_mode` never read on startup. Product decision deferred. See CLAUDE.md "Pending / Known Debt".
+- **Spurious sidebar expand during theme hover — root cause unknown** (2026-05-26) — suspected race between the right-click handler and the panel animation guard; only mitigated (overlay mask unconditionally excludes sidebar geometry), not fixed. See NOTES.md "Theme System — Known Bugs (2026-05-26)".
+- **`hide_all_panels` then open relies on a `QTimer.singleShot(320, ...)` magic number** instead of a real `all_panels_hidden` signal from `PanelManager`; silently breaks if any panel animation duration changes. Also has an unresolved design question (whether blur's 500ms should count toward "hidden"). Same item as CLAUDE.md's P6-D panel-construction debt — not a new entry, just the fuller writeup. See NOTES.md "`hide_all_panels` then open: timer vs signal (2026-05-26)".
 
 ## Stats / library UI
 
-- **Deleted/excluded book UI in stats panel** — sessions/history for excluded books show with no visual differentiation; duration label, cover, metadata, Cover+Tags tabs all need treatment. Deferred to Session 7. See CLAUDE.md "Pending / Known Debt".
+- **Semi-transparent session history rows — investigation dead end, not pursued** (2026-06-10) — goal was matching the Tags panel's row transparency; abandoned because `QScrollArea`'s internal viewport resists QSS/`WA_*` transparency attempts. Current baseline (solid alternating colors) is accepted. Root structural issue: a shared `get_stats_stylesheet()` makes this kind of scoped QSS override fragile — a dedicated stylesheet function for `BookDetailPanel` was named as a possible path but not pursued. Grey area: also reads as a deferred polish feature, not purely structural. See NOTES.md "Semi-transparent session history rows — investigation dead end".
 - **Screen drag 4K→1080p: cover scaling doesn't update without scroll** — needs `QWindow.screenChanged`. See CLAUDE.md "Pending / Known Debt".
-- **Book detail panel background opacity** — user wants it opaque eventually; not in current scope. See CLAUDE.md "Pending / Known Debt".
 - **MP3 natural sort (2 before 10)** — out of scope for v1. See CLAUDE.md "Pending / Known Debt".
 
 ## Code structure / drift risk
@@ -44,6 +39,24 @@ Newest entries at the top within each section, matching SESSION.md/NOTES.md conv
 
 - **Book switch state split on DB failure** — `_on_book_selected_from_library` (app.py:1449–1458) has no rollback if `db.update_last_played` raises mid-sequence; `current_file` can end up pointing at a book mpv isn't actually playing. Not a common failure mode. See NOTES.md "Book switch state split on DB failure".
 - **`cover_path` can be an audio file path in an edge case** — only when thumbnail `img.save()` fails (disk full/permissions); `CoverLoaderWorker` then silently shows no cover rather than crashing. Accepted failure mode, no fix planned. See NOTES.md "cover_path can be an audio file path in edge case".
+- **Known gaps — missing-file edge cases not yet exercised** (2026-06-08) — two scenarios identified but unverified: partial VT folder removal (some but not all multi-file book files deleted externally), and removable/network drive unmount mid-buffer (likely funnels through existing error handling, but timing/UX unconfirmed without real hardware). See NOTES.md "Known gaps — missing-file edge cases not yet exercised".
+- **Config `balance` key has no bounds validation** — `config.set_balance()` has no clamp; a corrupted/manually-edited QSettings value could pass an out-of-range balance to mpv's audio filter silently. Fix: clamp `[-1.0, 1.0]` in `set_balance`, deferred to next config touch. See NOTES.md "Config — `balance` key has no bounds validation".
+- **`upsert_cover` deletes the file before the DB row** — wrong order; if the DB delete fails, the DB still references a now-missing file (broken thumbnail). Correct order is DB-first. Address when cover panel is next touched. See NOTES.md "`upsert_cover` delete ordering — file before DB".
+- **`_on_thumb_delete` doesn't check the file-delete return value** — a silent file-deletion failure leaves an orphaned file with no log. At minimum, log the failure. See NOTES.md "`_on_thumb_delete` does not check file delete return value".
+
+## Database / queries
+
+- **`get_listening_time_per_period` — orphaned sessions collapse under NULL `book_id`** (2026-05-27) — pre-migration sessions with a NULL `book_id` collapse into one GROUP BY row with an unreliable `book_path`. Low-impact, no fix planned — documented for awareness. See NOTES.md "`get_listening_time_per_period` — orphaned sessions collapse under NULL book_id".
+
+## Cold-start / position-restore paths
+
+- **Cover cache cold start still hits mutagen** — `_load_cover_art`'s cache check is keyed by the library-panel-populated cache; on a cold start (library never opened this session) the cache is empty and mutagen runs synchronously as before. Two fix options identified, neither implemented. See NOTES.md "Cover cache — cold start still hits mutagen".
+- **Position-restore fragility** — `_restore_position` does an extra `db.get_book()` read purely as a workaround for `_current_book` potentially being stale relative to a config sync. Could be eliminated by reordering; "requires care." See NOTES.md "Position restore fragility".
+- **mpv `loadfile start=` option does not work** — environmental limitation in the current mpv/python-mpv combination, not a Fabulor bug; position-restore relies on a separate `time_pos` assignment instead. Revisit if a future mpv/python-mpv version fixes upstream. See NOTES.md "mpv `loadfile start=` option does not work".
+
+## ChapterList
+
+- **`fade_out` signal accumulation** — double-calling `fade_out` before the animation completes can leave `_hide_connected` semantically stale; confirmed safe in practice today, but flagged as a future risk. Deferred until chapter-list animation is next refactored. See NOTES.md "ChapterList — Deferred Fixes (2026-05-15)".
 
 ## VT (multi-file) — fully deferred
 

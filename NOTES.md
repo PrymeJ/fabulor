@@ -1753,13 +1753,6 @@ On first visit to each of Day, Week, Month tabs after app start, content flashed
 
 ---
 
-## Sleep Timer
-
-### State not persisted across restarts
-`config.get_sleep_duration()` and `config.get_sleep_mode()` exist and are written by `SleepTimerPanel.set_sleep_timer()` ([sleep_timer.py:130–137](src/fabulor/ui/sleep_timer.py#L130-L137)), but nothing reads them on startup. `SleepTimerPanel.__init__` always starts with `_sleep_timer_end_time = None` and `_sleep_mode = None`. Whether to restore sleep timer state across restarts is a product decision. Address when sleep timer feature is next touched.
-
----
-
 ## Panel Animation — Deferred Fixes
 
 ### `library_panel_animation.finished` duplicate connection risk — `_start_library_entry` and `_close_library_flow`
@@ -1836,9 +1829,11 @@ Tested with `instance.loadfile(path, start=str(int(seconds)))` and `f"+{int(seco
 
 ---
 
-## Library Panel — Open/Close Performance (CLOSE STUTTER RESOLVED 2026-05-13 — open performance still has open items)
+## Library Panel — Open/Close Performance (RESOLVED — close stutter 2026-05-13, open performance since fixed)
 
-Current state: close slide on book selection is smooth. Open performance is unchanged.
+Current state: both close slide and open performance are smooth. The attempt log below is kept as
+historical record of what was tried during the close-stutter session; the open-side work that
+finally resolved it landed later. Do not re-investigate the reverted attempts below as if open.
 
 ### What was attempted this session and reverted
 
@@ -2075,8 +2070,14 @@ No second *unguarded synchronous* writer exists. The residual exposure is **pure
 
 The disconnect-before-connect fix in `load_book` addressed the *double-handler* variant (a real bug, fixed). This residual is the leftover guard-release-ordering overlap. **If determinism is ever wanted, the lever is ordering** — hold the timer resume until BOTH the flow animation finished AND the restore seek settled, rather than resuming on `_flow_anim.finished` alone. Not pursued; the self-correct makes it cosmetic and rare. Full writer list with file:line is in review/Review_260612_6.md §7.
 
-### VT sessions not recorded correctly across file switches
-`_close_session`/`_open_session` wiring does not account for mid-book VT file transitions. When mpv emits `file_switched`, the session layer treats it as a new play event rather than continuation of the same book. Accurate listening time attribution across VT file boundaries requires threading `file_switched` into the session recorder. Known pre-existing issue; address when session recording is next touched.
+### VT sessions not recorded correctly across file switches — believed FIXED (verify, 2026-06-25)
+Original issue: `_close_session`/`_open_session` wiring did not account for mid-book VT file
+transitions — when mpv emitted `file_switched`, the session layer treated it as a new play event
+rather than continuation of the same book, breaking listening-time attribution across VT file
+boundaries. Believed resolved as of 2026-06-25 (`file_switched` now threaded into the recorder), but
+not independently re-confirmed here — left in NOTES as a root-cause record pending a verification
+pass. If a VT book's listening time still fragments across its file boundaries, this is where to
+start.
 
 ---
 
