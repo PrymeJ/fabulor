@@ -716,9 +716,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_book_removed(self):
         """Helper for controller when the currently playing folder is removed from library."""
+        # close() MUST fire while _current_book / current_file are still valid and
+        # the player is still live: its get_book_fn lambda reads self._current_book,
+        # and its position read reads the live player. Nulling these first made
+        # close() receive None for the book and silently discard every active
+        # session on removal regardless of duration (confirmed data loss for long
+        # sessions). terminate() still runs after, below.
+        self.session_recorder.close()
         self.current_file = ""
         self._current_book = None
-        self.session_recorder.close()
         if self.player:
             self.player.terminate()
 
