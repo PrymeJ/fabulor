@@ -9,6 +9,7 @@ from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics
+from PIL import Image, ImageFilter
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -1791,7 +1792,6 @@ class BookDelegate(QStyledItemDelegate):
         noise instead. Do not raise percent without re-checking against photographic covers,
         not just flat-color graphic ones — the latter tolerates much more sharpening before
         artifacts become visible."""
-        from PIL import Image, ImageFilter
         qimg = cover.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
         pil_img = Image.frombuffer(
             "RGBA", (qimg.width(), qimg.height()),
