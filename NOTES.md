@@ -1704,6 +1704,14 @@ Both are filtered by `get_all_books` (`WHERE is_deleted = 0 AND is_excluded = 0`
 
 The `upsert` resurrection behavior (rescan brings a book back) is a deliberate design choice, not an oversight. If permanent exclusion is needed in the future, the upsert blocks would need a conditional reset: `is_excluded = CASE WHEN excluded.something THEN 0 ELSE books.is_excluded END`.
 
+> **SUPERSEDED 2026-06-27:** the "future" above arrived. `is_excluded` is now sticky through
+> rescans (`is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END` in both upserts) — a rescan no
+> longer resurrects a trashed/missing book. The restore path is now the **Excluded Books** section in
+> the Library settings tab (`ui/excluded_books.py` → `set_book_excluded(path, False)`). `is_deleted`
+> still resets on upsert (location-readd resurrection unchanged). The lines above (1701, 1705)
+> describe the pre-2026-06-27 behavior and are kept as the historical record. See CLAUDE.md "Sticky
+> `is_excluded`".
+
 ## Scanner progress invariant — never pass 0.0 (2026-05-18)
 
 `upsert_book` and `upsert_books_batch` use `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` to avoid overwriting saved playback positions on rescan. The scanner does not know the user's position — it must pass `None`, not `0.0`. The `NULLIF` is a safety net for accidental zeros, not a contract callers can rely on. If a future DB engine or sqlite version changes `NULLIF` semantics, `0.0` would overwrite progress silently.

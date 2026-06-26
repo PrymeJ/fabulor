@@ -437,12 +437,33 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 ### Force-rescan missing-book detection (2026-06-26)
 - [ ] Physically delete a book folder from disk, click Rescan (force) → book disappears from the library view
 - [ ] Same: the deleted book is flagged is_excluded=1 (soft), NOT hard-deleted — its row, progress, and listening history still appear in the Stats panel (search by title)
-- [ ] Deleted-then-rescanned book can be resurrected: restore its folder on disk, click Rescan again → book reappears in the library with progress intact (force-rescan upsert clears is_excluded)
+- [ ] **Sticky exclusion (2026-06-27):** a deleted-then-missing-flagged book does NOT reappear on a later force rescan even if its folder is restored on disk — `is_excluded` is sticky through upserts now. The ONLY way back is the Excluded Books section (below). (Was previously: rescan cleared is_excluded — no longer true.)
 - [ ] **Non-force scan does NOT remove a deleted folder's book** — re-adding a location (which triggers a non-force scan) leaves a physically-deleted book still visible (only the explicit Rescan button removes it)
 - [ ] **Offline/unmounted location is safe:** with location A unmounted (root no longer exists) and location B present, clicking Rescan does NOT flag A's books missing — they stay visible (root.exists() guard via walked_locations)
 - [ ] **Transient I/O hiccup is safe:** a book folder that momentarily errors on read (permission/flaky mount) during a force rescan is NOT flagged missing — it stays visible
 - [ ] A force rescan with one book deleted and one present flags only the deleted one; the present book is untouched
 - [ ] Excluded books (user-trashed via book detail trash button) are unaffected by the missing-detection pass — their is_excluded state is independent
+
+### Excluded Books section — Library settings tab (2026-06-27)
+- [ ] With zero excluded books, the section is entirely invisible (no header, no space) in the Library tab
+- [ ] With ≥1 excluded book, "Excluded Books" header + "N books excluded ▼" line appears; cursor is a pointer hand over the line
+- [ ] Count text is correct and singular/plural ("1 book" vs "2 books"); font is 1px smaller than other settings labels
+- [ ] Clicking the line expands a scrollable list with a downward height animation; arrow flips to ▲; clicking again collapses, arrow back to ▼
+- [ ] List shows exactly 3 rows at its fixed height; a 4th+ excluded book scrolls
+- [ ] Each row is a single compact line (~21px): "Title — Author" elided right if too long; eye icon on the right
+- [ ] Hovering a row slides the eye in from the right (same feel as the History tab trash reveal); hover away slides it back
+- [ ] Clicking the eye restores the book immediately and silently (no confirm) — row animates out, count decrements, book reappears in the library grid
+- [ ] Restore also refreshes stats panel, book detail panel, and tag manager (not just the library grid)
+- [ ] Restoring the LAST row: list stays visible for the rest of this settings session; section disappears only on the NEXT settings-panel open (count rechecked)
+- [ ] Section retints correctly on a theme change while the settings panel is open
+- [ ] A book excluded, then restored via the eye, is NOT re-excluded by a subsequent force rescan (sticky flag was cleared by set_book_excluded(path, False))
+
+### Naming pattern (restored 2026-06-27)
+- [ ] Naming pattern section appears in the Library tab AFTER Manage folders (not before)
+- [ ] "Author - Title" / "Title - Author" buttons show the selected-state highlight matching saved config
+- [ ] Clicking a pattern re-splits all books' title/author from their folder names and refreshes the library grid + current book metadata
+- [ ] **Lock guard:** a book whose title and/or author was edited and LOCKED (book detail panel) keeps its locked field(s) after a naming-pattern click; only unlocked fields re-parse
+- [ ] Manage folders list box is shorter than before (~4 paths visible), with the naming pattern section below it
 
 ## Settings panel
 

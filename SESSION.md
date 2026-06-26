@@ -1,3 +1,66 @@
+## Session Summary — 2026-06-27 — Excluded Books restore UI, sticky exclusion, reparse lock fix
+
+**Branch:** `main`. **Commits:** `35fb971` (reparse lock fix), `f91b002` (sticky exclusion +
+`get_excluded_books`), `0cf58f8` (Excluded Books UI + Library tab layout).
+
+### Context
+
+Two threads converged. (1) The 2026-06-26 missing-detection work made a force rescan *create*
+`is_excluded=1` rows, but the upserts still *reset* `is_excluded=0` on every rescan — so a missing
+or trashed book could flip back the moment its folder reappeared (or on any force rescan that
+re-touched the row). The user wanted exclusion to be sticky, with a deliberate restore UI instead of
+rescan-as-restore. (2) While restoring the (earlier-removed) Naming pattern UI, `reparse_library`
+turned out to be a real data-loss bug, not a no-op — see below.
+
+### What shipped
+
+- **Sticky `is_excluded` (`db.py`)** — both `upsert_book` and `upsert_books_batch` now use
+  `is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END` instead of `is_excluded=0`. A force
+  rescan keeps an excluded book excluded; `is_deleted` still resets (location-readd resurrection
+  unchanged). Reverses the documented "rescan resets both flags" behavior — intentional, the
+  Excluded Books UI is the replacement restore path.
+- **`db.get_excluded_books()`** — `(path, title, author)` for `is_excluded=1 AND is_deleted=0`,
+  ordered by title, drives the new UI.
+- **Excluded Books section (`ui/excluded_books.py`, new)** — collapsible section at the bottom of
+  the Library settings tab. Invisible/zero-space when none excluded; rechecked on each settings-panel
+  open (`_reload_excluded_books`, wired into `panels._start_settings_entry`). Compact single-line
+  rows (~21px): "Title — Author" elided right, hover-reveal eye (copies `_HistoryRow`'s slide
+  animation exactly — 250ms, OutCubic-in/InOutQuad-out, off-screen-right child overlay — with
+  `eye.svg` via `load_currentcolor_icon`). Click restores immediately and silently via
+  `set_book_excluded(path, False)` + the standard 4-way refresh (library grid, book detail, stats,
+  tags). List shows exactly 3 rows, scrolls beyond. Theme changes retint rows via `theme_manager`.
+- **`reparse_library` lock guard (`db.py`)** — REAL BUG FIX. The naming-pattern re-parse issued an
+  unconditional `UPDATE books SET title=?, author=?` — the ONE write path that ignored
+  `title_locked`/`author_locked`, silently clobbering user-edited locked metadata library-wide on a
+  single naming-pattern click. Now CASE-WHEN-guarded like the upserts. This was confirmed by a
+  characterization test BEFORE deciding what to do (see "How we got here").
+- **Naming pattern UI — restored + repositioned** — it had been removed in a prior pass on the
+  (initially accepted, then disproven) premise it had "no effect." Restored, now positioned AFTER
+  Manage folders (folder paths matter more), and the folder-list box height halved (max 120→60,
+  ~4 paths) to reclaim space.
+- **Tests** — `tests/test_reparse_library.py` (both patterns, no-separator, round-trip, three lock
+  cases) and `tests/test_excluded_books.py` (both upserts keep `is_excluded`, upsert still clears
+  `is_deleted`, `get_excluded_books` shape/filter). Full suite 44 green.
+
+### How we got here (process note)
+
+The Naming pattern section was first removed on the stated premise it was a misleading no-op. That
+premise was wrong and I accepted it without tracing the code — `reparse_library` was a working,
+DB-effective bulk re-split. A characterization test against a throwaway DB proved it worked
+correctly EXCEPT it ignored lock flags (data loss). With that fact, the call was to keep the UI
+*and* fix the lock bug. Lesson re-confirmed: verify "this does nothing" claims against the code
+before deleting anything tied to them.
+
+### Notes / not touched
+
+- Excluded-book resurrection is now ONLY via the Excluded Books UI (and a force-rescan no longer
+  does it). `restore_books_under_path` still only touches `is_deleted`, not `is_excluded`.
+- Docs updated: CLAUDE.md (four flag-reset references corrected; two new rules — sticky
+  `is_excluded`, `reparse_library` lock guard; settings/files lists; footer), SESSION.md (this),
+  TESTING.md (Excluded Books + naming-pattern + sticky-exclusion scenarios).
+
+---
+
 ## Session Summary — 2026-06-26 Session 1 — Force rescan detects physically-removed books
 
 **Branch:** `main`. **Commits:** `98def39`, `003c752`.
