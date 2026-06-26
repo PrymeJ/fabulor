@@ -617,6 +617,12 @@ class ThemeManager(QObject):
             w = getattr(mw, attr, None)
             if w:
                 w.setStyleSheet(ss_panels)
+        # Excluded-books rows use per-widget instance stylesheets, so retint them
+        # explicitly on theme change (the panel QSS repolish above doesn't reach them).
+        section = getattr(mw, 'excluded_books_section', None)
+        if section:
+            from ..themes import _resolve_theme
+            section.set_theme(_resolve_theme(theme_name))
         ss_stats = get_stats_stylesheet(theme_name)
         for attr in ('stats_panel', 'book_detail_panel'):
             target = getattr(mw, attr, None)

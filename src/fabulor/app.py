@@ -634,6 +634,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             btn.setVisible(enabled)
         self._update_persist_filter_visuals()
 
+    def _reload_excluded_books(self):
+        """Recheck the excluded-book set and rebuild the Library tab's Excluded
+        Books section. Called on each settings-panel open — the count drives
+        whether the section is visible at all (zero ⇒ entirely hidden)."""
+        if not hasattr(self, 'excluded_books_section'):
+            return
+        self.excluded_books_section.set_theme(self.theme_manager.get_current_theme())
+        self.excluded_books_section.reload(self.db.get_excluded_books())
+
+    def _on_excluded_book_restored(self, path: str):
+        """Restore a user-excluded book (is_excluded=0) and refresh every view
+        the same way a rescan completion would."""
+        self.db.set_book_excluded(path, False)
+        self.library_panel.refresh(force=True)
+        self.book_detail_panel._refresh_stats()
+        self.stats_panel.refresh_current_tab()
+        self.tags_panel.refresh_books()
+
     def _on_persist_filter_master(self, enabled: bool):
         if enabled:
             # If all three sub-keys are False, reset them all to True before enabling

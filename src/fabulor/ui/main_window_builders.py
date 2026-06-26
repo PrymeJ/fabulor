@@ -27,6 +27,7 @@ from .stats_panel import StatsPanel
 from .tag_manager import TagManagerWidget
 from .book_detail_panel import BookDetailPanel
 from .audio_controls import AudioSettingsTab
+from .excluded_books import ExcludedBooksSection
 from .ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon
 
 
@@ -871,28 +872,6 @@ def build_library_tab(mw):
     library_tab = QWidget()
     lib_layout = QVBoxLayout(library_tab)
     lib_layout.setContentsMargins(10, 0, 10, 10)
-    pattern_header = QLabel("Naming pattern")
-    pattern_header.setObjectName("settings_header")
-    lib_layout.addWidget(pattern_header)
-
-    pattern_row = QHBoxLayout()
-    mw.at_pattern_btn = QPushButton("Author - Title")
-    mw.ta_pattern_btn = QPushButton("Title - Author")
-    mw.at_pattern_btn.setObjectName("pattern_button")
-    mw.ta_pattern_btn.setObjectName("pattern_button")
-
-    mw.at_pattern_btn.setToolTip("Folders are named like 'Author - Title' (e.g. 'Stephen King - The Shining')")
-    mw.ta_pattern_btn.setToolTip("Folders are named like 'Title - Author' (e.g. 'The Shining - Stephen King')")
-
-    pattern_row.addWidget(mw.at_pattern_btn)
-    pattern_row.addWidget(mw.ta_pattern_btn)
-    pattern_row.addStretch()
-    lib_layout.addLayout(pattern_row)
-
-    mw.at_pattern_btn.clicked.connect(lambda: mw.naming_pattern_changed.emit("Author - Title"))
-    mw.ta_pattern_btn.clicked.connect(lambda: mw.naming_pattern_changed.emit("Title - Author"))
-
-    lib_layout.addSpacing(10)
 
     folders_header = QLabel("Manage folders")
     folders_header.setObjectName("settings_header")
@@ -901,9 +880,10 @@ def build_library_tab(mw):
     mw.folder_list_widget = QListWidget()
     mw.folder_list_widget.setObjectName("settings_folder_list")
     mw.folder_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-    # Make height flexible: start small, grow to a cap
+    # Height halved (was max 120) to ~fit 4 paths; the reclaimed space below
+    # holds the restored Naming pattern section.
     mw.folder_list_widget.setMinimumHeight(45)
-    mw.folder_list_widget.setMaximumHeight(120)
+    mw.folder_list_widget.setMaximumHeight(70)
     mw.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     mw._path_list_ef = _PathListEventFilter(mw.folder_list_widget)
     mw.folder_list_widget.viewport().installEventFilter(mw._path_list_ef)
@@ -920,7 +900,25 @@ def build_library_tab(mw):
     folder_btns_layout.addWidget(mw.remove_folder_btn)
     folder_btns_layout.addWidget(mw.refresh_library_btn)
     lib_layout.addLayout(folder_btns_layout)
-    lib_layout.addSpacing(10)
+
+    pattern_header = QLabel("Naming pattern")
+    pattern_header.setObjectName("settings_header")
+    lib_layout.addWidget(pattern_header)
+
+    pattern_row = QHBoxLayout()
+    mw.at_pattern_btn = QPushButton("Author - Title")
+    mw.ta_pattern_btn = QPushButton("Title - Author")
+    mw.at_pattern_btn.setObjectName("pattern_button")
+    mw.ta_pattern_btn.setObjectName("pattern_button")
+    mw.at_pattern_btn.setToolTip("Folders are named like 'Author - Title' (e.g. 'Stephen King - The Shining')")
+    mw.ta_pattern_btn.setToolTip("Folders are named like 'Title - Author' (e.g. 'The Shining - Stephen King')")
+    pattern_row.addWidget(mw.at_pattern_btn)
+    pattern_row.addWidget(mw.ta_pattern_btn)
+    pattern_row.addStretch()
+    lib_layout.addLayout(pattern_row)
+
+    mw.at_pattern_btn.clicked.connect(lambda: mw.naming_pattern_changed.emit("Author - Title"))
+    mw.ta_pattern_btn.clicked.connect(lambda: mw.naming_pattern_changed.emit("Title - Author"))
 
     chap_source_header = QLabel("Chapter source")
     chap_source_header.setObjectName("settings_header")
@@ -936,8 +934,6 @@ def build_library_tab(mw):
         mw.chapter_source_buttons[source] = btn
     chap_source_row.addStretch()
     lib_layout.addLayout(chap_source_row)
-
-    lib_layout.addSpacing(10)
 
     persist_header = QLabel("Persist search filter")
     persist_header.setObjectName("settings_header")
@@ -969,6 +965,12 @@ def build_library_tab(mw):
         persist_row.addWidget(btn)
         mw.persist_filter_sub_buttons[key] = btn
     lib_layout.addLayout(persist_row)
+
+    # Excluded Books section — invisible (zero space) when no books are excluded.
+    # Rechecked on each settings-panel open via _reload_excluded_books().
+    mw.excluded_books_section = ExcludedBooksSection()
+    mw.excluded_books_section.restore_requested.connect(mw._on_excluded_book_restored)
+    lib_layout.addWidget(mw.excluded_books_section)
 
     # Library controller connections are consolidated in __init__
     lib_layout.addStretch()
