@@ -719,7 +719,7 @@ def build_themes_tab(mw):
     interval_row.addWidget(interval_label)
     interval_row.addSpacing(13)
 
-    intervals = [(2, "2"), (5, "5"), (10, "10"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
+    intervals = [(2, "2"), (5, "5"), (10, "10"), (20, "20"), (30, "30"), (60, "60"), (120, "120"), (0, "Off")]
     for mins, text in intervals:
         lbl = QLabel(text)
         lbl.setObjectName("theme_interval_label")
