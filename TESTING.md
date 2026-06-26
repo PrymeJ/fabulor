@@ -434,6 +434,16 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [ ] Stats panel refreshes after path removal (rows update without manual tab switch)
 - [ ] Tag manager book grid refreshes after path removal (removed-book thumbs update)
 
+### Force-rescan missing-book detection (2026-06-26)
+- [ ] Physically delete a book folder from disk, click Rescan (force) → book disappears from the library view
+- [ ] Same: the deleted book is flagged is_excluded=1 (soft), NOT hard-deleted — its row, progress, and listening history still appear in the Stats panel (search by title)
+- [ ] Deleted-then-rescanned book can be resurrected: restore its folder on disk, click Rescan again → book reappears in the library with progress intact (force-rescan upsert clears is_excluded)
+- [ ] **Non-force scan does NOT remove a deleted folder's book** — re-adding a location (which triggers a non-force scan) leaves a physically-deleted book still visible (only the explicit Rescan button removes it)
+- [ ] **Offline/unmounted location is safe:** with location A unmounted (root no longer exists) and location B present, clicking Rescan does NOT flag A's books missing — they stay visible (root.exists() guard via walked_locations)
+- [ ] **Transient I/O hiccup is safe:** a book folder that momentarily errors on read (permission/flaky mount) during a force rescan is NOT flagged missing — it stays visible
+- [ ] A force rescan with one book deleted and one present flags only the deleted one; the present book is untouched
+- [ ] Excluded books (user-trashed via book detail trash button) are unaffected by the missing-detection pass — their is_excluded state is independent
+
 ## Settings panel
 
 - [x] All clicks on buttons dismisses and performs
@@ -673,6 +683,9 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] **Folder removal (own folder):** removing the folder containing the active book unloads the book; player chrome disappears; correct state shown
 - [ ] **Folder removal (last folder):** removing the last library folder while any book is loaded unloads the book regardless of path-match; empty state shown with Library button hidden
 - [ ] **Folder removal (different folder):** removing a folder that does NOT contain the active book leaves the book loaded; only the folder list updates
+- [ ] **Rescan flags loaded book missing:** with a book loaded and playing, delete its folder from disk, click Rescan → book unloads, player chrome disappears, drops to no-book-selected (or empty) state without app restart
+- [ ] **Rescan flags loaded book missing — session preserved:** the unloaded book's in-progress session is flushed to Stats (not silently discarded) since on_book_removed closes the recorder before nulling the book
+- [ ] **Rescan does NOT unload an unaffected loaded book:** a force rescan that flags a DIFFERENT book missing leaves the currently-loaded book playing untouched
 - [ ] No stale time labels, chapter info, speed badge, or progress fill after book unload
 
 ## Library panel

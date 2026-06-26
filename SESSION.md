@@ -1,3 +1,63 @@
+## Session Summary — 2026-06-26 Session 1 — Force rescan detects physically-removed books
+
+**Branch:** `main`. **Commits:** `98def39`, `003c752`.
+
+### Context
+
+A book whose folder was physically deleted from disk was never noticed by any scan. The scanner
+only ever acts on folders it *rediscovers* (`ScannerWorker.run_scan` Phase 1 → `book_dirs`); a
+vanished folder is simply never visited, so `upsert_books_batch` never runs for it and its row sat
+untouched (`is_deleted=0, is_excluded=0`), staying visible in the library forever. The only existing
+detector was `_mark_book_missing` (`app.py`), which fires *lazily* — only when the user actually
+tries to select/load that specific gone book. Confirmed by reading the full scan paths: a force
+rescan was purely additive/resurrective, with no removal pass at all.
+
+### What shipped
+
+- **`db.py` — two new methods:**
+  - `get_visible_book_paths_under(path)` — returns visible (`is_deleted=0 AND is_excluded=0`) book
+    paths under a location, via the same `path + "/%"` prefix match used by
+    `remove_scan_location`/`restore_books_under_path` (valid because `books.path` is a folder path —
+    `str(book_dir)` in scanner.py, verified).
+  - `mark_books_missing(paths)` — batch `is_excluded=1` (executemany), same soft semantics as
+    `_mark_book_missing`. No UI side effects — the scanner's `finished` signal drives the refresh.
+- **`scanner.py` — `ScannerWorker.run_scan` missing-book detection (force rescan only):** after
+  Phase 1, for each location whose root `exists()` (`walked_locations`), diff
+  `get_visible_book_paths_under(loc)` against the discovered folders and `mark_books_missing` the
+  difference. Two load-bearing guards: (1) runs ONLY on `force_refresh=True`; (2) scoped to
+  `walked_locations` — an offline/unmounted location is never in that list, so an unplugged drive
+  never falsely flags its books. The inner per-folder `entry.iterdir()` audio check is now wrapped
+  in `try/except (PermissionError, OSError)` (it had *no* error handling before — a real latent bug:
+  one bad folder crashed the whole scan); skipped folders accumulate in a function-scoped
+  `skipped_dirs` set (initialized once at the top, only `.add()`ed, never reassigned) folded into the
+  `discovered` set, so a transient I/O hiccup never reads as "folder gone".
+- **`library_controller.py` — unload loaded book if rescan flags it missing:** on `_on_scan_finished`,
+  if the currently-loaded book is now `is_excluded`, call `app.on_book_removed()` (closes the session
+  preserving stats, terminates the player, clears UI, drops to no-book-selected) and early-return past
+  the now-moot cover refresh. Lives on the Qt main thread in the controller, not the worker thread.
+- **`tests/test_scanner_missing.py`** — drives the real `run_scan` against temp DB + temp folders:
+  deleted folder flags on force rescan (soft, not hard-deleted), non-force scan leaves it untouched,
+  offline location doesn't flag its books, transient `iterdir()` error doesn't misfire. Full suite
+  33 green.
+
+### Scope deliberately not touched
+
+- **Excluded-book resurrection on rescan** — re-adding files then rescanning still un-excludes any
+  user-trashed book whose folder still exists. Out of scope per the user; the cleanest fix (a UI list
+  of excluded books) isn't worth the fixed-window real estate, and the current behavior is acceptable.
+- **`get_all_book_paths`/`known_paths`** stays unfenced (the missing-detection uses a separate
+  flag-fenced, location-scoped query) — changing it caused a prior resurrection bug.
+
+### Notes for next session
+
+- Docs updated: CLAUDE.md (new "Scanner missing-book detection" rule + scanner summary line),
+  `_mark_book_missing` docstring (notes the scanner as a second confirmed-missing detector),
+  SESSION.md (this entry), TESTING.md (force-rescan + loaded-book-unload scenarios). NOTES.md was
+  *not* given a root-cause writeup — the behavior is documented inline and in CLAUDE.md; add one only
+  if the residual remount-race false-positive risk ever surfaces in practice.
+
+---
+
 ## Session Summary — 2026-06-25 — Fixed silent session-discard on book/path removal
 
 **Branch:** `main`.

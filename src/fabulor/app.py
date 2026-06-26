@@ -929,6 +929,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         speculatively (e.g. on a transient I/O hiccup) — that would hide a book the
         user could otherwise still play once a drive remounts.
 
+        This is the LAZY, single-book detector (fires when the user selects/loads a
+        gone book). The scanner's force-rescan path (db.mark_books_missing, called
+        from ScannerWorker.run_scan) is a SECOND confirmed-missing detector with the
+        same is_excluded contract — it batch-flags books under a scanned-and-reachable
+        location whose folders weren't rediscovered, and refreshes the UI via the
+        scanner's `finished` signal rather than the inline refresh calls below.
+
         If the missing book is the active one, also tears down playback via
         _on_book_removed so the UI doesn't keep showing a ghost now-playing state."""
         book = self.db.get_book(path)
