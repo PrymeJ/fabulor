@@ -31,27 +31,57 @@ class ScannerWorker(QObject):
         
         audio_exts = {'.m4b', '.mp3', '.flac', '.m4a'}
         book_dirs = []
+        # Function-scoped accumulators for the force-rescan missing-book detection
+        # below. MUST be initialized here, once, and only mutated (never reassigned)
+        # inside the Phase 1 loop — see the missing-detection block for why.
+        walked_locations = []   # locations whose root.exists() passed (were actually scanned)
+        skipped_dirs = set()    # folders skipped due to a transient I/O error, not absence
 
         # Phase 1: Discovery (Folder = Book)
         for loc in locations:
             root = Path(loc)
             if not root.exists(): continue
-            
+            walked_locations.append(loc)
+
             try:
                 for entry in root.iterdir():
                     if not self._running.is_set(): return
                     if entry.is_dir():
-                        # Check for audio files inside
-                        if any(f.suffix.lower() in audio_exts for f in entry.iterdir() if f.is_file()):
-                            book_dirs.append(entry)
+                        # Check for audio files inside. A per-folder I/O error
+                        # (PermissionError / flaky mount) must NOT crash the whole
+                        # scan, nor be mistaken for "folder gone" by the missing
+                        # detection below — record it in skipped_dirs and move on.
+                        try:
+                            if any(f.suffix.lower() in audio_exts for f in entry.iterdir() if f.is_file()):
+                                book_dirs.append(entry)
+                        except (PermissionError, OSError):
+                            skipped_dirs.add(str(entry))
+                            continue
             except PermissionError:
                 continue
 
         total = len(book_dirs)
         processed = 0
-        
+
         # Optimization: Get all known paths first to avoid re-extracting tags
         known_paths = db.get_all_book_paths()
+
+        # Missing-book detection (force rescan only): a book whose folder was
+        # deleted from disk is never visited by Phase 1/2, so its row would sit
+        # untouched (is_deleted=0, is_excluded=0) and stay visible forever. On a
+        # force rescan, flag any currently-visible book under a SCANNED-and-REACHABLE
+        # location that wasn't rediscovered as missing (is_excluded=1) — same
+        # semantics as app.py's _mark_book_missing. Scoped to walked_locations only:
+        # an offline/unmounted location (root.exists() False) is never in that list,
+        # so its books are never falsely flagged. skipped_dirs is folded into the
+        # discovered set so a transient per-folder error never reads as "gone".
+        if self.force_refresh:
+            discovered = {str(d) for d in book_dirs} | skipped_dirs
+            missing = set()
+            for loc in walked_locations:
+                missing |= (db.get_visible_book_paths_under(loc) - discovered)
+            if missing:
+                db.mark_books_missing(sorted(missing))
 
         # Phase 2: Metadata Extraction
         pending = []

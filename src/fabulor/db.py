@@ -378,6 +378,21 @@ class LibraryDB:
             rows = conn.execute("SELECT path FROM books").fetchall()
             return {row[0] for row in rows}
 
+    def get_visible_book_paths_under(self, path) -> set:
+        """Returns paths of currently-visible (is_deleted=0 AND is_excluded=0)
+        books under `path`. Used by a force rescan to detect books whose folder
+        vanished from disk but were never explicitly excluded or location-removed
+        — those get flagged via mark_books_missing. books.path is a folder path
+        (str(book_dir) in scanner.py), so the same `path + "/%"` prefix match used
+        by remove_scan_location/restore_books_under_path applies here."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT path FROM books WHERE is_deleted = 0 AND is_excluded = 0 "
+                "AND path LIKE ?",
+                (str(path).rstrip("/") + "/%",)
+            ).fetchall()
+            return {row[0] for row in rows}
+
     def get_book_count(self):
         """Returns the total number of books in the library."""
         with self._get_conn() as conn:
@@ -1535,6 +1550,21 @@ class LibraryDB:
             conn.execute(
                 "UPDATE books SET is_excluded = ? WHERE path = ?",
                 (1 if excluded else 0, path)
+            )
+
+    def mark_books_missing(self, paths) -> None:
+        """Batch is_excluded=1 for books a force rescan confirmed are gone from
+        disk — same semantics/contract as set_book_excluded / _mark_book_missing
+        (app.py), just called from the scanner worker thread in bulk. The book
+        stays in the DB (progress, history, tags survive) and a future force
+        rescan or the folder's return can resurface it. No UI side effects here;
+        the scanner's `finished` signal drives the library refresh."""
+        if not paths:
+            return
+        with self._get_conn() as conn:
+            conn.executemany(
+                "UPDATE books SET is_excluded = 1 WHERE path = ?",
+                [(p,) for p in paths]
             )
 
     def get_book_files(self, book_path: str) -> list[dict]:
