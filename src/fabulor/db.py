@@ -526,8 +526,18 @@ class LibraryDB:
                     else:
                         title, author = raw.strip(), ""
 
+                    # Respect lock flags — a user-edited (locked) title/author must
+                    # survive a naming-pattern re-parse, mirroring the CASE WHEN
+                    # guards in upsert_book/upsert_books_batch. folder_name_raw is
+                    # the raw source string (not user-editable metadata) so it
+                    # always re-stores. A book with only title_locked keeps its
+                    # title but gets a fresh author, and vice versa.
                     conn.execute(
-                        "UPDATE books SET title = ?, author = ?, folder_name_raw = ? WHERE id = ?",
+                        "UPDATE books SET "
+                        "title  = CASE WHEN title_locked  THEN title  ELSE ? END, "
+                        "author = CASE WHEN author_locked THEN author ELSE ? END, "
+                        "folder_name_raw = ? "
+                        "WHERE id = ?",
                         (title, author, raw, row["id"])
                     )
 
