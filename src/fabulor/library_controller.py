@@ -122,6 +122,23 @@ class LibraryController(QObject):
         self.ui.set_scan_buttons_enabled(True)
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
+
+        # If a force rescan flagged the currently-loaded book as missing (its
+        # folder was deleted from disk — db.mark_books_missing set is_excluded=1),
+        # it's gone from the library but still open in the player. Unload it and
+        # drop to the no-book-selected state. on_book_removed() closes the session
+        # (preserving stats), terminates the player, clears UI, and runs
+        # apply_current_state itself — so return early to skip the now-moot cover
+        # refresh below.
+        current = self.app.get_current_file()
+        if current and self.db.is_book_excluded(current):
+            self.app.on_book_removed()
+            self.ui.refresh_panel(force=True)
+            self.app.refresh_tag_manager()
+            self.app.refresh_stats()
+            self._refresh_folder_list()
+            return
+
         QTimer.singleShot(0, self.apply_current_state)
         self.ui.refresh_panel(force=True)
         self.app.refresh_tag_manager()
@@ -130,7 +147,6 @@ class LibraryController(QObject):
 
         # Refresh player cover after scan — ensures the active book_covers entry
         # is used, not a stale cache entry from before the scan.
-        current = self.app.get_current_file()
         if current:
             self.app.load_cover_art(current)
 
