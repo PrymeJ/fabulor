@@ -304,7 +304,7 @@ class LibraryDB:
                 cover_path=excluded.cover_path,
                 year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
-                is_excluded=0
+                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END
         """
         with self._get_conn() as conn:
             conn.execute(query, cleaned)
@@ -325,7 +325,7 @@ class LibraryDB:
                 cover_path=excluded.cover_path,
                 year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
-                is_excluded=0
+                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END
         """
         cleaned_list = [
             {k: (v.strip() if isinstance(v, str) else v) for k, v in {
@@ -1561,6 +1561,19 @@ class LibraryDB:
                 "UPDATE books SET is_excluded = ? WHERE path = ?",
                 (1 if excluded else 0, path)
             )
+
+    def get_excluded_books(self) -> list[tuple]:
+        """Returns (path, title, author) for all user-excluded-but-not-location-removed
+        books (is_excluded=1 AND is_deleted=0), ordered by title. Drives the
+        Excluded Books section in the Library settings tab — restoring one calls
+        set_book_excluded(path, False)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT path, title, author FROM books "
+                "WHERE is_excluded = 1 AND is_deleted = 0 "
+                "ORDER BY title COLLATE NOCASE"
+            ).fetchall()
+            return [(r[0], r[1], r[2]) for r in rows]
 
     def mark_books_missing(self, paths) -> None:
         """Batch is_excluded=1 for books a force rescan confirmed are gone from
