@@ -125,7 +125,8 @@ class Player(QObject):
         if self.instance is None:
             locale.setlocale(locale.LC_NUMERIC, "C")
             self.instance = MPV(
-                vo='null', ao='pulse', vid=False, ytdl=False, keep_open='always'
+                vo='null', ao='pulse', vid=False, ytdl=False, keep_open='always',
+                audio_client_name='fabulor'
             )
             self.instance.observe_property('chapter', self._on_chapter_change)
             self.instance.observe_property('pause', self._on_pause_test)  # ADD
