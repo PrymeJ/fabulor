@@ -19,6 +19,14 @@
   `session_recorder.close()`/`.pause()` call site.
 - Full writeup in NOTES.md; new CLAUDE.md rule added (DO NOT call `close()` after nulling
   `_current_book`/`current_file`).
+- **Added `audio_client_name='fabulor'` to the MPV constructor (`player.py`)** — sets mpv's
+  `--audio-client-name`, which maps to the PulseAudio/PipeWire sink-input `application.name`.
+  Without it, the stream-restore key was unstable (`mpv` or PID-derived), so openSUSE/PulseAudio
+  couldn't reliably remember a per-app OS-level volume across launches — symptom: volume reset to
+  a stale value (e.g. 5%) on every book load, independent of the correctly-persisted in-app volume.
+  Does not fix an already-poisoned stream-restore entry (clear once via `pavucontrol`); makes the
+  restore key stable going forward. CLAUDE.md's frozen MPV-init constructor list updated to include
+  this new argument.
 
 ---
 
