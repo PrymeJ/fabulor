@@ -1,4 +1,83 @@
-## Session Summary — 2026-06-27 Session 3 — is_missing flag fixes the excluded-books ping-pong; arrow split out of the toggle label
+## Session Summary — 2026-06-28 Session 1 — Excluded Books list: re-parented to library_tab, four position/expand/count bugs fixed
+
+**Branch:** `main`. **Commit:** `ddd257f` (code), docs commit follows.
+
+### Context
+
+Direct continuation of the previous session's always-visible/arrow-split redesign. That session
+ended with the list re-parented from `MainWindow` to `library_tab` to fix wrong-tab rendering, but
+left an unresolved ~100px position offset. This session was almost entirely live, iterative
+back-and-forth with the user against the running app — a lot of failed attempts before landing on
+each real fix. Full root-cause writeup for all four bugs is in NOTES.md ("Excluded Books list:
+re-parented to library_tab, position/expand bugs fixed") — this summary covers the shape of the
+session, not the mechanics.
+
+### What went wrong before it went right
+
+**Position bug — my own diagnostics actively misled me.** I added debug prints showing the
+position math was internally consistent (`anchor_top=350, height=74, target_y=276`), and kept
+re-verifying that the `move()` call did what the code told it to. The user's screenshots and
+descriptions never wavered: the box was overlapping "Naming pattern"/"Chapter source," ~100px too
+high. I asked clarifying questions about gap size that the user rejected — correctly, since I
+already had enough information and was avoiding making a change. The actual bug wasn't in the
+arithmetic at all: the anchor model itself was wrong (anchoring to the row's TOP edge and growing
+upward immediately, instead of anchoring BELOW the row at the default size and only growing upward
+when expanded). No script could have caught this, because the script was only checking "does the
+code do what it says" — not "does the code say the right thing." Once I stopped trying to re-prove
+the math and just asked what's actually different about the *visual* failure (gap vs. overlap), the
+real shape of the bug became clear in one exchange.
+
+**Then I overshot the fix in the other direction.** First attempt at the upward-anchor fix made the
+box grow DOWNWARD off the bottom of the window instead — same wrong-direction problem, mirrored.
+User: "Why do you even grow it downwards outside the screen? It should expand upwards." Corrected to
+a fixed bottom edge (computed once, at the 3-row default height) that never moves, with only the
+top edge rising on expand — this is the version that shipped.
+
+**Arrow silently not moving — looked like nothing was happening, was actually clipping.** The
+arrow's `move()` calls were correct and were executing; it just never painted, because it was a
+child of a zero-fixed-height row widget and Qt clips children above their parent's own origin.
+Traced by checking the parent/child relationship directly rather than re-checking the move() math a
+third time — the lesson from the position bug (stop re-verifying arithmetic, check the surrounding
+model) applied a second time in the same session.
+
+**Sizing and count bugs — both from trusting `QListWidget.count()`.** Two more rounds: (1) the
+collapsed/expanded sizes were shrinking to fit the actual book count instead of staying fixed at 3
+and 7 — user explicitly confirmed twice that both sizes must be fixed regardless of count. (2) the
+displayed "N books excluded" count was consistently one too high right after a restore, and the
+arrow could get stuck at its expanded position when the count dropped below the expand threshold via
+a restore (as opposed to the user clicking the arrow). Root cause for both: `self.count()` (the live
+widget item count) is stale-by-one for the ~250ms duration of the row's slide-out animation, since
+the actual `takeItem()` doesn't run until the animation finishes, but the count label/expand-state
+logic was reading it synchronously, immediately after the restore signal fired. Fixed with an
+explicit `_book_count` counter decremented in lockstep with the DB write.
+
+### What shipped
+
+- `ExcludedBooksPopup._reposition_vertically()`: bottom-anchored to a fixed `_anchor_bottom`
+  (computed once per `reposition()` call, always using the 3-row default height), expansion moves
+  only the top edge upward — never the bottom.
+- `ExcludedBooksSection`: arrow `QLabel` is no longer a child of the section row; it's parented to
+  `library_tab` directly via a new `set_arrow_parent()` call (wired from `app.py` right after both
+  widgets exist), positioned via `mapTo()` so it can travel above the row without being clipped.
+- `_resize_to_row_count()`: fixed at exactly `DEFAULT_VISIBLE_ROWS` (3) or `MAX_EXPANDED_ROWS` (7),
+  no `min()` against the actual book count — empty rows below the last book are expected and fine.
+- `ExcludedBooksPopup._book_count` (new): decremented immediately in `_on_row_restore`, exposed via
+  a public `book_count` property; `is_expandable`, `reposition()`'s show/hide check, and the resize
+  logic all read it instead of `self.count()`. `app.py`'s restore handler explicitly calls
+  `popup.set_expanded(False)` when the fresh count crosses back below the expand threshold, since
+  nothing else clears that flag when the trigger is a restore rather than an arrow click.
+- TESTING.md: new "Excluded Books (Settings → Library)" checklist section (19 items) covering
+  position, fixed sizing, arrow tracking, and the count/stuck-expand edge cases found this session.
+- Stale module/class docstrings in `excluded_books.py` corrected — they still described the
+  MainWindow-parented, grow-downward architecture from before this session's fixes.
+
+### Verification
+
+`pytest tests/ -q` stays green throughout (this area has no automated coverage — all verification
+was live, in the running app, per the user's explicit standing instruction from the previous session
+that headless/scripted checks are not trustworthy for this class of layout bug).
+
+
 
 **Branch:** `main`. **Commit:** `9afab19` (code+tests), docs commit follows.
 

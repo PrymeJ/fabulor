@@ -1,3 +1,118 @@
+## Excluded Books list: re-parented to library_tab, position/expand bugs fixed (2026-06-28)
+
+**Context:** following the 2026-06-27 popup rebuild (entry below) and the always-visible/arrow-split
+redesign, this session was almost entirely live back-and-forth with the user fixing four distinct
+bugs in the new list. Recorded in full because several of the fixes are genuinely unobvious and at
+least two of my own diagnostic approaches were actively wrong before landing on the real cause —
+worth keeping the wrong turns visible, not just the final fix.
+
+### Bug 1 — list rendered ~100px too high, overlapping other settings rows
+
+**Symptom, as the user reported it (verbatim, paraphrased across several messages):** the list
+appeared well above the "Excluded books" row, overlapping "Naming pattern"/"Chapter source" text.
+Screenshots were given multiple times; my own geometry-measurement diagnostics ("anchor_top=350,
+height=74, target_y=276... math is internally consistent") kept reporting the position as correct,
+directly contradicting the user's repeated visual reports. **This contradiction was real and was
+not resolved by re-measuring harder** — the actual bug was in the surrounding architecture, not the
+arithmetic.
+
+**What it actually was:** the list's `_reposition_vertically()` computed `target_y = anchor_top -
+self.height()` — i.e., it anchored to the row's TOP edge and grew upward from there, immediately.
+That arithmetic was internally self-consistent (hence my diagnostics kept passing), but it placed
+the box in the wrong general area: anchoring to the row's top edge and subtracting height puts the
+box's bottom edge AT the row's top edge, i.e. flush-above-and-touching, not where it's supposed to
+sit when collapsed. The correct model (confirmed explicitly by the user, see "Bugs 2-3" below) is:
+the box at its DEFAULT (collapsed, 3-row) size sits flush BELOW the "Excluded books" row, and ONLY
+when expanded does it grow upward from there, covering whatever's above. The original code skipped
+the "sits below by default" step entirely and went straight to "anchored above, grown upward by its
+current height" — which for a 7-row expanded box reaches much further up than the 3-row collapsed
+case ever should.
+
+**Why my own diagnostics didn't catch it:** I was verifying that `move()` placed the widget where the
+code told it to, which it always did — the bug was in deciding WHERE that should be, not in the
+move() call itself. A script confirming "the code does what the code says" cannot catch "the code
+says the wrong thing." This is the same class of failure flagged in the existing CLAUDE.md rule "DO
+NOT verify a settings-panel/tab visual layout bug with headless test scripts alone" — added for a
+different bug, same underlying lesson, reconfirmed here.
+
+**The fix, in two corrected passes (I got the SECOND attempt wrong too — see Bug pass 2):**
+1st pass: anchored flush below the row, grew DOWNWARD when expanded. User caught this immediately:
+growing downward runs the box off the bottom of the tab/window — there's no room below "Excluded
+books," same as there's no room above it for the original upward-without-an-anchor-step bug. 2nd
+pass (correct, confirmed): the box's BOTTOM edge is computed ONCE, fixed at `anchor_bottom =
+anchor_top + anchor_height + DEFAULT_ROW_COUNT_HEIGHT` (always using the 3-row height for this
+calculation, regardless of current expand state) — that bottom edge never moves again. Expanding to
+7 rows only moves the TOP edge upward from that fixed bottom, covering whatever's above (Naming
+pattern/Chapter source) as the topmost element — exactly mirroring how `ChapterList` anchors its
+bottom and grows up. `_reposition_vertically()` is now just `self.move(POPUP_X, anchor_bottom -
+self.height())` — trivial once the anchor concept was right.
+
+### Bug 2 — arrow didn't visually move when the list expanded
+
+**Symptom:** code clearly called `move()` on the arrow with a new, higher y-coordinate when
+expanding, confirmed via direct inspection — but the arrow never visibly moved.
+
+**Root cause:** the arrow `QLabel` was a CHILD of `ExcludedBooksSection` (the toggle-line row
+widget), which itself has no fixed height — it's a normal `QVBoxLayout` member sized to its natural
+content. Qt clips child widgets to their parent's bounding rect; moving a child to a y-coordinate
+above its parent's own (0,0) origin (which is exactly what "lift the arrow up to track the
+expanding box" requires) makes it paint over nothing — silently invisible, no warning, no error.
+This is the same fundamental class of bug as `ChapterList`'s historical "DO NOT try to expand a
+widget's height inside the Library settings tab's QVBoxLayout" trap (see CLAUDE.md), just
+manifesting as silent clipping instead of stolen layout space.
+
+**The fix:** re-parented the arrow `QLabel` to `library_tab` directly (the SAME parent the popup
+itself uses), via a new `ExcludedBooksSection.set_arrow_parent(library_tab)` called once from
+`app.py` right after both objects exist. Positioning is now computed via `self.mapTo(library_tab,
+...)` to translate the section's own row position into `library_tab`'s coordinate space, so the
+arrow can be centered on the row horizontally while moving freely in the vertical axis without any
+parent-bounds clipping.
+
+### Bug 3 — collapsed/expanded sizing shrank to fit instead of staying fixed
+
+**Symptom:** with 4 excluded books, expanding showed 4 rows, not 7; going from 2 books down to 1
+shrank the collapsed box to 1 row instead of staying at 3.
+
+**Root cause:** `_resize_to_row_count()` used `min(self.count(), MAX_EXPANDED_ROWS or
+DEFAULT_VISIBLE_ROWS)` — capping the shown row count at however many books actually existed. The
+correct, explicitly confirmed behavior: collapsed is ALWAYS exactly 3 rows (with empty space below
+the list if there are 1-2 books) and expanded is ALWAYS exactly 7 rows (with empty space if there
+are 4-6) — two fixed sizes, never a shrink-to-fit. Removed the `min()` entirely from both the resize
+logic and the arrow's lift-distance calculation (which has to use the same fixed delta, or the arrow
+and the box would disagree on how far "expanded" actually moves).
+
+### Bug 4 — book count off-by-one and stuck-expanded state, both from the same stale read
+
+**Symptom, in order discovered:** (a) restoring a book down to exactly 3 left a stale "4 books
+excluded" label for a moment / arrow stayed lifted at the expanded position; (b) the count label was
+consistently one too high immediately after clicking an eye icon.
+
+**Root cause (one cause, two symptoms):** `ExcludedBooksPopup` used `self.count()` — the live
+`QListWidget` item count — as the source of truth for both the displayed count AND the
+`is_expandable` decision. But the restore flow (`_on_row_restore`) fires the `restore_requested`
+signal (which `app.py` uses to update the DB and refresh the count label) BEFORE removing the row
+from the widget — the actual `takeItem()` call only happens after a ~250ms slide-out animation
+finishes. So `self.count()` is stale-by-one for the entire duration of that animation, and anything
+that reads it synchronously right after a restore (which `app.py`'s handler does, immediately) sees
+the old, pre-restore count.
+
+**The fix:** added an explicit `_book_count` integer on the popup, decremented immediately in
+`_on_row_restore` (in lockstep with the `restore_requested` emit, not waited on the animation), and
+rewired `is_expandable`, `reposition()`'s show/hide check, and `_resize_to_row_count()` to read it
+instead of `self.count()`. Exposed via a public `book_count` property so `app.py` doesn't need to
+duplicate the DB query it was previously using as an awkward workaround for the same staleness.
+`app.py`'s restore handler also now explicitly forces `popup.set_expanded(False)` when the fresh
+count drops to/below the default — without that, the popup's internal `_expanded` flag had no other
+trigger to clear it when the count crossed the threshold from the OUTSIDE (i.e. via restore, as
+opposed to the user clicking the arrow), leaving it stuck sized at 7 rows even after the section's
+arrow had already visually flipped to its dimmed/collapsed style.
+
+**General lesson, stated plainly since it cost real back-and-forth:** `QListWidget.count()` (or any
+live widget-state read) is not a safe stand-in for "the true current count of the underlying data"
+the moment there's an animation or any other delay between a user action and the widget actually
+reflecting it. Track the real count as an explicit variable updated at the moment of the actual data
+change, not derived from incidentally-correct-most-of-the-time widget introspection.
+
 ## Excluded-books "Schrödinger's audiobook": restoring a missing book put it right back in Excluded Books (2026-06-27)
 
 **Symptom:** a book that was both physically deleted from disk AND flagged in the Excluded Books

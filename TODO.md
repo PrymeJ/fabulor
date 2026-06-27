@@ -6,6 +6,20 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-27] Unused imports / dead names flagged by pyflakes in `app.py` and `ui/panels.py`.**
+  Pre-existing, not introduced this session (confirmed via `git log -p`), surfaced while checking a
+  warning on an unrelated edit. `app.py`: `QModelIndex`, `QRegularExpression` (QtCore),
+  `QIntValidator`, `QRegularExpressionValidator` (QtGui), `THEMES` (themes), `ThemeComboBox`
+  (theme_manager), `CoverLoaderWorker` (cover_loader), `LibraryPanel` (ui.library), `StatsPanel`
+  (stats_panel), `BookDetailPanel` (book_detail_panel), `TagManagerWidget` (tag_manager),
+  `BOOK_QUOTES` (book_quotes); also a `QPropertyAnimation` import shadowed by a loop variable at
+  app.py:1212. `ui/panels.py`: `QWidget`, `QLabel`, `QPushButton`, `QHBoxLayout`, `QVBoxLayout`,
+  `QGridLayout`, `QLineEdit` unused, plus an undefined-name `BookDetailPanel` reference at line 34
+  (likely meant to be removed or imported — needs investigation, not just an unused-import deletion).
+  Run `python -m pyflakes src/fabulor/app.py src/fabulor/ui/panels.py` to reproduce. Low priority,
+  cosmetic/lint-only except the undefined-name one, which should be checked for being a latent bug
+  rather than assumed harmless.
+
 - **[2026-06-27] Distinct icon for `is_missing` books (gravestone vs. ghost).** `is_missing` (added
   this session to fix the excluded-books ping-pong) is currently folded into the existing
   `_is_archived`/`is_archived` checks in `stats_panel.py`/`book_detail_panel.py`/`tag_manager.py`, so

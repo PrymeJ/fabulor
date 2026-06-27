@@ -1179,6 +1179,30 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] With master On but Tag disabled: tag filter not restored on restart
 - [ ] With master Off: search field always empty on launch regardless of previous filter
 
+## Excluded Books (Settings → Library)
+
+- [ ] Section invisible (zero space) when no books are excluded
+- [ ] Trash a book (book detail panel): list appears under "Excluded books" on next Settings open, count shows "1 book excluded" (singular)
+- [ ] Trash a second book: count shows "2 books excluded" (plural)
+- [ ] List sits flush BELOW the "Excluded books" row, as the topmost element — does not float above it or leave a gap
+- [ ] Very first Settings → Library open in a fresh app session: list is visible immediately (not just on a second open)
+- [ ] Switching to another settings tab (e.g. Themes) and back to Library: list still renders in the right place, not at a stale/garbage position
+- [ ] 1–3 excluded books: collapsed box is always exactly 3 rows tall (empty space below the list for 1 or 2 books — box does NOT shrink to fit)
+- [ ] 4+ excluded books: arrow appears, live/clickable styling (not dimmed)
+- [ ] 1–3 excluded books: arrow appears dimmed and inert — clicking it does nothing (no expand, no glyph change)
+- [ ] Click the arrow with 4+ books: list expands to exactly 7 rows (not fewer, even if there are only 4–6 excluded books — empty space below the last row is fine)
+- [ ] Arrow glyph is ▲ when collapsed, ▼ when expanded (matches ChapterList's direction-of-next-click convention)
+- [ ] Arrow visually moves UP with the box when expanded (sits flush on the list's current top edge, collapsed or expanded) — does not get left behind at the collapsed position
+- [ ] Expanding covers whatever settings rows are above it (Chapter source, Naming pattern, etc.) rather than pushing them or leaving a gap — same as ChapterList overlaying content below it
+- [ ] Click outside the list while expanded: collapses back to 3 rows (does not hide the list entirely)
+- [ ] Switch tabs while expanded: list becomes hidden/clipped immediately (no fade, no flash on the new tab)
+- [ ] Restore a book via its row's hover-reveal eye icon: row slides out, book reappears in the library/grid
+- [ ] Restore the 4th-from-last book (count goes 4→3): list immediately collapses to 3 rows and the arrow drops to dimmed/inert — does not stay stuck expanded at 7 rows
+- [ ] Restore books down to exactly 1 left (e.g. 2→1): box stays at the fixed 3-row collapsed height — does not shrink to 1 row
+- [ ] Restore the last remaining excluded book (1→0): list and the "Excluded books" header/count line both disappear immediately — no leftover empty box or stale count text
+- [ ] "N books excluded" count is correct immediately after each restore — no off-by-one (this was a real bug: the count used to read 1 too high right after clicking the eye, since the restored row isn't actually removed from the list widget until its slide-out animation finishes a moment later)
+- [ ] Restore a book that is also flagged `is_missing` (folder deleted from disk): does NOT appear in this list at all, with no eye icon, regardless of `is_excluded` state
+
 ## Saving states
 
 - [x] Book progress restored
