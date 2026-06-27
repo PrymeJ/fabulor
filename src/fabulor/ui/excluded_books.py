@@ -33,7 +33,7 @@ class _ExcludedRow(QWidget):
 
     _EYE_W   = 26    # width of the revealed eye overlay (compact)
     _ANIM_MS = 250
-    ROW_H    = 21    # compact single-line row
+    ROW_H    = 16    # compact single-line row
 
     def __init__(self, path: str, title: str, author: str, index: int, parent=None):
         super().__init__(parent)
@@ -50,7 +50,7 @@ class _ExcludedRow(QWidget):
         self.setFixedHeight(self.ROW_H)
 
         hbox = QHBoxLayout(self)
-        hbox.setContentsMargins(10, 0, 10, 0)
+        hbox.setContentsMargins(4, 0, 10, 0)
         hbox.setSpacing(6)
 
         # Title + author as two labels (so the author can be a darker shade),
@@ -213,7 +213,7 @@ class ExcludedBooksSection(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._header = QLabel("Excluded Books")
+        self._header = QLabel("Excluded books")
         self._header.setObjectName("settings_header")
         outer.addWidget(self._header)
 
