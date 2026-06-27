@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
-    QWidget, QPushButton, QVBoxLayout,
+    QWidget, QPushButton, QVBoxLayout, QListWidgetItem,
     QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
@@ -786,7 +786,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _update_folder_list_widget(self, paths):
         self.folder_list_widget.clear()
         for loc in paths:
-            self.folder_list_widget.addItem(loc)
+            item = QListWidgetItem(loc)
+            item.setToolTip(loc)  # full path on hover, since long paths now elide instead of scrolling
+            self.folder_list_widget.addItem(item)
 
     def _get_selected_folder_path(self):
         item = self.folder_list_widget.currentItem()

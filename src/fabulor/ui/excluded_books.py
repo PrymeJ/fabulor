@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .icon_utils import load_currentcolor_icon
+from ..themes import _hex_to_rgb
 
 
 class _ExcludedRow(QWidget):
@@ -41,9 +42,8 @@ class _ExcludedRow(QWidget):
         self._state = 'idle'   # idle | hover
         self._anim: QPropertyAnimation | None = None
         self._eye_color = '#cccccc'
-        title = (title or "Unknown title").strip()
-        author = (author or "").strip()
-        self._full_text = f"{title} — {author}" if author else title
+        self._title = (title or "Unknown title").strip()
+        self._author = (author or "").strip()
 
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setObjectName("excluded_row")
@@ -51,14 +51,18 @@ class _ExcludedRow(QWidget):
 
         hbox = QHBoxLayout(self)
         hbox.setContentsMargins(10, 0, 10, 0)
-        hbox.setSpacing(0)
+        hbox.setSpacing(6)
 
-        # Single elided line. Eliding is done manually in _apply_elide against
-        # the available width so the eye overlay always has reserved room
-        # (text never reflows when the eye slides in).
-        self._text_lbl = QLabel(self._full_text)
-        self._text_lbl.setObjectName("excluded_row_text")
-        hbox.addWidget(self._text_lbl, stretch=1)
+        # Title + author as two labels (so the author can be a darker shade),
+        # each elided independently in _apply_elide against the available
+        # width so the eye overlay always has reserved room (text never
+        # reflows when the eye slides in).
+        self._title_lbl = QLabel(self._title)
+        self._title_lbl.setObjectName("excluded_row_title")
+        self._author_lbl = QLabel(self._author)
+        self._author_lbl.setObjectName("excluded_row_author")
+        hbox.addWidget(self._title_lbl)
+        hbox.addWidget(self._author_lbl, stretch=1)
 
         # ── eye overlay (child, absolutely positioned off-screen right) ──
         self._overlay = QWidget(self)
@@ -86,13 +90,20 @@ class _ExcludedRow(QWidget):
     def set_colors(self, theme: dict | None):
         if not theme:
             return
-        key = 'session_history_row_one' if self._row_index % 2 == 0 else 'session_history_row_two'
-        fallback_key = 'library_row_one' if self._row_index % 2 == 0 else 'library_row_two'
-        row_bg = theme.get(key) or theme.get(fallback_key) or theme.get('bg_main', 'transparent')
-        text_color = theme.get('text', '#ffffff')
+        # session_history_row_*/library_row_* are tuned for their own dark
+        # contexts and read as too dark here on light themes. bg_deep is a
+        # placeholder until this gets a proper calculation over bg_main (or a
+        # dedicated theme key) — TODO, see CLAUDE.md/NOTES.md.
+        row_bg = theme.get('transparent')
+        title_color = theme.get('text', '#ffffff')
+        # Author rendered as the same hue at reduced opacity (not a different
+        # color) — slightly darker than the title to create visual separation
+        # without a separator glyph, while staying theme-agnostic.
+        author_rgba = f"rgba({_hex_to_rgb(title_color)}, 0.65)"
         self.setStyleSheet(
             f"QWidget#excluded_row {{ background-color: {row_bg}; }}"
-            f"QLabel#excluded_row_text {{ color: {text_color}; font-size: 11px; }}"
+            f"QLabel#excluded_row_title {{ color: {title_color}; font-size: 11px; }}"
+            f"QLabel#excluded_row_author {{ color: {author_rgba}; font-size: 11px; }}"
         )
         self._overlay.setStyleSheet(f"QWidget#excluded_row_overlay {{ background-color: {row_bg}; }}")
         self._eye_btn.setStyleSheet("QToolButton { background: transparent; border: none; }")
@@ -109,14 +120,23 @@ class _ExcludedRow(QWidget):
         self._eye_btn.setIconSize(QSize(icon_size, icon_size))
 
     def _apply_elide(self):
-        # Reserve the eye width + the layout margins so text never overlaps the
-        # eye or reflows when it slides in.
-        avail = self.width() - 20 - self._EYE_W   # 10px L + 10px R margins
+        # Reserve the eye width + the layout margins + the inter-label spacing
+        # so text never overlaps the eye or reflows when it slides in.
+        avail = self.width() - 20 - self._EYE_W - 6   # 10px L + 10px R margins + 6px gap
         if avail <= 0:
             return
-        fm = QFontMetrics(self._text_lbl.font())
-        self._text_lbl.setText(
-            fm.elidedText(self._full_text, Qt.TextElideMode.ElideRight, avail)
+        fm = QFontMetrics(self._title_lbl.font())
+        # Title gets priority — elide it first only if it alone overflows;
+        # otherwise give it its natural width and let the author take the rest.
+        title_w = fm.horizontalAdvance(self._title)
+        if title_w > avail:
+            self._title_lbl.setText(fm.elidedText(self._title, Qt.TextElideMode.ElideRight, avail))
+            self._author_lbl.setText("")
+            return
+        self._title_lbl.setText(self._title)
+        author_avail = avail - title_w
+        self._author_lbl.setText(
+            fm.elidedText(self._author, Qt.TextElideMode.ElideRight, author_avail)
         )
 
     def resizeEvent(self, event):
@@ -178,8 +198,8 @@ class ExcludedBooksSection(QWidget):
     restore_requested = Signal(str)  # emits book path; owner performs the DB write + refresh
 
     # Show exactly 3 compact rows; scroll beyond that. 3 × ROW_H(21) + the
-    # list container's 4px top margin.
-    _LIST_H  = 3 * _ExcludedRow.ROW_H + 4
+    # list container's 4px top margin, +12px extra breathing room.
+    _LIST_H  = 3 * _ExcludedRow.ROW_H + 4 + 12
     _ANIM_MS = 250
 
     def __init__(self, parent=None):
@@ -201,6 +221,10 @@ class ExcludedBooksSection(QWidget):
         self._toggle.setObjectName("excluded_toggle")
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle.mousePressEvent = self._on_toggle_clicked
+        # Indented 6px so it reads as nested under the header, not flush with
+        # it (it was sitting at the same x as the header/buttons, which read
+        # as unmoored since this is the first text-under-header in this panel).
+        self._toggle.setContentsMargins(4, 0, 0, 0)
         outer.addWidget(self._toggle)
 
         # Scrollable list, height-animated open/closed.
@@ -295,7 +319,7 @@ class ExcludedBooksSection(QWidget):
         arrow = "▲" if self._expanded else "▼"
         plural = "book" if n == 1 else "books"
         color = (self._theme or {}).get('text', '#ffffff')
-        # font-size 11px = 1px smaller than the settings-panel default (12px).
+        # font-size 12px — 1px bigger than the prior 11px.
         self._toggle.setText(
-            f'<span style="color:{color}; font-size:11px;">{n} {plural} excluded {arrow}</span>'
+            f'<span style="color:{color}; font-size:13px;">{n} {plural} excluded {arrow}</span>'
         )

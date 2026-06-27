@@ -884,7 +884,11 @@ def build_library_tab(mw):
     # holds the restored Naming pattern section.
     mw.folder_list_widget.setMinimumHeight(45)
     mw.folder_list_widget.setMaximumHeight(70)
-    mw.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    # No horizontal scrollbar — a long path just elides (ElideRight) rather than
+    # forcing a scrollbar that breaks the box's layout. The user can still see
+    # most of the path and where it leads; full path is in the tooltip.
+    mw.folder_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    mw.folder_list_widget.setTextElideMode(Qt.TextElideMode.ElideRight)
     mw._path_list_ef = _PathListEventFilter(mw.folder_list_widget)
     mw.folder_list_widget.viewport().installEventFilter(mw._path_list_ef)
     lib_layout.addWidget(mw.folder_list_widget)
