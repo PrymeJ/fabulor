@@ -970,10 +970,14 @@ def build_library_tab(mw):
         mw.persist_filter_sub_buttons[key] = btn
     lib_layout.addLayout(persist_row)
 
-    # Excluded Books section — invisible (zero space) when no books are excluded.
-    # Rechecked on each settings-panel open via _reload_excluded_books().
+    # Excluded Books toggle — invisible (zero space) when no books are excluded.
+    # Rechecked on each settings-panel open via _reload_excluded_books(). The
+    # actual list is a separate popup (mw.excluded_books_popup, built in
+    # build_status_banner's sibling chapter_list_widget construction site —
+    # see app.py) parented to MainWindow, not nested here — see
+    # excluded_books.py's module docstring for why.
     mw.excluded_books_section = ExcludedBooksSection()
-    mw.excluded_books_section.restore_requested.connect(mw._on_excluded_book_restored)
+    mw.excluded_books_section.toggle_requested.connect(mw._on_excluded_toggle_clicked)
     lib_layout.addWidget(mw.excluded_books_section)
 
     # Library controller connections are consolidated in __init__

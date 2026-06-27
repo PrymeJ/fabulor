@@ -617,12 +617,19 @@ class ThemeManager(QObject):
             w = getattr(mw, attr, None)
             if w:
                 w.setStyleSheet(ss_panels)
-        # Excluded-books rows use per-widget instance stylesheets, so retint them
-        # explicitly on theme change (the panel QSS repolish above doesn't reach them).
+        # Excluded-books toggle + popup use per-widget instance stylesheets, so
+        # retint them explicitly on theme change (the panel QSS repolish above
+        # doesn't reach them — the popup isn't even a descendant of
+        # settings_panel, it's parented to MainWindow directly).
         section = getattr(mw, 'excluded_books_section', None)
-        if section:
+        popup = getattr(mw, 'excluded_books_popup', None)
+        if section or popup:
             from ..themes import _resolve_theme
-            section.set_theme(_resolve_theme(theme_name))
+            theme = _resolve_theme(theme_name)
+            if section:
+                section.set_theme(theme)
+            if popup:
+                popup.set_theme(theme)
         ss_stats = get_stats_stylesheet(theme_name)
         for attr in ('stats_panel', 'book_detail_panel'):
             target = getattr(mw, attr, None)

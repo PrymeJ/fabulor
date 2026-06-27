@@ -504,6 +504,13 @@ class PanelManager:
         if hasattr(self.main_window, 'theme_manager'):
             self.main_window.theme_manager._on_theme_unhovered()
             self.main_window.theme_manager.snap_theme_forward()
+        # The Excluded Books popup is parented to MainWindow, not the settings
+        # panel — it has no reason to persist once its anchor (the toggle line
+        # inside the Library tab) slides away with the panel.
+        popup = getattr(self.main_window, 'excluded_books_popup', None)
+        if popup and popup.isVisible():
+            popup.fade_out()
+            self.main_window.excluded_books_section.set_expanded(False)
         if self.settings_panel_animation.state() == QAbstractAnimation.State.Running:
             return
         panel_w = self.settings_panel.width()

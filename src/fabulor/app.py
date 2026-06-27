@@ -20,6 +20,7 @@ from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
 from .themes import THEMES, _resolve_theme, get_player_stylesheet
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
+from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
 from .ui.speed_controls import SpeedControlsPanel
 from .ui.sleep_timer import SleepTimerPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
@@ -532,7 +533,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget = ChapterList(self)
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
         self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
-        
+
+        self.excluded_books_popup = ExcludedBooksPopup(self)
+        self.excluded_books_popup.restore_requested.connect(self._on_excluded_book_restored)
+
         builders.build_sidebar(self)
         builders.build_library_panel(self)
         builders.build_settings_panel(self)
@@ -635,13 +639,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_persist_filter_visuals()
 
     def _reload_excluded_books(self):
-        """Recheck the excluded-book set and rebuild the Library tab's Excluded
-        Books section. Called on each settings-panel open — the count drives
-        whether the section is visible at all (zero ⇒ entirely hidden)."""
+        """Recheck the excluded-book set and rebuild the popup's contents plus
+        the toggle line's count/visibility. Called on each settings-panel
+        open. Closes the popup unconditionally first — the count or the rows
+        themselves may have changed (e.g. a rescan flagged more books missing
+        since this was last open), so any previously-open popup is stale."""
         if not hasattr(self, 'excluded_books_section'):
             return
-        self.excluded_books_section.set_theme(self.theme_manager.get_current_theme())
-        self.excluded_books_section.reload(self.db.get_excluded_books())
+        if self.excluded_books_popup.isVisible():
+            self.excluded_books_popup.fade_out()
+        self.excluded_books_section.set_expanded(False)
+        theme = self.theme_manager.get_current_theme()
+        self.excluded_books_section.set_theme(theme)
+        self.excluded_books_popup.set_theme(theme)
+        books = self.db.get_excluded_books()
+        self.excluded_books_popup.reload(books)
+        self.excluded_books_section.set_count(len(books))
+
+    def _on_excluded_toggle_clicked(self):
+        if self.excluded_books_popup.isVisible():
+            self.excluded_books_popup.fade_out()
+            self.excluded_books_section.set_expanded(False)
+        else:
+            self.excluded_books_popup.show_below(self.excluded_books_section, self)
+            self.excluded_books_section.set_expanded(True)
 
     def _on_excluded_book_restored(self, path: str):
         """Restore a user-excluded book (is_excluded=0) and refresh every view
@@ -651,6 +672,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel._refresh_stats()
         self.stats_panel.refresh_current_tab()
         self.tags_panel.refresh_books()
+        # The popup already animated the row out itself; just keep the toggle
+        # line's count in sync (and hide it entirely if that was the last one).
+        self.excluded_books_section.set_count(self.excluded_books_popup.count())
+        if self.excluded_books_popup.count() == 0:
+            self.excluded_books_popup.fade_out()
+            self.excluded_books_section.set_expanded(False)
 
     def _on_persist_filter_master(self, enabled: bool):
         if enabled:
