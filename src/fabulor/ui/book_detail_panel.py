@@ -619,7 +619,8 @@ class BookDetailPanel(QWidget):
         self._is_archived = (
             _book_dict is None or
             bool(_book_dict.get('is_deleted')) or
-            bool(_book_dict.get('is_excluded'))
+            bool(_book_dict.get('is_excluded')) or
+            bool(_book_dict.get('is_missing'))
         )
 
         pixmap = QPixmap()
@@ -1340,7 +1341,8 @@ class BookDetailPanel(QWidget):
         self._is_archived = (
             _book_dict is None or
             bool(_book_dict.get('is_deleted')) or
-            bool(_book_dict.get('is_excluded'))
+            bool(_book_dict.get('is_excluded')) or
+            bool(_book_dict.get('is_missing'))
         )
         self._remove_btn.setVisible(not self._is_archived)
         self._ghost_label.setVisible(self._is_archived)

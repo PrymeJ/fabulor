@@ -1,10 +1,15 @@
 """Force-rescan missing-book detection contract for ``ScannerWorker.run_scan``.
 
-Pins the behavior added 2026-06-26: a book whose folder is physically deleted from
-disk must be flagged ``is_excluded=1`` (NOT hard-deleted, NOT ``is_deleted``) on a
-FORCE rescan — same semantics as ``app.py``'s ``_mark_book_missing`` — so it leaves
-the visible library but survives in Stats and can be resurrected by a later force
-rescan if the folder returns.
+Pins the behavior added 2026-06-26, revised 2026-06-27: a book whose folder is
+physically deleted from disk must be flagged ``is_missing=1`` (NOT ``is_excluded``,
+NOT hard-deleted, NOT ``is_deleted``) on a FORCE rescan — same dedicated-flag
+semantics as ``app.py``'s ``_mark_book_missing`` — so it leaves the visible library
+but survives in Stats and self-heals (is_missing clears automatically) the next
+time a scan rediscovers the folder. Originally this used ``is_excluded`` (the same
+flag the user-trash flow uses); that caused a ping-pong bug — un-excluding a missing
+book via the Excluded Books popup put a file-less row back in the library, which
+got re-flagged the next time the user tried to load it. ``is_missing`` is a separate
+flag specifically to avoid that — see CLAUDE.md and NOTES.md, 2026-06-27.
 
 Load-bearing guards these tests pin:
   * runs ONLY on ``force_refresh=True`` (a non-force scan must never flag anything);
@@ -62,8 +67,8 @@ def test_force_rescan_flags_deleted_folder(env, tmp_path):
     worker = ScannerWorker(str(db.db_path), force_refresh=True, locations=[loc])
     worker.run_scan()
 
-    assert db.is_book_excluded(gone), "deleted folder must be flagged is_excluded"
-    assert not db.is_book_excluded(keep), "present folder must stay visible"
+    assert db.is_book_missing(gone), "deleted folder must be flagged is_missing"
+    assert not db.is_book_missing(keep), "present folder must stay visible"
     assert db.get_visible_book_count() == 1
     # Soft-delete only: the row (and its stats lineage) survives, NOT hard-deleted.
     assert db.get_book(gone) is not None
@@ -79,7 +84,7 @@ def test_non_force_scan_does_not_flag_deleted_folder(env, tmp_path):
 
     # A routine (non-force) scan must never flag a missing book — only the
     # explicit Rescan button (force) is allowed to mutate flags.
-    assert not db.is_book_excluded(gone)
+    assert not db.is_book_missing(gone)
     assert db.get_visible_book_count() == 2
 
 
@@ -95,8 +100,8 @@ def test_offline_location_does_not_flag_its_books(env, tmp_path):
     worker = ScannerWorker(str(db.db_path), force_refresh=True, locations=[loc])
     worker.run_scan()
 
-    assert not db.is_book_excluded(keep)
-    assert not db.is_book_excluded(gone)
+    assert not db.is_book_missing(keep)
+    assert not db.is_book_missing(gone)
     assert db.get_visible_book_count() == 2
 
 
@@ -117,6 +122,6 @@ def test_transient_iterdir_error_is_not_treated_as_missing(env, tmp_path, monkey
     worker = ScannerWorker(str(db.db_path), force_refresh=True, locations=[loc])
     worker.run_scan()
 
-    assert not db.is_book_excluded(gone), \
+    assert not db.is_book_missing(gone), \
         "a transient per-folder I/O error must not flag the book missing"
     assert db.get_visible_book_count() == 2

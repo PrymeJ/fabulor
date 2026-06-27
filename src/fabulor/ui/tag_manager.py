@@ -63,7 +63,7 @@ class _TagBookThumb(QWidget):
     def __init__(self, book: dict, assets_dir: str, placeholder_color: str = "#888888", parent=None):
         super().__init__(parent)
         self._path = book['path']
-        self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0))
+        self._is_archived = (book.get('is_deleted', 0) or book.get('is_excluded', 0) or book.get('is_missing', 0))
         self.setFixedSize(47, 47)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(book.get('title', ''))

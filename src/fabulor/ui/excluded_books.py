@@ -207,7 +207,7 @@ class ExcludedBooksPopup(QListWidget):
 
     restore_requested = Signal(str)  # emits book path; owner performs the DB write + refresh
 
-    POPUP_W = 235      # narrower than the full window — matches the settings
+    POPUP_W = 237      # narrower than the full window — matches the settings
                        # panel's own content width, not the whole 300px app
     POPUP_X = 17       # offset from the settings panel's left edge
     MAX_LIST_H = 75    # capped total popup height; scrolls beyond this
@@ -392,6 +392,26 @@ class ExcludedBooksSection(QWidget):
         outer.addWidget(self._header)
         outer.addStretch()
 
+        # Pure state indicator — visible only while the popup is open, shows
+        # "▲" only (there's nothing to show when hidden, so no "▼" state is
+        # ever needed). NOT a click target: no cursor, no mousePressEvent.
+        # Mirrors ChapterList's _expand_btn in spirit (visible only when
+        # relevant) but unlike it, has no click handler of its own at all —
+        # the "N books excluded" label below is the only way to toggle the
+        # popup. Do not add one "for consistency"; that would create a second
+        # way to open/close the popup that doesn't match the design.
+        self._arrow = QLabel("")
+        self._arrow.setObjectName("excluded_toggle_arrow")
+        self._arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._arrow.setContentsMargins(0, 7, 0, 0)
+        # Same fixed-height pin as the count label below, same reasoning:
+        # don't let this widget's own sizeHint (which can fluctuate with its
+        # text content) influence the row's height.
+        self._arrow.setFixedHeight(self._header.sizeHint().height())
+        self._arrow.setVisible(False)
+        outer.addWidget(self._arrow)
+        outer.addStretch()
+
         self._toggle = QLabel("")
         self._toggle.setObjectName("excluded_toggle")
         self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -428,6 +448,7 @@ class ExcludedBooksSection(QWidget):
         the arrow reflects real popup state rather than assuming the toggle
         click always succeeds."""
         self._expanded = expanded
+        self._arrow.setVisible(expanded)
         self._apply_toggle_text()
 
     def _on_toggle_clicked(self, event):
@@ -436,9 +457,10 @@ class ExcludedBooksSection(QWidget):
         self.toggle_requested.emit()
 
     def _apply_toggle_text(self):
-        arrow = "▲" if self._expanded else "▼"
         plural = "book" if self._count == 1 else "books"
         color = (self._theme or {}).get('text', '#ffffff')
         self._toggle.setText(
-            f'<span style="color:{color}; font-size:13px;">{self._count} {plural} excluded {arrow}</span>'
+            f'<span style="color:{color}; font-size:13px;">{self._count} {plural} excluded</span>'
         )
+        if self._expanded:
+            self._arrow.setText(f'<span style="color:{color}; font-size:13px;">▲</span>')

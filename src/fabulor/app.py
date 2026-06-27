@@ -965,11 +965,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_status_banner_ui(show_banner=False)
 
     def _mark_book_missing(self, path: str) -> None:
-        """Soft-deletes a book whose backing file/folder is confirmed gone —
-        mirrors the user-trash flow (set_book_excluded), not remove_scan_location's
-        is_deleted. The book stays in the DB (progress, history, tags survive) and
-        a future force rescan or the file's return can resurface it; only Cover/Tags
-        editing and active playback are gone, exactly like a user-trashed book.
+        """Flags a book whose backing file/folder is confirmed gone via the
+        dedicated is_missing flag — NOT is_excluded (user-trash). The two used
+        to be conflated (this method used to call set_book_excluded(path, True)
+        directly): a book the scanner auto-flagged as missing would land in the
+        Excluded Books popup with a "restore" eye that just un-excluded it with
+        no file behind it — the user would try to load it, _mark_book_missing
+        would fire again, and it ping-ponged back into Excluded Books forever.
+        is_missing is what's now used for this; get_excluded_books() filters it
+        out entirely (no restore action makes sense for a book that isn't
+        there), and it self-heals (cleared automatically) the next time the
+        scanner rediscovers the folder — see upsert_book/upsert_books_batch.
+
+        The book stays in the DB (progress, history, tags survive); only
+        Cover/Tags editing and active playback are gone while missing, same as
+        a user-trashed book.
 
         Call this ONLY at a confirmed-missing point — i.e. after os.path.exists(path)
         has returned False, or mpv itself reported the load failed. Do not call it
@@ -979,7 +989,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         This is the LAZY, single-book detector (fires when the user selects/loads a
         gone book). The scanner's force-rescan path (db.mark_books_missing, called
         from ScannerWorker.run_scan) is a SECOND confirmed-missing detector with the
-        same is_excluded contract — it batch-flags books under a scanned-and-reachable
+        same is_missing contract — it batch-flags books under a scanned-and-reachable
         location whose folders weren't rediscovered, and refreshes the UI via the
         scanner's `finished` signal rather than the inline refresh calls below.
 
@@ -988,7 +998,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         book = self.db.get_book(path)
         if book is None:
             return
-        self.db.set_book_excluded(path, True)
+        self.db.set_book_missing(path, True)
         self.library_panel.refresh(force=True)
         self.tags_panel.refresh_books()
         self.stats_panel.refresh_current_tab()

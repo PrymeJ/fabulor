@@ -410,10 +410,13 @@ class BookDayRow(QWidget):
         self.setObjectName("stats_book_day_row_alt" if index % 2 else "stats_book_day_row")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # A book is archived if its path is missing (location removed) or if it's explicitly excluded
+        # A book is archived if its path is missing (location removed), explicitly
+        # excluded, or confirmed missing from disk (is_missing — see db.py's
+        # set_book_missing/mark_books_missing)
         self._is_archived = (row_data.get("book_path") is None or
                             row_data.get("is_deleted", 0) or
-                            row_data.get("is_excluded", 0))
+                            row_data.get("is_excluded", 0) or
+                            row_data.get("is_missing", 0))
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 4, 2)
@@ -587,6 +590,7 @@ class FinishedBookThumb(QWidget):
         self.setFixedSize(47, 47)
         self._is_archived = (row_data.get("is_deleted", 0) or
                             row_data.get("is_excluded", 0) or
+                            row_data.get("is_missing", 0) or
                             row_data.get("book_path") is None)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
@@ -756,15 +760,16 @@ class FinishedScrollRow(QWidget):
     def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
         # Order-sensitive signature: book_id alone misses changes that don't
         # alter membership but do alter what's rendered (re-finish reordering,
-        # cover swaps, resurrection/exclusion flipping is_deleted or is_excluded —
-        # the two independent soft-delete flags, see CLAUDE.md). Comparing the
-        # full tuple per row keeps the no-rebuild fast path for the common
-        # truly-unchanged case while still catching everything that matters —
-        # avoids the rebuild-driven cover flash/stutter risk on panel open.
+        # cover swaps, resurrection/exclusion flipping is_deleted, is_excluded,
+        # or is_missing — three independent soft-delete-ish flags, see
+        # CLAUDE.md). Comparing the full tuple per row keeps the no-rebuild
+        # fast path for the common truly-unchanged case while still catching
+        # everything that matters — avoids the rebuild-driven cover
+        # flash/stutter risk on panel open.
         incoming_sig = [
             (r.get("book_id"), r.get("event_time"),
              r.get("active_cover_path") or r.get("cover_path"),
-             r.get("is_deleted"), r.get("is_excluded"))
+             r.get("is_deleted"), r.get("is_excluded"), r.get("is_missing"))
             for r in rows
         ]
         if incoming_sig == self._current_sig:

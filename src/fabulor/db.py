@@ -216,6 +216,10 @@ class LibraryDB:
                 conn.execute(
                     "ALTER TABLE books ADD COLUMN year_locked INTEGER NOT NULL DEFAULT 0"
                 )
+            if "is_missing" not in col_names:
+                conn.execute(
+                    "ALTER TABLE books ADD COLUMN is_missing INTEGER NOT NULL DEFAULT 0"
+                )
 
             # Populate tags table from existing book_tags (idempotent, safe to run each startup)
             conn.execute("""
@@ -304,7 +308,8 @@ class LibraryDB:
                 cover_path=excluded.cover_path,
                 year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
-                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END
+                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END,
+                is_missing=0
         """
         with self._get_conn() as conn:
             conn.execute(query, cleaned)
@@ -325,7 +330,8 @@ class LibraryDB:
                 cover_path=excluded.cover_path,
                 year=CASE WHEN books.year_locked THEN books.year ELSE COALESCE(excluded.year, books.year) END,
                 is_deleted=0,
-                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END
+                is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END,
+                is_missing=0
         """
         cleaned_list = [
             {k: (v.strip() if isinstance(v, str) else v) for k, v in {
@@ -366,7 +372,7 @@ class LibraryDB:
             raise ValueError(f"Invalid sort order: {order!r}")
         collate = " COLLATE NOCASE" if sort_by in self._TEXT_SORT_COLUMNS else ""
         with self._get_conn() as conn:
-            cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 AND is_excluded = 0 ORDER BY {sort_by}{collate} {order}")
+            cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0 ORDER BY {sort_by}{collate} {order}")
             return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
     def get_all_book_paths(self) -> set:
@@ -379,16 +385,17 @@ class LibraryDB:
             return {row[0] for row in rows}
 
     def get_visible_book_paths_under(self, path) -> set:
-        """Returns paths of currently-visible (is_deleted=0 AND is_excluded=0)
-        books under `path`. Used by a force rescan to detect books whose folder
-        vanished from disk but were never explicitly excluded or location-removed
-        — those get flagged via mark_books_missing. books.path is a folder path
-        (str(book_dir) in scanner.py), so the same `path + "/%"` prefix match used
-        by remove_scan_location/restore_books_under_path applies here."""
+        """Returns paths of currently-visible (is_deleted=0 AND is_excluded=0
+        AND is_missing=0) books under `path`. Used by a force rescan to detect
+        books whose folder vanished from disk but were never explicitly
+        excluded, missing, or location-removed — those get flagged via
+        mark_books_missing. books.path is a folder path (str(book_dir) in
+        scanner.py), so the same `path + "/%"` prefix match used by
+        remove_scan_location/restore_books_under_path applies here."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT path FROM books WHERE is_deleted = 0 AND is_excluded = 0 "
-                "AND path LIKE ?",
+                "AND is_missing = 0 AND path LIKE ?",
                 (str(path).rstrip("/") + "/%",)
             ).fetchall()
             return {row[0] for row in rows}
@@ -399,17 +406,18 @@ class LibraryDB:
             return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
 
     def get_visible_book_count(self) -> int:
-        """Returns the number of books visible in the library (excludes soft-deleted and excluded)."""
+        """Returns the number of books visible in the library (excludes
+        soft-deleted, excluded, and missing-from-disk books)."""
         with self._get_conn() as conn:
             return conn.execute(
-                "SELECT COUNT(*) FROM books WHERE is_deleted = 0 AND is_excluded = 0"
+                "SELECT COUNT(*) FROM books WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0"
             ).fetchone()[0]
 
     def has_books_with_progress(self) -> bool:
         with self._get_conn() as conn:
             row = conn.execute(
                 """SELECT 1 FROM books
-                   WHERE is_deleted = 0 AND is_excluded = 0
+                   WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0
                    AND progress > 1.0
                    LIMIT 1"""
             ).fetchone()
@@ -419,7 +427,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             row = conn.execute(
                 """SELECT 1 FROM books b
-                   WHERE b.is_deleted = 0 AND b.is_excluded = 0
+                   WHERE b.is_deleted = 0 AND b.is_excluded = 0 AND b.is_missing = 0
                    AND EXISTS (
                        SELECT 1 FROM book_events be
                        WHERE be.book_id = b.id
@@ -438,7 +446,7 @@ class LibraryDB:
                 """SELECT b.id, MAX(be.event_time) as last_finished
                    FROM books b
                    JOIN book_events be ON be.book_id = b.id
-                   WHERE b.is_deleted = 0 AND b.is_excluded = 0
+                   WHERE b.is_deleted = 0 AND b.is_excluded = 0 AND b.is_missing = 0
                    AND be.event_type = 'finished'
                    GROUP BY b.id"""
             ).fetchall()
@@ -456,7 +464,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT cover_path FROM books "
-                "WHERE is_deleted = 0 AND is_excluded = 0 "
+                "WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0 "
                 "AND cover_path IS NOT NULL AND cover_path != ''"
             ).fetchall()
             return [row[0] for row in rows]
@@ -1555,6 +1563,13 @@ class LibraryDB:
             ).fetchone()
             return bool(row and row[0])
 
+    def is_book_missing(self, path: str) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT is_missing FROM books WHERE path = ?", (path,)
+            ).fetchone()
+            return bool(row and row[0])
+
     def set_book_excluded(self, path: str, excluded: bool) -> None:
         with self._get_conn() as conn:
             conn.execute(
@@ -1562,31 +1577,48 @@ class LibraryDB:
                 (1 if excluded else 0, path)
             )
 
+    def set_book_missing(self, path: str, missing: bool) -> None:
+        """Sets is_missing — confirmed gone from disk. Independent of
+        is_excluded (user-trash): a book can be missing without being
+        user-excluded, or both at once (user trashed an already-missing
+        book). Unlike is_excluded, is_missing self-heals — see
+        upsert_book/upsert_books_batch, which unconditionally reset it to 0
+        whenever the scanner rediscovers the folder."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE books SET is_missing = ? WHERE path = ?",
+                (1 if missing else 0, path)
+            )
+
     def get_excluded_books(self) -> list[tuple]:
-        """Returns (path, title, author) for all user-excluded-but-not-location-removed
-        books (is_excluded=1 AND is_deleted=0), ordered by title. Drives the
-        Excluded Books section in the Library settings tab — restoring one calls
-        set_book_excluded(path, False)."""
+        """Returns (path, title, author) for all user-excluded-but-not-location-removed,
+        not-currently-missing books (is_excluded=1 AND is_deleted=0 AND
+        is_missing=0), ordered by title. Drives the Excluded Books popup in the
+        Library settings tab — restoring one calls set_book_excluded(path, False).
+        Missing books are deliberately excluded from this list: there is no
+        useful "restore" action for a book whose folder isn't there, and
+        un-excluding it anyway would just have it re-flagged missing the next
+        time the user tries to load it (this was a real bug — see NOTES.md)."""
         with self._get_conn() as conn:
             rows = conn.execute(
                 "SELECT path, title, author FROM books "
-                "WHERE is_excluded = 1 AND is_deleted = 0 "
+                "WHERE is_excluded = 1 AND is_deleted = 0 AND is_missing = 0 "
                 "ORDER BY title COLLATE NOCASE"
             ).fetchall()
             return [(r[0], r[1], r[2]) for r in rows]
 
     def mark_books_missing(self, paths) -> None:
-        """Batch is_excluded=1 for books a force rescan confirmed are gone from
-        disk — same semantics/contract as set_book_excluded / _mark_book_missing
-        (app.py), just called from the scanner worker thread in bulk. The book
-        stays in the DB (progress, history, tags survive) and a future force
-        rescan or the folder's return can resurface it. No UI side effects here;
-        the scanner's `finished` signal drives the library refresh."""
+        """Batch is_missing=1 for books a force rescan confirmed are gone from
+        disk, called from the scanner worker thread in bulk. The book stays in
+        the DB (progress, history, tags survive); is_missing self-heals the
+        next time the scanner rediscovers the folder (see upsert_book/
+        upsert_books_batch). No UI side effects here; the scanner's `finished`
+        signal drives the library refresh."""
         if not paths:
             return
         with self._get_conn() as conn:
             conn.executemany(
-                "UPDATE books SET is_excluded = 1 WHERE path = ?",
+                "UPDATE books SET is_missing = 1 WHERE path = ?",
                 [(p,) for p in paths]
             )
 
