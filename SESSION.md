@@ -1,3 +1,97 @@
+## Session Summary — 2026-06-27 Session 3 — is_missing flag fixes the excluded-books ping-pong; arrow split out of the toggle label
+
+**Branch:** `main`. **Commit:** `9afab19` (code+tests), docs commit follows.
+
+### Context
+
+Two issues raised together at the start of this session, both stemming from precedent already
+established by `ChapterList`:
+
+1. **Arrow semantics.** The Excluded Books popup's toggle line combined "N books excluded" and the
+   `▼`/`▲` arrow into one clickable label, arrow always visible. `ChapterList` never does this — its
+   arrow (`_expand_btn`) only appears while the dropdown is open, is a pure state indicator with its
+   own narrower second-tier role (expand the row count further), and is never the thing that opens or
+   dismisses the list (outside-click / row-selection do that). The user wanted the arrow pulled out of
+   the toggle label, hidden until the popup is open, centered between the header and the (now purely
+   right-aligned) count label.
+
+2. **"Schrödinger's audiobook."** Discovered live: a book that's both physically deleted AND was
+   already user-excluded (or gets auto-flagged missing by a force rescan) ping-pongs. Root cause:
+   `mark_books_missing`/`_mark_book_missing` wrote `is_excluded=1` for a confirmed-missing book — the
+   exact same flag `set_book_excluded` uses for a deliberate user-trash. The popup's eye-click restore
+   treated every row identically (`set_book_excluded(path, False)`), so clicking the eye on a
+   missing-flagged row put a file-less book back in the visible library. The user tried to play it,
+   `_mark_book_missing` fired again (the file still wasn't there), and it landed right back in
+   Excluded Books. Infinite loop — this was the previous session's missing-detection feature
+   colliding with this session's restore-UI feature, neither bug on its own, only the combination.
+
+This went through a full plan-mode design pass (see `/home/pryme/.claude/plans/if-i-physically-remove-serialized-phoenix.md`)
+before implementation, per explicit request — "this might require some thinking before implementing."
+
+### What shipped
+
+**New `is_missing` column (`db.py`)** — independent of `is_excluded`, same migration pattern as the
+existing `*_locked`/`is_excluded` columns. `set_book_missing` (new, mirrors `set_book_excluded`);
+`mark_books_missing` rewritten to write `is_missing=1` instead of `is_excluded=1`;
+`app.py`'s `_mark_book_missing` calls `set_book_missing`. Unlike `is_excluded` (sticky — the upserts
+never reset it), `is_missing` **self-heals**: both upserts unconditionally reset it to 0, since an
+upsert only ever runs for a path the scanner just rediscovered on disk — rediscovery is unambiguous
+proof the file is back, no CASE WHEN guard needed.
+
+**`get_excluded_books` filters `is_missing=1` rows out entirely** — this is the actual ping-pong fix.
+There's no restore action that makes sense for a book that isn't there, so it just doesn't appear in
+the popup. (Accepted edge case, documented in CLAUDE.md and not fixed: a book can be both
+`is_excluded=1` and `is_missing=1` — when the file returns, `is_missing` self-heals but `is_excluded`
+stays sticky, so the book reappears in the popup but not the library, with no proactive notice. Out
+of scope per the plan.)
+
+**Visibility-fence gap caught by a failing test, not by review** — the first pass only filtered
+`get_excluded_books`. Running the full suite immediately surfaced `get_visible_book_count()` still
+counting a missing book as visible (the test asserted count drops to 1, got 2). Swept and fixed every
+other query that gates on `is_deleted=0 AND is_excluded=0`: `get_all_books`, `has_books_with_progress`,
+`has_finished_books`, `get_finished_book_data`, `get_all_cover_paths`, `get_visible_book_paths_under`
+— all now also fence `is_missing=0`. Also found (via grep, not a failing test) a seventh, identically-
+shaped fence in `ui/tag_manager.py`'s `_is_archived` check that the original grep pattern missed
+(different quote style).
+
+**Archived/dimmed display** — `is_missing` folded into the existing `_is_archived`/`is_archived`
+boolean checks in `stats_panel.py` (3 sites, including a cache-invalidation signature tuple that
+needed the new flag added too, or a missing-flip wouldn't trigger a rebuild) and `book_detail_panel.py`
+(2 identical sites, `replace_all`). **No new icon** — `ghost.svg` continues to represent "archived for
+any reason"; a distinct gravestone icon was explicitly descoped (no asset exists, sourcing one was
+out of scope for this pass). Filed in TODO.md.
+
+**Arrow split (`ui/excluded_books.py`, `ExcludedBooksSection`)** — new `self._arrow` `QLabel`
+(`excluded_toggle_arrow`), distinct object name from the count label's `excluded_toggle` (deliberately
+not reused, in case a future stylesheet rule ever targets one without the other). Hidden by default,
+shown only via `set_expanded(True)`, sits between two `addStretch()` calls so it centers independent
+of the count label's text width. No cursor, no `mousePressEvent` — confirmed in the plan's own
+DO NOT note and held to it. `_apply_toggle_text` no longer appends the arrow glyph to the count
+label's text at all.
+
+### Tests
+
+`tests/test_excluded_books.py` — four new tests: missing rows hidden from `get_excluded_books` even
+when also excluded; `is_missing` self-heals on upsert while a separately-set `is_excluded` stays
+sticky (both with and without `is_excluded` also set); `mark_books_missing` never touches
+`is_excluded`; the visibility-fence sweep (`get_visible_book_count`, `get_all_books`,
+`get_visible_book_paths_under`) excludes missing books. `tests/test_scanner_missing.py` updated —
+its four existing tests asserted the OLD (now-corrected) behavior that `mark_books_missing` sets
+`is_excluded`; updated to assert `is_missing` instead (not a regression, a stale assertion against
+behavior that was itself the bug). Added `db.is_book_missing()` reader (mirrors `is_book_excluded`).
+Full suite: 50 passing.
+
+### Docs
+
+CLAUDE.md: "DO NOT conflate `is_deleted` and `is_excluded`" retitled to include `is_missing`,
+rewritten for three flags with a new "ping-pong bug" sub-note explaining the fix and the accepted
+edge case; "Scanner resurrection behaviour," "Sticky `is_excluded`," and "Scanner missing-book
+detection" rules all corrected (previously said `mark_books_missing` writes `is_excluded`); the
+`db.py` files-and-responsibilities summary's soft-delete-flags and upserts bullets corrected for
+three flags instead of two. Footer entry added.
+
+---
+
 ## Session Summary — 2026-06-27 Session 2 — Excluded Books list: inline expand failed, rebuilt as a popup
 
 **Branch:** `main`. **Commits:** `be208c0` (popup rebuild). Checkpoints along the way:

@@ -1,3 +1,62 @@
+## Excluded-books "Schrödinger's audiobook": restoring a missing book put it right back in Excluded Books (2026-06-27)
+
+**Symptom:** a book that was both physically deleted from disk AND flagged in the Excluded Books
+popup would ping-pong forever. Click the eye to restore → the book reappears in the library (with
+no file behind it) → user tries to play it → it lands right back in Excluded Books → repeat.
+
+**Root cause:** `is_excluded` was overloaded to mean two different things. (1) The user deliberately
+trashed a book via the detail-panel trash button (`set_book_excluded`, book still physically
+present at the time). (2) The force-rescan missing-detector (`mark_books_missing`, added the
+previous session — see the popup-architecture entry below) flagged a book whose folder is gone,
+using the SAME flag. The popup's eye-click restore (`_on_excluded_book_restored` → 
+`set_book_excluded(path, False)`) treated every row identically — for a case-(2) row, the file
+genuinely isn't there, so unconditionally un-excluding it just put a file-less row back in the
+visible library. The user (or `_on_book_selected_from_library`/playback) would try to load it,
+`_mark_book_missing` would fire again (`os.path.exists(path)` still False), calling
+`set_book_excluded(path, True)` again — landing it right back in Excluded Books.
+
+This was unreachable before the previous session's missing-detection feature shipped: `is_excluded`
+only ever got set by a deliberate user action on a book that was, by definition, still present when
+they clicked trash. The bug only existed in the *combination* of two correct-on-their-own features.
+
+**The fix:** a new, independent `is_missing` column (`db.py` migration, same pattern as the existing
+`is_excluded`/`*_locked` columns). `mark_books_missing`/`_mark_book_missing` now write `is_missing`,
+never `is_excluded`. `get_excluded_books()` filters `is_missing=1` rows out of the popup entirely —
+there is no restore action that makes sense for a book that isn't there, so it simply isn't shown.
+
+The two flags have **deliberately opposite** reset behavior, which is itself worth flagging for
+future readers: `is_excluded` is sticky (the upserts' `CASE WHEN books.is_excluded THEN 1 ELSE 0
+END` — a force rescan must never silently un-exclude a deliberate user-trash). `is_missing` is the
+opposite — both upserts reset it to a **plain, unconditional 0**, no CASE WHEN at all — because an
+upsert only ever runs for a path the scanner just rediscovered on disk; rediscovery is unambiguous
+proof the file is back, so there's nothing to guard against. Do not "fix" `is_missing` to also use a
+CASE WHEN guard "for consistency" with `is_excluded` — that would make a returned file's row stay
+hidden forever, which is the opposite of correct.
+
+**A visibility-fence gap this surfaced, caught by a failing test rather than by review:** the first
+implementation pass only added the `is_missing=0` filter to `get_excluded_books()`. Running the test
+suite immediately afterward failed on `get_visible_book_count()` — it still counted a missing book
+as visible, because `is_deleted=0 AND is_excluded=0` is a pattern repeated across SEVEN separate
+queries in `db.py` (`get_all_books`, `get_visible_book_paths_under`, `get_visible_book_count`,
+`has_books_with_progress`, `has_finished_books`, `get_finished_book_data`, `get_all_cover_paths`)
+plus an eighth, identically-shaped check in `ui/tag_manager.py`'s `_is_archived` (found by grep, not
+by the test — a different quote style than the others, so a naive grep for the exact `is_deleted = 0
+AND is_excluded = 0` string missed it on the first pass too). **Lesson: when adding a new flag that
+needs to participate in an existing "is this visible" contract, grep for every occurrence of the
+existing fence pattern across the WHOLE codebase, not just the one query you're directly touching —
+and confirm the count with a test, not by inspection, since this exact gap survived one round of
+manual review and was only caught by `assert db.get_visible_book_count() == 1` failing with `2`.**
+
+**Accepted edge case, not fixed:** a book can be both `is_excluded=1` AND `is_missing=1` (the user
+trashed a book that was already missing, or trashed it before it was ever discovered missing). While
+missing, it's correctly hidden from the popup. When the file returns and a force rescan runs,
+`is_missing` self-heals (clears) but `is_excluded` stays sticky — so the book reappears in the
+*popup* (now visible again since `is_missing=0`) but not the library, with no proactive notification
+that this happened. The user could plausibly forget the book existed and wonder where a "newly
+returned" file went. Explicitly accepted as out of scope — no notification mechanism was built.
+
+---
+
 ## Excluded Books list wouldn't expand inside the settings panel — five inline approaches failed before a MainWindow-level popup (ChapterList's architecture) fixed it (2026-06-27)
 
 **Symptom:** a toggle line ("N books excluded ▼") in the Library settings tab was meant to expand

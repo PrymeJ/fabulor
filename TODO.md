@@ -6,6 +6,13 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-27] Distinct icon for `is_missing` books (gravestone vs. ghost).** `is_missing` (added
+  this session to fix the excluded-books ping-pong) is currently folded into the existing
+  `_is_archived`/`is_archived` checks in `stats_panel.py`/`book_detail_panel.py`/`tag_manager.py`, so
+  a missing-from-disk book shows the same `ghost.svg` as a user-excluded or location-removed book.
+  No `gravestone.svg` (or similar) asset exists yet; sourcing one was explicitly out of scope for the
+  `is_missing` fix itself. Add the asset, then branch `BookDetailPanel._ghost_label`'s three call
+  sites (init, refresh, theme-change — keep them in lockstep) on `is_missing` specifically.
 - **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) theming gaps — four issues, found via
   live screenshot comparison on a flamboyant/cyberpunk-style theme:**
   - On at least one such theme, row text and the eye icon are barely visible against the popup's
