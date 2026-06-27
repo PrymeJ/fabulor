@@ -1,3 +1,67 @@
+## Excluded Books list wouldn't expand inside the settings panel — five inline approaches failed before a MainWindow-level popup (ChapterList's architecture) fixed it (2026-06-27)
+
+**Symptom:** a toggle line ("N books excluded ▼") in the Library settings tab was meant to expand
+an inline list of restorable books below it. Across five distinct implementation attempts, the
+list either silently failed to grow past ~0px, caused the entire Library tab to visibly drift
+(other widgets resizing to compensate), flickered, or rendered nothing at all despite every
+programmatic check — geometry, `isVisible()`, stylesheet, row content — reporting correct.
+
+**Root cause:** `settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed
+500px height** widget, and the Library tab page has **no `QScrollArea` of its own** (unlike
+`StatsPanel._build_overall_tab`, which wraps its content in one as a safety net — not adoptable
+here per explicit product decision that no panel should have a scrollbar). Any widget inside that
+tab trying to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put
+the extra height — Qt either refuses to allocate it (if the growing widget's effective size
+policy/sizeHint doesn't force it) or steals it from a sibling with a flexible size (causing visible
+drift elsewhere in the tab).
+
+**What was tried and reverted, in order** (full detail with code patterns in SESSION.md
+2026-06-27 Session 2 — kept brief here):
+
+1. `QScrollArea.maximumHeight` animated alone, default `Expanding` policy → did nothing
+   (`QScrollArea.sizeHint()` is ~`(0, 4)` regardless of content; with no sibling stretch to absorb
+   slack, the layout granted it ~0px rather than growing it).
+2. `minimumHeight` driven in lockstep with `maximumHeight` (via a custom `Property`) → genuinely
+   grew the list, but the tab had no spare budget, so it stole space from the folder-list box and
+   visibly drifted the whole tab every animation frame.
+3. Header+toggle merged onto one row + `QSizePolicy.Fixed` on the scroll area → drift became a
+   flicker (`Fixed` sizes from `sizeHint()` clamped to min/max, not `maximumHeight` alone, so it
+   fought itself without `minimumHeight` also driven — and adding that back changed nothing
+   further, by this point with no further user-visible effect).
+4. Absolute-overlay positioning (`setGeometry`/`show()`/`raise_()`, no layout at all) **as a child
+   of the section widget itself** → every programmatic check passed; nothing rendered live, in
+   either this session's testing or an independent attempt by a different model (Gemini) given the
+   same approach to fix.
+
+**The actual fix:** stop trying to grow anything *inside* the Library tab's layout at all. Rebuilt
+as `ExcludedBooksPopup` (`ui/excluded_books.py`), parented directly to `MainWindow` — copying
+`ChapterList`'s (`ui/chapter_list.py`) already-proven architecture exactly: `QGraphicsOpacityEffect`
+fade only (no size/height `QPropertyAnimation` at all), `show()`/`raise_()`/`setGeometry()` called
+synchronously from the click handler, `QTimer.singleShot(0, ...)` for focus. Because the popup is
+never a descendant of the tab's `QVBoxLayout`, nothing in that layout is ever asked to renegotiate
+space for it — it floats above everything, the same way `ChapterList` floats above the player
+chrome. `ExcludedBooksSection` (the toggle line) stayed inside the tab; only the *list itself*
+needed to leave.
+
+One concrete bug inside the fix worth flagging for future similar work: the first popup version
+used a `_TOP_MARGIN` constant copy-pasted from `ChapterList`, which opens *upward* and reserves
+clearance above itself. This popup opens *downward*, so that same constant — subtracted from the
+available-height calculation — was reserving clearance in the wrong direction and silently
+starving the list down to fitting only 1 row. Renamed to `_BOTTOM_MARGIN` and applied on the
+correct side once that direction mismatch was caught via live user testing.
+
+**Process lesson — do not skip:** every one of attempts 1–4 was "verified" via headless Python
+scripts (`processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic
+`QMouseEvent` delivery, even a same-process `MainWindow()` instantiation with the settings panel
+never actually opened through its real animated entry path). Every single one of those scripts
+reported success or at least "looks plausible" at some point in this arc, including for the fully
+broken attempt 4. None of that matched what the user actually saw. For settings-panel/tab-layout
+visual bugs specifically: do not trust headless geometry/visibility assertions as a substitute for
+having the user check the live, actually-opened panel — the gap between "this script says it's
+fine" and "the real app does this" was the single biggest time cost in this session.
+
+---
+
 ## `_on_book_removed` nulled `_current_book` before calling `session_recorder.close()`, silently discarding every active session on book/path removal regardless of duration (2026-06-25)
 
 **Symptom path:** any removal of the currently-playing book — scan-location removal

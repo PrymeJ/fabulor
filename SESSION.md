@@ -1,3 +1,95 @@
+## Session Summary — 2026-06-27 Session 2 — Excluded Books list: inline expand failed, rebuilt as a popup
+
+**Branch:** `main`. **Commits:** `be208c0` (popup rebuild). Checkpoints along the way:
+`3c77170`, `16feccf` (`wip:` — manual snapshots taken before/after an aborted attempt to have
+Gemini fix the same bug; its changes were reverted, not these).
+
+### Context
+
+Continuation of Session 1's Excluded Books feature. The collapsed toggle line ("N books
+excluded ▼") worked from Session 1, but clicking it to expand the inline list never worked
+correctly, through many distinct attempts — documented below because the failure pattern itself
+is the useful artifact for next time, not just the final fix.
+
+### What was tried and failed (inline expand, all reverted)
+
+The list lived inside `ExcludedBooksSection`'s own `QVBoxLayout`, alongside the toggle line, inside
+the Library settings tab — which itself sits inside a **fixed 500px-height** `settings_panel`
+(`main_window_builders.py` `build_settings_panel`) with **no scroll area of its own** (confirmed by
+comparing to `StatsPanel._build_overall_tab`, which DOES wrap its content in a `QScrollArea` as a
+safety net — ruled out as a fix here per explicit instruction: "no panels will be scrollable, no
+panels will have scrollbars. Stats don't have them, Sleep don't have them, Playback don't have
+them"). Attempts, in order:
+
+1. **`QScrollArea.maximumHeight` animated via `QPropertyAnimation`, `Expanding` size policy
+   (default).** Visually did nothing — `QScrollArea.sizeHint()` is ~`(0, 4)` regardless of its
+   scrolled content, and with `Expanding` policy + no sibling stretch to absorb slack, the layout
+   satisfied the maximum constraint by giving it ~0px rather than growing it.
+2. **Drove `minimumHeight` in lockstep with `maximumHeight`** (via a `_scrollHeight` `Property` on
+   the section) to force real allocation. This DID grow the scroll area — but caused the entire
+   Library tab to visibly reflow: the folder-list box (flexible between 45–70px) and everything
+   below it shifted up/down each frame, because the tab genuinely didn't have free vertical budget
+   and Qt redistributed it from the only other flexible sibling. User-visible as "the whole window
+   drifts up and down like a ship in a storm."
+3. **Margin trim attempt** (kept, harmless but insufficient alone): Library tab's own bottom
+   `QVBoxLayout` margin trimmed 10→0 (`main_window_builders.py`), reclaiming some dead space — real,
+   measured via `sizeHint()` (408→398), but nowhere near enough to fit the list without also fixing
+   the layout-fighting problem above.
+4. **Header+toggle moved onto one row (right-aligned toggle), `Fixed` size policy on the
+   `QScrollArea`.** Drift became a **flicker** instead — `Fixed` policy sizes from `sizeHint()`
+   clamped to min/max, not from `maximumHeight` alone, so without `minimumHeight` also driven it
+   fought itself every frame. Adding `minimumHeight` back (the same lockstep as #2) produced **no
+   visible change at all** — by this point user testing showed the toggle row itself jumping
+   between two y-values, traced to a real Qt quirk: a `QLabel`'s rich-text `sizeHint()` can differ
+   between `"▼"` and `"▲"` content even at identical nominal font-size, and pinning the toggle's own
+   height (`setFixedHeight(header.sizeHint().height())`) removed that specific jump — but the
+   underlying expand-height bug was still unsolved.
+5. **Absolute-overlay rewrite** (full `ChapterList`-style positioning, but as a child of
+   `ExcludedBooksSection` itself rather than `MainWindow`): `setGeometry`/`show()`/`raise_()`
+   directly, no layout/animation. Every programmatic check (geometry, `isVisible()`, stylesheet,
+   row widget content, even a bright red/green debug-color stylesheet) reported correct — and
+   **nothing rendered at all** in the live app. Independently, the user asked Gemini to attempt a
+   fix on a snapshot of this same inline-overlay shape; it also failed (squashed layout, list still
+   wouldn't expand, menu entries still jumped) — confirming this isn't one model's blind spot, the
+   approach itself was unworkable inside this panel's layout constraints.
+
+**Root lesson:** repeated headless test scripts (`processEvents()` loops, manual `QPropertyAnimation`
+frame stepping, synthetic `QMouseEvent` delivery) gave "looks correct" results that disagreed with
+the live app at every single step in this arc — including the final, fully-broken case (geometry
+right, visible flag `True`, still rendered nothing). Headless Qt testing without the settings panel
+genuinely opened via its real animated entry path, and without the Library tab genuinely the active
+tab, is not a reliable signal for this kind of layout/paint bug — don't trust it for visual
+verification again; have the user check live instead, every time, for this class of change.
+
+### What shipped (popup rebuild — see CLAUDE.md "Excluded Books popup" rule)
+
+Rebuilt as `ExcludedBooksPopup`, parented directly to `MainWindow`, copying `ChapterList`'s
+proven architecture exactly: `QGraphicsOpacityEffect` fade (no size animation at all), `show()` /
+`raise_()` / `setGeometry()` driven synchronously from a click, `QTimer.singleShot(0, ...)` for
+focus. This sidesteps the entire class of bug above because nothing here ever asks the Library
+tab's `QVBoxLayout` to renegotiate space for it — the popup floats above everything, not nested in
+any tab's layout at all. `ExcludedBooksSection` is now just the toggle line; clicking it emits
+`toggle_requested`, and `app.py`'s `_on_excluded_toggle_clicked` opens/closes the popup. Per-row
+hover-reveal-eye restore (`_ExcludedRow`, copied from `_HistoryRow`'s slide animation) carried over
+unchanged — it doesn't care whether its ancestor is laid out or positioned absolutely.
+
+Tuned after live user testing across several rounds: popup width 235px (not full window width),
+anchored 15px right of the toggle and below it (not flush at x=0), height capped at 75px via
+`MAX_LIST_H` (a `_BOTTOM_MARGIN=20` constant replaced a copy-pasted `_TOP_MARGIN=66` from
+`ChapterList` that made sense for an *upward*-opening list but starved available height for this
+*downward*-opening one — that one-line direction mismatch was why only 1 row ever fit), title/author
+vertically centered in each row (font-size mismatch made the author label sit visibly higher),
+toggle text nudged down ~5–8px to align with the header's own margin-shifted glyph position.
+
+### Known follow-ups (not yet done)
+- Scrollbar inside the popup needs styling (currently default/unthemed).
+- Eye restore icon should be on the right of each row (currently matches `_HistoryRow`'s left-ish
+  placement from the original design — user flagged it reads better on the right here).
+- Popup background may get dropped/changed later (currently `bg_deep` + `accent` border,
+  `chapter_dropdown`-style) — explicitly deferred, not a bug.
+
+---
+
 ## Session Summary — 2026-06-27 — Excluded Books restore UI, sticky exclusion, reparse lock fix
 
 **Branch:** `main`. **Commits:** `35fb971` (reparse lock fix), `f91b002` (sticky exclusion +

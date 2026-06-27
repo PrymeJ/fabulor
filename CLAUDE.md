@@ -345,7 +345,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 ### Settings Panel
 
-- Themes tab, Controls tab (chapter digit mode by_name/by_index, autoplay/jump-only toggle), Audio tab, Library tab (folder management, naming pattern, chapter source Embedded/.cue, persist-filter, and a collapsible **Excluded Books** section — `ui/excluded_books.py`, rebuilt on each panel open via `_reload_excluded_books`, restoring via `set_book_excluded(path, False)`). Bound dynamically via `SettingsController` through the five interface facades.
+- Themes tab, Controls tab (chapter digit mode by_name/by_index, autoplay/jump-only toggle), Audio tab, Library tab (folder management, naming pattern, chapter source Embedded/.cue, persist-filter, and an **Excluded Books** toggle line — `ui/excluded_books.py`'s `ExcludedBooksSection` — that opens `ExcludedBooksPopup`, a `MainWindow`-level popup, NOT an inline expanding widget; rebuilt on each panel open via `_reload_excluded_books`, restoring via `set_book_excluded(path, False)`). Bound dynamically via `SettingsController` through the five interface facades.
 
 ### Library state machine, scan & covers (`library_controller.py`, `library/`)
 
@@ -609,6 +609,12 @@ The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { 
 ### DO NOT revert `_update_cover_art_scaling` to reading `cover_art_label.height()` for `target_h`
 `_update_cover_art_scaling` uses `COVER_AREA_HEIGHT` (a module-level constant in `app.py`) as `target_h`, not `self.cover_art_label.height()`. The live allocated height is transient and state-dependent — it reflects whatever the layout engine allocated at the moment of the call, which can be wrong during any state transition (empty→book, no-cover→cover, panel open/close). The constant decouples scaling from layout state and prevents any cover aspect ratio or state transition from breaking the layout. `cover_art_label` is also pinned with `setFixedHeight(COVER_AREA_HEIGHT)` in `_build_cover_art`. If the window layout ever changes, re-calibrate `COVER_AREA_HEIGHT` empirically by testing covers of various aspect ratios and confirming no bottom clipping in fit mode.
 
+### DO NOT try to expand a widget's height inside the Library settings tab's `QVBoxLayout` — use a MainWindow-level popup instead
+`settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed 500px height** widget, and no settings tab has its own `QScrollArea` (this is intentional — no panel in this app has a scrollbar: Stats, Sleep, and Playback don't, and Library must not either). Any widget inside a settings tab that tries to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put the extra height: Qt either refuses to allocate it, or steals it from a sibling with a flexible size policy (visible as the whole tab drifting). Five inline approaches for the Excluded Books expandable list all failed this way — `QScrollArea.maximumHeight` animated alone (grew nothing — `QScrollArea.sizeHint()` is ~`(0,4)` regardless of content), `minimumHeight`+`maximumHeight` driven in lockstep (grew the list but stole space from the folder-list box, visible whole-tab drift), `QSizePolicy.Fixed` on the scroll area (drift became a flicker), and an absolute-overlay child of the section widget itself (every geometry/visibility check passed, nothing rendered live — independently reproduced by a different model attempting the same shape). Full blow-by-blow in NOTES.md "Excluded Books list wouldn't expand..." (2026-06-27). The fix: anything that needs to expand beyond a settings tab's available space must be a popup parented directly to `MainWindow` (see `ExcludedBooksPopup`, `ui/excluded_books.py`, which copies `ChapterList`'s — `ui/chapter_list.py` — architecture exactly: `QGraphicsOpacityEffect` fade only, no size `QPropertyAnimation`, `show()`/`raise_()`/`setGeometry()` from the click handler). It is never a descendant of the tab's layout, so nothing in that layout is ever asked to renegotiate space for it.
+
+### DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone
+For this exact class of bug (widgets inside a settings tab not sizing/showing correctly), every headless Python verification attempt — `processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic `QMouseEvent` delivery, even instantiating `MainWindow()` without actually opening the settings panel through its real animated entry path or switching to the real active tab — reported "looks correct" at some point, including for an attempt that rendered nothing at all in the live app. The gap between a script reporting correct geometry/`isVisible()`/stylesheet state and what the real, live, actually-opened app shows was real and repeated, not a one-off fluke. For any settings-panel/tab layout or paint bug: do not trust headless assertions as a substitute for the user checking the live app. Make the change, ask them to check, and treat their report as ground truth over any script's output.
+
 ---
 
 ## Pending / Known Debt
@@ -663,7 +669,7 @@ src/fabulor/
     ├── speed_controls.py     # Speed panel
     ├── sleep_timer.py        # Sleep timer panel
     ├── audio_controls.py     # Audio settings panel (normalisation, voice boost, balance, stereo/mono)
-    ├── excluded_books.py     # ExcludedBooksSection — collapsible Excluded Books list in the Library settings tab (compact hover-reveal-eye restore rows)
+    ├── excluded_books.py     # ExcludedBooksSection (toggle line) + ExcludedBooksPopup (MainWindow-level popup, ChapterList's architecture — hover-reveal-eye restore rows)
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
     ├── icon_utils.py         # render_logo_placeholder, render_logo_placeholder_bordered — SVG logo placeholder renderers
@@ -697,7 +703,17 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-27 — Excluded Books restore UI + sticky exclusion + reparse lock fix.
+*Last updated: 2026-06-27 Session 2 — Excluded Books list rebuilt as a MainWindow-level popup.
+The inline collapsible-section design described below (one-line rows expanding inside the Library
+tab's own layout) never worked — five distinct attempts to grow it within the settings panel's
+fixed 500px box all failed (drift, flicker, or rendered nothing; full history in NOTES.md/SESSION.md
+2026-06-27 Session 2). Rebuilt as `ExcludedBooksPopup`, parented directly to `MainWindow` and copying
+`ChapterList`'s architecture exactly (opacity fade only, no size animation, `show()`/`raise_()`/
+`setGeometry()` from the click handler) — see the two new CLAUDE.md rules above. `ExcludedBooksSection`
+is now only the toggle line; the list itself is the popup. Two new CLAUDE.md rules added (don't
+expand a settings-tab widget inline; don't trust headless scripts for this bug class).*
+
+*Previously: 2026-06-27 Session 1 — Excluded Books restore UI + sticky exclusion + reparse lock fix.
 Made `is_excluded` sticky through force rescans (both upserts now `CASE WHEN books.is_excluded`,
 reversing the old "rescan resets both flags" behavior) and added a collapsible **Excluded Books**
 section to the Library settings tab (`ui/excluded_books.py`, `db.get_excluded_books`) as the new
