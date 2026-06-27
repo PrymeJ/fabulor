@@ -434,6 +434,9 @@ class ExcludedBooksSection(QWidget):
     # clicked — the owner toggles ExcludedBooksPopup.set_expanded in response.
     toggle_requested = Signal()
 
+    ARROW_W = 26    # must match self._arrow.setFixedSize(...)'s width
+    ARROW_GAP = 4  # breathing room between the count label and the arrow
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._theme: dict | None = None
@@ -461,7 +464,7 @@ class ExcludedBooksSection(QWidget):
         # settings_header rule) baked into its sizeHint, so simply centering
         # the toggle within that same box reads visibly too high relative to
         # the header's actual (lower, margin-shifted) glyph position.
-        self._toggle.setContentsMargins(0, 6, 0, 0)
+        self._toggle.setContentsMargins(0, 9, 0, 0)
         # Fixed height pinned to the header's own sizeHint — see the
         # commit history for why: rich text with an inline
         # <span style="font-size:..."> can report a different sizeHint()
@@ -470,6 +473,16 @@ class ExcludedBooksSection(QWidget):
         # used to ripple into the header row's height.
         self._toggle.setFixedHeight(self._header.sizeHint().height())
         outer.addWidget(self._toggle)
+
+        # Fixed-width spacer reserving room for the arrow, which sits
+        # absolutely positioned (NOT a layout member — see below) flush
+        # against the row's right edge. Without this, the count label
+        # (right-aligned, addStretch() before it) would render flush against
+        # the row's right edge too and the arrow would overlap its text.
+        # ARROW_W must match self._arrow.setFixedSize(...)'s width exactly;
+        # ARROW_GAP (10px) is the breathing room between the count label's
+        # new right edge and the arrow's left edge.
+        outer.addSpacing(self.ARROW_W + self.ARROW_GAP)
 
         # The real toggle now — always visible whenever the section itself
         # is (count > 0), showing ▼ (collapsed) or ▲ (expanded). Dimmed and
@@ -501,7 +514,7 @@ class ExcludedBooksSection(QWidget):
         self._arrow.setObjectName("excluded_toggle_arrow")
         self._arrow.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._arrow.setFixedSize(26, 11)
+        self._arrow.setFixedSize(self.ARROW_W, 11)
         self._arrow.mousePressEvent = self._on_arrow_clicked
         self._reposition_arrow()
 
@@ -510,13 +523,12 @@ class ExcludedBooksSection(QWidget):
         self._reposition_arrow()
 
     def _reposition_arrow(self):
-        """Flush against the TOGGLE ROW's bottom edge, horizontally CENTERED
-        in the row, between "Excluded books" and the count label — not
-        right-aligned like ChapterList._reposition_btn (that one sits above
-        the dropdown it controls, with nothing to its right; this one sits
-        between two other labels in the same row, so centering is the
-        equivalent placement). Computed in library_tab's coordinate space
-        (mapTo) since the arrow is parented there, not to self — see
+        """Flush against the TOGGLE ROW's bottom-right corner — flush right
+        against the row's right edge (zero margin), with the count label
+        (right-aligned, via the ARROW_W+ARROW_GAP spacer reserved in
+        __init__'s layout) sitting to its left with ARROW_GAP px of
+        breathing room. Computed in library_tab's coordinate space (mapTo)
+        since the arrow is parented there, not to self — see
         set_arrow_parent().
 
         The list (ExcludedBooksPopup) grows UPWARD from a fixed bottom edge
@@ -531,7 +543,7 @@ class ExcludedBooksSection(QWidget):
             return
         row_h = self._header.sizeHint().height()
         self_topleft = self.mapTo(library_tab, self.rect().topLeft())
-        x = self_topleft.x() + (self.width() - self._arrow.width()) // 2
+        x = self_topleft.x() + self.width() - self._arrow.width()
         lift = 0
         if self._expanded:
             # Expanded height is always exactly MAX_EXPANDED_ROWS (fixed,
@@ -623,7 +635,7 @@ class ExcludedBooksSection(QWidget):
         plural = "book" if self._count == 1 else "books"
         color = (self._theme or {}).get('text', '#ffffff')
         self._toggle.setText(
-            f'<span style="color:{color}; font-size:13px;">{self._count} {plural} excluded</span>'
+            f'<span style="color:{color}; font-size:11px;">{self._count} {plural} excluded</span>'
         )
         # Plain text — color comes from the stylesheet block in
         # _apply_arrow_style(), not an inline span (which would fight the
