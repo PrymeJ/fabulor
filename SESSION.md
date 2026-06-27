@@ -81,12 +81,42 @@ anchored 15px right of the toggle and below it (not flush at x=0), height capped
 vertically centered in each row (font-size mismatch made the author label sit visibly higher),
 toggle text nudged down ~5–8px to align with the header's own margin-shifted glyph position.
 
-### Known follow-ups (not yet done)
-- Scrollbar inside the popup needs styling (currently default/unthemed).
-- Eye restore icon should be on the right of each row (currently matches `_HistoryRow`'s left-ish
-  placement from the original design — user flagged it reads better on the right here).
+### Known follow-ups
+- ~~Scrollbar inside the popup needs styling~~ — **done.** Styled to match `chapter_dropdown`'s
+  themed handle (8px, rounded, `accent`-colored), same convention as the rest of the popup surface.
+- ~~Eye restore icon should be on the right of each row~~ — **done, but ended up on the LEFT, not
+  the right.** The popup's own vertical scrollbar lives on the right edge, so a right-side reveal
+  (the original `_HistoryRow` copy) would contest that exact strip — moved to the left instead,
+  which is clear of the scrollbar. The row's left content margin now permanently reserves
+  `_EYE_W` so text never overlaps/reflows on hover (mirrors the old right-margin reservation, just
+  flipped). Tightened 10px further per live feedback so the title sits closer to the eye.
 - Popup background may get dropped/changed later (currently `bg_deep` + `accent` border,
   `chapter_dropdown`-style) — explicitly deferred, not a bug.
+
+### Follow-up round: dismiss behavior + four theming gaps found on a flamboyant theme (same day)
+
+A live screenshot on a "flamboyant/cyberpunk" theme surfaced four polish issues, filed as one dated
+TODO.md entry rather than fixed immediately (explicitly deferred): low contrast for row text/eye
+icon against `bg_deep` on that theme; the popup's `::item:selected` highlight (newly added — was
+missing entirely, silently falling back to an unthemed system color) reads as a different color
+than `settings_folder_list`'s own selection highlight in the same screenshot; a corner-radius
+mismatch between the two (popup flat, folder list rounded); and a background-color mismatch between
+the two list surfaces generally. See TODO.md, dated 2026-06-27.
+
+Separately, dismiss-on-click behavior was tightened to extend the *existing* dismiss mechanism
+(`PanelManager.hide_all_panels()` / `_close_settings_flow()`, the same path every panel already
+uses to close on an outside click) rather than invent a parallel rule for the popup specifically:
+- Click outside the whole settings panel → already handled by the pre-existing path; the popup now
+  hides via the new `dismiss_immediately()` (no fade) instead of `fade_out()`, since a fade can't
+  keep pace with the panel sliding away under it.
+- Click inside the panel but outside the popup (a button, the Library tab body, empty space) → new
+  `MainWindow.eventFilter` check: fades the popup closed WITHOUT consuming the event, so the
+  underlying click still reaches its real target (button press still fires, etc.).
+- Click on the settings tab bar specifically (switching to Themes/Look/Audio/Controls) → same
+  instant `dismiss_immediately()` as the panel-close case, not a fade — switching tabs moves the
+  popup's anchor out from under it just as fast as the panel sliding away does.
+
+Commit: `d5cd551`.
 
 ---
 

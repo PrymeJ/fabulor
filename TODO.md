@@ -6,6 +6,24 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) theming gaps — four issues, found via
+  live screenshot comparison on a flamboyant/cyberpunk-style theme:**
+  - On at least one such theme, row text and the eye icon are barely visible against the popup's
+    `bg_deep` background — needs a per-theme override (or a contrast-aware fallback) for this
+    specific theme, not just the popup's general color keys.
+  - The popup's `::item:selected` highlight (`dropdown_curr_chap`) and `settings_folder_list`'s own
+    selection highlight read as visually inconsistent side-by-side in the same screenshot — different
+    colors entirely (not just hue, looks like two different theme keys or fallback paths winning).
+  - Corner radius mismatch: the popup's selection highlight is flat/square; `settings_folder_list`'s
+    is rounded. Should match (one or the other) since they're both "selected row in a themed list"
+    in the same panel.
+  - Background color mismatch between the two same-panel list surfaces (popup vs. folder list) —
+    they don't read as part of the same design system in a single screenshot even though each looks
+    fine in isolation.
+  Not urgent — deferred by explicit instruction ("not going to deal with these now"). Revisit
+  together as one pass over `excluded_books.py`'s `set_theme` + `themes.py`'s `dropdown_curr_chap`/
+  `bg_deep` keys, probably alongside the cyberpunk-style theme(s) that surfaced it.
+
 - **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
   `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
   already equals the default speed, since there's nothing to reset. See NOTES.md "TODO (before
