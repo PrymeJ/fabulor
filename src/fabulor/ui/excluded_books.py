@@ -63,7 +63,10 @@ class _ExcludedRow(QWidget):
         self.setFixedHeight(self.ROW_H)
 
         hbox = QHBoxLayout(self)
-        hbox.setContentsMargins(10, 0, 10, 0)
+        # Left margin reserves room for the eye overlay (see below) so text
+        # never overlaps it or reflows when it slides in on hover — mirrors
+        # the old right-margin reservation, just on the other edge now.
+        hbox.setContentsMargins(self._EYE_W, 1, 10, 0)
         hbox.setSpacing(6)
 
         self._title_lbl = QLabel(self._title)
@@ -79,7 +82,12 @@ class _ExcludedRow(QWidget):
         hbox.addWidget(self._title_lbl)
         hbox.addWidget(self._author_lbl, stretch=1)
 
-        # ── eye overlay (child, absolutely positioned off-screen right) ──
+        # ── eye overlay (child, absolutely positioned off-screen LEFT) ──
+        # Left, not right: the popup's QListWidget owns a vertical scrollbar
+        # at the row's right edge, so a right-side reveal (the _HistoryRow
+        # pattern this was originally copied from) would contest that same
+        # strip. Left is clear of the scrollbar and still reads naturally as
+        # "reveal an action for this row" on hover.
         self._overlay = QWidget(self)
         self._overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._overlay.setObjectName("excluded_row_overlay")
@@ -98,7 +106,7 @@ class _ExcludedRow(QWidget):
         self._set_eye_icon(self._eye_color)
         ov_layout.addWidget(self._eye_btn)
 
-        self._overlay.setGeometry(self.width(), 0, self._EYE_W, self.ROW_H)
+        self._overlay.setGeometry(-self._EYE_W, 0, self._EYE_W, self.ROW_H)
 
         self.setMouseTracking(True)
 
@@ -134,9 +142,10 @@ class _ExcludedRow(QWidget):
         self._eye_btn.setIconSize(QSize(icon_size, icon_size))
 
     def _apply_elide(self):
-        # Reserve the eye width + the layout margins + the inter-label spacing
-        # so text never overlaps the eye or reflows when it slides in.
-        avail = self.width() - 20 - self._EYE_W - 6   # 10px L + 10px R margins + 6px gap
+        # The eye-width reservation now lives in hbox's left content margin
+        # (see __init__), so this only needs the layout's own margins + the
+        # inter-label spacing — not a separate _EYE_W subtraction on top.
+        avail = self.width() - self._EYE_W - 10 - 6   # L margin (= eye width) + R margin + gap
         if avail <= 0:
             return
         fm = QFontMetrics(self._title_lbl.font())
@@ -153,11 +162,10 @@ class _ExcludedRow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        row_w = self.width()
         if self._state == 'idle':
-            self._overlay.move(row_w, 0)
+            self._overlay.move(-self._EYE_W, 0)
         elif self._state == 'hover':
-            self._overlay.setGeometry(row_w - self._EYE_W, 0, self._EYE_W, self.ROW_H)
+            self._overlay.setGeometry(0, 0, self._EYE_W, self.ROW_H)
         self._apply_elide()
 
     def enterEvent(self, event):
@@ -173,14 +181,15 @@ class _ExcludedRow(QWidget):
             self._slide_overlay(0)
 
     def _slide_overlay(self, target_w: int):
-        """Animate overlay width by sliding its left edge; right edge stays at row right.
-        Identical pattern to _HistoryRow._slide_overlay."""
+        """Animate overlay width by sliding its right edge; left edge stays
+        pinned at the row's left (mirror of _HistoryRow._slide_overlay, which
+        anchors to the row's right edge instead — see the left-vs-right note
+        in __init__ for why this one is flipped)."""
         if self._anim and self._anim.state() == QPropertyAnimation.State.Running:
             self._anim.stop()
         start_geom = self._overlay.geometry()
-        row_w = self.width()
-        end_geom = QRect(row_w - target_w, 0, target_w, self.ROW_H)
-        sliding_in = target_w > start_geom.width()
+        end_geom = QRect(0, 0, target_w, self.ROW_H) if target_w > 0 else QRect(-self._EYE_W, 0, self._EYE_W, self.ROW_H)
+        sliding_in = target_w > 0
         self._anim = QPropertyAnimation(self._overlay, b"geometry", self)
         self._anim.setDuration(self._ANIM_MS)
         self._anim.setEasingCurve(
@@ -232,9 +241,28 @@ class ExcludedBooksPopup(QListWidget):
         self._theme = theme
         bg_deep = theme.get('bg_deep', '#1a1a1a')
         accent = theme.get('accent', '#888888')
+        # Scrollbar styling copied from chapter_dropdown's (ChapterList) QSS —
+        # same popover surface pattern, same slim themed handle instead of
+        # the default unthemed OS scrollbar.
+        # Without an explicit ::item:selected rule, Qt falls back to a
+        # system/default highlight color instead of a themed one — the same
+        # rule chapter_dropdown defines, reusing the same dropdown_curr_chap
+        # key for consistency between the two popover surfaces.
+        sel_bg = theme.get('dropdown_curr_chap', accent)
+        sel_text = theme.get('text', '#ffffff')
         self.setStyleSheet(
             f"QListWidget#excluded_popup {{ background-color: {bg_deep}; "
             f"border: 1px solid {accent}; outline: none; }}"
+            f"QListWidget#excluded_popup::item:selected {{ "
+            f"background-color: {sel_bg}; color: {sel_text}; }}"
+            f"QListWidget#excluded_popup QScrollBar:vertical {{ width: 8px; "
+            f"background: {bg_deep}; border: none; margin: 0px; }}"
+            f"QListWidget#excluded_popup QScrollBar::handle:vertical {{ "
+            f"background: {accent}; min-height: 20px; border-radius: 4px; }}"
+            f"QListWidget#excluded_popup QScrollBar::add-line:vertical, "
+            f"QListWidget#excluded_popup QScrollBar::sub-line:vertical {{ height: 0px; }}"
+            f"QListWidget#excluded_popup QScrollBar::add-page:vertical, "
+            f"QListWidget#excluded_popup QScrollBar::sub-page:vertical {{ background: none; }}"
         )
         for row in self._rows.values():
             row.set_colors(theme)
@@ -319,6 +347,17 @@ class ExcludedBooksPopup(QListWidget):
         self._anim.finished.connect(self._on_fade_out_finished)
         self._hide_connected = True
         self._anim.start()
+
+    def dismiss_immediately(self):
+        """Hide with no fade at all. Used when the popup's anchor is about to
+        move out from under it (the settings panel sliding closed, or a click
+        outside it while the panel itself is closing) — a fade can't keep up
+        with that motion and would visibly lag/detach from the toggle line it
+        was anchored to. fade_out() is for a deliberate, standalone close
+        (clicking the toggle again) where the panel itself isn't moving."""
+        self._anim.stop()
+        self._disconnect_hide()
+        self.hide()
 
     def _on_fade_out_finished(self):
         self.hide()

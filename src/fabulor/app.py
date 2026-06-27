@@ -2665,6 +2665,33 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     elif not self.chapter_list_widget.geometry().contains(local_pos):
                         self.chapter_list_widget.fade_out()
                         return True
+                # Excluded Books popup: a click anywhere inside settings_panel
+                # but outside the popup itself (another tab, a button, empty
+                # space) must close the popup AND still let the click reach
+                # its real target (switch tabs, press the button) — unlike
+                # chapter_list_widget above, this never consumes the event.
+                # The outside-the-whole-panel case (titlebar, sliders, the
+                # window sliver) is handled separately in
+                # PanelManager.hide_all_panels(), the same mechanism every
+                # other panel already uses to close on an outside click —
+                # not duplicated here.
+                if hasattr(self, 'excluded_books_popup') and self.excluded_books_popup.isVisible():
+                    local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                    inside_popup = self.excluded_books_popup.geometry().contains(local_pos)
+                    inside_panel = self.settings_panel.isVisible() and self.settings_panel.geometry().contains(local_pos)
+                    if inside_panel and not inside_popup:
+                        # Tab-bar clicks switch the visible tab page out from
+                        # under the popup's anchor — same reasoning as the
+                        # panel-close case: a fade can't keep pace with that,
+                        # it would visibly detach/linger over the wrong tab.
+                        on_tab_bar = self.tabs.tabBar().geometry().contains(
+                            self.tabs.mapFromGlobal(event.globalPosition().toPoint())
+                        )
+                        if on_tab_bar:
+                            self.excluded_books_popup.dismiss_immediately()
+                        else:
+                            self.excluded_books_popup.fade_out()
+                        self.excluded_books_section.set_expanded(False)
         except Exception:
             pass
 
