@@ -175,6 +175,12 @@ class PanelManager:
     def _start_settings_entry(self):
         """Starts the settings panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
         self.main_window._sync_persist_filter_on_open()
+        # excluded_books_popup is now parented to library_tab (not
+        # MainWindow), so its position is relative to its own parent and
+        # stays correct regardless of where the settings panel currently is
+        # mid-slide — no need to wait for the slide-in animation to finish
+        # before repositioning (that was only needed under the old
+        # MainWindow-relative-coordinates architecture).
         self.main_window._reload_excluded_books()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
@@ -182,11 +188,11 @@ class PanelManager:
         self.settings_panel.move(-panel_w, sidebar_y)
         self.settings_panel.show()
         self.settings_panel.raise_()
-        
+
         self.settings_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.settings_panel_animation.start()
-        
+
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
@@ -504,15 +510,14 @@ class PanelManager:
         if hasattr(self.main_window, 'theme_manager'):
             self.main_window.theme_manager._on_theme_unhovered()
             self.main_window.theme_manager.snap_theme_forward()
-        # The Excluded Books popup is parented to MainWindow, not the settings
-        # panel — it has no reason to persist once its anchor (the toggle line
-        # inside the Library tab) slides away with the panel. dismiss_immediately
-        # (no fade) — the panel is about to slide away under it, and a fade
-        # can't keep pace with that motion (it would visibly detach from the
-        # toggle line mid-slide).
+        # Hide and collapse the excluded-books list explicitly on close —
+        # belt-and-suspenders (reload() on the next open also collapses it),
+        # and avoids it lingering visible for a frame while the panel starts
+        # its slide-out.
         popup = getattr(self.main_window, 'excluded_books_popup', None)
         if popup and popup.isVisible():
-            popup.dismiss_immediately()
+            popup.set_expanded(False)
+            popup.hide()
             self.main_window.excluded_books_section.set_expanded(False)
         if self.settings_panel_animation.state() == QAbstractAnimation.State.Running:
             return

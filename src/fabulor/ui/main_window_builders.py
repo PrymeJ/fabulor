@@ -972,10 +972,15 @@ def build_library_tab(mw):
 
     # Excluded Books toggle — invisible (zero space) when no books are excluded.
     # Rechecked on each settings-panel open via _reload_excluded_books(). The
-    # actual list is a separate popup (mw.excluded_books_popup, built in
-    # build_status_banner's sibling chapter_list_widget construction site —
-    # see app.py) parented to MainWindow, not nested here — see
-    # excluded_books.py's module docstring for why.
+    # actual list (mw.excluded_books_popup, constructed in app.py) is parented
+    # to mw.library_tab (this page), NOT added to lib_layout — absolutely
+    # positioned within it via setGeometry, not a layout member, so it never
+    # asks the tab's QVBoxLayout for space (the thing that caused the original
+    # rendering wall — see excluded_books.py's module docstring). Being a
+    # child of the tab page (not MainWindow) means it moves/hides for free
+    # when the settings panel slides or the user switches tabs — no manual
+    # position-tracking needed.
+    mw.library_tab = library_tab
     mw.excluded_books_section = ExcludedBooksSection()
     mw.excluded_books_section.toggle_requested.connect(mw._on_excluded_toggle_clicked)
     lib_layout.addWidget(mw.excluded_books_section)

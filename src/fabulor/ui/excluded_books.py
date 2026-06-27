@@ -1,32 +1,41 @@
-"""Excluded Books popup for the Library settings tab.
+"""Excluded Books list for the Library settings tab.
 
 Lists books the user has trashed (is_excluded=1, is_deleted=0) and lets them be
-restored. A toggle line ("N books excluded ▼") in the Library tab opens
-ExcludedBooksPopup — a real popup parented directly to MainWindow, not a
-widget living inside the settings tab's QVBoxLayout. This mirrors
-ChapterList (chapter_list.py) deliberately: that overlay/expand-inline
-approach was tried first and hit an unfixable rendering wall inside the
-settings panel's fixed-height tab layout (confirmed independently twice).
-Parenting to MainWindow and positioning/sizing it directly (setGeometry,
-show(), raise_()) sidesteps the whole class of QVBoxLayout/QScrollArea
-interaction that caused that — same as ChapterList already does for chapter
-navigation.
+restored. ExcludedBooksList is ALWAYS VISIBLE (not click-to-open) whenever
+there's at least one excluded book — a permanent fixture under the "Excluded
+books" header, not a popup. It's parented directly to library_tab (the
+Library settings tab's own page widget, not MainWindow — see app.py) and
+positioned/sized directly (move(), show(), raise_()), the same overlay
+architecture as ChapterList (chapter_list.py): that's load-bearing, not
+incidental — an earlier attempt to make this a normal widget living inside the
+settings tab's QVBoxLayout, animated open/closed, hit an unfixable rendering
+wall (confirmed independently twice; see NOTES.md 2026-06-27). Even though
+this no longer animates open/closed, it stays a tab-level overlay rather than
+a normal layout member for the same reason — a fixed-size jump between 3 and
+6 rows still resizes the widget, and the proven-safe path is to keep doing
+that outside the tab's layout rather than risk the same failure mode again.
+It sits flush BELOW the "Excluded books" row as the topmost element, growing
+downward and covering whatever else is there when expanded — same visual
+relationship ChapterList has with content below it.
 
-Difference from ChapterList: this expands DOWNWARD from its anchor (the
-toggle line sits mid-panel, not pinned near the bottom of a fixed area like
-the chapter label), and there is no second-level "expand further" tier —
-ChapterList's _can_expand/_expand_btn two-stage reveal doesn't apply here.
+Default view shows up to DEFAULT_VISIBLE_ROWS (3); the arrow (on
+ExcludedBooksSection, a separate widget — see its docstring) expands the
+visible window up to MAX_EXPANDED_ROWS (6) when there are more books than the
+default shows. The arrow is a real toggle now (click target moved off the
+count label — see ExcludedBooksSection) and is dimmed/inert when there's
+nothing to expand (count <= DEFAULT_VISIBLE_ROWS). Clicking outside the list
+while expanded collapses it back to the default — it does NOT hide the list
+entirely (there's no "closed" state anymore, only collapsed/expanded).
 
 The per-row restore affordance copies _HistoryRow's hover-reveal slide
 animation exactly (same _ANIM_MS / OutCubic-in / InOutQuad-out, same
 off-screen-right child overlay), substituting eye.svg for the X icon.
 Restore is immediate and silent — no confirm panel.
 """
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
 from PySide6.QtGui import QIcon, QFontMetrics
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QToolButton, QListWidget, QListWidgetItem,
-    QGraphicsOpacityEffect,
 )
 
 from .icon_utils import load_currentcolor_icon
@@ -201,21 +210,21 @@ class _ExcludedRow(QWidget):
 
 
 class ExcludedBooksPopup(QListWidget):
-    """Popup list of excluded books, parented directly to MainWindow — same
-    architecture as ChapterList (see module docstring for why). Opens via
-    show_below(anchor_widget, window), closes via fade_out()."""
+    """Always-visible list of excluded books, parented directly to
+    library_tab — same overlay architecture as ChapterList (see module
+    docstring for why). Shown whenever there's at least one excluded book;
+    sized to DEFAULT_VISIBLE_ROWS by default, expandable up to
+    MAX_EXPANDED_ROWS via set_expanded(True). Sits flush below its anchor
+    (the "Excluded books" row) and grows downward, covering whatever else
+    is in the tab below it."""
 
     restore_requested = Signal(str)  # emits book path; owner performs the DB write + refresh
 
-    POPUP_W = 237      # narrower than the full window — matches the settings
+    POPUP_W = 240      # narrower than the full window — matches the settings
                        # panel's own content width, not the whole 300px app
-    POPUP_X = 17       # offset from the settings panel's left edge
-    MAX_LIST_H = 75    # capped total popup height; scrolls beyond this
-    FADE_IN_MS = 300
-    FADE_OUT_MS = 250
-    _BOTTOM_MARGIN = 20  # clearance kept below the popup, since it opens
-                         # DOWNWARD (unlike ChapterList's _TOP_MARGIN, which
-                         # reserves space above an UPWARD-opening list)
+    POPUP_X = 10       # offset from the settings panel's left edge
+    DEFAULT_VISIBLE_ROWS = 3  # default (collapsed) row count
+    MAX_EXPANDED_ROWS = 7     # cap when expanded via the arrow
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -224,18 +233,44 @@ class ExcludedBooksPopup(QListWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setObjectName("excluded_popup")
         self.setUniformItemSizes(True)
+        # No row selection — clicking a row does nothing here (the eye button
+        # is the only per-row action), so a persistent highlight just adds
+        # visual noise with no purpose.
+        self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.hide()
 
-        self._opacity = QGraphicsOpacityEffect(self)
-        self._opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self._opacity)
-
-        self._anim = QPropertyAnimation(self._opacity, b"opacity")
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
-        self._hide_connected = False
-
+        self._expanded = False
         self._theme: dict | None = None
         self._rows: dict[str, _ExcludedRow] = {}  # path -> row widget
+        self._anchor_bottom: int | None = None  # fixed BOTTOM y of the list at
+            # its DEFAULT (3-row) height, in window coords — this never moves;
+            # expanding to 6 rows only moves the TOP edge upward, same as
+            # ChapterList anchoring its bottom and growing up.
+        # Tracked independently of self.count() (the live QListWidget item
+        # count), which is stale-by-one immediately after a restore — the
+        # restored row isn't actually removed from the widget until its
+        # slide-out animation finishes (see _on_row_restore). _book_count is
+        # decremented immediately, in lockstep with the DB write, so
+        # is_expandable reflects the true count right away.
+        self._book_count = 0
+
+    @property
+    def book_count(self) -> int:
+        """True excluded-book count — NOT self.count() (the live QListWidget
+        item count), which is stale-by-one immediately after a restore. See
+        _book_count's docstring in __init__."""
+        return self._book_count
+
+    @property
+    def is_expandable(self) -> bool:
+        """True when there are more books than the default view shows — the
+        arrow has something to do. Used by ExcludedBooksSection to decide
+        whether the arrow is a live control or a dimmed no-op."""
+        return self._book_count > self.DEFAULT_VISIBLE_ROWS
+
+    @property
+    def is_expanded(self) -> bool:
+        return self._expanded
 
     def set_theme(self, theme: dict):
         self._theme = theme
@@ -243,18 +278,12 @@ class ExcludedBooksPopup(QListWidget):
         accent = theme.get('accent', '#888888')
         # Scrollbar styling copied from chapter_dropdown's (ChapterList) QSS —
         # same popover surface pattern, same slim themed handle instead of
-        # the default unthemed OS scrollbar.
-        # Without an explicit ::item:selected rule, Qt falls back to a
-        # system/default highlight color instead of a themed one — the same
-        # rule chapter_dropdown defines, reusing the same dropdown_curr_chap
-        # key for consistency between the two popover surfaces.
-        sel_bg = theme.get('dropdown_curr_chap', accent)
-        sel_text = theme.get('text', '#ffffff')
+        # the default unthemed OS scrollbar. No ::item:selected rule needed —
+        # selection is disabled entirely (NoSelection, see __init__): clicking
+        # a row does nothing here, the eye button is the only per-row action.
         self.setStyleSheet(
             f"QListWidget#excluded_popup {{ background-color: {bg_deep}; "
             f"border: 1px solid {accent}; outline: none; }}"
-            f"QListWidget#excluded_popup::item:selected {{ "
-            f"background-color: {sel_bg}; color: {sel_text}; }}"
             f"QListWidget#excluded_popup QScrollBar:vertical {{ width: 8px; "
             f"background: {bg_deep}; border: none; margin: 0px; }}"
             f"QListWidget#excluded_popup QScrollBar::handle:vertical {{ "
@@ -271,6 +300,7 @@ class ExcludedBooksPopup(QListWidget):
         """Rebuild from a list of (path, title, author)."""
         self.clear()
         self._rows = {}
+        self._book_count = len(books)
         for i, (path, title, author) in enumerate(books):
             self._add_row(path, title, author, i)
 
@@ -288,6 +318,11 @@ class ExcludedBooksPopup(QListWidget):
     def _on_row_restore(self, path: str):
         # Fire the DB write/refresh immediately; animate the row out visually,
         # then remove it from the list once the collapse finishes.
+        # _book_count drops immediately (in lockstep with the DB write the
+        # restore_requested handler performs), NOT after the animation —
+        # is_expandable and reposition() must reflect the true count right
+        # away, since app.py's restore handler reads them synchronously.
+        self._book_count = max(0, self._book_count - 1)
         self.restore_requested.emit(path)
         row = self._rows.pop(path, None)
         if row is None:
@@ -299,8 +334,15 @@ class ExcludedBooksPopup(QListWidget):
                 if item.data(Qt.UserRole) == path:
                     self.takeItem(i)
                     break
-            if self.count() == 0:
-                self.fade_out()
+            # If the count dropped to/below the default, an expanded view has
+            # nothing left to show beyond the default — collapse it rather
+            # than leave it expanded-but-pointless. The owner (app.py) is
+            # responsible for hiding this widget entirely if count hits 0.
+            # (app.py's restore handler already does this immediately via
+            # set_expanded(False)/reposition(); this is a no-op in that case
+            # and only matters if some other caller skips that step.)
+            if not self.is_expandable and self._expanded:
+                self.set_expanded(False)
 
         anim = QPropertyAnimation(row, b"maximumHeight", row)
         anim.setDuration(_ExcludedRow._ANIM_MS)
@@ -311,56 +353,69 @@ class ExcludedBooksPopup(QListWidget):
         anim.start()
         row._out_anim = anim  # keep ref
 
-    def show_below(self, anchor_widget, window):
-        """Position the popup inside the parent window, just below anchor_widget.
-        Mirror of ChapterList.show_above — same fade-in mechanics, opposite
-        anchor direction (downward, since this toggle sits mid-panel rather
-        than pinned near the bottom of a fixed area)."""
+    def set_expanded(self, expanded: bool):
+        """Toggle between DEFAULT_VISIBLE_ROWS and min(count, MAX_EXPANDED_ROWS).
+        A plain, instant setFixedHeight jump — NOT an animated transition.
+        Animating this widget's height inside this fixed-overlay model is
+        exactly the thing that worked fine for ChapterList (a real QWidget,
+        not laid out by anything) and is safe here for the same reason: it's
+        an overlay nobody else's layout reacts to, so a resize can't trigger
+        the QVBoxLayout-fighting failure mode that ruled out the earlier
+        animated-inline-widget approach."""
+        self._expanded = expanded and self.is_expandable
+        self._resize_to_row_count()
+        self._reposition_vertically()
+
+    def _resize_to_row_count(self):
+        # Fixed at exactly two sizes — DEFAULT_VISIBLE_ROWS (3) collapsed,
+        # MAX_EXPANDED_ROWS (7) expanded — regardless of the actual book
+        # count, as long as there's at least 1 (count==0 hides entirely,
+        # handled by callers). NOT a shrink-to-fit: 1 or 2 excluded books
+        # still get the full 3-row collapsed height, just with empty rows
+        # below; this also keeps the arrow's lift distance constant.
+        rows = self.MAX_EXPANDED_ROWS if self._expanded else self.DEFAULT_VISIBLE_ROWS
+        h_overhead = self.frameWidth() * 2
+        self.setFixedHeight(rows * _ExcludedRow.ROW_H + h_overhead)
+
+    def _reposition_vertically(self):
+        """Bottom-anchored to _anchor_bottom — flush under "Excluded books"
+        at the DEFAULT (3-row) height. That bottom edge never moves;
+        expanding to 6 rows only moves the TOP edge upward, covering
+        whatever else is there as the topmost element (same as ChapterList
+        anchoring its bottom and growing up)."""
+        if self._anchor_bottom is None:
+            return
+        self.move(self.POPUP_X, self._anchor_bottom - self.height())
+
+    def reposition(self, anchor_widget, window):
+        """Position this list inside the parent window, anchored flush BELOW
+        anchor_widget's bottom edge at the list's DEFAULT height, expanding
+        UPWARD from that fixed bottom edge when shown with more rows (same
+        as ChapterList), and show/hide it based on whether there are any
+        excluded books at all. Call after reload() and whenever the
+        anchor's position might have changed (e.g. theme/layout changes).
+
+        Uses self._book_count, NOT self.count() (the live QListWidget item
+        count) — self.count() is stale-by-one immediately after a restore,
+        since the just-restored row isn't removed from the widget until its
+        slide-out animation finishes (see _on_row_restore). _book_count is
+        decremented immediately in lockstep with the DB write instead."""
+        if self._book_count == 0:
+            self.hide()
+            return
+
         self.setFixedWidth(self.POPUP_W)
 
-        self._opacity.setOpacity(0.0)
-        self.show()
-
-        anchor_local = anchor_widget.mapTo(window, anchor_widget.rect().bottomLeft())
-        anchor_bottom_y = anchor_local.y()
+        anchor_local = anchor_widget.mapTo(window, anchor_widget.rect().topLeft())
+        anchor_top = anchor_local.y()
         h_overhead = self.frameWidth() * 2
-        available_px = min(self.MAX_LIST_H, window.height() - anchor_bottom_y - self._BOTTOM_MARGIN)
-        rows = max(1, min(self.count(), (available_px - h_overhead) // _ExcludedRow.ROW_H))
-        self.setFixedHeight(rows * _ExcludedRow.ROW_H + h_overhead)
-        self.move(self.POPUP_X, anchor_bottom_y)
+        default_height = self.DEFAULT_VISIBLE_ROWS * _ExcludedRow.ROW_H + h_overhead
+        self._anchor_bottom = anchor_top + anchor_widget.height() + default_height
+
+        self._resize_to_row_count()
+        self._reposition_vertically()
+        self.show()
         self.raise_()
-        QTimer.singleShot(0, self.setFocus)
-
-        self._anim.stop()
-        self._anim.setDuration(self.FADE_IN_MS)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(0.97)
-        self._disconnect_hide()
-        self._anim.start()
-
-    def fade_out(self):
-        self._anim.stop()
-        self._anim.setDuration(self.FADE_OUT_MS)
-        self._anim.setStartValue(self._opacity.opacity())
-        self._anim.setEndValue(0.0)
-        self._disconnect_hide()
-        self._anim.finished.connect(self._on_fade_out_finished)
-        self._hide_connected = True
-        self._anim.start()
-
-    def dismiss_immediately(self):
-        """Hide with no fade at all. Used when the popup's anchor is about to
-        move out from under it (the settings panel sliding closed, or a click
-        outside it while the panel itself is closing) — a fade can't keep up
-        with that motion and would visibly lag/detach from the toggle line it
-        was anchored to. fade_out() is for a deliberate, standalone close
-        (clicking the toggle again) where the panel itself isn't moving."""
-        self._anim.stop()
-        self._disconnect_hide()
-        self.hide()
-
-    def _on_fade_out_finished(self):
-        self.hide()
 
     def _disconnect_hide(self):
         if self._hide_connected:
@@ -375,13 +430,16 @@ class ExcludedBooksSection(QWidget):
     set_popup_anchor) rather than expanding anything inline — see module
     docstring for why."""
 
-    toggle_requested = Signal()  # owner opens/closes the popup, anchored to this widget
+    # Emitted only when the arrow is a live control (is_expandable) and gets
+    # clicked — the owner toggles ExcludedBooksPopup.set_expanded in response.
+    toggle_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._theme: dict | None = None
         self._count = 0
         self._expanded = False
+        self._expandable = False  # True when count > popup.DEFAULT_VISIBLE_ROWS
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -392,36 +450,18 @@ class ExcludedBooksSection(QWidget):
         outer.addWidget(self._header)
         outer.addStretch()
 
-        # Pure state indicator — visible only while the popup is open, shows
-        # "▲" only (there's nothing to show when hidden, so no "▼" state is
-        # ever needed). NOT a click target: no cursor, no mousePressEvent.
-        # Mirrors ChapterList's _expand_btn in spirit (visible only when
-        # relevant) but unlike it, has no click handler of its own at all —
-        # the "N books excluded" label below is the only way to toggle the
-        # popup. Do not add one "for consistency"; that would create a second
-        # way to open/close the popup that doesn't match the design.
-        self._arrow = QLabel("")
-        self._arrow.setObjectName("excluded_toggle_arrow")
-        self._arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._arrow.setContentsMargins(0, 7, 0, 0)
-        # Same fixed-height pin as the count label below, same reasoning:
-        # don't let this widget's own sizeHint (which can fluctuate with its
-        # text content) influence the row's height.
-        self._arrow.setFixedHeight(self._header.sizeHint().height())
-        self._arrow.setVisible(False)
-        outer.addWidget(self._arrow)
-        outer.addStretch()
-
+        # "N books excluded" is plain, non-interactive text now — the arrow
+        # is the only click target (see below). No cursor, no
+        # mousePressEvent: this used to be the toggle itself, before the list
+        # became always-visible instead of click-to-open.
         self._toggle = QLabel("")
         self._toggle.setObjectName("excluded_toggle")
-        self._toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._toggle.mousePressEvent = self._on_toggle_clicked
         self._toggle.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         # Nudged down 5px — the header has its own `margin-top: 10px` (QSS
         # settings_header rule) baked into its sizeHint, so simply centering
         # the toggle within that same box reads visibly too high relative to
         # the header's actual (lower, margin-shifted) glyph position.
-        self._toggle.setContentsMargins(0, 7, 0, 0)
+        self._toggle.setContentsMargins(0, 6, 0, 0)
         # Fixed height pinned to the header's own sizeHint — see the
         # commit history for why: rich text with an inline
         # <span style="font-size:..."> can report a different sizeHint()
@@ -431,9 +471,105 @@ class ExcludedBooksSection(QWidget):
         self._toggle.setFixedHeight(self._header.sizeHint().height())
         outer.addWidget(self._toggle)
 
+        # The real toggle now — always visible whenever the section itself
+        # is (count > 0), showing ▼ (collapsed) or ▲ (expanded). Dimmed and
+        # inert (no cursor, no-op click) when there's nothing to expand
+        # (count <= ExcludedBooksPopup.DEFAULT_VISIBLE_ROWS) — see
+        # set_expandable(). Do not give it a click handler that always
+        # toggles regardless of _expandable; an inert click must be a true
+        # no-op, not a state change with no visible effect.
+        #
+        # The arrow QLabel itself is NOT a child of this widget — see
+        # set_arrow_parent(). ExcludedBooksSection has no fixed height (the
+        # Library tab's layout stretches it to fill leftover space), and
+        # the arrow needs to travel well above this row's own bounds when
+        # the list expands (up to 4 extra rows × 24px). A child positioned
+        # above its parent's (0,0) gets silently clipped and never paints —
+        # that's why an earlier version of this arrow (parented to self)
+        # never visibly moved despite move() being called correctly. The
+        # arrow is instead parented to library_tab (the same parent as
+        # ExcludedBooksPopup itself), in that same absolute coordinate
+        # space, and owned/positioned by this class via set_arrow_parent().
+        self._arrow: QLabel | None = None
+
+    def set_arrow_parent(self, library_tab):
+        """Creates the arrow QLabel as a child of library_tab (NOT self —
+        see __init__) so it can move freely above this row without being
+        clipped. Must be called once, after both this section and
+        library_tab exist (see app.py construction order)."""
+        self._arrow = QLabel("▲", library_tab)  # collapsed default — see _apply_toggle_text
+        self._arrow.setObjectName("excluded_toggle_arrow")
+        self._arrow.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._arrow.setFixedSize(26, 11)
+        self._arrow.mousePressEvent = self._on_arrow_clicked
+        self._reposition_arrow()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_arrow()
+
+    def _reposition_arrow(self):
+        """Flush against the TOGGLE ROW's bottom edge, horizontally CENTERED
+        in the row, between "Excluded books" and the count label — not
+        right-aligned like ChapterList._reposition_btn (that one sits above
+        the dropdown it controls, with nothing to its right; this one sits
+        between two other labels in the same row, so centering is the
+        equivalent placement). Computed in library_tab's coordinate space
+        (mapTo) since the arrow is parented there, not to self — see
+        set_arrow_parent().
+
+        The list (ExcludedBooksPopup) grows UPWARD from a fixed bottom edge
+        when expanded — its top edge rises by (extra rows × ROW_H). The
+        arrow sits flush on that top edge, so it must rise by the same
+        amount when expanded, or it gets left behind at the collapsed
+        position while the box grows up past it."""
+        if self._arrow is None:
+            return
+        library_tab = self._arrow.parentWidget()
+        if library_tab is None:
+            return
+        row_h = self._header.sizeHint().height()
+        self_topleft = self.mapTo(library_tab, self.rect().topLeft())
+        x = self_topleft.x() + (self.width() - self._arrow.width()) // 2
+        lift = 0
+        if self._expanded:
+            # Expanded height is always exactly MAX_EXPANDED_ROWS (fixed,
+            # regardless of book count — see _resize_to_row_count), so the
+            # lift distance is fixed too.
+            default_rows = min(self._count, ExcludedBooksPopup.DEFAULT_VISIBLE_ROWS)
+            lift = max(0, ExcludedBooksPopup.MAX_EXPANDED_ROWS - default_rows) * _ExcludedRow.ROW_H
+        self._arrow.move(x, self_topleft.y() + row_h - self._arrow.height() - lift)
+        self._arrow.raise_()
+
     def set_theme(self, theme: dict):
         self._theme = theme
+        self._apply_arrow_style()
         self._apply_toggle_text()
+
+    def _apply_arrow_style(self):
+        # Filled block, same color pair chapter_expand_btn uses (themes.py),
+        # so the arrow reads as one attached unit with the count label rather
+        # than a separate floating glyph. Dimmed (accent_dark/text at reduced
+        # opacity, via a flat lower-saturation fallback) and inert when
+        # there's nothing to expand — same "exists but greyed out" treatment
+        # other settings buttons use for an unavailable action, rather than
+        # disappearing (which would look like a missing element).
+        if self._arrow is None:
+            return
+        theme = self._theme or {}
+        if self._expandable:
+            bg = theme.get('dropdown_expand', theme.get('accent', '#888888'))
+            text = theme.get('dropdown_text', theme.get('text', '#ffffff'))
+            self._arrow.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            bg = theme.get('bg_deep', '#333333')
+            text = theme.get('accent_dark', theme.get('text', '#888888'))
+            self._arrow.setCursor(Qt.CursorShape.ArrowCursor)
+        self._arrow.setStyleSheet(
+            f"QLabel#excluded_toggle_arrow {{ background-color: {bg}; color: {text}; "
+            f"font-size: 10px; border: none; }}"
+        )
 
     def set_count(self, count: int):
         """Called by the owner after the popup's reload() — drives visibility
@@ -441,26 +577,64 @@ class ExcludedBooksSection(QWidget):
         space allocated), matching the original "invisible when empty" rule."""
         self._count = count
         self.setVisible(count > 0)
+        # The arrow is no longer a child of self (see set_arrow_parent) so
+        # hiding self does NOT hide it for free — must be driven explicitly.
+        if self._arrow is not None:
+            self._arrow.setVisible(count > 0)
         self._apply_toggle_text()
+        self._reposition_arrow()
+
+    def set_expandable(self, expandable: bool):
+        """Called by the owner whenever the count changes — drives the
+        arrow's dimmed/inert vs. live appearance. Independent of set_count
+        because the threshold lives on ExcludedBooksPopup
+        (DEFAULT_VISIBLE_ROWS), not here."""
+        self._expandable = expandable
+        if not expandable:
+            self._expanded = False
+        self._apply_arrow_style()
+        self._apply_toggle_text()
+        # If count dropped to <= DEFAULT_VISIBLE_ROWS while expanded (e.g.
+        # restoring a book down to exactly 3 left), _expanded just flipped
+        # to False above — the arrow must drop back to its flush/collapsed
+        # position, not stay lifted at the old expanded height.
+        self._reposition_arrow()
 
     def set_expanded(self, expanded: bool):
-        """Called by the owner once the popup has actually opened/closed, so
-        the arrow reflects real popup state rather than assuming the toggle
-        click always succeeds."""
+        """Called by the owner once the list has actually expanded/collapsed,
+        so the arrow glyph reflects real state rather than assuming the click
+        always succeeds. The list grows UPWARD from a fixed bottom edge, so
+        the arrow (which sits flush on the list's TOP edge) must move up
+        with it — see _reposition_arrow."""
         self._expanded = expanded
-        self._arrow.setVisible(expanded)
         self._apply_toggle_text()
+        self._reposition_arrow()
 
-    def _on_toggle_clicked(self, event):
+    def _on_arrow_clicked(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             return
+        if not self._expandable:
+            return  # true no-op — dimmed/inert state, not a state change
         self.toggle_requested.emit()
 
     def _apply_toggle_text(self):
+        if self._arrow is None:
+            return
         plural = "book" if self._count == 1 else "books"
         color = (self._theme or {}).get('text', '#ffffff')
         self._toggle.setText(
             f'<span style="color:{color}; font-size:13px;">{self._count} {plural} excluded</span>'
         )
-        if self._expanded:
-            self._arrow.setText(f'<span style="color:{color}; font-size:13px;">▲</span>')
+        # Plain text — color comes from the stylesheet block in
+        # _apply_arrow_style(), not an inline span (which would fight the
+        # filled background's own text-color rule).
+        #
+        # Matches ChapterList._toggle_expand's exact convention: the glyph
+        # shows the DIRECTION the next click will move things, not the
+        # current state directly. This list grows UPWARD when expanded (same
+        # as ChapterList's dropdown), so: ▲ collapsed (there's more above,
+        # click to reveal it upward), ▼ expanded (click to collapse back
+        # down). This is the opposite of "▲ when expanded" — verified against
+        # chapter_list.py:207 (`"▼" if self._expanded else "▲"`) directly,
+        # not assumed.
+        self._arrow.setText("▼" if self._expanded else "▲")

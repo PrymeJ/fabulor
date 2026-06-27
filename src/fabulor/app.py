@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
 )
 from PySide6.QtCore import (
-    Qt, QTimer, QPoint, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
+    Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize, QVariantAnimation
 )
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
@@ -534,12 +534,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget.chapter_changed.connect(self._update_chapter_title_text)
         self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
 
-        self.excluded_books_popup = ExcludedBooksPopup(self)
-        self.excluded_books_popup.restore_requested.connect(self._on_excluded_book_restored)
-
         builders.build_sidebar(self)
         builders.build_library_panel(self)
         builders.build_settings_panel(self)
+        # Parented to library_tab (the tab PAGE, not MainWindow) so it moves
+        # with the settings panel for free when it slides, and is
+        # automatically clipped/hidden by Qt when another tab becomes
+        # current — no manual position-tracking or tab-change guards needed.
+        # Must be constructed after build_settings_panel, since library_tab
+        # doesn't exist until then. Absolutely positioned within the page via
+        # setGeometry (see ExcludedBooksPopup.reposition), never added to the
+        # tab's own QVBoxLayout — that's what avoids the original rendering
+        # wall (see excluded_books.py's module docstring / NOTES.md).
+        self.excluded_books_popup = ExcludedBooksPopup(self.library_tab)
+        self.excluded_books_popup.restore_requested.connect(self._on_excluded_book_restored)
+        # The arrow QLabel is parented to library_tab too (not
+        # excluded_books_section) so it can travel above the section's own
+        # row bounds without being clipped — see ExcludedBooksSection's
+        # set_arrow_parent() docstring.
+        self.excluded_books_section.set_arrow_parent(self.library_tab)
+        self._library_tab_shown_once = False  # see eventFilter's Show-event hook
+
         builders.build_stats_panel(self)
         builders.build_tags_panel(self)
 
@@ -639,15 +654,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._update_persist_filter_visuals()
 
     def _reload_excluded_books(self):
-        """Recheck the excluded-book set and rebuild the popup's contents plus
-        the toggle line's count/visibility. Called on each settings-panel
-        open. Closes the popup unconditionally first — the count or the rows
-        themselves may have changed (e.g. a rescan flagged more books missing
-        since this was last open), so any previously-open popup is stale."""
+        """Recheck the excluded-book set and rebuild the list's contents plus
+        the toggle line's count/arrow state. Called on each settings-panel
+        open. Always collapses back to the default view first — the count or
+        the rows themselves may have changed (e.g. a rescan flagged more
+        books missing since this was last open), so any previous expanded
+        state is stale."""
         if not hasattr(self, 'excluded_books_section'):
             return
-        if self.excluded_books_popup.isVisible():
-            self.excluded_books_popup.fade_out()
+        self.excluded_books_popup.set_expanded(False)
         self.excluded_books_section.set_expanded(False)
         theme = self.theme_manager.get_current_theme()
         self.excluded_books_section.set_theme(theme)
@@ -655,14 +670,38 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         books = self.db.get_excluded_books()
         self.excluded_books_popup.reload(books)
         self.excluded_books_section.set_count(len(books))
+        self.excluded_books_section.set_expandable(self.excluded_books_popup.is_expandable)
+        # Positioned relative to library_tab (its own parent now, not
+        # MainWindow) — meaningful regardless of which settings tab happens
+        # to be current, since Qt clips/hides it automatically if Library
+        # isn't the visible page. No tab-text guard needed anymore.
+        #
+        # On the VERY FIRST Settings open in a session, library_tab has never
+        # been shown before (built at startup, stays hidden in the QTabWidget
+        # until now) — querying its/the section's geometry here, before Qt's
+        # first real layout pass on the now-visible page, is unreliable
+        # (confirmed live: invisible + badly mispositioned on the first open
+        # only). That first-open case is handled by eventFilter's one-shot
+        # hook on library_tab's Show event instead — skip this call here so
+        # it isn't done twice.
+        if self._library_tab_shown_once:
+            self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
 
     def _on_excluded_toggle_clicked(self):
-        if self.excluded_books_popup.isVisible():
-            self.excluded_books_popup.fade_out()
+        """Arrow click — toggles between the default and expanded row count.
+        The list itself is always visible (when count > 0); this only
+        changes how many rows are shown, never show/hide."""
+        expanded = not self.excluded_books_popup.is_expanded
+        self.excluded_books_popup.set_expanded(expanded)
+        self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
+
+    def _collapse_excluded_books(self):
+        """Collapse back to the default view without hiding the list —
+        used for outside-clicks and panel-close, which used to dismiss the
+        popup entirely but now just end an expanded view."""
+        if self.excluded_books_popup.is_expanded:
+            self.excluded_books_popup.set_expanded(False)
             self.excluded_books_section.set_expanded(False)
-        else:
-            self.excluded_books_popup.show_below(self.excluded_books_section, self)
-            self.excluded_books_section.set_expanded(True)
 
     def _on_excluded_book_restored(self, path: str):
         """Restore a user-excluded book (is_excluded=0) and refresh every view
@@ -672,12 +711,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.book_detail_panel._refresh_stats()
         self.stats_panel.refresh_current_tab()
         self.tags_panel.refresh_books()
-        # The popup already animated the row out itself; just keep the toggle
-        # line's count in sync (and hide it entirely if that was the last one).
-        self.excluded_books_section.set_count(self.excluded_books_popup.count())
-        if self.excluded_books_popup.count() == 0:
-            self.excluded_books_popup.fade_out()
-            self.excluded_books_section.set_expanded(False)
+        # The popup already animated the row out itself and decremented its
+        # own _book_count immediately (see ExcludedBooksPopup._on_row_restore
+        # — NOT self.count(), which is stale-by-one until the slide-out
+        # animation finishes removing the item). Just keep the toggle line's
+        # count/arrow state in sync and reposition; reposition() hides the
+        # list entirely once the count hits 0.
+        is_expandable = self.excluded_books_popup.is_expandable
+        # If the count dropped to <= DEFAULT_VISIBLE_ROWS, force the popup's
+        # own _expanded flag back to False too — its internal state would
+        # otherwise stay stuck expanded (nothing else clears it in time), so
+        # reposition() below would still size to MAX_EXPANDED_ROWS even
+        # though the section's arrow has already flipped to collapsed.
+        if not is_expandable:
+            self.excluded_books_popup.set_expanded(False)
+        self.excluded_books_section.set_count(self.excluded_books_popup.book_count)
+        self.excluded_books_section.set_expandable(is_expandable)
+        self.excluded_books_section.set_expanded(self.excluded_books_popup.is_expanded)
+        self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
 
     def _on_persist_filter_master(self, enabled: bool):
         if enabled:
@@ -2665,6 +2716,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             elif event.type() == QEvent.Leave:
                 self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps)
 
+        # One-shot: library_tab is built at startup but stays hidden inside
+        # the QTabWidget until the user's first-ever Settings open. Geometry
+        # queried before its FIRST real Show event (and the layout pass that
+        # comes with it) is unreliable — confirmed live: the excluded-books
+        # list was invisible and badly mispositioned on the very first open
+        # only, self-correcting every time after. singleShot(0, ...) wasn't a
+        # long enough defer (it doesn't wait for this specific event); this
+        # does, and only runs once.
+        if (not self._library_tab_shown_once and hasattr(self, 'library_tab')
+                and obj is self.library_tab and event.type() == QEvent.Type.Show):
+            self._library_tab_shown_once = True
+            if hasattr(self, 'excluded_books_section') and hasattr(self, 'excluded_books_popup'):
+                self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
+
         try:
             if event.type() == QEvent.MouseButtonPress:
                 if hasattr(self, 'chapter_list_widget') and self.chapter_list_widget.isVisible():
@@ -2675,33 +2740,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     elif not self.chapter_list_widget.geometry().contains(local_pos):
                         self.chapter_list_widget.fade_out()
                         return True
-                # Excluded Books popup: a click anywhere inside settings_panel
-                # but outside the popup itself (another tab, a button, empty
-                # space) must close the popup AND still let the click reach
-                # its real target (switch tabs, press the button) — unlike
-                # chapter_list_widget above, this never consumes the event.
-                # The outside-the-whole-panel case (titlebar, sliders, the
-                # window sliver) is handled separately in
-                # PanelManager.hide_all_panels(), the same mechanism every
-                # other panel already uses to close on an outside click —
-                # not duplicated here.
-                if hasattr(self, 'excluded_books_popup') and self.excluded_books_popup.isVisible():
+                # Excluded Books list: a click anywhere inside settings_panel
+                # but outside the list itself (another tab, a button, empty
+                # space) COLLAPSES it back to the default view — the list is
+                # always visible now (not click-to-open/dismiss), so there's
+                # nothing to "close"; an expanded view just isn't a
+                # standalone modal state anymore. Never consumes the event,
+                # so the underlying click (tab switch, button press) still
+                # fires normally.
+                if hasattr(self, 'excluded_books_popup') and self.excluded_books_popup.is_expanded:
                     local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
-                    inside_popup = self.excluded_books_popup.geometry().contains(local_pos)
+                    # The popup is parented to library_tab now (not
+                    # MainWindow), so its geometry() is in library_tab's own
+                    # coordinate system — map its rect into MainWindow
+                    # coordinates before comparing against local_pos.
+                    popup_topleft = self.excluded_books_popup.mapTo(self, self.excluded_books_popup.rect().topLeft())
+                    popup_rect = QRect(popup_topleft, self.excluded_books_popup.size())
+                    inside_popup = popup_rect.contains(local_pos)
                     inside_panel = self.settings_panel.isVisible() and self.settings_panel.geometry().contains(local_pos)
                     if inside_panel and not inside_popup:
-                        # Tab-bar clicks switch the visible tab page out from
-                        # under the popup's anchor — same reasoning as the
-                        # panel-close case: a fade can't keep pace with that,
-                        # it would visibly detach/linger over the wrong tab.
-                        on_tab_bar = self.tabs.tabBar().geometry().contains(
-                            self.tabs.mapFromGlobal(event.globalPosition().toPoint())
-                        )
-                        if on_tab_bar:
-                            self.excluded_books_popup.dismiss_immediately()
-                        else:
-                            self.excluded_books_popup.fade_out()
-                        self.excluded_books_section.set_expanded(False)
+                        self._collapse_excluded_books()
         except Exception:
             pass
 
