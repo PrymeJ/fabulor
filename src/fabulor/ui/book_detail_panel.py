@@ -92,6 +92,7 @@ class BookDetailPanel(QWidget):
         self._duration_show_adjusted: bool = False
         self._editing: bool = False
         self._is_archived: bool = False
+        self._is_missing: bool = False
         self._confirming_remove: bool = False
         self._remove_cancel_timer: QTimer | None = None
         self._delete_history_cancel_timer: QTimer | None = None
@@ -272,6 +273,18 @@ class BookDetailPanel(QWidget):
         right_col.addWidget(self._close_btn, alignment=Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._meta_action_btn, alignment=Qt.AlignmentFlag.AlignRight)
         right_col.addWidget(self._finished_label, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # Independent of _ghost_label/_is_archived: a book can be BOTH
+        # is_excluded AND is_missing at once (trashed an already-missing
+        # book, or trashed before discovery — see CLAUDE.md's "accepted
+        # edge case" note), so this is a second, separate icon rather than
+        # a replacement for the ghost. Sits right after _finished_label, in
+        # the row that visually lines up with the year field in meta_block.
+        self._missing_label = QLabel()
+        self._missing_label.setFixedSize(self._finished_label.size())
+        self._missing_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._missing_label.hide()
+        right_col.addWidget(self._missing_label, alignment=Qt.AlignmentFlag.AlignRight)
 
         self._ghost_label = QLabel()
         self._ghost_label.setFixedSize(self._remove_btn.size())
@@ -622,6 +635,7 @@ class BookDetailPanel(QWidget):
             bool(_book_dict.get('is_excluded')) or
             bool(_book_dict.get('is_missing'))
         )
+        self._is_missing = bool(_book_dict and _book_dict.get('is_missing'))
 
         pixmap = QPixmap()
         cover_path = self.db.get_active_cover_path(self._book_path)
@@ -665,6 +679,10 @@ class BookDetailPanel(QWidget):
         if self._is_archived:
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
+        self._missing_label.setVisible(self._is_missing)
+        if self._is_missing:
+            pixmap = load_themed_icon("missing.svg", self._theme.get("accent", "#888888"), 16, 0.7)
+            self._missing_label.setPixmap(pixmap)
         self._locks = self.db.get_metadata_locks(self._book_path)
         if any(self._locks.values()):
             self._set_meta_state(_MetaActionState.LOCKED)
@@ -1344,11 +1362,16 @@ class BookDetailPanel(QWidget):
             bool(_book_dict.get('is_excluded')) or
             bool(_book_dict.get('is_missing'))
         )
+        self._is_missing = bool(_book_dict and _book_dict.get('is_missing'))
         self._remove_btn.setVisible(not self._is_archived)
         self._ghost_label.setVisible(self._is_archived)
         if self._is_archived:
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
+        self._missing_label.setVisible(self._is_missing)
+        if self._is_missing:
+            pixmap = load_themed_icon("missing.svg", self._theme.get("accent", "#888888"), 16, 0.7)
+            self._missing_label.setPixmap(pixmap)
         if any(self._locks.values()):
             self._set_meta_state(_MetaActionState.LOCKED)
         else:
@@ -1386,6 +1409,9 @@ class BookDetailPanel(QWidget):
         if self._ghost_label.isVisible():
             pixmap = load_themed_icon("ghost.svg", theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
+        if self._missing_label.isVisible():
+            pixmap = load_themed_icon("missing.svg", theme.get("accent", "#888888"), 16, 0.7)
+            self._missing_label.setPixmap(pixmap)
 
     @staticmethod
     def _fmt(seconds: float) -> str:
