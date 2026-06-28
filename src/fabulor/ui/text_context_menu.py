@@ -34,7 +34,7 @@ class ContextIconMenu(QWidget):
         self._cut_btn   = self._make_btn("cut.svg",    self._do_cut)
         self._copy_btn  = self._make_btn("copy.svg",   self._do_copy)
         self._paste_btn = self._make_btn("paste.svg",  self._do_paste)
-        self._del_btn   = self._make_btn("delete.svg", self._do_delete)
+        self._del_btn   = self._make_btn("trash.svg", self._do_delete)
 
         for btn in (self._cut_btn, self._copy_btn, self._paste_btn, self._del_btn):
             row.addWidget(btn)
