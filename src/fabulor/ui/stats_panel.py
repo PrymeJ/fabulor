@@ -469,9 +469,13 @@ class BookDayRow(QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_lbl = ElidedLabel(row_data.get("book_title", "Unknown"), max_px=_STATS_TITLE_WIDTH)
         title_lbl.setFixedWidth(_STATS_TITLE_WIDTH)
-        if self._is_archived:
-            title_lbl.setObjectName("stats_book_title_deleted")
-        elif is_finished:
+        # Finished-title coloring is independent of archived state — only the
+        # cover thumbnail dims for is_archived (via _dim_effect above), not
+        # the title text. Was previously an if/elif that let _is_archived
+        # silently override is_finished, but stats_book_title_deleted has no
+        # QSS rule at all, so an archived+finished book's title rendered
+        # identically to a never-finished book's — losing the finished cue.
+        if is_finished:
             title_lbl.setObjectName("stats_book_title_finished")
         else:
             title_lbl.setObjectName("stats_book_title")
