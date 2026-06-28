@@ -686,6 +686,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # hook on library_tab's Show event instead — skip this call here so
         # it isn't done twice.
         if self._library_tab_shown_once:
+            # set_count() above can flip excluded_books_section from
+            # hidden to visible (count was 0 before this call) — Qt does
+            # not guarantee the section's height() reflects its final
+            # laid-out size immediately after setVisible(True) returns;
+            # the real layout pass can land on a LATER event-loop tick.
+            # reposition() reads anchor_widget.height() synchronously right
+            # after this, so without forcing the pending layout to resolve
+            # first, it can compute geometry from a stale/zero height —
+            # confirmed live (2026-06-28): the box stayed invisible despite
+            # a correct count, and in a worse case (6 books) the arrow
+            # stayed clickable and expanding grew the list DOWNWARD with
+            # the arrow moving UP — both directions inverted, consistent
+            # with _anchor_bottom being computed from garbage geometry.
+            self.library_tab.layout().activate()
             self.excluded_books_popup.reposition(self.excluded_books_section, self.library_tab)
 
     def _on_excluded_toggle_clicked(self):
@@ -808,6 +822,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.refresh(force=True)
         self.tags_panel.refresh_books()
         self.stats_panel.refresh_current_tab()
+        self._reload_excluded_books()
         if path == self.current_file:
             self._on_book_removed()
 
