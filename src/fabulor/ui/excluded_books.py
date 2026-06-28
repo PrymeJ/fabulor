@@ -225,6 +225,10 @@ class ExcludedBooksPopup(QListWidget):
     POPUP_X = 10       # offset from the settings panel's left edge
     DEFAULT_VISIBLE_ROWS = 3  # default (collapsed) row count
     MAX_EXPANDED_ROWS = 7     # cap when expanded via the arrow
+    ANCHOR_Y_NUDGE = 2  # shifts the list (and the arrow, in lockstep — see
+                        # ExcludedBooksSection._reposition_arrow) 2px up from
+                        # the literal flush-below-the-row position, by user
+                        # visual preference (photo-edited mockup comparison)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -410,7 +414,7 @@ class ExcludedBooksPopup(QListWidget):
         anchor_top = anchor_local.y()
         h_overhead = self.frameWidth() * 2
         default_height = self.DEFAULT_VISIBLE_ROWS * _ExcludedRow.ROW_H + h_overhead
-        self._anchor_bottom = anchor_top + anchor_widget.height() + default_height
+        self._anchor_bottom = anchor_top + anchor_widget.height() + default_height - self.ANCHOR_Y_NUDGE
 
         self._resize_to_row_count()
         self._reposition_vertically()
@@ -435,7 +439,7 @@ class ExcludedBooksSection(QWidget):
     toggle_requested = Signal()
 
     ARROW_W = 26    # must match self._arrow.setFixedSize(...)'s width
-    ARROW_GAP = 4  # breathing room between the count label and the arrow
+    ARROW_GAP = 2  # breathing room between the count label and the arrow
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -551,7 +555,10 @@ class ExcludedBooksSection(QWidget):
             # lift distance is fixed too.
             default_rows = min(self._count, ExcludedBooksPopup.DEFAULT_VISIBLE_ROWS)
             lift = max(0, ExcludedBooksPopup.MAX_EXPANDED_ROWS - default_rows) * _ExcludedRow.ROW_H
-        self._arrow.move(x, self_topleft.y() + row_h - self._arrow.height() - lift)
+        # ANCHOR_Y_NUDGE keeps the arrow flush with the list's top edge,
+        # which is shifted up by the same amount — see reposition()'s
+        # _anchor_bottom calculation.
+        self._arrow.move(x, self_topleft.y() + row_h - self._arrow.height() - lift - ExcludedBooksPopup.ANCHOR_Y_NUDGE)
         self._arrow.raise_()
 
     def set_theme(self, theme: dict):
