@@ -608,6 +608,7 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
+                    b.is_missing,
                     (SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END)
                      FROM book_events be WHERE be.book_id = b.id) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
@@ -841,6 +842,7 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
+                    b.is_missing,
                     (SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END)
                      FROM book_events be WHERE be.book_id = b.id) as is_finished,
                     (SELECT ls2.position_start FROM listening_sessions ls2
@@ -874,6 +876,7 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
+                    b.is_missing,
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
@@ -896,6 +899,7 @@ class LibraryDB:
                     b.cover_path,
                     b.is_deleted,
                     b.is_excluded,
+                    b.is_missing,
                     COALESCE(b.title, be.book_path) as book_title,
                     COALESCE(b.author, '') as book_author
                 FROM book_events be
@@ -1414,7 +1418,7 @@ class LibraryDB:
         """Returns books that have the given tag, with path, title, author, cover_path."""
         with self._get_conn() as conn:
             rows = conn.execute(
-                """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path, b.is_deleted, b.is_excluded
+                """SELECT b.id AS book_id, b.path, b.title, b.author, b.cover_path, b.is_deleted, b.is_excluded, b.is_missing
                 FROM books b
                 JOIN book_tags t ON b.id = t.book_id
                 WHERE t.tag = ?
