@@ -98,6 +98,7 @@ class AppInterface:
     def on_book_removed(self): self._main._on_book_removed()
     def refresh_tag_manager(self) -> None: self._main.tags_panel.refresh_books()
     def refresh_stats(self) -> None: self._main.stats_panel.refresh_current_tab()
+    def refresh_excluded_books(self) -> None: self._main._reload_excluded_books()
 
 class BrowserInterface:
     def __init__(self, main):
@@ -1053,6 +1054,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.refresh(force=True)
         self.tags_panel.refresh_books()
         self.stats_panel.refresh_current_tab()
+        self._reload_excluded_books()
         if path == self.current_file:
             self._on_book_removed()
 

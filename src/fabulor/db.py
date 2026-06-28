@@ -400,6 +400,25 @@ class LibraryDB:
             ).fetchall()
             return {row[0] for row in rows}
 
+    def get_non_deleted_book_paths_under(self, path) -> set:
+        """Returns paths of books under `path` with is_deleted=0 — deliberately
+        NOT fenced on is_excluded or is_missing, unlike get_visible_book_paths_under.
+        Used by the force-rescan missing-detector so an EXCLUDED book whose folder
+        later vanishes still gets is_missing=1 set. Without this, an excluded book's
+        file-existence was never re-checked at all once excluded (the popup's
+        get_excluded_books() correctly hides is_missing=1 rows, so this does not
+        resurrect anything into view — see CLAUDE.md's "is_missing"/"is_excluded"
+        rules) — found 2026-06-28: exclude a book, delete its folder, rescan; it
+        stayed is_excluded=1/is_missing=0 forever, so the eye-click restore put a
+        dead book back in the library (the ping-pong this flag was built to kill,
+        recurring via a path the original fix didn't cover)."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT path FROM books WHERE is_deleted = 0 AND path LIKE ?",
+                (str(path).rstrip("/") + "/%",)
+            ).fetchall()
+            return {row[0] for row in rows}
+
     def get_book_count(self):
         """Returns the total number of books in the library."""
         with self._get_conn() as conn:

@@ -92,7 +92,8 @@ class BookDetailPanel(QWidget):
         self._duration_show_adjusted: bool = False
         self._editing: bool = False
         self._is_archived: bool = False
-        self._is_missing: bool = False
+        self._is_excluded: bool = False  # drives the ghost icon specifically
+        self._is_missing: bool = False   # drives the gravestone icon (is_missing OR is_deleted)
         self._confirming_remove: bool = False
         self._remove_cancel_timer: QTimer | None = None
         self._delete_history_cancel_timer: QTimer | None = None
@@ -635,7 +636,16 @@ class BookDetailPanel(QWidget):
             bool(_book_dict.get('is_excluded')) or
             bool(_book_dict.get('is_missing'))
         )
-        self._is_missing = bool(_book_dict and _book_dict.get('is_missing'))
+        # Two independent reasons get two independent icons, never both for
+        # the SAME reason: ghost = user-excluded specifically; gravestone =
+        # gone from disk, which covers BOTH is_missing (scanner-detected,
+        # file vanished while still tracked) and is_deleted (location
+        # removed) — a book can show both icons together (e.g. excluded AND
+        # missing), but is_missing alone no longer also lights the ghost.
+        self._is_excluded = bool(_book_dict and _book_dict.get('is_excluded'))
+        self._is_missing = bool(_book_dict and (
+            _book_dict.get('is_missing') or _book_dict.get('is_deleted')
+        ))
 
         pixmap = QPixmap()
         cover_path = self.db.get_active_cover_path(self._book_path)
@@ -673,10 +683,9 @@ class BookDetailPanel(QWidget):
 
         self._cover_panel.load_book(self._book_path)
         self._refresh_stats()
-        excluded = bool(_book_dict and _book_dict.get('is_excluded'))
-        self._remove_btn.setVisible(not excluded and not self._is_archived)
-        self._ghost_label.setVisible(self._is_archived)
-        if self._is_archived:
+        self._remove_btn.setVisible(not self._is_excluded and not self._is_archived)
+        self._ghost_label.setVisible(self._is_excluded)
+        if self._is_excluded:
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
         self._missing_label.setVisible(self._is_missing)
@@ -1362,10 +1371,19 @@ class BookDetailPanel(QWidget):
             bool(_book_dict.get('is_excluded')) or
             bool(_book_dict.get('is_missing'))
         )
-        self._is_missing = bool(_book_dict and _book_dict.get('is_missing'))
+        # Two independent reasons get two independent icons, never both for
+        # the SAME reason: ghost = user-excluded specifically; gravestone =
+        # gone from disk, which covers BOTH is_missing (scanner-detected,
+        # file vanished while still tracked) and is_deleted (location
+        # removed) — a book can show both icons together (e.g. excluded AND
+        # missing), but is_missing alone no longer also lights the ghost.
+        self._is_excluded = bool(_book_dict and _book_dict.get('is_excluded'))
+        self._is_missing = bool(_book_dict and (
+            _book_dict.get('is_missing') or _book_dict.get('is_deleted')
+        ))
         self._remove_btn.setVisible(not self._is_archived)
-        self._ghost_label.setVisible(self._is_archived)
-        if self._is_archived:
+        self._ghost_label.setVisible(self._is_excluded)
+        if self._is_excluded:
             pixmap = load_themed_icon("ghost.svg", self._theme.get("accent", "#888888"), 16, 0.7)
             self._ghost_label.setPixmap(pixmap)
         self._missing_label.setVisible(self._is_missing)

@@ -123,9 +123,10 @@ class LibraryController(QObject):
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
 
-        # If a force rescan flagged the currently-loaded book as missing (its
-        # folder was deleted from disk — db.mark_books_missing set is_excluded=1),
-        # it's gone from the library but still open in the player. Unload it and
+        # If a force rescan flagged the currently-loaded book as excluded (its
+        # folder was deleted from disk and the user had already trashed it —
+        # see CLAUDE.md's is_missing/is_excluded split), it's gone from the
+        # library but still open in the player. Unload it and
         # drop to the no-book-selected state. on_book_removed() closes the session
         # (preserving stats), terminates the player, clears UI, and runs
         # apply_current_state itself — so return early to skip the now-moot cover
@@ -136,6 +137,7 @@ class LibraryController(QObject):
             self.ui.refresh_panel(force=True)
             self.app.refresh_tag_manager()
             self.app.refresh_stats()
+            self.app.refresh_excluded_books()
             self._refresh_folder_list()
             return
 
@@ -143,6 +145,7 @@ class LibraryController(QObject):
         self.ui.refresh_panel(force=True)
         self.app.refresh_tag_manager()
         self.app.refresh_stats()
+        self.app.refresh_excluded_books()
         self._refresh_folder_list()
 
         # Refresh player cover after scan — ensures the active book_covers entry

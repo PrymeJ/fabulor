@@ -68,18 +68,24 @@ class ScannerWorker(QObject):
 
         # Missing-book detection (force rescan only): a book whose folder was
         # deleted from disk is never visited by Phase 1/2, so its row would sit
-        # untouched (is_deleted=0, is_excluded=0) and stay visible forever. On a
-        # force rescan, flag any currently-visible book under a SCANNED-and-REACHABLE
-        # location that wasn't rediscovered as missing (is_excluded=1) — same
-        # semantics as app.py's _mark_book_missing. Scoped to walked_locations only:
-        # an offline/unmounted location (root.exists() False) is never in that list,
-        # so its books are never falsely flagged. skipped_dirs is folded into the
-        # discovered set so a transient per-folder error never reads as "gone".
+        # untouched and stay visible forever. On a force rescan, flag any
+        # is_deleted=0 book under a SCANNED-and-REACHABLE location that wasn't
+        # rediscovered, setting is_missing=1 — same semantics as app.py's
+        # _mark_book_missing. Deliberately uses get_non_deleted_book_paths_under
+        # (is_deleted=0 only), NOT get_visible_book_paths_under (which also
+        # fences is_excluded=0/is_missing=0) — an EXCLUDED book's folder can
+        # still vanish, and if this check skipped excluded books, that case
+        # never got re-flagged is_missing at all (found 2026-06-28: this was a
+        # second path into the same ping-pong is_missing was added to kill —
+        # see CLAUDE.md). Scoped to walked_locations only: an offline/unmounted
+        # location (root.exists() False) is never in that list, so its books
+        # are never falsely flagged. skipped_dirs is folded into the discovered
+        # set so a transient per-folder error never reads as "gone".
         if self.force_refresh:
             discovered = {str(d) for d in book_dirs} | skipped_dirs
             missing = set()
             for loc in walked_locations:
-                missing |= (db.get_visible_book_paths_under(loc) - discovered)
+                missing |= (db.get_non_deleted_book_paths_under(loc) - discovered)
             if missing:
                 db.mark_books_missing(sorted(missing))
 
