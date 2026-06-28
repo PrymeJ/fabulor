@@ -1,3 +1,151 @@
+## `is_missing` silently dropped from five stats/tag SELECT queries (2026-06-28)
+
+**Symptom:** two specific books (The Carpet Makers, The Lotus Shoes), both flagged `is_missing=1`
+via the scanner's force-rescan detector, showed in FULL COLOR in the Overall/Day/Week/Month stats
+tabs instead of monochrome with the ghost icon — while other books flagged via the older
+`is_deleted`/`is_excluded` mechanisms displayed correctly archived. The user noticed the pattern
+("what's common... is that they are both books I finished and removed") and asked for a DB check
+rather than accepting a UI-only diagnosis.
+
+**Root cause:** `stats_panel.py`'s `BookDayRow`/`FinishedBookThumb` archived check
+(`row_data.get("is_missing", 0)`) was already correct — it had been updated for `is_missing` in an
+earlier session. The bug was one layer down: `get_daily_book_breakdown`, `get_books_listened_in_period`,
+`get_finished_in_period`, `get_recently_finished`, and `get_books_by_tag` (`db.py`) all `SELECT`ed
+`b.is_deleted` and `b.is_excluded` explicitly, but never `b.is_missing` — so the row dict handed to
+the widget simply didn't have that key, and `.get("is_missing", 0)` defaulted to 0 regardless of the
+column's true value in the database. A correct `WHERE`-clause fence (the kind of gap the
+`is_missing` rollout session swept for and fixed in seven other queries) does NOT catch this: these
+five queries don't fence on `is_missing` in their `WHERE` at all (they intentionally show
+archived/missing books, just dimmed) — the gap was purely in the `SELECT` column list.
+
+**Verification approach:** queried `library.db` directly via `sqlite3` for the two affected books'
+raw flag values, confirming `is_missing=1, is_excluded=0, is_deleted=0` — i.e. genuinely archived,
+genuinely not displaying as such. Then grepped `db.py` for every `b.is_excluded` `SELECT` site and
+added `b.is_missing` immediately after each one as a single `replace_all` edit, rather than fixing
+one query and assuming the others were fine — this exact "fix one, the others were the same shape"
+pattern was the lesson from the original `is_missing` rollout's `WHERE`-fence sweep, reapplied here
+to `SELECT` lists instead.
+
+**Lesson:** `WHERE`-clause fencing and `SELECT`-column completeness are two independent things that
+both need a full sweep whenever a new soft-delete-ish flag is added — fixing one does not imply the
+other is fixed, and a query that's correctly UNfenced (because it deliberately wants to show
+archived rows) can still silently omit the column that tells the caller WHY a row is archived.
+
+## A second, independent path into the `is_missing` ping-pong: excluding BEFORE the file goes missing (2026-06-28)
+
+**Symptom, user's exact repro:** exclude a book (file still on disk at the time) → move its folder
+out of any scanned location → force rescan. Expected (per the original `is_missing` fix): the book
+gets `is_missing=1` and disappears from the Excluded Books popup, since `get_excluded_books()`
+already fences `is_missing=0`. Actual: it stayed `is_excluded=1, is_missing=0` indefinitely, full
+rescans included — the book never got the `is_missing` flag despite its folder genuinely being gone.
+It stayed visible in the popup with a live eye icon; clicking it just un-excluded a book with no file
+behind it, reproducing the EXACT symptom the original `is_missing` fix existed to eliminate.
+
+**Root cause:** the scanner's force-rescan missing-detector diffs `db.get_visible_book_paths_under(loc)`
+against what Phase 1 actually found on disk, flagging anything missing from that diff via
+`mark_books_missing`. `get_visible_book_paths_under`'s query fences `is_deleted = 0 AND is_excluded
+= 0 AND is_missing = 0` — by design, for OTHER call sites that need "visible in the library right
+now." But for THIS call site, that same fence means an already-excluded book is invisible to the
+diff entirely: the scanner never even considers whether its folder still exists, because the query
+filtered it out before the comparison ever happens. The original `is_missing` fix (see the entry
+below this one) only covers a book that goes missing BEFORE the user excludes it — once excluded,
+file-existence checking for that book silently stops forever. Two independent orderings of the same
+two events (exclude, then lose the file vs. lose the file, then the scanner catches it) take two
+different code paths, and only one of them was fixed.
+
+**The fix:** added `get_non_deleted_book_paths_under` — identical shape to
+`get_visible_book_paths_under` but fencing ONLY `is_deleted = 0`, deliberately NOT `is_excluded`/
+`is_missing` — and switched the scanner's missing-detector to use it instead. This does not
+resurrect anything into view: `get_excluded_books()` (which drives the popup) still independently
+fences `is_missing = 0`, so the moment this new, wider check sets `is_missing=1` on an excluded
+book, it disappears from the popup on the very next reload — closing the loop the original fix was
+supposed to close. Verified directly against the live DB (not just by reading the code): toggled
+`is_excluded` on a real row and confirmed `get_visible_book_paths_under` excluded it from its result
+while `get_non_deleted_book_paths_under` included it, before trusting the fix and asking the user to
+re-test live.
+
+**Why this wasn't caught by the original `is_missing` session's testing:** that session's repro
+order was always "file goes missing → scanner flags it → (optionally) user later interacts with the
+now-missing-flagged row." It never tested "user excludes a book that's still present, THEN its file
+disappears" — a different chronological ordering of the same two facts, which happens to route
+through a completely different DB query with its own independent fence. Any future flag-interaction
+bug in this area should be checked against BOTH orderings of "user does X" / "file does Y", not just
+the one that was originally reported.
+
+## Ghost icon and the new missing/gravestone icon doubled up for the same is_missing reason (2026-06-28)
+
+**Symptom:** after wiring up a new dedicated `missing.svg` (gravestone) icon for `is_missing` books
+in `BookDetailPanel`, ANY book flagged `is_missing=1` showed BOTH the new gravestone icon AND the
+pre-existing ghost icon — even when `is_excluded` and `is_deleted` were both 0.
+
+**Root cause:** the first implementation pass set the new icon's visibility from `_is_missing`
+(correct) but left the ghost icon's visibility driven by the existing `_is_archived` boolean, which
+is `is_deleted OR is_excluded OR is_missing` — i.e. `is_missing` was already one of `_is_archived`'s
+three inputs by design (from the original `is_missing` rollout, which intentionally folded it into
+the existing archived/dimmed treatment with NO new icon, since no gravestone asset existed yet).
+Adding a second, MORE SPECIFIC icon on top of that broad boolean, without narrowing what the ORIGINAL
+icon responds to, inevitably double-fires both for the overlapping case.
+
+**The fix, per the user's explicit rule** ("is_missing=1 OR is_deleted=1, gravestone. is_excluded=1,
+ghost. Separate things."): split into two independent booleans. `_is_excluded` (new) drives the
+ghost icon — `is_excluded` ONLY, nothing else. `_is_missing` (redefined) drives the gravestone icon
+— `is_missing OR is_deleted` (both "gone from disk" reasons share the one icon; "user explicitly
+trashed it" gets the other). `_is_archived` itself is UNCHANGED and still drives the unrelated
+grayscale-cover and remove-button-visibility logic, which legitimately wants "archived for ANY
+reason" — only the two ICONS needed to stop sharing one trigger condition. A book can still show
+BOTH icons together when it's independently true for both reasons (e.g. excluded AND later found
+missing) — that's correct, not a regression of this fix.
+
+## Excluded Books popup: two more bugs only reproducible via a same-tab refresh (2026-06-28)
+
+**Symptom 1:** start the app, exclude a book via the detail panel's trash button WHILE Settings →
+Library is already open, then navigate back to Settings → Library. The toggle line correctly reads
+"1 book excluded" but the list itself is invisible. Closing and reopening the settings panel fixes
+it.
+
+**Root cause 1:** `_on_book_detail_removed` (the trash-button signal handler in `app.py`) simply
+never called `_reload_excluded_books()` at all — every other refresh it does (library panel, tags,
+stats) was present; this one call was missing. The count line showing correctly was misleading: it
+implied SOME refresh path ran, but it was actually the LATER close/reopen of the settings panel
+(which does call `_reload_excluded_books()` normally) that the user performed as part of their own
+repro investigation, not anything triggered by the exclude action itself.
+
+**Symptom 2 (worse, same underlying class):** with 6 books excluded via the same trash-while-open
+flow, the count line again showed correctly, but the arrow was clickable, and clicking it grew the
+list DOWNWARD instead of upward, with the arrow moving UP instead of down to track it — both
+directions visibly inverted from the correct, already-tested-in-Session-1 behavior.
+
+**Root cause 2 (found after fixing root cause 1 — this symptom persisted even with the
+`_reload_excluded_books()` call added):** `_reload_excluded_books()` calls
+`excluded_books_section.set_count(len(books))` immediately before
+`excluded_books_popup.reposition(excluded_books_section, library_tab)`. `set_count()` can flip
+`excluded_books_section` from hidden to visible (`setVisible(count > 0)`) if the count was 0 before
+this call (i.e., the section had no reason to be shown). Qt does NOT guarantee that a widget's
+`height()` reflects its final, laid-out size the instant `setVisible(True)` returns — the actual
+layout pass can land on a later tick of the event loop. `reposition()` reads
+`anchor_widget.height()` synchronously, a few lines later in the SAME call stack, with no
+opportunity for that layout pass to run in between — so it can compute `_anchor_bottom` from a
+stale or zero height. Garbage height feeds directly into both the list's vertical position
+(explaining the invisible-but-correctly-counted box) and, since the SAME `_anchor_bottom` anchors
+the arrow's lift calculation in `_reposition_arrow`, into the arrow's position too — explaining why
+the direction itself looked inverted: the underlying expand-upward/lift-the-arrow-up logic (fixed
+and tested in Session 1) was never wrong; it was being fed a corrupted starting point.
+
+**The fix:** `self.library_tab.layout().activate()` immediately before the `reposition()` call,
+forcing the pending layout pass to resolve synchronously so `anchor_widget.height()` is guaranteed
+current by the time it's read. This is narrower than `QApplication.processEvents()` (which would
+also process unrelated pending events/repaints/signals) — `layout().activate()` only forces this one
+layout's geometry to recompute.
+
+**Why this didn't surface in Session 1's testing:** every Session 1 repro opened the settings panel
+fresh each time (close fully, then reopen) — `_library_tab_shown_once` was already `True` by the
+relevant point, and `excluded_books_section` was already visible and already correctly laid out from
+a PRIOR open, so `set_count()` never actually flipped visibility from hidden to shown in the middle
+of a `reposition()` call. The bug only exists in the narrower window where a refresh happens WHILE
+the tab is already the current, visible page AND the section's visibility is changing as part of
+that same refresh — a path Session 1 never exercised because its repros always closed the panel
+between state changes.
+
 ## Excluded Books list: re-parented to library_tab, position/expand bugs fixed (2026-06-28)
 
 **Context:** following the 2026-06-27 popup rebuild (entry below) and the always-visible/arrow-split

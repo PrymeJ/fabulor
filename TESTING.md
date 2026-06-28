@@ -1202,6 +1202,15 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Restore the last remaining excluded book (1→0): list and the "Excluded books" header/count line both disappear immediately — no leftover empty box or stale count text
 - [ ] "N books excluded" count is correct immediately after each restore — no off-by-one (this was a real bug: the count used to read 1 too high right after clicking the eye, since the restored row isn't actually removed from the list widget until its slide-out animation finishes a moment later)
 - [ ] Restore a book that is also flagged `is_missing` (folder deleted from disk): does NOT appear in this list at all, with no eye icon, regardless of `is_excluded` state
+- [ ] Arrow sits flush against the row's RIGHT edge; "N books excluded" label is to its left with a small gap (not overlapping)
+- [ ] With Settings → Library ALREADY open: exclude a book via the detail panel's trash button, then navigate back to Settings → Library — the list appears immediately (not just the count text), no close/reopen of the settings panel needed
+- [ ] With Settings → Library ALREADY open and 4+ books just excluded that way: arrow appears in its correct (live) state, list is visible at the correct collapsed size — not invisible with a "stuck" clickable arrow
+- [ ] Same scenario, click the arrow: list expands UPWARD (not downward, not off-screen), arrow moves UP with it (not down) — this was a real regression where both directions inverted when the list was first shown via a same-tab refresh rather than a fresh panel open
+- [ ] Exclude a book whose file is still present, then move/delete its folder, then force-rescan: the book is flagged `is_missing` and disappears from this list (does not stay stuck showing `is_excluded=1` forever with a live, misleading eye icon)
+- [ ] Exclude a book whose file is still present, move/delete its folder, then try to PLAY the now-missing book (instead of rescanning): same result — the popup updates and the book disappears from the list without needing a manual refresh
+- [ ] A book that is ONLY `is_missing` (not excluded, not location-deleted): book detail panel shows ONLY the gravestone icon, NOT the ghost icon too
+- [ ] A book that is ONLY `is_excluded` (file still present): book detail panel shows ONLY the ghost icon, NOT the gravestone icon
+- [ ] A book that is BOTH `is_excluded` AND `is_missing`/`is_deleted`: book detail panel shows BOTH icons together (this is correct, not a bug)
 
 ## Saving states
 

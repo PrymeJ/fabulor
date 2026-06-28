@@ -1,4 +1,105 @@
-## Session Summary — 2026-06-28 Session 1 — Excluded Books list: re-parented to library_tab, four position/expand/count bugs fixed
+## Session Summary — 2026-06-28 Session 2 — arrow swap, is_missing ghost/gravestone split, excluded-on-excluded ping-pong, stale-geometry popup bug
+
+**Branch:** `main`. **Commits:** `9e4ad41`, `76542da`, `7431b07`, `742efd8`, `f32625f`, `d79de45`,
+`e23510d`, `905ce5b` (code/assets/docs across the session), docs commit follows. (`485f07b` —
+trash.svg/delete.svg icon rename in `text_context_menu.py` — landed in the middle of this session
+but is unrelated to the Excluded Books work below.)
+
+### Context
+
+Continuation of Session 1's Excluded Books list work. Five separate threads, roughly in the order
+they came up:
+
+1. Swap the arrow and the "N books excluded" label horizontally (arrow flush right, count label to
+   its left) — a pure layout request, not a bug.
+2. A 2px visual nudge to match a photo-edited mockup the user made.
+3. A real data bug, found by manually inspecting two specific books (The Carpet Makers, The Lotus
+   Shoes) that showed in full color in Overall/Day/Week/Month instead of monochrome+ghost — traced
+   to `is_missing` not being included in the relevant SQL `SELECT`s.
+4. A request for a dedicated `missing.svg` icon (the gravestone asset deferred since the original
+   `is_missing` session), which surfaced two more real bugs while testing it: the gravestone and
+   ghost icons doubling up for the same underlying reason, and the original `is_missing` ping-pong
+   bug recurring via a path Session 1's fix didn't cover (excluding a book BEFORE its file goes
+   missing).
+5. Stale-geometry bugs in the popup's `reposition()` when triggered from a refresh that happens
+   while the Library settings tab is already the visible, open tab (not via the normal "settings
+   panel just opened" path).
+
+### What shipped
+
+**Arrow swap (`9e4ad41`, `76542da`).** `outer.addSpacing(ARROW_W + ARROW_GAP)` reserves room so the
+right-aligned count label doesn't render under the now-flush-right arrow; `_reposition_arrow` aligns
+to the row's right edge instead of centering. A `ANCHOR_Y_NUDGE = 2` constant (used identically by
+both the popup's `_anchor_bottom` calculation and the arrow's vertical position, so they can't drift
+apart) nudges both up 2px to match the user's mockup.
+
+**`is_missing` not selected in five queries (`7431b07`).** `get_daily_book_breakdown`,
+`get_books_listened_in_period`, `get_finished_in_period`, `get_recently_finished`, and
+`get_books_by_tag` all `SELECT`ed `b.is_deleted`/`b.is_excluded` but never `b.is_missing` — even
+though the widget-level `_is_archived` checks in `stats_panel.py`/`tag_manager.py` already correctly
+included `is_missing`, the row dicts feeding them never had that key, so `.get("is_missing", 0)`
+silently defaulted to 0 regardless of the true DB value. Found by the user manually cross-checking
+two specific books' DB rows against what the UI showed — not caught by any test, since this class of
+bug (column present in the schema and in the WHERE-fence sweep, but missed in a SELECT list) isn't
+something the existing test suite exercises. Fixed by adding `b.is_missing` to all five `SELECT`s.
+
+**Ghost/gravestone icon split (`f32625f`, then corrected in `e23510d`).** `missing.svg` was added as
+a new, dedicated icon (gravestone) for `is_missing` books — `742efd8` added the raw SVG asset,
+`f32625f` wired up a new `_missing_label` in `BookDetailPanel`'s `right_col`, driven by `_is_missing`.
+First pass folded `is_missing` into the SAME `_is_archived` boolean that already drives the ghost
+icon — meaning ANY `is_missing=1` book lit BOTH icons, since `is_missing` is one of `_is_archived`'s
+three inputs by design. The user's rule, stated precisely: ghost = user-excluded specifically;
+gravestone = gone from disk, covering BOTH `is_missing` (scanner-detected) and `is_deleted`
+(location-removed) — independent reasons, each with their own icon, both showing together only when
+BOTH are independently true. Fixed in `e23510d` by splitting `_is_archived` (unchanged, still drives
+grayscale/remove-button visibility) into two new flags: `_is_excluded` (ghost) and `_is_missing`
+(gravestone, redefined as `is_missing OR is_deleted`) — `TODO.md`'s deferred entry for this icon
+was removed once it shipped.
+
+**The `is_missing` ping-pong, recurring via a second path (`e23510d`).** The user's repro: exclude a
+book (file still present) → move its folder out of any scanned location → force rescan. Expected:
+the book gets flagged `is_missing=1` and disappears from the Excluded Books popup (since
+`get_excluded_books()` already fences `is_missing=0`). Actual: it stayed `is_excluded=1,
+is_missing=0` forever, still visible in the popup — clicking the eye un-excluded it, putting a
+dead book back in the library, exactly the ping-pong Session 1's `is_missing` flag was built to
+prevent. Root cause: `get_visible_book_paths_under` (which the scanner's force-rescan
+missing-detector diffs against what's actually on disk) fences `is_excluded = 0` — so an
+ALREADY-excluded book's folder disappearing was never even checked. The original `is_missing` fix
+only covered the case where a book goes missing BEFORE being excluded; excluding first, then losing
+the file, was a second, independent path into the same failure mode the flag exists to prevent.
+Fixed by adding `get_non_deleted_book_paths_under` (`is_deleted = 0` only, deliberately NOT fenced on
+`is_excluded`/`is_missing`) and switching the scanner to use it instead — confirmed via a manual
+DB-level check (toggling `is_excluded` on a real row and comparing both queries' output) before
+trusting the fix, given the user's standing instruction from Session 1 that this class of bug needs
+real verification, not just code that "looks right."
+
+**Stale-geometry popup bugs when refreshed mid-session (`905ce5b`).** Two related bugs, both only
+reproducible when changing the excluded-book set while Settings → Library was ALREADY the open,
+visible tab (as opposed to the normal flow of opening Settings fresh, which always worked):
+(1) excluding a book via the detail panel's trash button never called `_reload_excluded_books()` at
+all — `_on_book_detail_removed` was simply missing the call, so the popup stayed completely stale
+until a manual close/reopen of the settings panel; (2) even after adding that call,
+`reposition()` reads `excluded_books_section.height()` immediately after `set_count()` can flip the
+section from hidden to visible (going from 0 excluded books to 1+) — Qt does not guarantee the
+section's laid-out height is current the instant `setVisible(True)` returns; the real layout pass
+can land on a later event-loop tick. The user's two repros made the symptom unambiguous: with 1 book,
+the box stayed invisible despite the count label correctly reading "1 book excluded"; with 6 books,
+the arrow stayed clickable, and clicking it grew the list DOWNWARD with the arrow moving UP — both
+directions inverted from intended, consistent with `_anchor_bottom` being computed from garbage
+(stale/zero) geometry rather than a logic error in the direction math itself (which was already
+correct and tested as of Session 1). Fixed by forcing `library_tab.layout().activate()` immediately
+before `reposition()` reads anything, guaranteeing the section's geometry is resolved first.
+
+### Verification
+
+`pytest tests/ -q` stays green throughout (no automated coverage added this session for the
+Excluded Books UI specifically — per the user's standing instruction from Session 1, all of this
+area's verification is live, in the running app). The `is_missing` query fix and the
+`get_non_deleted_book_paths_under` scanner fix were both additionally checked directly against the
+live `library.db` (via `sqlite3`) before and after, since this class of bug — wrong data silently
+flowing through otherwise-correct-looking code — does not reliably surface from UI inspection alone.
+
+
 
 **Branch:** `main`. **Commit:** `ddd257f` (code), docs commit follows.
 
