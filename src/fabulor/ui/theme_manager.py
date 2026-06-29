@@ -635,6 +635,17 @@ class ThemeManager(QObject):
             target = getattr(mw, attr, None)
             if target:
                 target.setStyleSheet(ss_stats)
+        # The "Recently finished" scroll rows' edge-scroll arrows use
+        # per-widget instance stylesheets (a qlineargradient overlay), so —
+        # same reasoning as excluded_books_section/popup above — the plain
+        # QSS repolish on stats_panel does NOT reach them. on_theme_changed
+        # was previously only ever called once, at startup
+        # (main_window_builders.py); a live theme switch never refreshed
+        # the arrow overlay color at all.
+        stats_panel = getattr(mw, 'stats_panel', None)
+        if stats_panel and hasattr(stats_panel, 'on_theme_changed'):
+            from ..themes import _resolve_theme
+            stats_panel.on_theme_changed(_resolve_theme(theme_name))
         if hasattr(mw, 'sidebar'):
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
         if hasattr(mw, '_set_chapter_ui_active'):

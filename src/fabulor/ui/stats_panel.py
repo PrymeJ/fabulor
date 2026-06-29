@@ -689,6 +689,8 @@ class FinishedBookThumb(QWidget):
 
 class FinishedScrollRow(QWidget):
     """Horizontally scrollable row of FinishedBookThumb widgets with edge scroll indicators."""
+    ARROW_W = 11  # width of each edge-scroll arrow sliver
+
     def __init__(self, assets_dir: str, parent=None):
         super().__init__(parent)
         self._assets_dir = assets_dir
@@ -708,30 +710,30 @@ class FinishedScrollRow(QWidget):
         self._layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._scroll.setWidget(self._container)
 
-        overlay_style = (
-            "QPushButton {"
-            "  background: rgba(0,0,0,170); color: rgba(255,255,255,140);"
-            "  font-size: 7px; border: none; border-radius: 2px;"
-            "  padding: 0px; margin: 0px;"
-            "}"
-            "QPushButton:hover { background: rgba(0,0,0,200); color: rgba(255,255,255,200); }"
-        )
-
+        # Gradient fade instead of a flat rgba box — a hard-edged black
+        # rectangle reads as a jagged silhouette against light thumbnails
+        # (dark covers just happen to blend with it by coincidence). Each
+        # side fades from opaque at the OUTER screen edge (x1/y1 = 0 for
+        # left, x2/y2 = 1 for right) toward fully transparent at the inner
+        # edge nearest the thumbnail content, so there's no hard boundary
+        # anywhere — just a soft vignette the arrow glyph sits on top of.
         self._hovered = False
+        self._overlay_rgb = (0, 0, 0)        # set_arrow_colors() overrides per theme
+        self._overlay_text_rgb = (255, 255, 255)
 
         self._left_arrow = QPushButton("◀", self)
-        self._left_arrow.setFixedSize(10, 51)
-        self._left_arrow.setStyleSheet(overlay_style)
+        self._left_arrow.setFixedSize(self.ARROW_W, 51)
         self._left_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
         self._left_arrow.clicked.connect(lambda: self._scroll_by(-51))
         self._left_arrow.hide()
 
         self._right_arrow = QPushButton("▶", self)
-        self._right_arrow.setFixedSize(10, 51)
-        self._right_arrow.setStyleSheet(overlay_style)
+        self._right_arrow.setFixedSize(self.ARROW_W, 51)
         self._right_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
         self._right_arrow.clicked.connect(lambda: self._scroll_by(51))
         self._right_arrow.hide()
+
+        self._apply_arrow_styles()
 
         bar = self._scroll.horizontalScrollBar()
         bar.valueChanged.connect(self._update_arrows)
@@ -743,7 +745,7 @@ class FinishedScrollRow(QWidget):
         super().resizeEvent(event)
         self._scroll.setGeometry(0, 0, self.width(), self.height())
         self._left_arrow.move(0, 0)
-        self._right_arrow.move(self.width() - 10, 0)
+        self._right_arrow.move(self.width() - self.ARROW_W, 0)
 
     def enterEvent(self, event):
         self._hovered = True
@@ -760,6 +762,49 @@ class FinishedScrollRow(QWidget):
         bar = self._scroll.horizontalScrollBar()
         self._left_arrow.setVisible(bar.value() > bar.minimum())
         self._right_arrow.setVisible(bar.value() < bar.maximum())
+
+    def set_arrow_colors(self, overlay_rgb: tuple[int, int, int], text_rgb: tuple[int, int, int]):
+        """Theme-driven overlay color for the scroll-edge arrows — a fixed
+        black gradient looks like a dark smudge against a light theme
+        background (bg_main/bg_deep), so StatsPanel.on_theme_changed derives
+        a light-vs-dark overlay from theme luminance and pushes it here.
+        Per-cover contrast (some individual covers are light even in a dark
+        theme, or vice versa) is deliberately NOT handled — that would mean
+        recoloring per-thumbnail, which reads as the overlay "shape-shifting"
+        thumbnail to thumbnail; theme-level contrast is the agreed trade-off."""
+        self._overlay_rgb = overlay_rgb
+        self._overlay_text_rgb = text_rgb
+        self._apply_arrow_styles()
+
+    def _apply_arrow_styles(self):
+        # Flat, fully-opaque solid-color sliver — no gradient, no
+        # border-radius, no border. The gradient/derived-luminance approach
+        # was tried and dropped (live testing across themes: black, white,
+        # and darkened-bg_main overlays all either looked smudgy, too
+        # harsh, or too thin to read clearly). The sliver is only ever
+        # shown while the row itself is hovered (_hovered gate in
+        # enterEvent/_update_arrows), so its background is fully opaque at
+        # rest — :hover on the BUTTON itself only brightens the arrow
+        # glyph's text color, it does not change the background further.
+        r, g, b = self._overlay_rgb
+        tr, tg, tb = self._overlay_text_rgb
+        text_base_a, text_hover_a = 140, 200
+
+        common = (
+            f"background: rgba({r},{g},{b},255);"
+            f"color: rgba({tr},{tg},{tb},{text_base_a});"
+            "font-size: 7px; border: none; border-radius: 0px; padding: 0px; margin: 0px;"
+        )
+        hover_common = f"color: rgba({tr},{tg},{tb},{text_hover_a});"
+
+        self._left_arrow.setStyleSheet(
+            f"QPushButton {{ {common} }}"
+            f"QPushButton:hover {{ {hover_common} }}"
+        )
+        self._right_arrow.setStyleSheet(
+            f"QPushButton {{ {common} }}"
+            f"QPushButton:hover {{ {hover_common} }}"
+        )
 
     def set_items(self, rows: list[dict], click_callback, placeholder_color: str = "#888888"):
         # Order-sensitive signature: book_id alone misses changes that don't
@@ -2658,10 +2703,20 @@ class StatsPanel(QWidget):
         if not hasattr(self, '_finished_scroll_row'):
             return
         color = self._placeholder_color
+        # Scroll-edge arrow overlay: accent_dark, per the user's explicit
+        # choice — tried deriving from bg_main luminance (and before that, a
+        # flat black/white pick by background lightness) but both were
+        # rejected live across themes (too smudgy, too harsh, or unrelated
+        # to the panel's own palette). accent_dark is a real theme color,
+        # not a derived guess, and is generally dark enough for white text.
+        accent_dark_color = QColor(theme.get("accent_dark", theme.get("accent", "#1a1a1a")))
+        arrow_overlay_rgb = (accent_dark_color.red(), accent_dark_color.green(), accent_dark_color.blue())
+        arrow_text_rgb = (255, 255, 255)
         for attr in ('_finished_scroll_row', '_day_finished_scroll',
                      '_week_finished_scroll', '_month_finished_scroll'):
             scroll_row = getattr(self, attr, None)
             if scroll_row is not None:
+                scroll_row.set_arrow_colors(arrow_overlay_rgb, arrow_text_rgb)
                 for widget in self._iter_finished_thumbs(scroll_row):
                     widget.update_placeholder_color(color)
         for tab_name in ("Day", "Week", "Month"):
