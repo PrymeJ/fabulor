@@ -651,6 +651,14 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] With 15+ finished books: scroll to the end of the carousel — the last thumb is fully visible, not clipped at the right edge
 - [ ] Placeholder and real-cover thumbs appear the same visual size (47×47) — no 1px size discrepancy between books with and without cover art
 
+### Scroll-arrow overlay (15px sliver, accent_dark / stats_carousel_stripe)
+- [ ] Arrow sliver is a flat, fully-opaque solid color — no gradient, no rounded corners, no border
+- [ ] Sliver color matches the current theme's `accent_dark` (or `stats_carousel_stripe` if a theme sets it) — not a fixed black/white regardless of theme
+- [ ] Switch themes while the stats panel is open (live, not just on next launch): sliver color updates immediately to the new theme's color
+- [ ] Hovering the row (not the sliver itself): sliver background is visible but at reduced opacity vs. hovering the sliver directly
+- [ ] Hovering the sliver itself: background goes fully opaque, arrow glyph brightens
+- [ ] Sliver renders cleanly against both light and dark book covers — no jagged/hard-edged silhouette effect from the old flat-black overlay
+
 ### Synchronous widget removal
 - [ ] Navigate period rapidly (click ‹ several times quickly): no stacking — old thumbs removed before new ones inserted, no overlap
 
@@ -853,6 +861,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Rows sorted by clock time descending, book time as tiebreaker
 - [ ] Deleted books show dimmed row with app icon placeholder
 - [ ] Finished books show title in finished color
+- [ ] A book that is BOTH finished AND archived (excluded/deleted/missing): title still shows in finished color, not the plain/unfinished color — only the cover thumbnail dims for archived state
 - [ ] Clicking a row opens Book Detail Panel on Stats tab
 - [ ] Hand cursor on hover over rows
 

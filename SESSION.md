@@ -1,3 +1,70 @@
+## Session Summary — 2026-06-29 Session 1 — the icon-position regression's real fix, finished-title color, and the carousel arrow overlay rework
+
+**Branch:** `main`. **Commits:** `891d656`, `562d342`, `c295100`, `b17de6f`, `cb18b2d`, docs commit
+follows.
+
+### Context
+
+Direct continuation of 2026-06-28 Session 2's gravestone/ghost icon work, which ended badly: a
+multi-hour attempt to fix the gravestone icon pushing the ghost icon down (`RetainSizeWhenHidden`,
+a `QStackedLayout` unification of `_remove_btn`/`_ghost_label`, a `_cover_label` fixed-height fix
+that was real but not the cause) never found the actual bug, and was fully reverted back to the
+last-committed state. The user found the real cause independently afterward — recorded here since
+it's the throughline of this session's first fix.
+
+### What shipped
+
+**The actual fix for the icon-position bug (`562d342`):** `self._missing_label.setFixedSize(self
+._finished_label.size())` was the culprit — a *delegated* size (read from another widget's
+`.size()` at construction time), not a literal number, which is why grepping for suspicious magic
+numbers across the previous session's multi-hour investigation never surfaced it. Fixed in three
+lines: `_missing_label.setFixedSize(16, 18)` (a literal, not delegated), plus a
+`setContentsMargins` nudge each on `_missing_label` and `_ghost_label` (`(0,0,0,-1)` and
+`(8,-2,0,0)` respectively). No structural layout changes were needed at all — the entire
+`RetainSizeWhenHidden`/`QStackedLayout` detour from the prior session was unnecessary.
+
+**Finished-title color independent of archived state (`891d656`):** `BookDayRow`'s title-color
+logic was an `if self._is_archived: ... elif is_finished: ...` — archived state silently overrode
+the finished color, but `stats_book_title_deleted` has no QSS rule at all, so an archived-and-finished
+book's title rendered identically to a never-finished book's, losing the finished cue entirely. Now
+title color depends purely on `is_finished`; only the cover thumbnail still dims for archived state.
+
+**Carousel scroll-arrow overlay, several iterations (`c295100`, `b17de6f`, `cb18b2d`):** the
+"Recently finished" scroll row's edge-scroll arrows used a flat `rgba(0,0,0,170)` box that read as
+a jagged black silhouette against light book covers (dark covers happened to blend with it by
+coincidence — not a deliberate design). Went through several rejected approaches before landing on
+the current baseline, each one tested live against real themes/covers rather than assumed correct:
+a gradient fade (too faint at the edges, barely visible); raising peak opacity (still too faint);
+shrinking the fade distance with a mid-stop (helped, but still color-blind to theme); a
+luminance-threshold black-vs-white pick from `bg_main` (wrong at the 0.5 cutoff for mid-toned
+backgrounds like Brave New World's `#5A4A7F`, and lowering the cutoff to 0.3 just made the white
+branch fire — "can't get whiter than this" — equally harsh in the other direction); deriving a
+darkened variant of `bg_main` (still not right). Final, current baseline: dropped the gradient
+entirely for a flat, fully-opaque 15px sliver colored from a real theme key (`accent_dark`,
+falling back further to plain `accent`), not a derived guess. `StatsPanel.on_theme_changed` was
+also found to only ever run once, at startup (`main_window_builders.py`) — live theme switches
+never refreshed the arrow color at all; wired into `ThemeManager._apply_stylesheets` so it does now.
+Also added an opacity tier system (row-hover vs. sliver-hover vs. a faked "actively scrolling" decay
+window, since the actual scroll position change is instant with no real in-progress state to hook
+into) — the user later flattened the scrolling/non-scrolling base opacity to the same value (220),
+so that tier no longer visibly does anything on its own, though the underlying timer machinery is
+still in place if it's revisited. Picked up an unrelated `delete.svg` re-export (`c295100`) along
+the way, included here only because it landed in the middle of this same commit range — no logic
+change, just a cleaner Inkscape export of the same icon.
+
+**New `stats_carousel_stripe` theme key (`cb18b2d`):** the arrow overlay color was hardcoded to
+`accent_dark` in code; promoted to a proper optional per-theme override (`themes.py` GROUP 9, after
+`tassel_fringe`) so individual themes can override it without a code change, falling back to
+`accent_dark` exactly as before for any theme that doesn't set it. Not added to
+`_NO_BASE_INHERIT_KEYS` — "The Color Purple" doesn't define this key (yet); per the existing
+CLAUDE.md rule, that addition is only needed if/when Purple itself sets one.
+
+### Verification
+
+`pytest tests/ -q` stays green throughout. No automated coverage added for the arrow-overlay color
+logic or the icon-position fix — both are visual/QSS-driven and were verified live in the running
+app, consistent with the standing approach for this whole area of the codebase.
+
 ## Session Summary — 2026-06-28 Session 2 — arrow swap, is_missing ghost/gravestone split, excluded-on-excluded ping-pong, stale-geometry popup bug
 
 **Branch:** `main`. **Commits:** `9e4ad41`, `76542da`, `7431b07`, `742efd8`, `f32625f`, `d79de45`,

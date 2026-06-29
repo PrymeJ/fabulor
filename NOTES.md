@@ -1,3 +1,37 @@
+## A delegated `setFixedSize(other_widget.size())` call was the real cause of the icon-position bug — found AFTER a full revert (2026-06-28 → 2026-06-29)
+
+**Symptom:** adding a gravestone icon (`_missing_label`) next to the existing ghost icon
+(`_ghost_label`) in `BookDetailPanel`'s header pushed the ghost icon down whenever both were
+visible, and pushed the whole panel's tab row (Stats/History/Tags) down with it. A full session
+(2026-06-28 Session 2, several hours) tried to fix this via `QSizePolicy.RetainSizeWhenHidden`,
+unifying the two widgets into a single `QToolButton` with a `QStackedLayout`, and a real (but
+unrelated) `_cover_label` fixed-height fix — none of it found the actual bug, and the whole
+structural detour was reverted back to the prior commit.
+
+**Root cause, found by the user independently after the revert:**
+`self._missing_label.setFixedSize(self._finished_label.size())` — the gravestone label's size was
+*delegated* to another widget's `.size()` at construction time, not a literal number. This is the
+reason a "grep for suspicious magic numbers" pass across the broken layout never found it during
+the original multi-hour investigation: there was no number to grep for at the call site. The actual
+fixed size baked in at construction time differed from what was visually expected, and because nothing
+else in the surrounding code uses delegated sizing this way, there was no comparison point to notice
+it against.
+
+**The fix, three lines, no structural change at all:**
+```python
+self._missing_label.setFixedSize(16, 18)              # literal, not delegated
+self._missing_label.setContentsMargins(0, 0, 0, -1)
+self._ghost_label.setContentsMargins(8, -2, 0, 0)
+```
+The entire `RetainSizeWhenHidden`/`QStackedLayout` unification from the reverted session was
+unnecessary — the original two-separate-widgets structure was fine; only the size value was wrong.
+
+**General lesson:** `widget.setFixedSize(other_widget.size())` (or any size/geometry call that reads
+from a SECOND widget's current state rather than a literal) is exactly as much a "magic number" as a
+hardcoded literal — it's just one level of indirection deeper, and won't show up in a search for
+literal numbers. When debugging an unexplained size/position discrepancy, explicitly check every
+`setFixedSize`/`setGeometry`/`resize` call for a delegated argument, not just literal-looking ones.
+
 ## `is_missing` silently dropped from five stats/tag SELECT queries (2026-06-28)
 
 **Symptom:** two specific books (The Carpet Makers, The Lotus Shoes), both flagged `is_missing=1`
