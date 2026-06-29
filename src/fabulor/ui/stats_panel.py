@@ -718,6 +718,7 @@ class FinishedScrollRow(QWidget):
         # edge nearest the thumbnail content, so there's no hard boundary
         # anywhere — just a soft vignette the arrow glyph sits on top of.
         self._hovered = False
+        self._scrolling = False
         self._overlay_rgb = (0, 0, 0)        # set_arrow_colors() overrides per theme
         self._overlay_text_rgb = (255, 255, 255)
 
@@ -737,7 +738,19 @@ class FinishedScrollRow(QWidget):
 
         bar = self._scroll.horizontalScrollBar()
         bar.valueChanged.connect(self._update_arrows)
+        bar.valueChanged.connect(self._on_scroll_value_changed)
         bar.rangeChanged.connect(self._update_arrows)
+
+        # The actual scroll itself is instant (bar.setValue has no
+        # animation — see _scroll_by/wheelEvent), so there's no real
+        # "in progress" window to key off. This timer fakes one: each
+        # scroll bumps opacity to 100% and restarts a short decay window;
+        # if no further scroll arrives before it fires, opacity drops back
+        # to the row-hover baseline (90%) — same effect as a real
+        # "currently scrolling" state without animating the scroll itself.
+        self._scroll_active_timer = QTimer(self)
+        self._scroll_active_timer.setSingleShot(True)
+        self._scroll_active_timer.timeout.connect(self._on_scroll_settled)
 
         self._current_sig = []
 
@@ -763,6 +776,15 @@ class FinishedScrollRow(QWidget):
         self._left_arrow.setVisible(bar.value() > bar.minimum())
         self._right_arrow.setVisible(bar.value() < bar.maximum())
 
+    def _on_scroll_value_changed(self, *_):
+        self._scrolling = True
+        self._apply_arrow_styles()
+        self._scroll_active_timer.start(300)
+
+    def _on_scroll_settled(self):
+        self._scrolling = False
+        self._apply_arrow_styles()
+
     def set_arrow_colors(self, overlay_rgb: tuple[int, int, int], text_rgb: tuple[int, int, int]):
         """Theme-driven overlay color for the scroll-edge arrows — a fixed
         black gradient looks like a dark smudge against a light theme
@@ -777,25 +799,34 @@ class FinishedScrollRow(QWidget):
         self._apply_arrow_styles()
 
     def _apply_arrow_styles(self):
-        # Flat, fully-opaque solid-color sliver — no gradient, no
-        # border-radius, no border. The gradient/derived-luminance approach
-        # was tried and dropped (live testing across themes: black, white,
-        # and darkened-bg_main overlays all either looked smudgy, too
-        # harsh, or too thin to read clearly). The sliver is only ever
-        # shown while the row itself is hovered (_hovered gate in
-        # enterEvent/_update_arrows), so its background is fully opaque at
-        # rest — :hover on the BUTTON itself only brightens the arrow
-        # glyph's text color, it does not change the background further.
+        # Flat solid-color sliver — no gradient, no border-radius, no
+        # border. The gradient/derived-luminance approach was tried and
+        # dropped (live testing across themes: black, white, and
+        # darkened-bg_main overlays all either looked smudgy, too harsh, or
+        # too thin to read clearly).
+        #
+        # Background opacity, base vs. hover (text opacity is separate,
+        # below): row hovered (sliver visible at all) = base_a; sliver
+        # itself hovered = 255 (full), via the :hover rule. base_a was
+        # originally going to also bump to a near-full value while
+        # _scrolling (see _on_scroll_value_changed/_on_scroll_settled —
+        # that decay-timer machinery is still here), but base_a's two
+        # branches were flattened to the same 220 — scrolling no longer
+        # visibly changes the base opacity, only sliver-hover does.
         r, g, b = self._overlay_rgb
         tr, tg, tb = self._overlay_text_rgb
+        base_a = 220 if self._scrolling else 220
         text_base_a, text_hover_a = 140, 200
 
         common = (
-            f"background: rgba({r},{g},{b},255);"
+            f"background: rgba({r},{g},{b},{base_a});"
             f"color: rgba({tr},{tg},{tb},{text_base_a});"
-            "font-size: 7px; border: none; border-radius: 0px; padding: 0px; margin: 0px;"
+            "font-size: 8px; border: none; border-radius: 0px; padding: 0px; margin: 0px;"
         )
-        hover_common = f"color: rgba({tr},{tg},{tb},{text_hover_a});"
+        hover_common = (
+            f"background: rgba({r},{g},{b},255);"
+            f"color: rgba({tr},{tg},{tb},{text_hover_a});"
+        )
 
         self._left_arrow.setStyleSheet(
             f"QPushButton {{ {common} }}"
@@ -2703,14 +2734,16 @@ class StatsPanel(QWidget):
         if not hasattr(self, '_finished_scroll_row'):
             return
         color = self._placeholder_color
-        # Scroll-edge arrow overlay: accent_dark, per the user's explicit
-        # choice — tried deriving from bg_main luminance (and before that, a
-        # flat black/white pick by background lightness) but both were
-        # rejected live across themes (too smudgy, too harsh, or unrelated
-        # to the panel's own palette). accent_dark is a real theme color,
-        # not a derived guess, and is generally dark enough for white text.
-        accent_dark_color = QColor(theme.get("accent_dark", theme.get("accent", "#1a1a1a")))
-        arrow_overlay_rgb = (accent_dark_color.red(), accent_dark_color.green(), accent_dark_color.blue())
+        # Scroll-edge arrow overlay: stats_carousel_stripe (optional,
+        # per-theme override), falling back to accent_dark — tried deriving
+        # from bg_main luminance (and before that, a flat black/white pick
+        # by background lightness) but both were rejected live across
+        # themes (too smudgy, too harsh, or unrelated to the panel's own
+        # palette). accent_dark is a real theme color, not a derived guess,
+        # and is generally dark enough for white text; themes that need a
+        # different stripe color can set stats_carousel_stripe directly.
+        stripe_color = QColor(theme.get("stats_carousel_stripe", theme.get("accent_dark", theme.get("accent", "#1a1a1a"))))
+        arrow_overlay_rgb = (stripe_color.red(), stripe_color.green(), stripe_color.blue())
         arrow_text_rgb = (255, 255, 255)
         for attr in ('_finished_scroll_row', '_day_finished_scroll',
                      '_week_finished_scroll', '_month_finished_scroll'):

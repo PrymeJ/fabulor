@@ -87,6 +87,7 @@ bookmark_icon:           (Optional) Override for the clock/fire icon color on th
 tassel_cord:             (Optional) Color of the dangling tassel's cord (the bent line from the bookmark to the head). Fallback: tassel_fringe.
 tassel_head:             (Optional) Color of the dangling tassel's bound head (the small knot the cord ends in). Fallback: tassel_fringe.
 tassel_fringe:           (Optional) Color of the dangling tassel's fringe (the fanned threads below the head). Fallback: accent_light.
+stats_carousel_stripe:   (Optional) Background color for the Recently Finished scroll row's edge-scroll arrow sliver (stats_panel.py FinishedScrollRow). Fallback: accent_dark.
 
 GROUP 10 — MISC UI
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
