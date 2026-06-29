@@ -282,15 +282,16 @@ class BookDetailPanel(QWidget):
         # a replacement for the ghost. Sits right after _finished_label, in
         # the row that visually lines up with the year field in meta_block.
         self._missing_label = QLabel()
-        self._missing_label.setFixedSize(self._finished_label.size())
+        self._missing_label.setFixedSize(16,18)
         self._missing_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._missing_label.setContentsMargins(0, 0, 0, -1)
         self._missing_label.hide()
         right_col.addWidget(self._missing_label, alignment=Qt.AlignmentFlag.AlignRight)
 
         self._ghost_label = QLabel()
         self._ghost_label.setFixedSize(self._remove_btn.size())
         self._ghost_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._ghost_label.setContentsMargins(8, 0, 0, 0)
+        self._ghost_label.setContentsMargins(8, -2, 0, 0)
         self._ghost_label.hide()
 
         right_col.addStretch()
