@@ -293,12 +293,48 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_sidebar_closed_for_panel(self):
-        """Handler for sidebar animation finishing when a panel needs to open."""
+        """Handler for sidebar animation finishing when a panel needs to open.
+
+        Re-arm guard (fixes the sidebar-bleed-through bug — see NOTES.md 2026-07-01):
+        the queued-open pattern in the six `_open_*_flow` methods calls `_toggle_sidebar()`
+        to close the sidebar, but that call SILENTLY NO-OPS if a sidebar animation from a
+        prior toggle is still running (its `state() == Running` guard). If that happens,
+        the close never starts, yet this handler is still wired to `finished` — so the
+        already-running (OPENING) animation's `finished` would otherwise dispatch the panel
+        with the sidebar still fully expanded at x=0, visible through the panel's
+        semi-transparent background.
+
+        Fix: only dispatch once the sidebar is ACTUALLY collapsed. If `finished` fires while
+        `sidebar_expanded` is still True (the dropped close never happened / this `finished`
+        belonged to an opening animation), re-issue the close and keep waiting for the next
+        `finished` — do not dispatch, do not disconnect.
+
+        Termination: each re-arm issues exactly one `_toggle_sidebar()` close and returns;
+        it is driven by the `finished` signal, not recursion. `sidebar_expanded` can only flip
+        back to True via an OPENING `_toggle_sidebar()`, whose sole reachable trigger during
+        the wait is a physical user right-click on the drag area — nothing re-opens
+        automatically, so this cannot self-perpetuate. A stray extra user toggle mid-wait just
+        costs one more re-arm cycle and converges once toggling stops and a close lands with
+        `sidebar_expanded == False`. Even if a re-issued toggle were itself a no-op, the
+        handler simply re-arms again on the next `finished`; the invariant "never dispatch
+        while `sidebar_expanded`" holds regardless.
+        """
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_sidebar_closed_for_panel ENTRY] "
             f"sidebar_expanded={self.sidebar_expanded} "
             f"pending_panel_open={self._pending_panel_open!r}"
         )
+
+        if self.sidebar_expanded:
+            # The close we queued was dropped (or this `finished` came from an opening
+            # animation). Stay armed, re-issue the close, and wait for the next `finished`.
+            logger.debug(
+                f"t={time.perf_counter():.6f} [_on_sidebar_closed_for_panel RE-ARM] "
+                f"sidebar still expanded — re-issuing close, not dispatching"
+            )
+            self._toggle_sidebar()
+            return
+
         if self._sidebar_panel_signal_connected:
             self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
             self._sidebar_panel_signal_connected = False
