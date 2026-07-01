@@ -1,48 +1,79 @@
-## Sidebar visible through settings panel on open — DISTINCT from the "theme hover" sidebar bug; unreproduced, instrumentation in place (2026-07-01)
+## Sidebar visible through settings panel on open — ROOT CAUSE CONFIRMED, not yet fixed (2026-07-01)
 
 **Do not file this under "Spurious sidebar expand during theme hover" (below in this file, originally
 2026-05-26).** They read as the same bug ("sidebar bleeds through / is visible when it shouldn't be")
 but source tracing this session showed they are not — see that entry's own correction for why its
-original race theory is dead. This is a separate, still-open, still-unreproduced-on-demand report.
+original race theory is dead. This is a separate bug, now root-caused, with a fix not yet written.
 
-**Symptom, per the user's own account (2026-07-01):** the sidebar is visible through the Settings
-panel specifically at the moment the panel first appears — never once it's already open and stable.
-Settings' background is intentionally semi-transparent (`panel_opacity_hover` in `themes.py`, ~0.88–
-0.95 depending on theme), so *some* see-through is by design; the open question is whether the
-sidebar is still mid-collapse or in the wrong position underneath during that specific opening
-window, which the near-opaque-but-not-fully-opaque background would make visible for a frame or two.
+**Symptom:** the sidebar is visible through the Settings panel specifically at the moment the panel
+first appears — never once it's already open and stable. Settings' background is intentionally
+semi-transparent (`panel_opacity_hover` in `themes.py`, ~0.88–0.95 depending on theme), so *some*
+see-through is by design; the bug is that the sidebar is fully expanded (`x=0`, not mid-collapse)
+underneath, because it never actually started closing.
 
-**What's been ruled out this session, in order:**
-1. First live catch (via the theme-hover instrumentation, see the entry below) showed
-   `sidebar_expanded=True` with the sidebar fully on-screen throughout an entire theme-hover session
-   — but tracing the click sequence showed this was *correct* state (the sidebar had been toggled
-   open independently, not via `_open_settings_flow`'s collapse-first path) — not a bug.
-2. Multiple rapid right-clicks on the drag area while Settings was open, tried deliberately to
-   reproduce it: each click independently and correctly triggered `_close_settings_flow` while
-   `settings_panel.isVisible()` was still `True`; the sidebar only opened once a later click landed
-   after Settings had genuinely finished closing. No dispatch bug found.
-3. Two clean single-click Settings opens, traced frame-by-frame through the entire
-   `settings_panel_animation` slide (`valueChanged` + `finished`) against live `sidebar.pos()` /
-   `sidebar_expanded`: sidebar was at `(-70, 56)` (fully off-screen) and `sidebar_expanded=False` at
-   **every** logged frame, from `_start_settings_entry` entry through animation completion. No overlap
-   window found in either capture.
+**Root cause, confirmed via live `perf_counter()` trace (`panels.py` instrumentation, commit
+`ed1c7b2`):** `_toggle_sidebar()`'s re-entrancy guard —
+```python
+if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
+    return
+```
+— returns *before* doing anything, including before logging, if a sidebar animation is already in
+flight. All six `_open_*_flow` methods (`_open_library_flow`, `_open_settings_flow`,
+`_open_speed_flow`, `_open_sleep_flow`, `_open_stats_flow`, `_open_tags_flow`; `_pending_panel_open`
+assignments at `panels.py:95,184,267,386,418,496`) share one queued-open pattern that assumes every
+`_toggle_sidebar()` call it makes *starts a new animation* it can wait on via
+`sidebar_animation.finished.connect(_on_sidebar_closed_for_panel)`. It doesn't check the guard itself
+and has no way to know when its call was silently dropped.
 
-**Instrumentation in place (commit `ed1c7b2`, `panels.py`), all DEBUG-level / silent by default:**
+**The confirmed failure sequence (2026-07-01 20:42:59, user's own words: "I managed to sneak in a
+right click between clicking the Settings entry and panel actually sliding"):**
+1. User rapid-toggles the sidebar (closed→open→closed→**open**, the last one still `Running`).
+2. User clicks Settings while that 4th (opening) animation is still in flight:
+   `_open_settings_flow` sees `sidebar_expanded=True` (already flipped synchronously at the 4th
+   toggle's click time, per the earlier-confirmed synchronous-write behavior) and `sidebar_animation.
+   state()=Running`. It queues `_pending_panel_open="settings"`, connects
+   `_on_sidebar_closed_for_panel` to `finished`, and calls `_toggle_sidebar()` — a 5th call.
+3. That 5th call hits the guard above and returns immediately, doing nothing — no new animation, no
+   flag flip, silently dropped. `_open_settings_flow` has no idea.
+4. The 4th animation (the one already running — an **opening** slide) finishes on its own, landing
+   the sidebar at `(0, 56)`, fully expanded.
+5. Its `finished` signal fires `_on_sidebar_closed_for_panel`, which has no way to tell this
+   `finished` came from an opening animation rather than a closing one it caused — it just dispatches
+   `_start_settings_entry()` immediately. Confirmed in the log:
+   `_on_sidebar_closed_for_panel ENTRY sidebar_expanded=True` →
+   `_start_settings_entry ENTRY sidebar_expanded=True sidebar.pos()=(0, 56)`.
+6. Settings slides in over a fully-expanded, fully-visible sidebar. Its ~90%-opaque background makes
+   the sidebar visible underneath for the whole open (not just a transient frame) — matching the
+   user's report that it's visible from the moment the panel first appears.
+
+**Ruled out en route to this (kept for context, not because the theories were viable — they were
+useful negative evidence that narrowed the search):** an over-broad first catch turned out to be
+correct state, not a bug (sidebar toggled open independently of any panel-open flow, hovering
+happened afterward with both simultaneously and validly open); repeated rapid right-clicks *while
+Settings was already open* correctly triggered `_close_settings_flow` every time and never reproduced
+it; two clean single-click Settings opens traced frame-by-frame showed no overlap window at all. All
+three were genuinely clean runs — the bug only appears when the *extra* click lands during the brief
+window while a sidebar animation from a **preceding, separate** toggle is still in flight, which none
+of those three scenarios happened to hit.
+
+**Fix approach (not yet implemented — deliberately deferred to a separate session):** the queued-open
+pattern needs to detect a dropped `_toggle_sidebar()` call and either retry it once the in-flight
+animation actually finishes, or (simpler) have the six `_open_*_flow` methods check
+`sidebar_animation.state() == Running` themselves before deciding whether to queue at all, and/or have
+`_on_sidebar_closed_for_panel` re-check `sidebar_expanded` when it fires and bail out (re-queue) rather
+than blindly dispatching if the sidebar turns out to still be expanded. Whichever approach, it must be
+applied consistently across all six `_open_*_flow` methods, not just `_open_settings_flow` — they share
+the identical pattern and are equally exposed.
+
+**Instrumentation that caught this (commit `ed1c7b2`, `panels.py`), all DEBUG-level / silent by
+default and left in place — still useful for confirming the fix once written:**
 `handle_drag_area_right_click` (which panel-visible flags it sees, which branch it takes);
-`_open_settings_flow` entry state; `_on_sidebar_closed_for_panel` entry/exit;
-`_on_sidebar_hidden` entry; and frame-by-frame `settings_panel_animation` tracing (panel x-position
-+ sidebar position/visibility at every animation tick, via a `valueChanged` tap that disconnects
-itself on `finished`).
-
-**Status: unreproduced under deliberate attempts, real during normal use.** The user has hit this
-during ordinary use (not a deliberate repro) at least once before this instrumentation existed, and
-was unable to force it again across three separate attempts with the instrumentation live. No further
-active hunting planned this session — `FABULOR_LOG_LEVEL=DEBUG` stays on via the `fabulorentr` shell
-function (see `~/.bashrc`) for normal use, and the log should have it whenever it next happens
-naturally. When it does: check `handle_drag_area_right_click`'s branch/visibility snapshot first (was
-Settings really closed when the click that opened things fired?), then the per-frame
-`sidebar.pos()`/`sidebar_expanded` values against `settings_panel_animation`'s `panel_pos` at the
-exact frame the user reports seeing the bleed-through.
+`_open_settings_flow` entry state; `_on_sidebar_closed_for_panel` entry/exit; `_on_sidebar_hidden`
+entry; frame-by-frame `settings_panel_animation` tracing. Known gap: `_toggle_sidebar`'s early-return
+guard returns before its own log line, so a dropped call is currently invisible directly — its
+presence has to be inferred from the surrounding `_on_sidebar_hidden`/`_open_settings_flow`/
+`_on_sidebar_closed_for_panel` timestamps, as done above. A future instrumentation pass could log the
+guard's early return explicitly if this needs re-diagnosing.
 
 ---
 
