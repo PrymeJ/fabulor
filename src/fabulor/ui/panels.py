@@ -1,6 +1,10 @@
+import logging
+import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit
 from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer
+
+logger = logging.getLogger(__name__)
 
 class PanelManager:
     def __init__(self, main_window):
@@ -48,6 +52,11 @@ class PanelManager:
         """Slides the sidebar in or out."""
         if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
             return
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_toggle_sidebar ENTRY] "
+            f"sidebar_expanded(pre)={self.sidebar_expanded} "
+            f"branch={'opening' if not self.sidebar_expanded else 'closing'}"
+        )
         # Opening the sidebar (the gateway to every panel, and the target of a
         # right-click on the drag area / future panel hotkeys) while a main-
         # window theme fade is in flight must complete that fade cleanly first
@@ -64,7 +73,9 @@ class PanelManager:
         width = self.sidebar.width()
 
         if not self.sidebar_expanded:
+            logger.debug(f"t={time.perf_counter():.6f} [sidebar.raise_ BEFORE]")
             self.sidebar.raise_()
+            logger.debug(f"t={time.perf_counter():.6f} [sidebar.raise_ AFTER]")
             self.sidebar_animation.setStartValue(QPoint(-width, sidebar_y))
             self.sidebar_animation.setEndValue(QPoint(0, sidebar_y))
             self.sidebar_expanded = True
@@ -72,7 +83,7 @@ class PanelManager:
             self.sidebar_animation.setStartValue(QPoint(0, sidebar_y))
             self.sidebar_animation.setEndValue(QPoint(-width, sidebar_y))
             self.sidebar_expanded = False
-            
+
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
