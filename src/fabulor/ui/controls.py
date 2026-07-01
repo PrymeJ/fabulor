@@ -359,7 +359,7 @@ class ScrollingLabel(FreezableLabel):
             return
 
         text_width = self.fontMetrics().horizontalAdvance(self.text())
-        max_scroll = text_width - self.width()
+        max_scroll = text_width - self.width() + 2
 
         if self._direction == -1:  # Scrolling towards the end
             self._scroll_pos -= 1
@@ -381,9 +381,9 @@ class ScrollingLabel(FreezableLabel):
         metrics = self.fontMetrics()
         text_width = metrics.horizontalAdvance(text)
         y = (self.height() + metrics.ascent() - metrics.descent()) // 2
-        
+
         if self._timer.isActive():
-            p.drawText(self._scroll_pos, y, text)
+            p.drawText(self._scroll_pos + 2, y, text)
         else:
             # Center the text within the available width
             if self._scroll_mode == "Off":
