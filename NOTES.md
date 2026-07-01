@@ -1,3 +1,51 @@
+## Sidebar visible through settings panel on open — DISTINCT from the "theme hover" sidebar bug; unreproduced, instrumentation in place (2026-07-01)
+
+**Do not file this under "Spurious sidebar expand during theme hover" (below in this file, originally
+2026-05-26).** They read as the same bug ("sidebar bleeds through / is visible when it shouldn't be")
+but source tracing this session showed they are not — see that entry's own correction for why its
+original race theory is dead. This is a separate, still-open, still-unreproduced-on-demand report.
+
+**Symptom, per the user's own account (2026-07-01):** the sidebar is visible through the Settings
+panel specifically at the moment the panel first appears — never once it's already open and stable.
+Settings' background is intentionally semi-transparent (`panel_opacity_hover` in `themes.py`, ~0.88–
+0.95 depending on theme), so *some* see-through is by design; the open question is whether the
+sidebar is still mid-collapse or in the wrong position underneath during that specific opening
+window, which the near-opaque-but-not-fully-opaque background would make visible for a frame or two.
+
+**What's been ruled out this session, in order:**
+1. First live catch (via the theme-hover instrumentation, see the entry below) showed
+   `sidebar_expanded=True` with the sidebar fully on-screen throughout an entire theme-hover session
+   — but tracing the click sequence showed this was *correct* state (the sidebar had been toggled
+   open independently, not via `_open_settings_flow`'s collapse-first path) — not a bug.
+2. Multiple rapid right-clicks on the drag area while Settings was open, tried deliberately to
+   reproduce it: each click independently and correctly triggered `_close_settings_flow` while
+   `settings_panel.isVisible()` was still `True`; the sidebar only opened once a later click landed
+   after Settings had genuinely finished closing. No dispatch bug found.
+3. Two clean single-click Settings opens, traced frame-by-frame through the entire
+   `settings_panel_animation` slide (`valueChanged` + `finished`) against live `sidebar.pos()` /
+   `sidebar_expanded`: sidebar was at `(-70, 56)` (fully off-screen) and `sidebar_expanded=False` at
+   **every** logged frame, from `_start_settings_entry` entry through animation completion. No overlap
+   window found in either capture.
+
+**Instrumentation in place (commit `ed1c7b2`, `panels.py`), all DEBUG-level / silent by default:**
+`handle_drag_area_right_click` (which panel-visible flags it sees, which branch it takes);
+`_open_settings_flow` entry state; `_on_sidebar_closed_for_panel` entry/exit;
+`_on_sidebar_hidden` entry; and frame-by-frame `settings_panel_animation` tracing (panel x-position
++ sidebar position/visibility at every animation tick, via a `valueChanged` tap that disconnects
+itself on `finished`).
+
+**Status: unreproduced under deliberate attempts, real during normal use.** The user has hit this
+during ordinary use (not a deliberate repro) at least once before this instrumentation existed, and
+was unable to force it again across three separate attempts with the instrumentation live. No further
+active hunting planned this session — `FABULOR_LOG_LEVEL=DEBUG` stays on via the `fabulorentr` shell
+function (see `~/.bashrc`) for normal use, and the log should have it whenever it next happens
+naturally. When it does: check `handle_drag_area_right_click`'s branch/visibility snapshot first (was
+Settings really closed when the click that opened things fired?), then the per-frame
+`sidebar.pos()`/`sidebar_expanded` values against `settings_panel_animation`'s `panel_pos` at the
+exact frame the user reports seeing the bleed-through.
+
+---
+
 ## Logging infrastructure added — `user_log_dir("fabulor")` uses the one-arg platformdirs form; revisit for the Windows port (2026-07-01)
 
 Added `src/fabulor/logger_setup.py` (`setup_logging()`, called first thing in `main.py`'s
