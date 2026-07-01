@@ -6,6 +6,35 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-01] Book Detail panel slide-in feels less smooth from Library than from Stats.**
+  User observation, unconfirmed and not yet investigated: right-clicking a book row in the Library
+  panel to open Book Detail feels janky compared to clicking a book row in the Stats panel to open
+  the same panel — same target panel (`open_book_detail` → `_start_book_detail_entry`,
+  `panels.py:578`), so if real, the difference is in what's already on-screen underneath, not the
+  panel itself. One structural note found while checking: `_start_book_detail_entry` does NOT touch
+  `blur_animation` at all (every other `_start_*_entry` — library/settings/speed/stats/sleep/tags —
+  starts/stops it), so whatever blur state the currently-open panel left in place just carries over
+  unchanged; unclear if that's relevant. User also flagged this may just be "noticing now because
+  I'm paying attention" rather than a real regression — needs a clean side-by-side comparison
+  before concluding anything. Do not conflate with the sidebar-bleed-through investigation
+  (NOTES.md, same date) — confirmed structurally unrelated: Book Detail never routes through
+  `_on_sidebar_closed_for_panel` (no sidebar trigger button opens it; it's reached only from
+  library rows, stats rows, and tag chips), so that fix does not touch this path at all.
+
+- **[2026-07-01] Theme hover-preview performance pass needed — regressed from a prior fix.**
+  User reports theme pool hover-preview (Settings → Themes tab, hovering a theme button to preview
+  it) has been sluggish for a while and was previously fixed (\"more than a month ago\") via
+  dedicated stylesheets, but has since degraded again for an unknown reason. Could not locate the
+  original fix in NOTES.md/SESSION.md by searching for hover-preview performance, dedicated
+  stylesheets, or QSS-caching terms — either it predates the retained history or was described
+  differently there; **ask the user for the specifics/date before assuming anything about what the
+  original fix actually changed.** Needs a full profiling/performance pass on the hover path
+  (`_on_theme_hovered` → `_on_theme_changed`, `theme_manager.py`), not a guess-and-patch — likely
+  candidates worth checking first: whether per-hover work that should be cached/precomputed is being
+  redone on every hover tick, and whether anything added since the original fix (e.g. the
+  `tags_panel` mask-exclusion addition, `65b5688`, or other `_apply_stylesheets` dispatch growth) is
+  back on the hot path.
+
 - **[2026-07-01] ScrollingLabel first-glyph clipping.** When a chapter name is long enough to scroll,
   the first character ('c', 't', etc.) clips against the widget's left edge at the start position
   (`_scroll_pos = 0`). Qt renders glyphs at x=0 with no left margin and the widget boundary shears

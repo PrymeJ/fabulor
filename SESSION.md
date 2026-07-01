@@ -1,3 +1,109 @@
+## Session Summary — 2026-07-01 Session 5 — sidebar-bleed-through root cause found and fixed; two new performance/polish items stashed
+
+**Branch:** `main`. **Commits:** `ed1c7b2`, `68798a4`, `5dfd030`, `efaf3ba`.
+
+### Context
+
+Direct continuation of Session 3's sidebar-hover-bug instrumentation. That session left the
+"spurious sidebar expand during theme hover" investigation with three ruled-out theories and live
+DEBUG tracing in place, dormant, waiting for the bug to reproduce during normal use. It did — twice,
+each catch narrowing the diagnosis further, until the third catch (a user-described "sneak a right
+click between clicking Settings and the panel actually sliding") gave a clean enough trace to name
+the exact mechanism and fix it.
+
+### First catch: correct state, not a bug
+
+The first live capture showed `sidebar_expanded=True` with the sidebar fully on-screen throughout an
+entire theme-hover session with Settings open. Tracing the click sequence showed this was *correct*
+— the sidebar had been toggled open independently of `_open_settings_flow`'s collapse-first path
+(Settings is only reachable *through* the sidebar in this app, so the sidebar staying expanded while
+navigating into Settings is the intended flow, not an edge case). No bug here; ruled out.
+
+### Second catch: rapid pre-clicks don't reproduce it
+
+Deliberately spamming right-clicks on the drag area while Settings was already open reliably
+triggered `_close_settings_flow` every time (`settings_panel.isVisible()` correctly `True` at each
+click) and never opened the sidebar prematurely. Two clean single-click Settings opens, traced
+frame-by-frame through the whole `settings_panel_animation` slide against live `sidebar.pos()` /
+`sidebar_expanded`, showed the sidebar fully collapsed and off-screen at every logged frame. Deeper
+instrumentation added this pass (`ed1c7b2`, `panels.py`): `handle_drag_area_right_click` branch/
+visibility logging, `_open_settings_flow` entry state, `_on_sidebar_closed_for_panel` entry/exit,
+`_on_sidebar_hidden` entry, and a `valueChanged`-tap frame-by-frame trace of
+`settings_panel_animation` itself (self-disconnecting on `finished`).
+
+NOTES.md updated (`68798a4`) to log this as its own distinct entry — explicitly separated from the
+already-corrected "theme hover" bug from Session 3, since they read as the same symptom but are not
+the same mechanism, and the risk of a future catch getting filed under the wrong entry was real
+enough to flag directly.
+
+### Third catch: root cause confirmed
+
+User reproduced it during normal use and correctly self-diagnosed the trigger: "I managed to sneak
+in a right click between clicking the Settings entry and panel actually sliding." The trace showed
+exactly why that's fatal — `_toggle_sidebar()`'s re-entrancy guard
+(`if sidebar_animation.state() == Running: return`) *silently no-ops* if a sidebar animation from a
+prior, separate toggle is still in flight when it's called. All six `_open_*_flow` methods
+(library/settings/speed/sleep/stats/tags) share one queued-open pattern that calls `_toggle_sidebar()`
+to close the sidebar and blindly trusts a `finished` signal to mean "it closed." When a stray click
+lands mid-animation: the queued close is dropped; the *already-running* (opening) animation finishes
+on its own; its `finished` fires `_on_sidebar_closed_for_panel`, which has no way to tell this
+`finished` didn't come from the close it thinks it queued — so it dispatches the panel anyway, with
+the sidebar sitting fully expanded at `x=0`. Settings' ~90%-opaque background (`panel_opacity_hover`,
+`themes.py`) then lets the sidebar show through for the entire time the panel is open, not just a
+stray frame. Root cause confirmed and documented in full, with the exact failing log sequence, in
+NOTES.md (`5dfd030`) — diagnosis-only that pass, per explicit instruction to hold the fix for review.
+
+### Fix (`efaf3ba`)
+
+Planned via `/plan` with the user reviewing the approach before implementation (variant A: fix the
+root cause centrally in the one shared dispatcher, rather than reporting failure back to six
+independent call sites). `_on_sidebar_closed_for_panel` now only dispatches once `sidebar_expanded`
+is confirmed `False`. If `finished` fires while still expanded, it re-issues the close and returns
+without disconnecting or dispatching, waiting for the next `finished`. Termination reasoning (required
+explicitly by the user before approving the plan) is written into the method's docstring: the re-arm
+is driven by the `finished` signal, not recursion; the only reachable re-opener during the wait is a
+physical user right-click; a stray extra toggle mid-wait just costs one more re-arm cycle and still
+converges. Scoped to exactly one method — the six `_open_*_flow` methods and `_toggle_sidebar`'s guard
+itself are untouched, per plan.
+
+Verified live against the `perf_counter()` trace that caught the original bug (same rapid-toggle +
+sneak-a-click-mid-animation repro); unreproducible after the fix across repeated attempts. Per user:
+holding off on marking NOTES.md as confirmed-fixed for about a week of normal use before closing it
+out — this session's docs commit intentionally does not change that entry's "not yet fixed" framing.
+
+### Aside: `panels.py` stashed mid-session
+
+The fix commit was briefly `git stash`ed (only `panels.py`, `TODO.md` left alone) so the user could
+verify a separately-reported Book Detail panel stutter against a clean baseline, then popped and
+committed once that check was done.
+
+### Two new items stashed in TODO.md (not investigated this session)
+
+- **Book Detail panel slide-in feels less smooth from Library than from Stats.** Same target method
+  (`open_book_detail` → `_start_book_detail_entry`) either way, so if real, the difference is in
+  what's already on-screen underneath. Noted structurally: `_start_book_detail_entry` doesn't touch
+  `blur_animation` at all, unlike every other `_start_*_entry`. Confirmed unrelated to the sidebar
+  fix — Book Detail has no sidebar trigger button and never routes through
+  `_on_sidebar_closed_for_panel`. User flagged this may just be "noticing now because I'm paying
+  attention" — needs a clean comparison before concluding anything.
+- **Theme hover-preview performance regression.** User reports hover-preview (Settings → Themes tab)
+  was fixed for performance "more than a month ago" via dedicated stylesheets, and has since
+  degraded again. Could not locate the original fix by searching NOTES.md/SESSION.md for
+  hover-preview performance or dedicated-stylesheet terms — ask the user for specifics before
+  assuming what that fix actually changed. Needs a full profiling pass on `_on_theme_hovered` →
+  `_on_theme_changed`, not a guess-and-patch.
+
+### Documentation housekeeping
+
+This pass also fixed a SESSION.md numbering error from a prior session: an orphaned entry (this
+file's own "Session 3," covering the `seek_within_chapter` tracing follow-up and the start of the
+sidebar investigation) had lost its header and intro paragraph when a later, unrelated session's
+content was pasted in using the same "Session 3" number. Restored the missing header, renumbered the
+unrelated cover-art-button session to Session 4 (chronologically correct — it landed after the
+orphaned block's commits), and logged this session as Session 5.
+
+---
+
 ## Session Summary — 2026-07-01 Session 4 — cover-art theme button hover/pressed contrast tuning
 
 **Branch:** `main`. **Commit:** `e25c0bf`.
@@ -32,7 +138,9 @@ Checked numerically (headless HSV shift over sample dominant hues — orange, te
 than visually running the app, since this is a pure color-derivation change with no layout/timing
 component. User confirmed the final values were acceptable after this pass.
 
+---
 
+## Session Summary — 2026-07-01 Session 3 — seek_within_chapter tracing follow-up; sidebar-hover-bug investigation + wiring
 
 **Branch:** `main`. **Commits:** `053c681`, `ecaab3c`, `32563ff`, `3aeed97`, `90029f0`, `93c4414`.
 
