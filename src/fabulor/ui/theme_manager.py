@@ -1,5 +1,6 @@
 import logging
 import random
+import time
 import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
@@ -332,7 +333,15 @@ class ThemeManager(QObject):
         self._is_hover_active = hover
 
         # Guard against theme changes during panel animation to prevent hitches
-        if self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating():
+        _any_animating = bool(
+            self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating()
+        )
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
+            f"any_panel_animating={_any_animating}"
+            + (" -> queuing deferred retry" if _any_animating else "")
+        )
+        if _any_animating:
             self._panel_guard_timer.stop()
             try:
                 with warnings.catch_warnings():
@@ -382,6 +391,11 @@ class ThemeManager(QObject):
 
             from PySide6.QtGui import QRegion
             if pm and pm.is_any_panel_visible():
+                logger.debug(
+                    f"t={time.perf_counter():.6f} [mask-build themes-tab-visible path] "
+                    f"sidebar_expanded={pm.sidebar_expanded} "
+                    f"sidebar.geometry()={pm.sidebar.geometry()}"
+                )
                 mask = QRegion(self.main_window.rect())
                 panels = ['library_panel', 'tags_panel', 'speed_panel',
                           'sleep_panel', 'stats_panel', 'book_detail_panel']
@@ -392,11 +406,14 @@ class ThemeManager(QObject):
                 if pm.sidebar_expanded:
                     mask -= QRegion(pm.sidebar.geometry())
                 self._fade_overlay.setMask(mask)
+                logger.debug(f"t={time.perf_counter():.6f} [mask-build themes-tab-visible path] mask set")
             else:
                 self._fade_overlay.clearMask()
 
             self._fade_overlay.show()
+            logger.debug(f"t={time.perf_counter():.6f} [fade_overlay.raise_ BEFORE themes-tab-visible path]")
             self._fade_overlay.raise_()
+            logger.debug(f"t={time.perf_counter():.6f} [fade_overlay.raise_ AFTER themes-tab-visible path]")
 
             self._save_on_fade = save
             self._fade_in_flight = True
@@ -496,6 +513,11 @@ class ThemeManager(QObject):
         from PySide6.QtCore import QPoint
         pm = getattr(mw, 'panel_manager', None)
         if pm and pm.is_any_panel_visible():
+            logger.debug(
+                f"t={time.perf_counter():.6f} [mask-build slider-animation path] "
+                f"sidebar_expanded={pm.sidebar_expanded} "
+                f"sidebar.geometry()={pm.sidebar.geometry()}"
+            )
             mask = QRegion(mw.rect())
             panels = ['library_panel', 'tags_panel', 'speed_panel',
                       'sleep_panel', 'stats_panel', 'book_detail_panel']
@@ -513,9 +535,12 @@ class ThemeManager(QObject):
             top_left = s.mapTo(mw, QPoint(0, 0))
             mask -= QRegion(top_left.x(), top_left.y(), s.width(), s.height())
         self._fade_overlay.setMask(mask)
+        logger.debug(f"t={time.perf_counter():.6f} [mask-build slider-animation path] mask set")
 
         self._fade_overlay.show()
+        logger.debug(f"t={time.perf_counter():.6f} [fade_overlay.raise_ BEFORE slider-animation path]")
         self._fade_overlay.raise_()
+        logger.debug(f"t={time.perf_counter():.6f} [fade_overlay.raise_ AFTER slider-animation path]")
         self._save_on_fade = save
         self._fade_anim.setDuration(fade_ms)
         self._fade_anim.start()
@@ -650,7 +675,9 @@ class ThemeManager(QObject):
             from ..themes import _resolve_theme
             stats_panel.on_theme_changed(_resolve_theme(theme_name))
         if hasattr(mw, 'sidebar'):
+            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar BEFORE]")
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
+            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar AFTER]")
         if hasattr(mw, '_set_chapter_ui_active'):
             mw._set_chapter_ui_active(mw._chapter_ui_active)
 
