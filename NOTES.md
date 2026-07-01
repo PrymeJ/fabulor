@@ -2479,30 +2479,71 @@ The Settings panel Themes tab was audited and ruled out for per-element color an
 
 ---
 
-## Theme System — Known Bugs (2026-05-26)
+## Theme System — Known Bugs (2026-05-26, corrected 2026-07-01)
 
-### Spurious sidebar expand during theme hover — root cause unknown
+### Spurious sidebar expand during theme hover — root cause still unknown; original theory disproven
 
 **Symptom:** Occasionally during hover-preview over theme pool items, the sidebar briefly becomes
 visible behind or alongside the settings panel. Visually this shows as sidebar button labels
 (SETTINGS, STATS, etc.) bleeding through, giving a hodge-podge appearance.
 
-**Root cause:** Sidebar expands when it shouldn't — suspected race between the right-click handler
-and the panel animation guard, but not confirmed. The condition is sporadic and has not been
-reliably reproduced.
+**CORRECTION (2026-07-01):** The "Mitigation (2026-05-26)" paragraph that used to appear here
+claimed the overlay mask was changed to unconditionally exclude the sidebar geometry. This was
+checked against source: it is **factually wrong**. `git log -p -L` on both mask-exclusion sites
+(`theme_manager.py`, then-lines ~392 and ~506) shows `if pm.sidebar_expanded: mask -=
+QRegion(pm.sidebar.geometry())` has been **identical since its introduction on `99438c5`
+(2026-05-10)**, through the cited 2026-05-26 date, through every commit since, unchanged in the
+current source. The commit that date's docs entry pointed to (`65b5688`, 2026-05-26, "perf: add
+tags_panel to fade overlay mask") only appends `'tags_panel'` to the panel-exclusion list — it
+never touches the sidebar conditional. No commit anywhere in either file's history makes the
+sidebar exclusion unconditional. Whether this mitigation was ever actually written and lost, or
+the original doc entry was simply aspirational/incorrect when filed, is unknown — but the guard
+itself was never touched, so nothing here needs fixing on that front. Do not cite "unconditional
+sidebar mask exclusion" as existing mitigation again without re-checking the source.
 
-**Mitigation (2026-05-26):** The overlay mask now unconditionally excludes the sidebar geometry
-(previously only excluded when `sidebar_expanded` was already `True`). This limits visual damage
-when the sidebar appears unexpectedly, but does not fix the underlying expand.
+**Root cause: still unknown. The original race theory is DISPROVEN, not just unconfirmed** — this
+is a real result, not a shrug. The old theory: `_on_theme_right_clicked` → `_on_theme_changed` →
+`_any_panel_animating()` guard fires while a sidebar animation is in progress → deferred retry
+executes after the sidebar has already closed → `sidebar_expanded` left stale. Traced against
+source (2026-07-01) and ruled out on two independent grounds:
+1. `sidebar_expanded` is written **synchronously in `_toggle_sidebar`, before `sidebar_animation.start()`**
+   (`panels.py`) — never from an animation-finished callback. It reflects the most recent click's
+   intent the instant the click handler runs; there is no code path where an animation completes
+   and the flag fails to already match it. It cannot go stale relative to a completed animation.
+2. `sidebar_animation.setDuration(300)` (`main_window_builders.py`) vs. the guard's own
+   `_PANEL_ANIM_GUARD_MS = 700` retry delay (`theme_manager.py`) — a single sidebar toggle is
+   never still `Running` when a 700ms-later deferred retry fires. And the deferred retry fully
+   re-runs `_any_panel_animating()` from scratch (no bypass on retry), so even a still-animating
+   sidebar at that later moment would just re-defer, not fall through with stale state.
 
-**Do not remove the `if pm.sidebar_expanded:` guard** — it controls the sidebar exclusion in other
-code paths and is not the cause of the bug.
+**Do not remove the `if pm.sidebar_expanded:` guard** — confirmed to be a single, correctly-behaving
+flag (not two distinct checks under one name), referenced identically at both mask-exclusion sites
+plus ~12 other read sites in `panels.py`. It is not the cause of the bug.
 
-**Investigation notes:** The right-click flow in `_on_theme_right_clicked` calls
-`_on_theme_changed` which checks `_any_panel_animating()` — if the panel guard fires while a
-sidebar animation is in progress, the deferred retry may execute after the sidebar has already
-closed, leaving `sidebar_expanded` stale. Check `_toggle_sidebar` / `_on_sidebar_hidden` timing
-relative to `_panel_guard_timer` expiry.
+**Two untested candidate mechanisms (2026-07-01), neither requiring `sidebar_expanded` to be wrong:**
+- **Repaint/QSS ordering gap:** the fade overlay's mask punches a hole at the sidebar's *current*
+  geometry (correctly reflecting `sidebar_expanded`), but if `_apply_stylesheets`' sidebar
+  `setStyleSheet(get_sidebar_stylesheet(...))` repolish/repaint lands after the overlay is shown
+  rather than before, the hole could expose one or more frames of the sidebar still rendering
+  old-theme (or unstyled) colors — reading as the reported "hodge-podge" bleed-through without any
+  flag being incorrect.
+- **z-order race between independent `.raise_()` calls:** `_toggle_sidebar` calls
+  `self.sidebar.raise_()` on open; `_on_theme_changed`/`_do_fade_with_slider_animation` separately
+  call `self._fade_overlay.raise_()` after building the mask. If both land close enough together,
+  Qt's stacking order could resolve with the sidebar on top of the overlay regardless of what the
+  mask says — orthogonal to the mask/QRegion mechanism entirely.
+
+**Instrumentation added (2026-07-01, commits `3aeed97`, `90029f0`):** `logger.debug` calls with
+inline `time.perf_counter()` timestamps (sub-millisecond resolution — the standard log timestamp's
+millisecond granularity isn't fine enough to disambiguate closely-spaced events here) now bracket:
+`_toggle_sidebar` entry + its `sidebar.raise_()` call (`panels.py`); the `_any_panel_animating()`
+guard result, both mask-build blocks' `sidebar_expanded`/`sidebar.geometry()` reads, and both
+`_fade_overlay.raise_()` call sites (`theme_manager.py`); and the sidebar `setStyleSheet()` call in
+`_apply_stylesheets`. Silent below `FABULOR_LOG_LEVEL=DEBUG`; verified live (hover + independent
+sidebar toggles) to produce a correctly-ordered, human-readable sequence — see SESSION.md 2026-07-01
+for the verification log excerpt. No repro was forced or captured this session; the instrumentation
+is in place for whenever the bug next surfaces during normal use with DEBUG enabled, which should
+let it distinguish between the two candidates above (or surface a third mechanism neither covers).
 
 ---
 

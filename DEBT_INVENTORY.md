@@ -20,7 +20,7 @@ Newest entries at the top within each section, matching SESSION.md/NOTES.md conv
 ## Theme system
 
 - **Theme transitions** — long-term path is per-element `@Property(QColor)` animation; Themes tab QSS complexity makes it non-trivial today. `THEME_ANIM_TODO` comments mark instrumented widgets. See CLAUDE.md "Pending / Known Debt".
-- **Spurious sidebar expand during theme hover — root cause unknown** (2026-05-26) — suspected race between the right-click handler and the panel animation guard; only mitigated (overlay mask unconditionally excludes sidebar geometry), not fixed. See NOTES.md "Theme System — Known Bugs (2026-05-26)".
+- **Spurious sidebar expand during theme hover — root cause unknown** (2026-05-26, corrected 2026-07-01) — original race theory (deferred-retry leaves `sidebar_expanded` stale) disproven by source tracing: the flag is written synchronously at click time and the 300ms animation / 700ms retry-guard duration gap rules out staleness. No mitigation exists in source despite prior docs claiming one (see NOTES.md correction). DEBUG-level `perf_counter()` instrumentation added 2026-07-01 (commits `3aeed97`, `90029f0`) to catch the next live repro. See NOTES.md "Theme System — Known Bugs (2026-05-26, corrected 2026-07-01)".
 - **`hide_all_panels` then open relies on a `QTimer.singleShot(320, ...)` magic number** instead of a real `all_panels_hidden` signal from `PanelManager`; silently breaks if any panel animation duration changes. Also has an unresolved design question (whether blur's 500ms should count toward "hidden"). Same item as CLAUDE.md's P6-D panel-construction debt — not a new entry, just the fuller writeup. See NOTES.md "`hide_all_panels` then open: timer vs signal (2026-05-26)".
 
 ## Stats / library UI
