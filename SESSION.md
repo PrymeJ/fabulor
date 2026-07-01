@@ -1,4 +1,38 @@
-## Session Summary — 2026-07-01 Session 3 — chapter-nav tracing follow-up; sidebar-hover-bug investigation + wiring
+## Session Summary — 2026-07-01 Session 4 — cover-art theme button hover/pressed contrast tuning
+
+**Branch:** `main`. **Commit:** `e25c0bf`.
+
+### Context
+
+User flagged that in cover-art-derived dynamic themes (`with_pool`/`exclusive` cover theme mode),
+the button hover color was too bright/washed out against light button text (player transport
+buttons and settings-tab buttons both affected), making labels hard to read on hover.
+
+### Iteration
+
+All changes scoped to `ui/cover_theme.py`'s `build_cover_theme` — no static theme in `themes.py`
+touched, per explicit instruction partway through.
+
+1. First attempt dimmed `accent_light` itself (S 0.60→0.55, V 0.90→0.55). This is wrong in
+   hindsight: `accent_light` is also used directly as `sidebar_text`'s resting color, not just the
+   button-hover background, so dimming it flattened sidebar text too. Reported "too dark."
+2. Second attempt (V 0.55→0.70) — still too dark/dull/lifeless.
+3. Correct direction (per user feedback): don't touch `accent_light` at all — restore it, and
+   instead adjust the button's **normal** state (`accent`) down and bring `accent_dark` (pressed)
+   closer to normal, so pressing doesn't read as a jarring blink between two far-apart values.
+   First pass (`accent` V 0.85→0.60, `accent_dark` V 0.45→0.72) made normal too subdued and hover
+   (unchanged, bright) too far above it.
+4. Final values: `accent` S 0.60/V 0.72, `accent_light` S 0.60/V 0.85, `accent_dark` S 0.65/V 0.65.
+   Normal/hover/pressed now sit in a tight V 0.65–0.85 band (same hue throughout) — hover reads as
+   a subtle brighten, pressed a subtle darken, neither a flash.
+
+### Verification
+
+Checked numerically (headless HSV shift over sample dominant hues — orange, teal, yellow) rather
+than visually running the app, since this is a pure color-derivation change with no layout/timing
+component. User confirmed the final values were acceptable after this pass.
+
+
 
 **Branch:** `main`. **Commits:** `053c681`, `ecaab3c`, `32563ff`, `3aeed97`, `90029f0`, `93c4414`.
 
