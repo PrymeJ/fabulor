@@ -174,17 +174,32 @@ class PanelManager:
         #self._abort_theme_fade()
         self.main_window.theme_manager.snap_theme_forward()
         """Hides sidebar first, then shows settings panel."""
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_open_settings_flow ENTRY] "
+            f"sidebar_expanded={self.sidebar_expanded} "
+            f"sidebar_animation.state()={self.sidebar_animation.state()} "
+            f"_sidebar_panel_signal_connected={self._sidebar_panel_signal_connected}"
+        )
         if self.sidebar_expanded:
             self._pending_panel_open = "settings"
             if not self._sidebar_panel_signal_connected:
                 self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
                 self._sidebar_panel_signal_connected = True
+            logger.debug(f"t={time.perf_counter():.6f} [_open_settings_flow] queued: calling _toggle_sidebar to close first")
             self._toggle_sidebar()
         else:
+            logger.debug(f"t={time.perf_counter():.6f} [_open_settings_flow] sidebar already collapsed: entering directly")
             self._start_settings_entry()
 
     def _start_settings_entry(self):
         """Starts the settings panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_start_settings_entry ENTRY] "
+            f"sidebar_expanded={self.sidebar_expanded} "
+            f"sidebar.pos()={self.sidebar.pos()} "
+            f"sidebar.isVisible()={self.sidebar.isVisible()} "
+            f"sidebar_animation.state()={self.sidebar_animation.state()}"
+        )
         self.main_window._sync_persist_filter_on_open()
         # excluded_books_popup is now parented to library_tab (not
         # MainWindow), so its position is relative to its own parent and
@@ -197,12 +212,47 @@ class PanelManager:
         sidebar_y = 56
         self.settings_panel.setFixedWidth(panel_w)
         self.settings_panel.move(-panel_w, sidebar_y)
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_start_settings_entry] "
+            f"BEFORE settings_panel.show()/raise_ "
+            f"sidebar.pos()={self.sidebar.pos()} sidebar.isVisible()={self.sidebar.isVisible()}"
+        )
         self.settings_panel.show()
         self.settings_panel.raise_()
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_start_settings_entry] "
+            f"AFTER settings_panel.show()/raise_ "
+            f"sidebar.pos()={self.sidebar.pos()} sidebar.isVisible()={self.sidebar.isVisible()}"
+        )
 
         self.settings_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _log_settings_slide_frame(value):
+            logger.debug(
+                f"t={time.perf_counter():.6f} [settings_panel_animation valueChanged] "
+                f"panel_pos={value} "
+                f"sidebar.pos()={self.sidebar.pos()} sidebar.isVisible()={self.sidebar.isVisible()} "
+                f"sidebar_expanded={self.sidebar_expanded}"
+            )
+
+        def _on_settings_slide_finished():
+            logger.debug(f"t={time.perf_counter():.6f} [settings_panel_animation finished]")
+            try:
+                self.settings_panel_animation.valueChanged.disconnect(_log_settings_slide_frame)
+                self.settings_panel_animation.finished.disconnect(_on_settings_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+
+        self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
+        self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
+
         self.settings_panel_animation.start()
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_start_settings_entry] "
+            f"settings_panel_animation.start() called "
+            f"sidebar.pos()={self.sidebar.pos()} sidebar.isVisible()={self.sidebar.isVisible()}"
+        )
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
@@ -244,6 +294,11 @@ class PanelManager:
 
     def _on_sidebar_closed_for_panel(self):
         """Handler for sidebar animation finishing when a panel needs to open."""
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_on_sidebar_closed_for_panel ENTRY] "
+            f"sidebar_expanded={self.sidebar_expanded} "
+            f"pending_panel_open={self._pending_panel_open!r}"
+        )
         if self._sidebar_panel_signal_connected:
             self.sidebar_animation.finished.disconnect(self._on_sidebar_closed_for_panel)
             self._sidebar_panel_signal_connected = False
@@ -254,6 +309,10 @@ class PanelManager:
         elif self._pending_panel_open == "sleep": self._start_sleep_entry()
         elif self._pending_panel_open == "stats": self._start_stats_entry()
         elif self._pending_panel_open == "tags": self._start_tags_entry()
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_on_sidebar_closed_for_panel EXIT] "
+            f"dispatched={self._pending_panel_open!r} sidebar_expanded={self.sidebar_expanded}"
+        )
         self._pending_panel_open = None
 
     def _close_library_flow(self):
@@ -555,6 +614,10 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_on_sidebar_hidden ENTRY] "
+            f"sidebar_expanded={self.sidebar_expanded}"
+        )
         if not self.sidebar_expanded:
             self._notify_panel_closed()
 
@@ -632,24 +695,45 @@ class PanelManager:
 
     def handle_drag_area_right_click(self, event):
         """Handles right-click on drag area to dismiss panels or toggle sidebar."""
+        logger.debug(
+            f"t={time.perf_counter():.6f} [handle_drag_area_right_click ENTRY] "
+            f"library={self.library_panel.isVisible()} "
+            f"settings={self.settings_panel.isVisible()} "
+            f"speed={self.speed_panel.isVisible()} "
+            f"sleep={self.sleep_panel.isVisible()} "
+            f"stats={self.stats_panel.isVisible()} "
+            f"tags={self.tags_panel.isVisible()} "
+            f"book_detail={bool(self.book_detail_panel and self.book_detail_panel.isVisible())} "
+            f"chapter_list={self.main_window.chapter_list_widget.isVisible()} "
+            f"sidebar_expanded={self.sidebar_expanded}"
+        )
         self.library_panel.cancel_preload()
         if self.library_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_library")
             self._close_library_flow()
         elif self.settings_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_settings")
             self._close_settings_flow()
         elif self.speed_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_speed")
             self._close_speed_flow()
         elif self.sleep_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_sleep")
             self._close_sleep_flow()
         elif self.stats_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_stats")
             self._close_stats_flow()
         elif self.tags_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_tags")
             self._close_tags_flow()
         elif self.book_detail_panel and self.book_detail_panel.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_book_detail")
             self._close_book_detail_flow()
         elif self.main_window.chapter_list_widget.isVisible():
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=chapter_list_fade_out")
             self.main_window.chapter_list_widget.fade_out()
         else:
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=toggle_sidebar (no panel visible)")
             self._toggle_sidebar()
 
     def resize_panels(self):
