@@ -123,9 +123,9 @@ def build_cover_theme(pixmap: QPixmap) -> dict:
     lib_grid   = _shift_sv(dr, dg, db, j(0.45), j(0.09))
     bg_drop    = _shift_sv(dr, dg, db, j(0.35), j(0.22))
 
-    accent       = _shift_sv(dr, dg, db, j(0.75), j(0.85))
-    accent_light = _shift_sv(dr, dg, db, j(0.60), j(0.90))
-    accent_dark  = _shift_sv(dr, dg, db, j(0.80), j(0.45))
+    accent       = _shift_sv(dr, dg, db, j(0.60), j(0.72))
+    accent_light = _shift_sv(dr, dg, db, j(0.60), j(0.85))
+    accent_dark  = _shift_sv(dr, dg, db, j(0.65), j(0.65))
 
     lib_hover    = _shift_sv(dr, dg, db, j(0.65), j(0.45))   # dominant hue, mid-dark for library hover
     chap_fill    = _shift_sv(dr, dg, db, j(0.60), j(0.55))   # dominant hue, slightly lighter for chapter bar
