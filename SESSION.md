@@ -1,3 +1,44 @@
+## Session Summary — 2026-07-01 Session 1 — honest session position_end, furthest/remaining split, ScrollingLabel clipping
+
+**Branch:** `main`. **Commits:** `44bef56`, `72d80df`.
+
+### Context
+
+Two independent changes: a session recording correctness fix, and an attempted cosmetic fix for
+ScrollingLabel glyph clipping.
+
+### Session position_end fix (`44bef56`)
+
+`SessionRecorder.close()` was storing `position_end = max(live_pos, furthest_position, pos_start)`,
+meaning a session that peaked at 28% mid-session but closed at 1.6% was recorded as ending at 28%.
+This inflated History tab rows, Day/Week/Month `pct_end`, and the book detail "Remaining" row.
+
+Changed `close()` to write `pos_end = live_pos` — the honest closing position. Negative deltas in
+History rows (session ends behind where it started — re-listen scenario) are now possible and shown
+with a muted `_RangeBar` fill and dimmed delta label (`stats_session_label_dim` QSS rule added).
+Crash-recovery path (`_recover_checkpoint`) intentionally left using `furthest_position` since live
+position isn't saved to the checkpoint; a comment documents this.
+
+Book detail Stats tab now has two independently-sourced values: **Furthest position** shows
+`MAX(position_end)` across all sessions (how far you've ever genuinely closed a session), while
+**Remaining** shows `duration - books.progress` (where you are right now). Previously both came
+from `MAX(furthest_position)` which was inflatable by mid-session scrubbing.
+
+`_RecentHistoryWidget` gained theme storage so its `_RangeBar` instances also get the negative
+color. `SessionListWidget._make_row` (dead code, never instantiated) left untouched.
+
+### ScrollingLabel clipping (`72d80df`)
+
+Pre-existing cosmetic issue: when a chapter name is long enough to scroll, the first glyph clips
+against the widget's left boundary at `_scroll_pos = 0`. Attempted fix: `+2` draw offset in
+`paintEvent` and `max_scroll = text_width - width + 2` to keep the right side symmetric. This
+reduced clipping but left a visible 2px gap at the start position. Multiple follow-up approaches
+all introduced worse regressions (ghost text on chapter switch, right-side clipping, etc.). Committed
+the `+2` state as the least-bad tradeoff. Documented in TODO.md for a future pass using
+`QTextLayout` or a container-margin approach instead of raw `drawText` at x=0.
+
+---
+
 ## Session Summary — 2026-06-29 Session 1 — the icon-position regression's real fix, finished-title color, and the carousel arrow overlay rework
 
 **Branch:** `main`. **Commits:** `891d656`, `562d342`, `c295100`, `b17de6f`, `cb18b2d`, docs commit

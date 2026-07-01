@@ -6,6 +6,17 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-01] ScrollingLabel first-glyph clipping.** When a chapter name is long enough to scroll,
+  the first character ('c', 't', etc.) clips against the widget's left edge at the start position
+  (`_scroll_pos = 0`). Qt renders glyphs at x=0 with no left margin and the widget boundary shears
+  them. Attempted fixes: `+2` draw offset (fixes left, clips right or leaves a gap), `setClipRect`
+  (gaps and clips simultaneously), `leftBearing` compensation (bearing reports 0 for these glyphs so
+  no help), `eraseRect`/`fillRect` background clear (causes ghost-text overlap on chapter switch),
+  `update()` after `_timer.start()` (same ghost problem). All attempts introduced worse regressions.
+  The committed state (`72d80df`) has a visible 2px gap at the start position as the least-bad
+  tradeoff. Needs a fresh look — possibly `QTextLayout` instead of raw `drawText`, or a containing
+  widget with `setContentsMargins` rather than painting directly.
+
 - **[2026-06-27] Unused imports / dead names flagged by pyflakes in `app.py` and `ui/panels.py`.**
   Pre-existing, not introduced this session (confirmed via `git log -p`), surfaced while checking a
   warning on an unrelated edit. `app.py`: `QModelIndex`, `QRegularExpression` (QtCore),
