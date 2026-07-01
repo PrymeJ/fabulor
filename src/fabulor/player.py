@@ -140,6 +140,7 @@ class Player(QObject):
             self.instance.event_callback('end-file')(self._on_end_file)
 
     def _on_time_pos_change(self, name, value):
+        logger.debug(f"_on_time_pos_change: raw time_pos={value}")
         self._cached_time_pos = value
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
@@ -163,6 +164,10 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= global_pos:
                     curr = i
+            logger.debug(
+                f"_on_time_pos_change: VT walk local={value} file_offset={self._file_offset} "
+                f"global={global_pos} -> chapter={curr} (prev={self._last_vt_chapter})"
+            )
             if curr != self._last_vt_chapter:
                 self._last_vt_chapter = curr
                 self.chapter_changed.emit(curr)
@@ -175,6 +180,12 @@ class Player(QObject):
             for i, chap in enumerate(self.chapter_list):
                 if chap.get('time', 0) <= value + _CHAPTER_WALK_TOLERANCE:
                     curr = i
+            tolerance_boundary = curr > 0 and self.chapter_list[curr].get('time', 0) > value
+            logger.debug(
+                f"_on_time_pos_change: non-VT walk pos={value} tolerance={_CHAPTER_WALK_TOLERANCE} "
+                f"-> chapter={curr} (prev={self._last_nonvt_chapter}) "
+                f"tolerance_affected_outcome={tolerance_boundary}"
+            )
             if curr != self._last_nonvt_chapter:
                 self._last_nonvt_chapter = curr
                 self.chapter_changed.emit(curr)
@@ -592,6 +603,12 @@ class Player(QObject):
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
         if not self.instance:
             return
+        current_pos = self._cached_time_pos or 0.0
+        direction = 'forward' if pos >= current_pos else 'back'
+        logger.debug(
+            f"seek_async: entry target={pos} current={current_pos} direction={direction} "
+            f"paused={self._cached_pause}"
+        )
         # Floor the target. _EMBEDDED_CHAPTER_SEEK_OFFSET is negative, so a nav to
         # chapter 0 (nominal ~0.0) would otherwise produce a negative absolute seek;
         # mpv treats a negative/zero absolute seek as undefined and can land at EOF
@@ -618,6 +635,10 @@ class Player(QObject):
                     return
                 if target_file['duration'] - local_pos < 2.0:
                     return  # too close to file end — let natural EOF handle it
+                logger.debug(
+                    f"seek_async: VT same-file branch local_pos={local_pos} "
+                    f"final_seek_target={pos}"
+                )
                 self.instance.command_async('seek', local_pos, 'absolute+exact')
             else:
                 self._eof = False
@@ -627,6 +648,10 @@ class Player(QObject):
                 self._current_vt_index = target_idx
                 self._file_offset = target_file['cumulative_start']
                 self._is_vt_file_switch = True
+                logger.debug(
+                    f"seek_async: VT cross-file branch target_idx={target_idx} "
+                    f"local_pos={local_pos} final_seek_target={pos}"
+                )
                 self.instance.play(target_file['file_path'])
         else:
             dur = self._cached_duration
@@ -641,11 +666,19 @@ class Player(QObject):
             # Paused embedded-M4B seeks undershoot by ~0.37s; nudge the mpv command
             # forward to land on target. Logical state below keeps the true pos.
             seek_pos = pos
+            undershoot_comp_applied = False
             if self._is_embedded_m4b and self._cached_pause:
                 seek_pos = pos + _PAUSED_SEEK_UNDERSHOOT_COMP
+                undershoot_comp_applied = True
                 dur = self._cached_duration
                 if dur and dur - seek_pos < 2.0:
                     seek_pos = pos  # don't push the compensated target into the EOF deadzone
+                    undershoot_comp_applied = False
+            logger.debug(
+                f"seek_async: non-VT branch mpv_command_pos={seek_pos} "
+                f"undershoot_comp_applied={undershoot_comp_applied} "
+                f"final_seek_target={pos}"
+            )
             self.instance.command_async('seek', seek_pos, 'absolute+exact')
             self._eof = False
             self.is_seeking = True
@@ -656,6 +689,10 @@ class Player(QObject):
                 for i, chap in enumerate(self._chapter_list):
                     if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
                         curr = i
+                logger.debug(
+                    f"seek_async: CUE optimistic walk pos={pos} tolerance={_CHAPTER_WALK_TOLERANCE} "
+                    f"-> chapter={curr} (prev={self._last_nonvt_chapter})"
+                )
                 if curr != self._last_nonvt_chapter:
                     self._last_nonvt_chapter = curr
                     self.chapter_changed.emit(curr)
@@ -813,6 +850,14 @@ class Player(QObject):
         guard clears on settle and the chapter slider/labels refresh. Returns the
         seek target, or None if idx is out of range."""
         chaps = self.chapter_list or []
+        curr_time = self.time_pos or 0.0
+        curr_idx = 0
+        for i, chap in enumerate(chaps):
+            if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
+                curr_idx = i
+        logger.debug(
+            f"activate_chapter_index: entry requested_idx={idx} current_idx={curr_idx}"
+        )
         if not (0 <= idx < len(chaps)):
             return None
         target = chaps[idx].get('time', 0.0) + self._chapter_seek_offset()
@@ -827,20 +872,30 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            logger.debug(f"previous_chapter: entry (VT) current_idx={curr_chap}")
             chap_start = self._chapter_list[curr_chap].get('time', 0)
             # In the FIRST chapter there is no "previous chapter" to step back to, so the
             # 2s restart-vs-previous threshold does not apply: Prev always rewinds to the
             # book start (0:00). Without this, sitting in the first 2s of chapter 0 made
             # Prev a no-op, leaving 0:01 awkward to clear to 0:00.
             if curr_chap == 0:
+                logger.debug("previous_chapter: (VT) at chapter 0 -> target_idx=0 target=0.0")
                 self.seek_async(0.0)
                 return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
                 target = self._chapter_list[curr_chap - 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+                logger.debug(
+                    f"previous_chapter: (VT) within {threshold}s of chapter start -> "
+                    f"target_idx={curr_chap - 1} target={target}"
+                )
                 self.seek_async(target)
                 return target
             else:
+                logger.debug(
+                    f"previous_chapter: (VT) restart current chapter -> "
+                    f"target_idx={curr_chap} target={chap_start}"
+                )
                 self.seek_async(chap_start)
                 return chap_start
         else:
@@ -850,20 +905,30 @@ class Player(QObject):
             for i, chap in enumerate(chap_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            logger.debug(f"previous_chapter: entry current_idx={curr_chap}")
             chap_start = chap_list[curr_chap].get('time', 0) if chap_list and curr_chap < len(chap_list) else 0
             # First chapter: no previous chapter, so the 2s threshold doesn't apply —
             # Prev always rewinds to the book start (0:00). (See VT branch above.)
             if curr_chap == 0:
+                logger.debug("previous_chapter: at chapter 0 -> target_idx=0 target=0.0")
                 self.seek_async(0.0)
                 return 0.0
             threshold = 2.0 * (self.speed or 1.0)
             if curr_time < chap_start + threshold:
                 nominal = chap_list[curr_chap - 1].get('time', 0)
                 target = nominal + self._chapter_seek_offset()
+                logger.debug(
+                    f"previous_chapter: within {threshold}s of chapter start -> "
+                    f"target_idx={curr_chap - 1} target={target}"
+                )
                 self.seek_async(target)
                 return target
             else:
                 target = chap_start + self._chapter_seek_offset()
+                logger.debug(
+                    f"previous_chapter: restart current chapter -> "
+                    f"target_idx={curr_chap} target={target}"
+                )
                 self.seek_async(target)
                 return target
 
@@ -876,9 +941,12 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            logger.debug(f"next_chapter: entry (VT) current_idx={curr_chap}")
             if curr_chap >= len(self._chapter_list) - 1:
+                logger.debug("next_chapter: (VT) already at last chapter -> no-op")
                 return
             target = self._chapter_list[curr_chap + 1].get('time', 0) + _CHAPTER_BOUNDARY_EPSILON
+            logger.debug(f"next_chapter: (VT) target_idx={curr_chap + 1} target={target}")
             self.seek_async(target)
             return target
         else:
@@ -888,11 +956,14 @@ class Player(QObject):
             for i, chap in enumerate(chap_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            logger.debug(f"next_chapter: entry current_idx={curr_chap}")
             if not chap_list or curr_chap >= len(chap_list) - 1:
+                logger.debug("next_chapter: no chapters or already at last chapter -> no-op")
                 return
             next_chap = curr_chap + 1
             nominal = chap_list[next_chap].get('time', 0)
             target = nominal + self._chapter_seek_offset()
+            logger.debug(f"next_chapter: target_idx={next_chap} target={target}")
             self.seek_async(target)
             return target
 
