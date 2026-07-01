@@ -1,3 +1,4 @@
+import logging
 import random
 import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
@@ -8,6 +9,8 @@ from ..themes import (
     get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
     get_stats_stylesheet, THEMES
 )
+
+logger = logging.getLogger(__name__)
 
 def _theme_distance(name_a: str, name_b: str) -> float:
     """

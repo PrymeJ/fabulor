@@ -1,4 +1,5 @@
 import locale
+import logging
 import math
 import os
 import time
@@ -6,6 +7,8 @@ import warnings
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 from PySide6.QtGui import QPixmap
+
+logger = logging.getLogger(__name__)
 
 # Stub workaround and libmpv check logic lives here
 os.environ["MPV_HOME"] = ""

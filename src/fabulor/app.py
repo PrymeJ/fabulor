@@ -1,6 +1,7 @@
-# THEME_ANIM_TODO: MainWindow, TitleBar, ChapterList, SpeedControlsPanel, 
-# AudioSettingsTab, SleepTimerPanel, StatsPanel, BookDetailPanel, 
+# THEME_ANIM_TODO: MainWindow, TitleBar, ChapterList, SpeedControlsPanel,
+# AudioSettingsTab, SleepTimerPanel, StatsPanel, BookDetailPanel,
 # status_banner, sidebar, vol_container
+import logging
 import os
 import re
 from datetime import datetime, timedelta
@@ -46,6 +47,8 @@ from .book_switch import BookSwitchState
 # main_window_builders module can use them without importing app.py).
 # Re-imported here so existing references in this module keep working unchanged.
 from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon, _load_svg_pixmap
+
+logger = logging.getLogger(__name__)
 
 # Chapter-slider "sliver" suppression (paused-only display fix).
 # A chapter-nav seek lands at `_seek_target = nominal + offset`, where for VT/CUE the
