@@ -1,3 +1,96 @@
+## Session Summary — 2026-07-01 Session 3 — chapter-nav tracing follow-up; sidebar-hover-bug investigation + wiring
+
+**Branch:** `main`. **Commits:** `053c681`, `ecaab3c`, `32563ff`, `3aeed97`, `90029f0`, `93c4414`.
+
+### Context
+
+Two independent threads, both building on Session 2's logging infrastructure (`logger_setup.py`,
+module-level loggers). First: closed the one gap flagged during Session 2's chapter-nav tracing
+pass. Second: a from-scratch investigation of a long-standing, sporadic, never-reproduced bug
+("spurious sidebar expand during theme hover") — doc research, then source tracing, then targeted
+instrumentation — which surfaced that the bug's own documentation was itself wrong about what had
+been tried.
+
+### Chapter-nav tracing: `seek_within_chapter` gap closed (`053c681`, `ecaab3c`, `32563ff`)
+
+Session 2 added DEBUG tracing to `_on_time_pos_change`, `seek_async`, `activate_chapter_index`,
+`previous_chapter`, `next_chapter` (`player.py`), and `_sync_chapter_ui` (`app.py`), but explicitly
+left `seek_within_chapter` untouched — same inlined chapter-walk pattern as the others, out of
+scope for that session. Added it this session: same log-line shape (`walk pos=... tolerance=...
+-> chapter=... tolerance_affected_outcome=...`) as the existing walk sites. Verified live via a
+scroll-wheel seek over the chapter progress slider — `seek_within_chapter` → `seek_async` sequence
+read correctly, `direction=back` reported accurately for a backward scroll. Split into three
+commits matching the file/concern boundaries.
+
+### Sidebar-hover-bug investigation (doc research → source tracing → instrumentation)
+
+**Doc research (read-only, not committed as code):** Swept CLAUDE.md, NOTES.md, SESSION.md,
+TESTING.md, DEBT_INVENTORY.md, and `review/*.md` for prior work on "spurious sidebar expand during
+theme hover" (NOTES.md, originally filed 2026-05-26). Found the bug was reported once, mitigated
+same-day per the doc (never re-confirmed after), and carried forward unchanged as "not fixed" in
+two separate debt trackers weeks apart. Distinguished it from an unrelated, confirmed-FIXED bug
+with an adjacent name ("theme fade interrupt (sidebar mid-fade)," 2026-06-19 — slider *color*
+stranding on interrupt, not sidebar *visibility* bleed-through) and from three older, unrelated
+`QRegion`/mask commits (2026-05-08 removal, 2026-05-10 reimplementation — NOTES.md misdated this
+one 2026-05-13) for the cover-art theme mask subsystem.
+
+**Source-level tracing:** Traced every `sidebar_expanded` reference (confirmed: one flag on
+`PanelManager`, ~14 read/write sites, not two distinct checks under one name — resolving the
+doc-level ambiguity plainly). Traced `_on_theme_right_clicked`/`_on_theme_hovered` →
+`_on_theme_changed`'s `_any_panel_animating()` guard and its 700ms (`_PANEL_ANIM_GUARD_MS`)
+deferred-retry timer; `_toggle_sidebar`/`_on_sidebar_hidden`; both mask-exclusion blocks
+(`theme_manager.py`, themes-tab-visible path and slider-animation path).
+
+**Two findings, both against the documented record:**
+1. **The original race theory is disproven, not just unconfirmed.** The suspected mechanism
+   (deferred retry executes after the sidebar has already closed, leaving `sidebar_expanded`
+   stale) doesn't hold: the flag is written **synchronously in `_toggle_sidebar`, before
+   `sidebar_animation.start()`** — never from an animation-finished callback, so it can't go stale
+   relative to a completed animation. Independently, `sidebar_animation`'s duration (300ms) is
+   well under the guard's own retry delay (700ms), so a single toggle can never still be
+   `Running` when a deferred retry fires — and the retry fully re-checks the guard from scratch,
+   so even a still-animating sidebar at that later moment just re-defers rather than falling
+   through with stale state.
+2. **NOTES.md's "Mitigation (2026-05-26)" claim doesn't match source.** It stated the overlay mask
+   was changed to unconditionally exclude sidebar geometry. `git log -p -L` on both mask sites
+   shows `if pm.sidebar_expanded: mask -= QRegion(pm.sidebar.geometry())` has been byte-identical
+   since its introduction on `99438c5` (2026-05-10) through today; the commit the doc cited
+   (`65b5688`, same date) only adds `tags_panel` to the panel-exclusion list and never touches the
+   sidebar line. No commit in either file's full history ever makes the exclusion unconditional.
+
+Two untested candidate mechanisms recorded in place of the disproven theory — a repaint/QSS
+ordering gap (sidebar's own stylesheet repolish landing after the overlay's mask-punched hole is
+shown) and a z-order race between `sidebar.raise_()` and `_fade_overlay.raise_()` being independent
+calls with no synchronization between them. Neither requires `sidebar_expanded` to be wrong.
+
+**Instrumentation added (`3aeed97`, `90029f0`):** DEBUG-level `logger.debug` calls with inline
+`time.perf_counter()` timestamps (standard log timestamps are only millisecond-resolution — too
+coarse to disambiguate the closely-spaced events here) bracket: `_toggle_sidebar` entry +
+`sidebar.raise_()` (`panels.py`, which gained its first `logger`/`import time` this session); the
+`_any_panel_animating()` guard result, both mask-build blocks' `sidebar_expanded`/`geometry()`
+reads, both `_fade_overlay.raise_()` sites, and the sidebar `setStyleSheet()` bracket in
+`_apply_stylesheets` (`theme_manager.py`). Verified live (hover several themes + independent
+sidebar toggles): all lines fire, correctly ordered by embedded `perf_counter()` values even
+within the same log-timestamp millisecond, silent at default WARNING level. No repro was forced or
+captured — the bug is sporadic by nature; this is instrumentation in place for whenever it next
+surfaces during normal use with `FABULOR_LOG_LEVEL=DEBUG` already on.
+
+**Docs corrected (`93c4414`):** NOTES.md's "Theme System — Known Bugs" entry rewritten in place —
+kept the original symptom description, explicitly flagged the mitigation claim as checked-and-wrong
+with the git evidence, replaced the disproven race theory with the disproof and the two new
+candidates, and recorded the instrumentation. `DEBT_INVENTORY.md`'s one-line summary updated to
+match. `review/DEBT_INVENTORY.md` deliberately left untouched — it's a dated snapshot from the
+2026-06-12 review batch, not a doc meant to be retroactively edited.
+
+### Follow-up
+
+The instrumentation is dormant until the bug next reproduces. When it does, the `perf_counter()`
+sequence should be enough to tell whether it's the repaint/QSS-ordering candidate, the z-order-race
+candidate, or something neither theory anticipated — no further guessing from static reading should
+be needed at that point.
+
+---
+
 ## Session Summary — 2026-07-01 Session 2 — logging infrastructure (plumbing only)
 
 **Branch:** `main`. **Commits:** (uncommitted at time of writing).
