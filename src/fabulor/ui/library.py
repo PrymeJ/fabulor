@@ -16,7 +16,7 @@ ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "
 TWO_PER_ROW_MODE   = ("2 per row", ["2 Cities", "2 Towers", "Swim-2-Birds", "2nd Sex", "2nd Sons"])
 THREE_PER_ROW_MODE = ("3 per row", ["3 Body", "3 Stigmata", "3 Kingdoms", "Drawing of the 3", "3 Lives", "The 3rd Man", "3rd Policeman", "3 Guineas", "3 Comrades"])
 SQUARE_MODE        = ("Square",    ["Washington Sq."])
-LIST_MODE          = ("List",      ["Cannery Row"])
+LIST_MODE          = ("List",      ["Cannery Row", "Tamarisk Row"])
 VIEW_MODES = [ONE_PER_ROW_MODE, TWO_PER_ROW_MODE, THREE_PER_ROW_MODE, SQUARE_MODE, LIST_MODE]
 
 # Constants for Virtual Scrolling
