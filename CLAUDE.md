@@ -392,6 +392,10 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - `assets.py` — `get_asset_path(relative)` resolves into the bundled `assets/` dir; `ICON_PATH` for the app icon.
 - `book_quotes.py` — `BOOK_QUOTES`: 32 `(text, title, text_size, title_size, color, text_align)` literary quotes; `LibraryController._rotate_quote` picks one and renders it as HTML in the empty state.
 
+### Logging (`logger_setup.py`, added 2026-07-01)
+
+Pure plumbing, no call sites yet. `setup_logging()` (called first thing in `main.py`'s `__main__` block, before `QApplication`) configures the `fabulor` root logger **once** (idempotent): a `RotatingFileHandler` (2 MB × 3 backups) at `platformdirs.user_log_dir("fabulor")`, level from `FABULOR_LOG_LEVEL` (DEBUG/INFO/WARNING/ERROR, case-insensitive, invalid → WARNING default), format `"%(asctime)s %(levelname)-8s %(name)s — %(message)s"`, `propagate=False` — **file sink only, no stdout/console handler**. Emits one `logger.warning("Fabulor started")` at the end (WARNING, not INFO, so it lands in the file at the default level). Module-level `logger = logging.getLogger(__name__)` instances exist in `player.py`, `app.py`, `ui/theme_manager.py` but are **silent** — call sites land incrementally in later sessions. **Windows-port note:** the log dir uses the one-arg `user_log_dir("fabulor")` form (no appauthor), unlike the two-arg `user_data_dir("fabulor", "fabulor")` used everywhere else — see NOTES.md (2026-07-01) for why that matters on Windows.
+
 ---
 
 ## Critical Architecture Rules
@@ -648,6 +652,7 @@ src/fabulor/
 ├── settings_controller.py    # Settings logic (dynamic binding)
 ├── session_recorder.py       # SessionRecorder — session open/pause/resume/close, checkpoint, furthest-pos tracking
 ├── book_switch.py            # BookSwitchState — single authority for the book-switch transition lifecycle (phase, deadzone, pre-switch captures, deferred flags)
+├── logger_setup.py           # setup_logging() — root fabulor logger, rotating file handler (called first in main.py)
 ├── book_quotes.py            # Quote pool for the empty/no-book state rotation
 ├── assets.py                 # get_asset_path helper (resolves paths into the assets/ bundle)
 ├── library/
@@ -705,7 +710,18 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-06-27 Session 3 — is_missing flag fixes the Excluded Books ping-pong; arrow
+*Last updated: 2026-07-01 Session 2 — logging infrastructure added (plumbing only). New
+`logger_setup.py`: `setup_logging()` configures the `fabulor` root logger once (rotating file
+handler, 2 MB × 3, at `platformdirs.user_log_dir("fabulor")`; level from `FABULOR_LOG_LEVEL`,
+default WARNING; file sink only, no console handler), called first thing in `main.py`. Startup
+message logged at WARNING (not INFO) so it lands at the default level. Silent module-level
+`logger` instances added to `player.py`/`app.py`/`ui/theme_manager.py` — no call sites yet, those
+land incrementally. New "Logging" subsystem entry under What's Built; `logger_setup.py` added to
+the file tree. No new DO-NOT rule (pure additive plumbing, no hard-won bug). Windows-port note
+recorded in NOTES.md: log dir uses the one-arg `user_log_dir("fabulor")` form vs the two-arg
+`user_data_dir("fabulor", "fabulor")` used elsewhere.*
+
+*Previously: 2026-06-27 Session 3 — is_missing flag fixes the Excluded Books ping-pong; arrow
 moved out of the toggle label. mark_books_missing/_mark_book_missing used to write is_excluded=1
 for a book confirmed gone from disk — indistinguishable from a real user-trash, and the popup's
 eye-click restore (set_book_excluded(path, False)) would put a file-less book back in the library,

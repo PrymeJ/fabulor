@@ -1,3 +1,26 @@
+## Logging infrastructure added — `user_log_dir("fabulor")` uses the one-arg platformdirs form; revisit for the Windows port (2026-07-01)
+
+Added `src/fabulor/logger_setup.py` (`setup_logging()`, called first thing in `main.py`'s
+`__main__` block): a rotating file handler (2 MB × 3) on the `fabulor` root logger, level from
+`FABULOR_LOG_LEVEL` (default WARNING), file sink only. Module-level `logger` instances are
+declared in `player.py`, `app.py`, `ui/theme_manager.py` but have **no call sites yet** — those
+land incrementally in later sessions.
+
+**Windows-port gotcha — the two `platformdirs` call forms differ, and it matters on Windows:**
+
+- The **log sink** uses the **one-arg** form: `platformdirs.user_log_dir("fabulor")` — appname
+  only, **no appauthor**. On Linux this resolves to `~/.local/state/fabulor/log`.
+- **Every other user-dir call** in the codebase uses the **two-arg** form
+  `platformdirs.user_data_dir("fabulor", "fabulor")` / `user_cache_dir("fabulor", "fabulor")`
+  (appname **and** appauthor) — see `db.py`, `library/cover_manager.py`, `library/scanner.py`.
+
+On Linux the `appauthor` argument is ignored, so the two forms differ only cosmetically and
+everything lands under `~/.local/{state,share,cache}/fabulor/`. **On Windows** `platformdirs`
+inserts `appauthor` as an actual path segment (`…\fabulor\fabulor\…`), so the one-arg log dir and
+the two-arg data/cache dirs would land under **different** parent folders. When porting, decide
+whether to unify on the two-arg form (recommended, for one consistent per-app tree). This was
+left as-is deliberately this session to keep the logging change additive-only.
+
 ## A delegated `setFixedSize(other_widget.size())` call was the real cause of the icon-position bug — found AFTER a full revert (2026-06-28 → 2026-06-29)
 
 **Symptom:** adding a gravestone icon (`_missing_label`) next to the existing ghost icon

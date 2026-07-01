@@ -1,3 +1,60 @@
+## Session Summary — 2026-07-01 Session 2 — logging infrastructure (plumbing only)
+
+**Branch:** `main`. **Commits:** (uncommitted at time of writing).
+
+### Context
+
+Fabulor had no logging infrastructure at all — a codebase-wide grep for `import logging` /
+`getLogger` returned nothing, so diagnosing the app's many timing/state bugs relied on ad-hoc
+`print` statements. This session lays the plumbing only: a root-logger setup module wired into
+startup, plus silent module-level `logger` instances in the subsystems most likely to need
+instrumentation next. **Additive-only — no call sites beyond one startup message, no existing
+logic touched.**
+
+### What shipped
+
+**New `src/fabulor/logger_setup.py`** — `setup_logging()` configures the `fabulor` root logger
+once (idempotent via a module-level `_configured` guard): a `RotatingFileHandler`
+(`maxBytes=2*1024*1024`, `backupCount=3`, `encoding="utf-8"`) at
+`platformdirs.user_log_dir("fabulor")` (dir created if absent). Level from `FABULOR_LOG_LEVEL`
+(DEBUG/INFO/WARNING/ERROR, case-insensitive, invalid → WARNING default). Format
+`"%(asctime)s %(levelname)-8s %(name)s — %(message)s"` (default `asctime` gives `,mmm` ms).
+`propagate = False` — **file sink only, no stdout/console handler**. Ends with one
+`logger.warning("Fabulor started")`.
+
+**Deviation from the implementation prompt (confirmed with user):** the prompt specified
+`logger.info("Fabulor started")`, but with the default WARNING level an INFO startup line would
+never reach the file. Logged at **WARNING** instead so the heartbeat lands on every run
+regardless of level.
+
+**`main.py`** — `setup_logging()` is the first statement inside the `__main__` block, before
+`QApplication(sys.argv)`. `logger_setup` imports only stdlib + `platformdirs`, so it's safe to
+import/run first.
+
+**Module-level `logger = logging.getLogger(__name__)`** (declaration only, zero call sites) added
+to `player.py`, `app.py`, `ui/theme_manager.py`. Chapter nav is not a separate module — it lives
+in `player.py`, already covered. The `player.py` import was placed above the MPV-init block,
+which was not touched.
+
+**NOTES.md** — prepended a dated entry documenting the one-arg `user_log_dir("fabulor")` vs the
+two-arg `user_data_dir("fabulor", "fabulor")` form used everywhere else (`db.py`,
+`cover_manager.py`, `scanner.py`), and why the difference matters for the Windows port (appauthor
+becomes a real path segment on Windows, so log dir and data/cache dirs would diverge).
+
+### Verification
+
+Real app run wrote the startup line to `~/.local/state/fabulor/log/fabulor.log`, did not leak to
+stdout, no tracebacks, no stray processes. Level plumbing confirmed: DEBUG→10, bogus→WARNING(30),
+lowercase `info`→20; idempotent (one handler after two `setup_logging()` calls). All 48 tests
+green (`pytest tests/ -q`).
+
+### Follow-up
+
+Call sites land incrementally in future sessions. CLAUDE.md updated with a short logging-subsystem
+reference and the one-arg-platformdirs / WARNING-startup facts.
+
+---
+
 ## Session Summary — 2026-07-01 Session 1 — honest session position_end, furthest/remaining split, ScrollingLabel clipping
 
 **Branch:** `main`. **Commits:** `44bef56`, `72d80df`.
