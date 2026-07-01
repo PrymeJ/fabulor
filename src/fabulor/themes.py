@@ -3661,6 +3661,10 @@ def get_stats_stylesheet(theme_name="default"):
             color: {t['accent_light']};
             font-size: 13px;
         }}
+        QLabel#stats_session_label_dim {{
+            color: rgba({_hex_to_rgb(t['text'])}, 0.80);
+            font-size: 13px;
+        }}
         QLabel#tag_display_chip {{
             color: {t['accent_light']};
             font-size: 12px;
@@ -3670,7 +3674,7 @@ def get_stats_stylesheet(theme_name="default"):
             color: {finished_color};
         }}
         QLabel#stats_book_time_label_dim {{
-            color: rgba({_hex_to_rgb(t['text'])}, 0.45);
+            color: rgba({_hex_to_rgb(t['text'])}, 0.70);
         }}
         QWidget#stats_book_day_row:hover, QWidget#stats_book_day_row_alt:hover {{
             background-color: rgba({_hex_to_rgb(t['accent'])}, 0.12);

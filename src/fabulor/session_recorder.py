@@ -120,7 +120,7 @@ class SessionRecorder(QObject):
             start = self._session_start
             pos_start = self._session_position_start
             live_pos = self._get_position()
-            pos_end = max(live_pos, self._session_furthest_position or pos_start or 0.0, pos_start or 0.0)
+            pos_end = live_pos
             furthest = self._session_furthest_position
             dur = book.duration if book else 0
             pct_end = (pos_end / dur * 100) if dur else 0
@@ -266,6 +266,10 @@ class SessionRecorder(QObject):
                         session_start=session_start,
                         session_end=session_end,
                         position_start=position_start,
+                        # On crash recovery the live position at crash time is not
+                        # available (the checkpoint doesn't save it). furthest_position
+                        # is the best approximation we have. This is intentionally
+                        # inconsistent with close(), which now uses the honest live_pos.
                         position_end=furthest if furthest is not None else position_start,
                         furthest_position=furthest,
                         listened_seconds=listened,

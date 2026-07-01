@@ -728,7 +728,7 @@ class LibraryDB:
         with self._get_conn() as conn:
             agg = conn.execute("""
                 SELECT
-                    MAX(furthest_position) as furthest_position,
+                    MAX(position_end) as furthest_position,
                     SUM(COALESCE(listened_seconds, (julianday(session_end) - julianday(session_start)) * 86400)) as total_seconds,
                     COUNT(*) as session_count,
                     MIN(session_start) as first_session,

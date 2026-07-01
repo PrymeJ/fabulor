@@ -281,13 +281,15 @@ class _RangeBar(QWidget):
     """Flat bar showing which portion of a book was covered in a session."""
 
     def __init__(self, pos_start: float, pos_end: float, duration: float,
-                 accent: QColor, bg: QColor, parent=None):
+                 accent: QColor, bg: QColor, negative_color: QColor | None = None,
+                 parent=None):
         super().__init__(parent)
         self._start = pos_start
         self._end = pos_end
         self._duration = duration
         self._accent = accent
         self._bg = bg
+        self._negative_color = negative_color
 
     @Property(QColor)
     def accent_color(self):
@@ -326,22 +328,24 @@ class _RangeBar(QWidget):
         painter.fillRect(0, 0, w, h, self._bg)
 
         if self._duration > 0:
-            # Calculate pixel positions as floats first to maintain precision
             x1_float = (self._start / self._duration) * w
             x2_float = (self._end / self._duration) * w
 
-            # Ensure x2_float doesn't exceed widget width
-            x2_float = min(x2_float, float(w))
+            is_negative = self._end < self._start
+            fill_color = (self._negative_color
+                          if is_negative and self._negative_color is not None
+                          else self._accent)
 
-            # Calculate the width of the filled portion
-            fill_width_float = x2_float - x1_float
+            # Draw from the lesser to the greater x, regardless of direction.
+            left = min(x1_float, x2_float)
+            right = min(max(x1_float, x2_float), float(w))
+            fill_width_float = right - left
 
-            # Apply the 1px minimum width rule if there's any progress
             if fill_width_float > 0 and fill_width_float < 1:
                 fill_width = 1
             else:
-                fill_width = int(fill_width_float) # Convert to int for drawing
-            painter.fillRect(int(x1_float), 0, fill_width, h, self._accent)
+                fill_width = int(fill_width_float)
+            painter.fillRect(int(left), 0, fill_width, h, fill_color)
 
         outline = QColor(self._accent)
         outline.setAlpha(120)

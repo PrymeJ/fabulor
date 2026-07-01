@@ -631,6 +631,10 @@ class BookDetailPanel(QWidget):
                 }
 
         _book_dict = self.db.get_book_dict(self._book_path)
+        # Keep progress in _book_data current — it's the discrete saved position
+        # used by _refresh_stats to compute "Remaining" (not furthest_position).
+        if _book_dict:
+            self._book_data['progress'] = _book_dict.get('progress', 0.0)
         self._is_archived = (
             _book_dict is None or
             bool(_book_dict.get('is_deleted')) or
@@ -1107,12 +1111,18 @@ class BookDetailPanel(QWidget):
 
         speed = self.config.get_book_speed(self._book_path) or 1.0
 
+        # Re-read progress from DB so Remaining reflects the latest saved position
+        # even if the panel was opened before the most recent pause/book-switch write.
+        fresh = self.db.get_book_dict(self._book_path)
+        if fresh:
+            self._book_data['progress'] = fresh.get('progress', 0.0)
         furthest = stats['furthest_position']
+        current  = self._book_data.get('progress') or 0.0
         if duration and duration > 0:
             pct = min(100, round((furthest / duration) * 100))
             self._furthest_bar.update_range(0, furthest, duration)
             self._furthest_pct_label.setText(f"{pct}%")
-            remaining = max(0, duration - furthest)
+            remaining = max(0, duration - current)
             if speed != 1.0:
                 self._stat_labels[0].setText(
                     f"{self._fmt(remaining / speed)} at {speed:g}x"
@@ -1209,9 +1219,12 @@ class BookDetailPanel(QWidget):
 
         accent = QColor(self._theme.get('library_slider_fill', '#888888'))
         bg     = QColor(self._theme.get('library_slider_bg',   '#333333'))
+        neg    = QColor(self._theme.get('text', '#888888'))
+        neg.setAlphaF(0.45)
 
         for i, s in enumerate(sessions):
             row = _HistoryRow(s, duration, accent, bg, index=i,
+                              negative_color=neg,
                               parent=self._history_container)
             row.set_colors(accent, bg, self._theme)
             row.confirm_requested.connect(
@@ -1265,7 +1278,7 @@ class BookDetailPanel(QWidget):
         from PySide6.QtGui import QColor
         fill = QColor(self._theme.get('library_slider_fill', '#888888'))
         bg   = QColor(self._theme.get('library_slider_bg',   '#333333'))
-        self._session_list.set_colors(fill, bg)
+        self._session_list.set_colors(fill, bg, self._theme)
         for row in self._history_rows:
             row.set_colors(fill, bg, self._theme)
         self._furthest_bar.set_colors(fill, bg)
@@ -1453,6 +1466,7 @@ class _RecentHistoryWidget(QWidget):
         super().__init__(parent)
         self._accent = QColor("#9B59B6")
         self._bg = QColor("#3A1A50")
+        self._theme: dict = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1471,9 +1485,11 @@ class _RecentHistoryWidget(QWidget):
         header_h = header.sizeHint().height()
         self.setFixedHeight(header_h + self._HEADER_TO_ROW_GAP + rows_h)
 
-    def set_colors(self, accent: QColor, bg: QColor):
+    def set_colors(self, accent: QColor, bg: QColor, theme: dict | None = None):
         self._accent = accent
         self._bg = bg
+        if theme is not None:
+            self._theme = theme
         for i in range(self._layout.count() - 1):
             item = self._layout.itemAt(i)
             if item and item.widget():
@@ -1516,6 +1532,7 @@ class _RecentHistoryWidget(QWidget):
 
         pos_start = s.get('position_start') or 0.0
         pos_end = s.get('position_end') or 0.0
+        delta = 0.0
 
         if duration > 0:
             def fmt_pct(v):
@@ -1530,13 +1547,18 @@ class _RecentHistoryWidget(QWidget):
             delta_label = QLabel("")
             pct_label = QLabel("")
 
-        delta_label.setObjectName("stats_value_label")
+        delta_label.setObjectName(
+            "stats_session_label_dim" if delta < 0 else "stats_value_label"
+        )
         delta_label.setFixedWidth(39)
         delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(delta_label)
         hbox.addSpacing(6)
 
-        bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg)
+        neg = QColor(self._theme.get('text', '#888888'))
+        neg.setAlphaF(0.45)
+        bar = _RangeBar(pos_start, pos_end, duration, self._accent, self._bg,
+                        negative_color=neg)
         bar.setFixedHeight(6)
         hbox.addWidget(bar, stretch=1)
 
@@ -1563,11 +1585,13 @@ class _HistoryRow(QWidget):
     ROW_H = 27
 
     def __init__(self, session: dict, duration: float,
-                 accent: QColor, bg: QColor, index: int, parent=None):
+                 accent: QColor, bg: QColor, index: int,
+                 negative_color: QColor | None = None, parent=None):
         super().__init__(parent)
         self._session_id = session.get('id')
         self._accent = accent
         self._bg = bg
+        self._negative_color = negative_color
         self._state = 'idle'   # idle | hover | confirming
         self._confirm_timer = QTimer(self)
         self._confirm_timer.setSingleShot(True)
@@ -1604,6 +1628,7 @@ class _HistoryRow(QWidget):
 
         pos_start = session.get('position_start') or 0.0
         pos_end   = session.get('position_end')   or 0.0
+        delta     = 0.0
 
         if duration > 0:
             def fmt_pct(v):
@@ -1618,13 +1643,16 @@ class _HistoryRow(QWidget):
             delta_label = QLabel("")
             pct_text    = ""
 
-        delta_label.setObjectName("stats_value_label")
+        delta_label.setObjectName(
+            "stats_session_label_dim" if delta < 0 else "stats_value_label"
+        )
         delta_label.setFixedWidth(39)
         delta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hbox.addWidget(delta_label)
         hbox.addSpacing(6)
 
-        self._bar = _RangeBar(pos_start, pos_end, duration, accent, bg)
+        self._bar = _RangeBar(pos_start, pos_end, duration, accent, bg,
+                              negative_color=self._negative_color)
         self._bar.setFixedHeight(6)
         hbox.addWidget(self._bar, stretch=1)
 
