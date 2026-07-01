@@ -1899,6 +1899,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for i, chap in enumerate(chap_list):
             if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
                 curr_chap = i
+        logger.debug(
+            f"_sync_chapter_ui: syncing to chapter={curr_chap} pos={pos} "
+            f"prev_ui_row={self.chapter_list_widget.currentRow()}"
+        )
         if curr_chap < len(chap_list):
             # Update chapter progress
             start = chap_list[curr_chap].get('time', 0)
