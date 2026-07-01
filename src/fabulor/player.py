@@ -981,6 +981,11 @@ class Player(QObject):
             for i, chap in enumerate(self._chapter_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            tolerance_boundary = curr_chap > 0 and self._chapter_list[curr_chap].get('time', 0) > curr_time
+            logger.debug(
+                f"seek_within_chapter: (VT) walk pos={curr_time} tolerance={_CHAPTER_WALK_TOLERANCE} "
+                f"-> chapter={curr_chap} tolerance_affected_outcome={tolerance_boundary}"
+            )
             dur = self.duration
             start = self._chapter_list[curr_chap].get('time', 0)
             end = self._chapter_list[curr_chap + 1].get('time', dur) if curr_chap + 1 < len(self._chapter_list) else dur
@@ -996,6 +1001,11 @@ class Player(QObject):
             for i, chap in enumerate(chap_list):
                 if chap.get('time', 0) <= curr_time + _CHAPTER_WALK_TOLERANCE:
                     curr_chap = i
+            tolerance_boundary = curr_chap > 0 and chap_list[curr_chap].get('time', 0) > curr_time
+            logger.debug(
+                f"seek_within_chapter: walk pos={curr_time} tolerance={_CHAPTER_WALK_TOLERANCE} "
+                f"-> chapter={curr_chap} tolerance_affected_outcome={tolerance_boundary}"
+            )
             if chap_list and curr_chap < len(chap_list):
                 dur = self.duration
                 start = chap_list[curr_chap].get('time', 0)
