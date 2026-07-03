@@ -31,6 +31,49 @@ Revisit as a dedicated follow-up if mode-switch first-paint stall becomes a felt
 
 ---
 
+## `_sized_cover_cache` memory + warming-time cost (all view modes vs. active-only) (2026-07-04)
+
+Reference numbers behind the "active view mode only" scoping decision for the idle-preloader
+sized-cache warming (see "Idle preloader warms `_sized_cover_cache`" and the FUTURE IDEA entry
+above). Kept here so the tradeoff doesn't have to be re-derived.
+
+**Memory model.** A sized pixmap costs `stored_w × stored_h × 4 bytes` (RGBA8888), and — this is
+the key point — that is **independent of the source cover's file size or resolution**: it's the
+scaled-down raster, not the original. `stored_w/h` is the source scaled to *cover* the cell (max
+of the two axis ratios; `_get_sized_cover`'s expand-then-crop), so slightly larger than the cell
+on one axis. Per-mode cover-rect sizes come from `BookDelegate.cover_cell_size()`:
+Square 92×92, 3-per-row 92×142, 2-per-row 113×172, 1-per-row 100×151 (List has no cover). Costs
+scale with **DPR²** (a HiDPI/Retina 2× display quadruples every number — 2× per axis), so any
+"cache more" decision must be reasoned at DPR 2, not DPR 1.
+
+Per-book, summing the 4 cover-bearing modes: **~237 KB at DPR 1, ~950 KB at DPR 2.**
+
+| Library size | All 4 modes @DPR1 | All 4 modes @DPR2 | Active-mode-only @DPR2 (what ships) |
+|---|---|---|---|
+| 383 (current lib) | 89 MB | 355 MB | 114 MB |
+| 1,000 | 232 MB | 928 MB | 297 MB |
+| 4,000 | 927 MB | **3.7 GB** | 1.2 GB |
+| 10,000 | 2.3 GB | **9.3 GB** | 3.0 GB |
+
+The intercept is tolerable; the **slope** is the problem — cost is `books × modes × dpr²` and
+`_sized_cover_cache` has **no eviction** (grows for the session; see DEBT_INVENTORY.md). "All modes"
+just multiplies the already-unbounded active-mode figure by 4 for **no additional stall benefit**
+over "active mode" + the bounded first-page-per-mode idea combined. Hence: do NOT warm all modes.
+If mode-switch stall becomes a felt problem, do the **first-page-per-mode** approach from the FUTURE
+IDEA entry instead — ~20–30 books × 5 modes ≈ **~5 MB flat at DPR 2, independent of library size**.
+
+**Warming time (measured, this machine, 383-book lib, "3 per row").** With the shipped config
+(`PRELOAD_BATCH_SIZE=3` / `PRELOAD_INTERVAL_MS=50` ⇒ 60 books/s theoretical) and the real gate in
+place, the whole library warmed (both `_cover_cache` and `_sized_cover_cache`) in **~6 s of
+preloading**, after the initial 5 s idle wait — steady **~58–61 books/s**, i.e. it hits the dispatch
+ceiling. Warming is **dispatch-bound, not scale-bound**: the off-thread LANCZOS keeps up with the
+50 ms tick, so time scales linearly and predictably as **≈ books ÷ 60 seconds** (≈ 17 s for 1,000
+books, ≈ 67 s for 4,000). This is wall-clock while idle and untouched; any interaction resets the
+5 s idle timer and pauses in-flight work, so real-world completion is longer if the app is actively
+used.
+
+---
+
 ## No-cover-source handling consolidated into `_show_no_cover_state` (2026-07-03)
 
 Step 1.5 of the placeholder rework: de-duplicated the two identical no-cover branches in
