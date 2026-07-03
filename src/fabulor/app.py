@@ -3,7 +3,6 @@
 # status_banner, sidebar, vol_container
 import logging
 import os
-import re
 from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -12,10 +11,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QByteArray, QElapsedTimer, QSize, QVariantAnimation
+    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation
 )
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
-from PySide6.QtSvg import QSvgRenderer
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
@@ -46,7 +44,8 @@ from .book_switch import BookSwitchState
 # Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
 # main_window_builders module can use them without importing app.py).
 # Re-imported here so existing references in this module keep working unchanged.
-from .ui.ui_helpers import _ASSETS_DIR, COVER_AREA_HEIGHT, _load_svg_icon, _load_svg_pixmap
+from .ui.ui_helpers import COVER_AREA_HEIGHT, _load_svg_icon, _load_svg_pixmap
+from .ui.cover_placeholder import CoverPlaceholder
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +297,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.current_cover_pixmap = QPixmap()
         self._pending_cover_pixmap = None
         self._cover_fit_mode = 'fit'
-        self._showing_placeholder = False
+        self._cover_placeholder = CoverPlaceholder()
         self._carousel = None           # CoverCarousel widget inside carousel_holder (lazily built)
         self._carousel_slide_anim = None
         self._dialog_close_time = QElapsedTimer()
@@ -1835,8 +1834,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             bg_color = t.get('carousel_bg', t.get('slider_overall_bg', '#1a1a1a'))
             line_color = t.get('carousel_stripe') or None
             self._carousel.set_stripe_color(bg_color, line_color=line_color)
-        if self._showing_placeholder:
-            self._show_cover_placeholder()
+        self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_color())
         # Refresh whichever play/pause/restart icon is currently showing
         if self.current_file and self.player.eof_reached:
             self._set_play_icon("restart")
@@ -2193,7 +2191,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.preview_anim.start()
 
     def _apply_main_cover(self, pixmap):
-        self._showing_placeholder = False
+        self._cover_placeholder.clear()
         self.current_cover_pixmap = pixmap
         self.cover_art_label.show()
         self.metadata_label.hide()
@@ -2210,7 +2208,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _load_cover_art(self, file_path):
         if not file_path:
             self.current_cover_pixmap = QPixmap()
-            self._showing_placeholder = False
+            self._cover_placeholder.clear()
             self.cover_art_label.hide()
             self.metadata_label.hide()
             self.theme_manager.clear_cover_theme()
@@ -2262,31 +2260,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 f"{book.author} - {book.title}" if book else "Unknown book"
             )
 
-    def _show_cover_placeholder(self):
+    def _placeholder_color(self):
         t = _resolve_theme(self.theme_manager._current_theme_name)
-        color = t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
-        try:
-            logo_path = os.path.join(_ASSETS_DIR, "fabulor.svg")
-            with open(logo_path) as f:
-                data = f.read()
-            data = re.sub(r'fill="(?!none)[^"]*"',     f'fill="{color}"',   data)
-            data = re.sub(r'stroke="(?!none)[^"]*"',   f'stroke="{color}"', data)
-            data = re.sub(r'(fill:)(?!none)[^;}"]*',   rf'\g<1>{color}',     data)
-            data = re.sub(r'(stroke:)(?!none)[^;}"]*', rf'\g<1>{color}',     data)
-            ba = QByteArray(data.encode())
-            renderer = QSvgRenderer(ba)
-            placeholder_size = int(COVER_AREA_HEIGHT * 0.65)
-            pm = QPixmap(placeholder_size, placeholder_size)
-            pm.fill(Qt.transparent)
-            painter = QPainter(pm)
-            renderer.render(painter)
-            painter.end()
-            self.cover_art_label.setPixmap(pm)
-            self.cover_art_label.show()
-            self._showing_placeholder = True
-        except Exception:
-            self.cover_art_label.hide()
-            self._showing_placeholder = False
+        return t.get('placeholder_cover', t.get('library_narrator', t.get('text', '#888888')))
+
+    def _show_cover_placeholder(self):
+        self._cover_placeholder.show(self.cover_art_label, self._placeholder_color())
 
     def _on_active_cover_changed(self, book_path: str, file_path: str) -> None:
         if not book_path:
