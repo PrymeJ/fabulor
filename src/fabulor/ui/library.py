@@ -41,7 +41,19 @@ SORT_KEY_MAP = {
 MIN_PROGRESS = 1.0  # seconds — anything under 1 second is treated as zero
 
 PRELOAD_INTERVAL_MS = 50   # ms between preload timer ticks
-PRELOAD_BATCH_SIZE  = 3    # covers dispatched per tick
+PRELOAD_BATCH_SIZE  = 4    # covers dispatched per tick (~80/s). Chosen by measuring the real
+                           # warm path's MAIN-thread jank (heartbeat, warming in isolation after
+                           # startup settle) at 50ms interval: batch 3 = 5 blocks>18ms / 25ms max,
+                           # batch 4 = 6 blocks / 28ms max (indistinguishable from 3), batch 5 = 13
+                           # blocks / 47ms max (clearly worse). So 4 buys ~33% faster warming for
+                           # no meaningful extra jank; 5 is the wall. The cost is on the MAIN thread,
+                           # NOT the off-thread LANCZOS: each worker fires TWO QueuedConnection
+                           # completion slots (cover_loaded + sized_cover_loaded, each doing
+                           # QImage->QPixmap + a dict write) and _preload_tick also does a synchronous
+                           # get_active_cover_path DB read per book. Do NOT remove batching (dumping
+                           # all workers at once froze the main thread ~766ms) and do NOT raise past 4
+                           # without re-measuring the real two-slot path (an isolated one-slot sweep
+                           # under-measures it and will mislead you toward a higher number).
 
 _cover_cache: dict = {}  # module-level singleton {book_id (int): QPixmap}, shared by BookModel and idle preloader
 
