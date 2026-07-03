@@ -620,7 +620,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
         self._settle_vol_stack()
 
-        QTimer.singleShot(4000, self.library_panel.start_idle_preload)
+        # Idle cover preloader: do NOT run at app start (startup work interferes with the
+        # cover-art flow animation). Instead ARM the idle-detection machinery once, here —
+        # this only starts the 5s idle timer; it does not itself run a preload. The first
+        # preload run happens only after 5s of genuine no-interaction (the eventFilter
+        # resets this timer on every mouse/key event), identical to every subsequent
+        # resume-after-inactivity cycle. A user who opens the library as their very first
+        # action after launch therefore sees today's behavior — no preloader contention —
+        # until the app has actually been idle for 5s.
+        self._arm_preload_idle()
+
+    def _arm_preload_idle(self):
+        """(Re)start the 5s idle timer that eventually triggers start_idle_preload. Called
+        once after startup to arm the machinery, and again from the eventFilter on every
+        user interaction so the first (and every) preload run only fires after 5s of
+        genuine inactivity. Idempotent: restarting a running single-shot timer just resets
+        its countdown."""
+        if not hasattr(self, '_preload_restart_timer'):
+            self._preload_restart_timer = QTimer(self)
+            self._preload_restart_timer.setSingleShot(True)
+            self._preload_restart_timer.timeout.connect(self.library_panel.start_idle_preload)
+        self._preload_restart_timer.start(5000)
 
     def _update_naming_pattern(self, pattern):
         """Changes the folder parsing pattern and triggers a database re-parse."""
@@ -2767,13 +2787,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             pass
 
         if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.KeyPress):
-            if hasattr(self, 'library_panel') and not self.library_panel.preload_complete():
+            if hasattr(self, 'library_panel'):
+                # Abort any in-flight preload so the interaction isn't contended, then
+                # (re)arm the 5s idle timer. Re-arming on EVERY interaction — not only when
+                # a preload is already pending — is what makes the first post-startup run
+                # wait for a genuine 5s idle window (the queue is empty before the first
+                # run, so preload_complete() is True then; gating on it would skip the
+                # reset and let the initial run fire mid-interaction).
                 self.library_panel.cancel_preload()
-                if not hasattr(self, '_preload_restart_timer'):
-                    self._preload_restart_timer = QTimer(self)
-                    self._preload_restart_timer.setSingleShot(True)
-                    self._preload_restart_timer.timeout.connect(self.library_panel.start_idle_preload)
-                self._preload_restart_timer.start(5000)
+                self._arm_preload_idle()
 
         # Ensure obj is a valid QObject before calling super().eventFilter
         # Some internal Qt objects like QWidgetItem are not QObjects.

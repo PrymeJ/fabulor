@@ -3,7 +3,7 @@ import random
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem,
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
@@ -690,18 +690,68 @@ class LibraryPanel(QFrame):
 
     # ── Idle preload ─────────────────────────────────────────────────────────
 
+    def _current_sized_key_dims(self) -> Optional[tuple]:
+        """Device-pixel (dev_w, dev_h) the preloader should warm _sized_cover_cache to for
+        the CURRENT view mode — the exact key _get_sized_cover computes at paint time
+        (round(target * dpr)). Returns None when the mode draws no scaled cover (List), or
+        when the panel has no screen yet. DPR is read here, on the MAIN thread, and passed
+        by value into the worker — the worker must never read screen()/DPR itself."""
+        cell = self._delegate.cover_cell_size()
+        if cell is None:
+            return None
+        screen = self.screen()
+        dpr = screen.devicePixelRatio() if screen else 1.0
+        dev_w = max(1, round(cell[0] * dpr))
+        dev_h = max(1, round(cell[1] * dpr))
+        return (dev_w, dev_h)
+
+    def _preload_paused(self) -> bool:
+        """Per-batch gate: True while it is unsafe to run background preload work.
+        Pauses ONLY during active animations + scan/theme-flow (the confirmed-to-interfere
+        states); NOT gated on a static open panel, the Stats Month tab, playback, or seeking
+        (all tested safe). Playback/seeking are deliberately allowed."""
+        mw = self.window()
+        # Scan in progress
+        scanner = getattr(mw, 'scanner', None)
+        if scanner is not None and scanner.is_running():
+            return True
+        tm = getattr(mw, 'theme_manager', None)
+        if tm is not None:
+            # Theme fade in flight
+            if getattr(tm, '_fade_in_flight', False):
+                return True
+            fade_anim = getattr(tm, '_fade_anim', None)
+            if fade_anim is not None and fade_anim.state() == QPropertyAnimation.State.Running:
+                return True
+        # Cover-art / book-switch flow animation (either slider)
+        for slider_attr in ('progress_slider', 'chapter_progress_slider'):
+            slider = getattr(mw, slider_attr, None)
+            flow = getattr(slider, '_flow_anim', None) if slider is not None else None
+            if flow is not None and flow.state() == QPropertyAnimation.State.Running:
+                return True
+        # Any panel slide animation running
+        pm = getattr(mw, 'panel_manager', None)
+        if pm is not None and pm.is_any_panel_animating():
+            return True
+        return False
+
     def start_idle_preload(self):
         if getattr(self, '_preload_timer', None) and self._preload_timer.isActive():
             return  # already running
 
-        # Resume interrupted queue, or build a fresh one
+        # Resume interrupted queue, or build a fresh one. A book stays queued if it needs
+        # EITHER its raw cover (_cover_cache) OR its current-view-mode sized entry
+        # (_sized_cover_cache) — the whole point of this pass is that a raw-warm-but-
+        # sized-cold book (viewed once, or warmed by an earlier raw-only preload) still
+        # needs sized warming. The per-tick skip re-checks this, so an already-fully-warm
+        # book is dropped cheaply.
         if not getattr(self, '_preload_queue', None):
             sort_key  = SORT_KEY_MAP.get(self.config.get_library_sort_key(), "title")
             if sort_key not in self.db._ALLOWED_SORT_COLUMNS:
                 sort_key = "title"
             ascending = self.config.get_library_sort_ascending()
             books = self.db.get_all_books(sort_by=sort_key, order="ASC" if ascending else "DESC")
-            self._preload_queue = [b for b in books if b.id not in _cover_cache]
+            self._preload_queue = [b for b in books if self._needs_preload(b.id)]
 
         if not self._preload_queue:
             return
@@ -713,21 +763,51 @@ class LibraryPanel(QFrame):
         self._preload_timer.setInterval(PRELOAD_INTERVAL_MS)
         self._preload_timer.start()
 
+    def _needs_preload(self, book_id: int) -> bool:
+        """A book needs a preload pass if its raw cover is not cached, OR (for the current
+        view mode) its sized entry is not cached. Sized target None (e.g. List mode) means
+        only the raw cover matters."""
+        if book_id not in _cover_cache:
+            return True
+        target = self._current_sized_key_dims()
+        if target is None:
+            return False
+        return (book_id, target[0], target[1]) not in self._delegate._sized_cover_cache
+
     def _preload_tick(self):
         if not getattr(self, '_preload_queue', None):
             self._preload_timer.stop()
             return
+        # Per-batch gate: pause (leave the queue intact) during interfering states. The
+        # 5s idle-restart machinery in MainWindow.eventFilter resumes us after inactivity;
+        # here we simply skip this tick and try again on the next one.
+        if self._preload_paused():
+            return
         from .cover_loader import CoverLoaderWorker
+        sized_target = self._current_sized_key_dims()
         for _ in range(PRELOAD_BATCH_SIZE):
             if not self._preload_queue:
                 break
             book = self._preload_queue.pop(0)
-            if book.id in _cover_cache:
+            raw_needed = book.id not in _cover_cache
+            sized_needed = (
+                sized_target is not None
+                and (book.id, sized_target[0], sized_target[1]) not in self._delegate._sized_cover_cache
+            )
+            if not raw_needed and not sized_needed:
                 continue
             active_path = self.db.get_active_cover_path(book.path) if self.db else None
-            worker = CoverLoaderWorker(book, active_cover_path=active_path)
+            worker = CoverLoaderWorker(
+                book,
+                active_cover_path=active_path,
+                sized_target=sized_target if sized_needed else None,
+            )
             worker._book_id = book.id
+            # cover_loaded warms _cover_cache; sized_cover_loaded warms _sized_cover_cache.
+            # Both are QueuedConnection so the QImage->QPixmap conversion + dict write run on
+            # the main thread (never write either cache from the worker).
             worker.signals.cover_loaded.connect(self._on_preload_cover_loaded, Qt.ConnectionType.QueuedConnection)
+            worker.signals.sized_cover_loaded.connect(self._on_preload_sized_cover_loaded, Qt.ConnectionType.QueuedConnection)
             QThreadPool.globalInstance().start(worker)
             self._active_workers.add(worker)
             worker.signals.finished.connect(
@@ -743,6 +823,21 @@ class LibraryPanel(QFrame):
         pixmap.setDevicePixelRatio(dpr)
         _cover_cache[book_id] = pixmap
         # If the model is showing this book, notify it
+        if not getattr(self, '_is_animating', False):
+            self._book_model.notify_cover_cached(book_id)
+
+    def _on_preload_sized_cover_loaded(self, book_id, dev_w, dev_h, image):
+        """Main-thread tail of the sized-warming path: convert the off-thread-scaled QImage
+        to a QPixmap and store it under the exact key _get_sized_cover uses at paint time.
+        Keying MUST match _get_sized_cover: (book_id, dev_w, dev_h) with dev_* already
+        computed as round(target * dpr) on the main thread at enqueue time, and DPR set on
+        the pixmap so its own devicePixelRatio matches what the paint path expects."""
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
+        pixmap.setDevicePixelRatio(dpr)
+        self._delegate._sized_cover_cache[(book_id, dev_w, dev_h)] = pixmap
         if not getattr(self, '_is_animating', False):
             self._book_model.notify_cover_cached(book_id)
 
@@ -1772,27 +1867,32 @@ class BookDelegate(QStyledItemDelegate):
         return sized
 
     @staticmethod
-    def _lanczos_scale(cover: QPixmap, w: int, h: int) -> QPixmap:
-        """PIL LANCZOS downscale — same rationale as scanner.py's thumbnail pass: Qt's
-        SmoothTransformation (bilinear) is the actual softness source this whole cache
-        exists to route around, so the one new resize this cache introduces must not
-        reuse it. Format_RGBA8888 before constBits() is mandatory (tightly-packed, no row
-        padding) and must not be reordered — see scanner.py's identical conversion.
+    def _lanczos_qimage(src: QImage, w: int, h: int) -> QImage:
+        """The actual PIL LANCZOS+UnsharpMask scale, QImage -> QImage. THREAD-SAFE:
+        touches only QImage (a pure raster container, safe off the GUI thread) and PIL
+        — deliberately NO QPixmap, so this can run on a CoverLoaderWorker thread to warm
+        _sized_cover_cache without blocking the main thread (see the idle-preloader
+        sized-warming path). The QImage -> QPixmap conversion is a separate main-thread
+        step (see _lanczos_scale, which is the thin main-thread tail around this).
 
-        LANCZOS is mathematically more correct than bilinear but, unlike bilinear, doesn't
-        ring/overshoot at edges — on flat-color graphic covers that overshoot is exactly what
-        reads as "punchy" contrast, so a straight LANCZOS swap measurably improves text
-        legibility while looking *less* crisp on high-contrast art (confirmed by user A/B at
-        real cell size). A mild UnsharpMask after the resize restores some of that edge punch
-        without giving up LANCZOS's cleaner text rendering — applied on the RGB channels only,
-        alpha passed through untouched so cover edges/transparency aren't affected. Strength is
-        deliberately conservative (percent=25): an earlier percent=60 pass was confirmed by the
-        user to look "cartoonish"/HDR-filtered — visible haloing on photographic gradients
-        (skies, faces) where LANCZOS leaves no real edge for the mask to find, so it amplifies
-        noise instead. Do not raise percent without re-checking against photographic covers,
-        not just flat-color graphic ones — the latter tolerates much more sharpening before
-        artifacts become visible."""
-        qimg = cover.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        Format_RGBA8888 before constBits() is mandatory (tightly-packed, no row padding)
+        and must not be reordered — see scanner.py's identical conversion.
+
+        LANCZOS is mathematically more correct than bilinear but, unlike Qt's
+        SmoothTransformation (bilinear), doesn't ring/overshoot at edges — on flat-color
+        graphic covers that overshoot is exactly what reads as "punchy" contrast, so a
+        straight LANCZOS swap measurably improves text legibility while looking *less*
+        crisp on high-contrast art (confirmed by user A/B at real cell size). A mild
+        UnsharpMask after the resize restores some of that edge punch without giving up
+        LANCZOS's cleaner text rendering — applied on the RGB channels only, alpha passed
+        through untouched so cover edges/transparency aren't affected. Strength is
+        deliberately conservative (percent=25): an earlier percent=60 pass was confirmed by
+        the user to look "cartoonish"/HDR-filtered — visible haloing on photographic
+        gradients (skies, faces) where LANCZOS leaves no real edge for the mask to find, so
+        it amplifies noise instead. Do not raise percent without re-checking against
+        photographic covers, not just flat-color graphic ones — the latter tolerates much
+        more sharpening before artifacts become visible."""
+        qimg = src.convertToFormat(QImage.Format.Format_RGBA8888)
         pil_img = Image.frombuffer(
             "RGBA", (qimg.width(), qimg.height()),
             bytes(qimg.constBits()), "raw", "RGBA", 0, 1,
@@ -1803,8 +1903,17 @@ class BookDelegate(QStyledItemDelegate):
             ImageFilter.UnsharpMask(radius=0.8, percent=25, threshold=2)
         )
         pil_img = Image.merge("RGBA", (*sharpened.split(), a))
-        out = QImage(pil_img.tobytes(), pil_img.width, pil_img.height, QImage.Format.Format_RGBA8888)
-        return QPixmap.fromImage(out.copy())
+        return QImage(
+            pil_img.tobytes(), pil_img.width, pil_img.height, QImage.Format.Format_RGBA8888
+        ).copy()
+
+    @staticmethod
+    def _lanczos_scale(cover: QPixmap, w: int, h: int) -> QPixmap:
+        """Main-thread tail: QPixmap -> QPixmap around the thread-safe _lanczos_qimage.
+        Used by _get_sized_cover on the paint path. The single implementation of the scale
+        logic lives in _lanczos_qimage — this only bridges QPixmap<->QImage (a GUI-thread
+        operation). Do NOT call this off-thread; call _lanczos_qimage there instead."""
+        return QPixmap.fromImage(BookDelegate._lanczos_qimage(cover.toImage(), w, h))
 
     def evict_sized_cover(self, book_id: int) -> None:
         """Drop all cached pre-scaled pixmaps for a book — call whenever its source
@@ -2053,6 +2162,31 @@ class BookDelegate(QStyledItemDelegate):
             return QRect(r.x() + 13, r.y() + 8, 113, 172)
         else:
             return QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
+
+    def cover_cell_size(self) -> Optional[tuple]:
+        """Logical (w, h) of the cover RECT drawn for the current view mode — the exact
+        target_w/target_h that _draw_cover passes to _get_sized_cover — so the idle
+        preloader can pre-scale to the same key. Returns None for modes that draw no cover
+        via _get_sized_cover (List).
+
+        Deterministic because the grid view is fixed-width (300px window) with
+        setGridSize == sizeHint == ITEM_DIMENSIONS[mode], so option.rect at paint time is
+        exactly the mode's cell size — no view stretching. The fixed-size modes (1/2 per
+        row) use constant cover rects independent of the cell. Keep this in lockstep with
+        _paint_grid_cell (r.width()-4, r.height()-4), _paint_one_per_row (100×151), and
+        _paint_two_per_row (113×172): if any of those cover-rect formulas change, this must
+        change with it, or preloaded sized entries will key on a stale size and silently
+        never be hit at paint time."""
+        mode = self._view_mode
+        if mode == "1 per row":
+            return (100, 151)
+        if mode == "2 per row":
+            return (113, 172)
+        if mode in ("3 per row", "Square"):
+            dim = ITEM_DIMENSIONS[mode]
+            # _paint_grid_cell: cover_rect = (r.x()+3, r.y()+2, r.width()-4, r.height()-4)
+            return (dim["w"] - 4, dim["h"] - 4)
+        return None  # List draws no cover via _get_sized_cover
 
     @staticmethod
     def _fmt(seconds: float) -> str:

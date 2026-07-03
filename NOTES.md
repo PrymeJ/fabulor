@@ -1,3 +1,36 @@
+## FUTURE IDEA (not decided, not implemented): preload the first-page cover set of EVERY view mode (2026-07-03)
+
+**Status: future design idea only. Not decided, not planned, not implemented in this pass.** This
+is captured so it isn't lost, not as a committed direction. It came out of the idle-preloader
+sized-cache-warming work (see "Idle preloader warms `_sized_cover_cache`" below) and is a distinct,
+smaller-scoped opportunity from what that pass implemented.
+
+**The observation (confirmed):** each view mode deterministically shows the *same books* at
+scroll-position-zero, regardless of how many times the user has switched modes or which mode is
+currently active. "What books are visible on the first open of view mode X" is knowable in advance
+— it's a pure function of the current sort order and X's page size — *without the user ever having
+navigated to X*. (The grid is fixed-width at 300px, so page size per mode is a constant: roughly
+20–30 books.)
+
+**Why it's interesting:** the sized-cache warming that WAS implemented this pass warms only the
+**currently active** view mode's cell size, because warming *all* modes' *entire reachable book
+sets* would scale memory as (modes × whole library) — explicitly ruled out as not scaling for large
+libraries. But warming just the **first-page set** of every mode is bounded by *page size per mode*
+(~20–30 books × 5 modes ≈ a small constant), NOT by total library size — so it does NOT reintroduce
+the "don't scale per-mode warming by library size" concern. It would make the *first* open of a
+mode the user has never visited this session already-warm, killing the first-paint LANCZOS stall for
+mode switches too (which the current pass explicitly left as an accepted first-paint cost — see that
+pass's point 5).
+
+**Why it's separate and deferred:** it needs its own design pass — computing each mode's first-page
+book set from the current sort without instantiating the mode, choosing when to warm the non-active
+modes (they'd want an even lower priority than the active mode's full reachable set), and deciding
+how a sort-order change invalidates the precomputed first-page sets. Different enough in scope from
+"warm the active mode's whole reachable set" that folding it in would have muddied the current pass.
+Revisit as a dedicated follow-up if mode-switch first-paint stall becomes a felt problem.
+
+---
+
 ## No-cover-source handling consolidated into `_show_no_cover_state` (2026-07-03)
 
 Step 1.5 of the placeholder rework: de-duplicated the two identical no-cover branches in

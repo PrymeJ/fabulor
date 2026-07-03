@@ -698,6 +698,30 @@ class PanelManager:
             self.main_window.chapter_list_widget.isVisible(),
         ])
 
+    def is_any_panel_animating(self):
+        """Returns True if any panel/sidebar slide animation is currently running.
+
+        Gate for the idle cover preloader: panel SLIDE animation is the confirmed
+        interference source (see the library slide-in jank investigation) — a background
+        sized-cover LANCZOS batch landing mid-slide stalls the motion. This is distinct
+        from is_any_panel_visible: an already-open, static panel is NOT interference
+        (tested), so the preloader gates on animating, not on visible. book_detail_panel's
+        animation is created lazily, so it's guarded with getattr."""
+        anims = [
+            self.sidebar_animation,
+            self.library_panel_animation,
+            self.settings_panel_animation,
+            self.speed_panel_animation,
+            self.sleep_panel_animation,
+            self.stats_panel_animation,
+            self.tags_panel_animation,
+            self.book_detail_panel_animation,
+        ]
+        return any(
+            a is not None and a.state() == QAbstractAnimation.State.Running
+            for a in anims
+        )
+
     def hide_all_panels(self):
         """Closes any open panels."""
         if self.main_window.chapter_list_widget.isVisible():
