@@ -444,6 +444,16 @@ class LibraryPanel(QFrame):
         mode = self.style_combo.currentData()
         self.config.set_library_view_mode(mode)
         self._resolve_theme_colors()
+
+        # Capture the topmost visible book BEFORE the layout changes, as a plain index into
+        # the filtered list. Content-anchored, NOT geometry-anchored: carrying the scrollbar's
+        # raw pixel value() across the switch (Qt's default) lands it on a different book per
+        # mode because each mode's total scroll range differs — the same pixel offset is a
+        # different fraction of a different range (top/0 is the only range-independent value,
+        # which is why it was the one case that "just worked"). A list index is stable across
+        # the switch by construction: a mode change never reorders or refilters _filtered.
+        top_row = self._first_visible_row()
+
         self._apply_view_mode(mode)
         self._book_model.set_hovered(None)
 
@@ -454,6 +464,15 @@ class LibraryPanel(QFrame):
             if first_idx.isValid() and self._list_view.visualRect(first_idx).isEmpty() and _attempt < 5:
                 QTimer.singleShot(50, lambda: _after_reset(_attempt + 1))
                 return
+            # Restore the same book to the top now that the new mode's layout exists. scrollTo
+            # clamps a too-large index gracefully (e.g. a near-bottom grid row that has no
+            # equivalent in a shorter-range mode). top_row is None only if the layout wasn't
+            # ready at capture time; index 0 / None both effectively leave the view at the top,
+            # matching today's behavior for the scroll-to-top case (no regression there).
+            if top_row is not None and 0 <= top_row < self._book_model.rowCount():
+                idx = self._book_model.index(top_row, 0)
+                if idx.isValid():
+                    self._list_view.scrollTo(idx, QListView.ScrollHint.PositionAtTop)
             self._load_visible_covers()
 
         QTimer.singleShot(0, _after_reset)
@@ -504,17 +523,19 @@ class LibraryPanel(QFrame):
 
     # ── Cover loading ────────────────────────────────────────────────────────
 
-    def _load_visible_covers(self):
-        if not self.isVisible():
-            return
-        # Guard: layout not done yet if item 0 has no visual rect
+    def _first_visible_row(self) -> Optional[int]:
+        """Row index of the topmost visible book via a visualRect binary search — the true
+        first-visible row (indexAt(topLeft) is unreliable in IconMode because it can land in
+        an inter-cell gutter). Returns None if the layout isn't ready (item 0 has no rect) or
+        there are no rows. Single source of "what's on top" — used by both _load_visible_covers
+        and the view-mode-switch position capture, which must agree."""
+        row_count = self._book_model.rowCount()
+        if row_count == 0:
+            return None
         first_idx = self._book_model.index(0, 0)
         if not first_idx.isValid() or self._list_view.visualRect(first_idx).isEmpty():
-            return
-        # Use visualRect to find the true visible row range — indexAt(bottomRight)
-        # is unreliable in IconMode (grid) because it lands in inter-cell gutters.
+            return None
         viewport_rect = self._list_view.viewport().rect()
-        row_count = self._book_model.rowCount()
         def _vr(row): return self._list_view.visualRect(self._book_model.index(row, 0))
         lo, hi = 0, row_count - 1
         while lo < hi:
@@ -523,7 +544,19 @@ class LibraryPanel(QFrame):
                 lo = mid + 1
             else:
                 hi = mid
-        first_row = lo
+        return lo
+
+    def _load_visible_covers(self):
+        if not self.isVisible():
+            return
+        first_row = self._first_visible_row()
+        if first_row is None:  # layout not ready
+            return
+        # Use visualRect to find the true visible row range — indexAt(bottomRight)
+        # is unreliable in IconMode (grid) because it lands in inter-cell gutters.
+        viewport_rect = self._list_view.viewport().rect()
+        row_count = self._book_model.rowCount()
+        def _vr(row): return self._list_view.visualRect(self._book_model.index(row, 0))
         lo, hi = first_row, row_count - 1
         while lo < hi:
             mid = (lo + hi + 1) // 2
