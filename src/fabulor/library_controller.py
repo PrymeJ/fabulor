@@ -123,16 +123,23 @@ class LibraryController(QObject):
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
 
-        # If a force rescan flagged the currently-loaded book as excluded (its
-        # folder was deleted from disk and the user had already trashed it —
-        # see CLAUDE.md's is_missing/is_excluded split), it's gone from the
-        # library but still open in the player. Unload it and
-        # drop to the no-book-selected state. on_book_removed() closes the session
-        # (preserving stats), terminates the player, clears UI, and runs
+        # If a scan flagged the currently-loaded book as either missing OR
+        # excluded, it's gone from the library but still open in the player.
+        # Unload it and drop to the no-book-selected state. Both flags are
+        # independent, legitimate reasons to tear down (see CLAUDE.md's
+        # is_missing/is_excluded split):
+        #   - is_missing=1: a force rescan found the book's folder gone from disk
+        #     (db.mark_books_missing). This is the common case here.
+        #   - is_excluded=1: the user trashed the book from the library UI,
+        #     possibly while it was the loaded/playing book.
+        # Before the 2026-06-27 flag split, missing-detection wrote is_excluded=1,
+        # so checking is_excluded alone covered both; it no longer does — a
+        # missing book now carries is_missing=1 only. on_book_removed() closes the
+        # session (preserving stats), terminates the player, clears UI, and runs
         # apply_current_state itself — so return early to skip the now-moot cover
         # refresh below.
         current = self.app.get_current_file()
-        if current and self.db.is_book_excluded(current):
+        if current and (self.db.is_book_missing(current) or self.db.is_book_excluded(current)):
             self.app.on_book_removed()
             self.ui.refresh_panel(force=True)
             self.app.refresh_tag_manager()

@@ -125,3 +125,45 @@ def test_transient_iterdir_error_is_not_treated_as_missing(env, tmp_path, monkey
     assert not db.is_book_missing(gone), \
         "a transient per-folder I/O error must not flag the book missing"
     assert db.get_visible_book_count() == 2
+
+
+# --- _on_scan_finished teardown predicate (library_controller.py) ------------
+#
+# The scan-finished handler tears down the currently-loaded book when it is no
+# longer in the library. Both flags are independent, legitimate reasons:
+#   - is_missing=1  : force rescan found the folder gone from disk (this file's
+#                     scanner tests above prove that flag gets written);
+#   - is_excluded=1 : user trashed the book, possibly while it was playing.
+# The teardown check is `is_book_missing(current) or is_book_excluded(current)`.
+# Before the 2026-06-27 flag split, missing-detection wrote is_excluded, so the
+# old `is_book_excluded`-only check happened to cover both; it no longer does.
+# These pin the predicate directly (no Qt / controller wiring needed) so the two
+# trigger flags can't silently drift apart again.
+
+def _teardown_triggered(db, path) -> bool:
+    """Mirror of the boolean evaluated at library_controller.py:_on_scan_finished."""
+    return db.is_book_missing(path) or db.is_book_excluded(path)
+
+
+def test_teardown_predicate_true_for_missing_book(env):
+    db, loc, keep, gone = env
+    db.mark_books_missing([gone])
+    assert _teardown_triggered(db, gone), \
+        "a book flagged is_missing must trigger the scan-finished teardown"
+    assert not _teardown_triggered(db, keep)
+
+
+def test_teardown_predicate_true_for_excluded_book(env):
+    # Regression guard for the manually-tested path that must NOT break: excluding
+    # the currently-loaded book still triggers teardown.
+    db, loc, keep, gone = env
+    db.set_book_excluded(gone, True)
+    assert _teardown_triggered(db, gone), \
+        "an excluded book must still trigger the scan-finished teardown"
+    assert not _teardown_triggered(db, keep)
+
+
+def test_teardown_predicate_false_for_visible_book(env):
+    db, loc, keep, gone = env
+    assert not _teardown_triggered(db, keep)
+    assert not _teardown_triggered(db, gone)
