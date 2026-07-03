@@ -2222,14 +2222,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # No cover source at all → show placeholder logo + author/title
         if not active_path and not fallback_path:
-            self.current_cover_pixmap = QPixmap()
-            self._pending_cover_pixmap = None
-            self.theme_manager.clear_cover_theme()
-            self._show_cover_placeholder()
-            self.metadata_label.show()
-            self.metadata_label.setText(
-                f"{book.author} - {book.title}" if book else "Unknown book"
-            )
+            self._show_no_cover_state(book)
             return
 
         # Active cover set in book_covers → load from that path directly.
@@ -2251,14 +2244,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if not pixmap.isNull():
             self._apply_main_cover(pixmap)
         else:
-            self.current_cover_pixmap = QPixmap()
-            self._pending_cover_pixmap = None
-            self.theme_manager.clear_cover_theme()
-            self._show_cover_placeholder()
-            self.metadata_label.show()
-            self.metadata_label.setText(
-                f"{book.author} - {book.title}" if book else "Unknown book"
-            )
+            self._show_no_cover_state(book)
+
+    def _show_no_cover_state(self, book) -> None:
+        """Clear cover state and show the placeholder + text metadata for a
+        book with no available cover art. Used both when there's no cover
+        source (no active/fallback path) and when extract_cover found nothing.
+        The two former call sites were byte-for-byte identical."""
+        self.current_cover_pixmap = QPixmap()
+        self._pending_cover_pixmap = None
+        self.theme_manager.clear_cover_theme()
+        self._show_cover_placeholder()
+        self.metadata_label.show()
+        self.metadata_label.setText(
+            f"{book.author} - {book.title}" if book else "Unknown book"
+        )
 
     def _placeholder_color(self):
         t = _resolve_theme(self.theme_manager._current_theme_name)
