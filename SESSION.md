@@ -1,3 +1,58 @@
+## Session Summary — 2026-07-03 — cover-placeholder extraction + no-cover-source consolidation (groundwork for the title/author layout redesign)
+
+**Branch:** `main`. **Commits:** `7383311` (extract), `b1e0db2` (consolidate).
+
+### Context
+
+Two-part groundwork ahead of an upcoming redesign of the no-cover placeholder's text layout
+(author/title moving to separate lines, title wrapping, logo position shifting with one- vs two-line
+titles). Both parts here are pure, behavior-preserving refactors — the layout work itself is a
+separate follow-up once font/measurements are finalized, deliberately not anticipated here.
+
+### Step 1 — extract the placeholder into its own module (`7383311`)
+
+Pulled the no-cover Fabulor-logo placeholder rendering out of `MainWindow` into
+`ui/cover_placeholder.py` (`CoverPlaceholder`). Same SVG recolor regexes, same
+`COVER_AREA_HEIGHT * 0.65` sizing, same show/hide-on-exception behavior. Interface:
+`show(cover_art_label, color)` / `clear()` / `refresh(cover_art_label, color)` / `is_showing`.
+
+One deliberate drift from the original sketch: the placeholder **color is a caller-supplied
+parameter, not resolved inside the module** — the theme-color resolution
+(`placeholder_cover`→`library_narrator`→`text`→`#888888`) stays in app.py as a small
+`_placeholder_color()` helper, so the module has zero theme/`ThemeManager` coupling. The four old
+`_showing_placeholder` bool sites now route through the object (`clear()` on real-cover load and on
+the no-book path; `refresh(...)` on theme change). Removed four now-dead imports from app.py (`re`,
+`QByteArray`, `QSvgRenderer`, `_ASSETS_DIR`), each verified to have exactly one remaining
+occurrence (its import line) first. No test referenced `_showing_placeholder`, so none changed.
+
+### Step 2 — consolidate the two duplicate no-cover branches (`b1e0db2`)
+
+`_load_cover_art` had two byte-for-byte-identical branches handling "no cover art available": the
+`not active_path and not fallback_path` branch and the final `else` after `player.extract_cover`
+returns a null pixmap. Both cleared cover state (`current_cover_pixmap`, `_pending_cover_pixmap`,
+`clear_cover_theme()`), showed the placeholder, and set the dash-joined `"{author} - {title}"`
+metadata. Collapsed into one `_show_no_cover_state(self, book)` helper called from both sites.
+
+Re-checked the live code rather than trusting the prior diff — found there are actually **three**
+no-cover branches, and only two duplicate the sequence. The third, the `if not file_path:` early
+return, does the *opposite* (hides the cover label AND `metadata_label`, calls
+`_cover_placeholder.clear()` not `_show_cover_placeholder()`) — it is the "no book loaded" path and
+was deliberately left out; folding it in would have changed behavior. The two consolidated branches
+were confirmed identical (no per-call-site divergence, no parameter needed). Grep confirmed no third
+copy of the dash-joined metadata format anywhere in `src/fabulor/` — one hit, inside the new helper.
+
+### Verification
+
+Full pytest suite green (48 passed) after each step. app.py imports cleanly. Both steps were pure
+refactors with no runtime-behavior change, so no live-app driving was needed beyond that.
+
+### Handover note for the layout follow-up
+
+The redesign now has a single place to land: `_show_no_cover_state` (the metadata text) and
+`CoverPlaceholder.show` (the logo render/position). The two-line author/title split, title
+wrapping, and logo-position-by-title-line-count logic all belong there — but were explicitly kept
+out of both refactors so the eventual layout diff reviews cleanly on its own.
+
 ## Session Summary — 2026-07-01 Session 5 — sidebar-bleed-through root cause found and fixed; two new performance/polish items stashed
 
 **Branch:** `main`. **Commits:** `ed1c7b2`, `68798a4`, `5dfd030`, `efaf3ba`.

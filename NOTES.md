@@ -1,3 +1,100 @@
+## No-cover-source handling consolidated into `_show_no_cover_state` (2026-07-03)
+
+Step 1.5 of the placeholder rework: de-duplicated the two identical no-cover branches in
+`_load_cover_art` (app.py) ahead of the title/author layout redesign, so that redesign lands in
+one place instead of two. **No behavioral change.**
+
+**Helper shape** — took all five statements (the earlier extraction diff's sketch had omitted the
+`_pending_cover_pixmap = None` and `theme_manager.clear_cover_theme()` calls, but both branches did
+them, so they belong inside):
+```python
+def _show_no_cover_state(self, book) -> None:
+    self.current_cover_pixmap = QPixmap()
+    self._pending_cover_pixmap = None
+    self.theme_manager.clear_cover_theme()
+    self._show_cover_placeholder()
+    self.metadata_label.show()
+    self.metadata_label.setText(
+        f"{book.author} - {book.title}" if book else "Unknown book"
+    )
+```
+
+**Call sites (2, both now one-liners):** the `not active_path and not fallback_path` branch, and the
+final `else` after `player.extract_cover(file_path)` returns a null pixmap. Both call
+`self._show_no_cover_state(book)` then behave as before (the first `return`s; the second is the end
+of the method).
+
+**Were the two branches identical?** Yes — **byte-for-byte identical**, all five statements in the
+same order. No per-call-site difference, so nothing had to stay outside the helper and no parameter
+was needed for a divergence.
+
+**One thing worth flagging: there is a THIRD no-cover branch that is deliberately NOT part of this
+helper** — the `if not file_path:` early return at the top of `_load_cover_art`. It is the "no book
+loaded at all" path and does the *opposite* of the two consolidated branches: it **hides** the cover
+label AND **hides** `metadata_label` (and calls `_cover_placeholder.clear()`, not
+`_show_cover_placeholder()`). It only shares the `current_cover_pixmap = QPixmap()` +
+`clear_cover_theme()` lines superficially; its intent (show nothing) is distinct from "show the
+placeholder + metadata". Left untouched — folding it in would have changed behavior.
+
+**No third duplicate of the sequence elsewhere:** grep for the dash-joined
+`"{book.author} - {book.title}"` / `"Unknown book"` format across `src/fabulor/` returns exactly one
+hit — inside the new helper. Nothing else in the codebase reproduced it.
+
+**Tests:** full suite green (48 passed). Pure de-duplication, no test changes.
+
+## Cover placeholder extracted to its own module (2026-07-03)
+
+Step 1 of a two-step change: pulled the no-cover Fabulor-logo placeholder rendering out of
+`MainWindow` (app.py) into `ui/cover_placeholder.py` (`CoverPlaceholder`) with **no behavioral
+change**. This is the groundwork for a follow-up that redesigns the placeholder's text layout
+(author/title on separate lines, title wrap, logo position shifting with one- vs two-line title) —
+that layout logic is explicitly NOT in this change.
+
+**Public interface** (drifted slightly from the original prompt sketch — the color is resolved by
+the caller, not the module):
+- `CoverPlaceholder()` — no args; owns the `_showing` bool.
+- `show(cover_art_label, color: str)` — renders `fabulor.svg` recolored to `color` at
+  `COVER_AREA_HEIGHT * 0.65`, sets it on the label, `show()`s, sets `_showing=True`; on any
+  exception hides the label and sets `_showing=False` (identical to the old inline behavior).
+- `clear()` — sets `_showing=False` (a real cover loaded).
+- `refresh(cover_art_label, color: str)` — re-renders only if `_showing` (theme-change path).
+- `is_showing` property.
+
+**Why `color` is a parameter, not resolved inside the module:** the old `_show_cover_placeholder`
+resolved the placeholder color from the live theme (`_resolve_theme(...)` +
+`placeholder_cover`→`library_narrator`→`text`→`#888888` chain). Keeping that resolution in the
+module would have coupled it to `ThemeManager`/`themes.py`. Instead app.py keeps a tiny
+`_placeholder_color()` helper that does the resolution and passes the string in. Both call sites
+(`_show_cover_placeholder`, and the theme-change `refresh` in `_reload_button_icons`) go through it,
+so the fallback chain still lives in exactly one place.
+
+**app.py call-site mapping** (was → now):
+- `self._showing_placeholder = False` (init) → `self._cover_placeholder = CoverPlaceholder()`.
+- `_apply_main_cover`: `self._showing_placeholder = False` → `self._cover_placeholder.clear()`.
+- `_load_cover_art` `not file_path` branch: same flag-clear → `.clear()`.
+- `_reload_button_icons`: `if self._showing_placeholder: self._show_cover_placeholder()` →
+  `self._cover_placeholder.refresh(self.cover_art_label, self._placeholder_color())`.
+- `_show_cover_placeholder` (still exists, now a 1-liner delegating to `.show(...)`) — kept so its
+  two call sites in `_load_cover_art` are untouched.
+
+**Dead imports removed from app.py** (only ever used by the moved SVG-building code): `re`,
+`QByteArray`, `QSvgRenderer`, and `_ASSETS_DIR` (from `ui_helpers`). Verified each had exactly one
+remaining occurrence (its import line) before removing. `COVER_AREA_HEIGHT` stays imported in app.py
+(still used by `_update_cover_art_scaling`); it is *also* imported by the new module from
+`ui_helpers` (the single source of truth), not duplicated.
+
+**Awkwardness worth flagging before the layout follow-up:** the "no cover source" handling is
+duplicated across TWO branches of `_load_cover_art` — the early `not active_path and not
+fallback_path` branch (~line 2224) and the final `else` when `extract_cover` returns null (~line
+2255). Both do the same four things: clear pixmap, clear pending cover, `clear_cover_theme()`,
+`_show_cover_placeholder()`, then `metadata_label.show()` + set the `"{author} - {title}"` text.
+The layout redesign will touch that metadata text, so whoever picks up step 2 should consider
+folding those two branches into one helper first — otherwise the new two-line author/title layout
+has to be written twice. Left as-is here to keep this diff a pure move.
+
+**Tests:** no test referenced `_showing_placeholder`, so none needed updating. Full suite green
+(48 passed).
+
 ## Sidebar visible through settings panel on open — ROOT CAUSE CONFIRMED, not yet fixed (2026-07-01)
 
 **Do not file this under "Spurious sidebar expand during theme hover" (below in this file, originally
