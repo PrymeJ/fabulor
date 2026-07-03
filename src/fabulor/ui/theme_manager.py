@@ -51,6 +51,7 @@ def _theme_distance(name_a: str, name_b: str) -> float:
 _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
+_HOVER_DEBOUNCE_MS    = 60        # coalesce rapid hover sweeps into one preview restyle
 
 
 
@@ -125,6 +126,16 @@ class ThemeManager(QObject):
         self._panel_guard_timer = QTimer(self)
         self._panel_guard_timer.setSingleShot(True)
         self._panel_guard_timer.setInterval(_PANEL_ANIM_GUARD_MS)
+
+        # Hover-preview debounce: sweeping the cursor across several theme names
+        # fires one enterEvent per name crossed. Coalesce them so the (heavy)
+        # restyle pipeline runs once, for the name the cursor settles on.
+        self._hover_debounce_timer = QTimer(self)
+        self._hover_debounce_timer.setSingleShot(True)
+        self._hover_debounce_timer.setInterval(_HOVER_DEBOUNCE_MS)
+        self._hover_debounce_timer.timeout.connect(self._fire_pending_hover)
+        self._pending_hover_theme = None
+        self._hover_seen_at = None  # perf_counter of the most recent enterEvent
 
         self._save_on_fade = False
         self._fade_in_flight = False
@@ -382,6 +393,10 @@ class ThemeManager(QObject):
         if not user_initiated and fade_ms > 0 and themes_tab_active:
             fade_ms = 0
 
+        _dbg = logger.isEnabledFor(logging.DEBUG)
+        _pipe_t0 = time.perf_counter()
+        _fade_started_at = None
+
         if fade_ms > 0 and themes_tab_active:
             # Themes tab visible — user is deliberately previewing themes, nothing is
             # moving. Full overlay fade including sliders (original behavior).
@@ -419,9 +434,14 @@ class ThemeManager(QObject):
             self._fade_in_flight = True
             self._fade_sliders = []   # themes-tab path animates no sliders separately
             self._fade_anim.setDuration(fade_ms)
-            self._fade_anim.start()
             self._theme_fade_anim = self._fade_anim
+            # Restyle happens invisibly beneath the raised overlay; start the fade
+            # AFTER it so the animation clock isn't consumed by the synchronous
+            # restyle block (previously the fade could fully elapse before the
+            # first rendered frame, degrading it to a late snap).
             self._apply_stylesheets(theme_name, hover=hover)
+            self._fade_anim.start()
+            _fade_started_at = time.perf_counter()
         elif fade_ms > 0:
             # Auto-rotation (or any non-themes-tab fade): sliders may be mid-interaction.
             # Exclude them from the overlay and animate their color properties instead.
@@ -432,11 +452,32 @@ class ThemeManager(QObject):
                 self._cached_theme_pixmap = self.main_window.grab()
             self._apply_stylesheets(theme_name, hover=hover)
 
-        if hasattr(self.main_window, '_refresh_panel_visuals'):
-            self.main_window._refresh_panel_visuals(theme_name)
-        from ..themes import _resolve_theme
-        self.theme_applied.emit(_resolve_theme(theme_name))
-        self.update_theme_list_visuals()
+        # Hidden-panel visual sync (settings-button states, tags/book-detail/stats
+        # via theme_applied, theme-list dimming) is skipped on hover: none of it is
+        # visible during a themes-tab preview, and the hover-exit full restyle
+        # re-runs all of it before any of those surfaces can be shown again.
+        if not hover:
+            if hasattr(self.main_window, '_refresh_panel_visuals'):
+                self.main_window._refresh_panel_visuals(theme_name)
+            from ..themes import _resolve_theme
+            self.theme_applied.emit(_resolve_theme(theme_name))
+            self.update_theme_list_visuals()
+
+        if _dbg:
+            now = time.perf_counter()
+            total_ms = (now - _pipe_t0) * 1000
+            if _fade_started_at is not None:
+                fade_delay_ms = (_fade_started_at - _pipe_t0) * 1000
+                logger.debug(
+                    f"[_on_theme_changed hover={hover}] pipeline={total_ms:.1f}ms  "
+                    f"fade_anim.start() at +{fade_delay_ms:.1f}ms (after restyle)  "
+                    f"fade_ms={fade_ms}"
+                )
+            else:
+                logger.debug(
+                    f"[_on_theme_changed hover={hover}] pipeline={total_ms:.1f}ms  "
+                    f"(no themes-tab overlay fade this call)  fade_ms={fade_ms}"
+                )
 
     def _get_slider_anims(self, slider) -> dict:
         """Lazily create and cache QPropertyAnimation instances for a slider's color properties."""
@@ -622,8 +663,26 @@ class ThemeManager(QObject):
         self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
 
     def _apply_stylesheets(self, theme_name, hover=False):
+        # DEBUG perf instrumentation: per-step wall-clock, only computed when the
+        # fabulor logger is at DEBUG. `hover` skips the hidden stats/book-detail
+        # panels — those are covered by the full hover=False restyle that fires on
+        # every hover exit (unhover snapback, click-to-activate, tab-leave), so
+        # they can never be opened stale (a panel open requires the sidebar, which
+        # requires leaving the themes tab first → leaveEvent → unhover).
+        _dbg = logger.isEnabledFor(logging.DEBUG)
+        _steps = []
+        _t = time.perf_counter()
+
+        def _mark(label, skipped=False):
+            nonlocal _t
+            if _dbg:
+                now = time.perf_counter()
+                _steps.append((label, 0.0 if skipped else (now - _t) * 1000, skipped))
+                _t = now
+
         mw = self.main_window
         mw.setStyleSheet(get_base_stylesheet(theme_name))
+        _mark("mw.setStyleSheet(base)")
         if hasattr(mw, 'title_bar'):
             mw.title_bar.setStyleSheet(get_title_bar_stylesheet(theme_name))
         if hasattr(mw, 'content_container'):
@@ -632,19 +691,28 @@ class ThemeManager(QObject):
             mw.content_container.setStyleSheet(
                 get_player_stylesheet(theme_name, suppress_bg_image=getattr(mw, '_bg_suppressed', False))
             )
+        _mark("title_bar + content_container")
         if hasattr(mw, '_reload_button_icons'):
             mw._reload_button_icons(theme_name)
+        _mark("_reload_button_icons")
         if not hover and hasattr(mw, 'library_panel'):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
             mw.library_panel.update_progress_bar_theme()
+            _mark("library_panel")
+        else:
+            _mark("library_panel", skipped=True)
         if not hover and hasattr(mw, 'chapter_list_widget'):
             theme_dict = self.get_current_theme() or {}
             mw.chapter_list_widget.update_theme(theme_dict)
+            _mark("chapter_list_widget")
+        else:
+            _mark("chapter_list_widget", skipped=True)
         ss_panels = get_settings_stylesheet(theme_name)
         for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
             w = getattr(mw, attr, None)
             if w:
                 w.setStyleSheet(ss_panels)
+        _mark("settings/speed/sleep panels")
         # Excluded-books toggle + popup use per-widget instance stylesheets, so
         # retint them explicitly on theme change (the panel QSS repolish above
         # doesn't reach them — the popup isn't even a descendant of
@@ -658,28 +726,47 @@ class ThemeManager(QObject):
                 section.set_theme(theme)
             if popup:
                 popup.set_theme(theme)
-        ss_stats = get_stats_stylesheet(theme_name)
-        for attr in ('stats_panel', 'book_detail_panel'):
-            target = getattr(mw, attr, None)
-            if target:
-                target.setStyleSheet(ss_stats)
-        # The "Recently finished" scroll rows' edge-scroll arrows use
-        # per-widget instance stylesheets (a qlineargradient overlay), so —
-        # same reasoning as excluded_books_section/popup above — the plain
-        # QSS repolish on stats_panel does NOT reach them. on_theme_changed
-        # was previously only ever called once, at startup
-        # (main_window_builders.py); a live theme switch never refreshed
-        # the arrow overlay color at all.
-        stats_panel = getattr(mw, 'stats_panel', None)
-        if stats_panel and hasattr(stats_panel, 'on_theme_changed'):
-            from ..themes import _resolve_theme
-            stats_panel.on_theme_changed(_resolve_theme(theme_name))
+        # stats_panel + book_detail_panel are always hidden while the Themes tab
+        # previews a hover; skip their QSS repolish and on_theme_changed pass on
+        # hover — the hover-exit full restyle re-applies them before either can
+        # ever become visible.
+        if not hover:
+            ss_stats = get_stats_stylesheet(theme_name)
+            for attr in ('stats_panel', 'book_detail_panel'):
+                target = getattr(mw, attr, None)
+                if target:
+                    target.setStyleSheet(ss_stats)
+            # The "Recently finished" scroll rows' edge-scroll arrows use
+            # per-widget instance stylesheets (a qlineargradient overlay), so —
+            # same reasoning as excluded_books_section/popup above — the plain
+            # QSS repolish on stats_panel does NOT reach them. on_theme_changed
+            # was previously only ever called once, at startup
+            # (main_window_builders.py); a live theme switch never refreshed
+            # the arrow overlay color at all.
+            stats_panel = getattr(mw, 'stats_panel', None)
+            if stats_panel and hasattr(stats_panel, 'on_theme_changed'):
+                from ..themes import _resolve_theme
+                stats_panel.on_theme_changed(_resolve_theme(theme_name))
+            _mark("stats + book_detail panels")
+        else:
+            _mark("stats + book_detail panels", skipped=True)
         if hasattr(mw, 'sidebar'):
             logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar BEFORE]")
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
             logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar AFTER]")
+        _mark("sidebar")
         if hasattr(mw, '_set_chapter_ui_active'):
             mw._set_chapter_ui_active(mw._chapter_ui_active)
+        _mark("_set_chapter_ui_active")
+
+        if _dbg:
+            total = sum(ms for _, ms, _ in _steps)
+            parts = "  ".join(
+                f"{lbl}={'SKIP' if sk else f'{ms:.1f}ms'}" for lbl, ms, sk in _steps
+            )
+            logger.debug(
+                f"[_apply_stylesheets hover={hover}] total={total:.1f}ms  {parts}"
+            )
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""
@@ -741,11 +828,32 @@ class ThemeManager(QObject):
             btn.style().polish(btn)
 
     def _on_theme_hovered(self, theme_name):
-        """Preview the theme visually."""
+        """Queue a debounced theme preview. Sweeping across several names only
+        restyles for the one the cursor settles on (see _fire_pending_hover)."""
+        self._pending_hover_theme = theme_name
+        self._hover_seen_at = time.perf_counter()
+        self._hover_debounce_timer.start()  # restart on each enter → coalesces the sweep
+
+    def _fire_pending_hover(self):
+        """Debounce timer elapsed without a newer hover — run the real preview."""
+        theme_name = self._pending_hover_theme
+        if theme_name is None:
+            return
+        self._pending_hover_theme = None
+        if logger.isEnabledFor(logging.DEBUG) and self._hover_seen_at is not None:
+            wait_ms = (time.perf_counter() - self._hover_seen_at) * 1000
+            logger.debug(
+                f"[hover debounce] firing preview for {theme_name!r} "
+                f"{wait_ms:.1f}ms after last enterEvent"
+            )
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
     def _on_theme_unhovered(self):
+        # Cancel any hover preview still queued by the debounce so a stale name
+        # can't fire its restyle after the cursor has already left the tab.
+        self._hover_debounce_timer.stop()
+        self._pending_hover_theme = None
         if self._cover_theme_active and self._cover_theme:
             self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS, hover=False)
         else:
@@ -852,6 +960,10 @@ class ThemeManager(QObject):
         self._update_cover_pool_btn()
 
     def _on_cover_pool_btn_hovered(self):
+        # Moving from a theme name onto the cover-pool button: drop any queued
+        # theme hover so it can't fire its preview after this one.
+        self._hover_debounce_timer.stop()
+        self._pending_hover_theme = None
         if not self._cover_theme:
             return
         fade = int(self.config.get_theme_fade_duration() * 0.5)
