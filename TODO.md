@@ -6,6 +6,19 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-03] DECIDE: excluding the currently-playing book behaves differently for M4B vs VT.**
+  Not a bug to fix — a design decision to make later. When the loaded/playing book is excluded
+  (user-trash) or flagged missing while playing, single-file **M4B** books keep playing (only the
+  library row disappears); **VT** (multi-file MP3) books drop to the no-book-loaded screen. Both
+  are "correct" in isolation — the divergence is the open question. Observed while verifying the
+  `is_missing OR is_excluded` teardown fix (`a48dc3d`, 2026-07-03); the fix itself is format-
+  agnostic (it just decides *whether* teardown fires), so this divergence lives downstream in how
+  playback survives an excluded/missing book, not in `_on_scan_finished`. Known and deliberately
+  tolerated: an M4B continuing to play a since-removed book hurts nothing and only holds memory
+  already loaded, so it's been left as-is. Decide later whether to (a) make both formats keep
+  playing, (b) make both drop to no-book, or (c) formally document the split as intended. No action
+  until then; captured so it isn't rediscovered as a "bug" and reflexively "fixed."
+
 - **[2026-07-01] Book Detail panel slide-in feels less smooth from Library than from Stats.**
   User observation, unconfirmed and not yet investigated: right-clicking a book row in the Library
   panel to open Book Detail feels janky compared to clicking a book row in the Stats panel to open
