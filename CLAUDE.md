@@ -293,11 +293,11 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 ### Library Panel (`library.py`)
 
-- `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)` + `LibraryPanel`. Shared module-level `_cover_cache` keyed by `book.id` (int) holds one native-resolution pixmap per book. `BookDelegate` additionally holds its own per-instance `_sized_cover_cache` keyed by `(book_id, device_w, device_h)` — a LANCZOS-prescaled pixmap per grid-cell size, built lazily by `_get_sized_cover` and consumed by `_draw_cover` so the final paint-time `drawPixmap` is a near-1:1 blit rather than a large bilinear downscale (added 2026-06-24, see CLAUDE.md rule below and NOTES.md for the full root-cause writeup).
+- `BookModel(QAbstractListModel)` + `BookDelegate(QStyledItemDelegate)` + `LibraryPanel`. Shared module-level `_cover_cache` keyed by `book.id` (int) holds one native-resolution pixmap per book. `BookDelegate` additionally holds its own per-instance `_sized_cover_cache` keyed by `(book_id, device_w, device_h)` — a LANCZOS-prescaled pixmap per grid-cell size, built lazily by `_get_sized_cover` (on the paint path) AND warmed ahead of time by the idle preloader (off-thread, 2026-07-04), consumed by `_draw_cover` so the final paint-time `drawPixmap` is a near-1:1 blit rather than a large bilinear downscale (added 2026-06-24, see CLAUDE.md rules below and NOTES.md for the full root-cause writeup).
 - **Five view modes** (`VIEW_MODES`): 1-per-row, 2-per-row, 3-per-row, Square, List. Display names are randomized literary puns (reshuffle on `hideEvent`). List mode draws an animated left-edge stripe (`_pulse_timer` 40 ms) on the playing book and supports hover-fade (Off/Slow/Normal/Fast); 1- and 2-per-row support hover text-scroll.
 - **Sort** (`SORT_KEY_MAP`): Title, Author, Last Played, Progress, Duration, Year, Finished. "Progress"/"Finished" appear only when such books exist (`has_books_with_progress` / `has_finished_books`). Direction toggle (`↑`/`↓`) defaults per key via `_SORT_DIRECTION_DEFAULTS`, persisted to config.
 - **Search/filter** — plain text (title/author/narrator/exact 4-digit year), `#tag` prefix (`get_paths_for_tag_prefix`; `#` alone = all), year filters `>NNNN` (≥) / `<NNNN` (≤) / ranges (both orderings). No-match: search field turns dark-red and the model falls back to the full list (never empty); incomplete year expressions never show red. Right-click clears the field; persistence is per-classification (`persist_filter_tag/year/text`).
-- **Cover loading** — `_load_visible_covers` binary-searches visual rects (±5 row pad), dispatches `CoverLoaderWorker` (caps to 320×480, raised from 226×344 on 2026-06-24). Idle preloader: `start_idle_preload` queues in sort order, `PRELOAD_BATCH_SIZE = 3` every `PRELOAD_INTERVAL_MS = 50` ms, starts 4s after launch, pauses on interaction. `_on_cover_loaded` skips the `dataChanged` emit while `_is_animating`.
+- **Cover loading** — `_load_visible_covers` finds the topmost visible row via `_first_visible_row()` (a visualRect binary search — shared with the view-mode-switch scroll-preservation capture, see rule below) then binary-searches the bottom (±5 row pad), dispatches `CoverLoaderWorker` (caps to 320×480, raised from 226×344 on 2026-06-24). Idle preloader (`start_idle_preload`): queues in sort order, `PRELOAD_BATCH_SIZE = 4` every `PRELOAD_INTERVAL_MS = 50` ms (batch was 3, raised to 4 on 2026-07-04 — measured ceiling before main-thread jank; see the constant's comment), **warms BOTH `_cover_cache` (raw) AND `_sized_cover_cache` (current view mode's cell size, off-thread — 2026-07-04)**, pauses per `_preload_paused()` (scan / theme-fade / cover-art flow anim / any panel slide — NOT static panels/Stats-Month/playback/seek), and no longer starts on an app-start timer: it's armed once after `_finish_startup` and only runs after 5s of genuine no-interaction (the eventFilter's idle-restart timer). `_on_cover_loaded` / `_on_preload_sized_cover_loaded` skip the `dataChanged` emit while `_is_animating`.
 - `BookDelegate._resolve_playback` returns `(pos, dur, dur_disp, pct, has_progress, speed)`; `has_progress` (gated on `progress > MIN_PROGRESS` = 1.0s) is what shows the elapsed/bar/percentage and applies per-book speed to the displayed duration. Clicking the time label toggles remaining/total. All delegate colors are injected `Property(QColor)` for theme animation.
 
 ### Stats Panel (`stats_panel.py`)
@@ -600,11 +600,38 @@ branch needs the pixmap's real, uncropped proportions to compute its own centere
 an already-cell-cropped pixmap breaks letterbox specifically while leaving the square/stretch/crop
 branches looking fine, so the bug would only surface on covers whose aspect ratio lands in the
 letterbox bucket (>8% ratio mismatch from the cell). Also do not raise the `UnsharpMask` strength
-in `_lanczos_scale` (currently `radius=0.8, percent=25`) without re-checking against a *photographic*
-cover, not just a flat-color graphic one — a stronger pass (`percent=60` was tried and reverted)
-reads as fine on graphic art but produces visible edge haloing on photographic gradients (skies,
-faces), described by the user as "out of focus, then we slapped an HDR filter on it." Full
-root-cause writeup in NOTES.md, 2026-06-24.
+in `_lanczos_qimage` (currently `radius=0.8, percent=25`; this is where the scale logic lives as of
+2026-07-04 — `_lanczos_scale` is now just its main-thread `QPixmap` tail) without re-checking against
+a *photographic* cover, not just a flat-color graphic one — a stronger pass (`percent=60` was tried
+and reverted) reads as fine on graphic art but produces visible edge haloing on photographic
+gradients (skies, faces), described by the user as "out of focus, then we slapped an HDR filter on
+it." Full root-cause writeup in NOTES.md, 2026-06-24.
+
+### DO NOT write `_sized_cover_cache` from a worker thread, read DPR off the main thread, or let the preloader's key drift from `_get_sized_cover`'s
+The idle preloader warms `_sized_cover_cache` off-thread (2026-07-04). Three invariants make that
+safe; all are load-bearing:
+- **The scale is split for thread-safety.** `_lanczos_qimage(QImage→QImage)` (the PIL LANCZOS +
+  UnsharpMask) is the ONLY part that may run on a `CoverLoaderWorker` thread — it touches only
+  `QImage` (a pure raster container) and PIL. `QPixmap` is a GUI-thread-only paint device: creating
+  or reading one off-thread is undefined behaviour (works sometimes, crashes others). So the worker
+  emits a `QImage` (`sized_cover_loaded`), and the `QImage→QPixmap` conversion + the `_sized_cover_cache`
+  write happen on the main thread in `_on_preload_sized_cover_loaded` (QueuedConnection). NEVER write
+  either cover cache from a worker; NEVER move the QPixmap step off-thread.
+- **DPR is read on the main thread at enqueue time and passed by value** into the worker
+  (`_current_sized_key_dims()` reads `self.screen()`), because `screen()`/DPR access off the GUI
+  thread is unsafe. Do not read it inside the worker.
+- **The preloader's key MUST equal `_get_sized_cover`'s paint-time key**, `(book_id, round(target_w*dpr),
+  round(target_h*dpr))`. `BookDelegate.cover_cell_size()` is the single source of the per-view-mode
+  `target_w/target_h` and MUST stay in lockstep with the cover-rect math in `_paint_grid_cell`
+  (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (113×172).
+  A mismatch is silent: the preloaded entry keys on the wrong size, is never hit at paint time, and
+  the LANCZOS runs on the main thread during the slide anyway — the exact stall this warming exists
+  to remove. Verified matching for all five modes when added; re-verify if any cover-rect formula
+  changes. Warming is **current view mode only** (all-modes doesn't scale by library size — see
+  NOTES.md cost table and the "FUTURE IDEA" first-page-per-mode note). Batching is also load-bearing:
+  dumping all workers at once froze the main thread ~766ms (completion slots pile onto it), so keep
+  `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the
+  real two-slot completion path.
 
 ### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
 `apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
@@ -710,7 +737,23 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-01 Session 2 — logging infrastructure added (plumbing only). New
+*Last updated: 2026-07-04 Session 1 — idle preloader now warms `_sized_cover_cache` off-thread to
+kill the library slide-in stall (first-time LANCZOS-in-`paint()` was the cause). Split `_lanczos_scale`
+into a thread-safe `_lanczos_qimage(QImage→QImage)` + a main-thread `QPixmap` tail; `CoverLoaderWorker`
+gained a sized mode emitting `sized_cover_loaded(book_id, dev_w, dev_h, QImage)`; new
+`BookDelegate.cover_cell_size()` keys the preloader identically to `_get_sized_cover` (verified all
+five modes); new `panel_manager.is_any_panel_animating()` + `_preload_paused()` gate; removed the 4s
+app-start preload timer (armed once after startup, runs only after 5s idle); `PRELOAD_BATCH_SIZE`
+3→4. Separately, scroll position is now preserved across view-mode switches by capturing the topmost
+book's `_filtered` index (via the extracted `_first_visible_row()`) and `scrollTo(PositionAtTop)`
+after — replacing the raw-pixel-`value()` carry that landed on a different book per mode. New DO-NOT
+rule (worker-thread/DPR/keying invariants); "What's Built" cover-loading + `_sized_cover_cache`
+descriptions updated; existing `_lanczos_scale` UnsharpMask rule repointed to `_lanczos_qimage`.
+Session 2 (theme-hover restyle perf, `_load_svg_pixmap` LRU, redundant-`on_theme_changed` removal —
+by Fable 5) added no new DO-NOT rules; writeups in NOTES.md + SESSION.md. Cost/warming-time table and
+the first-page-per-mode future idea recorded in NOTES.md.*
+
+*Previously: 2026-07-01 Session 2 — logging infrastructure added (plumbing only). New
 `logger_setup.py`: `setup_logging()` configures the `fabulor` root logger once (rotating file
 handler, 2 MB × 3, at `platformdirs.user_log_dir("fabulor")`; level from `FABULOR_LOG_LEVEL`,
 default WARNING; file sink only, no console handler), called first thing in `main.py`. Startup

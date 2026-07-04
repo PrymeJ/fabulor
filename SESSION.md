@@ -1,3 +1,120 @@
+## Session Summary — 2026-07-04 Session 2 — theme-name hover preview: restyle perf + a redundant-call cleanup
+
+**Branch:** `main`. **Commits:** `826fb8f` (hover restyle perf), `da0f1a5` (`_load_svg_pixmap` LRU),
+`002e72a` (remove redundant `stats_panel.on_theme_changed`). By Fable 5; summarized here for the
+record. Root-cause / rationale writeups in NOTES.md (three dated 2026-07-04 entries).
+
+### Context
+
+Hovering a theme name in Settings ▸ Themes ran a ~450–580ms synchronous main-thread restyle, and
+the fade animation's clock started *before* that block — so at the default fade duration the
+animation could elapse under the restyle and read as a late snap, intermittently (worse when the
+cursor swept across several names, queuing one restyle per name crossed).
+
+### `826fb8f` — three hover-pipeline fixes (items 1–3 of the investigation; 4–6 deferred)
+
+1. **Skip hidden-panel restyle when `hover=True`** — extended the existing library/chapter-list
+   hover skip to the always-hidden `stats_panel`/`book_detail_panel` QSS + `on_theme_changed`, and
+   to the trailing `_refresh_panel_visuals`/`theme_applied.emit()`/theme-list dimming. Safe because
+   every hover *exit* runs a full `hover=False` restyle and a panel is only openable via the sidebar
+   (which requires leaving the Themes tab first → unhover → full restyle) — so no panel can be shown
+   stale. That invariant is the load-bearing part (NOTES.md).
+2. **Start `_fade_anim` after the restyle** (overlay is already shown/raised before it, so the
+   restyle happens invisibly beneath) — the fade now plays its full configured duration.
+3. **Debounce `_on_theme_hovered` (60ms)** — a cursor sweep fires the pipeline once, for the name it
+   settles on; unhover / cover-pool hover cancel a pending debounced hover.
+
+Measured hover restyle 451ms → 316ms (30% faster). Residual ~316ms is dominated by
+`mw.setStyleSheet(base)` (~185–270ms), a separate out-of-scope top-level-invalidation refactor.
+
+### `da0f1a5` — `_load_svg_pixmap` LRU (deferred item 4)
+
+`lru_cache(maxsize=64)` core keyed `(name, color, size_wh)` (QSize normalized to a hashable tuple),
+matching `icon_utils`' existing pattern. No staleness risk (color is always an explicit arg; SVG on
+disk is static). **Sharing contract:** hits return the *same* pixmap object — all callers use it
+read-only; a future in-place `QPainter(pixmap)` caller would corrupt every other icon sharing that
+key and must `.copy()` first (NOTES.md).
+
+### `002e72a` — removed a redundant direct `stats_panel.on_theme_changed` call
+
+The direct call (added `b17de6f`, 2026-06-29) duplicated the `theme_applied` signal →
+`on_theme_changed` connection that has driven it on every live theme change since 2026-04-25
+(`e337eba`) — `b17de6f`'s justifying claim that `on_theme_changed` "was previously only called once,
+at startup" was factually wrong. Both sites share the same `if not hover:` gate, so a real theme
+change fired it 2× (pure waste — `on_theme_changed` is idempotent, not a correctness bug). Verified
+the arrow-color fix `b17de6f` actually shipped still works via the signal path alone (1×). Signal
+wiring is now the single owner, matching `tags_panel`/`book_detail_panel`. Do NOT re-add (NOTES.md).
+
+## Session Summary — 2026-07-04 Session 1 — idle preloader warms `_sized_cover_cache` (kills the library slide-in stall) + cross-mode scroll-position fix
+
+**Branch:** `main`. **Commits:** `15451b0` (warm sized cache), `c3c1622` (cost writeup),
+`6eeffc8` (batch 3→4), `9e30865` (scroll preservation). Preceded by a multi-pass investigation
+(no commits) that reframed the reported symptom twice before the real cause was found.
+
+### The investigation that set this up (library slide-in "stutter")
+
+Reported as a scroll stutter, then corrected by the user to the **panel slide-in itself looking
+janky, every library open**, worse-feeling but not actually cold-start-specific. Frame-level +
+main-thread-heartbeat instrumentation (all reverted) established: the slide *motion* is smooth; the
+jank is a burst of **first-time PIL LANCZOS scaling running synchronously inside `paint()` on the
+main thread** as newly-visible cells first render. Root cause pinned precisely: the idle preloader
+warmed only `_cover_cache` (raw pixmaps), never `_sized_cover_cache` (the LANCZOS+UnsharpMask
+cell-sized pixmaps `_get_sized_cover` builds at paint time) — so the *first* paint of any cell at
+the current cell size always paid the scale cost on the slide's frames. Ruled OUT (by the user's own
+controls — fixed theme, blur off, no rotation, mid-session, book-load-independent): theme rotation,
+cover-art theme, blur, and the scan-finished refresh, all of which *can* wipe the sized cache but
+weren't the everyday trigger. The everyday trigger is simply "cells not yet painted at this size."
+
+### `15451b0` — warm `_sized_cover_cache` in the idle preloader (the fix)
+
+- Split `_lanczos_scale` into a **thread-safe `_lanczos_qimage(QImage→QImage)`** (the actual PIL
+  work, no QPixmap) + a thin main-thread `QPixmap` tail; `_get_sized_cover` routes through the same
+  `_lanczos_qimage`, so one implementation. Verified off-thread QImage→PIL→QImage is safe
+  (QPixmap is GUI-thread-only; QImage is not).
+- `CoverLoaderWorker` gained a **sized mode**: given a pre-computed device-pixel target it scales
+  off-thread and emits `sized_cover_loaded(book_id, dev_w, dev_h, QImage)`; the main-thread slot
+  converts to QPixmap and writes `_sized_cover_cache`. DPR is read on the main thread at enqueue and
+  passed by value — the worker never touches `screen()`.
+- New `BookDelegate.cover_cell_size()` gives the deterministic per-view-mode cover-rect size so the
+  preloader keys **identically** to `_get_sized_cover` — verified exact match for all five modes
+  (this was the flagged silent-failure point: a mismatched key = a preloaded entry never hit).
+  **Active view mode only** (approved scope — all-modes doesn't scale by library size).
+- **Gate** (`_preload_paused()` + new `panel_manager.is_any_panel_animating()`): pauses during
+  scan / theme-fade / cover-art flow anim / any panel slide. NOT gated on a static open panel, the
+  Stats Month tab, playback, or seeking — the Month-tab case was empirically tested (heaviest month,
+  exaggerated load) and showed zero interference.
+- **Settled trigger:** removed the 4s app-start preload timer. The preloader is armed once after
+  startup and only runs after **5s of genuine no-interaction** (the eventFilter resets the idle
+  timer on every event), so a user who opens the library immediately sees today's behavior. Verified:
+  warmed open ran **0 main-thread LANCZOS calls during the slide**.
+
+### `c3c1622` / `6eeffc8` — cost writeup + batch tuning
+
+- Documented (NOTES.md) the memory + warming-time cost of caching all modes vs active-only: sized
+  pixmap = `w×h×4 bytes`, independent of source resolution, scales as `books×modes×dpr²`;
+  all-4-modes reaches 3.7 GB at 4k books / DPR2 with no eviction — hence active-mode-only. Measured
+  warming ≈ **books ÷ 60 s** (≈6s for the 383-book library), dispatch-bound not scale-bound.
+- Raised `PRELOAD_BATCH_SIZE` 3→4 (~33% faster warm) after measuring the **real** two-slot completion
+  path's main-thread jank: 3 = 5 blocks/25ms, 4 = 6/28ms (indistinguishable), 5 = 13/47ms (the wall).
+  Batching itself is load-bearing — dispatching all workers at once froze the main thread ~766ms
+  (each completion's `QImage→QPixmap`+dict write lands on the main thread via QueuedConnection).
+
+### `9e30865` — scroll position preserved across view-mode switches
+
+Separate investigation: switching view mode carried the scrollbar's raw **pixel `value()`** into the
+new mode unchanged (Qt's default), and since each mode packs the same books into a different number
+of rows, the same pixel offset lands on a different book per mode — top/0 was the only
+range-independent value, which is why scroll-to-top was the one case that "just worked". Confirmed
+empirically (`value` stayed constant while `maximum` changed per mode). Fixed by capturing the
+topmost visible book's **index into `_filtered`** before the switch and `scrollTo(index,
+PositionAtTop)` after, inside the existing `_after_reset` deferral. Extracted the visualRect
+first-visible-row search into `_first_visible_row()` so capture and `_load_visible_covers` share one
+implementation. Verified (isolated single-switch runs): same book stays at top across every mode
+pair; scroll-to-top still lands at row 0 (no regression); near-bottom → shorter-range mode clamps
+gracefully. Grid↔grid can shift ±1–2 rows (different column count — accepted "immediate vicinity").
+Process note: a batched test showed *false* regressions from rapid `setValue` racing the deferred
+`_after_reset`; isolated single-switch runs were the trustworthy signal.
+
 ## Session Summary — 2026-07-03 — cover-placeholder extraction + no-cover-source consolidation (groundwork for the title/author layout redesign)
 
 **Branch:** `main`. **Commits:** `7383311` (extract), `b1e0db2` (consolidate).

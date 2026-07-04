@@ -1,3 +1,66 @@
+## Theme-name hover preview: skip hidden-panel restyle, start the fade AFTER the restyle, debounce the pipeline (2026-07-04)
+
+Hovering a theme name in Settings ▸ Themes ran a ~450–580ms synchronous main-thread
+restyle, and the fade animation's clock was started *before* that block — so at the
+default fade duration the animation could fully elapse under the restyle and degrade
+into a late snap. Sweeping the cursor across several names queued one full restyle per
+name crossed, which is why the lateness was intermittent. Three fixes landed
+(`826fb8f`); items 4–6 from the same investigation were deferred pending visual
+inspection (item 4, the `_load_svg_pixmap` LRU, landed separately — see below).
+
+1. **Skip hidden-panel work when `hover=True`.** `_apply_stylesheets` already skipped
+   the library panel + chapter list on hover; extended to the always-hidden
+   `stats_panel`/`book_detail_panel` QSS + `stats_panel.on_theme_changed`, and to the
+   trailing `_refresh_panel_visuals` / `theme_applied.emit()` / theme-list dimming in
+   `_on_theme_changed`.
+
+   **Why this is safe (the load-bearing invariant, not obvious):** a hover preview can
+   never leave a panel showing stale colors, because *every* hover exit already runs a
+   full `hover=False` restyle — unhover snapback, click-to-activate, and tab-leave all
+   do. And a panel can only be opened via the sidebar, which requires *leaving the
+   Themes tab first* (`leaveEvent` → unhover → full restyle). So there is no reachable
+   sequence where a panel becomes visible after a hover-only restyle without a full
+   restyle in between. If a future change ever makes a config panel openable *without*
+   leaving the Themes tab, this skip becomes unsafe and must be revisited.
+
+2. **Start `_fade_anim` AFTER `_apply_stylesheets`** in the themes-tab hover branch. The
+   overlay is shown/raised *before* the restyle (so the restyle happens invisibly
+   beneath it); starting the fade afterward gives it its full configured duration
+   instead of burning the clock inside the restyle.
+
+3. **Debounce `_on_theme_hovered` (60ms single-shot).** A cursor sweep across N names
+   now fires the pipeline once, for the name it settles on. Unhover and cover-pool
+   hover both cancel a pending debounced hover so a stale preview can't fire after the
+   cursor has moved on.
+
+Measured (offscreen, timing only): `_apply_stylesheets` hover cost 451ms → 316ms (30%
+faster on the skip alone). The residual ~316ms is dominated by `mw.setStyleSheet(base)`
+(~185–270ms), a top-level-widget style invalidation flagged as a separate, out-of-scope
+refactor — do not conflate it with this hover work. Instrumentation is DEBUG-level (per
+the `FABULOR_LOG_LEVEL` convention): per-step wall-clock in `_apply_stylesheets`
+(skipped steps log SKIP) + a fade-start-timing line in `_on_theme_changed`.
+
+## `_load_svg_pixmap` LRU cache: returned pixmaps are shared read-only across callers (2026-07-04)
+
+`_load_svg_pixmap` (`ui_helpers.py`) was given an `lru_cache(maxsize=64)` core
+(`_load_svg_pixmap_cached`), matching the caching pattern `icon_utils.py`'s
+`load_themed_icon`/`load_currentcolor_icon` already used, keyed on
+`(name, color, size_wh)` — the `QSize` arg is normalized to a hashable `(w, h)`
+tuple since `QSize` itself isn't hashable.
+
+**Load-bearing assumption, not just an implementation detail:** every call site
+now gets back the *same* `QPixmap` object on a cache hit, not a fresh copy. All
+current callers use it read-only (`setPixmap`, wrapping in `QIcon(...)`,
+`drawPixmap`), which is safe. But a future caller that tried to paint into a
+returned pixmap in place (e.g. `QPainter(pixmap)` to draw an overlay directly
+onto it, rather than onto a fresh copy) would silently corrupt every other icon
+currently sharing that `(name, color, size)` cache entry — anywhere else in the
+app using that same icon at that same color/size would show the mutated result,
+with no error or warning. This is the same sharing contract `icon_utils`'s
+existing cached loaders already carry; `_load_svg_pixmap` just newly joins it.
+If in-place mutation is ever needed, the caller must `QPixmap(cached).copy()`
+(or equivalent) first — never paint directly onto the object the cache returned.
+
 ## Removed a redundant direct `stats_panel.on_theme_changed` call — signal path was already the owner (2026-07-04)
 
 `ThemeManager._apply_stylesheets` had a direct `stats_panel.on_theme_changed(...)`
