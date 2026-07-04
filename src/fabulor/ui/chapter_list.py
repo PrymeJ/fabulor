@@ -1,8 +1,12 @@
 # THEME_ANIM_TODO: ChapterList
+import logging
+import time
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate, QStyle, QGraphicsOpacityEffect, QPushButton
 from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QMouseEvent, QKeyEvent, QColor
 from mpv import ShutdownError
+
+logger = logging.getLogger(__name__)
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
@@ -129,6 +133,10 @@ class ChapterList(QListWidget):
         self.update()
 
     def populate(self, total_duration=0, speed=1.0, list_width=0):
+        logger.debug(
+            f"t={time.perf_counter():.6f} [populate ENTRY] "
+            f"count_before={self.count()} scroll_before={self.verticalScrollBar().value()}"
+        )
         self._digit_buffer = ""
         self._digit_timer.stop()
         try:
@@ -159,11 +167,20 @@ class ChapterList(QListWidget):
             self._can_expand = self.count() > VISIBLE_ROWS
             self._expanded = False
             self._expand_btn.setText("▲")
+            logger.debug(
+                f"t={time.perf_counter():.6f} [populate EXIT] "
+                f"count_after={self.count()} scroll_after={self.verticalScrollBar().value()}"
+            )
         except (ShutdownError, AttributeError, SystemError):
             return
 
     def show_above(self, anchor_widget, window):
         """Position the list inside the parent window, just above anchor_widget."""
+        logger.debug(
+            f"t={time.perf_counter():.6f} [show_above ENTRY] "
+            f"count={self.count()} scroll_before={self.verticalScrollBar().value()} "
+            f"isVisible={self.isVisible()}"
+        )
         self.setFixedWidth(window.width())
 
         self._opacity.setOpacity(0.0)
@@ -232,10 +249,19 @@ class ChapterList(QListWidget):
 
     def scroll_to_active(self, index):
         count = self.count()
+        logger.debug(
+            f"t={time.perf_counter():.6f} [scroll_to_active ENTRY] "
+            f"index={index} count={count} isVisible={self.isVisible()} "
+            f"scroll_before={self.verticalScrollBar().value()}"
+        )
         if count == 0:
             return
         top_row = max(0, min(index - 2, count - VISIBLE_ROWS))
         self.verticalScrollBar().setValue(top_row * ROW_HEIGHT)
+        logger.debug(
+            f"t={time.perf_counter():.6f} [scroll_to_active EXIT] "
+            f"top_row={top_row} scroll_after={self.verticalScrollBar().value()}"
+        )
 
     def mousePressEvent(self, event: QMouseEvent):
         item = self.itemAt(event.pos())
@@ -304,6 +330,10 @@ class ChapterList(QListWidget):
             return
 
     def _activate_item(self, item, force_play=False):
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_activate_item ENTRY] "
+            f"requested_idx={item.data(ROLE_CHAP_INDEX)} force_play={force_play}"
+        )
         try:
             if not self.player:
                 return

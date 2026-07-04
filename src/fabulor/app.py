@@ -1647,6 +1647,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         if self.chapter_list_widget.isVisible():
+            logger.debug(
+                f"t={time.perf_counter():.6f} [_show_chapter_dropdown] "
+                f"already visible -> fade_out"
+            )
             self.chapter_list_widget.fade_out()
             return
 
@@ -1665,6 +1669,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         for i, ch in enumerate(chapters):
             if ch.get('time', 0) <= pos + 0.35:
                 active_idx = i
+        logger.debug(
+            f"t={time.perf_counter():.6f} [_show_chapter_dropdown] "
+            f"pos={pos} is_seeking={self.player.is_seeking} -> active_idx={active_idx} "
+            f"(queuing deferred scroll_to_active)"
+        )
         self.chapter_list_widget.show_above(self.current_chapter_label, self)
 
         # Apply selection and scroll after the widget is shown and laid out
