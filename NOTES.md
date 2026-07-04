@@ -1,3 +1,36 @@
+## Removed a redundant direct `stats_panel.on_theme_changed` call — signal path was already the owner (2026-07-04)
+
+`ThemeManager._apply_stylesheets` had a direct `stats_panel.on_theme_changed(...)`
+call inside its `if not hover:` block (added 2026-06-29, `b17de6f`, alongside the
+Recently-Finished scroll-arrow color fix). Its commit message justified it by
+claiming `on_theme_changed` "was previously only ever called once, at startup" —
+which was **factually wrong**. The `theme_applied` signal → `on_theme_changed`
+connection (`build_stats_panel` in `main_window_builders.py`) has driven it on
+every live theme change since the ThemeManager-as-QObject introduction
+(2026-04-25, `e337eba`), and still does. `tags_panel` and `book_detail_panel` use
+the same signal wiring and have no direct call.
+
+**Confirmed a true duplicate, not dual-trigger coverage:** both live-update sites
+are gated by the *same* `if not hover:` condition (one in `_apply_stylesheets`,
+one guarding the `theme_applied.emit()` in `_on_theme_changed`), so they always
+fire together and never independently. Measured: a real theme change fired
+`on_theme_changed` **2×**, a hover preview fired it **0×**. `on_theme_changed` is
+fully idempotent — deterministic attribute writes + `.update()` repaint requests +
+pixmap re-renders (through the LRU-cached icon loaders), no `.emit()`, no timers,
+no DB queries, no accumulating state — so the double-call was pure waste, not a
+correctness bug.
+
+**The important verification (the original bug did NOT depend on the direct
+call):** before removing, isolated the signal path by neutralizing only the direct
+call and confirming the Recently-Finished arrow overlay color
+(`FinishedScrollRow._overlay_rgb`, the exact observable `b17de6f` was fixing) still
+updated to the new theme's `stats_carousel_stripe`/`accent_dark` on a real theme
+change — it did, via the signal path alone, firing `on_theme_changed` exactly 1×.
+So the direct call was not masking any signal-path gap (ordering, timing, or a
+hover-state edge in the connection); the April signal wiring genuinely already
+covered the live-update the arrow fix needed. Removed the direct call; the signal
+connection is now the single owner. Do NOT re-add a direct call here.
+
 ## FUTURE IDEA (not decided, not implemented): preload the first-page cover set of EVERY view mode (2026-07-03)
 
 **Status: future design idea only. Not decided, not planned, not implemented in this pass.** This

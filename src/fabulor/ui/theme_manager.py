@@ -737,16 +737,15 @@ class ThemeManager(QObject):
                 if target:
                     target.setStyleSheet(ss_stats)
             # The "Recently finished" scroll rows' edge-scroll arrows use
-            # per-widget instance stylesheets (a qlineargradient overlay), so —
-            # same reasoning as excluded_books_section/popup above — the plain
-            # QSS repolish on stats_panel does NOT reach them. on_theme_changed
-            # was previously only ever called once, at startup
-            # (main_window_builders.py); a live theme switch never refreshed
-            # the arrow overlay color at all.
-            stats_panel = getattr(mw, 'stats_panel', None)
-            if stats_panel and hasattr(stats_panel, 'on_theme_changed'):
-                from ..themes import _resolve_theme
-                stats_panel.on_theme_changed(_resolve_theme(theme_name))
+            # per-widget instance stylesheets that the plain QSS repolish above
+            # does NOT reach — they're refreshed by stats_panel.on_theme_changed,
+            # which is already driven on every live (non-hover) theme change by
+            # the theme_applied signal connection (main_window_builders.py, wired
+            # since the ThemeManager-QObject introduction). A direct call here was
+            # added later on the mistaken premise that on_theme_changed only ran
+            # once at startup; it was a true duplicate of the signal path and was
+            # removed (see NOTES.md). Do NOT re-add it — the signal path is the
+            # single owner, matching tags_panel / book_detail_panel.
             _mark("stats + book_detail panels")
         else:
             _mark("stats + book_detail panels", skipped=True)
