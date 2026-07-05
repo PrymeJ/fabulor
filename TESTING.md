@@ -767,11 +767,15 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 ### Tag filter (from Book Detail Panel)
 - [ ] Clicking a header tag chip (library context) dismisses detail panel and opens library filtered to #tag
 - [ ] All view modes show the filtered result correctly (1/2/3-per-row, Square, List)
-- [ ] Clicking into the search field while tag filter active clears it and allows normal typing
-- [ ] Opening library manually (sidebar button) while tag filter is active clears the filter
+- [ ] Clicking into the search field while a tag filter is active reverts to the last explicitly-typed/searched text (not empty) and allows normal typing from there
+- [ ] Opening library manually (sidebar button) while a tag filter is active reverts the field to the last explicit text (not empty)
 - [ ] Opening library via tag chip a second time replaces the previous tag filter
 - [ ] Tag filter does not persist across app restarts
-- [ ] Clicking the same tag a second time is a no-op re-set (not a toggle/clear) — known current behavior, not yet given its own toggle
+- [ ] A tag chip whose tag is already the active library filter (library context only) shows a regular cursor and does nothing on click — inert, not a re-set, not a toggle
+- [ ] Reopening a book's detail panel after typing `#sometag` manually: the matching chip (if the book has that tag) is inert; other tags on that book remain clickable
+- [ ] Click a tag chip to filter, then open a DIFFERENT book's detail panel that also has that tag: that chip is inert there too (live check against current search text, not tied to which specific chip instance was clicked)
+- [ ] Click a tag chip to filter, then open a book with a different tag: that different tag's chip remains clickable
+- [ ] Tag chip inert/clickable state is unaffected by (and does not affect) the Stats panel or Tags panel entry points to the detail panel — chips there are never clickable regardless of active filter, unchanged
 
 ### Click-to-filter (author/narrator/year, library grid — 1-per-row/2-per-row only)
 - [ ] Left-clicking author text sets the search field to the author's name and filters the library
@@ -793,12 +797,16 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Segment click resolves correctly whether the field is mid-scroll or at rest (short multi-value string that never overflows)
 - [ ] No underline, color change, or other visual decoration appears on hover, on any field, scrolling or static
 
-#### Toggle-off reverts to last explicit text (not empty)
+#### Toggle-off / revert reverts to last explicit text (not empty) — applies uniformly to tag AND field clicks
 - [ ] Type a search manually, click an author/narrator/year value, click the same value again: field reverts to the manually-typed text, not ""
 - [ ] Type a search, click field A, click field B, click a year, click the same year again: field reverts to the originally-typed text (not field A or B — only one explicit value is ever remembered)
-- [ ] Right-click to clear the field, then click a field value, then click it again: field reverts to empty (the right-click-clear is itself now the "explicit" value)
+- [ ] Type a search, click a tag chip, click a second tag chip: field shows the second tag's filter (not the first, not blank) — clicking a second click-filter must not silently lose the typed text
+- [ ] Type a search, click a tag chip, close and reopen the library (sidebar button): field reverts to the typed text, not empty
+- [ ] Type a search, click an author, click a tag, click a different author, click that author again: field reverts to the originally-typed text
+- [ ] Right-click to clear the field, then click a field value or tag, then click it again (or reopen the library): field reverts to empty (the right-click-clear is itself now the "explicit" value) — right-click behavior itself is completely unchanged
 - [ ] With no typed text this session (fresh open, no persisted filter): click a field value, click it again — field reverts to whatever the session's initial value was
-- [ ] Left-clicking into the search field while a click-filter is showing still clears it to empty immediately (pre-existing `focusInEvent` behavior, unchanged by this feature)
+- [ ] Left-clicking into the search field while ANY click-filter (tag or field) is showing reverts to the last explicit text and places the cursor there for editing — it does NOT clear to empty
+- [ ] Left-clicking into the search field when it already shows the real explicit text (no click-filter active) does nothing special — normal cursor/focus, no revert, no clear
 - [ ] "Persist search filter" restart behavior (see that section below) is completely unaffected by any of the above
 
 ### Theme

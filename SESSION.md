@@ -4,7 +4,9 @@
 `53fb087` (segment hit-test spike, throwaway scaffolding kept only as validated helpers),
 `5c904ef` (fixed per-field-type row slots), `a631e32` (split-name segment click-to-filter,
 underline removed), `8d4e935` (toggle-off maxLength fix), `d8f193d` (toggle-off reverts to last
-explicit filter text instead of "").
+explicit filter text instead of ""), `6847330` (library-reopen also reverts to explicit text,
+fixes a stomping bug), `f778828` (inert tag chip when its tag is the active filter), `a7271a5`
+(left-click into the field reverts to explicit text instead of clearing).
 
 ### Context
 
@@ -93,18 +95,65 @@ a short-lived `self._programmatic_search_update` guard around `setText` (same id
 `last_event_was_toggle`) so `_on_search_changed` can tell the two apart. Toggle-off calls
 `set_search(self._explicit_filter_text)` and then explicitly overrides `_tag_filter_active` back to
 `False` — `set_search` always sets it `True` (built for "a click filter is now active"), which would
-otherwise mark the just-restored real text as a click override, letting a later left-click into the
-field (`focusInEvent`'s existing snap-to-empty for an active click-filter) wipe it back out.
+otherwise mark the just-restored real text as a click override and needed to be undone explicitly
+here so a later left-click into the field wouldn't misread the restored text as still-active click
+state (see `a7271a5` below — that snap-to-empty behavior was itself corrected same-day).
 Only one explicit value is ever remembered — clicking A, then B, then a year, then re-clicking the
 year all revert to the *same* typed text, clicks never chain. `save_search_filter()` (the
 "Persist search filter" app-restart mechanism) reads `search_field.text()` directly and never
 references `_explicit_filter_text`, so that setting's behavior is unaffected.
 
-Scoped to the author/narrator/year field-click path (`library.py`) only. The tag-click path
-(`app.py:_on_tag_filter_requested`) has no toggle-off at all today — clicking the same tag twice
-just re-sets the identical string, a harmless no-op — and was deliberately left alone rather than
-retrofitted with the same toggle; the better fix there is likely to make an already-active tag not
-re-clickable in the first place, deferred for later.
+Scoped to the author/narrator/year field-click path (`library.py`) only at the time of this commit.
+The tag-click path (`app.py:_on_tag_filter_requested`) had no toggle-off at all — clicking the same
+tag twice just re-set the identical string, a harmless no-op — deliberately left alone rather than
+retrofitted with the same toggle; see `f778828` below for how that gap was actually closed (not via
+a toggle, but by making an already-active tag's chip inert).
+
+### `6847330` — library-reopen also reverts to explicit text (closes a stomping bug `d8f193d` missed)
+
+`d8f193d` protected `_explicit_filter_text` from click-originated `set_search` calls, but missed a
+second write path: `clear_tag_filter_if_active()` (called at the start of every library open,
+including as step one of applying a *new* tag-click filter via `_open_library_flow` →
+`_on_tag_filter_requested`) called `search_field.setText("")` directly, with no
+`_programmatic_search_update` guard. `_on_search_changed` read that as a genuine user edit and
+overwrote `_explicit_filter_text` to `""` — so typing `"Feist"`, clicking tag A, then clicking tag B
+silently destroyed `"Feist"` the instant the second click's `clear_tag_filter_if_active()` ran,
+before that click's own `set_search` even executed. Even guarded, the method only ever cleared to
+`""`, so reopening the library while a click-filter was showing could never restore the typed text
+either. Fixed by having `clear_tag_filter_if_active()` revert to `self._explicit_filter_text` (not
+`""`) under the same guard `set_search` uses — matching the field-click toggle-off exactly. Found by
+the user chaining exactly this sequence (type → click tag → click a different author → click that
+author again) and noticing the revert landed on the tag, not the typed text.
+
+### `f778828` — tag chip is inert when it is already the active filter
+
+The deferred tag-click gap noted in `d8f193d` above was closed by prevention rather than a toggle,
+per explicit user direction: a tag chip (library context only, in `BookDetailPanel`) becomes
+non-clickable — regular cursor, no click action, no `<a href>` in the tag-strip label — when
+`f"#{tag}"` exactly matches the library's current search text. No existing plumbing let
+`BookDetailPanel` read `LibraryPanel`'s live search text (`db`/`config` don't carry it;
+`config`'s persisted-filter value is a one-time snapshot, not live), so `panels.py:open_book_detail`
+(which already reaches both panels) snapshots `search_field.text()` once, at the moment the detail
+panel opens, and passes it through the existing `load_book(...)` call as `active_search_text`. A
+snapshot is sufficient rather than a live callback: the library's search text cannot change while
+the detail panel is open — reaching it requires leaving the library view first. Both
+`_rebuild_tag_chips` and `_rebuild_tag_display` check the match, still nested inside the pre-existing
+`self._context == 'library'` gate, so the stats-panel and tags-panel entry points are unaffected as
+before.
+
+### `a7271a5` — left-click into the search field also reverts to explicit text
+
+The last gap in the same family: `focusInEvent`'s handler cleared the field to `""` directly
+whenever a click-filter was active, with no guard — the same class of bug as `6847330`, just a
+different call site, and it meant left-clicking into the field while looking at a tag-click-filter
+(with no matching chip visible on the currently-open book to re-click) was a dead end back to `""`
+with no way to recover the typed text short of reopening the library. Fixed by delegating to
+`clear_tag_filter_if_active()` (already correct as of `6847330`) instead of duplicating its own
+`setText("")`. Left-click into the field is now a universal, source-agnostic way back to the last
+explicit text regardless of what produced the current click-filter (tag or field) — matching what
+re-clicking the exact same source already did, without requiring the user to find and re-click that
+exact source. No active filter: no-op, normal focus, unchanged. Right-click
+(`_on_search_right_click`) keeps its separate, deliberate nuke-to-`""` behavior, untouched.
 
 ### Deferred, not attempted
 

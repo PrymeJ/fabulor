@@ -1,6 +1,6 @@
-## Library click-to-filter: two bugs worth remembering the shape of (2026-07-05)
+## Library click-to-filter: three bugs worth remembering the shape of (2026-07-05)
 
-Full feature narrative is in SESSION.md (2026-07-05, commits `5f637dc`..`8d4e935`). Two bugs from
+Full feature narrative is in SESSION.md (2026-07-05, commits `5f637dc`..`a7271a5`). Three bugs from
 that work are worth a standalone note because the *shape* of each is likely to recur elsewhere,
 not just the specific line that was wrong.
 
@@ -38,6 +38,27 @@ ends up stored. **Lesson: any code that compares an external string against "wha
 currently holds" must derive the comparison value through the same transformation the widget
 applies (length limits, input masks, case-folding validators, etc.), not just diff the two raw
 strings — the widget's stored value and the value you handed it are not guaranteed to be equal.**
+
+**3. A guard added at one write-path was silently absent from a second, older write-path to the
+same widget.** `d8f193d` introduced `self._programmatic_search_update`, set around `set_search`'s
+`search_field.setText(...)` call, so `_on_search_changed` could tell a click-originated change
+apart from a genuine user edit and only update `self._explicit_filter_text` on the latter. This
+correctly protected every *new* call added for the click-to-filter feature — but `search_field`
+already had an older, pre-existing direct-`setText` call site, `clear_tag_filter_if_active()`
+(added long before this feature, originally just `setText("")` unconditionally), that nobody
+thought to route through the new guard because it wasn't being *changed* by this feature, only
+*read past* by it. The result: typing `"Feist"`, clicking a tag, then clicking a second tag,
+silently lost `"Feist"` — the second click's `_open_library_flow()` → `clear_tag_filter_if_active()`
+ran before that click's own `set_search`, saw `_tag_filter_active` was `True` from the first click,
+and called the old unguarded `setText("")`, which `_on_search_changed` read as real typing and
+overwrote `_explicit_filter_text` with `""`. A near-identical second instance of the exact same
+oversight was found the same day in `focusInEvent`'s handler (`a7271a5`) — also a pre-existing
+direct `setText("")` call, also never routed through the guard. Both fixed by having those call
+sites reuse `clear_tag_filter_if_active()` (itself now guarded) rather than calling `setText`
+directly. **Lesson: when adding a guard/flag to make one code path distinguishable from "real user
+input," grep for every OTHER call site that writes the same property the same way — a guard is only
+as good as its coverage, and old call sites that predate the guard are exactly the ones easiest to
+forget because they don't show up in a diff of the feature that introduced the guard.**
 
 ## Theme-name hover preview: skip hidden-panel restyle, start the fade AFTER the restyle, debounce the pipeline (2026-07-04)
 
