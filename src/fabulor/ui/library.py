@@ -410,28 +410,31 @@ class LibraryPanel(QFrame):
                 idx = self._list_view.indexAt(pos)
                 if idx.isValid():
                     book = idx.data(ROLE_BOOK)
+                    # Cache the hovered book so the scroll-tick cursor refresh (_advance_scroll)
+                    # can re-test the target under a stationary pointer as the marquee moves.
+                    self._delegate._hover_book = book
                     if book:
                         self._delegate.on_hover_move(book.path, pos)
-                        self._delegate._spike_update_hover_segment(book, pos)  # PROTOTYPE
                     self._list_view.update(idx)
                     opt = QStyleOptionViewItem()
                     self._delegate.initStyleOption(opt, idx)
                     opt.rect = self._list_view.visualRect(idx)
                     hit = self._delegate._time_label_rect(opt, idx)
                     has_progress = book and (book.progress or 0.0) > MIN_PROGRESS
-                    field_hit = book and self._delegate._filterable_field_at(book.path, pos)
-                    if (hit and hit.contains(pos) and has_progress) or field_hit:
+                    # Hand only over a real filter target — for a multi-value author/narrator
+                    # that means over a name, NOT over the separator gap between names (a dead
+                    # zone that clicks through to normal selection).
+                    field_target = book and self._delegate._field_filter_target_at(book, pos)
+                    if (hit and hit.contains(pos) and has_progress) or field_target:
                         self._list_view.viewport().setCursor(Qt.PointingHandCursor)
                     else:
                         self._list_view.viewport().setCursor(Qt.ArrowCursor)
                 else:
                     self._list_view.viewport().setCursor(Qt.ArrowCursor)
-                    self._delegate._hover_segment = None       # PROTOTYPE
-                    self._delegate._spike_hovered_book = None  # PROTOTYPE
+                    self._delegate._hover_book = None
             elif event.type() == QEvent.Type.Leave:
                 self._list_view.viewport().setCursor(Qt.ArrowCursor)
-                self._delegate._hover_segment = None       # PROTOTYPE
-                self._delegate._spike_hovered_book = None  # PROTOTYPE
+                self._delegate._hover_book = None
                 self._on_view_left()
         return super().eventFilter(obj, event)
 
@@ -1184,12 +1187,7 @@ class BookDelegate(QStyledItemDelegate):
         self._apply_theme(theme)
         self.last_event_was_toggle = False
         self.pending_field_filter = None  # (field, value) or None
-        # PROTOTYPE (spike): (path, field, seg_text, seg_start_px, seg_width_px) currently under
-        # cursor, or None. Transient — recomputed on mouse move AND each scroll tick, read by the
-        # paint highlight hooks. _spike_hovered_book caches the book so the tick recompute (driven
-        # by the scroll timer with a stationary mouse) can re-run the hit-test without a new event.
-        self._hover_segment = None
-        self._spike_hovered_book = None
+        self._hover_book = None  # book under cursor, for scroll-tick cursor refresh
         self._view_mode = "3 per row"
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
         self._hover_pos = QPoint()
@@ -1509,13 +1507,38 @@ class BookDelegate(QStyledItemDelegate):
             state[0] = offset
             changed = True
         if changed:
-            # PROTOTYPE: text moved under a possibly-stationary cursor — re-run the segment
-            # hit-test at the last known pointer position so the highlight/grab tracks what's
-            # actually under the mouse now, not what was under it at the last mouse-move.
-            self._spike_recompute_hover_segment()
+            # Text moved under a possibly-stationary cursor — refresh the hand/arrow cursor at
+            # the last known pointer position so it tracks what's actually under the mouse now
+            # (a name → hand, the gap between names → arrow), not what was there at the last
+            # mouse-move. The grab itself is always correct at click time; this keeps the
+            # affordance honest while the marquee scrolls.
+            self._refresh_hover_cursor()
             vp = getattr(self, '_viewport', None)
             if vp:
                 vp.update()
+
+    def _refresh_hover_cursor(self) -> None:
+        """Re-decide the viewport cursor for the currently-hovered book at the last known
+        pointer pos. Driven by _advance_scroll so a stationary cursor over a scrolling
+        multi-value field flips hand↔arrow as names/gaps pass under it. Mirrors the
+        mouse-move cursor logic in LibraryPanel.eventFilter, routed through the same
+        _field_filter_target_at so the two never diverge.
+
+        Scoped to only touch the cursor while the pointer is over one of this book's
+        author/narrator/year field rects — so it never clobbers the cursor the mouse-move
+        handler set elsewhere (e.g. over the time label, or a different row)."""
+        vp = getattr(self, '_viewport', None)
+        book = getattr(self, '_hover_book', None)
+        if vp is None or book is None:
+            return
+        if self._view_mode not in ("1 per row", "2 per row"):
+            return
+        if self._filterable_field_at(book.path, self._hover_pos) is None:
+            return  # pointer not over any field of this book — leave the cursor as-is
+        if self._field_filter_target_at(book, self._hover_pos):
+            vp.setCursor(Qt.PointingHandCursor)
+        else:
+            vp.setCursor(Qt.ArrowCursor)
 
     def sizeHint(self, option, index):
         dim = ITEM_DIMENSIONS.get(self._view_mode, ITEM_DIMENSIONS["3 per row"])
@@ -1562,12 +1585,10 @@ class BookDelegate(QStyledItemDelegate):
             return False
 
         if self._view_mode in ("1 per row", "2 per row"):
-            field = self._filterable_field_at(book.path, event.pos())
-            if field:
+            target = self._field_filter_target_at(book, event.pos())
+            if target:
                 if event.type() == _QEvent.Type.MouseButtonRelease:
-                    value = getattr(book, field, None)
-                    if value:
-                        self.pending_field_filter = (field, str(value))
+                    self.pending_field_filter = target
                 return True
 
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
@@ -1687,9 +1708,6 @@ class BookDelegate(QStyledItemDelegate):
                 painter.save()
                 painter.setClipRect(clip_rect)
                 painter.drawText(text_x + int(offset), row_text_y + fm.ascent(), value)
-                self._spike_draw_segment_highlight(  # PROTOTYPE
-                    painter, book.path, field, value,
-                    base_x=text_x + int(offset), baseline_y=row_text_y + fm.ascent())
                 painter.restore()
             else:
                 painter.drawText(text_x, row_text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
@@ -1785,9 +1803,6 @@ class BookDelegate(QStyledItemDelegate):
             painter.save()
             painter.setClipRect(QRect(x, y, w, line_h))
             painter.drawText(x + int(offset), y + fm.ascent(), value)
-            self._spike_draw_segment_highlight(  # PROTOTYPE
-                painter, path, field, value,
-                base_x=x + int(offset), baseline_y=y + fm.ascent())
             painter.restore()
         elif center and full_w <= w:
             painter.drawText(QRect(x, y, w, line_h), Qt.AlignHCenter | Qt.AlignVCenter, value)
@@ -2261,8 +2276,8 @@ class BookDelegate(QStyledItemDelegate):
     def _filterable_field_at(self, path: str, pos: "QPoint") -> Optional[str]:
         """Returns 'author'/'narrator'/'year' if pos hits that field's actual rendered text
         (not its full layout slot) for the given book path in 1-/2-per-row mode, else None.
-        Single source of truth for both the click hit-test (editorEvent) and the hover
-        cursor swap (LibraryPanel.eventFilter) — keep both callers routed through this."""
+        This is the field-level hit-test; _field_filter_target_at layers segment resolution
+        on top for multi-value author/narrator."""
         rects = self._scroll_field_rects.get(path, {})
         for field in ("author", "narrator", "year"):
             if field not in rects:
@@ -2273,16 +2288,43 @@ class BookDelegate(QStyledItemDelegate):
                 return field
         return None
 
-    # ── PROTOTYPE (spike): segment-aware hit-testing on scrolling multi-value text ──
-    # Throwaway. Not wired to click-to-filter. Delete this whole block + the _hover_segment
-    # highlight hooks in the two paint paths + the on_hover_move call to revert cleanly.
+    def _field_filter_target_at(self, book, pos: "QPoint"):
+        """Resolve a viewport position to the (field, value) a click would filter on, or None
+        if pos is not a click target. Single source of truth for BOTH the click grab
+        (editorEvent) and the hand-cursor decision (LibraryPanel.eventFilter / scroll-tick
+        refresh) so they can never diverge. For multi-value author/narrator, value is the
+        single name under the cursor; a position in the separator gap between names owns no
+        segment and returns None (dead zone → default cursor, click falls through to normal
+        card selection). year and single-value fields return the whole value."""
+        field = self._filterable_field_at(book.path, pos)
+        if not field:
+            return None
+        value = getattr(book, field, None)
+        if not value:
+            return None
+        value = str(value)
+        if field in ("author", "narrator"):
+            # Multi-value: require the point to land on an actual name, not the gap between.
+            # (_segment_bounds is empty for single-value, so this only gates multi-value.)
+            if self._segment_bounds(value, field):
+                seg = self._segment_under_point(book.path, field, value, pos)
+                if not seg:
+                    return None  # over a separator gap — not a target
+                value = seg[0]
+        return (field, value)
+
+    # ── Segment-aware hit-testing for multi-value author/narrator click-to-filter ──
+    # Clicking one name in "Feist, Wurts" grabs just that name. The separators (', ' etc.)
+    # are dead zones: a click there resolves to no segment, so it is NOT a filter target and
+    # falls through to normal card selection (same as clicking blank card space). There is no
+    # hover affordance beyond the cursor shape — no underline, no color swap.
 
     @staticmethod
     def _split_field_value(value: str) -> list:
         """Approximate split of a multi-value author/narrator string into segments.
         Splits on ',', ';', ' and ', ' & ' (word variants case-insensitive), trims each,
-        drops empties. Prototype-grade — no word-boundary precision for names containing
-        'and' as a substring."""
+        drops empties. No word-boundary precision for names that contain 'and' as a substring
+        of a word — accepted approximation."""
         import re
         if not value:
             return []
@@ -2291,7 +2333,7 @@ class BookDelegate(QStyledItemDelegate):
 
     def _field_font_metrics(self, field: str) -> "QFontMetrics":
         """QFontMetrics for a field in the current view mode, matching _set_font's sizing.
-        Built without a painter so the hover path can measure text off the paint cycle."""
+        Built without a painter so the hit-test can measure text off the paint cycle."""
         size, bold = FONT_SIZES.get(self._view_mode, {}).get(field, (13, False))
         f = QFont()
         f.setPixelSize(size)
@@ -2320,19 +2362,19 @@ class BookDelegate(QStyledItemDelegate):
         return out
 
     def _segment_under_point(self, book_path: str, field: str, value: str, viewport_pos):
-        """Which segment of a scrolling multi-value field is under viewport_pos right now,
-        accounting for the live scroll offset and clipping to the field's on-screen slot.
-        Returns (seg_text, seg_start_px_in_value, seg_width_px) or None if the field isn't
-        multi-segment, isn't currently scrolling, or the point misses every visible segment.
-        The px pair lets the highlight hook re-slice value[...] without re-splitting."""
+        """Which segment of a multi-value field is under viewport_pos right now, accounting
+        for the live scroll offset (0 when at rest / not scrolling) and clipping to the field's
+        on-screen slot. Returns (seg_text, seg_start_px_in_value, seg_width_px) or None if the
+        field isn't multi-segment or the point misses every visible segment — INCLUDING a point
+        in the separator gap between two names, which owns no segment and is therefore a dead
+        zone (no filter, cursor stays default). Works whether the marquee is moving or still."""
         rects = self._scroll_field_rects.get(book_path, {})
         if field not in rects:
             return None
         fx, fy, fw, fh, _ = rects[field]
+        # Offset 0 when the field isn't currently scrolling (drawn at its natural x).
         state = self._scroll_state.get((book_path, field))
-        if state is None:
-            return None  # not actively scrolling — spike only cares about the moving case
-        offset = int(state[0])
+        offset = int(state[0]) if state is not None else 0
         # Vertical gate: same slot y-band the whole field uses.
         if not (fy <= viewport_pos.y() < fy + fh):
             return None
@@ -2346,58 +2388,6 @@ class BookDelegate(QStyledItemDelegate):
             if lo < hi and lo <= px < hi:
                 return (seg, start_px, width_px)
         return None
-
-    def _spike_update_hover_segment(self, book, viewport_pos) -> None:
-        """PROTOTYPE mouse-move hook: cache the hovered book so the scroll-tick recompute
-        (in _advance_scroll) can re-run the hit-test against the SAME book without a fresh
-        mouse event, then compute the segment now at the given position."""
-        self._spike_hovered_book = book
-        self._spike_recompute_hover_segment(viewport_pos)
-
-    def _spike_recompute_hover_segment(self, viewport_pos=None) -> None:
-        """PROTOTYPE: recompute which segment sits under the cursor RIGHT NOW and stash it in
-        self._hover_segment for the paint highlight (and, in the real version, the click grab).
-        Position defaults to the last known cursor pos (self._hover_pos) so this can be driven
-        by the scroll timer while the mouse is stationary — the fix for 'grabs first hovered
-        name, not what's actually under the pointer as the text scrolls'. Repaints on change."""
-        if viewport_pos is None:
-            viewport_pos = self._hover_pos
-        book = getattr(self, '_spike_hovered_book', None)
-        prev = self._hover_segment
-        result = None
-        if book is not None and self._view_mode in ("1 per row", "2 per row"):
-            for field in ("author", "narrator"):
-                value = getattr(book, field, None)
-                if not value:
-                    continue
-                hit = self._segment_under_point(book.path, field, value, viewport_pos)
-                if hit:
-                    seg, start_px, width_px = hit
-                    result = (book.path, field, seg, start_px, width_px)
-                    break
-        self._hover_segment = result
-        if result != prev:
-            vp = getattr(self, '_viewport', None)
-            if vp:
-                vp.update()
-
-    def _spike_draw_segment_highlight(self, painter, path, field, value, *, base_x, baseline_y) -> None:
-        """PROTOTYPE: if _hover_segment names this (path, field), redraw its segment substring
-        in an accent color with an underline, on top of the just-drawn full string. Called
-        inside the caller's save()/setClipRect()/…/restore() scrolling branch, so it inherits
-        the field's clip and font. base_x is the same x the full value was drawn at
-        (text_x + int(offset)), so segment start_px offsets line up glyph-for-glyph."""
-        hs = self._hover_segment
-        if not hs or hs[0] != path or hs[1] != field:
-            return
-        _, _, seg_text, start_px, _ = hs
-        painter.save()
-        painter.setPen(QColor(self._color_accent))
-        f = QFont(painter.font())
-        f.setUnderline(True)
-        painter.setFont(f)
-        painter.drawText(base_x + start_px, baseline_y, seg_text)
-        painter.restore()
 
     def _cover_rect(self, r: QRect) -> QRect:
         if self._view_mode == "1 per row":
