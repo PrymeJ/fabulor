@@ -1943,8 +1943,23 @@ class BookDelegate(QStyledItemDelegate):
         title  = book.title  or ""
         author = book.author or ""
 
-        title_text_w  = fm.horizontalAdvance(title)
-        author_text_w = fm.horizontalAdvance(author)
+        # Measure each field in ITS ACTUAL draw font, not option.fontMetrics. Title draws at
+        # 14px bold and author at 13px regular (FONT_SIZES["List"], via _set_font), both wider
+        # than the generic 11pt app font `fm` is built from — so measuring with `fm` under-
+        # reported title width by ~5-7px and let near-miss titles render into author's space.
+        # Base off option.font (the app base family, Open Sans Condensed) + the same (size,bold)
+        # _set_font applies, so family and weight match the draw exactly.
+        def _field_fm(field: str) -> QFontMetrics:
+            size, bold = FONT_SIZES.get(self._view_mode, {}).get(field, (13, False))
+            f = QFont(option.font)
+            f.setPixelSize(size)
+            f.setBold(bold)
+            return QFontMetrics(f)
+        fm_title  = _field_fm("title")
+        fm_author = _field_fm("author")
+
+        title_text_w  = fm_title.horizontalAdvance(title)
+        author_text_w = fm_author.horizontalAdvance(author)
 
         author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
         title_max_lw = AVAILABLE - author_w
@@ -1956,18 +1971,24 @@ class BookDelegate(QStyledItemDelegate):
 
         title_avail = title_max_lw - TITLE_CM
 
-        ew = fm.horizontalAdvance("…")
-        title_elided  = title_text_w  - title_avail >= ew
-        author_elided = author_text_w - author_w    >= ew
+        # Strict fit test — no ellipsis-width tolerance band. The old `>= ew` skip existed to
+        # forgive near-misses caused by the wrong-font measurement above; with per-field-correct
+        # metrics there is no systematic under-report left to forgive, so tolerating overflow
+        # here would just reintroduce the collision.
+        title_elided  = title_text_w  > title_avail
+        author_elided = author_text_w > author_w
 
-        disp_title  = fm.elidedText(title,  Qt.ElideRight, title_avail) if title_elided  else title
-        disp_author = fm.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
+        disp_title  = fm_title.elidedText(title,   Qt.ElideRight, title_avail) if title_elided  else title
+        disp_author = fm_author.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
 
         # Layout geometry derived from option.rect
         left       = r.x() + LEFT_PAD + TITLE_CM
         mid        = left + title_avail
         right      = r.x() + LEFT_PAD + AVAILABLE
-        title_rect = QRect(left, r.y(), title_max_lw +8, r.height()) # +8 prevents clipping with still some separation
+        # Title draw rect must NOT extend past `mid` (author's left edge) — a small 2px clip-
+        # safety margin against subpixel rounding is fine, but the old `+8` overshoot was what
+        # let an un-elided near-miss title render straight into author_rect.
+        title_rect = QRect(left, r.y(), title_avail + 2, r.height())
         author_rect = QRect(mid, r.y(), author_w, r.height())
         time_rect  = QRect(right, r.y(), TIME_W, r.height())
 
