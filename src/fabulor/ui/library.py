@@ -324,9 +324,11 @@ class LibraryPanel(QFrame):
         self.search_field.textChanged.connect(self._on_search_changed)
         _original_focus = self.search_field.focusInEvent
         def _on_search_focus(event):
-            if self._tag_filter_active:
-                self.search_field.setText("")
-                self._tag_filter_active = False
+            # Left-click (or any focus-in) while a click-filter (tag or author/narrator/year)
+            # is showing reverts to the user's last explicitly-set text, same as re-clicking the
+            # active source or reopening the library — NOT a clear to "". Right-click keeps its
+            # separate, deliberate nuke-to-empty behavior (_on_search_right_click), unaffected.
+            self.clear_tag_filter_if_active()
             _original_focus(event)
         self.search_field.focusInEvent = _on_search_focus
         def _search_key(e):
