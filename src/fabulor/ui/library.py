@@ -361,7 +361,14 @@ class LibraryPanel(QFrame):
             field, value = self._delegate.pending_field_filter
             self._delegate.pending_field_filter = None
             target = f"<{value}>{value}" if field == "year" else value
-            if self.search_field.text() == target:
+            # The search field has a maxLength, so set_search(target) may store a truncated
+            # string. Compare toggle-off against what the field will ACTUALLY hold (target
+            # truncated the same way), else a value longer than maxLength never matches on the
+            # second click and re-sets instead of clearing (e.g. a 27-char translator credit
+            # against a 26-char limit).
+            max_len = self.search_field.maxLength()
+            stored_target = target[:max_len] if max_len > 0 else target
+            if self.search_field.text() == stored_target:
                 self.set_search("")
             else:
                 self.set_search(target)
