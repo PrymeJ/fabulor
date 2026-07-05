@@ -577,7 +577,14 @@ class PanelManager:
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
         self._abort_theme_fade()
-        self.main_window.book_detail_panel.load_book(book_data, tab=tab, context=context)
+        # Snapshot of the library's current search text, so tag chips (library context only)
+        # can tell whether a given tag is already the active filter and render inert. A
+        # snapshot (not a live callback) is sufficient: the library's search text cannot change
+        # while the detail panel is open — reaching this panel requires leaving the library view
+        # first, and there is no other UI path that edits the search field meanwhile.
+        active_search_text = self.library_panel.search_field.text()
+        self.main_window.book_detail_panel.load_book(
+            book_data, tab=tab, context=context, active_search_text=active_search_text)
         self._start_book_detail_entry()
 
     def _start_book_detail_entry(self):

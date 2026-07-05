@@ -101,6 +101,7 @@ class BookDetailPanel(QWidget):
         self._confirming_finished: bool = False
         self._finished_cancel_timer: QTimer | None = None
         self._context: str = ""
+        self._active_search_text: str = ""
         self._tag_display_tags: list = []
         self._meta_state: _MetaActionState = _MetaActionState.HIDDEN
         self._pre_edit_meta_state: _MetaActionState | None = None
@@ -519,7 +520,11 @@ class BookDetailPanel(QWidget):
             row.addWidget(dot)
             lbl = QLabel(tag)
             lbl.setObjectName("tag_chip_label")
-            if self._context == 'library':
+            # Inert (regular cursor, no click) when this tag is already the active library
+            # filter — exact string match against the snapshot taken when this panel opened
+            # (see load_book), same "#tag == current search text" comparison style as the
+            # author/narrator/year toggle-off. Live-scoped to library context only.
+            if self._context == 'library' and f"#{tag}" != self._active_search_text:
                 chip.setCursor(Qt.CursorShape.PointingHandCursor)
                 chip.mousePressEvent = lambda event, t=tag: self.tag_filter_requested.emit(t)
             x_btn = QPushButton("✕")
@@ -545,11 +550,18 @@ class BookDetailPanel(QWidget):
         text_color = self._theme.get("accent_light", "#ffffff")
         if self._context == 'library':
             self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
-            parts = [
-                f'<a href="{t}" style="color:{text_color};text-decoration:none;">'  
-                f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span> {t.replace(chr(32), " ")}</a>'
-                for t in tags
-            ]
+            parts = []
+            for t in tags:
+                dot_html = f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span>'
+                if f"#{t}" == self._active_search_text:
+                    # Already the active filter — inert, no <a href>, same shape as the
+                    # non-library plain-span rendering below.
+                    parts.append(f'{dot_html}<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>')
+                else:
+                    parts.append(
+                        f'<a href="{t}" style="color:{text_color};text-decoration:none;">'
+                        f'{dot_html} {t.replace(chr(32), " ")}</a>'
+                    )
             self._tag_display_label.setText(sep.join(parts))
         else:
             self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
@@ -611,8 +623,13 @@ class BookDetailPanel(QWidget):
                           self._narrator_label, self._year_label):
                 field.setCursorPosition(0)
 
-    def load_book(self, book_data: dict, tab: str = 'stats', context: str = ''):
+    def load_book(self, book_data: dict, tab: str = 'stats', context: str = '',
+                  active_search_text: str = ''):
         self._context = context
+        # Snapshot of the library's search field text at the moment this panel opened (library
+        # context only matters here — see _rebuild_tag_chips/_rebuild_tag_display). Used to make
+        # a tag chip inert when it's already the active filter, so re-clicking it can't happen.
+        self._active_search_text = active_search_text
         self._tag_manager_btn.setVisible(context != 'tags')
         self._book_path = book_data.get('path') or book_data.get('book_path')
         self._book_data = book_data
