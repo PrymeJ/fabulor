@@ -360,10 +360,11 @@ class LibraryPanel(QFrame):
         if self._delegate.pending_field_filter:
             field, value = self._delegate.pending_field_filter
             self._delegate.pending_field_filter = None
-            if field == "year":
-                self.set_search(f"<{value}>{value}")
+            target = f"<{value}>{value}" if field == "year" else value
+            if self.search_field.text() == target:
+                self.set_search("")
             else:
-                self.set_search(value)
+                self.set_search(target)
             return
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
         live_dur = index.data(ROLE_LIVE_DUR) or 0.0
