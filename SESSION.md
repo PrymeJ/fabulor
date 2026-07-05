@@ -1,3 +1,50 @@
+## Session Summary — 2026-07-06 — List-mode author click-to-filter (segmented) + scrollbar-space fix
+
+**Branch:** `main`. **Commits:** `799bcf9` (List author click-to-filter), `9c20f40` (reserve
+scrollbar space so right-aligned author/time don't shift on filter).
+
+### Context
+
+Grid views already shipped author/narrator/year click-to-filter (2026-07-05). This brings the
+**author** click-to-filter to List mode, matching grid behavior (segmented multi-value authors,
+delimiter dead zones, toggle-off-reverts-to-explicit-text), then fixes a scrollbar-induced layout
+shift that filtering exposed.
+
+### `799bcf9` — List author click-to-filter
+
+The whole feature reduced to making `_field_filter_target_at` return correctly for List — the
+eventFilter cursor logic and `_on_item_clicked` toggle-off were already view-agnostic and needed no
+change. Approach and safeguards (planned against tonight's "looked right, broke on real data"
+history):
+
+- **Single source of truth for draw + hit-test.** Extracted `_list_author_layout(option, book,
+  hover_pos, hovered)` — the active author rect + display string (resting or hover-invaded) — called
+  by BOTH `_paint_list_row` (draw) and the new `_list_author_segment_at` (hit-test), so they can
+  never disagree about where the author block is (the discipline that would have prevented the
+  earlier `full_rect`-drift bug). The extraction was proven **byte-identical** to the prior render
+  (drawn string + rect coords) across short/elided/invaded/multi-author/borrow rows via an
+  offscreen capture harness BEFORE the hit-test was added — a gate, not a claim.
+- **Right-alignment.** List author draws right-aligned, so the hit-test anchors segments from
+  `rect.right - drawn_width` (not `rect.x`) and measures in the layout's real `fm_author`, matching
+  the pixels. Clip rule transcribed from live `_segment_under_point` source, not memory.
+- **Isolation.** Chose a List-specific hit-test that does NOT populate `_scroll_field_rects` (grid
+  hover-scroll reads that dict; a stale List entry after List→grid switch would contaminate it).
+- **Accepted limitation (DEBT_INVENTORY.md):** the first segment of an elided multi-author is
+  unreachable when hover-expanded — invade holds only in `[mid, right)`, but the expanded first name
+  sits left of `mid`; inherent to pre-existing invade geometry, exposed (not caused) by this feature.
+
+### `9c20f40` — reserve scrollbar space so author/time don't shift
+
+Filtering by clicking an author shrinks the list → the vertical scrollbar (`ScrollBarAsNeeded`)
+disappears → the viewport widens by ~14px → the right-aligned author + time column jumped. Fixed by
+laying out against a **stable** width, `_list_content_width` = `view.width() - 2*frameWidth -
+SCROLLBAR_EXTENT`, which reserves the scrollbar gutter unconditionally (the view width is fixed; the
+scrollbar takes space *inside* it). Verified offscreen: viewport width changes 14px on scrollbar
+toggle, `_list_content_width` stays constant. Both draw and hit-test inherit it via
+`_list_author_layout`, so they stay in sync. New CLAUDE.md DO-NOT rule. **Known unfixed:** "1 per
+row" has the same drift on its time/progress — left for a follow-up (DEBT_INVENTORY.md), must reuse
+the same stable-width reservation.
+
 ## Session Summary — 2026-07-06 — list-mode title/author spacing: one fix kept, three reverted
 
 **Branch:** `main`. **Commit kept:** `d37507c` (measure list-mode title/author in their real draw
