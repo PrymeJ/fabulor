@@ -357,6 +357,14 @@ class LibraryPanel(QFrame):
         book = index.data(ROLE_BOOK)
         if not book:
             return
+        if self._delegate.pending_field_filter:
+            field, value = self._delegate.pending_field_filter
+            self._delegate.pending_field_filter = None
+            if field == "year":
+                self.set_search(f"<{value}>{value}")
+            else:
+                self.set_search(value)
+            return
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
         live_dur = index.data(ROLE_LIVE_DUR) or 0.0
         if live_pos > 0 and live_dur > 0:
@@ -409,7 +417,8 @@ class LibraryPanel(QFrame):
                     opt.rect = self._list_view.visualRect(idx)
                     hit = self._delegate._time_label_rect(opt, idx)
                     has_progress = book and (book.progress or 0.0) > MIN_PROGRESS
-                    if hit and hit.contains(pos) and has_progress:
+                    field_hit = book and self._delegate._filterable_field_at(book.path, pos)
+                    if (hit and hit.contains(pos) and has_progress) or field_hit:
                         self._list_view.viewport().setCursor(Qt.PointingHandCursor)
                     else:
                         self._list_view.viewport().setCursor(Qt.ArrowCursor)
@@ -1168,6 +1177,7 @@ class BookDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._apply_theme(theme)
         self.last_event_was_toggle = False
+        self.pending_field_filter = None  # (field, value) or None
         self._view_mode = "3 per row"
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
         self._hover_pos = QPoint()
@@ -1534,6 +1544,15 @@ class BookDelegate(QStyledItemDelegate):
         book = index.data(ROLE_BOOK)
         if not book:
             return False
+
+        if self._view_mode in ("1 per row", "2 per row"):
+            field = self._filterable_field_at(book.path, event.pos())
+            if field:
+                if event.type() == _QEvent.Type.MouseButtonRelease:
+                    value = getattr(book, field, None)
+                    if value:
+                        self.pending_field_filter = (field, str(value))
+                return True
 
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
         live_dur = index.data(ROLE_LIVE_DUR) or 0.0
@@ -2198,6 +2217,21 @@ class BookDelegate(QStyledItemDelegate):
             fm     = option.fontMetrics
             time_w = fm.horizontalAdvance("-00:00:00") + 2
             return QRect(r.right() - 4 - time_w, r.y(), time_w, r.height())
+        return None
+
+    def _filterable_field_at(self, path: str, pos: "QPoint") -> Optional[str]:
+        """Returns 'author'/'narrator'/'year' if pos hits that field's actual rendered text
+        (not its full layout slot) for the given book path in 1-/2-per-row mode, else None.
+        Single source of truth for both the click hit-test (editorEvent) and the hover
+        cursor swap (LibraryPanel.eventFilter) — keep both callers routed through this."""
+        rects = self._scroll_field_rects.get(path, {})
+        for field in ("author", "narrator", "year"):
+            if field not in rects:
+                continue
+            fx, fy, fw, fh, full_w = rects[field]
+            hit_w = min(full_w, fw)
+            if fx <= pos.x() < fx + hit_w and fy <= pos.y() < fy + fh:
+                return field
         return None
 
     def _cover_rect(self, r: QRect) -> QRect:
