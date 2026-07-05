@@ -1,3 +1,79 @@
+## List-mode title/author spacing: one fix that stuck, three that were reverted, and why (2026-07-06)
+
+`BookDelegate._paint_list_row` draws, per row, `[title (left-aligned)] … [author (right-aligned)] [time]`.
+Two defects were chased across four rounds. Only the first was kept (`d37507c`); the rest were
+reverted. This writeup exists so the next attempt does not re-walk the same three dead ends.
+
+### The one fix that stuck (`d37507c`) — wrong measurement font
+
+Every width in `_paint_list_row` was measured with `fm = option.fontMetrics` (the generic 11pt app
+font), but title *draws* at 14px **bold** and author at 13px regular (`FONT_SIZES["List"]`, applied
+via `_set_font` at draw time). The 11pt measurement under-reported title width by ~5-7px, so a
+near-miss title was judged to fit, drawn un-elided, and overflowed into author's space — while a
+title that overflowed by a *lot* elided correctly (the "near-miss fails, far-miss elides" signature,
+confirmed by lengthening a failing title until it elided). Fixed by measuring each field with a
+`QFontMetrics` built from `option.font` + that field's real `(size, bold)`. This is correct and
+kept. It also removed a `>= ellipsis-width` tolerance band (which only existed to forgive the
+wrong-font error) in favour of a strict `>` fit test, and shrank the `title_rect` clip margin +8 → +2.
+
+### The core insight (the reason the next three attempts all failed)
+
+**Rect-boundary padding cannot produce a constant glyph-to-glyph gap when one field is left-aligned
+and the other is right-aligned within its own rect.** The visible gap between title's last glyph and
+author's first glyph is:
+
+```
+gap = reserve + title_slack + author_rect_slack
+```
+
+- `reserve` — whatever fixed separation you build into the geometry (e.g. `TITLE_CM`).
+- `title_slack` — title is **left-aligned**, so if the title text is shorter than its budget, the
+  unused budget becomes empty space on its *right*. Content-dependent (varies per title).
+- `author_rect_slack` — author is **right-aligned** flush to its rect's right edge, so if the author
+  text is narrower than its rect, empty space opens on its *left*. Content-dependent (varies per
+  author).
+
+Both slack terms are per-book. So no amount of rect-edge tuning yields a constant *glyph* gap.
+Measured for "The Riddle-Master of Hed" / "Patricia A. McKillip" (`option.rect.width()=300`):
+title ends at x=144, author text starts at x=158 → **14px gap** = 6 (title slack) + 4 (reserve) +
+4 (author rect slack), not the 4px the "structural" attempt assumed. **Any real fix must measure
+actual drawn glyph extents and position relative to those, not relative to rect edges** — e.g.
+anchor author's *left* edge (left-align it, or place its text start at a fixed offset past the
+title's measured glyph end), rather than right-aligning it into a rect whose left edge is all the
+geometry controls.
+
+### The three reverted shapes, briefly
+
+1. **Pad-only** (rejected before landing) — add a fixed `TITLE_SEP` pad to compensate the overflow.
+   Rejected because it papers over the wrong-font root cause with a magic number calibrated to
+   today's exact font/sizes; superseded by the measurement fix above.
+2. **Symmetric `TITLE_CM` reserve at author→time** (`author_draw_w = author_w - TITLE_CM` at point of
+   use) — gave author→time a real 4px gap, but the borrow branch's own `spare = max(0, title_max_lw
+   - (title_text_w + TITLE_CM))` **double-counted** `TITLE_CM` against `title_avail = title_max_lw -
+   TITLE_CM`, cancelling the title→author gap to ~0 for borrow/elided rows while leaving short rows
+   fine → row-dependent collisions (9 of 18 `#elide` test rows). Reverted.
+3. **Structural `mid` placement** (`author_left = title_right + TITLE_CM`, borrow spare no longer adds
+   `TITLE_CM`) — fixed the double-count and made all 18 test rows show a clean ≥4px author→time gap in
+   the *arithmetic*. But live it exposed the opposite-alignment slack problem above (the "structural"
+   gap rendered as 7-14px, not 4, and varied per row), AND left the hover-invade path misaligned:
+   `full_rect` (invade draw) still used `AVAILABLE - TITLE_CM` → right edge at the time column, 4px
+   right of resting author's `author_right` → author visibly jumped 4px on hover. Reverted.
+
+### Orthogonal instability found during the round-3 post-mortem (NOT caused by any of these rounds)
+
+`_paint_list_row` reads `option.rect.width()` live, and the list view is configured
+`setResizeMode(ResizeMode.Adjust)` + `ListMode` (`library.py` ~258-259), so a row's width tracks the
+live **viewport** width rather than a fixed constant (`sizeHint` returns 290, viewport is ~300; Qt
+stretches). If a paint occurs while the library panel is mid-slide-in or before the viewport settles,
+`option.rect.width()` differs → `AVAILABLE` differs → `title_avail` differs → **the same title can
+elide in one paint and not another**. This matched the reported "three near-identical resting-state
+screenshots of the same row show different author x-positions / different title elision." The resting
+geometry is otherwise a **pure function** of `(book, option.rect, option.font)` — it reads no
+`_hover_pos`, no scroll/timer/leftover state — so `option.rect.width()` is the *only* non-constant
+input. This affects **any** List-mode geometry that reads `option.rect.width()`, not just this
+feature. Logged in DEBT_INVENTORY.md ("Stats / library UI"). A real spacing fix should either not
+depend on live width, or the width must be made stable first.
+
 ## Library click-to-filter: three bugs worth remembering the shape of (2026-07-05)
 
 Full feature narrative is in SESSION.md (2026-07-05, commits `5f637dc`..`a7271a5`). Three bugs from

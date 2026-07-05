@@ -1,3 +1,66 @@
+## Session Summary — 2026-07-06 — list-mode title/author spacing: one fix kept, three reverted
+
+**Branch:** `main`. **Commit kept:** `d37507c` (measure list-mode title/author in their real draw
+fonts). Three follow-up attempts to fix author-side spacing were implemented, tested, and **reverted**
+— they are recorded here and in NOTES.md so the next attempt doesn't re-walk them.
+
+### Context
+
+`BookDelegate._paint_list_row` draws each List-mode row as `[title (left-aligned)] … [author
+(right-aligned)] [time]`. Two defects: (1) titles overflowing into author's space in resting state;
+(2) author text sitting flush against the time column with no separation. Chased across four rounds.
+
+### `d37507c` — the fix that stuck: wrong measurement font
+
+Every width in `_paint_list_row` was measured with `option.fontMetrics` (generic 11pt app font), but
+title draws at 14px **bold** and author at 13px regular (`FONT_SIZES["List"]`). The 11pt measurement
+under-reported title width by ~5-7px → a near-miss title was judged to fit, drawn un-elided, and
+overflowed; a title that overflowed by a lot elided correctly (the "near-miss fails, far-miss elides"
+signature). Fixed by building per-field `QFontMetrics` from `option.font` + each field's real
+`(size, bold)`. Also: strict `>` fit test replacing a `>= ellipsis-width` tolerance band (which only
+existed to forgive the wrong-font error), and `title_rect` clip margin +8 → +2. Correct, kept.
+
+### The core insight (why the next three attempts all failed)
+
+**Rect-boundary padding cannot produce a constant glyph-to-glyph gap when one field is left-aligned
+and the other is right-aligned within its own rect.** The visible gap is
+`reserve + title's_left-align_slack + author's_right-align_rect_slack`, and **both slack terms are
+content-dependent** (per book). Measured for "The Riddle-Master of Hed" / "Patricia A. McKillip": the
+gap rendered as 14px (= 6 title slack + 4 reserve + 4 author rect slack), not the 4px the structural
+attempt assumed. Any real fix must measure actual drawn glyph extents and position relative to those,
+not relative to rect edges (e.g. anchor author's *left* edge instead of right-aligning it into a rect
+whose left edge is all the geometry controls). Full writeup in NOTES.md.
+
+### The three reverted shapes
+
+1. **Pad-only** — a fixed `TITLE_SEP` compensation pad. Rejected before landing: papers over the
+   wrong-font root cause with a magic number calibrated to today's exact font/sizes. Superseded by
+   `d37507c`.
+2. **Symmetric `TITLE_CM` reserve at author→time** (`author_draw_w = author_w - TITLE_CM` at point of
+   use). Gave author→time a real 4px gap, but the borrow branch's own `+ TITLE_CM` double-counted
+   against `title_avail`'s `- TITLE_CM`, cancelling the *title→author* gap to ~0 for borrow/elided
+   rows while short rows looked fine → row-dependent collisions (9 of 18 `#elide` test rows). Reverted.
+3. **Structural `mid` placement** (`author_left = title_right + TITLE_CM`, borrow spare no longer adds
+   `TITLE_CM`). Fixed the double-count; all 18 test rows showed clean gaps *in the arithmetic*. But
+   live it exposed the opposite-alignment slack problem (the "structural" gap rendered 7-14px and
+   varied per row), and left hover-invade misaligned (`full_rect` still used `AVAILABLE - TITLE_CM`,
+   landing author 4px right of resting → visible 4px jump on hover). Reverted.
+
+### Orthogonal instability found in the round-3 post-mortem (not caused by any round)
+
+`_paint_list_row` reads `option.rect.width()` live, and `setResizeMode(ResizeMode.Adjust)` + `ListMode`
+makes row width track the live viewport, not a fixed `sizeHint` — so a paint mid-slide-in / pre-settle
+gets a different width → `AVAILABLE` differs → the same title can elide in one paint and not another.
+Matched the reported "identical resting-state row shows different author positions across paints." The
+resting geometry is otherwise a pure function of `(book, option.rect, option.font)`; `option.rect.width()`
+is the only non-constant input. Affects any List-mode geometry. Recorded in DEBT_INVENTORY.md.
+
+### State after this session
+
+Reverted to `d37507c` (title-measurement fix only). Author-side spacing is **unfixed and deferred** —
+the next attempt needs the glyph-extent-relative approach above, and to account for (or first
+stabilise) the live-width instability. Both logged in DEBT_INVENTORY.md.
+
 ## Session Summary — 2026-07-05 — click-to-filter on author/narrator/year (library grid)
 
 **Branch:** `main`. **Commits:** `5f637dc` (whole-field click-to-filter), `7ba2753` (toggle-off),
