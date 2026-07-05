@@ -1,5 +1,6 @@
 # THEME_ANIM_TODO: LibraryPanel, BookDelegate
 import random
+from collections import namedtuple
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem,
 )
@@ -18,6 +19,18 @@ THREE_PER_ROW_MODE = ("3 per row", ["3 Body", "3 Stigmata", "3 Kingdoms", "Drawi
 SQUARE_MODE        = ("Square",    ["Washington Sq."])
 LIST_MODE          = ("List",      ["Cannery Row", "Tamarisk Row"])
 VIEW_MODES = [ONE_PER_ROW_MODE, TWO_PER_ROW_MODE, THREE_PER_ROW_MODE, SQUARE_MODE, LIST_MODE]
+
+# Full title/author geometry for one List-mode row, computed once by
+# BookDelegate._list_author_layout and consumed by BOTH the paint path and the click/cursor
+# hit-test so they can never disagree about where the author block is. `author_active_rect` /
+# `author_active_disp` are the rect + string the author is ACTUALLY drawn with this paint
+# (resting = author_rect/disp_author; invaded = full_rect/author).
+_ListLayout = namedtuple("_ListLayout", [
+    "title", "author", "fm_title", "fm_author",
+    "disp_title", "disp_author", "title_rect", "author_rect", "full_rect",
+    "expand_title", "expand_author", "time_rect", "time_w",
+    "author_active_rect", "author_active_disp",
+])
 
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
@@ -448,7 +461,7 @@ class LibraryPanel(QFrame):
                     # Hand only over a real filter target — for a multi-value author/narrator
                     # that means over a name, NOT over the separator gap between names (a dead
                     # zone that clicks through to normal selection).
-                    field_target = book and self._delegate._field_filter_target_at(book, pos)
+                    field_target = book and self._delegate._field_filter_target_at(book, pos, opt)
                     if (hit and hit.contains(pos) and has_progress) or field_target:
                         self._list_view.viewport().setCursor(Qt.PointingHandCursor)
                     else:
@@ -1630,8 +1643,10 @@ class BookDelegate(QStyledItemDelegate):
         if not book:
             return False
 
-        if self._view_mode in ("1 per row", "2 per row"):
-            target = self._field_filter_target_at(book, event.pos())
+        if self._view_mode in ("1 per row", "2 per row", "List"):
+            # List author click-to-filter routes through the same flag+poll as grid;
+            # _field_filter_target_at needs `option` for the List branch (grid ignores it).
+            target = self._field_filter_target_at(book, event.pos(), option)
             if target:
                 if event.type() == _QEvent.Type.MouseButtonRelease:
                     self.pending_field_filter = target
@@ -1903,9 +1918,95 @@ class BookDelegate(QStyledItemDelegate):
         if hovered:
             self._draw_hover_overlay(painter, cell_rect, book, show_rem, live_pos, live_dur, large=False)
 
+    def _list_author_layout(self, option, book, hover_pos, hovered) -> "_ListLayout":
+        """Single source of truth for List-mode title/author geometry (resting, invade, elision).
+        Called by _paint_list_row (to draw) and _list_author_segment_at (to hit-test) with the same
+        (option, book, hover_pos, hovered), so draw and click can never disagree about where the
+        author block is. Pure function of those inputs — reads/writes no leftover state.
+
+        `author_active_rect`/`author_active_disp` are the rect + string the author is actually drawn
+        with for THIS state: resting → (author_rect, disp_author); invaded → (full_rect, author).
+
+        Transcribed verbatim from the pre-refactor _paint_list_row geometry block — must stay
+        byte-identical to it (see the render-capture gate in the plan's Verification step 0)."""
+        r = option.rect
+
+        TIME_W    = QFontMetrics(option.fontMetrics).horizontalAdvance("-00:00:00") + 2
+        LEFT_PAD  = 4
+        RIGHT_PAD = 4
+        AVAILABLE = r.width() - LEFT_PAD - RIGHT_PAD - TIME_W
+
+        AUTHOR_BASE = 100
+        TITLE_CM    = 4
+        BUFFER      = 4
+
+        title  = book.title  or ""
+        author = book.author or ""
+
+        # Measure each field in ITS ACTUAL draw font (title 14px bold, author 13px regular per
+        # FONT_SIZES["List"], via _set_font), not option.fontMetrics (generic 11pt) — see the
+        # _paint_list_row wrong-font fix (d37507c). Base off option.font so family/weight match.
+        def _field_fm(field: str) -> QFontMetrics:
+            size, bold = FONT_SIZES.get(self._view_mode, {}).get(field, (13, False))
+            f = QFont(option.font)
+            f.setPixelSize(size)
+            f.setBold(bold)
+            return QFontMetrics(f)
+        fm_title  = _field_fm("title")
+        fm_author = _field_fm("author")
+
+        title_text_w  = fm_title.horizontalAdvance(title)
+        author_text_w = fm_author.horizontalAdvance(author)
+
+        author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
+        title_max_lw = AVAILABLE - author_w
+
+        if author_text_w + BUFFER > AUTHOR_BASE:
+            spare        = max(0, title_max_lw - (title_text_w + TITLE_CM))
+            author_w     = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
+            title_max_lw = AVAILABLE - author_w
+
+        title_avail = title_max_lw - TITLE_CM
+
+        title_elided  = title_text_w  > title_avail
+        author_elided = author_text_w > author_w
+
+        disp_title  = fm_title.elidedText(title,   Qt.ElideRight, title_avail) if title_elided  else title
+        disp_author = fm_author.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
+
+        left       = r.x() + LEFT_PAD + TITLE_CM
+        mid        = left + title_avail
+        right      = r.x() + LEFT_PAD + AVAILABLE
+        title_rect = QRect(left, r.y(), title_avail + 2, r.height())
+        author_rect = QRect(mid, r.y(), author_w, r.height())
+        time_rect  = QRect(right, r.y(), TIME_W, r.height())
+
+        local_x       = hover_pos.x() - r.x()
+        expand_title  = hovered and (left - r.x() <= local_x < mid - r.x()) and title_elided
+        # Author invade holds only while the cursor is in the author zone [mid, right). Known
+        # limitation (accepted, see DEBT_INVENTORY.md): when an elided MULTI-value author expands,
+        # it draws leftward past `mid`, so its FIRST segment sits left of `mid` — unreachable
+        # without leaving the zone (which collapses it). It stays clickable in the resting/partly-
+        # elided state; this is pre-existing invade geometry, not specific to click-to-filter.
+        expand_author = hovered and (mid - r.x() <= local_x < right - r.x()) and author_elided
+        full_rect     = QRect(left, r.y(), AVAILABLE - TITLE_CM, r.height())
+
+        if expand_author:
+            author_active_rect, author_active_disp = full_rect, author
+        else:
+            author_active_rect, author_active_disp = author_rect, disp_author
+
+        return _ListLayout(
+            title=title, author=author, fm_title=fm_title, fm_author=fm_author,
+            disp_title=disp_title, disp_author=disp_author,
+            title_rect=title_rect, author_rect=author_rect, full_rect=full_rect,
+            expand_title=expand_title, expand_author=expand_author,
+            time_rect=time_rect, time_w=TIME_W,
+            author_active_rect=author_active_rect, author_active_disp=author_active_disp,
+        )
+
     def _paint_list_row(self, painter, option, index, book, hovered, show_rem, live_pos, live_dur):
         r   = option.rect
-        fm  = option.fontMetrics
 
         # Alternating row background, then hover on top
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
@@ -1930,88 +2031,28 @@ class BookDelegate(QStyledItemDelegate):
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
-        # Time column width
-        TIME_W    = fm.horizontalAdvance("-00:00:00") + 2
-        LEFT_PAD  = 4
-        RIGHT_PAD = 4
-        AVAILABLE = option.rect.width() - LEFT_PAD - RIGHT_PAD - TIME_W
+        # All title/author layout geometry (resting + invade + elision) is computed in one place
+        # so this draw and the click/cursor hit-test (_list_author_segment_at) can never disagree
+        # about where the author block is — see _list_author_layout.
+        lay = self._list_author_layout(option, book, self._hover_pos, hovered)
 
-        AUTHOR_BASE = 100
-        TITLE_CM    = 4
-        BUFFER      = 4
-
-        title  = book.title  or ""
-        author = book.author or ""
-
-        # Measure each field in ITS ACTUAL draw font, not option.fontMetrics. Title draws at
-        # 14px bold and author at 13px regular (FONT_SIZES["List"], via _set_font), both wider
-        # than the generic 11pt app font `fm` is built from — so measuring with `fm` under-
-        # reported title width by ~5-7px and let near-miss titles render into author's space.
-        # Base off option.font (the app base family, Open Sans Condensed) + the same (size,bold)
-        # _set_font applies, so family and weight match the draw exactly.
-        def _field_fm(field: str) -> QFontMetrics:
-            size, bold = FONT_SIZES.get(self._view_mode, {}).get(field, (13, False))
-            f = QFont(option.font)
-            f.setPixelSize(size)
-            f.setBold(bold)
-            return QFontMetrics(f)
-        fm_title  = _field_fm("title")
-        fm_author = _field_fm("author")
-
-        title_text_w  = fm_title.horizontalAdvance(title)
-        author_text_w = fm_author.horizontalAdvance(author)
-
-        author_w     = min(author_text_w + BUFFER, AUTHOR_BASE)
-        title_max_lw = AVAILABLE - author_w
-
-        if author_text_w + BUFFER > AUTHOR_BASE:
-            spare        = max(0, title_max_lw - (title_text_w + TITLE_CM))
-            author_w     = min(author_text_w + BUFFER, AUTHOR_BASE + spare)
-            title_max_lw = AVAILABLE - author_w
-
-        title_avail = title_max_lw - TITLE_CM
-
-        # Strict fit test — no ellipsis-width tolerance band. The old `>= ew` skip existed to
-        # forgive near-misses caused by the wrong-font measurement above; with per-field-correct
-        # metrics there is no systematic under-report left to forgive, so tolerating overflow
-        # here would just reintroduce the collision.
-        title_elided  = title_text_w  > title_avail
-        author_elided = author_text_w > author_w
-
-        disp_title  = fm_title.elidedText(title,   Qt.ElideRight, title_avail) if title_elided  else title
-        disp_author = fm_author.elidedText(author, Qt.ElideRight, author_w)    if author_elided else author
-
-        # Layout geometry derived from option.rect
-        left       = r.x() + LEFT_PAD + TITLE_CM
-        mid        = left + title_avail
-        right      = r.x() + LEFT_PAD + AVAILABLE
-        # Title draw rect must NOT extend past `mid` (author's left edge) — a small 2px clip-
-        # safety margin against subpixel rounding is fine, but the old `+8` overshoot was what
-        # let an un-elided near-miss title render straight into author_rect.
-        title_rect = QRect(left, r.y(), title_avail + 2, r.height())
-        author_rect = QRect(mid, r.y(), author_w, r.height())
-        time_rect  = QRect(right, r.y(), TIME_W, r.height())
-
-        local_x       = self._hover_pos.x() - r.x()
-        expand_title  = hovered and (left - r.x() <= local_x < mid - r.x()) and title_elided
-        expand_author = hovered and (mid - r.x() <= local_x < right - r.x()) and author_elided
-        full_rect     = QRect(left, r.y(), AVAILABLE - TITLE_CM, r.height())
-
-        if expand_title:
+        if lay.expand_title:
             self._set_font(painter, mode=self._view_mode, field="title")
             painter.setPen(self._color_title)
-            painter.drawText(full_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
-        elif expand_author:
+            painter.drawText(lay.full_rect, Qt.AlignLeft | Qt.AlignVCenter, lay.title)
+        elif lay.expand_author:
             self._set_font(painter, mode=self._view_mode, field="author")
             painter.setPen(self._color_author)
-            painter.drawText(full_rect, Qt.AlignRight | Qt.AlignVCenter, author)
+            painter.drawText(lay.full_rect, Qt.AlignRight | Qt.AlignVCenter, lay.author)
         else:
             self._set_font(painter, mode=self._view_mode, field="title")
             painter.setPen(self._color_title)
-            painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, disp_title)
+            painter.drawText(lay.title_rect, Qt.AlignLeft | Qt.AlignVCenter, lay.disp_title)
             self._set_font(painter, mode=self._view_mode, field="author")
             painter.setPen(self._color_author)
-            painter.drawText(author_rect, Qt.AlignRight | Qt.AlignVCenter, disp_author)
+            painter.drawText(lay.author_rect, Qt.AlignRight | Qt.AlignVCenter, lay.disp_author)
+
+        time_rect = lay.time_rect
 
         # Time column — single value, right-aligned; toggle switches elapsed/remaining
         self._set_font(painter, mode=self._view_mode, field="total")
@@ -2355,14 +2396,23 @@ class BookDelegate(QStyledItemDelegate):
                 return field
         return None
 
-    def _field_filter_target_at(self, book, pos: "QPoint"):
+    def _field_filter_target_at(self, book, pos: "QPoint", option=None):
         """Resolve a viewport position to the (field, value) a click would filter on, or None
         if pos is not a click target. Single source of truth for BOTH the click grab
         (editorEvent) and the hand-cursor decision (LibraryPanel.eventFilter / scroll-tick
         refresh) so they can never diverge. For multi-value author/narrator, value is the
         single name under the cursor; a position in the separator gap between names owns no
         segment and returns None (dead zone → default cursor, click falls through to normal
-        card selection). year and single-value fields return the whole value."""
+        card selection). year and single-value fields return the whole value.
+
+        List mode routes to _list_author_segment_at (author only; needs `option` for the row's
+        rect/font — the grid path reads _scroll_field_rects instead, which List never populates).
+        If List is active but no `option` was supplied (e.g. the grid-only scroll-tick refresh),
+        return None — that path never targets List rows anyway."""
+        if self._view_mode == "List":
+            if option is None:
+                return None
+            return self._list_author_segment_at(book, option, pos)
         field = self._filterable_field_at(book.path, pos)
         if not field:
             return None
@@ -2379,6 +2429,59 @@ class BookDelegate(QStyledItemDelegate):
                     return None  # over a separator gap — not a target
                 value = seg[0]
         return (field, value)
+
+    def _list_author_segment_at(self, book, option, pos: "QPoint"):
+        """List-mode author click hit-test. Returns ('author', name) if pos is over the author's
+        drawn text (a single name for multi-value; the whole author for single-value), or None if
+        pos misses the author or lands in a separator gap between names (dead zone). Author is
+        drawn RIGHT-aligned, so the text's left edge is rect.right - drawn_width, not rect.x.
+
+        Uses _list_author_layout — the SAME geometry the paint uses — evaluated with hovered=True
+        (the row IS under the cursor when hit-testing), so the active author rect/string match
+        whatever is currently drawn (resting or hover-invaded). Segments are measured in the
+        layout's fm_author (the real draw font), not _field_font_metrics' default-family metrics,
+        so widths match the pixels exactly."""
+        author = book.author or ""
+        if not author:
+            return None
+        lay = self._list_author_layout(option, book, pos, True)
+        rect = lay.author_active_rect
+        disp = lay.author_active_disp
+        fm = lay.fm_author
+        # Vertical gate.
+        if not (rect.y() <= pos.y() < rect.y() + rect.height()):
+            return None
+        # Exclusive right edge (drawText right-aligns flush to it); text's true left edge.
+        block_right = rect.x() + rect.width()
+        drawn_w = fm.horizontalAdvance(disp)
+        block_left = block_right - drawn_w
+        px = pos.x()
+
+        segs = self._split_field_value(author)
+        if len(segs) < 2:
+            # Single author — whole field is the target iff pos is over the drawn glyphs.
+            if block_left <= px < block_right:
+                return ("author", author)
+            return None
+
+        # Multi-value: lay segments out left-to-right from the actual (right-aligned) text start,
+        # measuring against the ORIGINAL string so separator widths are exact (mirrors
+        # _segment_bounds), then clip each to the drawn extent [block_left, block_right) so a name
+        # dropped by the ellipsis isn't hittable. Same clip shape as _segment_under_point.
+        search_from = 0
+        for seg in segs:
+            idx = author.find(seg, search_from)
+            if idx < 0:
+                continue
+            start_px = fm.horizontalAdvance(author[:idx])
+            width_px = fm.horizontalAdvance(seg)
+            search_from = idx + len(seg)
+            screen_x = block_left + start_px
+            lo = max(screen_x, block_left)
+            hi = min(screen_x + width_px, block_right)
+            if lo < hi and lo <= px < hi:
+                return ("author", seg)
+        return None  # separator gap or past the drawn extent — dead zone
 
     # ── Segment-aware hit-testing for multi-value author/narrator click-to-filter ──
     # Clicking one name in "Feist, Wurts" grabs just that name. The separators (', ' etc.)
