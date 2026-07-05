@@ -3,7 +3,8 @@
 **Branch:** `main`. **Commits:** `5f637dc` (whole-field click-to-filter), `7ba2753` (toggle-off),
 `53fb087` (segment hit-test spike, throwaway scaffolding kept only as validated helpers),
 `5c904ef` (fixed per-field-type row slots), `a631e32` (split-name segment click-to-filter,
-underline removed), `8d4e935` (toggle-off maxLength fix).
+underline removed), `8d4e935` (toggle-off maxLength fix), `d8f193d` (toggle-off reverts to last
+explicit filter text instead of "").
 
 ### Context
 
@@ -22,10 +23,12 @@ rect (not its full layout slot — `_filterable_field_at` clamps hit width to `m
 and `LibraryPanel._on_item_clicked` polls/clears it and calls `set_search`. Year filters via the
 existing `<YYYY>YYYY` range-string convention (`_parse_year_range` collapses to an exact match when
 both bounds are equal) rather than inventing a new syntax. Toggle semantics: clicking again with a
-value that exactly matches the current search field text clears it instead of overwriting — plain
-string equality against `search_field.text()`, source-agnostic (doesn't matter if the current text
-came from a prior click or was typed by hand). No click-origin tracking, no flag, no timestamp —
-deliberately kept dumb; don't add statefulness here without a real reason.
+value that exactly matches the current search field text is a plain string-equality check against
+`search_field.text()`, source-agnostic (doesn't matter if the current text came from a prior click
+or was typed by hand) — no click-origin tracking, no timestamp; deliberately kept dumb. What it
+reverts *to* on a match changed same-day (see `d8f193d` below): initially cleared to `""`, corrected
+once real usage showed that discarded a manually-typed search the moment any click-filter touched
+the field.
 
 ### `5c904ef` — fixed per-field-type row slots, not redistribute-to-fill (1-per-row)
 
@@ -78,6 +81,30 @@ translator"`), so the toggle-off comparison against the untruncated target never
 second click and re-set instead of clearing. Fixed by comparing against `target` sliced to the
 field's actual `maxLength()`. Clipping itself is accepted as fine (26 chars separates any two
 books in practice) — only the toggle comparison needed to account for it.
+
+### `d8f193d` — toggle-off reverts to the user's last explicit text, not `""`
+
+Clearing to `""` on toggle-off silently discarded a manually-typed search the moment a click-filter
+touched the field — type `"Feist"`, click an author chip, click it again to toggle off, and the
+typed search was gone, not restored. Fixed by tracking `self._explicit_filter_text` — the user's
+real, explicitly-set filter text — updated only on a genuine edit (typed keystroke, or
+`.clear()`/right-click-clear), never on a click-originated `set_search` call. `set_search` now sets
+a short-lived `self._programmatic_search_update` guard around `setText` (same idiom as
+`last_event_was_toggle`) so `_on_search_changed` can tell the two apart. Toggle-off calls
+`set_search(self._explicit_filter_text)` and then explicitly overrides `_tag_filter_active` back to
+`False` — `set_search` always sets it `True` (built for "a click filter is now active"), which would
+otherwise mark the just-restored real text as a click override, letting a later left-click into the
+field (`focusInEvent`'s existing snap-to-empty for an active click-filter) wipe it back out.
+Only one explicit value is ever remembered — clicking A, then B, then a year, then re-clicking the
+year all revert to the *same* typed text, clicks never chain. `save_search_filter()` (the
+"Persist search filter" app-restart mechanism) reads `search_field.text()` directly and never
+references `_explicit_filter_text`, so that setting's behavior is unaffected.
+
+Scoped to the author/narrator/year field-click path (`library.py`) only. The tag-click path
+(`app.py:_on_tag_filter_requested`) has no toggle-off at all today — clicking the same tag twice
+just re-sets the identical string, a harmless no-op — and was deliberately left alone rather than
+retrofitted with the same toggle; the better fix there is likely to make an already-active tag not
+re-clickable in the first place, deferred for later.
 
 ### Deferred, not attempted
 

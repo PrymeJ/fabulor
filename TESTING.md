@@ -771,6 +771,35 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Opening library manually (sidebar button) while tag filter is active clears the filter
 - [ ] Opening library via tag chip a second time replaces the previous tag filter
 - [ ] Tag filter does not persist across app restarts
+- [ ] Clicking the same tag a second time is a no-op re-set (not a toggle/clear) — known current behavior, not yet given its own toggle
+
+### Click-to-filter (author/narrator/year, library grid — 1-per-row/2-per-row only)
+- [ ] Left-clicking author text sets the search field to the author's name and filters the library
+- [ ] Left-clicking narrator text (1-per-row only) sets the search field and filters
+- [ ] Left-clicking year text sets the search field to `<YYYY>YYYY` and filters to that exact year
+- [ ] Left-clicking title text does nothing special (normal select/play) — title is never a filter target
+- [ ] Clicking anywhere else on the card (cover, blank space) still selects/plays the book as before
+- [ ] Right-click still opens the Book Detail Panel, unaffected by any of the above
+- [ ] 3-per-row, Square, and List modes show no behavior change at all (feature is scoped out of them)
+- [ ] Missing narrator/year (1-per-row): that row is blank, not filled by an adjacent field shifting up
+- [ ] Hand cursor appears only directly over a field's rendered text, not below/around it in the reserved row slot
+- [ ] Hand cursor does not bleed between adjacent field rows (author/narrator/year) when moving the pointer vertically between them
+
+#### Multi-value author/narrator (e.g. "Feist, Wurts")
+- [ ] Clicking one name filters to just that name, not the full joined string
+- [ ] Hand cursor appears over each name individually
+- [ ] Hovering/clicking the separator (`, ` / `; ` / ` and ` / ` & `) shows the default cursor and falls through to normal card selection — not a filter, not the full string
+- [ ] While the field is actively scrolling (marquee), holding the cursor still: cursor flips hand→arrow as a separator passes under it, and back to hand as the next name arrives
+- [ ] Segment click resolves correctly whether the field is mid-scroll or at rest (short multi-value string that never overflows)
+- [ ] No underline, color change, or other visual decoration appears on hover, on any field, scrolling or static
+
+#### Toggle-off reverts to last explicit text (not empty)
+- [ ] Type a search manually, click an author/narrator/year value, click the same value again: field reverts to the manually-typed text, not ""
+- [ ] Type a search, click field A, click field B, click a year, click the same year again: field reverts to the originally-typed text (not field A or B — only one explicit value is ever remembered)
+- [ ] Right-click to clear the field, then click a field value, then click it again: field reverts to empty (the right-click-clear is itself now the "explicit" value)
+- [ ] With no typed text this session (fresh open, no persisted filter): click a field value, click it again — field reverts to whatever the session's initial value was
+- [ ] Left-clicking into the search field while a click-filter is showing still clears it to empty immediately (pre-existing `focusInEvent` behavior, unchanged by this feature)
+- [ ] "Persist search filter" restart behavior (see that section below) is completely unaffected by any of the above
 
 ### Theme
 - [x] Theme switch updates all delegate colors immediately
