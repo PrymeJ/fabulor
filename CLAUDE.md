@@ -299,6 +299,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Search/filter** — plain text (title/author/narrator/exact 4-digit year), `#tag` prefix (`get_paths_for_tag_prefix`; `#` alone = all), year filters `>NNNN` (≥) / `<NNNN` (≤) / ranges (both orderings). No-match: search field turns dark-red and the model falls back to the full list (never empty); incomplete year expressions never show red. Right-click clears the field; persistence is per-classification (`persist_filter_tag/year/text`).
 - **Cover loading** — `_load_visible_covers` finds the topmost visible row via `_first_visible_row()` (a visualRect binary search — shared with the view-mode-switch scroll-preservation capture, see rule below) then binary-searches the bottom (±5 row pad), dispatches `CoverLoaderWorker` (caps to 320×480, raised from 226×344 on 2026-06-24). Idle preloader (`start_idle_preload`): queues in sort order, `PRELOAD_BATCH_SIZE = 4` every `PRELOAD_INTERVAL_MS = 50` ms (batch was 3, raised to 4 on 2026-07-04 — measured ceiling before main-thread jank; see the constant's comment), **warms BOTH `_cover_cache` (raw) AND `_sized_cover_cache` (current view mode's cell size, off-thread — 2026-07-04)**, pauses per `_preload_paused()` (scan / theme-fade / cover-art flow anim / any panel slide — NOT static panels/Stats-Month/playback/seek), and no longer starts on an app-start timer: it's armed once after `_finish_startup` and only runs after 5s of genuine no-interaction (the eventFilter's idle-restart timer). `_on_cover_loaded` / `_on_preload_sized_cover_loaded` skip the `dataChanged` emit while `_is_animating`.
 - `BookDelegate._resolve_playback` returns `(pos, dur, dur_disp, pct, has_progress, speed)`; `has_progress` (gated on `progress > MIN_PROGRESS` = 1.0s) is what shows the elapsed/bar/percentage and applies per-book speed to the displayed duration. Clicking the time label toggles remaining/total. All delegate colors are injected `Property(QColor)` for theme animation.
+- **Click-to-filter on author/narrator/year (1-per-row/2-per-row only, added 2026-07-05)** — clicking author/narrator/year text sets the library search field to that value (year via the existing `<YYYY>YYYY` range-string convention) instead of selecting/playing the book; clicking again with the same value already active clears it (plain string equality against `search_field.text()`, source-agnostic). Title is never clickable. `_field_filter_target_at(book, pos)` is the single source of truth for both the click grab (`editorEvent`) and the hand-cursor decision, so they can't diverge. Multi-value author/narrator (e.g. `"Feist, Wurts"`) is split into clickable per-name segments (`_split_field_value`/`_segment_bounds`/`_segment_under_point`, on `,` `;` `" and "` `" & "`); a click in the separator gap between names is a dead zone (default cursor, falls through to normal selection) rather than grabbing the full joined string. No hover affordance beyond cursor shape — no underline, no color change, on any field. 1-per-row's title/author/narrator/year rows are fixed per-field-type slots (not redistribute-to-fill): a missing field leaves its row blank rather than letting adjacent fields shift, and the stored hit-rect height is the real font height (tight vertical hit-testing).
 
 ### Stats Panel (`stats_panel.py`)
 
@@ -737,7 +738,18 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-04 Session 1 — idle preloader now warms `_sized_cover_cache` off-thread to
+*Last updated: 2026-07-05 — click-to-filter on author/narrator/year added to the library grid
+(1-per-row/2-per-row only; commits `5f637dc`..`8d4e935`, see SESSION.md for the full per-commit
+narrative and NOTES.md for two bugs worth remembering the shape of). New "What's Built" line under
+Library Panel. No new DO-NOT rule — nothing here is a hard-won invariant a refactor is likely to
+silently undo; the tricky parts (segment tracking, delimiter dead zones, toggle-truncation) are
+covered in code comments and the two docs above. Fixed per-field-type row slots replace the old
+redistribute-to-fill layout in `_paint_one_per_row` (a missing field now leaves its row blank
+instead of letting adjacent fields shift) — chosen partly to keep hit-zone height a per-view-mode
+constant rather than a per-book variable, given how much effort other timing-sensitive bugs in this
+project (chapter oscillation, sidebar re-arm) have already cost.*
+
+*Previously: 2026-07-04 Session 1 — idle preloader now warms `_sized_cover_cache` off-thread to
 kill the library slide-in stall (first-time LANCZOS-in-`paint()` was the cause). Split `_lanczos_scale`
 into a thread-safe `_lanczos_qimage(QImage→QImage)` + a main-thread `QPixmap` tail; `CoverLoaderWorker`
 gained a sized mode emitting `sized_cover_loaded(book_id, dev_w, dev_h, QImage)`; new

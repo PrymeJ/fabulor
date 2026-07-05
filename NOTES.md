@@ -1,3 +1,44 @@
+## Library click-to-filter: two bugs worth remembering the shape of (2026-07-05)
+
+Full feature narrative is in SESSION.md (2026-07-05, commits `5f637dc`..`8d4e935`). Two bugs from
+that work are worth a standalone note because the *shape* of each is likely to recur elsewhere,
+not just the specific line that was wrong.
+
+**1. Partial removal of prototype code left dangling references that only failed at runtime.**
+The segment-hit-test spike (`53fb087`) was built with three helper methods
+(`_spike_update_hover_segment`, `_spike_recompute_hover_segment`, `_spike_draw_segment_highlight`)
+whose only job was driving a throwaway underline. When removing them, the *definitions* were
+deleted correctly, but two of their *call sites* — inside `_paint_one_per_row`'s and
+`_draw_scrollable_field`'s scroll-drawing branches — were missed in that same pass, plus a third
+call site in `_advance_scroll`. Because Python doesn't check attribute/method existence until the
+line actually executes, this didn't surface as an import error or a crash on startup — it surfaced
+as "the marquee scroll animation looks broken," reported by the user, because every scroll-tick
+paint of a scrolling field was raising `AttributeError` and presumably being swallowed or degrading
+silently somewhere in the paint/timer path. The fix was a `grep` sweep for the deleted names across
+the whole file, not a re-read of "the block I edited." **Lesson: when deleting a method, grep the
+method name file-wide before considering the removal done — a call site outside the section you
+were looking at will not announce itself as a syntax error, and may not announce itself as an error
+at all if the failure mode is a caught/logged exception in a hot path like paint() or a timer tick.**
+
+**2. A UI-visible string comparison silently diverged from what a length-limited widget actually
+stores.** The toggle-off feature (`7ba2753`) compares a click's target string against
+`search_field.text()` to decide whether to clear or overwrite. `search_field` has
+`setMaxLength(26)` (set once at construction, for display-width reasons unrelated to this
+feature). A grabbed author credit longer than 26 chars (`"Edith Grossman - translator"`, 27 chars)
+gets silently truncated by Qt when written via `setText`/`set_search` — but the code computing the
+comparison target had no reason to know that, since `target` is built from the raw click value, not
+read back from the widget. First click: sets fine (nobody compares yet). Second click on the same
+segment: `target` (27 chars) != `search_field.text()` (26 chars, truncated) → treated as a
+different value → re-sets instead of clearing. The bug was invisible in code review because both
+sides of the `==` look reasonable in isolation; it only manifests with a real string that happens
+to cross the 26-char boundary, which is why it wasn't caught until a real book's metadata hit it.
+Fixed (`8d4e935`) by comparing against `target[:search_field.maxLength()]` — i.e., reading the
+constraint from the widget itself rather than assuming the value passed to `set_search` is what
+ends up stored. **Lesson: any code that compares an external string against "what a widget
+currently holds" must derive the comparison value through the same transformation the widget
+applies (length limits, input masks, case-folding validators, etc.), not just diff the two raw
+strings — the widget's stored value and the value you handed it are not guaranteed to be equal.**
+
 ## Theme-name hover preview: skip hidden-panel restyle, start the fade AFTER the restyle, debounce the pipeline (2026-07-04)
 
 Hovering a theme name in Settings ▸ Themes ran a ~450–580ms synchronous main-thread

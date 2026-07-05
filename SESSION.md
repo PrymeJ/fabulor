@@ -1,3 +1,96 @@
+## Session Summary — 2026-07-05 — click-to-filter on author/narrator/year (library grid)
+
+**Branch:** `main`. **Commits:** `5f637dc` (whole-field click-to-filter), `7ba2753` (toggle-off),
+`53fb087` (segment hit-test spike, throwaway scaffolding kept only as validated helpers),
+`5c904ef` (fixed per-field-type row slots), `a631e32` (split-name segment click-to-filter,
+underline removed), `8d4e935` (toggle-off maxLength fix).
+
+### Context
+
+Book Detail Panel tag chips already filter the library on click (`tag_filter_requested` →
+`app.py:_on_tag_filter_requested` → `LibraryPanel.set_search`). This extends the same idea into
+the library grid cards themselves: clicking author/narrator/year text filters the library to that
+value instead of selecting/playing the book. Title is never clickable — no coherent single-value
+"filter by this" meaning for it. Scoped to 1-per-row/2-per-row only.
+
+### `5f637dc`/`7ba2753` — whole-field click-to-filter + toggle-off
+
+Flag+poll pattern mirroring the existing time-label-toggle mechanism (`last_event_was_toggle`) —
+`library.py` had no precedent for `BookDelegate` emitting signals or for a tuple `Signal`, so
+`editorEvent` sets `pending_field_filter = (field, value)` on release inside a field's rendered-text
+rect (not its full layout slot — `_filterable_field_at` clamps hit width to `min(full_w, fw)|`),
+and `LibraryPanel._on_item_clicked` polls/clears it and calls `set_search`. Year filters via the
+existing `<YYYY>YYYY` range-string convention (`_parse_year_range` collapses to an exact match when
+both bounds are equal) rather than inventing a new syntax. Toggle semantics: clicking again with a
+value that exactly matches the current search field text clears it instead of overwriting — plain
+string equality against `search_field.text()`, source-agnostic (doesn't matter if the current text
+came from a prior click or was typed by hand). No click-origin tracking, no flag, no timestamp —
+deliberately kept dumb; don't add statefulness here without a real reason.
+
+### `5c904ef` — fixed per-field-type row slots, not redistribute-to-fill (1-per-row)
+
+The original 1-per-row layout divided all available vertical space among however many of
+title/author/narrator/year were populated (`line_h = available_h // len(fields)`), so a lone author
+got a ~59px-tall slot for ~19px of text (oversized/inconsistent hit zones — hand cursor 50px below
+visible text, continuous hand across adjacent fields with no gap), and a missing narrator let year
+slide up into narrator's row. Fixed by giving each field TYPE a reserved slot at a fixed y, computed
+by walking all four types unconditionally regardless of which are populated
+(title@4/author@31/narrator@58/year@84, `FIELD_GAP=8` chosen to reproduce the prior full-metadata
+spacing so a fully-populated book doesn't shift). A book missing narrator now shows blank space at
+that row rather than author/title stretching to fill it. Chosen specifically *because* of the
+segment-click work below — a variable per-book row height would have made hit-zone height a
+per-book variable feeding into animation-timing-sensitive code, exactly the kind of extra moving
+part not worth adding given how much time chapter-oscillation/sidebar-timing bugs have already
+cost elsewhere in this project. The stored hit-rect height is now the real font height
+(`fm.height()`), not the stretched slot, so vertical hit-testing is tight to the text on both axes.
+
+### `53fb087`/`a631e32` — multi-value segmentation, delimiters as dead zones, no hover decoration
+
+Long author/narrator strings (e.g. `"Feist, Wurts"`) split into clickable segments on `,` `;`
+`" and "` `" & "` (case-insensitive on the words; approximate — no word-boundary precision for a
+name containing "and" as a substring). Each segment's click zone tracks its live on-screen
+x-position while the field is mid-scroll, recomputed per-tick from the same offset
+`_advance_scroll` already drives (not cached) — validated first as a throwaway spike (`53fb087`,
+visual-proof underline) before being promoted to real click wiring. Clicking a segment searches
+only that segment's text, not the full joined string.
+
+**Delimiters are dead zones, not fallback-to-full-string.** Hovering/clicking the separator between
+two segments is NOT a click target — cursor stays default, click behaves like clicking blank card
+space (select/play). Deliberate reversal of an earlier idea: first tried "gap click = search full
+joined string" with a hover color/underline to disambiguate which outcome you'd get, but rejected
+it — that created a third ambiguous outcome (segment A / segment B / full string) requiring a whole
+visual-state system just to explain itself. Making gaps non-clickable removes the ambiguity instead
+of signaling it. `_field_filter_target_at(book, pos)` is the single source of truth resolving a
+position to `(field, value)` or `None`, used by both the click grab and the hand-cursor decision so
+they can't diverge; a scroll-tick cursor refresh (`_refresh_hover_cursor`) keeps the cursor honest
+as names/gaps pass under a stationary pointer during the marquee.
+
+**No hover affordance beyond cursor shape**, on any clickable field, static or segmented. The
+underline built to visually prove the segment hit-test worked live was deliberately removed after
+validation — it only ever appeared on scrolling multi-value fields, never on static
+author/narrator/year, which taught an inconsistent rule (sometimes clickable text is decorated,
+sometimes not). Hand cursor alone is the whole affordance now, uniformly.
+
+### `8d4e935` — toggle-off maxLength truncation fix
+
+`search_field.setMaxLength(26)` truncates long grabs (e.g. a 27-char `"Edith Grossman -
+translator"`), so the toggle-off comparison against the untruncated target never matched on a
+second click and re-set instead of clearing. Fixed by comparing against `target` sliced to the
+field's actual `maxLength()`. Clipping itself is accepted as fine (26 chars separates any two
+books in practice) — only the toggle comparison needed to account for it.
+
+### Deferred, not attempted
+
+List view's "flow into neighbor field on hover" (title/author trading expanded space based on
+fixed original hit-rects, independent of any scroll animation) was not attempted. May or may not
+be worth building later; if it's never built, the feature stays scoped to 1-per-row/2-per-row and
+that is an acceptable final state, not unfinished work.
+
+**Untouched, pre-existing, unrelated:** `_scroll_field_rects` staleness across view-mode switches
+(dict keyed by `book.path`, never invalidated on a mode switch, narrow self-healing window — see
+delegate code comments). Investigated during this session's design discussion but explicitly out
+of scope; not touched by any commit above.
+
 ## Session Summary — 2026-07-04 Session 2 — theme-name hover preview: restyle perf + a redundant-call cleanup
 
 **Branch:** `main`. **Commits:** `826fb8f` (hover restyle perf), `da0f1a5` (`_load_svg_pixmap` LRU),
