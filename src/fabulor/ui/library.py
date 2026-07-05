@@ -137,6 +137,10 @@ FONT_SIZES = {
 }
 
 ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
+# Width reserved for the vertical scrollbar, so List-row layout (author + time column, both
+# right-aligned) does NOT shift by the scrollbar's width when it appears/disappears as the
+# filtered list grows/shrinks. See BookDelegate._list_content_width.
+SCROLLBAR_EXTENT = 14
 
 class LibraryPanel(QFrame):
     book_selected    = Signal(str)
@@ -1918,6 +1922,20 @@ class BookDelegate(QStyledItemDelegate):
         if hovered:
             self._draw_hover_overlay(painter, cell_rect, book, show_rem, live_pos, live_dur, large=False)
 
+    def _list_content_width(self, viewport_width: int) -> int:
+        """Stable width the List row lays out to, INDEPENDENT of whether the vertical scrollbar is
+        currently shown. The view's width is fixed (the scrollbar takes space *inside* it, shrinking
+        the viewport but not the view), so `view.width() - SCROLLBAR_EXTENT` reserves the scrollbar's
+        gutter unconditionally — the right-aligned author + time column then sit at a fixed x whether
+        or not the scrollbar is present. Falls back to the live viewport width (current behavior) if
+        the view can't be reached, so paint never breaks."""
+        vp = getattr(self, "_viewport", None)
+        view = vp.parent() if vp is not None else None
+        if view is not None:
+            fw = view.frameWidth() if hasattr(view, "frameWidth") else 0
+            return view.width() - 2 * fw - SCROLLBAR_EXTENT
+        return viewport_width
+
     def _list_author_layout(self, option, book, hover_pos, hovered) -> "_ListLayout":
         """Single source of truth for List-mode title/author geometry (resting, invade, elision).
         Called by _paint_list_row (to draw) and _list_author_segment_at (to hit-test) with the same
@@ -1934,7 +1952,13 @@ class BookDelegate(QStyledItemDelegate):
         TIME_W    = QFontMetrics(option.fontMetrics).horizontalAdvance("-00:00:00") + 2
         LEFT_PAD  = 4
         RIGHT_PAD = 4
-        AVAILABLE = r.width() - LEFT_PAD - RIGHT_PAD - TIME_W
+        # Lay out against a width that RESERVES the vertical scrollbar's space unconditionally, so
+        # the right-aligned author + time column don't shift by SCROLLBAR_EXTENT when the scrollbar
+        # appears/disappears as the filtered list grows/shrinks. Uses the VIEW width (fixed; the
+        # scrollbar takes space inside it, shrinking the viewport but not the view), not the live
+        # viewport width r.width() — see _list_content_width.
+        content_w = self._list_content_width(r.width())
+        AVAILABLE = content_w - LEFT_PAD - RIGHT_PAD - TIME_W
 
         AUTHOR_BASE = 100
         TITLE_CM    = 4
