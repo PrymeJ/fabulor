@@ -152,6 +152,7 @@ class LibraryPanel(QFrame):
         self._current_theme  = {}
         self._show_start     = None
         self._tag_filter_active: bool = False
+        self._programmatic_search_update: bool = False
         self._sort_initialized = False
 
         self._setup_ui()
@@ -314,7 +315,10 @@ class LibraryPanel(QFrame):
         self.search_field.setMaxLength(26)
         self.search_field.setPlaceholderText("search #tag")
         self.search_field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.search_field.customContextMenuRequested.connect(lambda _: self.search_field.clear())
+        def _on_search_right_click(_pos):
+            self.search_field.clear()
+            self._explicit_filter_text = ""
+        self.search_field.customContextMenuRequested.connect(_on_search_right_click)
         self.search_field.setFixedWidth(63)
         self.search_field.setFixedHeight(30)
         self.search_field.textChanged.connect(self._on_search_changed)
@@ -339,6 +343,12 @@ class LibraryPanel(QFrame):
                 self.search_field.blockSignals(True)
                 self.search_field.setText(_saved)
                 self.search_field.blockSignals(False)
+
+        # The user's real, explicitly-set filter text (typed, or right-click-cleared) — what a
+        # click-filter toggle-off reverts TO, as opposed to always reverting to "". Initialized
+        # from whatever the field holds at this point (respecting "Persist search filter" above,
+        # unchanged); updated only by genuine user edits, never by a click-originated set_search.
+        self._explicit_filter_text = self.search_field.text()
 
         self.back_button = QPushButton("Back")
         self.back_button.setFixedHeight(28)
@@ -369,7 +379,12 @@ class LibraryPanel(QFrame):
             max_len = self.search_field.maxLength()
             stored_target = target[:max_len] if max_len > 0 else target
             if self.search_field.text() == stored_target:
-                self.set_search("")
+                # Toggle-off: revert to the user's last explicitly-set text, not "". set_search
+                # always marks _tag_filter_active True (it's built for the "just applied a click
+                # filter" case); override it False right after — the field now shows real user
+                # text again, not a click override, so a later focus-click must NOT wipe it.
+                self.set_search(self._explicit_filter_text)
+                self._tag_filter_active = False
             else:
                 self.set_search(target)
             return
@@ -668,6 +683,10 @@ class LibraryPanel(QFrame):
         QTimer.singleShot(0, self._load_visible_covers)
 
     def _on_search_changed(self, text):
+        if not self._programmatic_search_update:
+            # A real user edit (typing, or QLineEdit.clear() from right-click/Escape) — this IS
+            # the user's explicit filter text now, not a click-filter override.
+            self._explicit_filter_text = text
         self._book_model.filter_books(text.lower().strip())
         no_match = self._book_model.filter_empty
         incomplete = _is_incomplete_year_filter(text.lower().strip())
@@ -742,7 +761,11 @@ class LibraryPanel(QFrame):
         self._delegate.set_hover_fade_enabled(mode)
 
     def set_search(self, text: str) -> None:
+        # Guard so _on_search_changed can tell this click-originated change apart from a real
+        # user edit — only real edits update _explicit_filter_text.
+        self._programmatic_search_update = True
         self.search_field.setText(text)
+        self._programmatic_search_update = False
         self._tag_filter_active = True
 
     def clear_tag_filter_if_active(self) -> None:
