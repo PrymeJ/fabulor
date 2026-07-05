@@ -1626,41 +1626,59 @@ class BookDelegate(QStyledItemDelegate):
         text_x = r.x() + 4 + cover_w + 8
         text_w = r.right() - text_x - 4
 
-        # Zone 1 — bottom block, anchored to r.bottom()
+        # Bottom block uses these; fm_time is read again below for the time row. (The bottom
+        # block is bottom-anchored to r.bottom() and recomputes its own bar_y/time_y — the
+        # text zone no longer needs to derive a text_bottom, since fields now pack from the
+        # top by fixed heights rather than filling the space down to the bottom block.)
         BAR_H  = 6
         PAD    = 4
         self._set_font(painter, mode=self._view_mode, field="elapsed")
         fm_time = painter.fontMetrics()
-        bar_y  = r.bottom() - PAD - BAR_H
-        time_y = bar_y - PAD - fm_time.height()
 
-        # Zone 2 — text block fills space above bottom block
-        text_y      = r.y() + PAD
-        text_bottom = time_y - PAD
+        # Zone 2 — text block, packed downward from the top
+        text_y = r.y() + PAD
 
-        fields = [("title", book.title or "")]
-        if book.author:
-            fields.append(("author", book.author))
-        if book.narrator:
-            fields.append(("narrator", book.narrator))
-        if book.year:
-            fields.append(("year", str(book.year)))
-
-        available_h = text_bottom - text_y
-        line_h      = available_h // len(fields) if fields else available_h
-
+        # Fixed, RESERVED slots per field TYPE. Each of the four metadata rows always owns the
+        # same vertical position whether or not the others are present — a missing field leaves
+        # its slot empty rather than letting later fields slide up. So a book with no narrator
+        # renders title / author / <gap> / year, with year still in its own row. The slot y is
+        # the cumulative sum of every PRECEDING slot's height + gap, computed unconditionally
+        # from each field type's own font (not from which fields happen to exist). FIELD_GAP=8
+        # reproduces the previous full-metadata spacing (title@4, author@31, narrator@58,
+        # year@84) so a fully-populated book doesn't shift.
+        FIELD_GAP = 8
+        SLOT_ORDER = ("title", "author", "narrator", "year")
+        values = {
+            "title":    book.title or "",
+            "author":   book.author or "",
+            "narrator": book.narrator or "",
+            "year":     str(book.year) if book.year else "",
+        }
         color_map = {
             "title":    self._color_title,
             "author":   self._color_author,
             "narrator": self._color_narrator,
             "year":     self._color_year,
         }
-        field_rects = {}
+
+        # Reserve each slot's y up front, walking ALL types regardless of population.
+        slot_y = {}
         row_text_y = text_y
-        for field, value in fields:
+        for slot in SLOT_ORDER:
+            self._set_font(painter, mode=self._view_mode, field=slot)
+            slot_y[slot] = row_text_y
+            row_text_y += painter.fontMetrics().height() + FIELD_GAP
+
+        field_rects = {}
+        for field in SLOT_ORDER:
+            value = values[field]
+            if not value:
+                continue  # slot stays empty and reserved; later fields keep their own y
             self._set_font(painter, mode=self._view_mode, field=field)
             fm = painter.fontMetrics()
             full_w = fm.horizontalAdvance(value)
+            line_h = fm.height()
+            row_text_y = slot_y[field]
             field_rects[field] = (text_x, row_text_y, text_w, line_h, full_w)
             painter.setPen(color_map[field])
             offset = self._scroll_state.get((book.path, field), [None])[0] if (book.path, field) in self._scroll_state else None
@@ -1675,7 +1693,6 @@ class BookDelegate(QStyledItemDelegate):
                 painter.restore()
             else:
                 painter.drawText(text_x, row_text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
-            row_text_y += line_h - 2
         self._scroll_field_rects[book.path] = field_rects
 
         # Bottom block
