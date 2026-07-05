@@ -769,8 +769,22 @@ class LibraryPanel(QFrame):
         self._tag_filter_active = True
 
     def clear_tag_filter_if_active(self) -> None:
+        """Called every time the library opens (fresh manual open, or as the first step of
+        applying a NEW click-filter — see _open_library_flow/_on_tag_filter_requested). Reverts
+        a currently-active click-filter (tag OR author/narrator/year) back to the user's last
+        explicitly-set text, same as the field-click toggle-off — NOT to "". Without this, any
+        path that reopens the library while a click-filter is showing (including chaining a
+        second tag click) would silently overwrite the user's real typed/searched text instead
+        of restoring it.
+
+        Uses the same programmatic guard as set_search: this is housekeeping, not a genuine
+        user edit, and setText() must not be read as one by _on_search_changed — else it would
+        overwrite _explicit_filter_text with whatever this call sets, instead of leaving it
+        untouched."""
         if self._tag_filter_active:
-            self.search_field.setText("")
+            self._programmatic_search_update = True
+            self.search_field.setText(self._explicit_filter_text)
+            self._programmatic_search_update = False
             self._tag_filter_active = False
 
     # ── Hide ─────────────────────────────────────────────────────────────────
