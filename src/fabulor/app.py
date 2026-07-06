@@ -463,6 +463,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.shortcuts.register(Action.OPEN_CHAPTER_LIST, self._show_chapter_dropdown)
         self.shortcuts.register(Action.TOGGLE_THEME, self.theme_manager._rotate_theme)
         self.shortcuts.register(Action.ROTATE_QUOTE, self._rotate_quote_shortcut)
+        self.shortcuts.register(Action.SHOW_LIBRARY, self._open_library_shortcut)
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -2122,6 +2123,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # TODO: remove before release — testing only
         if not self.current_file and self.quote_section.isVisible():
             self.library_controller._rotate_quote()
+
+    def _open_library_shortcut(self):
+        # Open-only: L is a no-op when the library is already up or any other full
+        # panel is open (you can't open an already-open panel — the COOLDOWN_DROP
+        # guard also drops repeat presses during the slide). The sidebar-open case
+        # is handled natively by _open_library_flow's queued close-then-open, so it
+        # is NOT excluded here. The button being hidden marks the empty-library state
+        # (set only there by apply_library_state) — nothing to browse, so no-op.
+        if self.library_trigger_btn.isHidden():
+            return
+        if self.panel_manager.is_any_full_panel_visible():
+            return
+        self.panel_manager._open_library_flow()
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
