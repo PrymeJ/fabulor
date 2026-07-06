@@ -691,10 +691,13 @@ class PanelManager:
             animations.append(self.book_detail_panel_animation)
         return any(anim.state() == QAbstractAnimation.State.Running for anim in animations)
 
-    def is_any_panel_visible(self):
-        """Returns True if the sidebar or any configuration panel is currently open."""
+    def is_any_full_panel_visible(self):
+        """Returns True if any full panel or the chapter-list overlay is open — i.e.
+        everything is_any_panel_visible checks EXCEPT the sidebar. The L shortcut
+        (SHOW_LIBRARY) uses this to no-op when a panel is already up while still
+        allowing the sidebar-open case to flow through _open_library_flow's queued
+        close-then-open."""
         return any([
-            self.sidebar_expanded,
             self.library_panel.isVisible(),
             self.settings_panel.isVisible(),
             self.speed_panel.isVisible(),
@@ -704,6 +707,10 @@ class PanelManager:
             self.book_detail_panel.isVisible() if self.book_detail_panel else False,
             self.main_window.chapter_list_widget.isVisible(),
         ])
+
+    def is_any_panel_visible(self):
+        """Returns True if the sidebar or any configuration panel is currently open."""
+        return self.sidebar_expanded or self.is_any_full_panel_visible()
 
     def is_any_panel_animating(self):
         """Returns True if any panel/sidebar slide animation is currently running.

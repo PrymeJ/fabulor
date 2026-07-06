@@ -40,6 +40,7 @@ from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder
 from .book_switch import BookSwitchState
+from .shortcuts import Action, ShortcutDispatcher
 
 # Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
 # main_window_builders module can use them without importing app.py).
@@ -454,11 +455,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.settings_controller.bind_mainwindow_handlers(self)
 
-        self._theme_rotate_cooldown = QTimer(self)
-        self._theme_rotate_cooldown.setSingleShot(True)
-        self._theme_rotate_cooldown.setInterval(2000)
-        self._theme_rotate_cooldown.timeout.connect(self._on_theme_rotate_cooldown)
-        self._theme_rotate_pending = False
+        # Global MainWindow key bindings (C / T / Q, + L). The dispatcher owns the
+        # spam-guard timing (T's leading-fire-then-coalesce cooldown used to live here
+        # as _theme_rotate_cooldown/_theme_rotate_pending); each handler still owns its
+        # own app-state gating. See shortcuts.py and KEYBINDINGS.md.
+        self.shortcuts = ShortcutDispatcher(self)
+        self.shortcuts.register(Action.OPEN_CHAPTER_LIST, self._show_chapter_dropdown)
+        self.shortcuts.register(Action.TOGGLE_THEME, self.theme_manager._rotate_theme)
+        self.shortcuts.register(Action.ROTATE_QUOTE, self._rotate_quote_shortcut)
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -2107,20 +2111,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.speed_button.setText(f"{value:.2f}x")
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_C and getattr(self, '_chapter_label_clickable', False):
-            self._show_chapter_dropdown()
-        elif event.key() == Qt.Key.Key_T:
-            if not self._theme_rotate_cooldown.isActive():
-                self.theme_manager._rotate_theme()
-                self._theme_rotate_cooldown.start()
-            else:
-                self._theme_rotate_pending = True
-        elif event.key() == Qt.Key.Key_Q:
-            # TODO: remove before release — testing only
-            if not self.current_file and self.quote_section.isVisible():
-                self.library_controller._rotate_quote()
-        else:
+        # All global key bindings route through the dispatcher (shortcuts.py). It owns
+        # binding + spam-guard; the registered handlers own app-state gating. A bound
+        # key is consumed even if its handler no-ops on the current state — harmless,
+        # MainWindow is the top-level widget so an un-consumed key went nowhere anyway.
+        if not self.shortcuts.handle_key_event(event):
             super().keyPressEvent(event)
+
+    def _rotate_quote_shortcut(self):
+        # TODO: remove before release — testing only
+        if not self.current_file and self.quote_section.isVisible():
+            self.library_controller._rotate_quote()
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
@@ -2682,12 +2683,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             event.accept()
         else:
             super().wheelEvent(event)
-
-    def _on_theme_rotate_cooldown(self):
-        if self._theme_rotate_pending:
-            self._theme_rotate_pending = False
-            self.theme_manager._rotate_theme()
-            self._theme_rotate_cooldown.start()
 
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer.
