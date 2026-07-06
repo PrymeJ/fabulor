@@ -779,7 +779,13 @@ as-is with its testing-only comment). New `KEYBINDINGS.md` is the full human-ref
 (global keys, chapter-list keys, text-field Escapes, mouse/wheel, and the explicit note that the
 library view has no keyboard nav). `tests/test_shortcuts.py` pins the three guard behaviors. No new
 DO-NOT rule — the migration preserves behavior exactly rather than resolving a hard-won bug. The
-audit that preceded this (full pre-migration key inventory) is `review/Review_260706_1.md`.*
+audit that preceded this (full pre-migration key inventory) is `review/Review_260706_1.md`.
+Follow-up (same session): added a per-binding `Binding.allow_autorepeat` (default False) — fixes a
+confirmed live bug where holding `C` re-toggled the chapter dropdown every autorepeat tick
+(flicker/fade-restart); `handle_key_event` drops a held-key repeat (returns False, falls through
+like an unbound key) unless the binding opts in. Deliberately per-binding, NOT dispatcher-wide, so
+the future hold-to-repeat keys sketched in `KEYBINDINGS.md` (skip/seek/volume) can enable it without
+a today-introduced regression. All four current bindings keep the default (none should repeat).*
 
 *Previously: 2026-07-06 — List-mode author click-to-filter (segmented) + a scrollbar-space fix.
 Author click-to-filter now works in List mode too (commit `799bcf9`), reusing the grid mechanism:

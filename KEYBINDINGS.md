@@ -88,3 +88,32 @@ The library grid/list currently has **no keyboard navigation**: there is no arro
 row movement, no key to load the selected book, and no key to focus the search field.
 Interaction there is mouse-only (plus typing once the search field is focused by
 clicking it). This is a statement of current fact, not a planned gap.
+
+## Planned keys from a Claude chat conversation dated May 9 (Some of them are already stale and they are mostly tentative, pending decision)
+
+Space — play/pause
+Left/Right — skip back/forward (short skip)
+l — library
+c — chapter list (already implemented)
+
+Skip/chapter/volume resolution:
+
+Up/Down — next/prev chapter (reassigned from volume — chapters matter more than volume during a session)
+Shift+Up/Down — volume (or left keyboard-free)
+Shift+Left/Right — long skip
+Ctrl+Left/Right — prev/next chapter (alternate binding, redundant with Up/Down)
+
+The s collision (stats/settings/sleep all wanted s):
+
+s — settings
+t — stats ("t for tracking/time") — note: this collides with your now-implemented T = theme rotate, so that idea is stale
+z — sleep timer
+
+Remaining ideas:
+
+m — mini-player toggle
+b — back/dismiss current panel
+Enter/Shift+Enter — book details for active book
+f or / — search/filter in library
+r — toggle remaining/total time
+Escape — dismiss any open panel/overlay

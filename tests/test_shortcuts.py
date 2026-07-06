@@ -35,9 +35,11 @@ def qapp():
 COOLDOWN_MS = 30
 
 
-def _press(dispatcher, key):
-    """Deliver a synthetic key press to the dispatcher; return whether it was consumed."""
-    ev = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+def _press(dispatcher, key, autorepeat=False):
+    """Deliver a synthetic key press to the dispatcher; return whether it was consumed.
+    Pass autorepeat=True to simulate a held-key repeat tick (QKeyEvent's autorep flag)."""
+    ev = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier,
+                   "", autorepeat)
     return dispatcher.handle_key_event(ev)
 
 
@@ -142,6 +144,30 @@ def test_drop_leading_fire_then_no_trailing(qapp):
     assert counts[Action.SHOW_LIBRARY] == 2
 
 
+# ── Autorepeat (per-binding) ─────────────────────────────────────────────────────
+
+def test_autorepeat_suppressed_by_default(qapp):
+    # A held-key repeat tick on a default (allow_autorepeat=False) binding does NOT
+    # fire and returns False (falls through like an unbound key), while a genuine
+    # non-autorepeat press of the same key still fires normally.
+    disp, counts = _make({Action.OPEN_CHAPTER_LIST: Binding(Qt.Key.Key_C)})
+    assert _press(disp, Qt.Key.Key_C, autorepeat=True) is False
+    assert counts[Action.OPEN_CHAPTER_LIST] == 0
+    assert _press(disp, Qt.Key.Key_C) is True
+    assert counts[Action.OPEN_CHAPTER_LIST] == 1
+
+
+def test_autorepeat_allowed_when_binding_opts_in(qapp):
+    # The mechanism the future skip/volume/chapter-skip bindings will need: a binding
+    # built with allow_autorepeat=True fires on a repeat tick. Uses a real action slot
+    # with an arbitrary key — the point is the flag, not which action it maps to.
+    disp, counts = _make({
+        Action.SHOW_LIBRARY: Binding(Qt.Key.Key_L, allow_autorepeat=True)
+    })
+    assert _press(disp, Qt.Key.Key_L, autorepeat=True) is True
+    assert counts[Action.SHOW_LIBRARY] == 1
+
+
 # ── Dispatch bookkeeping ─────────────────────────────────────────────────────────
 
 def test_unbound_key_returns_false_and_does_not_fire(qapp):
@@ -168,6 +194,8 @@ def test_default_table_shape(qapp):
     assert DEFAULT_BINDINGS[Action.ROTATE_QUOTE].guard is GuardKind.NONE
     assert DEFAULT_BINDINGS[Action.SHOW_LIBRARY].key == Qt.Key.Key_L
     assert DEFAULT_BINDINGS[Action.SHOW_LIBRARY].guard is GuardKind.COOLDOWN_DROP
+    # None of the current four should repeat on hold.
+    assert all(b.allow_autorepeat is False for b in DEFAULT_BINDINGS.values())
 
 
 def test_unregistered_action_is_a_silent_noop(qapp):

@@ -26,8 +26,12 @@ Key-matching parity note: matching is on ``event.key()`` vs ``Qt.Key`` and delib
 ignores modifiers, because that is exactly what the pre-migration code did (Ctrl+T
 rotated the theme). Strict ``QKeySequence`` matching would *change* behavior, so
 ``Binding.key`` stays a bare ``Qt.Key`` until configurability lands and can widen it.
-Autorepeat is likewise not filtered — held-key repeats were real presses before and stay
-so.
+
+Autorepeat is a per-binding property (``Binding.allow_autorepeat``), NOT a global
+dispatcher rule: all of today's bindings suppress held-key repeat (holding C otherwise
+re-toggles the chapter dropdown every tick, holding T spams rotations), but a future
+hold-to-repeat binding (skip/seek/volume — see KEYBINDINGS.md) can opt in. A
+dispatcher-wide block would silently break those the moment they're added.
 """
 
 from dataclasses import dataclass
@@ -70,6 +74,14 @@ class Binding:
     key: Qt.Key
     guard: GuardKind = GuardKind.NONE
     cooldown_ms: int = 0
+    allow_autorepeat: bool = False
+    """Whether a held-key autorepeat tick dispatches. Defaults False: none of today's
+    bindings (C/T/Q/L) make sense held down — holding C otherwise re-toggles the chapter
+    dropdown on every repeat, holding T would spam rotations, etc. Set True for a future
+    binding that genuinely wants hold-to-repeat — e.g. the held Left/Right skip and
+    Up/Down chapter-skip/volume keys sketched in KEYBINDINGS.md's planned-keys section,
+    which will live in this same global dispatcher. Without this flag those would work on
+    a single tap and silently NOT repeat on hold — an easy-to-miss regression."""
 
 
 # Default table. A future Config-backed source builds an equivalent dict and passes it
@@ -146,11 +158,16 @@ class ShortcutDispatcher(QObject):
         self._handlers[action] = handler
 
     def handle_key_event(self, event) -> bool:
-        """Dispatch a QKeyEvent. Returns True iff the key is bound (the caller should
-        then NOT pass the event on). A bound key returns True even when its guard
-        suppresses the fire — the key is still 'ours', it's just throttled."""
+        """Dispatch a QKeyEvent. Returns True iff the key is bound AND handled here (the
+        caller should then NOT pass the event on). A bound key returns True even when its
+        guard suppresses the fire — the key is still 'ours', it's just throttled. But a
+        held-key autorepeat tick on a binding that disallows repeat returns False (same
+        as an unbound key), so the caller's fallthrough to super() is consistent."""
         action = self._key_to_action.get(event.key())
         if action is None:
+            return False
+        binding = self._bindings[action]
+        if event.isAutoRepeat() and not binding.allow_autorepeat:
             return False
         guard = self._guards.get(action)
         if guard is None or guard.allow():
