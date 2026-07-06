@@ -139,7 +139,7 @@ FONT_SIZES = {
 ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
 # Width reserved for the vertical scrollbar, so List-row layout (author + time column, both
 # right-aligned) does NOT shift by the scrollbar's width when it appears/disappears as the
-# filtered list grows/shrinks. See BookDelegate._list_content_width.
+# filtered list grows/shrinks. See BookDelegate._row_content_width / _row_stable_right.
 SCROLLBAR_EXTENT = 14
 
 class LibraryPanel(QFrame):
@@ -1709,8 +1709,12 @@ class BookDelegate(QStyledItemDelegate):
 
         pos, dur, dur_disp, pct, has_progress, speed = self._resolve_playback(book, live_pos, live_dur)
 
+        # Reserve the vertical scrollbar's gutter so right-aligned time/percentage and the text
+        # column width don't shift by SCROLLBAR_EXTENT when filtering toggles the scrollbar. Use
+        # this stable right edge in place of r.right() for all right-aligned content below.
+        stable_right = self._row_stable_right(r)
         text_x = r.x() + 4 + cover_w + 8
-        text_w = r.right() - text_x - 4
+        text_w = stable_right - text_x - 4
 
         # Bottom block uses these; fm_time is read again below for the time row. (The bottom
         # block is bottom-anchored to r.bottom() and recomputes its own bar_y/time_y — the
@@ -1797,7 +1801,7 @@ class BookDelegate(QStyledItemDelegate):
             fm_total = painter.fontMetrics()
             right_w  = fm_total.horizontalAdvance(right_str)
             painter.setPen(self._color_total)
-            painter.drawText(r.right() - HPAD - right_w, baseline, right_str)
+            painter.drawText(stable_right - HPAD - right_w, baseline, right_str)
 
             # Bar row
             bar_rect = QRect(text_x, bar_y, 147, BAR_H)
@@ -1810,7 +1814,7 @@ class BookDelegate(QStyledItemDelegate):
             pct_y   = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
             painter.setPen(self._color_pct)
             pct_w = fm_pct.horizontalAdvance(pct_str)
-            painter.drawText(r.right() - HPAD - pct_w, pct_y, pct_str)
+            painter.drawText(stable_right - HPAD - pct_w, pct_y, pct_str)
         else:
             # No progress — total time at bar row, right-aligned
             dur_str  = self._fmt(dur_disp)
@@ -1819,7 +1823,7 @@ class BookDelegate(QStyledItemDelegate):
             dur_w    = fm_total.horizontalAdvance(dur_str)
             no_prog_y = bar_y + (BAR_H - fm_total.height()) // 2 + fm_total.ascent()
             painter.setPen(self._color_total)
-            painter.drawText(r.right() - HPAD - dur_w, no_prog_y, dur_str)
+            painter.drawText(stable_right - HPAD - dur_w, no_prog_y, dur_str)
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
@@ -1922,19 +1926,26 @@ class BookDelegate(QStyledItemDelegate):
         if hovered:
             self._draw_hover_overlay(painter, cell_rect, book, show_rem, live_pos, live_dur, large=False)
 
-    def _list_content_width(self, viewport_width: int) -> int:
-        """Stable width the List row lays out to, INDEPENDENT of whether the vertical scrollbar is
-        currently shown. The view's width is fixed (the scrollbar takes space *inside* it, shrinking
-        the viewport but not the view), so `view.width() - SCROLLBAR_EXTENT` reserves the scrollbar's
-        gutter unconditionally — the right-aligned author + time column then sit at a fixed x whether
-        or not the scrollbar is present. Falls back to the live viewport width (current behavior) if
-        the view can't be reached, so paint never breaks."""
+    def _row_content_width(self, viewport_width: int) -> int:
+        """Stable width a full-width row (List, 1-per-row) lays out to, INDEPENDENT of whether the
+        vertical scrollbar is currently shown. The view's width is fixed (the scrollbar takes space
+        *inside* it, shrinking the viewport but not the view), so `view.width() - SCROLLBAR_EXTENT`
+        reserves the scrollbar's gutter unconditionally — right-aligned content (author, time,
+        progress %) then sits at a fixed x whether or not the scrollbar is present. Falls back to the
+        live viewport width if the view can't be reached, so paint never breaks."""
         vp = getattr(self, "_viewport", None)
         view = vp.parent() if vp is not None else None
         if view is not None:
             fw = view.frameWidth() if hasattr(view, "frameWidth") else 0
             return view.width() - 2 * fw - SCROLLBAR_EXTENT
         return viewport_width
+
+    def _row_stable_right(self, r: QRect) -> int:
+        """The stable right-edge x for a full-width row (reserving the scrollbar gutter), for
+        right-aligned content that must NOT drift by SCROLLBAR_EXTENT when the scrollbar toggles.
+        Use in place of r.right() for right-aligned draws. Mirrors r.right() semantics (inclusive):
+        r.right() == r.x() + r.width() - 1, so stable right == r.x() + stable_width - 1."""
+        return r.x() + self._row_content_width(r.width()) - 1
 
     def _list_author_layout(self, option, book, hover_pos, hovered) -> "_ListLayout":
         """Single source of truth for List-mode title/author geometry (resting, invade, elision).
@@ -1956,8 +1967,8 @@ class BookDelegate(QStyledItemDelegate):
         # the right-aligned author + time column don't shift by SCROLLBAR_EXTENT when the scrollbar
         # appears/disappears as the filtered list grows/shrinks. Uses the VIEW width (fixed; the
         # scrollbar takes space inside it, shrinking the viewport but not the view), not the live
-        # viewport width r.width() — see _list_content_width.
-        content_w = self._list_content_width(r.width())
+        # viewport width r.width() — see _row_content_width.
+        content_w = self._row_content_width(r.width())
         AVAILABLE = content_w - LEFT_PAD - RIGHT_PAD - TIME_W
 
         AUTHOR_BASE = 100
