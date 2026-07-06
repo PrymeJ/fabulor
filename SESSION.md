@@ -1,3 +1,61 @@
+## Session Summary — 2026-07-06 Session 3 — `shortcuts.py` global-key dispatcher + new `L` shortcut
+
+**Branch:** `feat/shortcuts-module`. **Commits:** `a6bf62f` (dispatcher + C/T/Q migration),
+`12b2a10` (L shortcut), `b14e89a` (tests), + docs.
+
+### Context
+
+Global key handling was a hand-written `C`/`T`/`Q` if/elif chain in `MainWindow.keyPressEvent`,
+with `T`'s spam-guard living as loose `MainWindow` timer attributes (`_theme_rotate_cooldown`,
+`_theme_rotate_pending`, `_on_theme_rotate_cooldown`). A new `L` (open library) was wanted, plus
+eventual Settings-configurable bindings. This extracted the whole thing into a data-driven module.
+
+### What landed
+
+- **`src/fabulor/shortcuts.py`** — `Action` enum (semantic actions, not key literals),
+  `DEFAULT_BINDINGS` table (`Action` → `Binding`), and a declarative per-binding `GuardKind`
+  (`NONE` / `COOLDOWN_COALESCE` / `COOLDOWN_DROP`) interpreted by one `ShortcutDispatcher`. The
+  table is a constructor arg so a future Config-backed source swaps it wholesale — no persistence
+  built now. `_GuardState` holds the per-action timer + pending flag; the COALESCE timeout slot
+  reproduces the old `_on_theme_rotate_cooldown` exactly (fire once if pending, restart window).
+- **`MainWindow.keyPressEvent`** reduced to `if not self.shortcuts.handle_key_event(event): super()...`.
+  Old cooldown attrs + `_on_theme_rotate_cooldown` deleted. `T` registers `theme_manager._rotate_theme`
+  directly (no-arg, verified — no wrapper needed); `C` registers `_show_chapter_dropdown` (which
+  already self-gates on `_chapter_label_clickable` and self-toggles); `Q`/`L` get thin wrappers
+  because they carry app-state gating, not because of any signature mismatch.
+- **`L` = open-only** (per Pryme): no-op when the library or any full panel is already open, or in
+  the empty-library state (`library_trigger_btn.isHidden()` — set only there by `apply_library_state`).
+  Sidebar-open flows through the existing `_open_library_flow` queued close-then-open. `COOLDOWN_DROP`
+  500ms drops repeat presses during the 300ms slide so a spammed `L` can't double-fire
+  `_start_library_entry`. Added `PanelManager.is_any_full_panel_visible()` (the panel list minus the
+  sidebar; `is_any_panel_visible` now delegates to it — single source of the list).
+- **`tests/test_shortcuts.py`** (9 tests) pins NONE/COALESCE/DROP semantics + dispatch bookkeeping.
+  One case was restructured mid-write after it flaked on pump-overshoot — the timing-sensitive
+  assertions now only check fully-settled window states (see the file's docstring).
+
+### Step 1 finding (the "snap right away" Pryme flagged)
+
+Confirmed it is **`complete_main_fade`** (theme_manager.py), called from `_toggle_sidebar` when the
+sidebar opens mid-fade — it instantly completes an in-flight theme fade to avoid the stranded-slider
+"mulatto theme" bug. It's downstream of dispatch, triggered by the sidebar opening, NOT by `T`, so
+it's orthogonal to the key cooldown and stayed untouched. Same for `_open_library_flow`'s
+`_abort_theme_fade()` preamble, which `L` inherits for free.
+
+### Scope discipline
+
+Explicitly left untouched (per the task's scope guard): `ChapterList` keys, the four widget-scoped
+`Escape` handlers, all wheel input, and `Q`'s eventual removal (migrated as-is with its
+`# TODO: remove before release` comment). `KEYBINDINGS.md` is the new full human-reference input map.
+Preceding audit: `review/Review_260706_1.md`.
+
+### Parity decisions recorded
+
+Matching is on `event.key()` ignoring modifiers (Ctrl+T still rotates the theme — the sketch's
+`QKeySequence` would have *changed* behavior), and autorepeat is not filtered — both preserve
+pre-migration behavior. `Binding.key` can widen to `QKeySequence` when configurability lands.
+
+---
+
 ## Session Summary — 2026-07-06 Session 2 — 1-per-row right-edge padding + a standing rule about visual corrections
 
 **Branch:** `main`. **Commit:** `1cde901` (nudge 1-per-row right-aligned content right).
