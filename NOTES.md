@@ -1,3 +1,55 @@
+## Near-zero saved positions show spurious library progress: config↔DB drift + open-without-play position creep (2026-07-06)
+
+**Symptom:** "2666 (Unabridged)" showed a progress bar / percentage in the library despite reading
+`0:00:00` and `0.0%` in both the player and the library card. The user expected books effectively
+at the start not to count as "in progress."
+
+**Immediate cause — `MIN_PROGRESS` is too coarse.** The library gate is `MIN_PROGRESS = 1.0`
+(seconds, `library.py:54`). `books.progress` for 2666 was `1.3588` — over 1.0, so
+`_resolve_playback` set `has_progress = True` (draws bar/%/elapsed, `library.py:1676`) and the
+"Last Played" sort subset included it (`library.py:1135`). But `pos/dur = 1.3588/141340 ≈ 0.00001`
+→ renders `0.0%` / `0:00:00`. So classification and display contradict each other. Bumping
+`MIN_PROGRESS` (e.g. to 5s) hides the symptom but is NOT the fix — it just moves the threshold a
+book's crept value has to clear.
+
+**Why only 2666 showed it, when the config had many books at ~1.75–2.0.** Two independent position
+stores, and they drift:
+- **`books.progress` (DB)** — what the library grid reads.
+- **`pos_{path}` (QSettings/config)** — what `_restore_position` reads to seek on load
+  (`app.py:1601`).
+The DB `progress` is only written from config **when that specific book is actually opened**
+(`_restore_position`: `config_pos → db.update_progress → seek_async`, `app.py:1601-1613`). 2666 is
+the user's `last_book`, restored every launch, so its crept config value reached the DB. The other
+books had crept `pos_` values but hadn't been re-opened, so their DB `progress` stayed `0.0` and
+they correctly showed no progress. **The bug is library-wide-latent:** each book surfaces spurious
+progress the first time it's re-opened after creeping.
+
+**Two misreads corrected mid-investigation, recorded so they aren't repeated:**
+1. The cluster of config values `1.75 / 1.80 / 1.90 / 2.0 / 2.1` looked like a fixed +0.05/cycle
+   climb toward EOF. It is NOT — those digits are the per-book **speed coefficients** interacting
+   with the seek landing (user's correction), and that whole block of values lived under a **stale
+   duplicate `[pos_]`-shaped section below `[speed_]`** in the config, not the live `[pos_]` group
+   at line 56. The live values are smaller (0.04–0.42 range) and get **overwritten fresh** each
+   open→close, not monotonically climbed. Confirmed by re-opening The Fawn/Kundera/Austerlitz/Soviet
+   Milk: DB went to 0.4199 / 0.0407 / 0.0 / 0.0 and live config to 0.4199 / 0.0499 / 0 / 0 — below
+   1.0, so they now correctly read 00:00:00 with no bar.
+2. The real defect underneath: **a book opened and closed without genuine playback saves a small
+   non-zero position instead of preserving 0.** `_save_current_progress` (`app.py:1294`) persists
+   mpv's actual reported `time_pos`, and on the paused-embedded restore path a
+   `_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37, `player.py:670-671`) residual — scaled by speed — lands a
+   few tenths of a second past 0 rather than exactly at the saved position. That residual is what
+   gets saved. Same class as the already-fixed VT `+0.35` creep (see `_restore_position` comment
+   `app.py:1607-1612`); it survived on the paused-embedded compensation path.
+
+**Why this is deferred, not fixed now (user's call):** persisting the *logical* position
+(`_seek_target`) instead of mpv's reported `time_pos` would fix the creep but is entangled with
+other open mpv-playback issues (see the heavily-guarded MPV-seek / `_seek_target` invariants in
+CLAUDE.md). Fixing it in isolation risks a can of worms. To be tackled together with the other mpv
+problems as a set, not one-by-one. Already-poisoned config/DB values won't self-heal — a one-time
+cleanup zeroing sub-threshold `pos_`/`progress` entries is a candidate when the source fix lands.
+
+---
+
 ## List-mode title/author spacing: one fix that stuck, three that were reverted, and why (2026-07-06)
 
 `BookDelegate._paint_list_row` draws, per row, `[title (left-aligned)] … [author (right-aligned)] [time]`.
