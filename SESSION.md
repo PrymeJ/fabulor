@@ -37,13 +37,14 @@ history):
 
 Filtering by clicking an author shrinks the list → the vertical scrollbar (`ScrollBarAsNeeded`)
 disappears → the viewport widens by ~14px → the right-aligned author + time column jumped. Fixed by
-laying out against a **stable** width, `_list_content_width` = `view.width() - 2*frameWidth -
+laying out against a **stable** width, `_row_content_width` = `view.width() - 2*frameWidth -
 SCROLLBAR_EXTENT`, which reserves the scrollbar gutter unconditionally (the view width is fixed; the
 scrollbar takes space *inside* it). Verified offscreen: viewport width changes 14px on scrollbar
-toggle, `_list_content_width` stays constant. Both draw and hit-test inherit it via
-`_list_author_layout`, so they stay in sync. New CLAUDE.md DO-NOT rule. **Known unfixed:** "1 per
-row" has the same drift on its time/progress — left for a follow-up (DEBT_INVENTORY.md), must reuse
-the same stable-width reservation.
+toggle, `_row_content_width` stays constant. Both draw and hit-test inherit it via
+`_list_author_layout`, so they stay in sync. New CLAUDE.md DO-NOT rule. **1-per-row got the same fix
+same-session (`9f8b06f`):** the helper was generalized (`_list_content_width` → `_row_content_width`,
+plus `_row_stable_right(r)` for the stable right-edge x) and `_paint_one_per_row`'s right-aligned
+time/percentage/duration + text-column width now route through it instead of `r.right()`.
 
 ## Session Summary — 2026-07-06 — list-mode title/author spacing: one fix kept, three reverted
 

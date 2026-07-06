@@ -582,7 +582,7 @@ Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows
 Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
 
 ### DO NOT lay out a library row from the live viewport width — reserve the scrollbar's space
-Any per-row geometry with **right-aligned** content (author, time column, progress) must NOT derive its width from `option.rect.width()` (the live viewport width), because that value drops by `SCROLLBAR_EXTENT` (14px) when the vertical scrollbar appears and regains it when the scrollbar disappears — so filtering, which shrinks the list and toggles the scrollbar, makes right-aligned content jump by 14px. Lay out against a **stable** width that reserves the scrollbar gutter unconditionally: `view.width() - 2*frameWidth - SCROLLBAR_EXTENT` (see `BookDelegate._list_content_width`, used by `_list_author_layout` — 2026-07-06). The view width is fixed (the scrollbar takes space *inside* it, shrinking the viewport but not the view), so this is constant regardless of scrollbar state. Left-aligned content (title) is unaffected (it's anchored to the left edge). **KNOWN UNFIXED (2026-07-06): "1 per row" still drifts** — its total/remaining time + progress (right-aligned) read the live viewport width and shift with the scrollbar; List mode was fixed, 1-per-row was left for a follow-up (see DEBT_INVENTORY.md). When fixing it or adding any new right-aligned row content in any mode, route the width through the same stable-width reservation, don't read `option.rect.width()` directly.
+Any per-row geometry with **right-aligned** content (author, time column, progress %) must NOT derive its width or right edge from `option.rect.width()` / `r.right()` (the live viewport), because that value drops by `SCROLLBAR_EXTENT` (14px) when the vertical scrollbar appears and regains it when the scrollbar disappears — so filtering, which shrinks the list and toggles the scrollbar, makes right-aligned content jump by 14px. Lay out against a **stable** width/right edge that reserves the scrollbar gutter unconditionally: `BookDelegate._row_content_width(...)` (= `view.width() - 2*frameWidth - SCROLLBAR_EXTENT`) and `_row_stable_right(r)` (the stable right-edge x, use in place of `r.right()`) — 2026-07-06. The view width is fixed (the scrollbar takes space *inside* it, shrinking the viewport but not the view), so this is constant regardless of scrollbar state. Left-aligned content (title, the progress bar itself) is unaffected. **Fixed in both List (`_list_author_layout`, commit `9c20f40`) and 1-per-row (`_paint_one_per_row`, commit `9f8b06f`).** When adding ANY new right-aligned row content in ANY mode, route it through `_row_stable_right`/`_row_content_width`, never `r.right()`/`option.rect.width()` directly.
 
 ### DO NOT remove `_sized_cover_cache`/`_get_sized_cover` as "just an optimization"
 This cache is load-bearing, not a performance nicety layered on top of an already-correct render.
@@ -750,12 +750,12 @@ Author click-to-filter now works in List mode too (commit `799bcf9`), reusing th
 `_list_author_layout` is the single source of truth both `_paint_list_row` (draw) and
 `_list_author_segment_at` (hit-test) call, so click always matches what's drawn — the extraction was
 verified byte-identical to the prior render before the hit-test was added. Separately (`9c20f40`),
-List rows now lay out against a stable width (`_list_content_width` = view width − scrollbar extent)
-so right-aligned author/time don't shift when filtering toggles the scrollbar. New DO-NOT rule
-("DO NOT lay out a library row from the live viewport width"). Two accepted limitations in
-DEBT_INVENTORY.md: the first segment of an elided multi-author is unreachable when hover-expanded
-(inherent invade geometry), and "1 per row" still has the scrollbar-drift bug (time/progress) —
-left for a follow-up, must use the same stable-width reservation when fixed. Also earlier this
+List rows now lay out against a stable width (`_row_content_width` = view width − scrollbar extent)
+so right-aligned author/time don't shift when filtering toggles the scrollbar. **1-per-row's
+time/progress got the same fix (`9f8b06f`) via the generalized `_row_content_width`/`_row_stable_right`.**
+New DO-NOT rule ("DO NOT lay out a library row from the live viewport width"). One accepted
+limitation in DEBT_INVENTORY.md: the first segment of an elided multi-author is unreachable when
+hover-expanded (inherent invade geometry). Also earlier this
 session (`d37507c`): List title/author now measured in their real draw fonts (14px bold / 13px
 regular), fixing near-miss title overflow; three follow-up attempts at the separate title↔author
 visual-gap issue were reverted (full arc in SESSION.md/NOTES.md, both 2026-07-06).*
