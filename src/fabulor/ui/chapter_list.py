@@ -276,6 +276,14 @@ class ChapterList(QListWidget):
 
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
+        # Ignore held-key autorepeat for the close keys (C/Escape). The list grabs focus
+        # when it opens, so a held C — the very key that opened it — machine-guns this
+        # handler at the OS repeat rate; each tick calls fade_out(), which restarts the
+        # fade animation, producing a stuttering slow-fade until the key is released. The
+        # nav/activate/digit keys below are left repeatable (holding Down to scroll etc.
+        # is legitimate). See the app-level ShortcutDispatcher for the mirror rule.
+        if key in (Qt.Key.Key_Escape, Qt.Key.Key_C) and event.isAutoRepeat():
+            return
         if key in (Qt.Key_Up, Qt.Key_Down):
             super().keyPressEvent(event)
         elif key in (Qt.Key_Left, Qt.Key_Right) and self._can_expand:
