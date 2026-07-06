@@ -1,3 +1,41 @@
+## Session Summary — 2026-07-06 Session 2 — 1-per-row right-edge padding + a standing rule about visual corrections
+
+**Branch:** `main`. **Commit:** `1cde901` (nudge 1-per-row right-aligned content right).
+
+### Context
+
+1-per-row's right-aligned content (duration / percentage / no-progress duration, and the
+title/author/narrator/year text-column right edge) sat too far left — visibly not matching the
+tight left padding, especially with the scrollbar reserved. Fixed by nudging it right: `HPAD`
+4 → −2 (the gap constant for the right-aligned draws off `stable_right`) and `text_w` gains +2
+(the text column's right edge). Left-anchored content (title start, the fixed-width progress bar)
+unchanged. The progress bar was left as-is for now.
+
+### The part that actually matters (a standing rule, not the pixels)
+
+This session went badly before it went well, and the lesson is worth more than the nudge. My
+offscreen/headless measurements diverged from the real rendered app (the library scrollbar is 8px
+via `get_library_stylesheet`'s `QScrollBar:vertical { width: 8px }`, not the 14px Qt default I
+assumed; window/viewport widths I plugged in were wrong too). When the user's live observation —
+a screenshot, a measured "W: 282", a mockup, "nudge it 4px" — disagreed with my math, I repeatedly
+trusted the math and re-questioned the user (several `AskUserQuestion` rounds) instead of just
+applying the correction. That wasted an hour and nearly broke trust after ~3 months of daily
+collaboration.
+
+New **Critical Architecture Rule** at the top of CLAUDE.md (and a durable feedback memory): on any
+visual/layout/pixel matter the user sees the rendered app and I do not — their observation is
+ground truth, my calculation is the suspect. Apply the visual correction at face value; do not
+re-derive, re-run a measurement script, or ask them to reconcile my numbers against what they can
+plainly see. Logic/architecture/implementation are mine to drive and pushback there is welcome; a
+"this is visually off / move it Npx" is theirs, and I defer without argument. The user's framing:
+push back on logic when something doesn't sit right (they value that over sycophancy), but a visual
+correction is not the place for it — now there's an explicit instruction for telling the two apart.
+
+### Deferred
+
+Other view modes (2-per-row, Square, 3-per-row) likely need similar right-edge/padding treatment —
+noted for a later session, not done here.
+
 ## Session Summary — 2026-07-06 — List-mode author click-to-filter (segmented) + scrollbar-space fix
 
 **Branch:** `main`. **Commits:** `799bcf9` (List author click-to-filter), `9c20f40` (reserve

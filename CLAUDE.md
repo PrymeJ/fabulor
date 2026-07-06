@@ -52,6 +52,21 @@ specific reason the rule doesn't apply in this case, not just that it would be s
 
 ---
 
+### The user sees the rendered pixels. You do not. When they say something is visually off, that is ground truth — your calculation is what's wrong.
+On any visual/layout/pixel matter, the user's eyes are authoritative and your arithmetic is not.
+When a live observation (a screenshot, a measurement like "W: 282", "it's 4px off", "move it right")
+disagrees with your computed values, **the computation is the suspect, not the observation.** Do NOT
+re-derive, re-measure with a script, or re-question the user to defend your numbers — offscreen
+harnesses use default styles/sizes and silently diverge from the real rendered app (e.g. the
+scrollbar is 8px via QSS, not the 14px Qt default; assumed widths are wrong). When the user says
+"nudge it Npx" or "it ends here," just make that change and let them verify live. Asking them to
+reconcile your math against what they can plainly see is not rigor — it wastes their time and
+erodes trust. Take the visual correction at face value, apply it, move on. (Added 2026-07-06 after
+exactly this failure: clinging to a wrong SCROLLBAR_EXTENT/window-width calculation and repeatedly
+questioning the user instead of applying a simple 4px nudge they'd already measured and mocked up.)
+
+---
+
 ### DO NOT modify, refactor, or touch any code related to MPV initialization under any circumstances. This includes the _ensure_mpv() method, the load_book() method's MPV init block, the locale.setlocale(locale.LC_NUMERIC, "C") call, and all MPV constructor arguments (vo, ao, vid, ytdl, keep_open, audio_client_name). This code resolves a hard-won, non-obvious bug involving libcaca, libtinfo, and Qt's locale reset on Wayland/openSUSE. Any "improvement," "cleanup," or "fix" to this block will break the app. If you think something in this block needs changing, say so explicitly and wait for confirmation before touching it.
 
 `audio_client_name='fabulor'` (added 2026-06-26) sets mpv's `--audio-client-name`, which maps to the PulseAudio/PipeWire sink-input `application.name` property. Without it, mpv's `ao='pulse'` stream gets an unstable name (`mpv` or PID-derived), so `module-stream-restore` can't reliably remember a per-app volume across launches — symptom: openSUSE/PulseAudio resets the app's OS-level volume to some stale value (e.g. 5%) on every load, independent of the in-app volume which is correctly persisted. This does NOT fix an already-poisoned stream-restore entry — that must be cleared once via `pavucontrol` or the PipeWire/Pulse stream-restore DB; this just makes the restore key stable going forward.
