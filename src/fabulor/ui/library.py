@@ -1714,7 +1714,7 @@ class BookDelegate(QStyledItemDelegate):
         # this stable right edge in place of r.right() for all right-aligned content below.
         stable_right = self._row_stable_right(r)
         text_x = r.x() + 4 + cover_w + 8
-        text_w = stable_right - text_x - 4
+        text_w = stable_right - text_x + 2
 
         # Bottom block uses these; fm_time is read again below for the time row. (The bottom
         # block is bottom-anchored to r.bottom() and recomputes its own bar_y/time_y — the
@@ -1783,7 +1783,7 @@ class BookDelegate(QStyledItemDelegate):
         self._scroll_field_rects[book.path] = field_rects
 
         # Bottom block
-        HPAD = 4
+        HPAD = -2
         VPAD = 8
         bar_y  = r.bottom() - VPAD - BAR_H
         time_y = max(r.y() + PAD, bar_y - VPAD - fm_time.height())
