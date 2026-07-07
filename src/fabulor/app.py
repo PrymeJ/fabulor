@@ -2179,7 +2179,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             title = chaps[index].get('title') or f"Chapter {index + 1}"
             self._update_chapter_title_text(title)
             # Also sync the list selection visually
+            logger.debug(
+                f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
+                f"setCurrentRow({index}) isVisible={self.chapter_list_widget.isVisible()} "
+                f"scroll_before={self.chapter_list_widget.verticalScrollBar().value()}"
+            )
             self.chapter_list_widget.setCurrentRow(index)
+            logger.debug(
+                f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
+                f"scroll_after={self.chapter_list_widget.verticalScrollBar().value()}"
+            )
 
             # Save state on chapter change (natural stopping point)
             self._save_current_progress()
