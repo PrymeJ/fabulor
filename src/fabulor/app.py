@@ -1632,19 +1632,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
 
     def _on_speed_button_clicked(self):
-        self._hide_popups() # Ensure other popups are hidden
-        """Left click toggles the speed panel."""
+        """Left click toggles the speed (PLAYBACK) panel."""
+        # Own panel visible → close it (self-toggle, always allowed). Otherwise delegate to
+        # _open_speed_flow, which owns the one-overlay-at-a-time gate and the sidebar-queued
+        # handoff. This replaces the old unconditional _hide_popups() (which closed every
+        # other panel first — the close-vs-open fight that produced the overlap bug).
         if self.speed_panel.isVisible():
             self.panel_manager._close_speed_flow()
         else:
-            self.panel_manager._start_speed_entry()
+            self.panel_manager._open_speed_flow()
 
     def _on_sleep_button_clicked(self):
-        self._hide_popups() # Ensure other popups are hidden
         if self.sleep_panel.isVisible():
             self.panel_manager._close_sleep_flow()
         else:
-            self.panel_manager._start_sleep_entry()
+            self.panel_manager._open_sleep_flow()
 
     def _show_chapter_dropdown(self):
         """Positions and shows the floating chapter list."""
@@ -1659,7 +1661,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.chapter_list_widget.fade_out()
             return
 
-        self.panel_manager.hide_all_panels()
+        # One overlay at a time: if any OTHER overlay is present or mid-animation, drop this
+        # open rather than the old hide_all_panels()-then-open (which started a close-slide
+        # that fought the other panel's still-running open-slide — the overlap bug). The
+        # own-list-visible toggle above runs first, so this never blocks closing our own list.
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
 
         speed = self.player.speed or 1.0
         # Pass window width so elide widths are correct before the widget is shown
@@ -2125,15 +2132,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.library_controller._rotate_quote()
 
     def _open_library_shortcut(self):
-        # Open-only: L is a no-op when the library is already up or any other full
-        # panel is open (you can't open an already-open panel — the COOLDOWN_DROP
-        # guard also drops repeat presses during the slide). The sidebar-open case
-        # is handled natively by _open_library_flow's queued close-then-open, so it
-        # is NOT excluded here. The button being hidden marks the empty-library state
-        # (set only there by apply_library_state) — nothing to browse, so no-op.
+        # Open-only: L is a no-op when any overlay is already up, mid-animation, or a
+        # sidebar-handoff open is committed (is_overlay_open_or_committed — the same gate
+        # _open_library_flow itself now enforces; checked here too so L drops silently
+        # rather than delegating). A bare expanded sidebar is NOT blocked: that case flows
+        # through _open_library_flow's queued close-then-open. The button being hidden marks
+        # the empty-library state (set only there by apply_library_state) — nothing to
+        # browse, so no-op. The COOLDOWN_DROP binding guard also drops repeat L during the slide.
         if self.library_trigger_btn.isHidden():
             return
-        if self.panel_manager.is_any_full_panel_visible():
+        if self.panel_manager.is_overlay_open_or_committed():
             return
         self.panel_manager._open_library_flow()
 
