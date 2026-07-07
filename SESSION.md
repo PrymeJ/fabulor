@@ -1,3 +1,55 @@
+## Session Summary — 2026-07-06 Session 4 — autorepeat fixes + panel-overlap mutual exclusion
+
+**Branch:** `feat/shortcuts-module` (continues Session 3). **Commits:** `3b59d1b` (per-binding
+`allow_autorepeat`), `d186f86` (ChapterList C/Escape autorepeat guard), `df98cef` (overlay gate +
+entry-point guards), `09b669e` (gate test), + docs.
+
+### Two follow-ups on the shortcuts work, both surfaced by live testing
+
+**1. Held-`C` flicker.** Holding C opened the chapter list then made it slow-fade/flicker until
+release. First fix was a per-binding `Binding.allow_autorepeat` (default False) in the dispatcher —
+correct and kept (it handles held T/Q/L, which don't open a focus-stealing widget so their repeats
+reach the dispatcher). But it did NOT fix C: instrumentation showed the dispatcher saw only the
+FIRST C press (`isAutoRepeat=False`), while the focused ChapterList received **163** held-C repeats
+(`isAutoRepeat=True`, `hasFocus=True`). Opening the list gives it keyboard focus, so every
+autorepeat tick routed to `ChapterList.keyPressEvent`'s own `C`/`Escape → fade_out()` branch,
+restarting the fade ~40×/s. Real fix: an `event.isAutoRepeat()` guard on that close-key branch
+(`chapter_list.py`). Pryme's read ("the toggle events are fighting for the popup") was right and my
+original dispatcher-only aim was at the wrong widget. Both fixes ship; they cover different widgets.
+
+**2. Panel overlap (the bigger issue).** Two overlays could open together and overlap — reproducible
+mouse-only; shortcuts just make the timing window easy to hit (`l` then `c`, `l` + a sidebar panel
+click, speed button + `l`, `l` tapped while Settings slides in). Root cause: no single gate for "an
+overlay is opening" — each opener independently decided whether to clear others first, and most
+opened blind; only `_show_chapter_dropdown` and the speed/sleep buttons cleared first (via
+`hide_all_panels()`/`_hide_popups()`), and that clearing was itself the close-vs-open *fight*.
+Investigated first (`review/Review_260706_2.md`, full collision matrix) before touching code.
+Fix: `PanelManager.is_overlay_open_or_committed()` = `is_any_full_panel_visible() OR
+is_any_panel_animating() OR _pending_panel_open is not None`, reusing two existing predicates. Key
+finding that made it simple: `is_any_full_panel_visible()` is already True for a panel's ENTIRE
+lifecycle (panels `show()` at slide start, `hide()` only when the close-slide finishes), so it covers
+open-slide + settled + close-slide with no new animation polling. Every overlay-open path now drops
+the second request instead of clearing-then-opening.
+
+### Decisions Pryme locked
+- **Ignore the second request** (no queue, no switch); **drop scope = open OR animating** (strictly
+  one overlay). Shortcuts are main-window-exclusive today; "press L in Stats → dismiss Stats, open
+  Library" (switch behavior) is explicitly FUTURE, not built.
+- `open_book_detail` left **ungated** — reachable only from within library/stats/tags (three
+  contexts, all already-open-panel transitions), never races a fresh open.
+
+### Scope discipline / correctness notes
+- A **bare expanded sidebar** is deliberately NOT blocked (gate excludes it) so the sidebar-queued
+  open path still works; the handoff dispatches via `_start_*_entry` (not `_open_*_flow`), so it's
+  never blocked by its own committed state.
+- The tag-manager-from-book-detail transition (`hide_all_panels()` → `singleShot(320, _open_tags_flow)`)
+  works because book-detail's close animation is 300ms < 320ms — flagged in a code comment to revisit
+  if that duration ever grows.
+- New DO-NOT rule in CLAUDE.md; `tests/test_panel_exclusion.py` pins the gate truth table (binds the
+  real unbound method against a fake supplying the three inputs — no MainWindow needed).
+
+---
+
 ## Session Summary — 2026-07-06 Session 3 — `shortcuts.py` global-key dispatcher + new `L` shortcut
 
 **Branch:** `feat/shortcuts-module`. **Commits:** `a6bf62f` (dispatcher + C/T/Q migration),

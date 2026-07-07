@@ -656,6 +656,9 @@ safe; all are load-bearing:
   `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the
   real two-slot completion path.
 
+### DO NOT add an overlay-open path that skips `is_overlay_open_or_committed()`
+Only ONE overlay (the six sidebar panels — library/settings/speed/sleep/stats/tags — the chapter-list dropdown, or a mid-flight sidebar handoff) may open at a time. `PanelManager.is_overlay_open_or_committed()` (`panels.py`) is the single gate: `is_any_full_panel_visible() OR is_any_panel_animating() OR _pending_panel_open is not None`. Every overlay-OPEN entry point consults it FIRST and early-returns (drops the request) if True — the six `_open_*_flow` methods, `_show_chapter_dropdown` (AFTER its own already-visible→`fade_out` toggle), and `_open_library_shortcut`. The speed/sleep buttons delegate to `_open_speed_flow`/`_open_sleep_flow` (which gate) instead of the old unconditional `_hide_popups()`-then-open. **Policy is DROP the second request (ignore), NOT switch or queue** — two opens inside the animation window aren't legitimate intent. Do NOT "fix" a collision by making an opener call `hide_all_panels()` then open: that starts a close-slide that fights the other panel's open-slide (the exact overlap bug this replaced — see `review/Review_260706_2.md`). Load-bearing exclusions that must stay: a **bare expanded sidebar** is NOT blocked (the gate excludes it so the sidebar-queued open path works); the sidebar handoff dispatches via `_start_*_entry` (not `_open_*_flow`) so it's never blocked by its own committed state; `open_book_detail` is intentionally UNGATED (reachable only from within an already-open library/stats/tags panel — never races a fresh open). `_close_*_flow` and the own-panel-visible→close toggles are never gated. The FUTURE "press L in Stats → dismiss Stats, open Library" switch behavior is deliberately NOT built (shortcuts are main-window-exclusive today). `tests/test_panel_exclusion.py` pins the gate's truth table.
+
 ### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
 `apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
 
@@ -785,7 +788,13 @@ confirmed live bug where holding `C` re-toggled the chapter dropdown every autor
 (flicker/fade-restart); `handle_key_event` drops a held-key repeat (returns False, falls through
 like an unbound key) unless the binding opts in. Deliberately per-binding, NOT dispatcher-wide, so
 the future hold-to-repeat keys sketched in `KEYBINDINGS.md` (skip/seek/volume) can enable it without
-a today-introduced regression. All four current bindings keep the default (none should repeat).*
+a today-introduced regression. All four current bindings keep the default (none should repeat).
+The autorepeat fix later moved to `ChapterList.keyPressEvent` too (its own C/Escape close branch was
+the real machine-gun source once the focused list stole the held-C repeats — 163 repeats reached the
+list vs 2 the dispatcher; see SESSION.md). Second follow-up (same session): fixed a pre-existing
+panel-overlap concurrency bug the `L` shortcut surfaced — added `is_overlay_open_or_committed()` and
+gated every overlay-open path so only one opens at a time (new DO-NOT rule above; analysis in
+`review/Review_260706_2.md`, gate test `tests/test_panel_exclusion.py`).*
 
 *Previously: 2026-07-06 — List-mode author click-to-filter (segmented) + a scrollbar-space fix.
 Author click-to-filter now works in List mode too (commit `799bcf9`), reusing the grid mechanism:
