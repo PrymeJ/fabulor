@@ -782,6 +782,18 @@ class PanelManager:
                 or self.is_any_panel_animating()
                 or self._pending_panel_open is not None)
 
+    def dismiss_sidebar(self):
+        """Closes the sidebar if it's expanded; no-op otherwise. Idempotent (safe to call
+        from an action that doesn't know the sidebar's current state). For actions that
+        should get the sidebar out of the way WITHOUT closing an already-open panel (which
+        is_overlay_open_or_committed already prevents from coexisting) — e.g. opening the
+        chapter list, toggling the time label, wheel-scrolling the speed label or the
+        chapter-progress slider. Mirrors the `if sidebar_expanded: _toggle_sidebar()` line
+        inside hide_all_panels(); pulled out so single-purpose callers don't need the whole
+        close-everything sweep."""
+        if self.sidebar_expanded:
+            self._toggle_sidebar()
+
     def hide_all_panels(self):
         """Closes any open panels."""
         if self.main_window.chapter_list_widget.isVisible():

@@ -1667,6 +1667,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # own-list-visible toggle above runs first, so this never blocks closing our own list.
         if self.panel_manager.is_overlay_open_or_committed():
             return
+        self.panel_manager.dismiss_sidebar()
 
         speed = self.player.speed or 1.0
         # Pass window width so elide widths are correct before the widget is shown
@@ -2092,6 +2093,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         if not self._label_click_in_text(lbl, event.position().x()):
             return
+        self.panel_manager.dismiss_sidebar()
         self.show_remaining_time = not self.show_remaining_time
         self.config.set_show_remaining_time(self.show_remaining_time)
         self._update_ui_sync()
@@ -2648,6 +2650,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             event.accept()
         elif self.speed_button.underMouse():
             if not self.player: return
+            self.panel_manager.dismiss_sidebar()
             delta = event.angleDelta().y()
             step = self.config.get_speed_increment()
             current = self.player.speed or self.config.get_default_speed()
@@ -2672,6 +2675,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.handle_prev()
             event.accept()
         elif self.chapter_progress_slider.underMouse():
+            self.panel_manager.dismiss_sidebar()
             if not self.player or not self.current_file:
                 return
             if self.player.mp3_seek_reload_pending:
