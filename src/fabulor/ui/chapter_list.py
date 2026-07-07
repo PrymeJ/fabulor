@@ -87,6 +87,13 @@ class ChapterList(QListWidget):
         self._anim = QPropertyAnimation(self._opacity, b"opacity")
         self._anim.setEasingCurve(QEasingCurve.InOutQuad)
         self._hide_connected = False
+        # True only during the fade-IN (show_above -> here -> cleared on that animation's
+        # finished). mousePressEvent checks this to reject row clicks while still fading in —
+        # clicking where a chapter will appear mid-fade activated it immediately, which read
+        # as unintentional (the row wasn't fully there yet). Fade-out is unaffected: a click
+        # during fade-out still activates normally (not reported as an issue).
+        self._fading_in = False
+        self._fade_in_finished_connected = False
 
         self._expanded = False
         self._anchor_bottom = 0
@@ -201,7 +208,14 @@ class ChapterList(QListWidget):
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(0.94)
         self._disconnect_hide()
+        self._fading_in = True
+        if not self._fade_in_finished_connected:
+            self._anim.finished.connect(self._on_fade_in_finished)
+            self._fade_in_finished_connected = True
         self._anim.start()
+
+    def _on_fade_in_finished(self):
+        self._fading_in = False
 
     def _apply_height(self, rows):
         """Resize and reposition keeping the bottom edge fixed at _anchor_bottom."""
@@ -264,6 +278,12 @@ class ChapterList(QListWidget):
         )
 
     def mousePressEvent(self, event: QMouseEvent):
+        if self._fading_in:
+            # Reject row clicks while still fading in — clicking where a chapter will
+            # appear mid-fade activated it immediately, which read as unintentional (the
+            # row wasn't fully visible/settled yet). Once fully faded in, clicks work
+            # normally; fade-OUT is unaffected (not reported as an issue).
+            return
         item = self.itemAt(event.pos())
         if item is None:
             super().mousePressEvent(event)
