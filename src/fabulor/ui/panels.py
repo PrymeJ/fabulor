@@ -87,6 +87,11 @@ class PanelManager:
         self.sidebar_animation.start()
 
     def _open_library_flow(self):
+        # One overlay at a time: drop this open if any overlay is already present, mid-slide,
+        # or a sidebar-handoff open is committed. A settled-open sidebar with nothing pending
+        # is NOT blocked (that's the legitimate sidebar-button path). See is_overlay_open_or_committed.
+        if self.is_overlay_open_or_committed():
+            return
         self.main_window.library_panel.clear_tag_filter_if_active()
         self._abort_theme_fade()
         self.library_panel.cancel_preload()
@@ -171,6 +176,9 @@ class PanelManager:
         view.update(view.visualRect(idx))
 
     def _open_settings_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        if self.is_overlay_open_or_committed():
+            return
         #self._abort_theme_fade()
         self.main_window.theme_manager.snap_theme_forward()
         """Hides sidebar first, then shows settings panel."""
@@ -262,6 +270,9 @@ class PanelManager:
             self.blur_effect.setBlurRadius(0)
 
     def _open_speed_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        if self.is_overlay_open_or_committed():
+            return
         self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "speed"
@@ -417,6 +428,9 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _open_stats_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        if self.is_overlay_open_or_committed():
+            return
         self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "stats"
@@ -448,6 +462,9 @@ class PanelManager:
             self.blur_effect.setBlurRadius(0)
 
     def _open_sleep_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        if self.is_overlay_open_or_committed():
+            return
         self._abort_theme_fade()
         """Hides sidebar first, then shows sleep panel."""
         if self.sidebar_expanded:
@@ -527,6 +544,15 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _open_tags_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        # NOTE: the tag-manager-from-book-detail transition (app.py
+        # _on_open_tag_manager_from_detail) calls hide_all_panels() then singleShot(320,
+        # _open_tags_flow); the book-detail close animation is 300ms, so by the time this
+        # fires the detail panel is hidden and the gate is False — the transition still
+        # works. If book-detail's close duration ever grows past ~320ms, revisit that
+        # coupling (drive the open off the close `finished` signal instead of a fixed delay).
+        if self.is_overlay_open_or_committed():
+            return
         self._abort_theme_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "tags"
@@ -691,10 +717,13 @@ class PanelManager:
             animations.append(self.book_detail_panel_animation)
         return any(anim.state() == QAbstractAnimation.State.Running for anim in animations)
 
-    def is_any_panel_visible(self):
-        """Returns True if the sidebar or any configuration panel is currently open."""
+    def is_any_full_panel_visible(self):
+        """Returns True if any full panel or the chapter-list overlay is open — i.e.
+        everything is_any_panel_visible checks EXCEPT the sidebar. The L shortcut
+        (SHOW_LIBRARY) uses this to no-op when a panel is already up while still
+        allowing the sidebar-open case to flow through _open_library_flow's queued
+        close-then-open."""
         return any([
-            self.sidebar_expanded,
             self.library_panel.isVisible(),
             self.settings_panel.isVisible(),
             self.speed_panel.isVisible(),
@@ -704,6 +733,10 @@ class PanelManager:
             self.book_detail_panel.isVisible() if self.book_detail_panel else False,
             self.main_window.chapter_list_widget.isVisible(),
         ])
+
+    def is_any_panel_visible(self):
+        """Returns True if the sidebar or any configuration panel is currently open."""
+        return self.sidebar_expanded or self.is_any_full_panel_visible()
 
     def is_any_panel_animating(self):
         """Returns True if any panel/sidebar slide animation is currently running.
@@ -728,6 +761,38 @@ class PanelManager:
             a is not None and a.state() == QAbstractAnimation.State.Running
             for a in anims
         )
+
+    def is_overlay_open_or_committed(self):
+        """The single gate for 'ignore a second overlay-open request'. True if any full
+        overlay is present or mid-animation, OR a panel-open is already committed but the
+        panel hasn't shown yet (the sidebar-queued handoff sub-window).
+
+        Deliberately EXCLUDES a bare expanded sidebar with nothing pending: opening the
+        sidebar is not itself an overlay, and the queued-open path (_open_*_flow ->
+        _toggle_sidebar close -> _on_sidebar_closed_for_panel dispatch) depends on being
+        able to open a panel FROM the sidebar. `is_any_full_panel_visible` already excludes
+        the sidebar; `is_any_panel_animating` reads the sidebar animation True only while it
+        is actually sliding, so a settled-open sidebar with no _pending_panel_open is False.
+
+        Every overlay-OPEN entry point must consult this first and drop (early-return) the
+        request if it's True — see the entry-point guards in panels.py/app.py. `open_book_detail`
+        is the one intentional exception: it opens only from within an already-open panel
+        (library/stats/tags), never races a fresh open, so it is left ungated."""
+        return (self.is_any_full_panel_visible()
+                or self.is_any_panel_animating()
+                or self._pending_panel_open is not None)
+
+    def dismiss_sidebar(self):
+        """Closes the sidebar if it's expanded; no-op otherwise. Idempotent (safe to call
+        from an action that doesn't know the sidebar's current state). For actions that
+        should get the sidebar out of the way WITHOUT closing an already-open panel (which
+        is_overlay_open_or_committed already prevents from coexisting) — e.g. opening the
+        chapter list, toggling the time label, wheel-scrolling the speed label or the
+        chapter-progress slider. Mirrors the `if sidebar_expanded: _toggle_sidebar()` line
+        inside hide_all_panels(); pulled out so single-purpose callers don't need the whole
+        close-everything sweep."""
+        if self.sidebar_expanded:
+            self._toggle_sidebar()
 
     def hide_all_panels(self):
         """Closes any open panels."""

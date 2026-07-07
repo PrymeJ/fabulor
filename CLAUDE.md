@@ -272,7 +272,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Drag-area press** — `visual_area.mousePressEvent` is monkey-patched to `_on_drag_area_pressed`: left-click closes open panels, else toggles play/pause; empty library short-circuits. (No window-move logic lives here.)
 - **Cover scaling** — `_update_cover_art_scaling()` implements four fit modes (`fit` KeepAspectRatio / `stretch` IgnoreAspectRatio / `crop` center-crop / `top` top-aligned on black canvas), all sized to `COVER_AREA_HEIGHT` (module constant), not the live label height. No-cover books render a themed `fabulor.svg` placeholder. Cover-theme application defers while a panel is open (`_pending_cover_pixmap` → `_apply_pending_cover_theme`).
 - **200 ms `ui_timer` (`_update_ui_sync`)** — the heartbeat. Reads time/dur/pause/speed/eof; feeds `session_recorder.update_furthest_position`; on EOF synthesizes `pos = dur`, sets the restart icon, writes one `'finished'` event, shows the revert/close banner, and closes the session. Delegates to `_sync_playback_state`, `_sync_ui_render`, `_sync_progress_sliders` (skips setValue during flow anim / seeking / `flow_pending_progress`), `_sync_chapter_ui` (derives chapter from `pos`, skips during reload / no chapters / `flow_pending_chapter` / seeking), `_sync_persistence` (saves position every 0.1%, skips during drag / deadzone). Stopped during the flow animation; resumed via `_resume_ui_timer`.
-- **Keyboard** — `C` opens the chapter dropdown; `T` rotates theme (2s cooldown, pends if mid-cooldown); `Q` rotates the no-book quote (testing-only).
+- **Keyboard** — global keys route through `ShortcutDispatcher` (`shortcuts.py`), wired in `MainWindow.keyPressEvent`. `C` opens/closes the chapter dropdown (2+ chapters only); `T` rotates theme (`COOLDOWN_COALESCE` 2s — leading fire, repeats coalesce to one trailing fire, migrated from the old `_theme_rotate_cooldown`/`_pending` attrs); `Q` rotates the no-book quote (testing-only); `L` opens the library (`COOLDOWN_DROP` 500ms — open-only, no-op if the library/any full panel is already open or in the empty state, sidebar-open flows via `_open_library_flow`). The dispatcher owns binding + spam-guard ONLY; each action's app-state gating stays in its handler. Full input map (incl. chapter-list keys, text-field Escape handlers, mouse/wheel) in `KEYBINDINGS.md`.
 - **Wheel zones** — over `visual_area`: volume ±5 (2s overlay); over `speed_button`: speed ±`speed_increment`, clamped 0.25–8.0; over `progress_slider`: chapter Prev/Next (up → next chapter, down → previous; no-op when no chapters or at last/first boundary — delegates to `handle_next`/`handle_prev` so all guards are inherited); over `chapter_progress_slider`: seek by `max(10, chap_dur × 0.05)` with undo capture.
 - **Module-level interface classes** — thin one-way facades so controllers don't hold a raw `MainWindow`: `UIInterface` + `AppInterface` + `BrowserInterface` (→ `LibraryController`); `VisualsInterface` + `PanelInterface` + `UICallbackInterface` + `LibraryInterface` + `PlayerInterface` (→ `SettingsController`).
 - **Startup** (`__init__`) — build core objects → seed streak-grid cache → `_setup_ui` → wire timers/signals → instantiate `LibraryController` → restore last book (validated against active locations + `os.path.exists`) → `_check_library_status` → `ui_timer.start(200)` → instantiate `SettingsController` → `show()` → defer `start_idle_preload` by 4 s.
@@ -656,6 +656,9 @@ safe; all are load-bearing:
   `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the
   real two-slot completion path.
 
+### DO NOT add an overlay-open path that skips `is_overlay_open_or_committed()`
+Only ONE overlay (the six sidebar panels — library/settings/speed/sleep/stats/tags — the chapter-list dropdown, or a mid-flight sidebar handoff) may open at a time. `PanelManager.is_overlay_open_or_committed()` (`panels.py`) is the single gate: `is_any_full_panel_visible() OR is_any_panel_animating() OR _pending_panel_open is not None`. Every overlay-OPEN entry point consults it FIRST and early-returns (drops the request) if True — the six `_open_*_flow` methods, `_show_chapter_dropdown` (AFTER its own already-visible→`fade_out` toggle), and `_open_library_shortcut`. The speed/sleep buttons delegate to `_open_speed_flow`/`_open_sleep_flow` (which gate) instead of the old unconditional `_hide_popups()`-then-open. **Policy is DROP the second request (ignore), NOT switch or queue** — two opens inside the animation window aren't legitimate intent. Do NOT "fix" a collision by making an opener call `hide_all_panels()` then open: that starts a close-slide that fights the other panel's open-slide (the exact overlap bug this replaced — see `review/Review_260706_2.md`). Load-bearing exclusions that must stay: a **bare expanded sidebar** is NOT blocked (the gate excludes it so the sidebar-queued open path works); the sidebar handoff dispatches via `_start_*_entry` (not `_open_*_flow`) so it's never blocked by its own committed state; `open_book_detail` is intentionally UNGATED (reachable only from within an already-open library/stats/tags panel — never races a fresh open). `_close_*_flow` and the own-panel-visible→close toggles are never gated. The FUTURE "press L in Stats → dismiss Stats, open Library" switch behavior is deliberately NOT built (shortcuts are main-window-exclusive today). `tests/test_panel_exclusion.py` pins the gate's truth table.
+
 ### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
 `apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
 
@@ -702,6 +705,7 @@ src/fabulor/
 ├── settings_controller.py    # Settings logic (dynamic binding)
 ├── session_recorder.py       # SessionRecorder — session open/pause/resume/close, checkpoint, furthest-pos tracking
 ├── book_switch.py            # BookSwitchState — single authority for the book-switch transition lifecycle (phase, deadzone, pre-switch captures, deferred flags)
+├── shortcuts.py              # ShortcutDispatcher — data-driven global key bindings (Action enum, Binding table, declarative per-binding spam-guards); wired in MainWindow.keyPressEvent. See KEYBINDINGS.md
 ├── logger_setup.py           # setup_logging() — root fabulor logger, rotating file handler (called first in main.py)
 ├── book_quotes.py            # Quote pool for the empty/no-book state rotation
 ├── assets.py                 # get_asset_path helper (resolves paths into the assets/ bundle)
@@ -760,7 +764,39 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-06 — List-mode author click-to-filter (segmented) + a scrollbar-space fix.
+*Last updated: 2026-07-06 (Session 3) — extracted global key handling into `shortcuts.py`
+(`ShortcutDispatcher`) and added the `L` → open-library shortcut. `MainWindow.keyPressEvent`
+was a hand-written C/T/Q if/elif chain with T's spam-guard as loose `_theme_rotate_cooldown`/
+`_theme_rotate_pending` attrs; it's now a one-line delegate to a data-driven dispatcher — an
+`Action` enum, a `DEFAULT_BINDINGS` table (passed as a constructor arg so a future Config-backed
+source can swap it wholesale — persistence NOT built this task), and a declarative per-binding
+`GuardKind` (`NONE` / `COOLDOWN_COALESCE` = T's exact leading-then-coalesced-trailing behavior /
+`COOLDOWN_DROP` = L's drop-repeats-during-slide). The dispatcher decides bind-ness + guard ONLY;
+each action's app-state gating (C's clickability, Q's no-book state, L's panel/empty checks) stays
+in its handler. New `L` is open-only (no-op when the library/any full panel is open or in the empty
+state; sidebar-open uses the existing `_open_library_flow` queued flow), so `PanelManager` gained
+`is_any_full_panel_visible()` (everything `is_any_panel_visible` checks minus the sidebar; the
+latter now delegates to it — single panel list). Explicitly OUT of scope and untouched: `ChapterList`
+keys, the four widget-scoped `Escape` handlers, all wheel input, and Q's eventual fate (migrated
+as-is with its testing-only comment). New `KEYBINDINGS.md` is the full human-reference input map
+(global keys, chapter-list keys, text-field Escapes, mouse/wheel, and the explicit note that the
+library view has no keyboard nav). `tests/test_shortcuts.py` pins the three guard behaviors. No new
+DO-NOT rule — the migration preserves behavior exactly rather than resolving a hard-won bug. The
+audit that preceded this (full pre-migration key inventory) is `review/Review_260706_1.md`.
+Follow-up (same session): added a per-binding `Binding.allow_autorepeat` (default False) — fixes a
+confirmed live bug where holding `C` re-toggled the chapter dropdown every autorepeat tick
+(flicker/fade-restart); `handle_key_event` drops a held-key repeat (returns False, falls through
+like an unbound key) unless the binding opts in. Deliberately per-binding, NOT dispatcher-wide, so
+the future hold-to-repeat keys sketched in `KEYBINDINGS.md` (skip/seek/volume) can enable it without
+a today-introduced regression. All four current bindings keep the default (none should repeat).
+The autorepeat fix later moved to `ChapterList.keyPressEvent` too (its own C/Escape close branch was
+the real machine-gun source once the focused list stole the held-C repeats — 163 repeats reached the
+list vs 2 the dispatcher; see SESSION.md). Second follow-up (same session): fixed a pre-existing
+panel-overlap concurrency bug the `L` shortcut surfaced — added `is_overlay_open_or_committed()` and
+gated every overlay-open path so only one opens at a time (new DO-NOT rule above; analysis in
+`review/Review_260706_2.md`, gate test `tests/test_panel_exclusion.py`).*
+
+*Previously: 2026-07-06 — List-mode author click-to-filter (segmented) + a scrollbar-space fix.
 Author click-to-filter now works in List mode too (commit `799bcf9`), reusing the grid mechanism:
 `_list_author_layout` is the single source of truth both `_paint_list_row` (draw) and
 `_list_author_segment_at` (hit-test) call, so click always matches what's drawn — the extraction was

@@ -40,6 +40,7 @@ from mpv import ShutdownError
 from .settings_controller import SettingsController
 from .session_recorder import SessionRecorder
 from .book_switch import BookSwitchState
+from .shortcuts import Action, ShortcutDispatcher
 
 # Shared low-level UI helpers (moved to ui/ui_helpers.py so the extracted
 # main_window_builders module can use them without importing app.py).
@@ -454,11 +455,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.settings_controller.bind_mainwindow_handlers(self)
 
-        self._theme_rotate_cooldown = QTimer(self)
-        self._theme_rotate_cooldown.setSingleShot(True)
-        self._theme_rotate_cooldown.setInterval(2000)
-        self._theme_rotate_cooldown.timeout.connect(self._on_theme_rotate_cooldown)
-        self._theme_rotate_pending = False
+        # Global MainWindow key bindings (C / T / Q, + L). The dispatcher owns the
+        # spam-guard timing (T's leading-fire-then-coalesce cooldown used to live here
+        # as _theme_rotate_cooldown/_theme_rotate_pending); each handler still owns its
+        # own app-state gating. See shortcuts.py and KEYBINDINGS.md.
+        self.shortcuts = ShortcutDispatcher(self)
+        self.shortcuts.register(Action.OPEN_CHAPTER_LIST, self._show_chapter_dropdown)
+        self.shortcuts.register(Action.TOGGLE_THEME, self.theme_manager._rotate_theme)
+        self.shortcuts.register(Action.ROTATE_QUOTE, self._rotate_quote_shortcut)
+        self.shortcuts.register(Action.SHOW_LIBRARY, self._open_library_shortcut)
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -1627,19 +1632,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.panel_manager.hide_all_panels()
 
     def _on_speed_button_clicked(self):
-        self._hide_popups() # Ensure other popups are hidden
-        """Left click toggles the speed panel."""
+        """Left click toggles the speed (PLAYBACK) panel."""
+        # Own panel visible → close it (self-toggle, always allowed). Otherwise delegate to
+        # _open_speed_flow, which owns the one-overlay-at-a-time gate and the sidebar-queued
+        # handoff. This replaces the old unconditional _hide_popups() (which closed every
+        # other panel first — the close-vs-open fight that produced the overlap bug).
         if self.speed_panel.isVisible():
             self.panel_manager._close_speed_flow()
         else:
-            self.panel_manager._start_speed_entry()
+            self.panel_manager._open_speed_flow()
 
     def _on_sleep_button_clicked(self):
-        self._hide_popups() # Ensure other popups are hidden
         if self.sleep_panel.isVisible():
             self.panel_manager._close_sleep_flow()
         else:
-            self.panel_manager._start_sleep_entry()
+            self.panel_manager._open_sleep_flow()
 
     def _show_chapter_dropdown(self):
         """Positions and shows the floating chapter list."""
@@ -1654,7 +1661,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.chapter_list_widget.fade_out()
             return
 
-        self.panel_manager.hide_all_panels()
+        # One overlay at a time: if any OTHER overlay is present or mid-animation, drop this
+        # open rather than the old hide_all_panels()-then-open (which started a close-slide
+        # that fought the other panel's still-running open-slide — the overlap bug). The
+        # own-list-visible toggle above runs first, so this never blocks closing our own list.
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager.dismiss_sidebar()
 
         speed = self.player.speed or 1.0
         # Pass window width so elide widths are correct before the widget is shown
@@ -2080,6 +2093,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         if not self._label_click_in_text(lbl, event.position().x()):
             return
+        self.panel_manager.dismiss_sidebar()
         self.show_remaining_time = not self.show_remaining_time
         self.config.set_show_remaining_time(self.show_remaining_time)
         self._update_ui_sync()
@@ -2107,20 +2121,31 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.speed_button.setText(f"{value:.2f}x")
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_C and getattr(self, '_chapter_label_clickable', False):
-            self._show_chapter_dropdown()
-        elif event.key() == Qt.Key.Key_T:
-            if not self._theme_rotate_cooldown.isActive():
-                self.theme_manager._rotate_theme()
-                self._theme_rotate_cooldown.start()
-            else:
-                self._theme_rotate_pending = True
-        elif event.key() == Qt.Key.Key_Q:
-            # TODO: remove before release — testing only
-            if not self.current_file and self.quote_section.isVisible():
-                self.library_controller._rotate_quote()
-        else:
+        # All global key bindings route through the dispatcher (shortcuts.py). It owns
+        # binding + spam-guard; the registered handlers own app-state gating. A bound
+        # key is consumed even if its handler no-ops on the current state — harmless,
+        # MainWindow is the top-level widget so an un-consumed key went nowhere anyway.
+        if not self.shortcuts.handle_key_event(event):
             super().keyPressEvent(event)
+
+    def _rotate_quote_shortcut(self):
+        # TODO: remove before release — testing only
+        if not self.current_file and self.quote_section.isVisible():
+            self.library_controller._rotate_quote()
+
+    def _open_library_shortcut(self):
+        # Open-only: L is a no-op when any overlay is already up, mid-animation, or a
+        # sidebar-handoff open is committed (is_overlay_open_or_committed — the same gate
+        # _open_library_flow itself now enforces; checked here too so L drops silently
+        # rather than delegating). A bare expanded sidebar is NOT blocked: that case flows
+        # through _open_library_flow's queued close-then-open. The button being hidden marks
+        # the empty-library state (set only there by apply_library_state) — nothing to
+        # browse, so no-op. The COOLDOWN_DROP binding guard also drops repeat L during the slide.
+        if self.library_trigger_btn.isHidden():
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_library_flow()
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
@@ -2625,6 +2650,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             event.accept()
         elif self.speed_button.underMouse():
             if not self.player: return
+            self.panel_manager.dismiss_sidebar()
             delta = event.angleDelta().y()
             step = self.config.get_speed_increment()
             current = self.player.speed or self.config.get_default_speed()
@@ -2649,6 +2675,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 self.handle_prev()
             event.accept()
         elif self.chapter_progress_slider.underMouse():
+            self.panel_manager.dismiss_sidebar()
             if not self.player or not self.current_file:
                 return
             if self.player.mp3_seek_reload_pending:
@@ -2682,12 +2709,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             event.accept()
         else:
             super().wheelEvent(event)
-
-    def _on_theme_rotate_cooldown(self):
-        if self._theme_rotate_pending:
-            self._theme_rotate_pending = False
-            self.theme_manager._rotate_theme()
-            self._theme_rotate_cooldown.start()
 
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer.
