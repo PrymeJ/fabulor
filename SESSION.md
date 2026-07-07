@@ -1,3 +1,66 @@
+## Session Summary — 2026-07-07 Session 2 — chapter-list-scrolls-to-bottom: ruled out scroll_to_active, found an untraced setCurrentRow call
+
+**Branch:** `main`. **Commit:** `a1e7424`.
+
+### Context
+
+User reported the chapter list scrolling to the bottom by itself, isolated from the known chapter-drift
+issue (Session 2 tracing from 2026-07-01, `a07e454`). Reviewed the full DEBUG log across the whole
+9457-line file, not just the moment reported.
+
+### Finding
+
+Every `scroll_to_active` call in the entire log (20 occurrences) landed at a sane position
+(`top_row=4-5`, never near the actual bottom `~14`) — the bug does **not** go through that code path,
+ruling out the deferred-`QTimer.singleShot` race theorized in the prior session.
+
+Found the real blind spot: `_update_chapter_label_from_index` (`app.py`, wired to
+`player.chapter_changed`, which fires on every chapter boundary crossing during normal playback, not
+just dropdown interactions) calls `chapter_list_widget.setCurrentRow(index)` **unconditionally** — no
+visibility gate, no relation to `scroll_to_active`, and zero log coverage until now. This can trigger
+Qt's own auto-scroll-to-selection independent of anything already traced, including while the
+dropdown is closed — which would only become visible the next time it's opened, explaining why no
+`scroll_to_active` call ever correlated with the reported bug.
+
+### Instrumentation added
+
+Logs scrollbar value immediately before/after `setCurrentRow` plus dropdown visibility state, at the
+one call site. Diagnostic only, silent below DEBUG, 68 tests still green.
+
+---
+
+## Session Summary — 2026-07-07 Session 1 — sidebar-dismiss coverage + chapter-list fade-in click guard
+
+**Branch:** `main` (merged from `feat/shortcuts-module` in `f711161`). **Commits:** `c236575`
+(dismiss the sidebar on more actions), `58f002b` (ignore chapter-list clicks mid-fade-in).
+(`a1e7424`, interleaved, is Pryme's own unrelated commit — DEBUG tracing for a separate
+chapter-list-scrolls-to-bottom investigation; not part of this entry.)
+
+Live-testing Session 4's panel-exclusion gate surfaced two follow-ups, both from Pryme directly:
+
+**1. Sidebar wasn't dismissed by several actions.** Only the overall progress slider (via
+`handle_next`/`handle_prev`'s `hide_all_panels()` call) closed an open sidebar. Four other
+main-window actions left it open behind them: opening the chapter list (`C` or the label
+click — both route through `_show_chapter_dropdown`, so one fix covers both), toggling the
+time label, wheel-scrolling the speed button, and wheel-scrolling the chapter-progress slider.
+Added `PanelManager.dismiss_sidebar()` — closes the sidebar if expanded, no-op otherwise —
+pulled out of `hide_all_panels()`'s inline `if sidebar_expanded: _toggle_sidebar()` so these
+single-purpose callers don't need the whole close-everything sweep (which would wrongly fight
+an already-open panel that the Session 4 gate correctly keeps from coexisting anyway). Wired
+into the four call sites.
+
+**2. Chapter-list row clicks landed mid-fade-in.** Clicking where a chapter row would appear
+while the dropdown was still fading in activated that chapter immediately — reported as
+"feels weird," not a functional bug. Added a `_fading_in` flag (`chapter_list.py`), set True
+when `show_above()` starts the fade-in animation and cleared when that animation's `finished`
+fires; `mousePressEvent` now returns early while it's set. Fade-out is untouched — a click
+during fade-out still activates normally, which wasn't reported as an issue.
+
+Both fixes: 68 tests still green, live-verified by Pryme, no new DO-NOT rule (small additive
+fixes, not resolving a hard-won architectural bug).
+
+---
+
 ## Session Summary — 2026-07-06 Session 4 — autorepeat fixes + panel-overlap mutual exclusion
 
 **Branch:** `feat/shortcuts-module` (continues Session 3). **Commits:** `3b59d1b` (per-binding
