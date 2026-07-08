@@ -466,6 +466,21 @@ class LibraryPanel(QFrame):
         self._list_view.setFocus()
         self._on_keyboard_nav_moved()
 
+    def _release_focus_on_popup_close(self, combo: QComboBox) -> None:
+        """Sort/view-mode dropdowns are deliberately mouse-only (no keyboard shortcut opens or
+        drives them) — but by default a QComboBox keeps keyboard focus on itself after its
+        popup closes, by ANY means (value picked, clicked away, Escape). Since the list's own
+        arrow-key nav only runs while _list_view has focus, that stranded focus silently
+        breaks keyboard navigation the moment either dropdown is touched once, with no
+        recovery except clicking the list again. hidePopup() is Qt's own hook for "the popup
+        just closed, regardless of how" — override it (same instance-monkeypatch idiom as
+        search_field.keyPressEvent) to hand focus back to the list every time."""
+        original_hide_popup = combo.hidePopup
+        def _hide_popup():
+            original_hide_popup()
+            self._list_view.setFocus()
+        combo.hidePopup = _hide_popup
+
     # ── Toolbar ──────────────────────────────────────────────────────────────
 
     def _setup_ui(self):
@@ -487,6 +502,7 @@ class LibraryPanel(QFrame):
         self._sort_ascending   = self.config.get_library_sort_ascending()
         self._last_filter_mode = self.sort_combo.currentData()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        self._release_focus_on_popup_close(self.sort_combo)
 
         self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
         self.sort_dir_btn.setFixedWidth(16)
@@ -503,6 +519,7 @@ class LibraryPanel(QFrame):
                 self.style_combo.setCurrentIndex(i)
                 break
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
+        self._release_focus_on_popup_close(self.style_combo)
 
         self.search_field = QLineEdit()
         self.search_field.setMaxLength(26)
