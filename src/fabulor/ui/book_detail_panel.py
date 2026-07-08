@@ -954,10 +954,15 @@ class BookDetailPanel(QWidget):
                 self._on_finished_hover(hover=False)
             return False
 
-        if self._editing and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Escape:
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            # Editing → cancel the edit, panel stays open (existing behavior). Not editing →
+            # close the panel via the sole close path. Mutually exclusive on _editing, so one
+            # Escape can never both cancel an edit and close.
+            if self._editing:
                 self._exit_edit_mode(save=False)
-                return True
+            else:
+                self._on_close_clicked()
+            return True
 
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect

@@ -4,7 +4,7 @@ from collections import namedtuple
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem,
 )
-from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation
+from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation, QVariantAnimation
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
@@ -171,6 +171,14 @@ class LibraryPanel(QFrame):
         self._tag_filter_active: bool = False
         self._programmatic_search_update: bool = False
         self._sort_initialized = False
+        # Keyboard-selection highlight: the flash is triggered ONLY from the list's key
+        # handler (never from mouse selection), so mouse clicks never flash. Single fade anim,
+        # restarted (stop+start) on each keyboard move so passes-through never stack.
+        self._kbd_fade_anim = None
+        # Separate quick-fade anim used only when the mouse hovers onto a different book than
+        # the keyboard-selected one — cuts the hold short instead of retargeting the keyframed
+        # anim above.
+        self._kbd_quick_fade_anim = None
 
         self._setup_ui()
         self._resolve_theme_colors()
@@ -277,6 +285,7 @@ class LibraryPanel(QFrame):
         self._list_view.setUniformItemSizes(True)
         self._list_view.setMouseTracking(True)
         self._list_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list_view.setFocusPolicy(Qt.StrongFocus)
 
         self._list_view.clicked.connect(self._on_item_clicked)
         self._list_view.customContextMenuRequested.connect(self._on_context_menu)
@@ -287,8 +296,175 @@ class LibraryPanel(QFrame):
         self.main_layout.addWidget(self._list_view)
         self._delegate.set_viewport(self._list_view.viewport())
 
+        # Keyboard navigation. Instance-monkeypatch idiom (same as search_field, below) — no
+        # QListView subclass. Up/Down delegate to the native handler (BookModel has no flags()
+        # override, so native selection-move works); Left/Right are hand-coded as ±1-column
+        # moves in grid modes (native IconMode traversal was unreliable against our custom
+        # sizeHint/uniform sizing) and are a no-op in single-column modes (1-per-row/List).
+        # Enter/Space reuse the click path; Alt+Enter reuses the detail path.
+        def _list_key(e):
+            key = e.key()
+            mods = e.modifiers()
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                QListView.keyPressEvent(self._list_view, e)
+                self._on_keyboard_nav_moved()
+            elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                cols = ITEM_DIMENSIONS.get(self._delegate._view_mode, {}).get("cols", 1)
+                if cols > 1:
+                    self._move_selection_by(-1 if key == Qt.Key.Key_Left else 1)
+                    self._on_keyboard_nav_moved()
+                # else: no-op (single-column modes have no adjacent column)
+            elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                idx = self._list_view.currentIndex()
+                if not idx.isValid():
+                    return
+                if mods & Qt.KeyboardModifier.AltModifier:
+                    book = idx.data(ROLE_BOOK)
+                    if book:
+                        self.detail_requested.emit(book.path)
+                else:
+                    self._on_item_clicked(idx)
+            elif key == Qt.Key.Key_Space:
+                idx = self._list_view.currentIndex()
+                if idx.isValid():
+                    self._on_item_clicked(idx)
+            elif key == Qt.Key.Key_Tab:
+                self.search_field.setFocus()
+            else:
+                QListView.keyPressEvent(self._list_view, e)
+        self._list_view.keyPressEvent = _list_key
+
         saved_mode = self.style_combo.currentData()
         self._apply_view_mode(saved_mode)
+
+    def _move_selection_by(self, delta: int) -> None:
+        """Move the current selection by `delta` rows (used for Left/Right column moves in
+        grid modes, and for Up/Down pressed from the search field). Clamped to the valid row
+        range; no-op past either end. With no current selection yet, always lands on row 0
+        regardless of direction, rather than skipping past it."""
+        row_count = self._book_model.rowCount()
+        if row_count == 0:
+            return
+        current = self._list_view.currentIndex()
+        if not current.isValid():
+            self._list_view.setCurrentIndex(self._book_model.index(0, 0))
+            return
+        new_row = max(0, min(row_count - 1, current.row() + delta))
+        if new_row != current.row():
+            self._list_view.setCurrentIndex(self._book_model.index(new_row, 0))
+
+    def _on_keyboard_nav_moved(self) -> None:
+        """Common tail for every keyboard move (Up/Down/Left/Right): suppress the mouse hover
+        so only one highlight ever shows (reuses the same teardown the real mouse-Leave event
+        uses, so List-mode hover-fade and the cover hover-overlay both clear correctly), then
+        show the keyboard-selection highlight on the new current row. List mode reuses the
+        mouse's own hover-fade mechanism (library_item_hover_color/_alpha, Fast/Normal/Slow/Off)
+        instead of the generic tint the other modes use."""
+        self._delegate._hover_book = None
+        self._on_view_left()
+        index = self._list_view.currentIndex()
+        if self._delegate._view_mode == "List":
+            self._flash_keyboard_selection_list(index)
+        else:
+            self._flash_keyboard_selection(index)
+
+    def _flash_keyboard_selection_list(self, index) -> None:
+        """List-mode keyboard highlight: drives the exact same on_list_hover_enter/leave calls
+        a mouse hover would, so it fades in/out per the user's Hover fade setting
+        (Fast/Normal/Slow/Off) using library_item_hover_color/_alpha — not a separate tint.
+        _kbd_hover_path lives on the delegate (not the panel) since _paint_list_row reads it
+        directly for the Off-mode instant-fill fallback."""
+        prev_path = self._delegate._kbd_hover_path
+        book = index.data(ROLE_BOOK) if index.isValid() else None
+        self._delegate._kbd_hover_path = book.path if book else None
+        if book:
+            self._delegate.on_list_hover_enter(book.path)
+        if prev_path and prev_path != self._delegate._kbd_hover_path:
+            self._delegate.on_list_hover_leave(prev_path)
+
+    def _flash_keyboard_selection(self, index):
+        """Show the keyboard-selection highlight on `index` at full strength, hold ~2s, then
+        fade to 0 over ~450ms. One QVariantAnimation, restarted (stop+start) on each move so
+        rapid arrowing shows a single continuous indicator on the current row (never stacks)."""
+        if not index.isValid():
+            return
+        book = index.data(ROLE_BOOK)
+        if not book:
+            return
+        self._delegate._kbd_selected_path = book.path
+        self._list_view.scrollTo(index)
+
+        if self._kbd_fade_anim is None:
+            anim = QVariantAnimation(self)
+            anim.setDuration(2450)
+            # Hold at full for ~82% of the run, then fade to 0.
+            anim.setKeyValueAt(0.0, 255)
+            anim.setKeyValueAt(0.82, 255)
+            anim.setKeyValueAt(1.0, 0)
+
+            def _on_tick(value):
+                self._delegate._kbd_alpha = int(value)
+                self._delegate.parent().update()
+            anim.valueChanged.connect(_on_tick)
+            self._kbd_fade_anim = anim
+
+        if self._kbd_quick_fade_anim is not None:
+            self._kbd_quick_fade_anim.stop()
+        self._kbd_fade_anim.stop()
+        self._delegate._kbd_alpha = 255
+        self._kbd_fade_anim.start()
+
+    def _clear_keyboard_selection(self) -> None:
+        """Drop the keyboard highlight instantly — no fade, no stacking with the mouse hover
+        that's about to take over the same row."""
+        if self._kbd_fade_anim is not None:
+            self._kbd_fade_anim.stop()
+        if self._kbd_quick_fade_anim is not None:
+            self._kbd_quick_fade_anim.stop()
+        self._delegate._kbd_selected_path = None
+        self._delegate._kbd_alpha = 0
+        self._delegate.parent().update()
+
+    def _fade_out_keyboard_selection(self) -> None:
+        """The mouse just moved onto a DIFFERENT book than the keyboard-selected one — cut
+        straight to a quick fade-out from the current alpha instead of holding at full for the
+        rest of the normal ~2s timer. Separate QVariantAnimation from the hold-then-fade one
+        used by _flash_keyboard_selection, since retargeting a keyframed animation mid-flight
+        would fight its own 0.82-breakpoint timeline."""
+        if self._kbd_fade_anim is not None:
+            self._kbd_fade_anim.stop()
+        start_alpha = self._delegate._kbd_alpha
+        if start_alpha <= 0:
+            return
+
+        if self._kbd_quick_fade_anim is None:
+            anim = QVariantAnimation(self)
+
+            def _on_tick(value):
+                self._delegate._kbd_alpha = int(value)
+                self._delegate.parent().update()
+                if value <= 0:
+                    self._delegate._kbd_selected_path = None
+            anim.valueChanged.connect(_on_tick)
+            self._kbd_quick_fade_anim = anim
+
+        anim = self._kbd_quick_fade_anim
+        anim.stop()
+        anim.setDuration(max(1, int(450 * start_alpha / 255)))
+        anim.setStartValue(start_alpha)
+        anim.setEndValue(0)
+        anim.start()
+
+    def _focus_list_from_search(self):
+        """Tab-from-search: move focus to the list — the current selection if one exists,
+        else the first row — and flash the keyboard highlight so the landed row is visible
+        immediately rather than waiting for the next arrow press."""
+        idx = self._list_view.currentIndex()
+        if not idx.isValid() and self._book_model.rowCount() > 0:
+            idx = self._book_model.index(0, 0)
+            self._list_view.setCurrentIndex(idx)
+        self._list_view.setFocus()
+        self._on_keyboard_nav_moved()
 
     # ── Toolbar ──────────────────────────────────────────────────────────────
 
@@ -349,9 +525,21 @@ class LibraryPanel(QFrame):
             _original_focus(event)
         self.search_field.focusInEvent = _on_search_focus
         def _search_key(e):
-            if e.key() == Qt.Key.Key_Escape:
+            key = e.key()
+            if key == Qt.Key.Key_Escape:
                 self.search_field.clear()
                 self.search_field.clearFocus()
+            elif key == Qt.Key.Key_Tab:
+                # Tab is exclusive to toggling focus between the search field and the list —
+                # never reaches the style/sort combos or any other widget.
+                self._focus_list_from_search()
+            elif key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+                # Left/Right stay native (text-cursor movement within the field). Up/Down
+                # instead move the book selection by one and hand focus to the list
+                # immediately, so the books start navigating right away.
+                self._move_selection_by(1 if key == Qt.Key.Key_Down else -1)
+                self._list_view.setFocus()
+                self._on_keyboard_nav_moved()
             else:
                 QLineEdit.keyPressEvent(self.search_field, e)
         self.search_field.keyPressEvent = _search_key
@@ -434,6 +622,36 @@ class LibraryPanel(QFrame):
             self._delegate.on_list_hover_enter(book.path)
         if prev_path and prev_path != self._hovered_book_path:
             self._delegate.on_list_hover_leave(prev_path)
+        # The mouse just started hovering a book — the keyboard highlight must yield rather
+        # than stack with it. Same book: drop the keyboard highlight instantly, no double
+        # render. Different book: don't hold at full for the rest of its ~2s timer — cut
+        # straight to the fade-out leg so it visibly recedes right away.
+        if book and self._delegate._kbd_selected_path is not None:
+            if book.path == self._delegate._kbd_selected_path:
+                self._clear_keyboard_selection()
+            else:
+                self._fade_out_keyboard_selection()
+        # List mode: the mouse's own on_list_hover_enter call just above already reassigned
+        # _list_hovered_path to this book, so the shared fade timer will fade out the
+        # keyboard's entry on its own (anything that isn't _list_hovered_path fades out) when
+        # fade mode is active. When Off, on_list_hover_enter/leave are no-ops (Off has no fade
+        # trail) — that's fine since the Off-mode instant-fill fallback is book.path ==
+        # _kbd_hover_path, and clearing it here means the keyboard's stale row stops being
+        # filled the instant the mouse takes over. Either way, just forget our bookkeeping so a
+        # later keyboard move doesn't call on_list_hover_leave on a path the mouse already took.
+        if self._delegate._kbd_hover_path is not None:
+            self._delegate._kbd_hover_path = None
+            self._list_view.viewport().update()
+        # Mouse hover is also the real selection (currentIndex), not just a visual overlay —
+        # a single source of truth for "which book is highlighted." Without this, Enter/
+        # Alt+Enter could act on a stale keyboard-selected book while the user is visibly
+        # hovering a different one with the mouse, and a later arrow press would jump from
+        # that stale position instead of resuming from where the mouse left off. Safe to set
+        # unconditionally: the view is entirely delegate-painted and never reads
+        # option.state & QStyle.State_Selected, so this only updates the logical current row,
+        # not any native selection visual.
+        if book and self._list_view.currentIndex() != index:
+            self._list_view.setCurrentIndex(index)
 
     def _on_view_left(self):
         prev_path = getattr(self, '_hovered_book_path', None)
@@ -986,6 +1204,9 @@ class LibraryPanel(QFrame):
             self._book_model.filter_books("")
         QTimer.singleShot(0, self._load_visible_covers)
         self._progress_timer.start()
+        # Give the list keyboard focus immediately so arrow keys navigate without the user
+        # having to click or Tab into anything first.
+        self._list_view.setFocus()
 
     def hideEvent(self, event):
         self._progress_timer.stop()
@@ -1168,6 +1389,12 @@ class BookModel(QAbstractListModel):
                 matched = [b for b in source if b.year is not None and b.year <= year_max]
                 self._filter_no_match = False
                 books = matched if matched else list(source)
+            elif text.startswith('_'):
+                # Title-starts-with match (title only). text is already lowercased upstream.
+                prefix = text[1:]
+                matched = [b for b in source if b.title.lower().startswith(prefix)]
+                self._filter_no_match = not matched
+                books = matched if matched else list(source)
             else:
                 matched = [
                     b for b in source
@@ -1275,7 +1502,18 @@ class BookDelegate(QStyledItemDelegate):
         self._hover_fade_timer = QTimer(self)
         self._hover_fade_timer.setInterval(16)  # ~60fps
         self._hover_fade_timer.timeout.connect(self._advance_hover_fade)
-        
+        # Keyboard-selection highlight state — fully separate from hover. Path-keyed so it
+        # survives a resort/refilter; _kbd_alpha (0–255) is driven by LibraryPanel's fade anim.
+        # Used by 1-per-row (tint) and 2/3-per-row/Square (gates the duration/progress overlay,
+        # same overlay mouse hover uses — no separate tint there).
+        self._kbd_selected_path = None  # str | None
+        self._kbd_alpha = 0             # current overlay strength 0–255
+        # List-mode-only keyboard highlight: which book the keyboard has "hovered" via
+        # on_list_hover_enter/leave, or (Off fade mode) the instant-fill fallback in
+        # _paint_list_row. Independent of _kbd_selected_path/_kbd_alpha — List mode ignores
+        # those entirely and uses the ordinary mouse-hover machinery instead.
+        self._kbd_hover_path = None  # str | None
+
 
     def _apply_theme(self, theme: dict) -> None:
         def qc(hex_str, alpha=255):
@@ -1288,6 +1526,11 @@ class BookDelegate(QStyledItemDelegate):
         hc = theme.get('library_item_hover_color', theme.get('accent', '#ffffff'))
         ha = theme.get('library_item_hover_alpha', 0.50)
         self._hover_bg_color = qc(hc, int(ha * 255))
+        # Keyboard-selection highlight — separate from hover. Full-strength color; the fade
+        # animation scales it down via _kbd_alpha in _kbd_fill_color().
+        kc = theme.get('library_item_keyboard_color', theme.get('accent', '#ffffff'))
+        ka = theme.get('library_item_keyboard_alpha', 0.25)
+        self._kbd_base_color = qc(kc, int(ka * 255))
 
         self._bg_library     = qc(theme.get('library_bg',          '#1e1e1e'))
         self._grid_bg        = qc(theme.get('library_grid_bg',    theme.get('library_bg', '#1a1a1a')))
@@ -1311,6 +1554,13 @@ class BookDelegate(QStyledItemDelegate):
         self._color_pct      = qc(theme.get('library_percentage', '#aaaaaa'))
         self._alt_row_color  = self._row_two
         self._color_accent   = qc(theme.get('accent', '#ffffff'))
+
+    def _kbd_fill_color(self) -> QColor:
+        """Keyboard-selection overlay color at the current fade strength. The theme's
+        configured alpha is the ceiling; _kbd_alpha (0–255) scales it down as the fade runs."""
+        c = QColor(self._kbd_base_color)
+        c.setAlpha(int(self._kbd_base_color.alpha() * self._kbd_alpha / 255))
+        return c
 
     @Property(QColor)
     def pg_bg(self): return QColor(self._pg_bg)
@@ -1689,6 +1939,8 @@ class BookDelegate(QStyledItemDelegate):
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
         if hovered:
             painter.fillRect(r, self._hover_bg_color)
+        if book.path == self._kbd_selected_path and self._kbd_alpha > 0:
+            painter.fillRect(r, self._kbd_fill_color())
 
         # Cover (100×151, margins 4,4)
         cover_w, cover_h = 100, 151
@@ -1827,6 +2079,9 @@ class BookDelegate(QStyledItemDelegate):
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
+        # No separate keyboard-selection tint here — the duration/progress overlay below
+        # already indicates the active book, same as it does for mouse hover.
+        is_kbd_selected = book.path == self._kbd_selected_path and self._kbd_alpha > 0
         painter.fillRect(r, self._grid_bg)
 
         # Cover (113×172, left margin 13, top 8)
@@ -1851,8 +2106,9 @@ class BookDelegate(QStyledItemDelegate):
             x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects)
         self._scroll_field_rects[book.path] = field_rects
 
-        # Hover overlay over cover rect
-        if hovered:
+        # Hover overlay over cover rect — also shown for the keyboard-selected row, same as a
+        # mouse hover would, so duration/progress is visible while navigating with the keys.
+        if hovered or is_kbd_selected:
             self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=True)
 
     def _draw_scrollable_field(self, painter, *, path, field, value, x, y, w, color, field_rects, center=False) -> int:
@@ -1881,6 +2137,9 @@ class BookDelegate(QStyledItemDelegate):
 
     def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
+        # No separate keyboard-selection tint here — the duration/progress overlay below
+        # already indicates the active book, same as it does for mouse hover.
+        is_kbd_selected = book.path == self._kbd_selected_path and self._kbd_alpha > 0
         painter.fillRect(r, self._grid_bg)
         square = (self._view_mode == "Square")
         has_cover = cover is not None and not cover.isNull()
@@ -1892,7 +2151,7 @@ class BookDelegate(QStyledItemDelegate):
             # Drop any stale field-rect entry (e.g. book gained a cover after a no-cover paint),
             # else phantom scroll zones would linger on this real-cover cell until restart.
             self._scroll_field_rects.pop(book.path, None)
-            if hovered:
+            if hovered or is_kbd_selected:
                 self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
             return
 
@@ -1923,7 +2182,7 @@ class BookDelegate(QStyledItemDelegate):
         painter.setPen(QColor(self._placeholder_color))
         painter.drawRect(cell_rect.adjusted(0, 0, -1, -1))
 
-        if hovered:
+        if hovered or is_kbd_selected:
             self._draw_hover_overlay(painter, cell_rect, book, show_rem, live_pos, live_dur, large=False)
 
     def _row_content_width(self, viewport_width: int) -> int:
@@ -2043,7 +2302,10 @@ class BookDelegate(QStyledItemDelegate):
     def _paint_list_row(self, painter, option, index, book, hovered, show_rem, live_pos, live_dur):
         r   = option.rect
 
-        # Alternating row background, then hover on top
+        # Alternating row background, then hover on top. The keyboard highlight in List mode
+        # reuses this exact same hover mechanism (library_item_hover_color/_alpha, and the
+        # Fast/Normal/Slow/Off fade trail) via on_list_hover_enter/leave — see
+        # _flash_keyboard_selection_list — rather than the generic tint the other modes use.
         painter.fillRect(r, self._row_one if index.row() % 2 == 0 else self._row_two)
         if self._hover_fade_mode != "Off":
             fade_alpha = self._hover_fade.get(book.path, 0)
@@ -2051,7 +2313,7 @@ class BookDelegate(QStyledItemDelegate):
                 fade_color = QColor(self._hover_bg_color)
                 fade_color.setAlpha(fade_alpha)
                 painter.fillRect(r, fade_color)
-        elif hovered:
+        elif hovered or book.path == self._kbd_hover_path:
             painter.fillRect(r, self._hover_bg_color)
 
         if book.path == self._playing_path:

@@ -55,6 +55,8 @@ library_row_one:      Background color for odd rows in 1-per-row and List views.
 library_row_two:      Background color for even rows in 1-per-row and List views. Fallback: library_bg.
 library_item_hover_color: Background color for a book item when hovered. Fallback: accent.
 library_item_hover_alpha: Opacity (0.0 to 1.0) for the library item hover background. Fallback: 0.5.
+library_item_keyboard_color: Background color for the keyboard-selected book item. Fallback: accent.
+library_item_keyboard_alpha: Opacity (0.0 to 1.0) for the keyboard-selection background. Fallback: 0.25.
 library_title:        Text color for book titles in the library view.
 library_author:       Text color for book authors in the library view.
 library_narrator:     Text color for book narrators in the library view.
@@ -1564,8 +1566,8 @@ THEMES = {
         "library_grid_bg":               "#232323",
         "library_row_one":               "#302A2F",
         "library_row_two":               "#2A2129",
-        "library_item_hover_color":      "#FFFFFF",
-        "library_item_hover_alpha":      0.11,
+        "library_item_hover_color":      "#66FFEC",
+        "library_item_hover_alpha":      0.13,
         "library_title":                 "#A9A6A6",
         "library_slider_bg":             "#1A1A1A",
         "library_slider_fill":           "#6A6A6A",
