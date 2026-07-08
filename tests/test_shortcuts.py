@@ -194,8 +194,21 @@ def test_default_table_shape(qapp):
     assert DEFAULT_BINDINGS[Action.ROTATE_QUOTE].guard is GuardKind.NONE
     assert DEFAULT_BINDINGS[Action.SHOW_LIBRARY].key == Qt.Key.Key_L
     assert DEFAULT_BINDINGS[Action.SHOW_LIBRARY].guard is GuardKind.COOLDOWN_DROP
-    # None of the current four should repeat on hold.
+    # The panel-open family (G/P/A/S/Z) mirrors L: same key mapping, same DROP guard.
+    for action, key in (
+        (Action.SHOW_TAGS, Qt.Key.Key_G),
+        (Action.SHOW_PLAYBACK, Qt.Key.Key_P),
+        (Action.SHOW_STATS, Qt.Key.Key_A),
+        (Action.SHOW_SETTINGS, Qt.Key.Key_S),
+        (Action.SHOW_SLEEP, Qt.Key.Key_Z),
+    ):
+        assert DEFAULT_BINDINGS[action].key == key
+        assert DEFAULT_BINDINGS[action].guard is GuardKind.COOLDOWN_DROP
+    # None of the current bindings should repeat on hold.
     assert all(b.allow_autorepeat is False for b in DEFAULT_BINDINGS.values())
+    # No two actions share a key.
+    keys = [b.key for b in DEFAULT_BINDINGS.values()]
+    assert len(keys) == len(set(keys))
 
 
 def test_unregistered_action_is_a_silent_noop(qapp):

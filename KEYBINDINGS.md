@@ -26,6 +26,16 @@ app state allows it (that gating lives in each action's handler, not in the disp
 | `T` | Rotate the theme | Always (subject to the theme system's own rules: it defers while a panel is open and fires ~3s after the panel closes; it's inert in exclusive cover-art mode). | Throttled: the first press rotates immediately, then rapid repeat presses are collapsed into **one** further rotation ~2s later. Holding/spamming `T` yields about one change every 2 seconds — the last press always eventually lands. |
 | `Q` | Rotate the empty-state quote | Only in the empty/no-book state (no book loaded and the quote is showing). Inert once a book is playing. | None. **Testing-only** — flagged for removal before release. |
 | `L` | Open the library | Only when the library is browsable (not the empty-library state) and no full panel is already open. If the library is already open, `L` does nothing (it does not close it). If only the sidebar is open, `L` opens the library through the normal sidebar-close-then-open flow. | Repeat presses during the open animation are ignored (not queued) — you can't stack multiple opens of the same panel. |
+| `G` | Open Tags | Only when at least one book is indexed, and no full panel is already open. Does not close the panel if it's already open. | Same as `L` — repeats during the open animation are ignored. |
+| `P` | Open Playback (speed) | Only when a book is loaded (the Playback button is hidden otherwise), and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
+| `A` | Open Stats | Only when at least one book is indexed, and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
+| `S` | Open Settings | Only when at least one book is indexed, and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
+| `Z` | Open Sleep timer | Only when a book is loaded (the Sleep button is hidden otherwise), and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
+
+`G`/`P`/`A`/`S`/`Z` all share `L`'s shape exactly: **open-only** (pressing the key again while
+its own panel is already open does nothing — these keys never close a panel, only the sidebar's
+own buttons and the panel's own close controls do that) and gated by the same one-overlay-at-a-time
+rule (`is_overlay_open_or_committed`) as every other panel-open path.
 
 Modifiers are ignored: `T` and `Ctrl+T` both rotate the theme, etc. (This matches the
 pre-migration behavior and is intentional until configurable bindings land.)
@@ -93,8 +103,13 @@ clicking it). This is a statement of current fact, not a planned gap.
 
 Space — play/pause
 Left/Right — skip back/forward (short skip)
-l — library
+l — library (already implemented)
 c — chapter list (already implemented)
+g — tags (already implemented)
+p — playback (already implemented)
+a — stats (already implemented)
+s — settings (already implemented)
+z — sleep timer (already implemented)
 
 Skip/chapter/volume resolution:
 
@@ -102,12 +117,6 @@ Up/Down — next/prev chapter (reassigned from volume — chapters matter more t
 Shift+Up/Down — volume (or left keyboard-free)
 Shift+Left/Right — long skip
 Ctrl+Left/Right — prev/next chapter (alternate binding, redundant with Up/Down)
-
-The s collision (stats/settings/sleep all wanted s):
-
-s — settings
-t — stats ("t for tracking/time") — note: this collides with your now-implemented T = theme rotate, so that idea is stale
-z — sleep timer
 
 Remaining ideas:
 

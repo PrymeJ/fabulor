@@ -48,6 +48,11 @@ class Action(Enum):
     TOGGLE_THEME = auto()
     ROTATE_QUOTE = auto()
     SHOW_LIBRARY = auto()
+    SHOW_TAGS = auto()
+    SHOW_PLAYBACK = auto()
+    SHOW_STATS = auto()
+    SHOW_SETTINGS = auto()
+    SHOW_SLEEP = auto()
 
 
 class GuardKind(Enum):
@@ -92,6 +97,14 @@ DEFAULT_BINDINGS: dict[Action, Binding] = {
     # TODO: remove before release — testing only (Q rotates the no-book quote)
     Action.ROTATE_QUOTE:      Binding(Qt.Key.Key_Q),
     Action.SHOW_LIBRARY:      Binding(Qt.Key.Key_L, GuardKind.COOLDOWN_DROP, 500),
+    # G/P/A/S/Z mirror SHOW_LIBRARY exactly: open-only (never close their own panel),
+    # COOLDOWN_DROP so a spammed key can't double-fire mid-slide. Each handler's
+    # availability gate matches that panel's actual mouse-reachability (see app.py).
+    Action.SHOW_TAGS:         Binding(Qt.Key.Key_G, GuardKind.COOLDOWN_DROP, 500),
+    Action.SHOW_PLAYBACK:     Binding(Qt.Key.Key_P, GuardKind.COOLDOWN_DROP, 500),
+    Action.SHOW_STATS:        Binding(Qt.Key.Key_A, GuardKind.COOLDOWN_DROP, 500),
+    Action.SHOW_SETTINGS:     Binding(Qt.Key.Key_S, GuardKind.COOLDOWN_DROP, 500),
+    Action.SHOW_SLEEP:        Binding(Qt.Key.Key_Z, GuardKind.COOLDOWN_DROP, 500),
 }
 
 

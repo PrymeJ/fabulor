@@ -464,6 +464,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.shortcuts.register(Action.TOGGLE_THEME, self.theme_manager._rotate_theme)
         self.shortcuts.register(Action.ROTATE_QUOTE, self._rotate_quote_shortcut)
         self.shortcuts.register(Action.SHOW_LIBRARY, self._open_library_shortcut)
+        self.shortcuts.register(Action.SHOW_TAGS, self._open_tags_shortcut)
+        self.shortcuts.register(Action.SHOW_PLAYBACK, self._open_playback_shortcut)
+        self.shortcuts.register(Action.SHOW_STATS, self._open_stats_shortcut)
+        self.shortcuts.register(Action.SHOW_SETTINGS, self._open_settings_shortcut)
+        self.shortcuts.register(Action.SHOW_SLEEP, self._open_sleep_shortcut)
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -2146,6 +2151,49 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.panel_manager.is_overlay_open_or_committed():
             return
         self.panel_manager._open_library_flow()
+
+    # G/P/A/S/Z mirror _open_library_shortcut exactly: open-only (no toggle-closed
+    # branch — pressing the key again while the panel is already open does nothing),
+    # gated on is_overlay_open_or_committed() plus that panel's own availability check
+    # (mirroring its sidebar button's actual mouse-reachability), then delegate to the
+    # matching _open_*_flow (which re-gates and handles the sidebar-queued handoff).
+
+    def _open_tags_shortcut(self):
+        if self.db.get_book_count() == 0:
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_tags_flow()
+
+    def _open_playback_shortcut(self):
+        # speed_trigger_btn is hidden whenever no book is loaded (_set_interface_visible).
+        if self.speed_trigger_btn.isHidden():
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_speed_flow()
+
+    def _open_stats_shortcut(self):
+        if self.db.get_book_count() == 0:
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_stats_flow()
+
+    def _open_settings_shortcut(self):
+        if self.db.get_book_count() == 0:
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_settings_flow()
+
+    def _open_sleep_shortcut(self):
+        # sleep_trigger_btn is hidden whenever no book is loaded (_set_interface_visible).
+        if self.sleep_trigger_btn.isHidden():
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_sleep_flow()
 
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
