@@ -1,3 +1,116 @@
+## Session Summary — 2026-07-09 Session 1 — Library panel keyboard navigation + three live-testing follow-ups
+
+**Branch:** `main`. **Commits:** `fe4f0f9` (keyboard nav), `f6388d2` (dropdown focus release),
+`3e8c241` (popup hover delegate), `8515605` (down-arrow paint), `c521c39` (detail re-open guard).
+
+### Context
+
+Library had zero real keyboard interaction before this session — nothing gave `_list_view`
+focus, no selection was painted, and the only key handling anywhere in the file was the search
+field's Escape-clear monkeypatch. Planned via the plan-mode workflow (Explore agents to map
+`_on_item_clicked`, hover machinery, search-field key idiom, `BookModel` filter parsing,
+`BookDetailPanel`'s Escape handling, and `themes.py`'s GROUP 7 inheritance rules) before writing
+any code.
+
+### What shipped (`fe4f0f9`)
+
+Arrow-key row/column selection (Up/Down native via `QListView.keyPressEvent`; Left/Right hand-
+coded ±1-column moves in grid modes, no-op in single-column modes), Enter/Space to play (reuses
+`_on_item_clicked`), Alt+Enter to open detail (reuses the `detail_requested` signal), a Tab
+toggle exclusive to search-field↔list (never reaches the sort/style combos or any button — Tab
+routing here is fully custom, not Qt's native tab-order chain), a new `_prefix` (title-starts-
+with) search syntax mirroring the existing `#`/`>`/`<`/year-range special cases, and a keyboard-
+selection highlight per view mode (1-per-row: own tint; 2/3-per-row/Square: reuses the existing
+mouse-hover duration/progress overlay, no separate tint — removed after a live round found it
+redundant; List: reuses the mouse's own hover-fade mechanism so it honors the user's Fast/
+Normal/Slow/Off setting). Mouse hover was also made to set `currentIndex()`, so keyboard and
+mouse selection can never disagree about which book Enter/Alt+Enter would act on, and a keyboard
+move suppresses the mouse's hover (reusing the same teardown a real mouse-Leave uses) so only one
+highlight is ever visible — several rounds of live feedback shaped this (initial version had a
+timed flash instead of a persistent-until-moved highlight was tried and rejected mid-session in
+favor of keeping the flash, but the mouse/keyboard mutual-exclusion and the "grid modes redundant
+tint" simplification were both real corrections from watching it run).
+
+### Three follow-ups, all found and fixed by live-testing the same day
+
+**1. Dropdown focus trap (`f6388d2`).** Clicking the sort or view-mode dropdown left it holding
+keyboard focus afterward, silently stranding arrow-key navigation with no recovery except
+clicking the list again. Traced per the user's explicit instruction to find the mechanism rather
+than guess-patch: NOT a regression (nothing was removed) — a plain `QComboBox` has always kept
+focus on itself after its popup closes; this only became consequential once arrows started
+meaning something. Fixed by overriding `hidePopup()` (fires on ANY popup-close reason) to hand
+focus back to `_list_view`. Also investigated and set aside the user's belief that the popup's
+own native arrow-cycling was ALSO broken — found no mechanism anywhere in the codebase capable of
+interfering with a native combo popup's internal event loop; most likely a misdiagnosis of this
+same bug's symptom, not a second bug. Escalated per the prompt's own instruction rather than
+silently deciding.
+
+**2. `QComboBox` popup styling silently ignored on this desktop (`3e8c241`, `8515605`).** The
+REAL visual bug the user had been trying to describe the whole time — a QSS `::item:hover`
+addition made zero visible difference, which turned out to mean the rule wasn't reaching the
+popup's paint at all (proven by swapping it to glaring red and seeing no change, then confirmed
+in complete isolation outside the app). Fixed with a custom `_ComboItemDelegate` for popup items
+and a `_ThemedComboBox` subclass that paints its own arrow — the SAME root cause hit `::down-
+arrow` too (native arrow glyph painted regardless of `image: none`). A corner-squaring regression
+in the first arrow-paint draft was caught by the user from a live screenshot and fixed in the
+same pass (inset the fill away from the rounded corners). Full diagnostic trail, including the
+red-swap test and the isolated screenshot tests, in NOTES.md — this was, per the user, a bug
+already attempted and abandoned once roughly 3 months prior, undocumented at the time.
+
+**3. `open_book_detail` re-slide + hijack (`c521c39`).** Alt+Enter on an already-open book
+re-triggered the slide-in animation every press (the entry method is unconditional — always
+animates off-screen-then-back). A narrower first fix (skip re-slide only if the SAME book path
+was already showing) was correctly rejected by the user, who found a real hack it still allowed:
+open detail via right-click, arrow-navigate to a DIFFERENT book while it's open, Alt+Enter — the
+path-based guard would have let that hijack the visible panel onto the new book. Fixed by
+dropping the ENTIRE request whenever the panel is already visible, regardless of book, checked
+against all three real callers (library, stats panel, tag manager) to confirm none needed
+same-panel retargeting.
+
+### Verification
+
+`pytest tests/ -q` (68 tests) green after every commit. No automated test coverage added — this
+work is Qt widget/focus/paint-driven, not a pure state machine like the seek logic `tests/`
+already covers. All four fixes were verified live by the user, including two screenshot rounds
+for the QComboBox desktop quirk. `KEYBINDINGS.md` gained a Library section, correcting its
+previous (now-stale) "library is mouse-only" note. Two new CLAUDE.md DO-NOT rules (QComboBox
+popup QSS unreliability; the `open_book_detail` re-open guard); one new NOTES.md writeup
+covering all three follow-ups together.
+
+---
+
+## Session Summary — 2026-07-08 Session 1 — G/P/A/S/Z shortcuts for Tags/Playback/Stats/Settings/Sleep
+
+**Branch:** `main`. **Commit:** `634eef5`.
+
+Added five global shortcuts mirroring `L`'s exact shape (open-only, `COOLDOWN_DROP` 500ms guard,
+gated on `is_overlay_open_or_committed()`): `G` → Tags, `P` → Playback (speed panel), `A` →
+Stats, `S` → Settings, `Z` → Sleep timer. Each handler's availability check mirrors that panel's
+real mouse-reachability rather than a single shared rule: `G`/`A`/`S` (panels never hidden by
+`_set_interface_visible`) gate on `db.get_book_count() > 0`, matching the sidebar's own right-
+click-open guard; `P`/`Z` (buttons hidden whenever no book is loaded) gate on the trigger
+button's `isHidden()`. `tests/test_shortcuts.py` extended to cover all five new bindings plus a
+no-duplicate-keys check across the whole binding table. `KEYBINDINGS.md`'s main-window table and
+planned-keys note updated to mark all five implemented. No new DO-NOT rule — mirrors `L`'s
+already-established shape exactly, no new architectural ground broken.
+
+---
+
+## Session Summary — 2026-07-07 Session 3 — per-theme library color pass (through letter S)
+
+**Branch:** `main`. **Commit:** `ae4441c`.
+
+Updated `library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/
+`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/
+`_fill`/`library_input_bg`/`_text` across themes, alphabetically through the letter S. Several
+themes gained these keys for the first time (previously fell through to base-template
+inheritance or a generic fallback); several existing hover-alpha values were corrected down from
+very high values (e.g. 0.5) toward the more typical 0.1–0.25 band seen elsewhere. Pure data/
+tuning pass — no code or architecture change, no new DO-NOT rule. Remaining letters (T onward)
+still pending.
+
+---
+
 ## Session Summary — 2026-07-07 Session 2 — chapter-list-scrolls-to-bottom: ruled out scroll_to_active, found an untraced setCurrentRow call
 
 **Branch:** `main`. **Commit:** `a1e7424`.

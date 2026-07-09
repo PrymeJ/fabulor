@@ -809,6 +809,33 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Left-clicking into the search field when it already shows the real explicit text (no click-filter active) does nothing special — normal cursor/focus, no revert, no clear
 - [ ] "Persist search filter" restart behavior (see that section below) is completely unaffected by any of the above
 
+### Keyboard navigation (added 2026-07-09)
+- [ ] Opening the library and pressing Up/Down immediately navigates the list — no click or Tab needed first
+- [ ] Up/Down move selection in all five view modes
+- [ ] Left/Right move selection by one column in 2-per-row, 3-per-row, and Square
+- [ ] Left/Right are a no-op in 1-per-row and List (no adjacent column)
+- [ ] Enter or Space on the selected row plays that book (same as left-click)
+- [ ] Alt+Enter on the selected row opens Book Detail on the Stats tab (same as right-click)
+- [ ] Tab moves focus from the list to the search field
+- [ ] Tab moves focus from the search field back to the list (current selection, or first row if none)
+- [ ] Tab never moves focus to the sort combo, view-mode combo, sort-direction button, or Back button
+- [ ] Typing `_the` in search matches only titles STARTING WITH "the" (e.g. not "In the Woods")
+- [ ] Existing `#tag` / `>NNNN` / `<NNNN` / year-range search syntaxes still work after the `_prefix` addition
+- [ ] Mouse hover sets the real selection too — hovering book B then pressing Enter/Alt+Enter acts on B, not a stale keyboard-selected book
+- [ ] Moving the mouse onto a keyboard-selected row clears the keyboard highlight instantly (no stacked highlight)
+- [ ] Moving the mouse onto a DIFFERENT book than the keyboard-selected one fades the keyboard highlight out quickly, not after its full ~2.5s timer
+- [ ] Keyboard-selection highlight (1-per-row) is a themed tint; grid modes (2/3-per-row, Square) show the same duration/progress overlay mouse hover shows, with no separate tint underneath it
+- [ ] List mode's keyboard highlight follows the Hover-fade setting (Fast/Normal/Slow) — fades in per that speed
+- [ ] List mode's keyboard highlight with Hover-fade set to Off shows an instant fill (not silently invisible)
+- [ ] Clicking the sort dropdown or view-mode dropdown to make a selection returns keyboard focus to the list afterward — arrows immediately drive the list again, not the dropdown
+- [ ] Same check after clicking a dropdown open and dismissing it WITHOUT choosing a value (click away)
+- [ ] Sort/view-mode dropdown popups show a proper themed hover highlight on the item under the cursor (no thin dark lines / missing highlight)
+- [ ] Sort/view-mode dropdown closed-state arrow renders as a themed triangle, not a plain light square
+- [ ] Sort/view-mode dropdown corners (all four) stay fully rounded — no square/flat corner near the arrow
+- [ ] Alt+Enter on the already-open book does NOT re-trigger the slide-in animation on repeat presses
+- [ ] With Book Detail Panel already open (any entry point), arrow-navigating to a different book in the library list and pressing Alt+Enter does NOT retarget or re-slide the open panel — it stays exactly as-is
+- [ ] Book Detail Panel must be closed (its own close button, or the existing close flow) before a different book's detail can be opened
+
 ### Theme
 - [x] Theme switch updates all delegate colors immediately
 - [] Library stylesheet applies to toolbar inputs and background
@@ -1015,11 +1042,13 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 ### Navigation
 - [ ] Opens from library right-click with slide-in from right
 - [ ] Opens from Stats panel row click
+- [ ] Opens from Library via Alt+Enter on the keyboard-selected book (see Library panel > Keyboard navigation)
 - [ ] Close button slides panel out and returns to previous view
 - [ ] Panel is full window width, fully covers other panels (no bleed-through)
 - [ ] Clicking anywhere outside the panel does not close it (guard in mousePressEvent)
 - [ ] Theme applied correctly on first open (no system color fallback)
 - [ ] Bar colors update on theme change (curr_chap_highlight / library_slider_bg)
+- [ ] Requesting detail again while already open (any entry point, same or different book) is a no-op — no re-slide, no retargeting; panel must be closed first (added 2026-07-09)
 
 ### Header
 - [ ] Cover displays at correct aspect ratio, max 120×120

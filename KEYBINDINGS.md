@@ -92,12 +92,49 @@ Untouched by the shortcuts work; listed for completeness.
 
 ---
 
-## Library view
+## Library view (added 2026-07-09)
 
-The library grid/list currently has **no keyboard navigation**: there is no arrow-key
-row movement, no key to load the selected book, and no key to focus the search field.
-Interaction there is mouse-only (plus typing once the search field is focused by
-clicking it). This is a statement of current fact, not a planned gap.
+Handled directly by `LibraryPanel`/`BookDelegate` (`ui/library.py`) — not part of
+`shortcuts.py`. The list (`_list_view`) takes keyboard focus as soon as the panel opens
+(no click or Tab needed first).
+
+| Key | Does |
+|-----|------|
+| `Up` / `Down` | Move the book selection. Native `QListView` handling. |
+| `Left` / `Right` | Move the selection by one column — **only** in the three grid view modes (2-per-row, 3-per-row, Square). No-op in 1-per-row and List (no adjacent column to move to). |
+| `Enter` / `Return` | Play the selected book (same as left-click). |
+| `Alt`+`Enter` / `Alt`+`Return` | Open Book Detail for the selected book, on the Stats tab (same as right-click). No-op if a Book Detail panel is already open — see below. |
+| `Space` | Play the selected book (same as `Enter`). |
+| `Tab` | Toggle focus between the search field and the list. From the list: focus moves to the search field. From the search field: focus moves back to the list (current selection, or the first row if none). This is a dedicated two-way toggle, not Qt's native tab-order chain — it never reaches the sort combo, view-mode combo, sort-direction button, or Back button. |
+| `Up` / `Down` (search field focused) | Move the book selection by one and hand focus to the list immediately. `Left`/`Right` in the search field are unaffected (normal text-cursor movement). |
+| `Escape` (search field focused) | See "Text fields" above — clears the field and drops focus. |
+
+A keyboard-selected row shows a highlight: 1-per-row gets a themed tint; the three grid
+modes (2-per-row/3-per-row/Square) show the same duration/progress overlay a mouse hover
+would (no separate tint); List mode reuses the mouse's own hover-fade mechanism, so it
+follows the Hover-fade setting (Fast/Normal/Slow/Off) in Settings → Library. The
+highlight fades out after ~2.5s of no further keyboard movement, or is dropped/faded
+immediately if the mouse takes over (hovering the same row clears it instantly; hovering
+a different row fades it out quickly rather than waiting out its timer) — only one
+highlight (mouse or keyboard) is ever visible at a time. Mouse hover also sets the real
+selection, so `Enter`/`Alt+Enter` always act on whichever book is currently highlighted,
+by mouse or keyboard, whichever moved last.
+
+**Search syntax** (`BookModel._apply_filter_and_sort`): besides the existing `#tag` /
+`>NNNN` / `<NNNN` / year-range special prefixes, a search string starting with `_`
+matches only **titles that start with** the remainder (case-insensitive) — e.g. `_the`
+matches "The Hobbit" but not "In the Woods". Title only, not author/narrator.
+
+**Sort / view-mode dropdowns are deliberately mouse-only** — no keyboard shortcut opens
+or drives them, same tier as tag-name editing elsewhere in the app. Clicking one to make
+a selection (or dismissing it without choosing) returns keyboard focus to the list
+afterward, so arrows keep driving book navigation rather than getting stranded on the
+dropdown.
+
+**Book Detail Panel re-open guard:** requesting detail (via `Alt+Enter`, right-click, or
+any other entry point) while the panel is already visible is dropped entirely — it does
+not re-animate, and it does not retarget onto a different book. The panel must be closed
+first via its own close button or an existing close flow.
 
 ## Planned keys from a Claude chat conversation dated May 9 (Some of them are already stale and they are mostly tentative, pending decision)
 
@@ -120,9 +157,9 @@ Ctrl+Left/Right — prev/next chapter (alternate binding, redundant with Up/Down
 
 Remaining ideas:
 
-m — mini-player toggle
+m — mini-player toggle | mute
 b — back/dismiss current panel
-Enter/Shift+Enter — book details for active book
-f or / — search/filter in library
+Enter/Shift+Enter — book details for active book (different scope from the 2026-07-09 Alt+Enter added to the Library view above — that one acts on whichever row is keyboard-selected in the list, not the globally currently-playing book from anywhere in the app; this idea is still open)
+f or / — search/filter in library (Library's own search field exists and can be Tab-focused as of 2026-07-09 — this idea may now just mean "a global shortcut to jump straight to it")
 r — toggle remaining/total time
 Escape — dismiss any open panel/overlay

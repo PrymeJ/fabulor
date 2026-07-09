@@ -1,3 +1,143 @@
+## Library keyboard navigation: the focus-trap bug and what it revealed about `QComboBox` on this desktop (2026-07-09)
+
+Three follow-up bugs surfaced by live-testing the new Library keyboard-nav feature
+(`fe4f0f9`), each traced and fixed the same session. Recorded together since the second one
+is the meatier root-cause writeup and the other two are quick context.
+
+### 1. Sort/view-mode dropdown silently stranded keyboard focus
+
+**Symptom:** clicking either toolbar dropdown (sort key, view mode) to make a selection left it
+holding keyboard focus. Since arrows only drive book-list nav while `_list_view` has focus,
+touching either dropdown once silently broke keyboard navigation with no recovery except
+clicking the list again.
+
+**Investigation (per the user's instruction to find the actual mechanism, not guess-and-patch):**
+diffed the whole keyboard-nav commit against its parent. It only ever *added* focus machinery
+(`_list_view.setFocusPolicy(Qt.StrongFocus)`, three `setFocus()` calls) — nothing touches
+`sort_combo`/`style_combo`, and neither ever had an explicit focus policy before. This is **not
+a regression** in the sense of something being removed: a plain `QComboBox` has always kept
+keyboard focus on itself after its popup closes (any means — value picked, click-away, Escape),
+which was harmless before arrow keys drove anything in Library. The keyboard-nav work made
+`_list_view`'s focus state load-bearing for the first time; nothing was ever added to reclaim it.
+
+Also checked (and ruled out) whether the user's *separately* reported "arrows don't cycle the
+open popup's own options" was a real second bug: no event filter anywhere in the codebase
+touches either combo box or its popup, and `MainWindow`'s one app-wide `eventFilter` only
+observes `KeyPress` to reset an idle-preload timer — never consumes it, never inspects the key.
+A native combo popup is a self-contained Qt popup with its own internal event loop; nothing in
+this app could plausibly interfere with it. Read this as a likely misdiagnosis of bug #1's
+symptom (testing arrows after the popup had already closed) rather than a real second bug — no
+fix attempted for it, and the user's live testing after fix #1 landed didn't surface it again.
+
+**Fix (`f6388d2`):** `hidePopup()` is Qt's own hook for "the popup just closed, regardless of
+how." Overridden via the same instance-monkeypatch idiom the file already uses for
+`search_field.keyPressEvent` — call the original, then `self._list_view.setFocus()`. Applied to
+both `sort_combo` and `style_combo`.
+
+### 2. `QComboBox` popup hover/selection and the down-arrow are both silently broken by QSS, on this desktop
+
+The user then reported the ACTUAL visual bug being chased the whole time: the popup's hover
+highlight was invisible — thin dark lines appeared above/below the hovered row instead of a
+themed background fill — and a light square/rectangle sat where the dropdown arrow should be.
+The user noted this specific area (Library dropdown popup styling) had already been attempted
+and abandoned roughly 3 months earlier, undocumented at the time (possibly Gemini, possibly an
+earlier Claude Code session) — confirmed nothing about it exists anywhere in CLAUDE.md,
+NOTES.md, SESSION.md, TODO.md, or auto-memory before this session.
+
+**First attempt (wrong assumption, corrected same session):** `themes.py`'s
+`get_library_stylesheet` had `QComboBox QAbstractItemView` styled (background/border — visibly
+working, matches the theme) but **no `::item:hover`/`::item:selected` rule at all**, and no
+scoped scrollbar rule for the popup's internal viewport. Added both, plus `outline: none` on
+`::item` (Fusion's per-item focus rectangle survives regardless of background color unless the
+item itself, not just the view, suppresses it) — live-tested: **zero visible difference**, not
+even a partial change.
+
+**Diagnosis, done properly instead of guessing again:** since "zero difference" rules out a
+subtlety/color problem, swapped the hover/selected rule to a glaring, impossible-to-miss `red`
+and asked the user to check live. Still no red — conclusively proving the QSS rule was not
+reaching the popup's paint AT ALL on this system, not a matter of picking a better color.
+
+Cross-checked the mechanism in isolation (outside the running app, a bare `QComboBox` built
+fresh in a throwaway script) to rule out anything app-specific (timing, another stylesheet,
+an event filter):
+- `combo.view()` IS reachable in the ancestor widget's object tree (`findChildren` finds it) —
+  so this isn't a total cascade failure; base-level properties (background, border) genuinely
+  do inherit, matching what was visibly working.
+- `view().hasMouseTracking()` was `True` — ruled out the mouse-tracking-disabled theory.
+- Sent a synthetic `QMouseEvent(MouseMove)` directly to the popup viewport, and separately
+  called `view().setCurrentIndex(...)` (Qt's own native "current item" state, a much stronger
+  and more deterministic signal than hover) — grabbed screenshots of the live popup in both
+  cases. **Neither showed any highlight at all**, confirming the failure is unconditional, not
+  hover-specific.
+- Environment: `QApplication.style().objectName() == "fusion"`, `platformName() == "wayland"`,
+  `QT_QPA_PLATFORMTHEME` unset, `XDG_CURRENT_DESKTOP=KDE`. So this is Qt's OWN Fusion style, not
+  a KDE/Plasma platform-theme plugin overriding things — yet the pseudo-state paint still doesn't
+  apply. Root mechanism not fully pinned beyond "confirmed real and unconditional on this
+  desktop" — not worth chasing further given a working alternative existed.
+
+**Fix (`3e8c241`):** stopped relying on native pseudo-state painting for popup items entirely.
+Added `_ComboItemDelegate(QStyledItemDelegate)`, installed via
+`combo.view().setItemDelegate(...)`, that paints the row background for
+`State_MouseOver`/`State_Selected` directly. Reads `LibraryPanel._current_theme` live at paint
+time (same theme dict `BookDelegate` uses), so no separate theme-change plumbing was needed —
+`update_progress_bar_theme` already keeps it fresh. Confirmed to have no measurable performance
+cost: it only runs while that specific popup is open (a small, separate `QListView` from the
+book grid), never touches `LibraryPanel`'s slide animation or `BookDelegate`'s own paint path.
+
+**The down-arrow turned out to be the same root cause.** `QComboBox::down-arrow`'s `image: none`
++ border-triangle QSS trick was ALSO being ignored — the native style painted its own arrow
+glyph regardless, rendering as a plain light square (reproduced in the same kind of isolated
+screenshot test). Fix (`8515605`): `_ThemedComboBox(QComboBox)` overrides `paintEvent` — calls
+`super().paintEvent()` first (background/border/text still paint correctly via the style; only
+the item-popup and arrow pseudo-states are broken), then paints a themed triangle over just the
+arrow's `subControlRect(SC_ComboBoxArrow)`.
+
+**Regression caught and fixed in the same pass:** the first arrow-fix draft filled the ENTIRE
+arrow rect edge-to-edge before drawing the triangle. `subControlRect(SC_ComboBoxArrow)` spans
+the full control height, including the curved pixels of the top-right/bottom-right rounded
+corners — a flat fill there squares them off. Live screenshot from the user caught this
+immediately ("top right and bottom right radius of the box seem broken"). Fixed by insetting the
+fill vertically (`corner_clearance = 6`) so it only covers the flat middle section, never
+touching the border-radius curve. Re-verified via an isolated 4×-scaled screenshot before asking
+the user to re-check live.
+
+Both `sort_combo` and `style_combo` are now constructed as `_ThemedComboBox(self)` instead of
+plain `QComboBox()`; `_ComboItemDelegate` is installed on each one's `view()` right after
+construction, alongside the `hidePopup()` focus-release override from bug #1.
+
+### 3. `open_book_detail` re-triggered its slide-in animation on every repeat request, and could be hijacked onto a different book
+
+**Symptom (reported after 1 & 2 were fixed):** Alt+Enter on the currently-open book re-slid the
+Book Detail Panel every time it was pressed, even though it was already open.
+
+**Root cause:** `open_book_detail` (`panels.py`) called `_start_book_detail_entry()`
+unconditionally — that method always moves the panel off-screen right, THEN slides it back to
+`x=0`, with no check for "is it already there." Every Alt+Enter (or any other call to
+`open_book_detail`) yanked it out and back in.
+
+**A narrower first fix was rejected as insufficient by the user, correctly.** The first attempt
+only skipped the re-slide when the SAME book path was already showing — but the user pointed
+out a real hack this still allowed: right-click a book to open its detail panel, then (while it's
+open) arrow-navigate to a DIFFERENT book in the still-visible list behind it, then press
+Alt+Enter. Since the path comparison would see a different `requested_path`, it would have let
+`load_book` swap the panel onto the new book's data while already open — the panel never
+stacks (still only ever one at a time), but a currently-open detail panel silently retargeting
+itself to a different book was exactly the class of bug being fixed, just from a different
+angle.
+
+**Actual fix (`c521c39`):** `open_book_detail` now drops the ENTIRE request — no `load_book`
+call, no animation — whenever `book_detail_panel.isVisible()` is already `True`, regardless of
+which book. The user must close the panel via an existing close path first. Checked all three
+callers (`app.py`'s library right-click/Alt+Enter path, `stats_panel.py`'s row click,
+`tag_manager`'s book click via `main_window_builders.py`) — none of them legitimately need to
+retarget an already-open panel; each is "open detail for a book I clicked from wherever I'm
+browsing," not a same-panel tab-switch flow. Confirmed this doesn't conflict with the documented
+`open_book_detail` UNGATED note in CLAUDE.md — that note is about the *cross-panel*
+(`is_overlay_open_or_committed`) exclusion gate, an orthogonal concern; this new guard is
+book-detail-vs-book-detail only.
+
+---
+
 ## Near-zero saved positions show spurious library progress: config↔DB drift + open-without-play position creep (2026-07-06)
 
 **Symptom:** "2666 (Unabridged)" showed a progress bar / percentage in the library despite reading
