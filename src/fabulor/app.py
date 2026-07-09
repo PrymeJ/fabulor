@@ -13,7 +13,7 @@ from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation
 )
-from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter
+from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
@@ -2848,12 +2848,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Tab / Backtab.
         panel = self.panel_manager.active_full_panel()
         if panel == "library":
-            # The library's own list/search toggle owns Tab here — leave it alone so only that
-            # toggle is Tab-reachable while Library is open. Note: QListView intercepts Tab/
-            # Backtab in its own event() override before keyPressEvent ever sees it (confirmed
-            # via a focus-trace, 2026-07-10), so the list side of the toggle is implemented as
-            # an event() monkeypatch on _list_view, not a keyPressEvent one — see library.py.
-            return False
+            # search_field owns Tab-away-from-itself (clearFocus(), landing in a "nothing
+            # focused" state — see library.py's event() override on search_field), deferred
+            # above via the isinstance(focus, QLineEdit) check. Every OTHER focus state while
+            # Library is open — nothing focused, or (shouldn't normally happen anymore, but
+            # handled the same way for safety) the list itself — sends Tab to search_field,
+            # completing a QLineEdit <-> nothing two-state cycle. QListView is deliberately NOT
+            # part of the Tab cycle (2026-07-10): tabbing there used to call scrollTo() on
+            # whatever currentIndex() happened to be, and since mouse hover also sets
+            # currentIndex(), tabbing while the mouse hovered a partially-visible book silently
+            # scrolled the list — confirmed live, removed. The list is reachable by arrow keys
+            # only now (see the arrow-key branch below).
+            self.library_panel.search_field.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
         if panel in ("settings", "speed", "sleep"):
             widgets = self.panel_manager.panel_tab_widgets(panel)
             if not widgets:
@@ -2876,10 +2883,45 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
+    def _handle_library_nothing_focused_arrow(self, event) -> bool:
+        """Library, "nothing focused" state (see _handle_tab_escape: Tab clears focus to this
+        state rather than landing on the list, so the list is never scrolled to a mouse-hovered
+        book just because the user pressed Tab). An arrow key here hands focus to the list —
+        matching the existing "arrow out of the search field also lands on the list" precedent
+        — then explicitly resends this SAME key event to the newly-focused _list_view, so its
+        own event()/keyPressEvent() overrides (_list_key) handle the actual navigation exactly
+        as they already do for every other arrow press.
+
+        Does NOT rely on QApplication.focusWidget() to decide whether to act — confirmed via
+        isolated testing (2026-07-10) that focusWidget() does not update synchronously within
+        the same call stack as setFocus(), so a guard built on it either never fires or
+        recurses infinitely once the resent event loops back through this same filter. Guards
+        instead on the event object's own recursion marker (a private attribute stamped on the
+        QKeyEvent instance itself) — set once, checked first, so the resent copy is never
+        re-forwarded a second time regardless of what focusWidget() reports."""
+        if getattr(event, '_fabulor_forwarded', False):
+            return False
+        if not hasattr(self, 'panel_manager') or not hasattr(self, 'library_panel'):
+            return False
+        if self.panel_manager.active_full_panel() != "library":
+            return False
+        focus = QApplication.focusWidget()
+        if focus is self.library_panel.search_field or focus is self.library_panel._list_view:
+            return False
+        self.library_panel._list_view.setFocus(Qt.FocusReason.TabFocusReason)
+        forwarded = QKeyEvent(QEvent.Type.KeyPress, event.key(), event.modifiers())
+        forwarded._fabulor_forwarded = True
+        QApplication.sendEvent(self.library_panel._list_view, forwarded)
+        return True  # the original is fully replaced by the forwarded copy above
+
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        if event.type() == QEvent.Type.KeyPress and self._handle_tab_escape(event):
-            return True
+        if event.type() == QEvent.Type.KeyPress:
+            if self._handle_tab_escape(event):
+                return True
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
+                if self._handle_library_nothing_focused_arrow(event):
+                    return True
 
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
             if event.type() == QEvent.Enter:

@@ -608,17 +608,6 @@ class LibraryPanel(QFrame):
         anim.setEndValue(0)
         anim.start()
 
-    def _focus_list_from_search(self):
-        """Tab-from-search: move focus to the list — the current selection if one exists,
-        else the first row — and flash the keyboard highlight so the landed row is visible
-        immediately rather than waiting for the next arrow press."""
-        idx = self._list_view.currentIndex()
-        if not idx.isValid() and self._book_model.rowCount() > 0:
-            idx = self._book_model.index(0, 0)
-            self._list_view.setCurrentIndex(idx)
-        self._list_view.setFocus()
-        self._on_keyboard_nav_moved()
-
     def _release_focus_on_popup_close(self, combo: QComboBox) -> None:
         """Sort/view-mode dropdowns are deliberately mouse-only (no keyboard shortcut opens or
         drives them) — but by default a QComboBox keeps keyboard focus on itself after its
@@ -724,10 +713,22 @@ class LibraryPanel(QFrame):
         # same regardless of the exact mechanism. Fix: intercept at event(), same as
         # _list_view's Tab handling, filtered strictly to KeyPress + Tab/Backtab so no other key
         # or event type is affected.
+        #
+        # Tab clears focus entirely (a "nothing focused" state) rather than moving to the
+        # list — MainWindow._handle_tab_escape returns focus to search_field on a further Tab
+        # from that state, and separately hands focus to the list on an arrow key from that
+        # state (see app.py). This is deliberately NOT a search<->list two-way toggle: tabbing
+        # to the list used to call scrollTo(currentIndex()) via _flash_keyboard_selection, and
+        # since mouse hover also sets currentIndex() (see _on_view_entered), tabbing while the
+        # mouse happened to be hovering a partially-visible book silently scrolled the list to
+        # show it — a surprise, since the user only pressed Tab, not an arrow. Confirmed live,
+        # 2026-07-10, and fixed by removing Tab as a path to the list altogether; arrow keys
+        # remain the only way to reach/navigate the list, which is fine since an arrow press
+        # already reads as an intentional navigation gesture (the user's own framing).
         _original_search_event = self.search_field.event
         def _search_event(e):
             if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
-                self._focus_list_from_search()
+                self.search_field.clearFocus()
                 return True
             return _original_search_event(e)
         self.search_field.event = _search_event
