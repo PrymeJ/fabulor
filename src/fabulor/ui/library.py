@@ -437,22 +437,13 @@ class LibraryPanel(QFrame):
                 QListView.keyPressEvent(self._list_view, e)
         self._list_view.keyPressEvent = _list_key
 
-        # Tab/Backtab do NOT reach keyPressEvent above — QAbstractItemView (QListView's base)
-        # intercepts them in its own event() override and routes them straight into Qt's native
-        # focusNextPrevChild() chain-walk before keyPressEvent is ever called. Confirmed live via
-        # a focus-trace: every other key here (Up/Down/Enter/Space/Left/Right) reaches _list_key
-        # normally; Tab never did, even though the list genuinely had focus — it fell through to
-        # native traversal instead (7+ presses through the transport bar/sidebar/combos before
-        # reaching search_field). Fix: intercept at event(), the actual point Qt uses for these
-        # two keys on item views. Filters strictly on KeyPress + Tab/Backtab; every other event
-        # (including all other keys) is passed to the original event() unchanged.
-        _original_list_event = self._list_view.event
-        def _list_event(e):
-            if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
-                self.search_field.setFocus()
-                return True
-            return _original_list_event(e)
-        self._list_view.event = _list_event
+        # NOTE (2026-07-10): _list_view no longer has its own event()-level Tab/Backtab
+        # interception. QAbstractItemView intercepts Tab in event() before keyPressEvent ever
+        # sees it — that's still true — but the actual Tab-to-search-field handoff is now owned
+        # entirely by MainWindow._handle_tab_escape (app.py), which runs from the app-wide
+        # event filter BEFORE this widget's event() is reached, and already consumes every
+        # Tab/Backtab press while Library is open and the list has focus. An event() override
+        # here would just be dead code duplicating that logic in a second place.
 
         # Qt's native wheel scroll = wheelScrollLines() (a GLOBAL Qt setting, =3 on this
         # system) × singleStep() (= one row's height). That's a fixed 3-row jump per flick,

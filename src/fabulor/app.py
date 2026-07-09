@@ -2859,6 +2859,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # currentIndex(), tabbing while the mouse hovered a partially-visible book silently
             # scrolled the list — confirmed live, removed. The list is reachable by arrow keys
             # only now (see the arrow-key branch below).
+            #
+            # Drop the keyboard-selection highlight instantly (no fade) whenever Tab moves
+            # focus away from the list — the user's own framing: leaving the list via Tab
+            # should not leave a highlight lingering on its own ~2.5s timer, since Tab reads as
+            # "I'm done with the list" rather than a momentary pause. Deliberately does NOT
+            # touch mouse hover (timeless regardless of Tab, per the user) or List mode's own
+            # fade-based keyboard highlight (_clear_keyboard_selection only touches
+            # _kbd_selected_path/_kbd_alpha — the tint/overlay other modes use — never
+            # _kbd_hover_path, which is what List mode reads; calling it is already a no-op for
+            # List, so no mode check is needed here).
+            self.library_panel._clear_keyboard_selection()
             self.library_panel.search_field.setFocus(Qt.FocusReason.TabFocusReason)
             return True
         if panel in ("settings", "speed", "sleep"):
