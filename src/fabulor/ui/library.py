@@ -701,10 +701,6 @@ class LibraryPanel(QFrame):
             if key == Qt.Key.Key_Escape:
                 self.search_field.clear()
                 self.search_field.clearFocus()
-            elif key == Qt.Key.Key_Tab:
-                # Tab is exclusive to toggling focus between the search field and the list —
-                # never reaches the style/sort combos or any other widget.
-                self._focus_list_from_search()
             elif key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
                 # Left/Right stay native (text-cursor movement within the field). Up/Down
                 # instead move the book selection by one and hand focus to the list
@@ -715,6 +711,26 @@ class LibraryPanel(QFrame):
             else:
                 QLineEdit.keyPressEvent(self.search_field, e)
         self.search_field.keyPressEvent = _search_key
+
+        # Tab/Backtab do NOT reach keyPressEvent above — confirmed live via a focus-trace,
+        # 2026-07-10: a real Tab press with the search field focused never logged a single
+        # [_search_key] call, even with an unconditional log at the top of the function,
+        # across two full traces. Same shape as the earlier QListView Tab-eating bug (Session
+        # 3): the real, OS-delivered key event is handled before keyPressEvent ever runs — for
+        # QLineEdit specifically, an isolated synthetic sendEvent() test did NOT reproduce this
+        # (keyPressEvent ran fine there), so whatever intercepts it is specific to this app's
+        # real dispatch chain, not a universal QLineEdit quirk — but the live symptom (focus
+        # falling through to Qt's native chain, landing on the unnamed Back button next) is the
+        # same regardless of the exact mechanism. Fix: intercept at event(), same as
+        # _list_view's Tab handling, filtered strictly to KeyPress + Tab/Backtab so no other key
+        # or event type is affected.
+        _original_search_event = self.search_field.event
+        def _search_event(e):
+            if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                self._focus_list_from_search()
+                return True
+            return _original_search_event(e)
+        self.search_field.event = _search_event
 
         if self.config.get_persist_filter_enabled():
             _saved = self.config.settings.value("persisted_filter", "")
