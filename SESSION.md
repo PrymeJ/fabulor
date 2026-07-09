@@ -1,3 +1,62 @@
+## Session Summary — 2026-07-09 Session 2 — app-wide Tab/Escape key policy
+
+**Branch:** `main`. **Commit:** `624fc22`.
+
+### Context
+
+Session 1's Library keyboard-nav work exposed that Tab and Escape had no app-defined behavior
+anywhere: Tab rode Qt's default focus chain (able to reach the title-bar minimize/close buttons —
+plain `QPushButton`s, default `StrongFocus`), and Escape only did anything inside the library
+search field and inside `BookDetailPanel` while editing.
+
+### What shipped
+
+Explored the full existing key-handling surface first (3 parallel Explore agents: dispatcher
+architecture, Settings/Speed/Sleep widget inventories, every existing Escape/Tab handler) before
+designing, per the prompt's explicit escalation request. Landed on a hybrid: an unconditional
+`Qt.NoFocus` floor on the two title-bar buttons (removes them from the focus chain regardless of
+context — the actual hard-constraint guarantee), plus three new `PanelManager` helpers
+(`active_full_panel`, `escape_active_panel`, `panel_tab_widgets`) that reuse the existing
+`_close_*_flow` methods and `handle_drag_area_right_click`'s priority order, wired into a new
+`_handle_tab_escape` branch inside MainWindow's pre-existing app-wide event filter. Confirmed via
+Qt's install-order semantics that BookDetailPanel's own later-installed filter runs first while
+detail is open (no double-handling needed), and deliberately deferred to the chapter list's own
+focused `keyPressEvent` for the same reason (it also clears digit-jump state on Escape, which a
+generic close call would have skipped). `ShortcutDispatcher` was confirmed the wrong home (its
+own docstring: "does not gate on app state") and left untouched.
+
+### Live-testing found one thing working and two follow-ups, all deferred to next session
+
+Escape composition (search-field-Escape not also closing Library, book-detail editing-vs-close
+precedence) tested well live. Two things did not:
+
+1. **The Library Tab toggle doesn't actually clamp.** From the book list, Tab takes ~7 presses to
+   reach the sort combo — walking through the asc/desc button, the view-mode combo, the search
+   field, and the back button first. The `_handle_tab_escape` branch was designed to defer
+   entirely to Library's own existing list↔search monkeypatches for exactly this case, but live
+   behavior shows Tab falling through to Qt's default chain instead. Two unconfirmed theories
+   (nothing calls `_list_view.setFocus()` on Library open, so the first Tab starts from the wrong
+   widget; or the list's own keyPressEvent patch isn't consuming plain `Key_Tab`) — Pryme's own
+   instinct, endorsed rather than guessed past: instrument first, log the actual focused widget on
+   every Tab press per view mode (different view modes reportedly take different press-counts),
+   THEN fix. Full detail in TODO.md.
+2. **Keyboard focus is nearly invisible** on standard widgets (Settings/Speed/Sleep Tab cycling,
+   not just the Library keyboard-selection highlight from Session 1). A glow-style indicator was
+   floated but not decided — deferred, no fix attempted this session.
+
+Three more items named at session end for next time, captured in TODO.md: an unclarified
+`ptardyf12340` reference (ask Pryme what it means), Left/Right title/author expand in the library
+grid (already-known deferred item from the original keyboard-nav prompt), PgUp/PgDn on the
+library grid/list views (not yet designed), and a `T`+panel-shortcut-in-quick-succession visual
+glitch Pryme has a screenshot of but hasn't shared/described yet.
+
+`pytest tests/ -q` (68 tests) green. No automated coverage added — Qt focus-chain/event-filter
+behavior, not a pure state machine. Two new CLAUDE.md-worthy facts (NoFocus floor,
+`_handle_tab_escape`'s defer-to-focused-widget precedence) — not yet written up; flagged for the
+next docs pass alongside the TODO.md entries above.
+
+---
+
 ## Session Summary — 2026-07-09 Session 1 — Library panel keyboard navigation + three live-testing follow-ups
 
 **Branch:** `main`. **Commits:** `fe4f0f9` (keyboard nav), `f6388d2` (dropdown focus release),

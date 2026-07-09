@@ -6,6 +6,45 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-09] FIX: Library Tab toggle isn't actually clamping — falls through to Qt's default
+  focus chain.** The app-wide Tab/Escape policy (`624fc22`) was supposed to leave Library's
+  existing list↔search Tab toggle as the ONLY thing Tab reaches while Library is open (the
+  `MainWindow._handle_tab_escape` branch returns `False` for `panel == "library"` specifically to
+  defer to that toggle). Live-tested by Pryme: it does not clamp. From the book list, Tab takes
+  ~7 presses to reach the first combo box (sort/filter dropdown) — walking through it, the
+  asc/desc arrow button, the second (view-mode) combo, the search field, and the back button
+  before finally reaching the books again. Pryme doesn't want Tab to reach the combos/back button
+  at all, but says the bigger problem is not knowing where focus currently is at any point — "I
+  have no idea where it is until going there." Two live theories, unconfirmed:
+  (1) nothing calls `_list_view.setFocus()` when Library first opens, so the very first Tab press
+  starts from whatever widget had focus before Library opened — never from the list at all; (2)
+  the list's own Tab-catching keyPressEvent patch may not actually be consuming plain `Key_Tab`
+  the way it consumes arrows, letting it fall through to Qt's native chain. **Do not guess-fix
+  either theory** — Pryme's own instinct (endorsed) is to instrument first: log the actual focused
+  widget on every Tab press, per view mode (the different view modes reportedly take different
+  press-counts to cycle back around, which is itself a clue). Get a verified per-press focus trace
+  before touching code.
+- **[2026-07-09] FIX: keyboard-selection focus indicator is nearly invisible.** Across the Tab/
+  Escape live-testing, Pryme reported it's "almost impossible to see where the focus is" for
+  keyboard-focused controls in general (not just the Library keyboard-selection highlight from the
+  earlier session — this is about standard widget focus, e.g. in Settings/Speed/Sleep panels via
+  the new Tab cycling). Floated a glow-style indicator as one option, undecided. Explicitly
+  deferred to a future session ("we'll try and decide tomorrow") — do not implement a specific
+  fix without discussing the visual approach first.
+- **[2026-07-09] Parked, to pick up next session:** three items named by Pryme at session end, not
+  yet scoped or investigated:
+  - `ptardyf12340` — referenced verbatim by Pryme as still-parked; no prior occurrence found
+    anywhere in CLAUDE.md/NOTES.md/SESSION.md/TODO.md/memory. Meaning unclear — ask Pryme what
+    this refers to before starting on it.
+  - Left/Right title/author expand in the library grid — previously deferred in the original
+    Library-keyboard-nav plan (`fe4f0f9`'s prompt explicitly scoped this out as "still being
+    designed").
+  - PgUp/PgDn behavior on the library grid and list views — not yet designed.
+  - A "hodge-podge" bug from a screenshot Pryme has: pressing `T` (rotate theme) and a panel-open
+    shortcut (`L`/`G`/`P`/`A`/`S`/`Z`) in quick succession produces some kind of visible glitch.
+    Screenshot exists on Pryme's end; not yet shared/described in enough detail to reproduce or
+    diagnose — ask for the screenshot/repro steps at the start of next session.
+
 - **[2026-07-06] FIX (batched with the mpv-playback pass): books opened-without-playing save a
   spurious non-zero position → spurious library progress.** A book opened and closed without
   genuine playback persists a small non-zero position instead of 0: `_save_current_progress`
