@@ -876,6 +876,9 @@ class LibraryPanel(QFrame):
     def _apply_view_mode(self, mode: str) -> None:
         self._delegate.set_view_mode(mode)
         dim = ITEM_DIMENSIONS.get(mode, ITEM_DIMENSIONS["3 per row"])
+        # Reset first, unconditionally, so a margin applied for a PREVIOUS mode never leaks
+        # into this one — the Square-only correction below re-applies it fresh each time.
+        self._list_view.setViewportMargins(0, 0, 0, 0)
         if mode in ("3 per row", "2 per row", "Square"):
             self._list_view.setViewMode(QListView.ViewMode.IconMode)
             self._list_view.setGridSize(QSize(dim["w"], dim["h"]))
@@ -888,6 +891,25 @@ class LibraryPanel(QFrame):
             self._list_view.setViewMode(QListView.ViewMode.ListMode)
             self._list_view.setGridSize(QSize())
             self._list_view.viewport().setStyleSheet("")
+        if mode == "Square":
+            # The scrollbar's maximum() is content_height - viewport_height, and content_height
+            # is ALWAYS an exact multiple of cell_h (rows tile edge-to-edge with no spacing) —
+            # so the only source of a non-row-aligned maximum() is the viewport height itself
+            # not being a clean multiple of cell_h. That's a STRUCTURAL fix, not a per-scroll
+            # clamp: push the leftover remainder into a top viewport margin (absorbed into the
+            # existing top gutter, same idea as the earlier right-edge gutter fix) so the
+            # viewport height becomes an exact multiple of cell_h — maximum() % cell_h is then
+            # ALWAYS 0, for any list length, permanently, with no snapping/clamping needed
+            # anywhere else — unlike the reverted _snap_scroll_to_row approach, which only
+            # relocated the problem and broke reachability instead of removing it. Read the
+            # viewport height AFTER the reset above (never hardcode the 477 baseline — it
+            # depends on this app's fixed window/toolbar layout, which this code shouldn't need
+            # to know about directly).
+            cell_h = dim["h"]
+            viewport_h = self._list_view.viewport().height()
+            remainder = viewport_h % cell_h
+            if remainder:
+                self._list_view.setViewportMargins(0, remainder, 0, 0)
 
     def _on_view_mode_changed(self, _):
         mode = self.style_combo.currentData()
@@ -1379,6 +1401,16 @@ class LibraryPanel(QFrame):
         # Give the list keyboard focus immediately so arrow keys navigate without the user
         # having to click or Tab into anything first.
         self._list_view.setFocus()
+        # Square mode's row-alignment fix (_apply_view_mode) reads _list_view.viewport().height()
+        # to compute the correct top margin — but the FIRST call (from _setup_ui, at construction
+        # time) runs before the panel has ever actually been laid out, so it can read a wrong
+        # (too-large) viewport height and apply an oversized margin. Confirmed live, 2026-07-10:
+        # the panel opened with a visibly huge top gutter that only "settled" to the correct
+        # value once a manual view-mode switch re-ran the same computation after real layout had
+        # happened. Re-running it here, deferred one event-loop tick (same idiom as
+        # _load_visible_covers above) so Show has fully completed first, fixes the first-open
+        # case without needing the user to touch the mode selector.
+        QTimer.singleShot(0, lambda: self._apply_view_mode(self._delegate._view_mode))
 
     def hideEvent(self, event):
         self._progress_timer.stop()
@@ -2312,7 +2344,18 @@ class BookDelegate(QStyledItemDelegate):
     # stay in lockstep — see cover_cell_size's docstring). Reverted to the shared 96x95 values
     # for both modes — see the ITEM_DIMENSIONS comment on why the 94x94 attempt was reverted.
     _GRID_MARGINS = {
-        "Square":    (4, 2, 0, 2),
+        # Square: top=0/bottom=4 (not top=2/bottom=2). Mid-list row gap is unaffected either
+        # way (bottom_of_row_N + top_of_row_N+1 = 4 in both cases) — the difference only shows
+        # at the very first/last row, which has no neighbor to pair its margin with. With
+        # top=2/bottom=2, the true first row sat 2px (not 4) from the viewport's own top edge,
+        # and the true last row had only 2px (not 4) below it at the real scroll maximum —
+        # exactly what surfaced as an inconsistent boundary margin once the row-alignment
+        # (viewport-height) fix made the boundary actually reachable and visible cleanly.
+        # top=0/bottom=4 puts the full 4px where it visually belongs: nothing above the first
+        # row (that space is owned by _apply_view_mode's Square-only setViewportMargins top
+        # instead), the full 4px below the last row. Cover size is unchanged (95-0-4=91,
+        # matching the unchanged 91px width — still a true square).
+        "Square":    (4, 0, 0, 4),
         "3 per row": (4, 2, 0, 2),
     }
 
