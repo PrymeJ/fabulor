@@ -2,7 +2,8 @@ import logging
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit
-from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer
+from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
+from .title_bar import ThemeItem
 
 logger = logging.getLogger(__name__)
 
@@ -792,6 +793,93 @@ class PanelManager:
         return (self.is_any_full_panel_visible()
                 or self.is_any_panel_animating()
                 or self._pending_panel_open is not None)
+
+    # ── App-wide Tab/Escape policy support ───────────────────────────────────
+    # These back the Tab/Escape branch in MainWindow.eventFilter. Kept here because
+    # PanelManager already owns every _close_*_flow and the visible-panel priority chain
+    # (handle_drag_area_right_click), so close-logic and "which panel is open" stay in one place.
+
+    def active_full_panel(self):
+        """Which single full panel/overlay is currently open, as a string key
+        ('library'/'settings'/'speed'/'sleep'/'stats'/'tags'/'book_detail'/'chapter_list'),
+        or None. Same visibility checks and priority order as handle_drag_area_right_click —
+        there is no existing single accessor, so this centralizes it."""
+        if self.library_panel.isVisible():
+            return "library"
+        if self.settings_panel.isVisible():
+            return "settings"
+        if self.speed_panel.isVisible():
+            return "speed"
+        if self.sleep_panel.isVisible():
+            return "sleep"
+        if self.stats_panel.isVisible():
+            return "stats"
+        if self.tags_panel.isVisible():
+            return "tags"
+        if self.book_detail_panel and self.book_detail_panel.isVisible():
+            return "book_detail"
+        if self.main_window.chapter_list_widget.isVisible():
+            return "chapter_list"
+        return None
+
+    def escape_active_panel(self) -> bool:
+        """Close whichever full panel is open, reusing its existing _close_*_flow. Returns True
+        if something was closed, False if nothing was open. Invents no new close path — mirrors
+        handle_drag_area_right_click's chain.
+
+        Two deliberate exclusions (both return False, i.e. 'not handled here'):
+        - book_detail: BookDetailPanel installs its OWN QApplication event filter in showEvent
+          (after MainWindow's), so its Escape handler runs first and already closes/cancels —
+          this method is never reached for Escape while detail is open.
+        - chapter_list: it grabs keyboard focus when open and has its own keyPressEvent Escape
+          (which also clears the digit-jump buffer/timer before fading out). Deferring to it
+          preserves that cleanup and matches pre-existing behavior exactly."""
+        panel = self.active_full_panel()
+        if panel == "library":
+            self._close_library_flow()
+        elif panel == "settings":
+            self._close_settings_flow()
+        elif panel == "speed":
+            self._close_speed_flow()
+        elif panel == "sleep":
+            self._close_sleep_flow()
+        elif panel == "stats":
+            self._close_stats_flow()
+        elif panel == "tags":
+            self._close_tags_flow()
+        else:
+            # None, book_detail, or chapter_list — see docstring; not closed here.
+            return False
+        return True
+
+    def panel_tab_widgets(self, panel: str) -> list:
+        """Focusable controls of `panel`, in tab order, for Tab cycling. Only settings/speed/
+        sleep participate; every other context is a Tab no-op (returns []). Filters to widgets
+        currently visible within the panel and whose focus policy accepts Tab, in findChildren
+        order (== creation == visual order for these three, confirmed). Settings is scoped to the
+        active tab; on the Themes tab the N generated theme swatches (ThemeItem — mode/bulk
+        buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is deferred
+        to a later arrows+space design."""
+        if panel == "settings":
+            root = self.main_window.tabs.currentWidget()
+        elif panel == "speed":
+            root = self.speed_panel
+        elif panel == "sleep":
+            root = self.sleep_panel
+        else:
+            return []
+        if root is None:
+            return []
+        result = []
+        for w in root.findChildren(QWidget):
+            if isinstance(w, ThemeItem):
+                continue  # deferred: theme swatches get their own arrows+space nav later
+            if not w.isVisibleTo(root):
+                continue
+            if not (w.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                continue
+            result.append(w)
+        return result
 
     def dismiss_sidebar(self):
         """Closes the sidebar if it's expanded; no-op otherwise. Idempotent (safe to call

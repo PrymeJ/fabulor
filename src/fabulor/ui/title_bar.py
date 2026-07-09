@@ -19,6 +19,10 @@ class TitleBar(QWidget):
         for symbol, slot in [("─", self._minimize), ("✕", self._close)]:
             btn = QPushButton(symbol)
             btn.setFixedSize(32, 32)
+            # Keep the chrome buttons out of the keyboard focus chain entirely — Tab must
+            # never be able to land on (and thus trigger) minimize or close, in any context.
+            # This is the unconditional floor under the app-wide Tab policy.
+            btn.setFocusPolicy(Qt.NoFocus)
             btn.clicked.connect(slot)
             layout.addWidget(btn)
 

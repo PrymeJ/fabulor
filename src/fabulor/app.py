@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QFileDialog,
     QWidget, QPushButton, QVBoxLayout, QListWidgetItem,
-    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect,
+    QApplication, QGraphicsBlurEffect, QGraphicsOpacityEffect, QLineEdit,
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
@@ -2818,8 +2818,66 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             # even if the muted icon was resting.
             self._settle_vol_stack()
 
+    def _handle_tab_escape(self, event) -> bool:
+        """App-wide Tab/Escape policy. Returns True iff this consumed the event.
+
+        Runs from the app-level eventFilter (before the focused widget's own keyPressEvent
+        during dispatch), so it must DEFER to focused text fields rather than preempt them.
+        BookDetailPanel's own QApplication filter is installed later (in its showEvent) and so
+        runs BEFORE this one — its Escape (edit-cancel / close) fires first while detail is open,
+        and this method is never reached for that case.
+        """
+        key = event.key()
+        if key not in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab, Qt.Key.Key_Escape):
+            return False
+        if not hasattr(self, 'panel_manager'):
+            return False
+
+        # Defer to a focused text field: the library search / sleep custom-minutes / tag-name
+        # editors own Escape (clear+defocus) and, for the search field, Tab (list toggle) via
+        # their own keyPressEvent. Never preempt them.
+        focus = QApplication.focusWidget()
+        if isinstance(focus, QLineEdit):
+            return False
+
+        if key == Qt.Key.Key_Escape:
+            # Close whichever panel is open (book_detail handled by its own earlier filter).
+            # If nothing is open, do nothing (main-window Escape is deliberately deferred).
+            return self.panel_manager.escape_active_panel()
+
+        # Tab / Backtab.
+        panel = self.panel_manager.active_full_panel()
+        if panel == "library":
+            # The library's own list/search Tab monkeypatches own the list<->search toggle —
+            # leave them to it (don't interfere), so only that toggle is Tab-reachable there.
+            return False
+        if panel in ("settings", "speed", "sleep"):
+            widgets = self.panel_manager.panel_tab_widgets(panel)
+            if not widgets:
+                return True  # nothing focusable — still swallow so Tab can't escape the panel
+            # Shift+Tab arrives as Key_Backtab on most platforms, but some deliver Key_Tab with
+            # the Shift modifier — treat either as a backward move.
+            backward = (key == Qt.Key.Key_Backtab
+                        or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            forward = not backward
+            try:
+                idx = widgets.index(focus)
+                nxt = widgets[(idx + (1 if forward else -1)) % len(widgets)]
+            except ValueError:
+                # Current focus isn't one of the panel's widgets: enter at the first (Tab) or
+                # last (Backtab).
+                nxt = widgets[0] if forward else widgets[-1]
+            nxt.setFocus(Qt.FocusReason.TabFocusReason)
+            return True
+        # tags / book_detail / chapter_list / no panel open: Tab is a full no-op. Swallow it so
+        # (together with the NoFocus chrome buttons) it can never move focus anywhere.
+        return True
+
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
+        if event.type() == QEvent.Type.KeyPress and self._handle_tab_escape(event):
+            return True
+
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
             if event.type() == QEvent.Enter:
                 self.eof_revert_btn.set_icons(*self._eof_revert_pixmaps_hover)
