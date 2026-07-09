@@ -602,6 +602,17 @@ class PanelManager:
         self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
+        # If the panel is already showing ANY book, a new open request is dropped entirely —
+        # not just re-animated, not re-targeted to a different book. Without this, a book
+        # already open in the background list could be swapped out from under the visible
+        # panel (e.g. right-click a book to open detail, then arrow-key to a DIFFERENT book
+        # and press Alt+Enter — that reused this same unconditional path and hijacked the
+        # open panel onto the new book while still only ever showing one panel at a time).
+        # The user must close the current panel first via an existing close path
+        # (_close_book_detail_flow / the panel's own close button) before opening another.
+        panel = self.main_window.book_detail_panel
+        if panel.isVisible():
+            return
         self._abort_theme_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
         # can tell whether a given tag is already the active filter and render inert. A
@@ -609,7 +620,7 @@ class PanelManager:
         # while the detail panel is open — reaching this panel requires leaving the library view
         # first, and there is no other UI path that edits the search field meanwhile.
         active_search_text = self.library_panel.search_field.text()
-        self.main_window.book_detail_panel.load_book(
+        panel.load_book(
             book_data, tab=tab, context=context, active_search_text=active_search_text)
         self._start_book_detail_entry()
 
