@@ -459,14 +459,15 @@ class LibraryPanel(QFrame):
         # regardless of how many rows the viewport actually shows — confirmed live (screenshot
         # comparisons + direct observation, 2026-07-10) to be the root cause of the grid
         # appearing to "shift" by a couple px between scroll positions: repeated 3-row jumps
-        # accumulate at a stride unrelated to the viewport's actual row capacity, so the final
-        # clamp against the scrollbar's max lands on an arbitrary leftover offset instead of a
-        # clean row boundary. A pageStep-snapping theory was tried first and had ZERO live
-        # effect (only headless-probe "success" — see NOTES.md) — the real mechanism is wheel
-        # step count, not pageStep. Fix: each flick scrolls by exactly the number of FULL rows
-        # visible on screen (5 for Square's 477px/95px, ~17 for List's 477px/28px, etc.) — a
-        # fresh, fully-new screen of rows every flick, always landing on a row boundary,
-        # instead of Qt's fixed-3-row default.
+        # accumulate at a stride unrelated to the viewport's actual row capacity. Fix: each
+        # flick scrolls by exactly the number of FULL rows visible on screen (5 for Square's
+        # 477px/95px, ~17 for List's 477px/28px, etc.) — a fresh, fully-new screen of rows
+        # every flick, instead of Qt's fixed-3-row default. sb.setValue() clamps to the real
+        # [minimum, maximum] on its own (Qt's native behavior) — an earlier version of this
+        # additionally snapped an overshoot to a row-aligned value SHORT of maximum(), which
+        # silently made the true bottom of the list unreachable via wheel scroll (confirmed
+        # live, 2026-07-10 — reverted). Reaching the actual top/bottom always wins over a
+        # cosmetic boundary nudge.
         def _list_wheel(e):
             mode = self._delegate._view_mode
             dim = ITEM_DIMENSIONS.get(mode)
@@ -482,7 +483,7 @@ class LibraryPanel(QFrame):
                 return
             sb = self._list_view.verticalScrollBar()
             target = sb.value() - step if delta > 0 else sb.value() + step
-            sb.setValue(self._snap_scroll_to_row(target, cell_h))
+            sb.setValue(target)
             e.accept()
         self._list_view.wheelEvent = _list_wheel
 
@@ -534,24 +535,6 @@ class LibraryPanel(QFrame):
         if prev_path and prev_path != self._delegate._kbd_hover_path:
             self._delegate.on_list_hover_leave(prev_path)
 
-    def _snap_scroll_to_row(self, target: int, cell_h: int) -> int:
-        """Clamp `target` into the scrollbar's valid range the SAME way everywhere: overshoot
-        past the top clamps to minimum() (already row-aligned, always 0); overshoot past the
-        bottom clamps to the nearest row-aligned value at or before maximum(), not to
-        maximum() itself. maximum() (= content_height - viewport_height) has no reason to be a
-        multiple of cell_h, and Qt's own QScrollBar.setValue() clamp lands there directly if
-        left alone — confirmed live (red-line screenshot overlay, 2026-07-10) that this
-        produces a visible few-px "nudge" at the scroll boundaries. Shared by the wheel handler
-        and scrollTo()-based keyboard navigation (_flash_keyboard_selection) so both boundary-
-        clamp the same way — scrollTo() has this exact same issue since it's Qt's own "make
-        this index visible" logic, not something this app computes."""
-        sb = self._list_view.verticalScrollBar()
-        if target < sb.minimum():
-            return sb.minimum()
-        if target > sb.maximum():
-            return sb.maximum() - (sb.maximum() % cell_h)
-        return target
-
     def _flash_keyboard_selection(self, index):
         """Show the keyboard-selection highlight on `index` at full strength, hold ~2s, then
         fade to 0 over ~450ms. One QVariantAnimation, restarted (stop+start) on each move so
@@ -563,19 +546,6 @@ class LibraryPanel(QFrame):
             return
         self._delegate._kbd_selected_path = book.path
         self._list_view.scrollTo(index)
-        # scrollTo() can land the scrollbar exactly ON minimum()/maximum() when the target
-        # index is near either end of the list — those boundary values themselves aren't
-        # necessarily row-aligned (see _snap_scroll_to_row). Re-snap whenever the value is AT
-        # a boundary; checking sb.value() > sb.maximum() here would never be true (Qt already
-        # clamped it before scrollTo returned) — the bug is the boundary value itself, not an
-        # overshoot past it, so the check has to be "value == boundary", not "value > boundary".
-        mode = self._delegate._view_mode
-        dim = ITEM_DIMENSIONS.get(mode)
-        if dim and dim["h"] > 0:
-            sb = self._list_view.verticalScrollBar()
-            cell_h = dim["h"]
-            if sb.value() == sb.maximum() and sb.maximum() % cell_h != 0:
-                sb.setValue(sb.maximum() - (sb.maximum() % cell_h))
 
         if self._kbd_fade_anim is None:
             anim = QVariantAnimation(self)
