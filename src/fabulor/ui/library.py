@@ -1,4 +1,5 @@
 # THEME_ANIM_TODO: LibraryPanel, BookDelegate
+import logging
 import random
 from collections import namedtuple
 from PySide6.QtWidgets import (
@@ -11,6 +12,8 @@ from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter
 from PIL import Image, ImageFilter
+
+logger = logging.getLogger(__name__)
 
 # View mode: (internal_key, [display_name_options])
 ONE_PER_ROW_MODE   = ("1 per row", ["1 Flew Over", "1 Tree", "Ready Player 1", "1, None", "Power of 1", "1st Circle", "1st Law"])
@@ -411,11 +414,26 @@ class LibraryPanel(QFrame):
                 idx = self._list_view.currentIndex()
                 if idx.isValid():
                     self._on_item_clicked(idx)
-            elif key == Qt.Key.Key_Tab:
-                self.search_field.setFocus()
             else:
                 QListView.keyPressEvent(self._list_view, e)
         self._list_view.keyPressEvent = _list_key
+
+        # Tab/Backtab do NOT reach keyPressEvent above — QAbstractItemView (QListView's base)
+        # intercepts them in its own event() override and routes them straight into Qt's native
+        # focusNextPrevChild() chain-walk before keyPressEvent is ever called. Confirmed live via
+        # a focus-trace: every other key here (Up/Down/Enter/Space/Left/Right) reaches _list_key
+        # normally; Tab never did, even though the list genuinely had focus — it fell through to
+        # native traversal instead (7+ presses through the transport bar/sidebar/combos before
+        # reaching search_field). Fix: intercept at event(), the actual point Qt uses for these
+        # two keys on item views. Filters strictly on KeyPress + Tab/Backtab; every other event
+        # (including all other keys) is passed to the original event() unchanged.
+        _original_list_event = self._list_view.event
+        def _list_event(e):
+            if e.type() == QEvent.Type.KeyPress and e.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                self.search_field.setFocus()
+                return True
+            return _original_list_event(e)
+        self._list_view.event = _list_event
 
         saved_mode = self.style_combo.currentData()
         self._apply_view_mode(saved_mode)

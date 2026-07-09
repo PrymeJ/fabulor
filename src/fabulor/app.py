@@ -2848,8 +2848,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Tab / Backtab.
         panel = self.panel_manager.active_full_panel()
         if panel == "library":
-            # The library's own list/search Tab monkeypatches own the list<->search toggle —
-            # leave them to it (don't interfere), so only that toggle is Tab-reachable there.
+            # The library's own list/search toggle owns Tab here — leave it alone so only that
+            # toggle is Tab-reachable while Library is open. Note: QListView intercepts Tab/
+            # Backtab in its own event() override before keyPressEvent ever sees it (confirmed
+            # via a focus-trace, 2026-07-10), so the list side of the toggle is implemented as
+            # an event() monkeypatch on _list_view, not a keyPressEvent one — see library.py.
             return False
         if panel in ("settings", "speed", "sleep"):
             widgets = self.panel_manager.panel_tab_widgets(panel)
