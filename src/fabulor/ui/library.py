@@ -38,11 +38,17 @@ _ListLayout = namedtuple("_ListLayout", [
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
     "3 per row": {"w": 96,  "h": 146, "cols": 3},
-    # 96x95 — reverted from a 94x94 attempt that was visually WRONG when checked live (10px
-    # gaps instead of 4, a 7px sliver) despite passing arithmetic checks beforehand. Do not
-    # trust the arithmetic in isolation for this constant — any future change here MUST be
-    # verified against the real running app, not just checked on paper. See NOTES.md.
-    "Square":    {"w": 96,  "h": 95,  "cols": 3},
+    # 95x95 — h=95 is the known-working row-fit value (5 rows in the 477px viewport). w
+    # clipped 96->95 to match: with left=4/right=0 (_GRID_MARGINS), each cell lays out as
+    # [4px margin][91px cover] = 95px, giving a true 91x91 square cover (matching the 91px
+    # cover height that top=2/bottom=2 on a 95-tall cell already produces). The freed width
+    # from 3 cells (96->95 each) lands entirely in the window's own trailing gutter (right of
+    # the last column, before the scrollbar) — nothing else needs to change to absorb it, and
+    # the 4px gap between adjacent covers (left=4 + previous cell's right=0) is untouched. Do
+    # NOT trust arithmetic alone for this constant — a prior 94x94 CELL attempt (shrinking
+    # both dims together) passed on paper but was visually wrong live (10px gaps, a 7px
+    # sliver); verify any change against the real running app. See NOTES.md.
+    "Square":    {"w": 95,  "h": 95,  "cols": 3},
     "2 per row": {"w": 140, "h": 226, "cols": 2},
     "1 per row": {"w": 292, "h": 159, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
