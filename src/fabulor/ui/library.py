@@ -2,14 +2,14 @@
 import random
 from collections import namedtuple
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle,
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation, QVariantAnimation
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
-from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics
+from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter
 from PIL import Image, ImageFilter
 
 # View mode: (internal_key, [display_name_options])
@@ -175,6 +175,54 @@ class _ComboItemDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         return QSize(option.rect.width(), 22)
+
+
+class _ThemedComboBox(QComboBox):
+    """Draws its own down-arrow instead of relying on the QComboBox::down-arrow QSS pseudo-
+    element. On at least one confirmed real desktop (KDE/Plasma, Wayland, Fusion style),
+    `image: none` + a border-triangle trick for ::down-arrow is ignored — the native style
+    still paints its own arrow glyph, which renders as a plain light square/rectangle rather
+    than a themed triangle (verified: reproduced in complete isolation, unrelated to the rest
+    of the app). Same root cause and same fix shape as _ComboItemDelegate's popup-hover issue.
+    Paints the base control (background/border/text) normally via the style — only the arrow
+    sub-control rect is overridden — so the working parts of the native paint are untouched."""
+
+    def __init__(self, panel: "LibraryPanel", parent=None):
+        super().__init__(parent)
+        self._panel = panel
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        theme = self._panel._current_theme or {}
+        accent = theme.get('accent', '#ffffff')
+        input_bg = theme.get('library_input_bg', theme.get('bg_dropdown', '#1e1e1e'))
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        arrow_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxArrow, self)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Cover whatever the native style just painted in the arrow rect (same background the
+        # rest of the box uses via QSS), then draw our own small downward triangle, matching
+        # the size/margin the old QSS border-triangle used. arrow_rect spans the FULL control
+        # height (including the rounded top/bottom-right corners) — filling it edge-to-edge
+        # paints flat over those curved border pixels, squaring off the corners (regression
+        # found live: corners went sharp once this landed). Inset the fill vertically so it
+        # only covers the flat middle section, well clear of the border radius.
+        corner_clearance = 6
+        fill_rect = arrow_rect.adjusted(0, corner_clearance, 0, -corner_clearance)
+        painter.fillRect(fill_rect, QColor(input_bg))
+        cx = arrow_rect.center().x()
+        top = arrow_rect.center().y() - 2
+        triangle = QPolygon([
+            QPoint(cx - 5, top),
+            QPoint(cx + 5, top),
+            QPoint(cx, top + 5),
+        ])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(accent))
+        painter.drawPolygon(triangle)
+        painter.end()
 
 
 class LibraryPanel(QFrame):
@@ -530,7 +578,7 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setContentsMargins(3, 13, 3, 6)
         self.top_bar_layout.setSpacing(3)
 
-        self.sort_combo = QComboBox()
+        self.sort_combo = _ThemedComboBox(self)
         self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
         self._init_sort_combo(self.config.get_library_sort_key())
@@ -545,7 +593,7 @@ class LibraryPanel(QFrame):
         self.sort_dir_btn.setFixedHeight(26)
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
 
-        self.style_combo = QComboBox()
+        self.style_combo = _ThemedComboBox(self)
         for key, options in VIEW_MODES:
             self.style_combo.addItem(random.choice(options), key)
         self.style_combo.setFixedWidth(94)
