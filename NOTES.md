@@ -1,3 +1,263 @@
+## Library Tab-clamp root cause, and the Square-mode scroll/geometry saga (2026-07-09 Session 3)
+
+Two unrelated pieces of work, documented together because they landed in the same session.
+
+### 1. Library Tab toggle wasn't actually clamping — QListView eats Tab before keyPressEvent
+
+**Symptom (carried over from Session 2):** pressing Tab from the book list took 7+ presses to
+reach the sort combo, walking through the transport bar, sidebar buttons, and both toolbar combos
+before finally reaching `search_field`.
+
+**Investigation:** added temporary `logging.DEBUG`-level focus-trace instrumentation (removed once
+resolved) at three points: `LibraryPanel.showEvent` right after `_list_view.setFocus()` (plus a
+`QTimer.singleShot(0, ...)` echo, to catch anything stealing focus back post-event-loop), both Tab
+branches (`_list_key`, `_search_key`), and `MainWindow._handle_tab_escape`'s entry point. Had the
+user reproduce the bug live with `FABULOR_LOG_LEVEL=DEBUG python main.py` and pulled the real log.
+
+**What the trace showed:** focus WAS genuinely on `QListView` on the very first Tab press (ruling
+out "nothing focuses the list on open" — `showEvent`'s `setFocus()` call was working correctly).
+But there was not a single `[_list_key Tab]` log line anywhere in the trace — only
+`_handle_tab_escape` ever saw the Tab keypresses, correctly deferred (`panel == "library" → return
+False`), and then Qt's native focus-chain walk took over (confirmed by the sequence of focused
+widgets in the trace: `QListView → ShimmerButton(speed_btn) → HoverButton(prev_btn) →
+RightClickButton(rewind_btn) → ...` — the entire main-window transport bar and sidebar, in
+creation order).
+
+**Root cause:** `QAbstractItemView` (`QListView`'s base class) overrides `event()` and intercepts
+`QEvent.KeyPress` for `Key_Tab`/`Key_Backtab` specifically, routing them directly into
+`focusNextPrevChild()` — Qt's native chain-walk — *before* dispatch ever reaches `keyPressEvent()`.
+This is genuinely different from every other key this app's `_list_key` handles (Up/Down/Enter/
+Space/Left/Right): none of those are special-cased by Qt at the `event()` level, so they all reach
+`keyPressEvent` normally. The existing `_list_key` Tab branch was silently dead code the whole
+time — not from a logic bug, but because the key never arrived there at all.
+
+**Fix (`2fa5a98`):** moved the Tab/Backtab interception from the `_list_view.keyPressEvent`
+monkeypatch to a NEW `_list_view.event` monkeypatch (same instance-monkeypatch idiom already used
+elsewhere in this file), filtered strictly to `e.type() == QEvent.Type.KeyPress and e.key() in
+(Qt.Key.Key_Tab, Qt.Key.Key_Backtab)` — every other event, including every other key, is passed
+through to the original `event()` unchanged, so nothing else's behavior could regress.
+
+**Verification:** a second focus-trace, post-fix, showed clean `QListView ↔ QLineEdit`
+alternation on every Tab press, zero stray widgets in between, across both view modes tested live.
+
+---
+
+### 2. Square mode: autoscroll, wheel-scroll, and true-square-cover — three real fixes and one
+### reverted regression, with a lot of wrong turns along the way worth recording precisely
+
+User reported, testing Square mode specifically: hovering near the top/bottom edge auto-scrolled
+without any click; keyboard nav visibly "auto-corrected" after landing on a partial row (jarring);
+and separately, a hard constraint that vertical and horizontal inter-cover gaps must be equal
+("a true + between every pair of adjacent covers"), that the top toolbar's position can't move,
+and that cell size/margins otherwise have some flexibility.
+
+#### 2a. The measured baseline (do not re-derive from scratch — these are live-measured, confirmed
+multiple times across the session)
+
+- Window: fixed `300×564` (title bar 32px → `LibraryPanel` height 532px).
+- `top_bar_widget`: 49px tall (`13px` top margin + `30px` tallest child + `6px` bottom margin,
+  `QHBoxLayout` contentsMargins `(3, 13, 3, 6)`).
+- `main_layout` spacing (top bar → list): 6px (Qt default, no explicit override).
+- **`_list_view` viewport: 292×477px** — this is the real, live-measured available grid area
+  (300px window − 8px scrollbar gutter wide, 564 − 32 title bar − 49 top bar − 6 spacing tall).
+  Confirmed via a real `_open_library_flow()` + `switch_to_square()` probe reading actual
+  `viewport().size()`, not calculated from constants — and re-confirmed live by the user's own
+  screenshots throughout the session.
+
+#### 2b. Row-fit (cell height) — the one piece of geometry that was right the first time and never
+reverted
+
+At the original `96×96` cell, `477 / 96 = 4.97` → 4 full rows (384px) + a 5th cut at 93/96px
+(3px short of a clean 5th row). At `96×95`: `5 × 95 = 475px`, fitting in 477px with 2px to spare.
+This part of the fix landed before this session (documented already) and was never touched again.
+
+#### 2c. Horizontal margin — one wrong formula caught before shipping, one correct formula found
+
+**WRONG (caught, never shipped as final):** `cover_rect = QRect(r.x()+4, r.y()+2, r.width()-7,
+r.height()-4)` — intended `left=4, right=3`. The bug: `gap_between_adjacent_covers = right_of_
+cell_N + left_of_cell_N+1 = 3 + 4 = 7`, not 4. This came from conflating "how much total leftover
+width exists across the whole row" (7px, at cell_w=96 vs. a since-reverted cell_w=95 idea) with
+"what the actual gap between two tiled cells is" — those are different quantities and must be
+modeled cell-by-cell (each cell's own left+right margin, tiled edge-to-edge), not as one shared
+pool split however seems reasonable.
+
+**CORRECT (shipped, held for the rest of the session):** `left=4, right=0`, cell_w unchanged at
+96. `3 × 96 = 288` of the 292px viewport leaves exactly 4px of leftover, which with `right=0`
+lands as: gap between cells = `0 + 4 = 4` (matches), AND the outer-right edge (viewport edge minus
+the last cell's right-margin-adjusted edge) independently comes out to 4px too — no fractional
+splitting, nothing left unaccounted for, verified by explicit sum: `4 + 288 + 0 = 292`.
+
+#### 2d. The 94×94 (and 96×94) true-square-cell attempts — arithmetic passed, live check failed,
+reverted — the key "don't trust arithmetic alone" lesson of the session
+
+Given the constraints (5 rows, 4px gaps, some flexibility in top margin), several budgets were
+solved on paper:
+- `94×94` cell, gap=4: `5×94=470` tiled, `477-470=7` leftover, `bottom=4` (matches gap) leaves
+  `top=3`. Horizontally: `3×94=282`, `292-282=10` leftover, `left=4` leaves `right=6`. Every
+  number summed exactly to the viewport dimensions (`3+470+4=477`, `4+282+6=292`).
+- This was implemented (`ITEM_DIMENSIONS["Square"] = {"w": 94, "h": 94}`, `_GRID_MARGINS["Square"]
+  = (4, 3, 6, 4)`) and reported by the user as **visually wrong**: 10px gaps instead of 4, a 7px
+  sliver at the bottom. The exact mechanism was never fully pinned down before it was reverted —
+  the priority was restoring a known-good state over continuing to debug blind. Reverted to the
+  `96×95`/`(4,2,0,2)` values from 2c/2b.
+- **This is the moment worth remembering:** the arithmetic was internally consistent and summed
+  correctly, and was STILL wrong once rendered. Whatever assumption fed the model (likely: an
+  incorrect belief about how `_GRID_MARGINS`' four values compose with `ITEM_DIMENSIONS`' cell
+  size across a full tiled row, or a stale cache/paint path not accounted for) was never isolated.
+  Any future change to `ITEM_DIMENSIONS["Square"]` or `_GRID_MARGINS["Square"]` MUST be verified
+  against the real running app before being treated as done — this is now written directly into
+  both the `ITEM_DIMENSIONS` and `_GRID_MARGINS` code comments as a standing warning.
+
+#### 2e. Autoscroll-on-hover — root-caused correctly, fixed, confirmed (`b4dd1f5`)
+
+`QAbstractItemView.hasAutoScroll` defaults to `True` (16px `autoScrollMargin`), and — confirmed
+live — fires from pure mouse hover position near the top/bottom viewport edge, no button held.
+Nothing in this app's code called `startAutoScroll`/`doAutoScroll` explicitly; this is Qt's own
+native drag-autoscroll machinery, apparently reachable from hover alone given `setMouseTracking
+(True)` is already on for this list (needed for the existing hover-highlight/overlay features).
+Fixed with a single `self._list_view.setAutoScroll(False)` call at construction. Confirmed live
+by the user before being trusted as fixed.
+
+#### 2f. Wheel scroll: fixed 3-row jump regardless of viewport row count — user found this
+directly, not the model
+
+The user directly observed (unprompted) that every wheel flick scrolled exactly 3 rows,
+regardless of view mode: correct-*looking* for 1-per-row (which happens to show 3 rows on screen)
+purely by coincidence, wrong for Square (5 rows visible) and List (~17 rows visible — the user
+also confirmed List was affected, just less obviously so with small 28px rows). Root cause:
+`QApplication.wheelScrollLines()` — a GLOBAL Qt setting, confirmed `=3` on this system — multiplied
+by `QScrollBar.singleStep()` (which was already correctly `=cell_h` per row height). `3 × 95 =
+285px` per flick, a fixed jump with no relationship to how many rows actually fit the viewport.
+
+**Fix (`b4dd1f5`):** intercepted `_list_view.wheelEvent` (instance monkeypatch), computing
+`rows_per_screen = viewport_h // cell_h` fresh per event (reads `ITEM_DIMENSIONS[view_mode]`, so
+it's correct per-mode automatically) and scrolling the vertical scrollbar by exactly
+`rows_per_screen * cell_h` per flick — a fresh, fully-new screen of rows every scroll, always
+landing on a row boundary during normal (non-boundary) scrolling. Confirmed live and never
+reverted — this is the one part of the "nudge" complex that survived the whole session intact.
+
+#### 2g. `pageStep`: a fully wrong theory, built twice, zero live effect both times — a real
+methodology lesson about headless verification
+
+Before wheelScrollLines (2f) was found, the model theorized the "3-row jump" was really a
+`pageStep`-alignment problem (`pageStep` auto-set by Qt to the raw viewport height, 477, not a
+multiple of `cell_h`). Two implementation attempts, both dead ends:
+
+- **First attempt:** hooked `verticalScrollBar().rangeChanged` to re-snap `pageStep` to a clean
+  multiple of `cell_h`. Verified via an offscreen probe that this correctly changed `pageStep` to
+  475 in isolation — but had **zero effect in the real running app** (user tested, unchanged). Root
+  cause of the non-effect: `QAbstractItemView.updateGeometries()` calls
+  `verticalScrollBar().setPageStep(...)` **directly**, not via `setRange()` — confirmed by testing
+  that `QScrollBar.setPageStep()` alone does NOT emit `rangeChanged` (`sb.setRange(0,1000)` then
+  `sb.setPageStep(50)` — zero `rangeChanged` emissions). The hook was listening for a signal Qt
+  never fires for this code path.
+- **Second attempt:** switched to overriding `updateGeometries()` itself (instance monkeypatch),
+  confirmed via trace that it DID intercept Qt's internal calls and DID successfully change
+  `pageStep` (475, held through a 1.5s settle window in an offscreen probe) — and STILL had zero
+  observable effect when the user tested the real app.
+- **The theory itself was never right.** `pageStep` only governs PageUp/PageDown and clicking in
+  the scrollbar's track — not wheel scroll (`wheelScrollLines × singleStep`, see 2f) and not
+  `QAbstractItemView`'s native autoscroll (`hasAutoScroll`/`autoScrollMargin`, see 2e). All
+  `pageStep`-related code (`_fix_page_step`, the `updateGeometries` override, the `rangeChanged`
+  connection) was fully removed once the real mechanisms were found — none of it does anything in
+  the shipped code.
+- **This is the SECOND time this session** (after 2d) that an offscreen/headless check reported
+  success while the live app disagreed. Per the existing CLAUDE.md rule about headless
+  verification for settings-panel visual bugs, this session extends that lesson to scroll/focus
+  mechanics generally: an offscreen probe reading back a Qt property's value is not proof the
+  property is actually driving the behavior in question in the real, live, running app.
+
+#### 2h. Boundary drift ("2px nudge") — a real bug, a fix that worked for one input path, a worse
+regression discovered, and a full revert — currently OPEN
+
+**Confirmed real** via user-provided red-line screenshot overlays: two states (library just-opened
+vs. scrolled by one row via arrow keys) superimposed at 50% opacity, with a red reference line
+drawn at a fixed position. Same-state overlay (control) showed crisp, single-pixel gutter lines;
+cross-state overlay showed visibly muddy/doubled lines — a genuine ~2px misalignment, not
+perception. Further screenshots (scrollbar-at-top vs. scrollbar-at-bottom, same red line) showed
+the drift symmetrically at both the top and bottom boundaries, same content, same ~2px magnitude.
+
+**Root cause:** `QScrollBar.setValue()` silently clamps any out-of-range value to
+`[minimum, maximum]`. `maximum()` (`= content_height − viewport_height`) has no reason to be a
+multiple of `cell_h` — confirmed: `11493 % 95 = 93`. So scrolling (or `scrollTo()`-based keyboard
+nav) past either end lands the scrollbar on this arbitrary, non-row-aligned boundary value instead
+of a clean row-aligned position.
+
+**Fix attempt (reverted, see below):** added `_snap_scroll_to_row(target, cell_h)`, called from
+both the wheel handler (before `setValue`, where the overshoot is directly known) and from
+`_flash_keyboard_selection` (after `scrollTo()`, where the overshoot information is already gone
+— Qt clamps before returning). The keyboard-nav call site initially had a real logic bug: it
+checked `sb.value() > sb.maximum()`, which can **never** be true post-`scrollTo()` (Qt already
+clamped), so the snap silently never fired for keyboard nav even though the helper itself was
+correct — fixed to check `sb.value() == sb.maximum()` instead (checking for "landed exactly on
+the boundary", not "overshot past it", since the overshoot itself isn't observable after the fact).
+Wheel-scroll boundary drift confirmed fixed by the user at this point.
+
+**The regression, found by the user, called "more important" than the original drift:** snapping
+an overshoot to the nearest row-aligned value **below** `maximum()` means the scrollbar can no
+longer reach the TRUE bottom of the list at all — the last row (or several rows, depending on the
+remainder size) became permanently unreachable via wheel scroll or arrow-key nav, needing a manual
+scrollbar drag to see. Confirmed affecting all four grid/list modes except 1-per-row (which
+happens not to trigger the boundary case as visibly). This is a straightforwardly worse bug than a
+2px cosmetic nudge — content becoming unreachable is a real functional break.
+
+**Reverted in full (`ca5b9d6`):** `_snap_scroll_to_row` deleted; the wheel handler now just calls
+`sb.setValue(target)` directly, letting Qt's own native `[minimum, maximum]` clamp apply — the
+exact same behavior `scrollTo()` already had unassisted. Reachability confirmed restored.
+
+**Current state: the 2px boundary drift is back, unfixed, on both wheel and keyboard-nav paths.**
+Affects Square, 3-per-row, and List; explicitly expected by the user to also affect 2-per-row once
+that mode is worked on, since the underlying Qt scroll mechanics are shared across all grid/list
+modes. **Any future fix attempt must not reintroduce a short-of-maximum() clamp** — reaching the
+genuine top/bottom of the list always has to take priority over eliminating the cosmetic drift.
+Next agreed step: instrument (not guess), verify every claim against the real running app, not an
+offscreen probe (see 2d and 2g for why that specific shortcut has already failed twice this
+session).
+
+#### 2i. True-square cover (kept, `3275c24`) — the framing confusion that blocked progress longer
+than the arithmetic did
+
+Separately from the row-fit work (2b–2d): even after the `96×95` cell fix, the cover itself
+rendered `92×91` — visibly not square, since `top=2/bottom=2` (on a 95-tall cell) gives `91` but
+`left=4/right=0` (on a 96-wide cell) gives `92`.
+
+The path to the eventual fix took several wrong framings, each corrected by the user directly
+rather than found independently:
+1. First attempt: bumped `right` 0→1 on the EXISTING 96-wide cell to shrink the cover to 91×91.
+   This is internally correct for the cover's own squareness, but — not initially connected by the
+   model — it also changes the inter-cover GAP (`right(1) + left(4) = 5`, not 4), because `right`
+   is shared by every cell uniformly. The user caught the resulting 5px vertical gap live.
+2. Model then incorrectly assumed the fix required making `left`/`right` different per COLUMN
+   (first vs. last column), since a single shared margin can't square the cover without also
+   changing the gap. The user repeatedly corrected this — the columns are NOT what needed to
+   change; something else entirely.
+3. The actual ask (confirmed only after several rounds of the user drawing red arrows on a
+   screenshot pointing at the empty strip between the last column and the scrollbar, and then a
+   short direct Q&A — "what is that space", "what's the total width of the container", "what's
+   the blocker") was: shrink the CELL itself (not just the cover-within-an-unchanged-cell) by the
+   same 1px, so the gap math (2c) is completely untouched, and the 3 freed pixels (1px × 3
+   columns) fall out automatically into the window's own trailing gutter past the last column —
+   no per-cell or per-column margin change needed at all.
+
+**Final fix:** `ITEM_DIMENSIONS["Square"]["w"]`: 96→95 (matching the already-95 height — a true
+95×95 CELL, not just a square cover carved from an unchanged cell). `_GRID_MARGINS["Square"]`
+LEFT COMPLETELY UNCHANGED at `(4, 2, 0, 2)`. With `left=4, right=0` on a 95-wide cell:
+`cover_w = 95 − 4 − 0 = 91`, matching `cover_h = 95 − 2 − 2 = 91` — square, confirmed live. Gap
+between cells: `right(0) + left(4) = 4`, untouched. Trailing gutter: `3 × (96−95) = 3px` freed,
+landing automatically past the last column since nothing else in the tiling changed — verified by
+the user's own arithmetic (`4+91+4+91+4+91=285` of the `300px` window, `300−285=15px` gutter,
+matching the live screenshot) after the model had been modeling the wrong container width (`292`,
+the scrollbar-excluded viewport) instead of the full `300px` window the user was actually
+measuring the gutter against.
+
+**Process lesson for 2i specifically:** when a verbal geometry description isn't landing after
+multiple attempts, a short, literal, concrete question ("what is X", "what's the blocker") unblocks
+faster than proposing another guessed reformulation of the same wrong model. The user's own
+direct-question approach here is what actually broke the loop, not further calculation from the
+model's side.
+
+---
+
 ## Library keyboard navigation: the focus-trap bug and what it revealed about `QComboBox` on this desktop (2026-07-09)
 
 Three follow-up bugs surfaced by live-testing the new Library keyboard-nav feature
