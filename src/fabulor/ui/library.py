@@ -38,7 +38,11 @@ _ListLayout = namedtuple("_ListLayout", [
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
     "3 per row": {"w": 96,  "h": 146, "cols": 3},
-    "Square":    {"w": 96,  "h": 96,  "cols": 3},
+    # 96x95 — reverted from a 94x94 attempt that was visually WRONG when checked live (10px
+    # gaps instead of 4, a 7px sliver) despite passing arithmetic checks beforehand. Do not
+    # trust the arithmetic in isolation for this constant — any future change here MUST be
+    # verified against the real running app, not just checked on paper. See NOTES.md.
+    "Square":    {"w": 96,  "h": 95,  "cols": 3},
     "2 per row": {"w": 140, "h": 226, "cols": 2},
     "1 per row": {"w": 292, "h": 159, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
@@ -370,6 +374,15 @@ class LibraryPanel(QFrame):
         self._list_view.setViewMode(QListView.ViewMode.ListMode)
         self._list_view.setUniformItemSizes(True)
         self._list_view.setMouseTracking(True)
+        # Qt's native drag-autoscroll (hasAutoScroll=True by default, 16px edge margin) was
+        # firing purely from hover position (mouse near the top/bottom edge, no button held) —
+        # confirmed live, 2026-07-10 — not from anything this app's code does explicitly (no
+        # startAutoScroll/doAutoScroll call exists anywhere in this file). A pageStep-alignment
+        # theory was tried first and had zero effect, ruling it out — the actual mechanism is
+        # this native autoscroll API, unrelated to pageStep. Disabling it here removes the
+        # unwanted nudge; scrollTo() (keyboard nav) and manual dragging the scrollbar itself
+        # are unaffected, since neither goes through QAbstractItemView's autoscroll path.
+        self._list_view.setAutoScroll(False)
         self._list_view.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list_view.setFocusPolicy(Qt.StrongFocus)
 
@@ -435,6 +448,38 @@ class LibraryPanel(QFrame):
             return _original_list_event(e)
         self._list_view.event = _list_event
 
+        # Qt's native wheel scroll = wheelScrollLines() (a GLOBAL Qt setting, =3 on this
+        # system) × singleStep() (= one row's height). That's a fixed 3-row jump per flick,
+        # regardless of how many rows the viewport actually shows — confirmed live (screenshot
+        # comparisons + direct observation, 2026-07-10) to be the root cause of the grid
+        # appearing to "shift" by a couple px between scroll positions: repeated 3-row jumps
+        # accumulate at a stride unrelated to the viewport's actual row capacity, so the final
+        # clamp against the scrollbar's max lands on an arbitrary leftover offset instead of a
+        # clean row boundary. A pageStep-snapping theory was tried first and had ZERO live
+        # effect (only headless-probe "success" — see NOTES.md) — the real mechanism is wheel
+        # step count, not pageStep. Fix: each flick scrolls by exactly the number of FULL rows
+        # visible on screen (5 for Square's 477px/95px, ~17 for List's 477px/28px, etc.) — a
+        # fresh, fully-new screen of rows every flick, always landing on a row boundary,
+        # instead of Qt's fixed-3-row default.
+        def _list_wheel(e):
+            mode = self._delegate._view_mode
+            dim = ITEM_DIMENSIONS.get(mode)
+            cell_h = dim["h"] if dim else 0
+            if cell_h <= 0:
+                QListView.wheelEvent(self._list_view, e)
+                return
+            viewport_h = self._list_view.viewport().height()
+            rows_per_screen = max(1, viewport_h // cell_h)
+            step = rows_per_screen * cell_h
+            delta = e.angleDelta().y()
+            if delta == 0:
+                return
+            sb = self._list_view.verticalScrollBar()
+            target = sb.value() - step if delta > 0 else sb.value() + step
+            sb.setValue(self._snap_scroll_to_row(target, cell_h))
+            e.accept()
+        self._list_view.wheelEvent = _list_wheel
+
         saved_mode = self.style_combo.currentData()
         self._apply_view_mode(saved_mode)
 
@@ -483,6 +528,24 @@ class LibraryPanel(QFrame):
         if prev_path and prev_path != self._delegate._kbd_hover_path:
             self._delegate.on_list_hover_leave(prev_path)
 
+    def _snap_scroll_to_row(self, target: int, cell_h: int) -> int:
+        """Clamp `target` into the scrollbar's valid range the SAME way everywhere: overshoot
+        past the top clamps to minimum() (already row-aligned, always 0); overshoot past the
+        bottom clamps to the nearest row-aligned value at or before maximum(), not to
+        maximum() itself. maximum() (= content_height - viewport_height) has no reason to be a
+        multiple of cell_h, and Qt's own QScrollBar.setValue() clamp lands there directly if
+        left alone — confirmed live (red-line screenshot overlay, 2026-07-10) that this
+        produces a visible few-px "nudge" at the scroll boundaries. Shared by the wheel handler
+        and scrollTo()-based keyboard navigation (_flash_keyboard_selection) so both boundary-
+        clamp the same way — scrollTo() has this exact same issue since it's Qt's own "make
+        this index visible" logic, not something this app computes."""
+        sb = self._list_view.verticalScrollBar()
+        if target < sb.minimum():
+            return sb.minimum()
+        if target > sb.maximum():
+            return sb.maximum() - (sb.maximum() % cell_h)
+        return target
+
     def _flash_keyboard_selection(self, index):
         """Show the keyboard-selection highlight on `index` at full strength, hold ~2s, then
         fade to 0 over ~450ms. One QVariantAnimation, restarted (stop+start) on each move so
@@ -494,6 +557,19 @@ class LibraryPanel(QFrame):
             return
         self._delegate._kbd_selected_path = book.path
         self._list_view.scrollTo(index)
+        # scrollTo() can land the scrollbar exactly ON minimum()/maximum() when the target
+        # index is near either end of the list — those boundary values themselves aren't
+        # necessarily row-aligned (see _snap_scroll_to_row). Re-snap whenever the value is AT
+        # a boundary; checking sb.value() > sb.maximum() here would never be true (Qt already
+        # clamped it before scrollTo returned) — the bug is the boundary value itself, not an
+        # overshoot past it, so the check has to be "value == boundary", not "value > boundary".
+        mode = self._delegate._view_mode
+        dim = ITEM_DIMENSIONS.get(mode)
+        if dim and dim["h"] > 0:
+            sb = self._list_view.verticalScrollBar()
+            cell_h = dim["h"]
+            if sb.value() == sb.maximum() and sb.maximum() % cell_h != 0:
+                sb.setValue(sb.maximum() - (sb.maximum() % cell_h))
 
         if self._kbd_fade_anim is None:
             anim = QVariantAnimation(self)
@@ -2255,6 +2331,15 @@ class BookDelegate(QStyledItemDelegate):
             painter.drawText(x, y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, w))
         return line_h
 
+    # Per-mode grid-cell margins (left, top, right, bottom), shared by the has_cover and
+    # no-cover branches of _paint_grid_cell and by _cover_rect/cover_cell_size (all four MUST
+    # stay in lockstep — see cover_cell_size's docstring). Reverted to the shared 96x95 values
+    # for both modes — see the ITEM_DIMENSIONS comment on why the 94x94 attempt was reverted.
+    _GRID_MARGINS = {
+        "Square":    (4, 2, 0, 2),
+        "3 per row": (4, 2, 0, 2),
+    }
+
     def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
         # No separate keyboard-selection tint here — the duration/progress overlay below
@@ -2263,10 +2348,10 @@ class BookDelegate(QStyledItemDelegate):
         painter.fillRect(r, self._grid_bg)
         square = (self._view_mode == "Square")
         has_cover = cover is not None and not cover.isNull()
+        left, top, right, bottom = self._GRID_MARGINS.get(self._view_mode, (4, 2, 0, 2))
 
         if has_cover:
-            # Real cover: fills cell with 2px margin, no text (unchanged behavior).
-            cover_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
+            cover_rect = QRect(r.x() + left, r.y() + top, r.width() - left - right, r.height() - top - bottom)
             self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
             # Drop any stale field-rect entry (e.g. book gained a cover after a no-cover paint),
             # else phantom scroll zones would linger on this real-cover cell until restart.
@@ -2276,8 +2361,9 @@ class BookDelegate(QStyledItemDelegate):
             return
 
         # No cover: title + author at the top, logo centered below them. The 1px border frames
-        # the WHOLE cell area (a square in Square mode), not just the logo. Cell size unchanged.
-        cell_rect = QRect(r.x() + 3, r.y() + 2, r.width() - 4, r.height() - 4)
+        # the WHOLE cell area (a square in Square mode), not just the logo. Same margin as the
+        # has_cover branch above for a consistent outer edge.
+        cell_rect = QRect(r.x() + left, r.y() + top, r.width() - left - right, r.height() - top - bottom)
         painter.fillRect(cell_rect, self._grid_bg)
 
         field_rects = {}
@@ -2982,7 +3068,9 @@ class BookDelegate(QStyledItemDelegate):
         elif self._view_mode == "2 per row":
             return QRect(r.x() + 13, r.y() + 8, 113, 172)
         else:
-            return QRect(r.x() + 2, r.y() + 2, r.width() - 4, r.height() - 4)
+            # Mirrors _paint_grid_cell's per-mode margin (_GRID_MARGINS).
+            left, top, right, bottom = self._GRID_MARGINS.get(self._view_mode, (4, 2, 0, 2))
+            return QRect(r.x() + left, r.y() + top, r.width() - left - right, r.height() - top - bottom)
 
     def cover_cell_size(self) -> Optional[tuple]:
         """Logical (w, h) of the cover RECT drawn for the current view mode — the exact
@@ -2994,7 +3082,7 @@ class BookDelegate(QStyledItemDelegate):
         setGridSize == sizeHint == ITEM_DIMENSIONS[mode], so option.rect at paint time is
         exactly the mode's cell size — no view stretching. The fixed-size modes (1/2 per
         row) use constant cover rects independent of the cell. Keep this in lockstep with
-        _paint_grid_cell (r.width()-4, r.height()-4), _paint_one_per_row (100×151), and
+        _paint_grid_cell's _GRID_MARGINS, _paint_one_per_row (100×151), and
         _paint_two_per_row (113×172): if any of those cover-rect formulas change, this must
         change with it, or preloaded sized entries will key on a stale size and silently
         never be hit at paint time."""
@@ -3005,8 +3093,8 @@ class BookDelegate(QStyledItemDelegate):
             return (113, 172)
         if mode in ("3 per row", "Square"):
             dim = ITEM_DIMENSIONS[mode]
-            # _paint_grid_cell: cover_rect = (r.x()+3, r.y()+2, r.width()-4, r.height()-4)
-            return (dim["w"] - 4, dim["h"] - 4)
+            left, top, right, bottom = self._GRID_MARGINS.get(mode, (4, 2, 0, 2))
+            return (dim["w"] - left - right, dim["h"] - top - bottom)
         return None  # List draws no cover via _get_sized_cover
 
     @staticmethod
