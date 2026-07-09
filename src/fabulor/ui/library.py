@@ -2,7 +2,7 @@
 import random
 from collections import namedtuple
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem,
+    QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle,
 )
 from PySide6.QtCore import QThreadPool, QEvent, QAbstractListModel, QModelIndex, QSize, QTimer, QDateTime, Property, QPropertyAnimation, QVariantAnimation
 from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
@@ -141,6 +141,41 @@ ACTIVE_BOOK_STRIPE_WIDTH = 4 # for the List view
 # right-aligned) does NOT shift by the scrollbar's width when it appears/disappears as the
 # filtered list grows/shrinks. See BookDelegate._row_content_width / _row_stable_right.
 SCROLLBAR_EXTENT = 14
+
+
+class _ComboItemDelegate(QStyledItemDelegate):
+    """Paints hover/selected backgrounds for a QComboBox popup directly, bypassing native
+    Qt/style item-view painting. On at least one confirmed real desktop (KDE/Plasma, Wayland,
+    Fusion style), QComboBox QAbstractItemView::item:hover / ::item:selected QSS rules do not
+    reach this popup's paint at all — verified by swapping the rule to a glaring, unmissable
+    red and seeing zero visual change live, ruling out a color-choice/subtlety problem. Do not
+    revert to QSS-only styling for this popup without re-confirming on the affected desktop.
+    Reads panel._current_theme live at paint time (same theme dict BookDelegate uses), so it
+    needs no separate theme-change plumbing — LibraryPanel.update_progress_bar_theme already
+    keeps _current_theme fresh."""
+
+    def __init__(self, panel: "LibraryPanel", parent=None):
+        super().__init__(parent)
+        self._panel = panel
+
+    def paint(self, painter, option, index):
+        theme = self._panel._current_theme or {}
+        accent = theme.get('accent', '#ffffff')
+        input_bg = theme.get('library_input_bg', theme.get('bg_dropdown', '#1e1e1e'))
+        input_text = theme.get('library_input_text', theme.get('text', '#ffffff'))
+        is_hot = bool(option.state & QStyle.State_MouseOver) or bool(option.state & QStyle.State_Selected)
+        painter.save()
+        painter.fillRect(option.rect, QColor(input_bg))
+        if is_hot:
+            painter.fillRect(option.rect, QColor(accent))
+        painter.setPen(QColor(input_text) if not is_hot else QColor(input_bg))
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        painter.drawText(option.rect.adjusted(4, 0, -4, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width(), 22)
+
 
 class LibraryPanel(QFrame):
     book_selected    = Signal(str)
@@ -503,6 +538,7 @@ class LibraryPanel(QFrame):
         self._last_filter_mode = self.sort_combo.currentData()
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self._release_focus_on_popup_close(self.sort_combo)
+        self.sort_combo.view().setItemDelegate(_ComboItemDelegate(self, self.sort_combo.view()))
 
         self.sort_dir_btn = QPushButton("↑" if self._sort_ascending else "↓")
         self.sort_dir_btn.setFixedWidth(16)
@@ -520,6 +556,7 @@ class LibraryPanel(QFrame):
                 break
         self.style_combo.currentTextChanged.connect(self._on_view_mode_changed)
         self._release_focus_on_popup_close(self.style_combo)
+        self.style_combo.view().setItemDelegate(_ComboItemDelegate(self, self.style_combo.view()))
 
         self.search_field = QLineEdit()
         self.search_field.setMaxLength(26)

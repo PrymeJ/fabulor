@@ -3263,6 +3263,35 @@ def get_library_stylesheet(theme_name="default"):
         }}
         QComboBox QAbstractItemView::item {{
             min-height: 22px;
+            border: none;
+            padding: 2px 4px;
+        }}
+        QComboBox QAbstractItemView::item:hover {{
+            background-color: {t['accent']};
+            color: {input_bg};
+        }}
+        QComboBox QAbstractItemView::item:selected {{
+            background-color: {t['accent']};
+            color: {input_bg};
+        }}
+        QComboBox QAbstractItemView QScrollBar:vertical {{
+            width: 8px;
+            background: {input_bg};
+            border: none;
+            margin: 0px;
+        }}
+        QComboBox QAbstractItemView QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QComboBox QAbstractItemView QScrollBar::add-line:vertical,
+        QComboBox QAbstractItemView QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QComboBox QAbstractItemView QScrollBar::add-page:vertical,
+        QComboBox QAbstractItemView QScrollBar::sub-page:vertical {{
+            background: none;
         }}
         QListView {{
             border: none;
