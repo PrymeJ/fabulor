@@ -49,7 +49,19 @@ ITEM_DIMENSIONS = {
     # both dims together) passed on paper but was visually wrong live (10px gaps, a 7px
     # sliver); verify any change against the real running app. See NOTES.md.
     "Square":    {"w": 95,  "h": 95,  "cols": 3},
-    "2 per row": {"w": 140, "h": 226, "cols": 2},
+    # 145x234. h=234: viewport-top-of-first-cover to window-bottom was measured live at 469px
+    # (with the OLD top=8 layout — 477-8=469). 2 rows * 234 = 468, 1px short of 469 (235 would
+    # overshoot). The top/bottom margin was then swapped (top=0, bottom=8 — see the
+    # _GRID_MARGINS "2 per row" comment) so the true first row sits flush with the viewport
+    # top and the true last row gets a real trailing margin instead of none — same fix shape
+    # as Square's boundary-margin swap. w=145 (NOT the naive 146 = 2*118 cover + 20+8 margins
+    # summing to exactly 292, the nominal viewport width): confirmed live that an EXACT match
+    # to 292 collapsed the grid to a single column — QListView's default frameWidth is 1px,
+    # consumed from both sides (2px total), so the real usable width is 290, and 146 gave Qt
+    # zero slack to work with. 145 (2*145=290) is the tight-fit boundary. The 1px lost from the
+    # original 146 plan came out of the outer margins (20->19 each), NOT the middle gap, which
+    # stays exactly 16px as originally chosen — see _GRID_MARGINS' column-aware note.
+    "2 per row": {"w": 145, "h": 234, "cols": 2},
     "1 per row": {"w": 292, "h": 159, "cols": 1},
     "List":      {"w": 290, "h": 28,  "cols": 1}
 }
@@ -918,6 +930,12 @@ class LibraryPanel(QFrame):
             remainder = viewport_h % cell_h
             if remainder:
                 self._list_view.setViewportMargins(0, remainder, 0, 0)
+        elif mode == "2 per row":
+            # Flat 9px top push, eyeballed live against the running app (not derived from
+            # cell_h/viewport arithmetic — the user found the precise-calculation approach kept
+            # coming out wrong here and asked for a plain nudge instead, same spirit as the
+            # "trust the user's eyes over your math" rule elsewhere in this codebase).
+            self._list_view.setViewportMargins(0, 9, 0, 0)
 
     def _on_view_mode_changed(self, _):
         mode = self.style_combo.currentData()
@@ -2289,6 +2307,23 @@ class BookDelegate(QStyledItemDelegate):
             painter.setPen(self._color_total)
             painter.drawText(stable_right - HPAD - dur_w, no_prog_y, dur_str)
 
+    # Column-aware left margin for 2-per-row (index.row() % 2 gives the visual column, since
+    # BookModel is a flat list and IconMode wraps it — same reasoning already established for
+    # keyboard-nav column math). A UNIFORM per-cell margin can only ever produce a middle gap
+    # that's DOUBLE the outer margin (gap = right_of_col0 + left_of_col1, and symmetric L=R
+    # margins force that to 2L) — verified algebraically before implementing, see NOTES.md.
+    # The user wanted a middle gap SMALLER than the outer margins (16px vs the outer margin),
+    # which is structurally impossible without per-column margins — the first time this
+    # codebase has needed that (Square/3-per-row only ever needed a uniform margin). Column 0:
+    # left=19, right=8. Column 1: left=8, right=19. Both sum with cover_w=118 to cell_w=145
+    # (verified: 19+118+8=145, 8+118+19=145), and the full row (19+118+8 + 8+118+19) sums to
+    # 290 — the real usable width after QListView's 1px frameWidth on each side (292-2=290),
+    # not the naive 292 nominal viewport width (see ITEM_DIMENSIONS' "2 per row" comment for
+    # why an exact 292 match collapsed the grid to 1 column live). Middle gap stays exactly
+    # 16px (right_of_col0 + left_of_col1 = 8+8) as originally chosen; the 1px lost from the
+    # original 20/8 plan came out of the outer margins (20->19), not the middle gap.
+    _TWO_PER_ROW_LEFT_MARGIN = (19, 8)
+
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
         # No separate keyboard-selection tint here — the duration/progress overlay below
@@ -2296,10 +2331,13 @@ class BookDelegate(QStyledItemDelegate):
         is_kbd_selected = book.path == self._kbd_selected_path and self._kbd_alpha > 0
         painter.fillRect(r, self._grid_bg)
 
-        # Cover (113×172, left margin 13, top 8)
-        cover_x = r.x() + 13
-        cover_y = r.y() + 8
-        cover_w, cover_h = 113, 172
+        # Cover (118×180, column-aware left margin; top=0 so the true first row sits flush
+        # with the viewport top — the freed 8px falls to the bottom margin instead, same
+        # boundary-margin swap already applied to Square mode).
+        col = index.row() % 2
+        cover_x = r.x() + self._TWO_PER_ROW_LEFT_MARGIN[col]
+        cover_y = r.y()
+        cover_w, cover_h = 118, 180
         cover_rect = QRect(cover_x, cover_y, cover_w, cover_h)
         self._draw_cover(painter, cover_rect, cover, book, square=False, bg=self._grid_bg)
 
@@ -2888,7 +2926,7 @@ class BookDelegate(QStyledItemDelegate):
         elif self._view_mode in ("2 per row", "3 per row", "Square"):
             # Approximate overlay height: VPAD(6) + time_row(~16) + 8 + bar(6) + VPAD(6) = ~42px
             r = option.rect
-            cover_rect = self._cover_rect(r)
+            cover_rect = self._cover_rect(r, index)
             oh = 42
             overlay_rect = QRect(cover_rect.x(), cover_rect.bottom() - oh + 1, cover_rect.width(), oh)
             # Hit zone: right portion of the time row only (total/remaining label), HPAD=3 inset
@@ -3089,11 +3127,18 @@ class BookDelegate(QStyledItemDelegate):
                 return (seg, start_px, width_px)
         return None
 
-    def _cover_rect(self, r: QRect) -> QRect:
+    def _cover_rect(self, r: QRect, index=None) -> QRect:
         if self._view_mode == "1 per row":
             return QRect(r.x() + 4, r.y() + 4, 100, 151)
         elif self._view_mode == "2 per row":
-            return QRect(r.x() + 13, r.y() + 8, 113, 172)
+            # Column-aware left margin — mirrors _paint_two_per_row's _TWO_PER_ROW_LEFT_MARGIN.
+            # index is optional only for backward-compatible callers that can't supply it;
+            # column 0's margin is used as a fallback (matches pre-column-aware behavior for
+            # the common "left column" case) rather than raising, since this rect is only used
+            # for a hit-test approximation (_time_label_rect), not paint.
+            col = index.row() % 2 if index is not None else 0
+            left = self._TWO_PER_ROW_LEFT_MARGIN[col]
+            return QRect(r.x() + left, r.y(), 118, 180)
         else:
             # Mirrors _paint_grid_cell's per-mode margin (_GRID_MARGINS).
             left, top, right, bottom = self._GRID_MARGINS.get(self._view_mode, (4, 2, 0, 2))
@@ -3110,14 +3155,17 @@ class BookDelegate(QStyledItemDelegate):
         exactly the mode's cell size — no view stretching. The fixed-size modes (1/2 per
         row) use constant cover rects independent of the cell. Keep this in lockstep with
         _paint_grid_cell's _GRID_MARGINS, _paint_one_per_row (100×151), and
-        _paint_two_per_row (113×172): if any of those cover-rect formulas change, this must
-        change with it, or preloaded sized entries will key on a stale size and silently
+        _paint_two_per_row (118×180, column-aware X position via _TWO_PER_ROW_LEFT_MARGIN but
+        a fixed size regardless of column): if any of those cover-rect formulas change, this
+        must change with it, or preloaded sized entries will key on a stale size and silently
         never be hit at paint time."""
         mode = self._view_mode
         if mode == "1 per row":
             return (100, 151)
         if mode == "2 per row":
-            return (113, 172)
+            # Same (w, h) for both columns — only the cover's X POSITION is column-aware
+            # (_TWO_PER_ROW_LEFT_MARGIN), not its size, so no index/column is needed here.
+            return (118, 180)
         if mode in ("3 per row", "Square"):
             dim = ITEM_DIMENSIONS[mode]
             left, top, right, bottom = self._GRID_MARGINS.get(mode, (4, 2, 0, 2))
