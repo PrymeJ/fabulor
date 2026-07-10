@@ -6,6 +6,30 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-11] FIX (blocked on upcoming tags-gutter layout work): History tab's `_history_scroll`
+  has no row-height viewport quantization, unlike every other scrollable list in the app.**
+  `book_detail_panel.py`'s `_history_scroll` (`QScrollArea`) is added via `outer.addWidget(...,
+  stretch=1)` — its viewport height is whatever's left over in the fixed-size Book Detail Panel,
+  with no relationship to `_HistoryRow.ROW_H` (27px). `ChapterList`, `ExcludedBooksPopup`, and
+  `library.py`'s grid views all quantize their visible area to an exact multiple of their row
+  height so scrolling always lands on a clean row boundary; History tab never got this treatment,
+  and live testing with a long injected session list showed rows appearing to "shift" on scroll as
+  a result. A first attempt (fixed `_HISTORY_VISIBLE_ROWS` constant, `ChapterList`-style
+  `showEvent`/`_h_overhead` measurement) was tried and reverted live — didn't work, and pushed the
+  "Delete listening history" button out of its clamped bottom position. Not diagnosed further.
+  Explicitly deferred: the user has separate, upcoming layout work adding a tags gutter above the
+  History tab, which will itself change this tab's available vertical space — re-tuning viewport
+  quantization now would likely need redoing once that lands. Do this AFTER the tags-gutter work.
+  See NOTES.md "History tab delete-session animation" for the full writeup, including the reverted
+  attempt's exact shape (don't repeat it blind).
+- **[2026-07-11] TUNE (blocked on the above): History tab delete-session collapse animation still
+  "pauses near the end," per the user — bearable, not fixed.** Two other bugs in the same code path
+  were fixed this session (collapse stall from a `minimumHeight` floor, `813f7d9`; post-delete
+  color-flash from an unnecessary full row rebuild, `86b6cc9`), but a residual smoothness issue
+  remains even for a plain 2-row single delete (rules out an overlapping-animations theory — this is
+  per-frame cost during a single 150ms animation). Per the user, don't resume tuning this until the
+  viewport-quantization item above is settled — no point polishing an animation inside a viewport
+  that doesn't have stable row boundaries yet.
 - **[2026-07-10] DESIGN + IMPLEMENT: traveling focus marker must be keyboard-only — mouse must not
   activate it, and mouse should hide an already-active marker.** Lives on the not-yet-merged
   `feature/traveling-focus-marker` branch (see that branch's SESSION.md entry, "Traveling-border-

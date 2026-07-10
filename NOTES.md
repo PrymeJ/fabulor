@@ -1,3 +1,142 @@
+## History tab delete-session animation: stall, above-row-shift, and color-flash — three distinct bugs in one code path (2026-07-11)
+
+Bug report: confirming "Delete this session?" in the Book Detail Panel's History tab animated a
+partial slide that visibly stalled partway, leaving the last remaining row's content sitting at a
+vertical offset. Three screenshots showed the stall clearly. This turned out to be three separate,
+independently-diagnosed bugs layered in the same ~30-line method
+(`BookDetailPanel._on_history_delete_confirmed`), each requiring its own fix — worth recording all
+three, including the two dead ends, since the failure modes are non-obvious and easy to reintroduce.
+
+### Bug 1: the collapse stalls partway (FIXED, `813f7d9`)
+
+`_HistoryRow.__init__` (book_detail_panel.py) calls `self.setFixedHeight(self.ROW_H)` — `ROW_H = 27`.
+`QWidget.setFixedHeight()` sets BOTH `minimumHeight` and `maximumHeight` to that value; this is easy
+to forget since the method name only mentions "fixed," not that it clamps both bounds. The delete
+handler then runs:
+
+```python
+anim = QPropertyAnimation(row, b"maximumHeight", self)
+anim.setStartValue(row.height())
+anim.setEndValue(0)
+```
+
+Since `minimumHeight` is still pinned at 27, the layout can never actually shrink the row below that
+floor no matter what `maximumHeight` animates to — Qt resolves effective widget height from both
+constraints. The animation itself runs with no error; the visual collapse just stalls the instant it
+hits the row's own minimum. Fix: `row.setMinimumHeight(0)` before constructing the animation. One
+line, no other changes needed for this bug alone.
+
+**Excluded Books has the identical latent bug, but it's invisible in practice.** `_ExcludedRow`
+(`ui/excluded_books.py`) also does `setFixedHeight(self.ROW_H)`, and its restore-row removal
+(`ExcludedBooksPopup._on_row_restore`) runs the same shape of `maximumHeight` animation before
+`takeItem()`. It never visibly stalls because the row lives inside a `QListWidget` via a
+`QListWidgetItem` whose `setSizeHint()` was fixed once at creation and never updated to track the
+animating property — the list viewport simply doesn't reflow live during the animation at all; the
+row just sits at its fixed item size until `takeItem()` pops it out instantly. This matches what the
+user independently observed testing it side-by-side ("it doesn't animate like History... not saying
+this as necessarily a bug, it looks alright as it is"). **CLAUDE.md's prior claim that Excluded Books
+"intentionally copies this same slide pattern" from History is stale/inaccurate** — it copies the
+hover-reveal eye-icon slide mechanics, not a working removal-collapse animation. Left unfixed
+(user explicitly said not to touch it, since the current frozen/instant look reads fine as-is) — but
+worth knowing the shape of the bug is duplicated there if it's ever touched.
+
+### Bug 2: rows ABOVE the deleted one visibly shift (FIXED via AlignTop; a first attempted fix was reverted for making the animation worse)
+
+After fixing the stall, live testing surfaced a new symptom: not just rows below the deleted row
+sliding up (expected), but rows ABOVE it visibly shifting down and back — including, in one test, the
+topmost row in a long list when deleting near the bottom. This shouldn't be possible in a normal
+top-to-bottom `QVBoxLayout` reflow from a single shrinking child.
+
+Root cause: `_history_container`'s fixed height (set by `_resize_history_container`,
+`n * ROW_H`) was only updated ONCE, inside the animation's `finished` callback — for the entire
+150ms collapse, the container stayed at its OLD (larger, for the old row count) fixed height while
+the row inside it was shrinking toward 0. `_history_layout` (`QVBoxLayout`, spacing 0) had no
+`setAlignment` set, so with the container's fixed height now exceeding the sum of its children's
+actual heights, Qt's default behavior distributed that slack across ALL rows in the layout rather
+than leaving it as unused space below the last row — hence unrelated rows shifting.
+
+**First fix attempt (worked for this bug, made overall smoothness worse — reverted):** added a
+`valueChanged` handler on the SAME animation that called
+`self._history_container.setFixedHeight(base_container_h + value)` every tick, keeping the
+container's height in lockstep with the row's shrinking `maximumHeight`. This did fix the
+above-rows-shifting symptom. But it introduced a new, separate jaggedness: each animation tick now
+forced TWO independent layout passes instead of one — one from the row's own `maximumHeight` change,
+one from the container's `setFixedHeight` call triggered by the Python slot — and the user reported
+this as visible stutter even with as few as 2 total rows (ruling out an overlapping-animations
+theory; this was a single delete, single animation, still jagged).
+
+**What actually shipped:** reverted the lockstep `valueChanged` hack entirely. Added
+`_history_layout.setAlignment(Qt.AlignmentFlag.AlignTop)` instead — this alone stops the slack
+redistribution (any leftover space between the container's stale fixed height and its rows' actual
+summed height collects at the bottom, unused, rather than being distributed across rows), with zero
+added per-frame cost. Confirmed sufficient on its own; the container still only gets resized once, in
+`_finish()`, same as before Bug 2 was ever found.
+
+### Bug 3: post-delete "color-correction flash" (FIXED, `86b6cc9`) — user's fix was more precise than the first attempt
+
+Separately from the animation's smoothness, the user noticed a distinct rough moment right after the
+collapse finished: the alternating row-stripe colors visibly "correct" themselves. Root cause:
+`_finish()` called `self._refresh_stats()`, which unconditionally called
+`self._populate_history(sessions, duration)` — a full teardown (`deleteLater()` on every remaining
+row) and rebuild (fresh `_HistoryRow` + `set_colors`, 5 `setStyleSheet` calls each) of every
+surviving row, even though only one row was ever removed.
+
+**First fix attempt (wrong, per the user's own correction):** added a `rebuild_history: bool` flag to
+`_refresh_stats` and had the delete path skip the history rebuild entirely, reasoning "only one row
+gets popped, only the last row loses its color pairing." This is wrong for a scrollable,
+multi-page list: a row above the deleted one, anywhere in a long scrolled list (not just the visible
+bottom), shifts into an index it didn't have before, flipping its intended stripe parity — skipping
+recolor entirely produces back-to-back same-color rows wherever a delete happens away from the very
+end of the full list. The user caught this immediately after testing with 30+ injected sessions and
+scrolling to various positions before deleting.
+
+**What actually shipped:** kept the `rebuild_history` flag (skips the wasteful full
+`_populate_history`/`_apply_bar_colors` rebuild), but added a targeted, cheap fix instead of "skip
+entirely": a new `_HistoryRow.restripe(index, theme)` method that re-applies ONLY the 3 index-
+dependent background stylesheets (the row itself, its hover overlay, its confirm panel) — skipping
+the theme-only trash-icon-reload check and confirm-label restyle that `set_colors` also does but
+which never depend on row index. `_on_history_delete_confirmed` captures the deleted row's index
+before removing it from `self._history_rows`, then walks every surviving row from that index onward
+(NOT just the last row) and calls `restripe` with its new position. This is correct regardless of
+scroll position or where in the list the delete happens, and touches only the rows that actually
+need it.
+
+### Still open: no viewport row-quantization on the History tab's QScrollArea (deferred, see TODO.md)
+
+While testing Bug 2/3 with a long (30+ row) injected-session list, the user identified a fourth,
+more fundamental issue, independent of the animation entirely: `_history_scroll`
+(`QScrollArea`, `book_detail_panel.py`) is added via `outer.addWidget(self._history_scroll,
+stretch=1)` — its viewport height is whatever space is left over in the fixed-size Book Detail
+Panel, with NO relationship to `_HistoryRow.ROW_H`. Every other scrollable list/grid in this app —
+`ChapterList` (`ROW_HEIGHT`/`VISIBLE_ROWS`, `_h_overhead` measured live after `show()`, `setFixedHeight`
+quantized to whole rows), `ExcludedBooksPopup` (same pattern, `frameWidth()*2` overhead), and
+`library.py`'s grid views (remainder-into-top-margin variant, since its `QListView` viewport is
+layout-driven by an actually-resizable window) — deliberately quantizes its visible area to an exact
+multiple of its row height, specifically so scrolling always lands on a clean row boundary rather
+than cutting a row at an arbitrary sub-row pixel offset. History tab never got this treatment, and
+the user's live testing showed exactly the symptom you'd expect from its absence: scrolling made rows
+appear to "shift" rather than landing cleanly.
+
+An attempt to fix this the same session (mirroring `ChapterList`'s exact idiom — a
+`_HISTORY_VISIBLE_ROWS` constant, one-time `overhead = scroll.height() - scroll.viewport().height()`
+measured via `showEvent` + `QTimer.singleShot(0, ...)`, then `scroll.setFixedHeight(rows * ROW_H +
+overhead)`) was tried and **reverted live without being diagnosed** — per the user, "this didn't work
+at all," and it additionally pushed the "Delete listening history" button (which must stay clamped
+to the bottom of the tab) out of its correct position. Not investigated further before reverting,
+since the user separately noted upcoming, unrelated work on a tags gutter above the History tab will
+itself change this tab's available vertical space — re-tuning a fixed row count now would likely need
+redoing once that lands. Deferred; see TODO.md. **Do not re-attempt the animation-smoothness tuning
+(Bug 2's remaining "pauses near the end" report, still present but "bearable") until the viewport
+quantization is settled** — per the user, it doesn't make sense to keep polishing an animation
+running inside a viewport that itself doesn't have stable row boundaries yet.
+
+A throwaway script (`/tmp/.../scratchpad/inject_fake_sessions.py`, not part of the repo) was used to
+inject 30 synthetic `listening_sessions` rows for "The Tunnel" directly into the live `library.db`
+via `LibraryDB.write_session(...)`, to get a real long/scrollable list for testing without needing 30
+real listening sessions. These rows are still in the live DB as of this writing.
+
+---
+
 ## Grid-mode geometry, final pass: 3-per-row alignment, and the 2-per-row whole-system solve (2026-07-10, later sessions)
 
 Closes out the multi-session grid-view-mode geometry work (Square, List, 3-per-row, 2-per-row all
