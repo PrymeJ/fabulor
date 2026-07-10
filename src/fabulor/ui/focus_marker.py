@@ -32,7 +32,8 @@ same convention as Library's keyboard-selection highlight alpha (`library_item_k
 from enum import Enum, auto
 
 from PySide6.QtWidgets import QWidget, QTabBar
-from PySide6.QtCore import Qt, QRect, QPoint, QPointF, QTimer, QVariantAnimation, QElapsedTimer
+from PySide6.QtCore import (Qt, QRect, QPoint, QPointF, QTimer, QVariantAnimation, QElapsedTimer,
+                             Property)
 from PySide6.QtGui import QPainter, QColor
 
 
@@ -49,7 +50,7 @@ _DOT_RADIUS = 3.0        # px
 
 # Phase timings.
 _IDLE_BEFORE_SLOWDOWN_MS = 2600   # PATROL -> SLOWING: quiet time before the dot starts decelerating
-_SLOWDOWN_MS = 1000                # SLOWING duration: smooth decel to a full stop
+_SLOWDOWN_MS = 1200                # SLOWING duration: smooth decel to a full stop
 _WAIT_MS = 750                    # WAITING duration: stopped, fully visible, before the fade begins
 _FADE_MS = 750                    # FADING duration: alpha -> 0
 
@@ -185,6 +186,25 @@ class TravelingFocusMarker(QWidget):
         self._fade_anim.setEndValue(0)
         self._fade_anim.valueChanged.connect(self._on_fade_tick)
         self._fade_anim.finished.connect(self._on_fade_finished)
+
+        # Theme-driven dot color/ceiling-alpha, set via QSS qproperty- in get_base_stylesheet
+        # (mirrors ClickSlider's bg_color/fill_color) so a theme change — including a live hover
+        # preview, which calls mw.setStyleSheet(get_base_stylesheet(...)) on every tick — repaints
+        # the marker automatically, the same way #overall_progress's fill_color does. Defaults
+        # here are the theme dict's own fallbacks (theme.get('focus_marker', 'text'-derived) /
+        # theme.get('focus_marker_alpha', 1.0)) so an unstyled widget still looks right.
+        self._focus_marker_color = QColor("#ffffff")
+        self._focus_marker_alpha = 1.0
+
+    @Property(QColor)
+    def focus_marker_color(self): return self._focus_marker_color
+    @focus_marker_color.setter
+    def focus_marker_color(self, color): self._focus_marker_color = color; self.update()
+
+    @Property(float)
+    def focus_marker_alpha(self): return self._focus_marker_alpha
+    @focus_marker_alpha.setter
+    def focus_marker_alpha(self, value): self._focus_marker_alpha = value; self.update()
 
     # ── public API (called from app.py's focus wiring) ───────────────────────────────
 
@@ -332,16 +352,16 @@ class TravelingFocusMarker(QWidget):
     # ── paint ────────────────────────────────────────────────────────────────────────
 
     def _marker_color(self) -> QColor:
-        """Theme-agnostic: derive from the theme's own `text` (foreground) color, which by
-        construction already contrasts against that theme's backgrounds — unlike an accent color,
-        which can vanish into a segmented button's selected-state accent fill. No per-theme tuning."""
-        theme = self.main_window.theme_manager.get_current_theme()
-        hex_str = theme.get('text', '#ffffff').lstrip('#')
-        try:
-            r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
-        except (ValueError, IndexError):
-            r, g, b = 255, 255, 255
-        return QColor(r, g, b, self._alpha)
+        """Dot color at the current fade strength. `focus_marker_color`/`focus_marker_alpha` (Qt
+        Properties, set via QSS qproperty- in get_base_stylesheet — see __init__) are the
+        theme-driven ceiling color/opacity; theme.py's own fallback for focus_marker derives from
+        `text` (contrasts against that theme's backgrounds by construction, unlike accent, which
+        can vanish into a segmented button's selected-state fill). self._alpha (0-255, driven only
+        during FADING) scales the ceiling down as the fade runs — same ceiling-times-dynamic shape
+        as library.py's _kbd_fill_color()/_kbd_alpha."""
+        c = QColor(self._focus_marker_color)
+        c.setAlpha(int(self._focus_marker_alpha * 255) * self._alpha // 255)
+        return c
 
     def paintEvent(self, event):
         if self._perimeter is None or self._phase == _Phase.IDLE:

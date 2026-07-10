@@ -93,6 +93,8 @@ tassel_fringe:           (Optional) Color of the dangling tassel's fringe (the f
 stats_carousel_stripe:   (Optional) Background color for the Recently Finished scroll row's edge-scroll arrow sliver (stats_panel.py FinishedScrollRow). Fallback: accent_dark.
 
 GROUP 10 — MISC UI
+focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py). Fallback: text.
+focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -836,7 +838,46 @@ THEMES = {
         "bookmark_icon":                 "#5391D5",
         "tassel_head":                   "#2618A8",
         "placeholder_cover":             "#91B392",
-    },    
+    },
+    "Earthsea": {
+        "bg_deep":                       "#1A2A44",
+        "bg_main":                       "#2B4A6A",
+        "bg_sidebar":                    "#1A2A44",
+        "bg_dropdown":                   "#2B4A6A",
+        "panel_opacity_hover":           0.9,
+        "text":                          "#B9D7E2",
+        "accent":                        "#4A90A7",
+        "accent_light":                  "#6AB8C7",
+        "accent_dark":                   "#2F6A80",
+        "slider_progress":               "#DBEBF1",
+        "slider_overall_bg":             "#3A5A7A",
+        "slider_overall_fill":           "#4A90A7",
+        "slider_chapter_bg":             "#283F57",
+        "slider_chapter_fill":           "#3A7A90",
+        "slider_vol_bg":                 "#1A2A44",
+        "slider_vol_fill":               "#4A90A7",
+        "dropdown_curr_chap":            "#357C94",
+        "sidebar_text_hover":            "#6AB8C7",
+        "sidebar_opacity":               0.7,
+        "library_bg":                    "#203357",
+        "library_grid_bg":               "#1C2F4A",
+        "library_row_one":               "#203357",
+        "library_row_two":               "#1C2E52",
+        "library_item_hover_color":      "#10BFCF",
+        "library_item_hover_alpha":      0.11,
+        "library_title":                 "#7ACAC9",
+        "library_author":                "#22BDDD",
+        "library_narrator":              "#9CBAD4",
+        "library_elapsed":               "#9CBAD4",
+        "library_total":                 "#9CBAD4",
+        "library_percentage":            "#9CBAD4",
+        "library_slider_bg":             "#4A5F6F",
+        "library_slider_fill":           "#12B5DD",
+        "settings_theme_names_dimmed":   "#D2ECF1",
+        "streak_grid_dot":               "#2B4876",
+        "bookmark_body":                 "#94D9D9",
+        "placeholder_cover":             "#94D9D9",
+    },
     "Emiko": {
         "bg_deep":                       "#0A1F0A",
         "bg_main":                       "#123312",
@@ -3163,6 +3204,10 @@ def get_base_stylesheet(theme_name="default"):
             qproperty-fill_color: "{t['slider_overall_fill']}";
             qproperty-notch_color: "{t.get('notch_color', '#FFFFFF')}";
             qproperty-notch_opacity: {t.get('notch_opacity', 100)};
+        }}
+        QWidget#traveling_focus_marker {{
+            qproperty-focus_marker_color: "{t.get('focus_marker', t['text'])}";
+            qproperty-focus_marker_alpha: {t.get('focus_marker_alpha', 1.0)};
         }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('slider_progress', t.get('text_on_light_bg', t['text'])))}, 0.85);
