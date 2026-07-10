@@ -1,3 +1,50 @@
+## Session Summary — 2026-07-10 Session 1 — 2-per-row cover enlargement + column-aware margins
+
+**Branch:** `main`. **Commit:** `d74ebee`.
+
+Continuation of the Square-mode geometry work onto 2-per-row: grow the cover to fill available
+vertical space, and redistribute the freed horizontal space with wider outer margins than the
+middle gap between the two columns.
+
+Cover grew 113×172 → 118×180, cell 140×226 → 145×234. New: **per-column margins**
+(`_TWO_PER_ROW_LEFT_MARGIN = (19, 8)`, column 0 gets left=19/right=8, column 1 gets left=8/
+right=19) — the first time this codebase needed a margin that varies by column rather than just
+by mode, because a uniform per-cell margin can only ever produce a middle gap that's exactly
+double the outer margin (algebraically: `gap = right_of_col0 + left_of_col1`, forced to `2L` when
+symmetric). The user wanted the middle gap (16px) *smaller* than the outer margins, which is
+structurally impossible without this. `_cover_rect()` and `cover_cell_size()` were updated in
+lockstep (both now take/use `index.row() % 2` for the column), matching the same "keep every
+cover-rect consumer in sync" discipline Square mode already established.
+
+**Two live-correction rounds, same shape as Square mode's saga:**
+
+1. **Column collapse.** First attempt used `cell_w=146` (2×146 = 292, exactly the nominal
+   viewport width, zero slack). Confirmed live: this collapsed the grid to a single column.
+   Root cause: `QListView`'s default `frameWidth()` is 1px, consumed from both sides (2px total),
+   so the real usable width is 290, not 292 — `146` gave Qt no slack to work with. Fixed to
+   `cell_w=145` (2×145=290), shrinking the outer margins 20→19 to absorb the lost pixel while
+   keeping the 16px middle gap exactly as planned.
+
+2. **Vertical sliver + viewport push.** Same symptom Square mode hit originally: a sliver of a
+   third row at the bottom because the cell's top/bottom margin was asymmetric (top=8, bottom=0).
+   Swapped to top=0/bottom=8 (same "boundary-margin swap" fix pattern as Square). Then, once cell
+   size and margins were live-verified, the user asked to shrink the viewport 9px further (menu-
+   to-grid gap) — **not derived from cell_h/viewport arithmetic this time**, just a flat eyeballed
+   push, added as `setViewportMargins(0, 9, 0, 0)` for `"2 per row"` in `_apply_view_mode`. This
+   was confirmed to fix scroll-boundary snapping. The user was explicit that they were not asking
+   for precision here and that further precise calculation attempts had already proven wrong live
+   — same "trust the live observation, not the math" principle CLAUDE.md already codifies for
+   pixel-level Square-mode work, now reinforced a second time in a different view mode.
+
+**Known follow-up, explicitly deferred by the user ("Later"):** even with all of the above, 2-per-
+row still doesn't fully fill the available whitespace — the user's own diagnosis is that cell size
+can go larger still and the gaps can be tightened further. No further numeric target was given;
+next session should NOT assume the current 118×180/145×234 values are final, and should ask for a
+fresh live measurement before recalculating, rather than reusing the 469px figure from this
+session (which was itself measured against the pre-9px-push layout and is now stale).
+
+---
+
 ## Session Summary — 2026-07-09 Session 3 — Library Tab-clamp fix + Square-mode scroll/geometry saga
 
 **Branch:** `main`. **Commits:** `2fa5a98` (Tab-clamp fix), `b4dd1f5` (wheel-scroll row alignment),

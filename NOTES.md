@@ -1,3 +1,65 @@
+## 2-per-row cover enlargement: column-aware margins, a frameWidth collapse, and an eyeballed viewport push (2026-07-10 Session 1)
+
+Follow-on to the Square-mode geometry saga (below), applied to 2-per-row: grow the cover to use
+more of the available vertical space, then redistribute the freed horizontal space so the outer
+margins are wider than the gap between the two columns. Commit `d74ebee`.
+
+### Why a uniform per-cell margin couldn't work here
+
+For any two adjacent cells with the same left/right margin `L`/`R` (as every other grid mode in
+this codebase uses), the visual gap between them is `right_of_left_cell + left_of_right_cell =
+R + L`. If margins are symmetric (`L == R`, the normal case), the middle gap is always `2L` —
+exactly double the outer margin, structurally, for any `L`. The user wanted a middle gap (16px)
+*smaller* than the outer margins, which a symmetric uniform margin can never produce. Fix:
+`BookDelegate._TWO_PER_ROW_LEFT_MARGIN = (19, 8)` — column 0 gets left=19/right=8, column 1 gets
+left=8/right=19 (both sum to cell_w=145; the shared middle gap is `8+8=16`, the two outer edges
+are each `19`). `index.row() % 2` derives the visual column from the flat `BookModel` list index
+(IconMode wraps a `QAbstractListModel` visually — same reasoning already used for keyboard-nav
+column math elsewhere in `library.py`). `_cover_rect()` and `cover_cell_size()` were updated to
+accept/use the column too, so every cover-rect consumer (`_time_label_rect`, the overlay hit-test,
+the idle preloader's sized-cache key) stays in lockstep — same discipline as `_GRID_MARGINS`.
+
+### The exact-fit trap: `cell_w=146` collapsed the grid to 1 column
+
+First attempt sized the cell so `2 * cell_w` landed EXACTLY on the nominal 292px viewport width
+(146×2=292, zero slack). Confirmed live: this collapsed IconMode to a single column instead of
+two. Cause: `QListView`'s default `frameWidth()` is 1px, taken off both sides of the viewport
+(2px total), so the real usable width is 290, not 292 — a cell size with zero slack against the
+wrong (nominal, not frame-adjusted) width leaves Qt no room and it silently drops a column. Fixed
+by using `cell_w=145` (2×145=290, the frame-adjusted width) and absorbing the 1px difference into
+the outer margins (20→19 each) rather than the middle gap, which stays exactly 16px as planned.
+**Lesson for any future fixed-width IconMode sizing in this app: budget against
+`viewport().width()` at runtime, or at minimum subtract `2 * view.frameWidth()` from the nominal
+window width before dividing into columns — don't assume the full nominal width is usable.**
+
+### Vertical sliver + the eyeballed 9px push
+
+Same symptom Square mode hit originally: a sliver of a third row visible at the bottom, caused by
+an asymmetric cell margin (top=8, bottom=0) leaving the true last row's bottom margin at 0 instead
+of a real gap. Fixed with the same "boundary-margin swap" pattern as Square (top=0, bottom=8) —
+the mid-list row-to-row gap is unaffected (`bottom + top` is 8 either way), only the unpaired
+first/last row's margin changes.
+
+After that, the user asked to shrink the viewport a further 9px so the menu-to-grid gap grows to
+match — **explicitly not as a precision request**. This session's own precise `cell_h` math (based
+on a live-measured "469px available" figure) had already been superseded once the margins changed,
+and the user's exact words were that "your precise calculations are wrong too anyway" and that
+they were eyeballing it. Implemented as a flat, undecorated `setViewportMargins(0, 9, 0, 0)` for
+`"2 per row"` in `_apply_view_mode`, with a code comment explicitly noting it is NOT derived from
+`cell_h`/viewport arithmetic. Confirmed live to fix clean scroll-boundary snapping (mirrors why
+Square mode's `remainder`-based margin exists — a viewport height that isn't a multiple of
+`cell_h` makes `QScrollBar.maximum()` land off a row boundary — but here the fix is a flat eyeballed
+constant rather than a computed remainder, because the user explicitly asked for a nudge, not a
+recalculation).
+
+**Deferred by the user ("Later"):** even after all of the above, 2-per-row still doesn't fully use
+the available whitespace — cell size can likely grow further and the gaps can tighten more. No
+new target number was given. Do NOT reuse this session's 469px vertical-space figure as a baseline
+for that follow-up — it was measured before the 9px viewport push existed and is now stale; ask
+for a fresh live measurement first.
+
+---
+
 ## Library Tab-clamp root cause, and the Square-mode scroll/geometry saga (2026-07-09 Session 3)
 
 Two unrelated pieces of work, documented together because they landed in the same session.

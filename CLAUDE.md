@@ -601,6 +601,30 @@ Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no
 ### DO NOT lay out a library row from the live viewport width — reserve the scrollbar's space
 Any per-row geometry with **right-aligned** content (author, time column, progress %) must NOT derive its width or right edge from `option.rect.width()` / `r.right()` (the live viewport), because that value drops by `SCROLLBAR_EXTENT` (14px) when the vertical scrollbar appears and regains it when the scrollbar disappears — so filtering, which shrinks the list and toggles the scrollbar, makes right-aligned content jump by 14px. Lay out against a **stable** width/right edge that reserves the scrollbar gutter unconditionally: `BookDelegate._row_content_width(...)` (= `view.width() - 2*frameWidth - SCROLLBAR_EXTENT`) and `_row_stable_right(r)` (the stable right-edge x, use in place of `r.right()`) — 2026-07-06. The view width is fixed (the scrollbar takes space *inside* it, shrinking the viewport but not the view), so this is constant regardless of scrollbar state. Left-aligned content (title, the progress bar itself) is unaffected. **Fixed in both List (`_list_author_layout`, commit `9c20f40`) and 1-per-row (`_paint_one_per_row`, commit `9f8b06f`).** When adding ANY new right-aligned row content in ANY mode, route it through `_row_stable_right`/`_row_content_width`, never `r.right()`/`option.rect.width()` directly.
 
+### DO NOT size a fixed-width IconMode grid cell against the nominal viewport width with zero slack
+`QListView`'s default `frameWidth()` is 1px, taken off BOTH sides of the viewport (2px total) — the
+real usable width for column math is `nominal_width - 2*frameWidth`, not the nominal width itself.
+Confirmed live (2026-07-10): sizing 2-per-row's cell at `w=146` so `2*146` landed exactly on the
+292px nominal viewport (zero slack) silently collapsed the grid to a single column — Qt had no
+room to fit two cells once the real frame-adjusted width (290) was accounted for. Fixed by using
+`cell_w=145` (`2*145=290`). Any future fixed-width grid-cell sizing in `library.py` must budget
+against the frame-adjusted width, or verify live that the exact intended column count actually
+renders — this failure mode is silent (no error, no log, just fewer columns) and is NOT caught by
+arithmetic that only checks against the nominal window width.
+
+### DO NOT use a uniform per-cell margin when a grid mode needs a middle gap smaller than its outer margins
+For two adjacent cells sharing a uniform left/right margin `L`/`R` (every grid mode before
+2-per-row), the visual gap between them is always `R + L` — with the normal symmetric case
+(`L == R`), that's `2L`, exactly double the outer margin, for any `L`. There is no way to make the
+middle gap SMALLER than the outer margins with a single per-mode margin; it requires per-COLUMN
+margins instead. `BookDelegate._TWO_PER_ROW_LEFT_MARGIN` (a 2-tuple, one entry per column, derived
+from `index.row() % 2`) is the pattern: column 0 gets a wide left / narrow right, column 1 gets the
+mirror image, so the shared middle gap (`right_of_col0 + left_of_col1`) can be tuned independently
+of the outer edges. `_cover_rect()` and `cover_cell_size()` must stay in lockstep with this (both
+already take/use the column) — any new per-cell geometry in a multi-column mode that needs
+independent outer/middle spacing should follow this same column-aware shape rather than trying to
+force it out of a single margin value.
+
 ### DO NOT remove `_sized_cover_cache`/`_get_sized_cover` as "just an optimization"
 This cache is load-bearing, not a performance nicety layered on top of an already-correct render.
 Confirmed by direct measurement (2026-06-24): the scanner-side fixes alone (cover discovery,
@@ -648,7 +672,8 @@ safe; all are load-bearing:
 - **The preloader's key MUST equal `_get_sized_cover`'s paint-time key**, `(book_id, round(target_w*dpr),
   round(target_h*dpr))`. `BookDelegate.cover_cell_size()` is the single source of the per-view-mode
   `target_w/target_h` and MUST stay in lockstep with the cover-rect math in `_paint_grid_cell`
-  (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (113×172).
+  (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (118×180,
+  column-aware X via `_TWO_PER_ROW_LEFT_MARGIN`, fixed size regardless of column).
   A mismatch is silent: the preloaded entry keys on the wrong size, is never hit at paint time, and
   the LANCZOS runs on the main thread during the slide anyway — the exact stall this warming exists
   to remove. Verified matching for all five modes when added; re-verify if any cover-rect formula
@@ -772,7 +797,25 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-09 Session 1 — Library panel keyboard navigation, plus three follow-up
+*Last updated: 2026-07-10 Session 1 — 2-per-row grid cover enlargement (113×172 → 118×180, cell
+140×226 → 145×234), continuing the Square-mode geometry work onto a second view mode. Introduced
+**column-aware margins** (`BookDelegate._TWO_PER_ROW_LEFT_MARGIN`), the first per-column (not just
+per-mode) margin in this codebase — needed because a uniform per-cell margin can only ever produce
+a middle gap that's double the outer margin, and the user wanted the middle gap SMALLER. Two new
+DO-NOT rules added above: (1) don't size a fixed-width IconMode cell with zero slack against the
+nominal viewport width — `QListView.frameWidth()` (1px, both sides) silently collapsed the grid to
+1 column when a cell size summed exactly to 292px; fixed via `cell_w=145` against the frame-
+adjusted 290px. (2) don't use a uniform per-cell margin when a mode needs a middle gap smaller
+than its outer margins — use the column-aware pattern instead. Also reused the Square-mode
+"boundary-margin swap" (top=0/bottom=8) to kill a vertical sliver, then applied a **flat, eyeballed
+9px** top viewport margin per explicit user request (not derived from cell/viewport arithmetic —
+the user was explicit that further precision here was not wanted and that prior precise
+calculations in this same task had already proven wrong live). `d74ebee`. Deferred by the user
+("Later"): 2-per-row still doesn't fully fill available whitespace — cell size and gaps can likely
+tighten further; do not reuse this session's 469px vertical-space measurement as a baseline, it
+predates the 9px push. Full narrative in NOTES.md/SESSION.md.*
+
+*Previously: 2026-07-09 Session 1 — Library panel keyboard navigation, plus three follow-up
 fixes surfaced by live-testing it. Arrow-key row/column selection, Enter/Space to play,
 Alt+Enter to open detail, Tab toggle exclusive to search-field↔list, and a `_prefix` (title-
 starts-with) search syntax — see the "Keyboard navigation" bullets under Library Panel above
