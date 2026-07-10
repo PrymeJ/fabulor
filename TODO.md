@@ -6,6 +6,16 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-10] DECIDE: PageUp/PageDown jump distance in the library list.** `52b7abb` fixed
+  PageUp/PageDown/Home/End so the viewport actually follows the selection (they were never
+  broken navigation-wise, just invisible — `setAutoScroll(False)` ate the native scroll-follow).
+  Left as Qt's native page-jump distance, unexamined. Native Qt typically pages by roughly one
+  viewport's worth of rows, which may or may not be the right feel per view mode (five very
+  different row heights: List's ~28px rows vs. Square's ~95px cells vs. 1-per-row's ~159px).
+  Decide whether to override the jump distance (and if so, to what — e.g. a fixed row count, or
+  something tied to `ITEM_DIMENSIONS`/`cols` like the existing wheel-scroll fix's
+  `rows_per_screen * cell_h` computation) or leave native behavior alone. Not yet tested live
+  across all five modes to see whether native feels right or wrong anywhere.
 - **[2026-07-09] FIX: Library Tab toggle isn't actually clamping — falls through to Qt's default
   focus chain.** The app-wide Tab/Escape policy (`624fc22`) was supposed to leave Library's
   existing list↔search Tab toggle as the ONLY thing Tab reaches while Library is open (the

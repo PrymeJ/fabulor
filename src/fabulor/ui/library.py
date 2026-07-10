@@ -339,9 +339,17 @@ class LibraryPanel(QFrame):
     # (confirmed live 2026-07-10: the forwarder only knew about arrow keys, so sort/view-mode
     # letters and digits — and Enter/Space/Alt+Enter — needed an explicit arrow-key press first
     # to "wake up" the list before they'd do anything).
+    # PageUp/PageDown/Home/End (2026-07-10 fix, `52b7abb`) and Key_Period (middle-row jump)
+    # were both added to _list_key after this set was first written and are included from the
+    # start here — the earlier omission of PageUp/PageDown/Home/End from THIS set (they were
+    # only added to _list_key itself) reproduced the exact "works once focused, silently does
+    # nothing from 'nothing focused'" gap this set exists to prevent; caught and fixed in the
+    # same pass that added Key_Period, before it could ship as a second instance of the bug.
     _LIST_KEY_HANDLED_KEYS = frozenset(
         {Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
-         Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}
+         Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space,
+         Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End,
+         Qt.Key.Key_Period}
     ) | frozenset(_SORT_KEY_SHORTCUTS) | frozenset(_VIEW_MODE_SHORTCUTS)
 
     def __init__(self, db, config, player_instance=None, parent=None):
@@ -553,6 +561,17 @@ class LibraryPanel(QFrame):
                 # View-mode shortcut. Same autorepeat guard + always-consume rationale.
                 if not e.isAutoRepeat():
                     self._apply_view_mode_shortcut(key)
+            elif key == Qt.Key.Key_Period:
+                # Jump to the exact middle row. Confirmed unbound everywhere (list keys, sort/
+                # view-mode shortcut dicts, ShortcutDispatcher, and the search field's own
+                # handler, which only special-cases Escape/Up/Down and passes '.' through as
+                # ordinary text) before choosing it. Same autorepeat guard as the other
+                # single-press shortcuts above; reuses _on_keyboard_nav_moved so the jump
+                # scrolls into view and shows the keyboard highlight exactly like every other
+                # nav key, in every view mode.
+                if not e.isAutoRepeat():
+                    self._move_selection_to_middle()
+                    self._on_keyboard_nav_moved()
             else:
                 QListView.keyPressEvent(self._list_view, e)
         self._list_view.keyPressEvent = _list_key
@@ -616,6 +635,15 @@ class LibraryPanel(QFrame):
         new_row = max(0, min(row_count - 1, current.row() + delta))
         if new_row != current.row():
             self._list_view.setCurrentIndex(self._book_model.index(new_row, 0))
+
+    def _move_selection_to_middle(self) -> None:
+        """Jump the selection straight to the exact middle row of the (filtered) list — bound
+        to `.` in _list_key. Integer-division midpoint (row_count // 2), same rounding a plain
+        middle-index jump would use for either parity; no special-casing for odd/even counts."""
+        row_count = self._book_model.rowCount()
+        if row_count == 0:
+            return
+        self._list_view.setCurrentIndex(self._book_model.index(row_count // 2, 0))
 
     def _on_keyboard_nav_moved(self) -> None:
         """Common tail for every keyboard move (Up/Down/Left/Right): suppress the mouse hover
