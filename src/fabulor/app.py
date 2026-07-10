@@ -2894,14 +2894,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
-    def _handle_library_nothing_focused_arrow(self, event) -> bool:
+    def _handle_library_nothing_focused_key(self, event) -> bool:
         """Library, "nothing focused" state (see _handle_tab_escape: Tab clears focus to this
         state rather than landing on the list, so the list is never scrolled to a mouse-hovered
-        book just because the user pressed Tab). An arrow key here hands focus to the list —
-        matching the existing "arrow out of the search field also lands on the list" precedent
-        — then explicitly resends this SAME key event to the newly-focused _list_view, so its
-        own event()/keyPressEvent() overrides (_list_key) handle the actual navigation exactly
-        as they already do for every other arrow press.
+        book just because the user pressed Tab). Any key _list_key itself would act on (arrows,
+        Enter/Space/Alt+Enter, and the sort-field/view-mode shortcut letters and digits — see
+        LibraryPanel._LIST_KEY_HANDLED_KEYS, the single source of truth for this set) hands focus
+        to the list — matching the existing "arrow out of the search field also lands on the
+        list" precedent — then explicitly resends this SAME key event to the newly-focused
+        _list_view, so its own event()/keyPressEvent() overrides (_list_key) handle it exactly
+        as they already do once the list has real focus.
+
+        Originally arrow-keys-only (2026-07-10): confirmed live that this made the sort/view-mode
+        shortcuts (added the same day) and Enter/Space/Alt+Enter silently do nothing from
+        "nothing focused" — they only worked after an arrow press had already moved focus to the
+        list once. Broadened to _LIST_KEY_HANDLED_KEYS so every key _list_key recognizes is
+        reachable directly from this state, not just navigation.
 
         Does NOT rely on QApplication.focusWidget() to decide whether to act — confirmed via
         isolated testing (2026-07-10) that focusWidget() does not update synchronously within
@@ -2930,8 +2938,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
                 return True
-            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right):
-                if self._handle_library_nothing_focused_arrow(event):
+            if (hasattr(self, 'library_panel')
+                    and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):
+                if self._handle_library_nothing_focused_key(event):
                     return True
 
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:

@@ -331,6 +331,18 @@ class LibraryPanel(QFrame):
         Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2,
         Qt.Key.Key_4: 3, Qt.Key.Key_5: 4,
     }
+    # Every key _list_key actually handles (nav + activation + the two shortcut dicts above).
+    # Single source of truth for MainWindow._handle_library_nothing_focused_key (app.py),
+    # which forwards a key press to the list from Library's "nothing focused" Tab state (see
+    # _handle_tab_escape) — it must recognize the SAME key set _list_key does, or a key that
+    # works fine once the list already has focus silently does nothing from "nothing focused"
+    # (confirmed live 2026-07-10: the forwarder only knew about arrow keys, so sort/view-mode
+    # letters and digits — and Enter/Space/Alt+Enter — needed an explicit arrow-key press first
+    # to "wake up" the list before they'd do anything).
+    _LIST_KEY_HANDLED_KEYS = frozenset(
+        {Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+         Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}
+    ) | frozenset(_SORT_KEY_SHORTCUTS) | frozenset(_VIEW_MODE_SHORTCUTS)
 
     def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
