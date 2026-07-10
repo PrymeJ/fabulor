@@ -593,6 +593,34 @@ class BookDetailPanel(QWidget):
         self._tag_input.setText(text)
         self._on_add_tag()
 
+    def _on_tags_tab(self) -> bool:
+        """True iff the Tags tab is the currently-shown tab. Keyed on tab text (not a hardcoded
+        index) so it survives any future tab reorder."""
+        return self.tabs.tabText(self.tabs.currentIndex()) == "Tags"
+
+    def _clear_tag_input(self) -> None:
+        """Clear the tag-add field and drop its focus — the shared 'leave the field' action for
+        both Escape and Tab-away (they're the same gesture: abandon the half-typed tag). No
+        prior value to revert to, so 'revert' is just clear."""
+        self._tag_input.clear()
+        self._tag_input.clearFocus()
+
+    def _cycle_metadata_field(self, backward: bool) -> None:
+        """Move focus to the next/previous inline-metadata header field (title → author →
+        narrator → year, wrapping), while in edit mode. Called only from the Tab handler, which
+        consumes the event — so this never leaks to the library. All four are visible+editable
+        during edit mode (_enter_edit_mode), so no visibility filtering is needed."""
+        fields = [self._title_label, self._author_label,
+                  self._narrator_label, self._year_label]
+        try:
+            i = fields.index(QApplication.focusWidget())
+        except ValueError:
+            i = 0  # focus somewhere else in the panel — enter at the first field
+            fields[0].setFocus(Qt.FocusReason.TabFocusReason)
+            return
+        nxt = fields[(i + (-1 if backward else 1)) % len(fields)]
+        nxt.setFocus(Qt.FocusReason.TabFocusReason)
+
     def _on_add_tag(self):
         tag = self._tag_input.text().strip().lower()
         if not tag or not self._book_path:
@@ -964,6 +992,35 @@ class BookDetailPanel(QWidget):
                 self._on_finished_hover(hover=False)
             return False
 
+        if (event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)):
+            # ALWAYS consume Tab while this panel is open, on EVERY tab, in EVERY case below.
+            # This panel overlays the library, but active_full_panel() reports "library"
+            # (library is checked first in the priority chain, and both are visible) — so if Tab
+            # reached MainWindow's _handle_tab_escape it would route to the library's search
+            # field UNDERNEATH the detail panel (and from there arrows could change the library
+            # view — a genuinely bad leak, worse than any missing in-panel Tab feature). Handling
+            # every Tab locally and returning True seals that leak on all tabs: this filter runs
+            # before MainWindow's, per QApplication reverse-install order.
+            backward = (event.key() == Qt.Key.Key_Backtab
+                        or bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            if self._editing:
+                # Editing metadata: cycle the four header fields (title→author→narrator→year),
+                # wrapping. Safe to do here precisely because it's consumed — it can never leak.
+                self._cycle_metadata_field(backward)
+            elif self._on_tags_tab():
+                # Tags tab: two-state toggle between the tag-add field and "nothing focused"
+                # (mirrors the library's search↔nothing cycle). Into the field it focuses; out of
+                # it, it clears + drops focus — the SAME gesture as Escape (an add field has no
+                # prior value to revert to). The input is hidden at the 5-tag limit, so focus it
+                # only when actually shown.
+                if self._tag_input.hasFocus():
+                    self._clear_tag_input()
+                elif self._tag_input_widget.isVisible():
+                    self._tag_input.setFocus(Qt.FocusReason.TabFocusReason)
+            # else: consumed no-op — nothing to cycle, but still must not leak to the library.
+            return True
+
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             # Priority order — one Escape does exactly one thing, panel-close last:
             #   1. Tag input focused → clear it + drop focus, panel stays open. The tag field's
@@ -976,8 +1033,7 @@ class BookDetailPanel(QWidget):
             # 1 and 2 are mutually exclusive (you can't be mid-metadata-edit while the separate
             # tag field holds focus), so one Escape can never both cancel an edit and close.
             if self._tag_input.hasFocus():
-                self._tag_input.clear()
-                self._tag_input.clearFocus()
+                self._clear_tag_input()
             elif self._editing:
                 self._exit_edit_mode(save=False)
             else:
