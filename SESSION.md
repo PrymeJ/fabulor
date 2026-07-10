@@ -5091,6 +5091,62 @@ exactly the traps a future pass on this same bug would fall into again).
 
 ---
 
+## Session Summary — 2026-07-10 Session 6 — Traveling-border-marker focus indicator (Settings > Look tab only, parked)
+
+**Branch:** `feature/traveling-focus-marker` (NOT merged to `main` — this branch does not exist
+there yet). **Commits:** `a08780b` (core implementation), `01826ea` + `dd8a2d7` + `4b88e18` (live
+tuning: patrol speed 55→11→5 px/sec, border-centering fix, per-theme override), `7d61d57`
+(theme-driven color/alpha via QSS `qproperty-`).
+
+New keyboard-focus visibility design: a single dot travels continuously along the border of
+whichever control has keyboard focus, at a fixed px/sec speed (size-independent — a small
+widget's border laps quickly, a wide one takes proportionally longer). Supersedes an earlier,
+never-committed ring/caret/pulse comparison build (stashed on `main`, message
+"comparison-candidates: ring/caret/pulse focus indicators (superseded by traveling-marker
+design)" — recoverable via `git stash list` if ever wanted as reference).
+
+**Design, in brief** (full detail in `ui/focus_marker.py`'s module docstring): one overlay widget
+(`TravelingFocusMarker`, child of `MainWindow`) computes a `_Perimeter` (an ordered polyline with
+arc-length lookup) for whatever widget holds focus — full rounded rect for plain buttons, top+two
+sides only (no bottom) for a `QTabBar`'s active tab, since the bottom edge is shared with the
+tab's content panel below. A four-phase state machine drives it: PATROL (moving, indefinite) →
+SLOWING (decelerate to a full stop — never fades while still moving) → WAITING (stationary, full
+alpha) → FADING. Any Tab/Backtab during SLOWING/WAITING/FADING resumes PATROL immediately at the
+*carried-over relative position* (same % of perimeter traveled on the new widget, not reset to a
+fixed start). Dot color/alpha ceiling are theme-driven (`focus_marker`/`focus_marker_alpha`, new
+optional keys, GROUP 10 in `themes.py`'s docstring, alpha on the 0.0–1.0 scale like the rest of
+the theme dict) via Qt `Property`s set through `qproperty-` in `get_base_stylesheet` — the same
+mechanism `ClickSlider.bg_color`/`fill_color` already uses — so a live theme hover preview
+repaints the dot automatically with no extra wiring, since `get_base_stylesheet` runs
+unconditionally on every hover tick.
+
+**Scope, deliberately narrow:** wired for Settings' Look tab only (its `pattern_button` groups
+plus the Settings tab bar header, now prepended to `panel_tab_widgets("settings")`'s Tab-cycle
+list since the tab bar lives on the `QTabWidget`, not inside `currentWidget()`, so it was
+previously unreachable). Both widget shapes (segmented buttons, tab header) validated without
+wiring the rest of the app. Confirmed live-workable for both; nothing reported as failing to
+generalize.
+
+**Branch setup note, since this predates familiarity with the workflow:** the discarded
+ring/caret/pulse work was entirely uncommitted (working-tree only) when this began, so the
+"commit right before the comparison pass" was simply `main`'s tip at the time (`6a5ed18`) — it was
+stashed (not discarded) and this branch created from that same commit.
+
+**Parked here, not merged:** explicitly deferred by direct instruction, to resume later. One
+significant follow-up already scoped and recorded in `TODO.md` (on `main`, not this branch — it's
+a live cross-branch index): the marker currently activates on ANY focus change including mouse
+clicks (it reads `QApplication.focusWidget()` in the app-wide `FocusIn`/`FocusOut` filter without
+checking *how* focus arrived) — it should be keyboard-only, with mouse activity hiding an
+already-active marker. Full spec undecided; deferred until after this branch's design is settled
+and rolled out app-wide. `QFocusEvent.reason()` (confirmed to exist, distinguishes
+`Qt.FocusReason.TabFocusReason` from `MouseFocusReason`) is the concrete mechanism to reuse when
+that work starts — no new mouse-tracking machinery needed.
+
+`pytest tests/ -q` green throughout (88 tests, unaffected — this is a net-new overlay with no
+interaction with existing seek/state-machine logic covered there).
+
+---
+
 ## Session Summary — 2026-07-10 Session 5 — Grid geometry, final pass: List drift, 3-per-row/Square alignment, 2-per-row whole-system solve
 
 **Branch:** `main`. **Commits:** `06ab86b` (List 1px drift), `ef4b826` + `352b72f` (3-per-row
