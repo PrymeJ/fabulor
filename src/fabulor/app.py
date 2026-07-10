@@ -487,6 +487,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         self.show()
         self.theme_manager.initialize_fade_overlay()
+        # Traveling-border-marker keyboard-focus indicator (ui/focus_marker.py). Wired for the
+        # Settings panel's Look tab only this pass; driven from the app-wide eventFilter's
+        # FocusIn/FocusOut branch via _update_focus_marker().
+        from .ui.focus_marker import TravelingFocusMarker
+        self.focus_marker = TravelingFocusMarker(self)
+        # Switching settings tabs keeps focus ON the tab bar (no FocusIn/FocusOut fires), so
+        # re-evaluate marker scope on tab change: leaving Look clears it, and landing on Look
+        # while the tab bar is focused re-anchors the marker to Look's tab rect.
+        if hasattr(self, 'tabs'):
+            self.tabs.currentChanged.connect(lambda _idx: self._update_focus_marker())
         # Pause the carousel timer during theme fades to prevent freeze/ghost artifacts.
         # stateChanged covers Running (stop), Stopped (resume), and abort paths.
         self.theme_manager._fade_anim.stateChanged.connect(self._on_fade_state_changed)
@@ -2894,6 +2904,36 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # (together with the NoFocus chrome buttons) it can never move focus anywhere.
         return True
 
+    def _focus_marker_in_scope(self, focus) -> bool:
+        """Whether the traveling focus marker should be tracking `focus` right now. Scoped THIS
+        pass to the Settings panel's Look tab only: the Settings panel must be the active full
+        panel, the Look tab must be the active settings tab, and `focus` must be either the
+        Settings tab bar OR one of the Look tab's Tab-navigable controls (the exact same
+        membership set Tab cycling uses — no second source of truth)."""
+        if focus is None or not hasattr(self, 'panel_manager'):
+            return False
+        if self.panel_manager.active_full_panel() != "settings":
+            return False
+        if not hasattr(self, 'tabs') or self.tabs.tabText(self.tabs.currentIndex()) != "Look":
+            return False
+        if focus is self.tabs.tabBar():
+            return True
+        return focus in self.panel_manager.panel_tab_widgets("settings")
+
+    def _update_focus_marker(self) -> None:
+        """Point the traveling focus marker at the currently-focused control iff it's in scope
+        (see _focus_marker_in_scope), else clear it. Cheap: runs only on FocusIn/FocusOut. On a
+        Tab move within scope this fires with the NEW focus already set, so the marker resumes
+        patrol on the new widget at its carried-over relative position (show_for keeps self._t)."""
+        marker = getattr(self, 'focus_marker', None)
+        if marker is None:
+            return
+        focus = QApplication.focusWidget()
+        if self._focus_marker_in_scope(focus):
+            marker.show_for(focus)
+        else:
+            marker.clear()
+
     def _handle_library_nothing_focused_key(self, event) -> bool:
         """Library, "nothing focused" state (see _handle_tab_escape: Tab clears focus to this
         state rather than landing on the list, so the list is never scrolled to a mouse-hovered
@@ -2942,6 +2982,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     and event.key() in self.library_panel._LIST_KEY_HANDLED_KEYS):
                 if self._handle_library_nothing_focused_key(event):
                     return True
+
+        # Traveling-border-marker keyboard-focus indicator (ui/focus_marker.py). Observe focus
+        # changes app-wide and (re)point the marker at the focused control ONLY while it's in
+        # scope (Settings > Look tab, this pass). Catches focus arriving by Tab, mouse click, or
+        # panel open uniformly. Runs AFTER _handle_tab_escape so a Tab's setFocus has already
+        # landed and QApplication.focusWidget() reflects the NEW target.
+        if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
+            self._update_focus_marker()
 
         if hasattr(self, 'eof_revert_btn') and obj is self.eof_revert_btn:
             if event.type() == QEvent.Enter:
