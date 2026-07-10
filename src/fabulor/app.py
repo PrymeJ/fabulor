@@ -2924,7 +2924,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return False
         if self.panel_manager.active_full_panel() != "library":
             return False
+        # active_full_panel() returns "library" even when the Book Detail Panel is open OVER the
+        # library (both are visible; library is checked first in the priority chain). But while
+        # detail is up, these keys belong to it — its tag-add field and inline metadata editors
+        # are QLineEdits, and typing `t`/`a`/`1`/etc. there must NOT be stolen and forwarded to
+        # the library list underneath (which would change the library's sort/view mode and yank
+        # focus away mid-edit). Bail if detail is showing. (2026-07-11 fix.)
+        bd = getattr(self, 'book_detail_panel', None)
+        if bd is not None and bd.isVisible():
+            return False
+        # Defer to ANY focused text field, same as _handle_tab_escape does — if the user is
+        # typing (library search, sleep minutes, a tag/metadata editor), these keys are text,
+        # not library shortcuts. The two library-owned widgets below are a subset of this, but
+        # keep them explicit for the "focus already on the list/search" no-op intent.
         focus = QApplication.focusWidget()
+        if isinstance(focus, QLineEdit):
+            return False
         if focus is self.library_panel.search_field or focus is self.library_panel._list_view:
             return False
         self.library_panel._list_view.setFocus(Qt.FocusReason.TabFocusReason)
