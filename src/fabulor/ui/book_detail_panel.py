@@ -1125,7 +1125,7 @@ class BookDetailPanel(QWidget):
         self._cancel_remove()
         self.close_requested.emit()
 
-    def _refresh_stats(self):
+    def _refresh_stats(self, rebuild_history: bool = True):
         if not self._book_path:
             return
         day_start = self.config.get_day_start_hour()
@@ -1202,8 +1202,9 @@ class BookDetailPanel(QWidget):
 
         self._session_list.set_data(sessions[:4], duration or 0.0)
         self._update_finished_icon(stats['finished_count'] > 0)
-        self._populate_history(sessions, duration or 0.0)
-        self._apply_bar_colors()
+        if rebuild_history:
+            self._populate_history(sessions, duration or 0.0)
+            self._apply_bar_colors()
 
     def _position_delete_history_confirm(self):
         btn = self._delete_history_btn
@@ -1279,35 +1280,34 @@ class BookDetailPanel(QWidget):
         if row is None:
             return
         self.db.delete_session(session_id, self.config.get_day_start_hour())
+        deleted_at = self._history_rows.index(row)
         self._history_rows = [r for r in self._history_rows if r is not row]
+        # Every row after the deleted one shifts up one slot, flipping its
+        # alternating stripe — restripe only those, in place, instead of the
+        # full destroy/rebuild _populate_history does (which flashed visibly
+        # right after the collapse finished).
+        for i, r in enumerate(self._history_rows[deleted_at:], start=deleted_at):
+            r.restripe(i, self._theme)
 
         # setFixedHeight() in __init__ pins minimumHeight to ROW_H too, which
         # would otherwise floor this collapse animation partway instead of
         # letting it reach 0.
         row.setMinimumHeight(0)
-        start_h = row.height()
-        base_container_h = max(len(self._history_rows) * _HistoryRow.ROW_H, 1)
 
         anim = QPropertyAnimation(row, b"maximumHeight", self)
         anim.setDuration(150)
-        anim.setStartValue(start_h)
+        anim.setStartValue(row.height())
         anim.setEndValue(0)
-
-        # The container's fixed height must shrink in lockstep with the row's
-        # animated height, not just once at the end — otherwise the container
-        # stays taller than its rows' actual summed height for the whole
-        # animation, and QVBoxLayout ends up redistributing that slack across
-        # ALL rows (visible as unrelated/above rows shifting), not just
-        # collapsing the deleted row in place.
-        def _on_value_changed(value):
-            self._history_container.setFixedHeight(base_container_h + value)
-
-        anim.valueChanged.connect(_on_value_changed)
 
         def _finish():
             row.deleteLater()
             self._resize_history_container()
-            self._refresh_stats()
+            # Only the Stats-tab numbers need a re-query here — restriping
+            # already happened above, in place, right when the row was
+            # removed from the list. A full _populate_history rebuild would
+            # destroy and recreate every surviving row widget, which was the
+            # source of a visible "flash" right after the collapse finished.
+            self._refresh_stats(rebuild_history=False)
             # Per-session delete must refresh the *other* surfaces too. db.delete_session
             # already invalidated the streak-grid cache cell in-transaction, but the
             # stats panel's StreakGrid (mounted underneath this overlay when opened from
@@ -1755,6 +1755,19 @@ class _HistoryRow(QWidget):
         # Alternating background — theme keys with library_row fallback
         # Actual theme colors set via set_colors(); this sets a placeholder
         self._row_index = index
+
+    def restripe(self, index: int, theme: dict):
+        """Re-apply just the alternating background after this row's position
+        shifted (e.g. a row above it was deleted) — cheaper than set_colors,
+        which also re-applies the trash icon / confirm label styling that
+        never depends on row index."""
+        self._row_index = index
+        key = 'session_history_row_one' if index % 2 == 0 else 'session_history_row_two'
+        fallback_key = 'library_row_one' if index % 2 == 0 else 'library_row_two'
+        row_bg = theme.get(key) or theme.get(fallback_key) or theme.get('bg_main', 'transparent')
+        self.setStyleSheet(f"QWidget#history_row {{ background-color: {row_bg}; }}")
+        self._overlay.setStyleSheet(f"QWidget {{ background-color: {row_bg}; }}")
+        self._confirm_panel.setStyleSheet(f"QWidget {{ background-color: {row_bg}; }}")
 
     def set_colors(self, accent: QColor, bg: QColor, theme: dict | None = None):
         self._accent = accent
