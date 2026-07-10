@@ -1,3 +1,77 @@
+## Session Summary — 2026-07-10 Session 4 — PgUp/PgDn/Home/End traced and fixed, `.` middle-jump added
+
+**Branch:** `main`. **Commits:** `d5f4279` (unrelated carryover from prior session, see below),
+`52b7abb` (PgUp/PgDn/Home/End fix), `6acb512` (`.` middle-jump + `_LIST_KEY_HANDLED_KEYS` gap fix).
+
+Closed out the two remaining Library-keyboard items from earlier sessions' recon/TODO backlog:
+PageUp/PageDown/Home/End (previously "not yet designed," suspected no-op) and a new dedicated
+key for "jump to the middle row." Both followed the pattern this project has settled on for
+this whole feature area: instrument first, trust the live trace over any prior theory, fix only
+what the trace actually shows.
+
+### PgUp/PgDn/Home/End: NOT the Tab/Backtab bug — a live trace ruled that theory out cleanly
+
+Before this session, a separate recon pass (questions-only, no code changes) had two live
+theories for why PgUp/PgDn appeared to do nothing: (a) the same `QAbstractItemView.event()`-level
+interception that was root-caused for Tab/Backtab in an earlier session, or (b) the
+`setAutoScroll(False)` gap already found and fixed for List-mode Up/Down. Per that recon's own
+conclusion, neither could be confirmed or ruled out from reading code alone.
+
+Added temporary DEBUG-level instrumentation (`_list_key`'s entry, the native-fallthrough branch,
+and a passthrough `_list_view.event()` wrapper — same idiom as the original Tab-clamp diagnostic)
+and had the user reproduce live with `FABULOR_LOG_LEVEL=DEBUG`. The trace was unambiguous:
+
+- All four keys reached `event()` as `KeyPress` — theory (a) ruled out immediately, no
+  `event()`-level interception exists for these keys (unlike Tab/Backtab).
+- All four keys reached `_list_key`, fell through to native `QListView.keyPressEvent`, and
+  **`currentIndex` genuinely changed** (PageDown `0→16`, PageUp `16→0`, Home `2→0`, End `0→377`)
+  — native Qt was moving the selection correctly the whole time.
+- **`scrollValue` was `0` in every single trace line**, including the End jump from row 0 to row
+  377 — confirming theory (b): the selection was moving off-screen with the viewport frozen, so
+  it looked identical to a no-op from the user's seat.
+
+So these keys were never actually broken navigation — only invisible. Fixed by routing all four
+through the exact same `_on_keyboard_nav_moved()` tail Up/Down already uses (`library.py`'s
+`_list_key`), whose `_flash_keyboard_selection`/`_flash_keyboard_selection_list` methods already
+call `scrollTo()` for every view mode — zero new scroll logic needed, just correct routing. All
+temporary trace instrumentation was removed once the fix landed; only the real branch and a
+comment citing the confirmed index-jump numbers remain.
+
+### `.` (period) for "jump to middle row" — added cleanly, plus a self-caught regression
+
+User proposed `.` and asked for alternatives if a better one existed; confirmed via static
+search (list keys, both shortcut dicts, `ShortcutDispatcher`, and the search field's own handler)
+that `.` is unbound everywhere and structurally safe — the search field only special-cases
+Escape/Up/Down and passes everything else, including `.`, through to native `QLineEdit` text
+entry. No better alternative was found worth proposing over `.` (M/0 both had weaker
+justifications), so proceeded with it. New `_move_selection_to_middle()` (`row_count // 2`,
+trivial enough not to warrant a dedicated pure-function unit test unlike the sort/view-mode
+decision tables) wired into `_list_key` via the same `_on_keyboard_nav_moved()` tail as PgUp/PgDn.
+
+While wiring `.` into `_LIST_KEY_HANDLED_KEYS` (the "nothing focused" Tab-state key-forwarding
+set from a prior session), caught that **PageUp/PageDown/Home/End had been added to `_list_key`
+earlier this same session but never added to this set** — reproducing the exact "works once
+focused, silently does nothing from nothing-focused" gap that set exists to prevent, as a second,
+independent instance of the same bug class fixed for the sort/view-mode letters/digits last
+session. Fixed in the same commit as `.`, before it could ship as a live-discovered regression.
+
+### TODO.md
+
+Added one new entry: whether PgUp/PgDn's native Qt jump distance (currently unexamined, just
+"whatever native does") needs overriding per view mode, given the five view modes' very
+different row heights (List ~28px vs. Square ~95px vs. 1-per-row ~159px) — explicitly not
+decided or tested this session, deferred to a future pass once it's been tried live across all
+five modes. Also removed three now-fully-resolved items from a prior parked list (`ptardyf12340`,
+Left/Right title/author expand, PgUp/PgDn design) — all shipped across this and recent sessions.
+
+No new CLAUDE.md DO-NOT rule — this is routing/coverage completeness for an existing feature
+area (the Library keyboard-shortcuts work), not a newly-discovered architectural bug of the kind
+those rules exist to prevent. Full trace transcript and the recon report that preceded it are in
+this session's conversation history, not duplicated into NOTES.md (no durable root-cause narrative
+beyond what's captured in the code comments above and this entry).
+
+---
+
 ## Session Summary — 2026-07-10 Session 3 — List-mode keyboard title/author expand + a real scroll regression found along the way
 
 **Branch:** `main`. **Commit:** `8c5ab79`.

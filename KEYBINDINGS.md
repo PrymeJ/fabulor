@@ -92,7 +92,7 @@ Untouched by the shortcuts work; listed for completeness.
 
 ---
 
-## Library view (added 2026-07-09)
+## Library view (added 2026-07-09, extended through 2026-07-10)
 
 Handled directly by `LibraryPanel`/`BookDelegate` (`ui/library.py`) — not part of
 `shortcuts.py`. The list (`_list_view`) takes keyboard focus as soon as the panel opens
@@ -100,16 +100,38 @@ Handled directly by `LibraryPanel`/`BookDelegate` (`ui/library.py`) — not part
 
 | Key | Does |
 |-----|------|
-| `Up` / `Down` | Move the book selection. Native `QListView` handling. |
-| `Left` / `Right` | Move the selection by one column — **only** in the three grid view modes (2-per-row, 3-per-row, Square). No-op in 1-per-row and List (no adjacent column to move to). |
+| `Up` / `Down` | Move the book selection. Native `QListView` handling, scrolled into view via an explicit `scrollTo()` in every view mode (`setAutoScroll(False)` disables Qt's native scroll-follow app-wide — see the `PageUp`/`PageDown`/`Home`/`End` row below for the same fix applied to those keys). |
+| `Left` / `Right` | Move the selection by one column — in the three grid view modes (2-per-row, 3-per-row, Square). No-op in 1-per-row (no adjacent column). In **List mode**, Left/Right instead step the keyboard-selected row's title/author expand state — see the dedicated subsection below. |
+| `PageUp` / `PageDown` | Jump the selection roughly a page's worth of rows (native Qt distance, unexamined/un-overridden — see `TODO.md`), scrolled into view. Added 2026-07-10 (`52b7abb`) — these keys were never actually non-functional; native Qt was already moving the selection correctly, but `setAutoScroll(False)` silently prevented the viewport from following it, so the jump was invisible. Confirmed via a live `FABULOR_LOG_LEVEL=DEBUG` focus trace before fixing. |
+| `Home` / `End` | Jump the selection to the first / last row, scrolled into view. Same 2026-07-10 fix and same root cause as `PageUp`/`PageDown` above. |
+| `.` (period) | Jump the selection straight to the exact middle row (`row_count // 2`), scrolled into view. Added 2026-07-10 (`6acb512`). Confirmed unbound everywhere else (list keys, sort/view-mode shortcuts, `ShortcutDispatcher`, search field) before choosing it. |
 | `Enter` / `Return` | Play the selected book (same as left-click). |
 | `Alt`+`Enter` / `Alt`+`Return` | Open Book Detail for the selected book, on the Stats tab (same as right-click). No-op if a Book Detail panel is already open — see below. |
 | `Space` | Play the selected book (same as `Enter`). |
-| `Tab` | Toggle focus between the search field and the list. From the list: focus moves to the search field. From the search field: focus moves back to the list (current selection, or the first row if none). This is a dedicated two-way toggle, not Qt's native tab-order chain — it never reaches the sort combo, view-mode combo, sort-direction button, or Back button. |
+| `Tab` (list or "nothing focused") | Moves focus to the search field. |
+| `Tab` (search field focused) | Moves focus to a "nothing focused" state — NOT back to the list. See "nothing focused" row below. This is a two-state `search field ↔ nothing` cycle (changed 2026-07-10 from an earlier `search field ↔ list` toggle — tabbing directly onto the list used to call `scrollTo(currentIndex())`, and since mouse hover also sets `currentIndex()`, that silently scrolled the list if the mouse happened to be hovering a partially-visible book when Tab was pressed). Tab never reaches the sort combo, view-mode combo, sort-direction button, or Back button. |
+| Any arrow, `PageUp`/`PageDown`/`Home`/`End`, `.`, `Enter`/`Return`/`Space`+`Alt`, or a sort/view-mode letter/digit (**"nothing focused" state**) | Moves focus to the list AND performs that key's action in the same press — no wasted keypress "waking up" the list first. Every key the list itself handles is forwarded this way (`LibraryPanel._LIST_KEY_HANDLED_KEYS` is the single source of truth for this set, shared with `_list_key` so the two can't drift apart again — they did once, 2026-07-10, for `PageUp`/`PageDown`/`Home`/`End`, caught and fixed same-session). |
 | `Up` / `Down` (search field focused) | Move the book selection by one and hand focus to the list immediately. `Left`/`Right` in the search field are unaffected (normal text-cursor movement). |
 | `Escape` (search field focused) | See "Text fields" above — clears the field and drops focus. |
 | `t` / `a` / `r` / `d` / `y` / `p` / `f` (list focused) | Sort by Title / Author / Recent / Duration / Year / Progress / Finished — mirrors the sort dropdown. Pressing the letter of the **inactive** field switches to it at that field's default direction; pressing the letter of the **already-active** field toggles direction (asc↔desc, same as the ↑/↓ button). `p` (Progress) and `f` (Finished) are silent no-ops when those fields aren't in the dropdown (no book with progress / no finished book). Held keys do not repeat. |
 | `1` / `2` / `3` / `4` / `5` (list focused) | Switch view mode to 1-per-row / 2-per-row / 3-per-row / Square / List — mirrors the view-mode dropdown (by row count). The digit for the already-active mode is a no-op (no flicker/re-animation). Held keys do not repeat. |
+
+### List mode: title/author keyboard expand (`Left`/`Right`, added 2026-07-10)
+
+Only in List mode, where Left/Right have no column to move to. Mirrors the existing mouse-hover
+title/author expand mechanism (same rendering code, `BookDelegate._list_author_layout`) but is a
+per-row keyboard state, reset whenever the keyboard selection moves to a different row — never
+persisted. Which states are reachable depends on which fields are actually long (elided):
+
+- **Both short:** `Left`/`Right` do nothing.
+- **Long title, short author:** starts **title-expanded** the instant the row becomes the
+  keyboard selection (not only after pressing `Left`). `Right` returns it to normal; `Left`
+  re-expands it; author never expands (too short).
+- **Short title, long author:** starts at normal. `Right` expands the author; `Left` shrinks it
+  back to normal.
+- **Both long:** starts title-expanded (same start as above). `Right`/`Left` **toggle directly**
+  between title-expanded and author-expanded — the normal/collapsed state is never revisited
+  once both fields are long.
 
 A keyboard-selected row shows a highlight: 1-per-row gets a themed tint; the three grid
 modes (2-per-row/3-per-row/Square) show the same duration/progress overlay a mouse hover
@@ -120,7 +142,9 @@ immediately if the mouse takes over (hovering the same row clears it instantly; 
 a different row fades it out quickly rather than waiting out its timer) — only one
 highlight (mouse or keyboard) is ever visible at a time. Mouse hover also sets the real
 selection, so `Enter`/`Alt+Enter` always act on whichever book is currently highlighted,
-by mouse or keyboard, whichever moved last.
+by mouse or keyboard, whichever moved last. Pressing `Tab` to leave the list drops the
+highlight **instantly**, with no fade wait, in every mode except List (whose highlight is
+the mouse-hover-fade mechanism itself, unaffected by this).
 
 **Search syntax** (`BookModel._apply_filter_and_sort`): besides the existing `#tag` /
 `>NNNN` / `<NNNN` / year-range special prefixes, a search string starting with `_`
