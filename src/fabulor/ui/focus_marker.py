@@ -42,16 +42,16 @@ from PySide6.QtGui import QPainter, QColor
 # takes proportionally longer — NOT a fixed lap time. Per direct guidance this should read as
 # calm/idle, not urgent: "slow enough not to be annoying." Best-guess default, flagged for live
 # tuning.
-_PATROL_SPEED_PX_PER_SEC = 55.0
+_PATROL_SPEED_PX_PER_SEC = 11.0
 
 # The dot itself.
 _DOT_RADIUS = 3.0        # px
 
 # Phase timings.
 _IDLE_BEFORE_SLOWDOWN_MS = 2600   # PATROL -> SLOWING: quiet time before the dot starts decelerating
-_SLOWDOWN_MS = 900                # SLOWING duration: smooth decel to a full stop
-_WAIT_MS = 650                    # WAITING duration: stopped, fully visible, before the fade begins
-_FADE_MS = 550                    # FADING duration: alpha -> 0
+_SLOWDOWN_MS = 1000                # SLOWING duration: smooth decel to a full stop
+_WAIT_MS = 750                    # WAITING duration: stopped, fully visible, before the fade begins
+_FADE_MS = 750                    # FADING duration: alpha -> 0
 
 # Motion driver tick. ~60fps; distance-based so the visual speed is tick-rate-independent.
 _TICK_MS = 16
