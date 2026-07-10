@@ -1,3 +1,52 @@
+## Session Summary — 2026-07-10 Session 5 — Grid geometry, final pass: List drift, 3-per-row/Square alignment, 2-per-row whole-system solve
+
+**Branch:** `main`. **Commits:** `06ab86b` (List 1px drift), `ef4b826` + `352b72f` (3-per-row
+alignment to Square), `f0c0f62` (2-per-row cover growth + top-gap/sliver fix).
+
+Closes out the multi-session grid-view-mode geometry work — all five view modes (1-per-row,
+2-per-row, 3-per-row, Square, List) now have clean, drift-free scroll boundaries. Full technical
+writeup (including several reverted attempts worth remembering the shape of) is in NOTES.md
+"Grid-mode geometry, final pass" — this entry is the short version.
+
+**List mode** had the same 1px top/bottom scroll-boundary drift Square mode was fixed for
+earlier: `viewport_h % row_h` (28px rows) doesn't divide evenly, so top and bottom scroll
+positions were 1px apart. Same structural fix (absorb the remainder into a top viewport margin) —
+clean, one-shot, no wrong turns.
+
+**3-per-row** needed aligning to Square (both are 3-column, horizontally identical modes that had
+drifted apart): width fix (`96→95`) was clean. The margin fix was NOT clean — copying Square's
+`(4, 0, 0, 4)` boundary-margin shape via the same remainder-push mechanism that works invisibly
+for Square was tried twice (plain push, then a top/bottom split) and reverted both times, live —
+it produced a ~50px gap under the toolbar, because 3-per-row's much taller row leaves a far
+bigger leftover remainder than Square's near-exact fit. What shipped: the margin SHAPE `(4, 0, 0,
+4)` was kept, but the vertical position fix is a flat eyeballed 2px push, not a computed
+remainder — matching 2-per-row's own established "flat push, not math" precedent instead of
+Square's "compute the exact remainder" one. 3-per-row's partial 4th row stays visible by design
+(a taller-row mode can't fit a clean whole-row count either way).
+
+**2-per-row** was the hardest: an in-progress, uncommitted experiment (grown to 130×198 without
+touching the row height) caused a real visible bug — a book's title glyph overlapping the next
+row's cover, because the cover-draw code is independent of cell height and just ate into
+whatever trailing space existed. Several single-variable nudges (shrinking cell_h alone,
+misreading an unrelated `text_w` line as a vertical-spacing control) didn't converge. What broke
+the loop: stepping back and solving cover size, cell height, top-push, and margins together as
+one system from real live-measured numbers (not guessed font metrics), landing on cover
+128×195, cell 145×237, a 3px top push (down from 9px) giving an exact `2×237+3=477` two-row fit
+with zero sliver and a near-flush top gutter matching Square. Final pixel-level polish (text
+gaps) was hand-tuned live by the user directly and cross-checked in Photopea rather than
+recomputed — code comments say so explicitly, so a future pass doesn't try to "fix" hand-tuned
+values back to stale arithmetic. One piece of debt confirmed and explicitly declined to chase:
+2-per-row's top edge sits 1px below Square's; fixing it "would break the viewport," not worth it.
+
+No new CLAUDE.md DO-NOT rule — this is geometry-tuning debt closure across several already-
+established patterns (remainder-push margins, flat eyeballed pushes, per-column margins), not a
+newly discovered architectural bug. The two real transferable lessons (remainder-push only works
+invisibly when the remainder is small; cover-draw code and cell height are independently sized
+and must be changed together) are captured in NOTES.md, not elevated to CLAUDE.md rules, since
+they're specific to this one delegate's paint code rather than app-wide architecture.
+
+---
+
 ## Session Summary — 2026-07-10 Session 4 — PgUp/PgDn/Home/End traced and fixed, `.` middle-jump added
 
 **Branch:** `main`. **Commits:** `d5f4279` (unrelated carryover from prior session, see below),

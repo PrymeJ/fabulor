@@ -1,3 +1,105 @@
+## Grid-mode geometry, final pass: 3-per-row alignment, and the 2-per-row whole-system solve (2026-07-10, later sessions)
+
+Closes out the multi-session grid-view-mode geometry work (Square, List, 3-per-row, 2-per-row all
+now have clean scroll boundaries with no drift and no stray gaps). This entry covers the two
+hardest remaining modes, both of which took several real wrong turns before landing — recorded in
+full because the wrong turns are exactly the trap a future pass would fall into again.
+
+### 3-per-row: aligning to Square, and why the "obvious" full-symmetry fix made it WORSE
+
+Goal: 3-per-row and Square are horizontally identical (3 columns, same left/right margin shape) —
+they only ever needed to differ in row height. But 3-per-row's cell was still `96×146` with
+margins `(4, 2, 0, 2)` while Square had already been fixed to `95×95` / `(4, 0, 0, 4)` in an
+earlier session — so covers/gaps visibly shifted 1px right when toggling `3`↔`4`.
+
+**Width fix (clean, no drama):** `w: 96→95`, matching Square exactly. Confirmed live: toggling
+`3`/`4` now aligns pixel-for-pixel.
+
+**Margin fix: tried the "obviously correct" symmetric copy TWICE, reverted both times.** The
+naive move — copy Square's `(4, 0, 0, 4)` margin shape onto 3-per-row too, since it's the "more
+correct" boundary-margin shape (same reasoning that fixed Square's own first/last-row asymmetry)
+— was tried as (a) a plain remainder-into-top-margin push (mirroring Square's own
+`_apply_view_mode` fix verbatim) and (b) a top/bottom SPLIT of the remainder. **Both reverted
+live**, both times producing the same ~50px gap under the toolbar. Root cause: Square's fix works
+because its `viewport_h % cell_h` remainder is tiny (2-3px, invisible as a margin). 3-per-row's
+`cell_h=146` only fits 3 rows with a MUCH larger remainder (~40-57px depending on the exact
+number) — pushing that entire remainder into a margin (or splitting it) is glaringly visible as
+"one big empty gap," not "boundary correctness." **Lesson: the Square-mode remainder-margin
+pattern is only invisible-safe when the remainder is small relative to cell_h — do not
+mechanically reapply it to a mode with a much taller row without checking the actual remainder
+size first.**
+
+**What actually shipped:** `_GRID_MARGINS["3 per row"] = (4, 0, 0, 4)` (the symmetric shape DOES
+stay — this part was right) — but the vertical START position is corrected with a flat,
+eyeballed `setViewportMargins(0, 2, 0, 0)` in `_apply_view_mode` (2px, not a computed remainder),
+matching the exact "flat push, not math" idiom 2-per-row's original 9px fix already established.
+Cell height (`146`) was deliberately left un-clipped — 3-per-row keeps its partial 4th row
+visible (the same "3 rows fully visible, 4th partially cut" look it always had); the user
+explicitly chose this over letting the grid try to fit tighter, since a taller-row mode can never
+fit a clean 2-row-style whole-number-of-rows anyway.
+
+### 2-per-row: the second growth attempt collided a title into the next cover, then a from-scratch whole-system solve fixed it
+
+Follow-on to the 2026-07-10 Session 1 cover enlargement below (118×180, first pass). The user
+tried to push further — widen the cover more to fill remaining whitespace — with a **live,
+uncommitted experiment that grew the cover to 130×198 without touching cell_h**. This is the key
+mistake this whole saga hinges on: **the cover-rect code in `_paint_two_per_row` is completely
+independent of `cell_h`** — it draws at a fixed size from `cover_y = r.y()` regardless of how
+tall the cell is. So growing the cover this way didn't grow the row — it just ate into whatever
+trailing space existed below the author line. Confirmed live via screenshot: the "P" in a book's
+title started visibly overlapping/penetrating the NEXT row's cover. Separately, in the same
+experimental state, the top viewport push (still the old flat 9px) made the covers start ~7px
+lower than the scrollbar track's own top — a real, separate misalignment bug, visible once you
+line up two screenshots.
+
+**Multiple false starts trying to fix this incrementally, before stepping back:**
+1. Tried shrinking `cell_h` by 5px in isolation ("get rid of the space under the author") without
+   touching the cover — this DID reclaim trailing space correctly (confirmed: user could see the
+   author line moving relative to the next cover), but doing single-variable nudges one at a time
+   against a codebase where 5 separate locations (`ITEM_DIMENSIONS`, `_TWO_PER_ROW_LEFT_MARGIN`,
+   the hardcoded literals in `_paint_two_per_row`, `_cover_rect`, `cover_cell_size`) all have to
+   move together kept producing results that didn't converge on what the user actually wanted.
+2. A `text_w = cover_w - 14` line was misread by the user as controlling vertical spacing ("the
+   14px from the top") — it doesn't; it only bounds where the marquee-scroll text elides, with no
+   effect on layout position. Wasted a round confirming "changing it does nothing" before the
+   actual misunderstanding (w, not h) was caught.
+3. The assistant made an explicit process error mid-session: told the user "these changes are
+   made over the current version" (agreeing to build ON TOP of the 130×198 experiment), the user
+   said "alright, stash [it]" (meaning: preserve this as a checkpoint, still building on it after),
+   and the assistant then asked whether to POP the stash it had just been told to keep — a direct
+   contradiction caught immediately by the user. **Lesson: when a user stashes something as a
+   checkpoint mid-task, that is not the same as abandoning it — don't ask to reverse a stash you
+   were never asked to create as a rollback point.**
+
+**What broke the loop: solving the FULL system at once instead of one variable at a time.** Given
+real, live-measured numbers this time (not guessed font metrics) — `title_h + author_h ≈ 34px`
+measured from an actual live trailing-gap observation (13px trailing gap at a known `cell_h`),
+cover aspect ratio `118/180 ≈ 0.6556` — the assistant solved simultaneously for: (a) cover as
+large as possible on the same AR, (b) a real (not zero, not 13px) trailing gap after the author
+line, (c) a near-flush top gutter matching Square's own ~2-3px (not the old 9px), (d) an EXACT
+2-row fit with zero leftover for a 3rd-row sliver. The equation `2×cell_h + top_push = 477`
+(window height minus chrome) combined with the trailing-gap target converged on: cover
+`128×195`, `cell_h=237`, top push `3px` (down from 9px), margins `_TWO_PER_ROW_LEFT_MARGIN =
+(9, 8)` (absorbing the cover's width growth into the outer margins while keeping the proven 16px
+middle gap unchanged). `2×237+3 = 477` exactly — no sliver, and Square-like flush top gap, in one
+consistent change instead of another round of guess-and-check.
+
+**Final hand-tuning, done live by the user directly (not further iterated blind):** `text_w`
+(`cover_w - 14` → `cover_w - 2`), `text_y`'s two gap offsets (`+2`/`+2` → final `+1`/`+0`, plus a
+further live author-line nudge), all confirmed against both the running app and a Photopea
+mockup. The resulting trailing-gap-after-author value is intentionally NOT restated as an exact
+px figure in code comments, since it was hand-tuned past the point the arithmetic model tracks —
+comments instead say "confirmed live, do not recompute against fresh arithmetic."
+
+**Deliberately NOT pursued:** the user confirmed in Photopea that 2-per-row's top edge sits 1px
+lower than Square's, and explicitly declined to chase it — "that would break the viewport." This
+is accepted, permanent, cosmetic-only debt, not a bug to revisit.
+
+**Commits:** `ef4b826` (3-per-row width-only alignment), `352b72f` (3-per-row margins + 2px
+push), `f0c0f62` (2-per-row whole-system solve, final).
+
+---
+
 ## 2-per-row cover enlargement: column-aware margins, a frameWidth collapse, and an eyeballed viewport push (2026-07-10 Session 1)
 
 Follow-on to the Square-mode geometry saga (below), applied to 2-per-row: grow the cover to use

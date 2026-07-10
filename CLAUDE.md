@@ -798,7 +798,22 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts. While
+*Last updated: 2026-07-10 Session 5 — Grid-view-mode geometry, final pass. All five library view
+modes (1-per-row, 2-per-row, 3-per-row, Square, List) now have clean, drift-free scroll
+boundaries with no stray gaps. List got the same 1px top/bottom drift fix Square had (remainder
+absorbed into a top viewport margin). 3-per-row was aligned to Square (same 3-column shape,
+same margins) — the width fix was clean, but copying Square's exact remainder-push margin
+mechanism was tried twice and reverted twice (produced a ~50px gap, since 3-per-row's much
+taller row leaves a far bigger leftover than Square's near-exact fit); shipped as a flat
+eyeballed 2px push instead. 2-per-row's cover was grown 118×180 → 128×195 alongside its cell
+height and top-push, solved as one system (not one variable at a time, which had stalled through
+several rounds) — `2×237+3=477` exactly, no 3rd-row sliver, near-flush top gutter. No new
+DO-NOT rule; the two transferable lessons (remainder-push margins only work invisibly when the
+leftover is small; a delegate's cover-draw size and its cell height are independently sized code
+paths that must be changed together) are in NOTES.md "Grid-mode geometry, final pass," not
+elevated to app-wide rules. `06ab86b`, `ef4b826`, `352b72f`, `f0c0f62`.*
+
+*Previously: 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts. While
 the book list has focus (not the search field), `t/a/r/d/y/p/f` drive the sort dropdown and `1`–`5`
 the view-mode dropdown, mirroring the two mouse-only controls. Added to the existing `_list_key`
 monkeypatch (not a second key path); decision logic split into `_apply_sort_shortcut`/
