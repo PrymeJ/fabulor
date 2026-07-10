@@ -6,6 +6,24 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-10] DESIGN + IMPLEMENT: traveling focus marker must be keyboard-only — mouse must not
+  activate it, and mouse should hide an already-active marker.** Lives on the not-yet-merged
+  `feature/traveling-focus-marker` branch (see that branch's SESSION.md entry, "Traveling-border-
+  marker focus indicator"), not on `main` yet. Currently (`ui/focus_marker.py`/
+  `app.py._update_focus_marker`) the marker shows for whatever widget `QApplication.focusWidget()`
+  reports, via the app-wide `FocusIn`/`FocusOut` filter — this doesn't distinguish a Tab-driven
+  focus change from a mouse click landing focus on a button, so a mouse click currently activates
+  the marker too. Explicitly deferred: do not implement until the marker is settled and rolled out
+  app-wide (today it's Settings' Look tab only). Full spec not yet decided — open questions to
+  resolve before implementing: does "mouse activity" mean any mouse movement, or only a
+  click/press; should moving the mouse over the currently-focused (marker-lit) widget without
+  clicking hide it; does a keyboard action after a mouse click re-arm it immediately (consistent
+  with how the existing four-phase lifecycle already resumes-on-Tab from any phase) or does it
+  need its own re-arm condition. Whatever the answer, reuse `FocusReason`
+  (`Qt.FocusReason.TabFocusReason` vs `Qt.FocusReason.MouseFocusReason`, already available on the
+  `QFocusEvent` the app-wide filter receives) rather than inventing a separate mouse-tracking
+  mechanism — `_update_focus_marker` doesn't currently branch on it, so this is a targeted
+  narrowing of that existing check, not a rebuild.
 - **[2026-07-10] DECIDE: PageUp/PageDown jump distance in the library list.** `52b7abb` fixed
   PageUp/PageDown/Home/End so the viewport actually follows the selection (they were never
   broken navigation-wise, just invisible — `setAutoScroll(False)` ate the native scroll-follow).
