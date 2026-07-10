@@ -1111,6 +1111,14 @@ class LibraryPanel(QFrame):
             # coming out wrong here and asked for a plain nudge instead, same spirit as the
             # "trust the user's eyes over your math" rule elsewhere in this codebase).
             self._list_view.setViewportMargins(0, 9, 0, 0)
+        elif mode == "3 per row":
+            # Flat 2px top push, same idiom as 2-per-row's flat 9px above (eyeballed against
+            # the running app, not derived from remainder arithmetic). Copying Square's
+            # top=0/bottom=4 _GRID_MARGINS shape (2026-07-10) shifted 3-per-row's grid start
+            # up 2px relative to Square (matches the old top=2 margin's contribution disappearing)
+            # — confirmed live; this widens the toolbar-to-grid gap by the same 2px to bring it
+            # back down to the prior visual starting point.
+            self._list_view.setViewportMargins(0, 2, 0, 0)
         elif mode == "List":
             # Same structural fix as Square (see the comment above): row_h=28 doesn't evenly
             # divide the live viewport height, so the scrollbar's bottom-resting position
@@ -2659,7 +2667,7 @@ class BookDelegate(QStyledItemDelegate):
         # instead), the full 4px below the last row. Cover size is unchanged (95-0-4=91,
         # matching the unchanged 91px width — still a true square).
         "Square":    (4, 0, 0, 4),
-        "3 per row": (4, 2, 0, 2),
+        "3 per row": (4, 0, 0, 4),
     }
 
     def _paint_grid_cell(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):

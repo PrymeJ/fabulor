@@ -6,20 +6,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-10] 3-per-row grid: top gap doesn't match Square's boundary-margin shape.**
-  Confirmed live: 3-per-row's cover width was widened to match Square (95px, `d`/commit TBD),
-  so the two modes now align pixel-for-pixel on `3`/`4` toggle. But `_GRID_MARGINS["3 per row"]`
-  is still `(4, 2, 0, 2)` (top=2/bottom=2), NOT Square's `(4, 0, 0, 4)` — copying Square's shape
-  was tried twice (a plain all-in-top-margin remainder fix, and a top/bottom split) and both
-  reverted live: it shifts the grid's starting row down and reproduces a ~50px gap under the
-  toolbar (3-per-row's 146px row height leaves a much bigger `viewport_h % cell_h` remainder
-  than Square's near-exact 95px fit, so the same "push the remainder into a margin" trick that
-  works invisibly for Square is glaringly visible here). User's own proposed direction (not yet
-  tried): keep `(4, 0, 0, 4)` for genuine bottom/top symmetry, but ALSO increase the fixed gap
-  between the top toolbar and the grid itself (a different value than the row-remainder margin)
-  so the visual result doesn't read as "one huge empty gap" even though the underlying margin
-  math is doing the same thing it does for Square. Needs a fresh live-eyeballing pass, same
-  spirit as the 2-per-row 9px flat push — do not just recompute the old remainder differently.
 - **[2026-07-10] DECIDE: PageUp/PageDown jump distance in the library list.** `52b7abb` fixed
   PageUp/PageDown/Home/End so the viewport actually follows the selection (they were never
   broken navigation-wise, just invisible — `setAutoScroll(False)` ate the native scroll-follow).
