@@ -630,6 +630,11 @@ class BookDetailPanel(QWidget):
 
     def load_book(self, book_data: dict, tab: str = 'stats', context: str = '',
                   active_search_text: str = ''):
+        # Start the tag-add field empty on every fresh open. Nothing else clears it (it's only
+        # cleared on a successful add), so a half-typed tag left behind by a previous session —
+        # e.g. closed via the button, or the panel dismissed some other way — would otherwise
+        # reappear here. Escape while the field is focused also clears it (see eventFilter).
+        self._tag_input.clear()
         self._context = context
         # Snapshot of the library's search field text at the moment this panel opened (library
         # context only matters here — see _rebuild_tag_chips/_rebuild_tag_display). Used to make
@@ -960,10 +965,20 @@ class BookDetailPanel(QWidget):
             return False
 
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-            # Editing → cancel the edit, panel stays open (existing behavior). Not editing →
-            # close the panel via the sole close path. Mutually exclusive on _editing, so one
-            # Escape can never both cancel an edit and close.
-            if self._editing:
+            # Priority order — one Escape does exactly one thing, panel-close last:
+            #   1. Tag input focused → clear it + drop focus, panel stays open. The tag field's
+            #      analog to metadata's revert-on-Escape: there's no prior value to revert to
+            #      (it's an add field), so "revert" just means clear. Without this, Escape while
+            #      typing a tag fell straight through to the close branch, dismissing the panel
+            #      immediately AND leaving the half-typed text to persist to the next open.
+            #   2. Editing metadata → cancel the edit, panel stays open.
+            #   3. Neither → close the panel via the sole close path.
+            # 1 and 2 are mutually exclusive (you can't be mid-metadata-edit while the separate
+            # tag field holds focus), so one Escape can never both cancel an edit and close.
+            if self._tag_input.hasFocus():
+                self._tag_input.clear()
+                self._tag_input.clearFocus()
+            elif self._editing:
                 self._exit_edit_mode(save=False)
             else:
                 self._on_close_clicked()
