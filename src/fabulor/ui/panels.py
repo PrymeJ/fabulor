@@ -2035,6 +2035,14 @@ class PanelManager:
             pass
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
+        # Hide the traveling focus marker (ui/focus_marker.py) — a panel slide-out doesn't
+        # reliably emit a FocusOut, so the marker's own focus-driven clear can't be relied on.
+        # Cleared here (panel genuinely closed), not at the top of _close_settings_flow, so it
+        # doesn't race the snapback-settle wait/slide-out above. Safe no-op if the marker
+        # doesn't exist.
+        marker = getattr(self.main_window, 'focus_marker', None)
+        if marker is not None:
+            marker.clear()
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
@@ -2407,7 +2415,12 @@ class PanelManager:
         findChildren order (== creation == visual order for these, confirmed). Settings is
         scoped to the active tab; on the Themes tab the N generated theme swatches (ThemeItem —
         mode/bulk buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is
-        deferred to a later arrows+space design."""
+        deferred to a later arrows+space design.
+
+        For settings, the tab bar itself is prepended as the first Tab stop (it lives on the
+        QTabWidget, not inside currentWidget(), so findChildren under the active tab would miss
+        it): Tab then cycles tab-bar -> the active tab's controls -> back to the tab bar, and the
+        traveling focus marker (ui/focus_marker.py) can trace the tab-header shape too."""
         if panel == "settings":
             root = self.main_window.tabs.currentWidget()
         elif panel == "speed":
@@ -2421,6 +2434,10 @@ class PanelManager:
         if root is None:
             return []
         result = []
+        if panel == "settings":
+            tab_bar = self.main_window.tabs.tabBar()
+            if tab_bar.isVisible() and (tab_bar.focusPolicy() & Qt.FocusPolicy.TabFocus):
+                result.append(tab_bar)
         for w in root.findChildren(QWidget):
             if isinstance(w, ThemeItem):
                 continue  # deferred: theme swatches get their own arrows+space nav later
