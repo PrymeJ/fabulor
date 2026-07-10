@@ -6,6 +6,19 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-11] DESIGN + IMPLEMENT: Cover tab keyboard support in Book Detail.** Tab in the Book
+  Detail Panel now does something sensible on every tab EXCEPT Cover: Stats/History enter metadata
+  edit, Tags toggles the tag-add field, and Cover is a deliberate consumed no-op (Tab is swallowed
+  so it can't leak to the library underneath — see `book_detail_panel.py` eventFilter's Tab branch,
+  `0a4e558` — but does nothing in-panel). The Cover tab has its own interactive content (the cover
+  thumbnails strip + fit-mode buttons, a `CoverPanel`), so it should get real keyboard nav rather
+  than a dead Tab. Looks simple (a `CoverPanel` with a handful of focusable controls — thumbnails
+  to select/activate, fit buttons, add-cover button), but deferred anyway. When picking it up: the
+  Tab handler already consumes Tab on the Cover tab, so wiring in-panel nav there is purely additive
+  (add an `elif self._on_cover_tab():` branch alongside the existing Stats/History and Tags
+  branches); the leak is already sealed, so there's no risk in taking it slowly. Decide whether
+  Tab cycles the cover controls, or arrows navigate the thumbnail strip (like the library grid),
+  or both.
 - **[2026-07-11] FIX (blocked on upcoming tags-gutter layout work): History tab's `_history_scroll`
   has no row-height viewport quantization, unlike every other scrollable list in the app.**
   `book_detail_panel.py`'s `_history_scroll` (`QScrollArea`) is added via `outer.addWidget(...,
