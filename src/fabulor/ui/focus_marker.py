@@ -108,8 +108,8 @@ def _dist(a: QPointF, b: QPointF) -> float:
 
 def _rect_perimeter(rect: QRect, inset: float = 0.0) -> _Perimeter:
     """Closed loop around all four edges of `rect`, starting at the top-left and going clockwise.
-    `inset` pulls the path in from the raw edge so the dot rides ON the visible border rather than
-    a hair outside it."""
+    `inset` (default 0) offsets the path inward from the raw edge; at 0 the dot rides centered ON
+    the border line, straddling it. A positive inset would tuck the path fully inside the border."""
     l = rect.left() + inset
     t = rect.top() + inset
     r = rect.right() - inset
@@ -311,12 +311,13 @@ class TravelingFocusMarker(QWidget):
                     return
                 top_left = w.mapTo(self.main_window, tr.topLeft())
                 rect = QRect(top_left, tr.size())
-                # Inset by the dot radius so it rides on the border, not clipped outside.
-                self._perimeter = _tab_perimeter(rect, inset=_DOT_RADIUS)
+                # inset=0: the path follows the raw border line so the dot sits centered ON it
+                # (straddling it half-in/half-out), not tucked inside the perimeter.
+                self._perimeter = _tab_perimeter(rect)
             else:
                 top_left = w.mapTo(self.main_window, QPoint(0, 0))
                 rect = QRect(top_left, w.size())
-                self._perimeter = _rect_perimeter(rect, inset=_DOT_RADIUS)
+                self._perimeter = _rect_perimeter(rect)
         except RuntimeError:
             self._target = None
             self._perimeter = None
