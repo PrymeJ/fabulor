@@ -598,6 +598,12 @@ class BookDetailPanel(QWidget):
         index) so it survives any future tab reorder."""
         return self.tabs.tabText(self.tabs.currentIndex()) == "Tags"
 
+    def _on_info_tab(self) -> bool:
+        """True iff the currently-shown tab is a read-only info tab (Stats or History) — the
+        two tabs with no interactive body content of their own, so Tab binds to the shared
+        metadata header (enter edit) there. Keyed on tab text, not an index."""
+        return self.tabs.tabText(self.tabs.currentIndex()) in ("Stats", "History")
+
     def _clear_tag_input(self) -> None:
         """Clear the tag-add field and drop its focus — the shared 'leave the field' action for
         both Escape and Tab-away (they're the same gesture: abandon the half-typed tag). No
@@ -1018,6 +1024,16 @@ class BookDetailPanel(QWidget):
                     self._clear_tag_input()
                 elif self._tag_input_widget.isVisible():
                     self._tag_input.setFocus(Qt.FocusReason.TabFocusReason)
+            elif self._on_info_tab():
+                # Stats / History (the read-only info tabs): Tab ENTERS metadata edit mode —
+                # they have no interactive body content of their own, so Tab binds to the shared
+                # header. _enter_edit_mode focuses the title; further Tabs then cycle the fields
+                # (the _editing branch above). Not on Cover (its own thumbnails/fit controls own
+                # Tab's context) nor Tags (the input toggle above). No archived-book guard here,
+                # matching the existing click-to-edit path (_on_field_click) which also enters
+                # edit mode regardless of archived state — only the save/lock action button is
+                # hidden for archived books, not edit mode itself.
+                self._enter_edit_mode()
             # else: consumed no-op — nothing to cycle, but still must not leak to the library.
             return True
 
