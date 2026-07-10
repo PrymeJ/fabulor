@@ -1,3 +1,47 @@
+## Session Summary — 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts
+
+**Branch:** `main`. **Commit:** `c3bedce`.
+
+Added keyboard control of the two Library dropdowns that were left mouse-only in the 2026-07-09
+keyboard-nav work: sort field/direction (`t/a/r/d/y/p/f`) and view mode (`1`–`5`). Scoped to when
+the book **list** has focus (not the search field), so the keys type normally when searching.
+
+**Where it lives:** extended the existing `_list_key` monkeypatch (`library.py`) rather than adding
+a second key path — same "list has focus" context as the arrow/Enter/Alt+Enter keys. Two new
+class-constant dicts (`_SORT_KEY_SHORTCUTS`, `_VIEW_MODE_SHORTCUTS`) and two named decision methods
+(`_apply_sort_shortcut`, `_apply_view_mode_shortcut`) called from `_list_key`. The methods were
+split out of the closure specifically so the branch logic is unit-testable against a fake combo
+without standing up the whole panel (same pattern as `test_panel_exclusion.py`).
+
+**Reuse, no duplicated logic:** the keyboard path only decides *which* existing handler to invoke.
+Inactive sort field → `sort_combo.setCurrentIndex` fires `_on_sort_changed` (which applies the
+field's fixed fresh-selection default direction from `_SORT_DIRECTION_DEFAULTS`). Active sort field
+→ `_toggle_sort_direction()` (the exact asc/desc arrow-button path). View mode → `setCurrentIndex`
+fires `_on_view_mode_changed` (the mouse path). Nothing in those handlers changed.
+
+**Confirmed during exploration (the prompt asked to verify each, not assume):**
+- Fresh-selection sort direction is a fixed per-field default, not per-field-remembered — so
+  "match the dropdown default" = "let `_on_sort_changed` run unchanged."
+- `r → "Last Played"` (combo displays "Recent" but its data key is "Last Played").
+- Digit→mode is 1:1 with `VIEW_MODES` order — no remap.
+- Global `P`/`A`/etc. don't collide: consuming the key in `_list_key` stops bubble-up, and even if
+  one bubbled up, every `_open_*_shortcut` early-returns on `is_overlay_open_or_committed()` (True
+  while Library is open). No suppression workaround needed.
+- No autorepeat guard existed in `library.py`; the dispatcher's `allow_autorepeat` doesn't reach
+  keys it never sees, so a fresh `isAutoRepeat()` guard was added, scoped to only the new keys
+  (nav keys stay repeatable).
+
+**Design decisions (confirmed with the user):** `p`/`f` are a silent no-op when Progress/Finished
+aren't in the dropdown (conditional entries); the direction toggle calls `_toggle_sort_direction()`
+for behavior identical to the mouse arrow.
+
+**Tests:** `tests/test_library_shortcuts.py` (14 cases) pins the two constant dicts and the sort/
+view branch decisions. Full suite green (82). No new DO-NOT rule — this preserves existing behavior
+and reuses existing handlers rather than resolving a hard-won bug. Live verification (autorepeat,
+key-consumption, focus-scoping — all Qt event-dispatch behavior, not pure logic) done by the user.
+
+---
+
 ## Session Summary — 2026-07-10 Session 1 — 2-per-row cover enlargement + column-aware margins
 
 **Branch:** `main`. **Commit:** `d74ebee`.
