@@ -499,7 +499,19 @@ class LibraryPanel(QFrame):
         def _list_key(e):
             key = e.key()
             mods = e.modifiers()
-            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown,
+                       Qt.Key.Key_Home, Qt.Key.Key_End):
+                # PageUp/PageDown/Home/End: confirmed via live focus-trace (2026-07-10) that
+                # these were NEVER actually no-ops — native QListView.keyPressEvent already
+                # moves currentIndex correctly (verified: PageDown 0->16, PageUp 16->0, Home
+                # 2->0, End 0->377). What looked like "nothing happens" was the SAME
+                # setAutoScroll(False) gap already found and fixed for List-mode Up/Down
+                # (_flash_keyboard_selection_list's scrollTo) — currentIndex jumped off-screen
+                # with the viewport's scrollbar value never moving, so the highlighted row was
+                # invisible. _on_keyboard_nav_moved's own flash methods (_flash_keyboard_selection
+                # / _flash_keyboard_selection_list) already call scrollTo(index) for every mode,
+                # so simply routing these four keys through the SAME path Up/Down already uses
+                # is sufficient — no separate scroll-jump logic needed.
                 QListView.keyPressEvent(self._list_view, e)
                 self._on_keyboard_nav_moved()
             elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):

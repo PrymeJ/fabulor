@@ -33,13 +33,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   fix without discussing the visual approach first.
 - **[2026-07-09] Parked, to pick up next session:** three items named by Pryme at session end, not
   yet scoped or investigated:
-  - `ptardyf12340` — referenced verbatim by Pryme as still-parked; no prior occurrence found
-    anywhere in CLAUDE.md/NOTES.md/SESSION.md/TODO.md/memory. Meaning unclear — ask Pryme what
-    this refers to before starting on it.
-  - Left/Right title/author expand in the library grid — previously deferred in the original
-    Library-keyboard-nav plan (`fe4f0f9`'s prompt explicitly scoped this out as "still being
-    designed").
-  - PgUp/PgDn behavior on the library grid and list views — not yet designed.
   - A "hodge-podge" bug from a screenshot Pryme has: pressing `T` (rotate theme) and a panel-open
     shortcut (`L`/`G`/`P`/`A`/`S`/`Z`) in quick succession produces some kind of visible glitch.
     Screenshot exists on Pryme's end; not yet shared/described in enough detail to reproduce or
