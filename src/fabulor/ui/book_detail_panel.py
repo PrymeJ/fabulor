@@ -410,6 +410,11 @@ class BookDetailPanel(QWidget):
         self._history_layout = QVBoxLayout(self._history_container)
         self._history_layout.setContentsMargins(0, 0, 0, 0)
         self._history_layout.setSpacing(0)  # spacing handled per-row via _HistoryRow margins
+        # Without AlignTop, QVBoxLayout distributes any slack between the
+        # container's fixed height and the rows' summed height across the
+        # rows themselves (visible as unrelated rows shifting) whenever the
+        # two go out of sync mid-animation — see _on_history_delete_confirmed.
+        self._history_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._history_scroll.setWidget(self._history_container)
         self._history_rows: list = []
 
@@ -1276,10 +1281,28 @@ class BookDetailPanel(QWidget):
         self.db.delete_session(session_id, self.config.get_day_start_hour())
         self._history_rows = [r for r in self._history_rows if r is not row]
 
+        # setFixedHeight() in __init__ pins minimumHeight to ROW_H too, which
+        # would otherwise floor this collapse animation partway instead of
+        # letting it reach 0.
+        row.setMinimumHeight(0)
+        start_h = row.height()
+        base_container_h = max(len(self._history_rows) * _HistoryRow.ROW_H, 1)
+
         anim = QPropertyAnimation(row, b"maximumHeight", self)
         anim.setDuration(150)
-        anim.setStartValue(row.height())
+        anim.setStartValue(start_h)
         anim.setEndValue(0)
+
+        # The container's fixed height must shrink in lockstep with the row's
+        # animated height, not just once at the end — otherwise the container
+        # stays taller than its rows' actual summed height for the whole
+        # animation, and QVBoxLayout ends up redistributing that slack across
+        # ALL rows (visible as unrelated/above rows shifting), not just
+        # collapsing the deleted row in place.
+        def _on_value_changed(value):
+            self._history_container.setFixedHeight(base_container_h + value)
+
+        anim.valueChanged.connect(_on_value_changed)
 
         def _finish():
             row.deleteLater()
