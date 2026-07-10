@@ -1102,6 +1102,18 @@ class LibraryPanel(QFrame):
             # coming out wrong here and asked for a plain nudge instead, same spirit as the
             # "trust the user's eyes over your math" rule elsewhere in this codebase).
             self._list_view.setViewportMargins(0, 9, 0, 0)
+        elif mode == "List":
+            # Same structural fix as Square (see the comment above): row_h=28 doesn't evenly
+            # divide the live viewport height, so the scrollbar's bottom-resting position
+            # lands 1px off a clean row boundary relative to the top position — confirmed by
+            # the user via overlaid top/bottom screenshots (2026-07-10). Absorbing the
+            # remainder into a top margin makes viewport_h % row_h == 0 for any window size,
+            # not just today's numbers.
+            cell_h = dim["h"]
+            viewport_h = self._list_view.viewport().height()
+            remainder = viewport_h % cell_h
+            if remainder:
+                self._list_view.setViewportMargins(0, remainder, 0, 0)
 
     def _on_view_mode_changed(self, _):
         mode = self.style_combo.currentData()
