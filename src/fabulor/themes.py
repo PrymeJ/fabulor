@@ -92,6 +92,8 @@ tassel_fringe:           (Optional) Color of the dangling tassel's fringe (the f
 stats_carousel_stripe:   (Optional) Background color for the Recently Finished scroll row's edge-scroll arrow sliver (stats_panel.py FinishedScrollRow). Fallback: accent_dark.
 
 GROUP 10 — MISC UI
+focus_marker:         (Optional) Color of the traveling-border-marker keyboard-focus dot (ui/focus_marker.py). Fallback: text.
+focus_marker_alpha:   (Optional) Opacity (0.0 to 1.0, NOT 0-255) ceiling for the focus marker dot. Fallback: 1.0.
 cover_preview_bg:     Background color for book cover previews in the library. Fallback: bg_deep → #000000.
 
 GROUP 11 — PLACEHOLDER COVERS
@@ -817,7 +819,7 @@ THEMES = {
         "slider_progress":               "#DBEBF1",
         "slider_overall_bg":             "#3A5A7A",
         "slider_overall_fill":           "#4A90A7",
-        "slider_chapter_bg":             "#1E3854",
+        "slider_chapter_bg":             "#283F57",
         "slider_chapter_fill":           "#3A7A90",
         "slider_vol_bg":                 "#1A2A44",
         "slider_vol_fill":               "#4A90A7",
@@ -3009,6 +3011,10 @@ def get_base_stylesheet(theme_name="default"):
             qproperty-fill_color: "{t['slider_overall_fill']}";
             qproperty-notch_color: "{t.get('notch_color', '#FFFFFF')}";
             qproperty-notch_opacity: {t.get('notch_opacity', 100)};
+        }}
+        QWidget#traveling_focus_marker {{
+            qproperty-focus_marker_color: "{t.get('focus_marker', t['text'])}";
+            qproperty-focus_marker_alpha: {t.get('focus_marker_alpha', 1.0)};
         }}
         QLabel#percentage_label {{
             color: rgba({_hex_to_rgb(t.get('slider_progress', t.get('text_on_light_bg', t['text'])))}, 0.85);
