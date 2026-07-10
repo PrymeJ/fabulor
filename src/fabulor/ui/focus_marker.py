@@ -43,7 +43,7 @@ from PySide6.QtGui import QPainter, QColor
 # takes proportionally longer — NOT a fixed lap time. Per direct guidance this should read as
 # calm/idle, not urgent: "slow enough not to be annoying." Best-guess default, flagged for live
 # tuning.
-_PATROL_SPEED_PX_PER_SEC = 11.0
+_PATROL_SPEED_PX_PER_SEC = 5.0
 
 # The dot itself.
 _DOT_RADIUS = 3.0        # px
