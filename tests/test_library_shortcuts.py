@@ -1,20 +1,24 @@
-"""Decision-table for the Library sort-field / view-mode keyboard shortcuts.
+"""Decision-table for the Library sort-field / view-mode keyboard shortcuts, and for the
+List-mode keyboard title/author expand (Left/Right on the keyboard-selected row).
 
 The keys are handled inside LibraryPanel._list_key (only while the book list has focus, not
-the search field). The branch DECISIONS are factored into two small methods —
-`_apply_sort_shortcut` / `_apply_view_mode_shortcut` — so they can be pinned here without
-standing up the whole panel + QApplication.
+the search field). The branch DECISIONS are factored into small methods/functions —
+`_apply_sort_shortcut` / `_apply_view_mode_shortcut` / `_next_list_expand_field` — so they can
+be pinned here without standing up the whole panel + QApplication.
 
 Following tests/test_panel_exclusion.py's pattern: bind the REAL unbound methods against a
 tiny fake `self` that supplies only the combos (and `_toggle_sort_direction`) they read, so any
 future change to the branch logic is caught. The end-to-end key routing (autorepeat guard,
-consume-vs-fall-through, focus-scoping) is Qt-event-dispatch behavior verified live, per the
-project rule that live timing/focus behavior is ground truth.
+consume-vs-fall-through, focus-scoping, and the paint-time synthetic-hover_pos wiring in
+_paint_list_row) is Qt-event-dispatch/paint behavior verified live, per the project rule that
+live timing/focus behavior is ground truth.
 """
 import pytest
 from PySide6.QtCore import Qt
 
-from fabulor.ui.library import LibraryPanel, VIEW_MODES
+from fabulor.ui.library import (
+    LibraryPanel, VIEW_MODES, _initial_list_expand_field, _next_list_expand_field,
+)
 
 
 # ── Fakes ────────────────────────────────────────────────────────────────────
@@ -167,3 +171,82 @@ def test_view_mode_already_active_is_noop():
     host = _FakeViewHost(current_index=3)
     _apply_view(host, Qt.Key.Key_4)
     assert host.style_combo.currentIndex() == 3
+
+
+# ── List-mode keyboard title/author expand ───────────────────────────────────
+#
+# Reproduces the three reference rows directly against the pure functions — no Qt paint/widget
+# needed. _initial_list_expand_field gives the state a row starts at the moment it BECOMES the
+# keyboard selection (before any Left/Right). _next_list_expand_field's `current_field` is the
+# row's state BEFORE the press; it returns the state AFTER. Returning the same value as
+# current_field is the no-op signal (covers both "already there" and the short-field guard) —
+# see LibraryPanel._apply_list_expand_shortcut, which detects the no-op this same way. This is
+# a 1- or 2-state machine per row, NOT a 3-state default/title/author cycle: which states are
+# reachable (and where the row starts) depends on which fields are actually long.
+
+def test_initial_state_is_title_when_title_long():
+    assert _initial_list_expand_field(title_elided=True) == "title"
+
+
+def test_initial_state_is_default_when_title_short():
+    assert _initial_list_expand_field(title_elided=False) is None
+
+
+def test_both_fields_short_left_and_right_are_noop():
+    # "Titus Groan" / "Mervyn Peake" — neither field is truncated. Starts at default; every
+    # press is a no-op since neither field can ever expand.
+    assert _initial_list_expand_field(title_elided=False) is None
+    assert _next_list_expand_field(Qt.Key.Key_Left,  None, title_elided=False, author_elided=False) is None
+    assert _next_list_expand_field(Qt.Key.Key_Right, None, title_elided=False, author_elided=False) is None
+
+
+def test_long_title_short_author_sequence():
+    # "There Are Rivers in the Sky" / "Elif Shafak" — title truncated, author not. Starts
+    # title-expanded (not default) the moment the row is keyboard-selected.
+    te, ae = True, False
+    f = _initial_list_expand_field(te)
+    assert f == "title"
+    # Right: title moves back to its place (default) — author never expands (too short).
+    f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)
+    assert f is None
+    # Right again (default, author short): no-op.
+    assert _next_list_expand_field(Qt.Key.Key_Right, f, te, ae) is None
+    # Left (from default): title expands again.
+    f = _next_list_expand_field(Qt.Key.Key_Left, f, te, ae)
+    assert f == "title"
+    # Left again: already there, no-op.
+    assert _next_list_expand_field(Qt.Key.Key_Left, f, te, ae) == "title"
+
+
+def test_short_title_long_author_sequence():
+    # Short title, long author — starts at default (title isn't long, so nothing pre-expands).
+    te, ae = False, True
+    f = _initial_list_expand_field(te)
+    assert f is None
+    # Right: author expands.
+    f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)
+    assert f == "author"
+    # Right again: already there, no-op.
+    assert _next_list_expand_field(Qt.Key.Key_Right, f, te, ae) == "author"
+    # Left (from author-expanded): author shrinks back to default.
+    f = _next_list_expand_field(Qt.Key.Key_Left, f, te, ae)
+    assert f is None
+    # Left again (default, title short): no-op.
+    assert _next_list_expand_field(Qt.Key.Key_Left, f, te, ae) is None
+
+
+def test_long_title_long_author_sequence():
+    # "This Is How You Lose the Time War" / "Amal El-Mohtar, Max Gladstone" — both truncated.
+    # Starts title-expanded. Right/Left TOGGLE directly between title and author — default
+    # (None) is never reached again once both fields are long.
+    te, ae = True, True
+    f = _initial_list_expand_field(te)
+    assert f == "title"
+    f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)  # title -> author (not default)
+    assert f == "author"
+    f = _next_list_expand_field(Qt.Key.Key_Left, f, te, ae)   # author -> title (not default)
+    assert f == "title"
+    f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)  # title -> author again
+    assert f == "author"
+    f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)  # already at author: no-op
+    assert f == "author"

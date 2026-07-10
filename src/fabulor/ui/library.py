@@ -35,6 +35,53 @@ _ListLayout = namedtuple("_ListLayout", [
     "author_active_rect", "author_active_disp",
 ])
 
+
+def _initial_list_expand_field(title_elided):
+    """Which field (if any) starts expanded the moment a row BECOMES the keyboard selection —
+    before any Left/Right has been pressed on it. A long title expands immediately (whether or
+    not the author is also long is irrelevant to this decision — see _next_list_expand_field's
+    docstring for how author length affects what Right does FROM here); a long author never
+    starts pre-expanded — it only expands on an explicit Right press. Short/short never
+    expands. See _next_list_expand_field for the two/one-state transition table this feeds
+    into."""
+    return "title" if title_elided else None
+
+
+def _next_list_expand_field(key, current_field, title_elided, author_elided):
+    """Pure state-transition table for List-mode keyboard title/author expand
+    (LibraryPanel._apply_list_expand_shortcut). `current_field` is the row's CURRENT forced
+    field (from _initial_list_expand_field, or a prior press — "title"/"author"/None); returns
+    the NEXT field (same shape). No Qt/paint dependency — the caller derives
+    title_elided/author_elided from _list_author_layout's own output (disp_title != title,
+    etc.), so this never re-measures text itself.
+
+    This is a 1- or 2-state machine per row, NOT a 3-state default/title/author cycle — which
+    states are reachable depends on which fields are actually long:
+      - both short            -> only None is reachable; Left/Right always no-op.
+      - long title, short author -> {"title", None}; starts at "title" (see
+        _initial_list_expand_field). Right: title -> None. Left: None -> title.
+      - short title, long author -> {None, "author"}; starts at None. Right: None -> author.
+        Left: author -> None.
+      - both long              -> {"title", "author"}; starts at "title". Right/Left TOGGLE
+        directly between the two — None is never reachable once both fields are long, since
+        collapsing title would just re-reveal an author that's ALSO going to expand.
+    A field that isn't actually truncated can never become the next state (short-field guard)
+    — the caller compares the return value against current_field to detect a no-op, so
+    returning current_field unchanged IS the no-op signal for both "already there" and "short
+    field, can't expand"."""
+    if key == Qt.Key.Key_Right:
+        if current_field == "author":
+            return current_field  # already there
+        if current_field == "title":
+            return "author" if author_elided else None  # both long -> author; else -> default
+        return "author" if author_elided else current_field  # None -> author, or no-op
+    else:  # Key_Left
+        if current_field == "title":
+            return current_field
+        if current_field == "author":
+            return "title" if title_elided else None  # both long -> title; else -> default
+        return "title" if title_elided else current_field
+
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
     "3 per row": {"w": 96,  "h": 146, "cols": 3},
@@ -444,6 +491,14 @@ class LibraryPanel(QFrame):
                 QListView.keyPressEvent(self._list_view, e)
                 self._on_keyboard_nav_moved()
             elif key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                if self._delegate._view_mode == "List":
+                    # List mode has no adjacent column — Left/Right instead step the
+                    # keyboard-selected row's title/author expand state (see
+                    # _apply_list_expand_shortcut). Deliberately does NOT call
+                    # _on_keyboard_nav_moved: this isn't a row-selection change, and that
+                    # call's _on_view_left teardown would immediately clear the state just set.
+                    self._apply_list_expand_shortcut(key)
+                    return
                 cols = ITEM_DIMENSIONS.get(self._delegate._view_mode, {}).get("cols", 1)
                 if cols > 1:
                     self._move_selection_by(-1 if key == Qt.Key.Key_Left else 1)
@@ -558,12 +613,31 @@ class LibraryPanel(QFrame):
         a mouse hover would, so it fades in/out per the user's Hover fade setting
         (Fast/Normal/Slow/Off) using library_item_hover_color/_alpha — not a separate tint.
         _kbd_hover_path lives on the delegate (not the panel) since _paint_list_row reads it
-        directly for the Off-mode instant-fill fallback."""
+        directly for the Off-mode instant-fill fallback.
+
+        scrollTo is required here (mirrors _flash_keyboard_selection's own scrollTo) because
+        _list_view.setAutoScroll(False) — set deliberately to kill an unwanted hover-driven
+        autoscroll (see the setAutoScroll comment above) — also disables Qt's native
+        keyboard-nav auto-scroll. Without an explicit scrollTo, Up/Down still moves the
+        selection but the viewport never follows it once the selection moves off-screen.
+
+        Also sets this row's INITIAL title/author expand state (_initial_list_expand_field):
+        a row with a long title starts title-expanded the moment it becomes the keyboard
+        selection, not only after an explicit Left press — this is called on every keyboard
+        move (via _on_keyboard_nav_moved, which already cleared the PREVIOUS row's expand
+        state through _on_view_left), so it's the correct single place to seed the new one."""
+        if not index.isValid():
+            return
+        self._list_view.scrollTo(index)
         prev_path = self._delegate._kbd_hover_path
-        book = index.data(ROLE_BOOK) if index.isValid() else None
+        book = index.data(ROLE_BOOK)
         self._delegate._kbd_hover_path = book.path if book else None
         if book:
             self._delegate.on_list_hover_enter(book.path)
+            title_elided, _ = self._measure_list_field_elision(index, book)
+            initial_field = _initial_list_expand_field(title_elided)
+            self._delegate._kbd_expand_path = book.path if initial_field else None
+            self._delegate._kbd_expand_field = initial_field
         if prev_path and prev_path != self._delegate._kbd_hover_path:
             self._delegate.on_list_hover_leave(prev_path)
 
@@ -881,6 +955,17 @@ class LibraryPanel(QFrame):
         self._delegate.on_hover_leave()
         if prev_path:
             self._delegate.on_list_hover_leave(prev_path)
+        # Keyboard-driven List-mode title/author expand (see _list_key's List Left/Right
+        # branch and _flash_keyboard_selection_list's initial-state seed) is scoped to a
+        # single row and must never persist once that row stops being the keyboard selection.
+        # _on_view_left is the shared funnel for both a real mouse leave and keyboard row
+        # navigation (_on_keyboard_nav_moved calls it on every Up/Down, right before
+        # _flash_keyboard_selection_list re-seeds the NEW row's own initial state), so
+        # clearing here covers both without a second teardown path.
+        if self._delegate._kbd_expand_path is not None:
+            self._delegate._kbd_expand_path = None
+            self._delegate._kbd_expand_field = None
+            self._list_view.viewport().update()
 
     def eventFilter(self, obj, event):
         if obj is self._list_view.viewport():
@@ -1197,6 +1282,40 @@ class LibraryPanel(QFrame):
         target_idx = self._VIEW_MODE_SHORTCUTS[key]
         if self.style_combo.currentIndex() != target_idx:
             self.style_combo.setCurrentIndex(target_idx)
+
+    def _measure_list_field_elision(self, index, book) -> tuple[bool, bool]:
+        """(title_elided, author_elided) for `book` at `index`, read via BookDelegate.
+        _list_author_layout's own output (disp_title != title / disp_author != author — the
+        SAME elision computation mouse hover already uses; no new text-width measurement).
+        Shared by _apply_list_expand_shortcut and _flash_keyboard_selection_list's initial-
+        state assignment so both use one measurement path."""
+        opt = QStyleOptionViewItem()
+        self._delegate.initStyleOption(opt, index)
+        opt.rect = self._list_view.visualRect(index)
+        # hovered=False: the real mouse-hover state is irrelevant here — this call exists only
+        # to read title_elided/author_elided via the returned disp_* strings.
+        lay = self._delegate._list_author_layout(opt, book, self._delegate._hover_pos, False)
+        return (lay.disp_title != lay.title, lay.disp_author != lay.author)
+
+    def _apply_list_expand_shortcut(self, key) -> None:
+        """List-mode keyboard title/author expand (Left/Right on the keyboard-selected row).
+        Delegates the actual state transition to the pure _next_list_expand_field helper
+        (unit-tested in tests/test_library_shortcuts.py without needing a live paint).
+        Triggers a targeted repaint so the change is visible immediately — this is pure
+        paint-state, no model dataChanged needed (nothing else about the row changed)."""
+        idx = self._list_view.currentIndex()
+        book = idx.data(ROLE_BOOK) if idx.isValid() else None
+        if not book:
+            return
+        title_elided, author_elided = self._measure_list_field_elision(idx, book)
+        current_field = (self._delegate._kbd_expand_field
+                          if self._delegate._kbd_expand_path == book.path else None)
+        next_field = _next_list_expand_field(key, current_field, title_elided, author_elided)
+        if next_field == current_field:
+            return  # no-op (already there, or short-field guard)
+        self._delegate._kbd_expand_path = book.path if next_field else None
+        self._delegate._kbd_expand_field = next_field
+        self._list_view.viewport().update()
 
     def _on_search_changed(self, text):
         if not self._programmatic_search_update:
@@ -1802,6 +1921,12 @@ class BookDelegate(QStyledItemDelegate):
         # _paint_list_row. Independent of _kbd_selected_path/_kbd_alpha — List mode ignores
         # those entirely and uses the ordinary mouse-hover machinery instead.
         self._kbd_hover_path = None  # str | None
+        # List-mode-only keyboard title/author expand state: which book has a field forced
+        # expanded via Left/Right, and which field ("title"/"author"). Reset to None whenever
+        # keyboard selection moves to a different row (_on_view_left) — never persisted across
+        # rows, mirroring how mouse-hover-leave already resets the mouse-driven equivalent.
+        self._kbd_expand_path = None   # str | None
+        self._kbd_expand_field = None  # "title" | "author" | None
 
 
     def _apply_theme(self, theme: dict) -> None:
@@ -2661,7 +2786,20 @@ class BookDelegate(QStyledItemDelegate):
         # All title/author layout geometry (resting + invade + elision) is computed in one place
         # so this draw and the click/cursor hit-test (_list_author_segment_at) can never disagree
         # about where the author block is — see _list_author_layout.
-        lay = self._list_author_layout(option, book, self._hover_pos, hovered)
+        if book.path == self._kbd_expand_path and self._kbd_expand_field:
+            # Keyboard-forced expand (Left/Right in _list_key): synthesize a hover_pos inside
+            # the target zone and force hovered=True, so _list_author_layout — UNCHANGED —
+            # computes expand_title/expand_author exactly as it would for a real mouse hover
+            # in that zone. Same code path as mouse hover and as _list_author_segment_at's own
+            # synthetic-pos hit-test call; no duplicated geometry/elision logic. A first call
+            # with hovered=False gets the real geometry (title_rect/author_rect) without
+            # forcing any expand, so the probe point can be placed inside the correct zone.
+            geom = self._list_author_layout(option, book, self._hover_pos, False)
+            zone_rect = geom.title_rect if self._kbd_expand_field == "title" else geom.author_rect
+            probe_pos = QPoint(zone_rect.x() + 1, zone_rect.y() + zone_rect.height() // 2)
+            lay = self._list_author_layout(option, book, probe_pos, True)
+        else:
+            lay = self._list_author_layout(option, book, self._hover_pos, hovered)
 
         if lay.expand_title:
             self._set_font(painter, mode=self._view_mode, field="title")
