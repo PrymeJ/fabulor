@@ -1,3 +1,72 @@
+## Session Summary — 2026-07-10 Session 3 — List-mode keyboard title/author expand + a real scroll regression found along the way
+
+**Branch:** `main`. **Commit:** `8c5ab79`.
+
+Added keyboard control (Left/Right) of List mode's existing mouse-hover title/author expand
+mechanism, for the keyboard-selected row only. Two rounds: an initial implementation based on
+the user's written prompt, then a correction once the user tested it live and found the prompt
+itself had mis-described the intended behavior — plus a separate, more important regression
+(arrow-key scrolling silently broken) surfaced during the same live check.
+
+**Escalation resolved without restructuring, per the prompt's own instruction to stop and report
+rather than restructure unilaterally if this came up:** `BookDelegate._list_author_layout`
+(the single source of truth for List-mode title/author geometry) is a pure function of
+`(option, book, hover_pos, hovered)` with no discrete state anywhere — the 3-way expand
+decision is recomputed from raw mouse-position math every paint call. But it's already called
+with a SYNTHETIC `hover_pos`/`hovered=True` at a second site (`_list_author_segment_at`, the
+click hit-test) — proving that's a legitimate use of the function's real contract, not a hack.
+Followed that exact precedent: `_paint_list_row` now branches to feed a synthetic probe position
+(computed from the row's own real `title_rect`/`author_rect`) when a keyboard-forced expand is
+active, and `_list_author_layout` itself is completely unmodified. The "is this field long
+enough to expand" check reuses the function's own `disp_title != title` / `disp_author != author`
+output rather than a new text-width measurement.
+
+**First implementation — wrong, per the user's own initial prompt having been an imprecise
+translation of their actual intent.** Modeled a 3-state default→title→default→author cycle,
+always starting at default (nothing expanded) the moment a row became the keyboard selection.
+Live-tested and rejected: the user's real intent (given directly, since "the prompt didn't get it
+correctly") is a 1- or 2-state machine PER ROW depending on which fields are actually long:
+- Long title / short author: starts **title-expanded immediately** (not default) the instant the
+  row is keyboard-selected. Right moves it back to normal; Left re-expands; author never expands
+  (too short) — states are `{title, default}`.
+- Short title / long author: starts at default (nothing pre-expanded, since title has nothing to
+  reveal). Right expands the author; Left shrinks it back — states are `{default, author}`.
+- Both long: starts title-expanded (same start as the first case). Right/Left TOGGLE DIRECTLY
+  between title-expanded and author-expanded — default is never revisited once both fields are
+  long, since collapsing title would just re-reveal an author that's also going to expand anyway.
+
+Rewrote `_next_list_expand_field` to this exact table and added `_initial_list_expand_field`
+(new: a row's state isn't always `None` at selection time anymore — a long title pre-expands).
+Wired the initial-state seed into `_flash_keyboard_selection_list` (already the single place
+called every time keyboard selection lands on a new row), reusing a new shared
+`_measure_list_field_elision` helper so both the initial seed and the Left/Right transition read
+truncation the same way. `_on_view_left` (the existing shared row-leave teardown, used by both
+real mouse-leave and keyboard row nav) still clears the forced state on every row change — no
+second teardown path, no persistence across rows, exactly as originally scoped.
+
+**Separate regression found during the same live check, flagged by the user as "the other issue
+is more important": List mode's arrow-key scrolling had stopped following the selection
+off-screen.** Root cause pre-dates this session's work entirely — `_list_view.setAutoScroll(False)`
+(set earlier, deliberately, to kill an unwanted hover-driven autoscroll) also silently disables
+Qt's native keyboard-nav autoscroll. Grid modes already compensate for this via an explicit
+`scrollTo(index)` in `_flash_keyboard_selection`; List mode's equivalent,
+`_flash_keyboard_selection_list`, was simply missing the same call — a pre-existing gap that had
+gone unnoticed until this session's testing specifically exercised List-mode keyboard nav at
+length. Fixed by adding the same `scrollTo(index)` call, with a comment cross-referencing why it's
+needed (mirrors the grid-mode precedent, documents the `setAutoScroll(False)` interaction so a
+future reader doesn't reintroduce the gap by "simplifying" it back out).
+
+**Tests:** `tests/test_library_shortcuts.py` rewritten for the corrected 1-/2-state model — 20
+cases total, including the exact three reference-row sequences (long/short title × author) plus
+initial-state assertions. All pure logic against `_initial_list_expand_field`/
+`_next_list_expand_field`, no Qt paint needed. Full suite green (88 tests). No new DO-NOT rule —
+this is new functionality plus a fix, not a hard-won architectural bug of the kind CLAUDE.md's
+rules exist to prevent; the escalation-avoidance reasoning above is captured in code comments
+instead. Live verification (mouse hover unaffected, scroll-follow in all five modes, the exact
+three-scenario walkthroughs) confirmed working by the user ("Yes, works perfectly").
+
+---
+
 ## Session Summary — 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts
 
 **Branch:** `main`. **Commit:** `c3bedce`.

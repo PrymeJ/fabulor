@@ -411,6 +411,29 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [x] Art displayed when present
 - [x] Size locked
 
+## App-wide Tab / Escape key policy (added 2026-07-09)
+
+Global behavior installed in MainWindow's app-wide event filter. Library's own Tab/Escape
+handling (search field, list) is a separate, more specific mechanism — see the Library panel
+"Keyboard navigation" section above; it composes with this policy rather than being replaced by it.
+
+- [ ] In EVERY context (no panel open; Library; Settings; Speed; Sleep; Tags; Book Detail open) — repeatedly pressing Tab NEVER moves focus to the window's minimize or close button
+- [ ] With no panel open: Tab does nothing
+- [ ] Settings panel open: Tab cycles through the ACTIVE tab's controls in a sensible order, wrapping at the end back to the first; Shift+Tab (Backtab) cycles backward; never lands on minimize/close
+- [ ] Settings → Themes tab specifically: Tab cycles only the mode/bulk buttons — the generated theme swatches and the cover-pool button are skipped entirely (not yet given dedicated keyboard nav)
+- [ ] Speed panel open: Tab cycles that panel's controls with wrap, same as Settings
+- [ ] Sleep panel open: Tab cycles that panel's controls with wrap, same as Settings
+- [ ] Tags panel open: Tab does nothing (no controls wired for cycling yet)
+- [ ] Book Detail panel open (not editing a field): Tab does nothing
+- [ ] Book Detail panel open, editing a metadata field, press Escape: edit cancels, panel stays open (unaffected by this feature — BookDetailPanel's own separate filter still owns this)
+- [ ] Book Detail panel open, NOT editing, press Escape: panel closes
+- [ ] Library open, search field focused, type something, press Escape: field clears and loses focus; Library panel itself stays open (does NOT also close)
+- [ ] Library open, list focused (not search field), press Escape: Library panel closes
+- [ ] Settings / Speed / Sleep / Tags panel open, press Escape (not inside a text field): panel closes
+- [ ] Sleep panel's custom-minutes text field focused, press Escape: field's own existing Escape behavior runs (clears/defocuses), does not also close the Sleep panel
+- [ ] Tag manager's tag-name edit field focused, press Escape: field's own existing Escape behavior runs, does not also close the Tags panel
+- [ ] `pytest tests/ -q` stays green (no seek/session paths touched by this feature)
+
 ## Sidebar
 
 - [x] Slides on right click on cover art field
@@ -726,6 +749,22 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [x] Covers load for visible rows only on mode switch; preloaded covers appear instantly
 - [x] Books times are show with speed taken into account
 
+#### Square mode geometry (2026-07-09)
+- [ ] Uniform 4px gap between covers in both directions (horizontal and vertical), not visually uneven
+- [ ] Covers render as true squares — no visible clipping or stretch on any cover
+- [ ] Scrolling (wheel or keyboard) never autoscrolls just from hovering near the top/bottom edge without clicking
+- [ ] Wheel scroll moves by one full screen of rows (not a fixed 3-row jump that feels arbitrary relative to how many rows are visible)
+- [ ] Scrolling to the very bottom of the list reaches the TRUE last row (not stuck a partial row short)
+- [ ] Scrolling to the very top reaches the true first row, with the same 4px gap above it as between any two rows (no oversized top gutter)
+- [ ] First-ever Library open of a session in Square mode shows correct spacing immediately — does not show an oversized gap that only "settles" after switching modes once
+
+#### 2-per-row mode geometry (2026-07-10)
+- [ ] Cover is visibly larger than before (118×180) and the grid shows exactly 2 columns (not 1)
+- [ ] Middle gap between the two columns is visibly TIGHTER than the outer left/right margins
+- [ ] No sliver of a partial third row visible at the bottom of the viewport
+- [ ] Keyboard Up/Down scrolling in this mode reaches the true top and bottom of the list, same as Square
+- [ ] Known remaining cosmetic debt (not yet fixed, do not report as new): grid still doesn't fully use all available vertical whitespace — cell size/gaps may look slightly tighter than ideal; this is tracked, not expected to be perfect yet
+
 ### Cover loading
 - [x] First open: only visible rows dispatch workers
 - [x] Scrolling loads covers for newly visible rows
@@ -812,13 +851,18 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 ### Keyboard navigation (added 2026-07-09)
 - [ ] Opening the library and pressing Up/Down immediately navigates the list — no click or Tab needed first
 - [ ] Up/Down move selection in all five view modes
+- [ ] Up/Down scroll the viewport to follow the selection once it moves off-screen, in ALL five view modes including List (2026-07-10 fix: List mode's keyboard nav previously moved the selection but never scrolled the viewport — `setAutoScroll(False)`, set elsewhere to kill unwanted hover-driven autoscroll, also silently disabled Qt's native keyboard-nav autoscroll)
 - [ ] Left/Right move selection by one column in 2-per-row, 3-per-row, and Square
-- [ ] Left/Right are a no-op in 1-per-row and List (no adjacent column)
+- [ ] Left/Right are a no-op in 1-per-row (no adjacent column)
+- [ ] Left/Right in List mode do NOT move the row selection — see the dedicated "List mode title/author keyboard expand" section below
 - [ ] Enter or Space on the selected row plays that book (same as left-click)
 - [ ] Alt+Enter on the selected row opens Book Detail on the Stats tab (same as right-click)
-- [ ] Tab moves focus from the list to the search field
-- [ ] Tab moves focus from the search field back to the list (current selection, or first row if none)
+- [ ] On open (or after any panel/dialog interaction that drops focus), NEITHER the search field NOR the list has focus — pressing Tab moves to the search field; pressing any arrow key moves focus to the list AND performs that arrow's action in one press (2026-07-09 Tab-cycle redesign: no longer list↔search toggle)
+- [ ] Tab from the search field moves focus to "nothing focused" (not directly to the list) — the search field loses focus but the list does NOT gain it
+- [ ] From "nothing focused," pressing Tab moves focus to the search field
+- [ ] From "nothing focused," pressing an arrow key moves focus to the list AND performs the arrow's action (no wasted keypress)
 - [ ] Tab never moves focus to the sort combo, view-mode combo, sort-direction button, or Back button
+- [ ] Tabbing away from the list drops the keyboard-selection highlight instantly (no fade-out wait) in every mode EXCEPT List, where it is unaffected (List's highlight is the mouse-hover-fade mechanism, not the generic highlight)
 - [ ] Typing `_the` in search matches only titles STARTING WITH "the" (e.g. not "In the Woods")
 - [ ] Existing `#tag` / `>NNNN` / `<NNNN` / year-range search syntaxes still work after the `_prefix` addition
 - [ ] Mouse hover sets the real selection too — hovering book B then pressing Enter/Alt+Enter acts on B, not a stale keyboard-selected book
@@ -835,6 +879,38 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Alt+Enter on the already-open book does NOT re-trigger the slide-in animation on repeat presses
 - [ ] With Book Detail Panel already open (any entry point), arrow-navigating to a different book in the library list and pressing Alt+Enter does NOT retarget or re-slide the open panel — it stays exactly as-is
 - [ ] Book Detail Panel must be closed (its own close button, or the existing close flow) before a different book's detail can be opened
+
+### Sort-field and view-mode keyboard shortcuts (added 2026-07-10, list-focus-scoped only)
+- [ ] With the search field focused (not the list), typing `t`, `a`, `r`, `d`, `y`, `p`, `f`, or any digit 1–5 types normally into the field — no sort/view change
+- [ ] With the list focused: `t` / `a` / `r` / `d` / `y` sort by Title / Author / Recent / Duration / Year respectively, matching the dropdown's own field selection
+- [ ] Pressing the letter of a sort field that is NOT currently active switches to it at that field's correct default direction (Title/Author → ascending ↑; Recent/Duration/Year → descending ↓)
+- [ ] Pressing the letter of the CURRENTLY active sort field toggles direction (↑↔↓), identical to clicking the ↑/↓ button — repeat presses keep toggling indefinitely, never sticks or skips
+- [ ] Holding a sort letter down does NOT rapid-fire the toggle (autorepeat suppressed)
+- [ ] `p` (Progress): with at least one book that has progress, switches to Progress sort; with NO books having progress (so "Progress" isn't in the dropdown), `p` is a silent no-op — no field change, no direction change
+- [ ] `f` (Finished): same as above, gated on at least one finished book existing
+- [ ] Digits `1`–`5` switch view mode to 1-per-row / 2-per-row / 3-per-row / Square / List respectively, matching the view-mode dropdown
+- [ ] Pressing the digit for the CURRENTLY active view mode is a no-op — no flicker, no re-layout, no re-triggered slide/reveal animation
+- [ ] Holding a view-mode digit down does NOT repeatedly re-trigger the switch
+- [ ] After any of the above, arrow-key row navigation, Enter/Space/Alt+Enter, and the Tab focus-cycle all continue to work unchanged
+
+### List mode title/author keyboard expand (added 2026-07-10, List mode only)
+- [ ] A row where BOTH title and author already fit their slots without eliding: Left and Right do nothing at all — no expand, no elide change, in any state
+- [ ] A row with a LONG title and a SHORT author: the row shows title EXPANDED (invading the author's slot) the moment it becomes the keyboard selection — this is the starting state, not something you have to press Left for
+- [ ] From that title-expanded starting state, Right moves the title back to its normal place (both fields shown elided/fit as normal)
+- [ ] From that normal/collapsed state, Right again is a no-op (author is too short to ever expand)
+- [ ] From that normal/collapsed state, Left re-expands the title
+- [ ] A row with a SHORT title and a LONG author: shows in the normal/collapsed state (nothing pre-expanded) the moment it becomes the keyboard selection
+- [ ] From that normal state, Right expands the author (invading the title's slot)
+- [ ] From author-expanded, Right again is a no-op (already there)
+- [ ] From author-expanded, Left shrinks the author back to the normal/collapsed state
+- [ ] A row with BOTH title and author long: shows title EXPANDED the moment it becomes the keyboard selection (same starting state as the long-title/short-author case)
+- [ ] From title-expanded, Right goes DIRECTLY to author-expanded — it does NOT pass through/land on the normal collapsed state
+- [ ] From author-expanded, Left goes DIRECTLY back to title-expanded — same non-collapsing toggle, in both directions
+- [ ] For a both-long row, repeatedly alternating Left/Right toggles cleanly between title-expanded and author-expanded indefinitely — never lands on the collapsed state, never gets stuck
+- [ ] Navigating away from an expanded row (Up/Down to a different row) and back: the row is reset to its OWN starting state (title-expanded if its title is long, collapsed otherwise) — nothing is remembered from the previous visit
+- [ ] Mouse hover on any row (including one with keyboard-forced expand state) still works exactly as before — hovering title/author zones expands them independently of whatever the keyboard last set, unaffected
+- [ ] After using keyboard Left/Right to expand a row, moving the mouse over a DIFFERENT row's title/author and back does not leave any stale keyboard-forced expand visible on the original row
+- [ ] This entire feature has zero effect on any other view mode (1-per-row, 2-per-row, 3-per-row, Square) — their Left/Right column-move behavior is unchanged
 
 ### Theme
 - [x] Theme switch updates all delegate colors immediately
