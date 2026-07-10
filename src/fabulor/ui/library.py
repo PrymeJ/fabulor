@@ -84,17 +84,26 @@ def _next_list_expand_field(key, current_field, title_elided, author_elided):
 
 # Constants for Virtual Scrolling
 ITEM_DIMENSIONS = {
-    "3 per row": {"w": 96,  "h": 146, "cols": 3},
-    # 95x95 — h=95 is the known-working row-fit value (5 rows in the 477px viewport). w
-    # clipped 96->95 to match: with left=4/right=0 (_GRID_MARGINS), each cell lays out as
-    # [4px margin][91px cover] = 95px, giving a true 91x91 square cover (matching the 91px
-    # cover height that top=2/bottom=2 on a 95-tall cell already produces). The freed width
-    # from 3 cells (96->95 each) lands entirely in the window's own trailing gutter (right of
-    # the last column, before the scrollbar) — nothing else needs to change to absorb it, and
-    # the 4px gap between adjacent covers (left=4 + previous cell's right=0) is untouched. Do
-    # NOT trust arithmetic alone for this constant — a prior 94x94 CELL attempt (shrinking
-    # both dims together) passed on paper but was visually wrong live (10px gaps, a 7px
-    # sliver); verify any change against the real running app. See NOTES.md.
+    # w=95 (was 96), copied from Square (2026-07-10) so the two modes' covers/gaps align
+    # pixel-for-pixel when toggling between them (`3`/`4` keys) — before this, 3-per-row's
+    # cover was 1px wider than Square's, so columns visibly shifted right on toggle. h left
+    # at 146, and _GRID_MARGINS' "3 per row" left at (4, 2, 0, 2) (NOT copied to Square's
+    # (4, 0, 0, 4)) — deliberately: matching Square's top=0/bottom=4 shape here shifts the
+    # grid's starting row down and reproduces a ~50px top gap (tried twice — an all-in-top-
+    # margin remainder fix matching Square, and a top/bottom split — both reverted, same gap
+    # either way). Confirmed live (2026-07-10) that width alone is enough for `3`/`4` toggle
+    # alignment; the remaining top=2/bottom=2 vs Square's top=0/bottom=4 asymmetry is a known,
+    # deliberately unresolved follow-up — see TODO.md.
+    "3 per row": {"w": 95,  "h": 146, "cols": 3},
+    # 95x95 — h=95 is the known-working row-fit value (5 rows in the 477px viewport). w=95:
+    # with left=4/right=0 (_GRID_MARGINS), each cell lays out as [4px margin][91px cover] =
+    # 95px, giving a true 91x91 square cover. The freed width from 3 cells (96->95 each) lands
+    # entirely in the window's own trailing gutter (right of the last column, before the
+    # scrollbar) — nothing else needs to change to absorb it, and the 4px gap between adjacent
+    # covers (left=4 + previous cell's right=0) is untouched. Do NOT trust arithmetic alone for
+    # a cell-size change here — a prior 94x94 attempt (shrinking both dims together) passed on
+    # paper but was visually wrong live (10px gaps, a 7px sliver); verify any change against the
+    # real running app. See NOTES.md.
     "Square":    {"w": 95,  "h": 95,  "cols": 3},
     # 145x234. h=234: viewport-top-of-first-cover to window-bottom was measured live at 469px
     # (with the OLD top=8 layout — 477-8=469). 2 rows * 234 = 468, 1px short of 469 (235 would
