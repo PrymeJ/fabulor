@@ -94,7 +94,7 @@ class PanelManager:
         if self.is_overlay_open_or_committed():
             return
         self.main_window.library_panel.clear_tag_filter_if_active()
-        self._abort_theme_fade()
+        self._complete_main_fade()
         self.library_panel.cancel_preload()
         self.main_window._save_current_progress()
         if self.sidebar_expanded:
@@ -180,8 +180,10 @@ class PanelManager:
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         if self.is_overlay_open_or_committed():
             return
-        #self._abort_theme_fade()
-        self.main_window.theme_manager.snap_theme_forward()
+        # NOT snap_theme_forward (Settings-tuned, explicitly wrong for a main-window-in-
+        # flight fade — see _toggle_sidebar's comment). complete_main_fade is what actually
+        # re-polishes the slider colors; matches every other _open_*_flow (2026-07-10 fix).
+        self._complete_main_fade()
         """Hides sidebar first, then shows settings panel."""
         logger.debug(
             f"t={time.perf_counter():.6f} [_open_settings_flow ENTRY] "
@@ -274,7 +276,7 @@ class PanelManager:
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         if self.is_overlay_open_or_committed():
             return
-        self._abort_theme_fade()
+        self._complete_main_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "speed"
             if not self._sidebar_panel_signal_connected:
@@ -432,7 +434,7 @@ class PanelManager:
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         if self.is_overlay_open_or_committed():
             return
-        self._abort_theme_fade()
+        self._complete_main_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "stats"
             if not self._sidebar_panel_signal_connected:
@@ -466,7 +468,7 @@ class PanelManager:
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         if self.is_overlay_open_or_committed():
             return
-        self._abort_theme_fade()
+        self._complete_main_fade()
         """Hides sidebar first, then shows sleep panel."""
         if self.sidebar_expanded:
             self._pending_panel_open = "sleep"
@@ -554,7 +556,7 @@ class PanelManager:
         # coupling (drive the open off the close `finished` signal instead of a fixed delay).
         if self.is_overlay_open_or_committed():
             return
-        self._abort_theme_fade()
+        self._complete_main_fade()
         if self.sidebar_expanded:
             self._pending_panel_open = "tags"
             if not self._sidebar_panel_signal_connected:
@@ -614,7 +616,7 @@ class PanelManager:
         panel = self.main_window.book_detail_panel
         if panel.isVisible():
             return
-        self._abort_theme_fade()
+        self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
         # can tell whether a given tag is already the active filter and render inert. A
         # snapshot (not a live callback) is sufficient: the library's search text cannot change
@@ -709,10 +711,27 @@ class PanelManager:
         if tm:
             tm._fire_pending_rotation()
 
-    def _abort_theme_fade(self):
+    def _complete_main_fade(self):
+        """Main-window theme-fade-in-flight guard for every panel-open flow that can be
+        reached WITHOUT going through _toggle_sidebar (direct-open branch of each
+        _open_*_flow, and open_book_detail). complete_main_fade is the same call
+        _toggle_sidebar already makes before a right-click-driven sidebar open — it fully
+        re-polishes the slider @Property colors via _apply_stylesheets, unlike
+        abort_theme_fade (stops animations but never re-polishes, stranding sliders at an
+        intermediate color) or snap_theme_forward (Settings-panel-tuned, explicitly wrong
+        for the main window per _toggle_sidebar's own comment). No-op if no fade is running
+        (ThemeManager.complete_main_fade's own guard). Was previously named
+        _abort_theme_fade and called theme_manager.abort_theme_fade() — renamed and
+        rewired 2026-07-10 after confirming via live focus-trace-style investigation that
+        the keyboard-shortcut panel-open path (T then L/G/P/A/S/Z) bypasses
+        _toggle_sidebar entirely when the sidebar is collapsed, so it never reached
+        complete_main_fade and left sliders stranded mid-fade under the newly-opened
+        panel — a gap anticipated in NOTES.md 2026-06-19 but not caught when the six
+        shortcuts were added, because abort_theme_fade's name was conflated with
+        complete_main_fade's actual behavior without diffing the two bodies."""
         tm = getattr(self.main_window, 'theme_manager', None)
         if tm:
-            tm.abort_theme_fade()
+            tm.complete_main_fade()
 
     def _any_panel_animating(self):
         """Returns True if any sliding panel or blur animation is currently running."""
