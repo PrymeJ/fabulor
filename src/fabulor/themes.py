@@ -493,6 +493,7 @@ THEMES = {
         "bookmark_body":                 "#52C8F7",
         "tassel_head":                   "#57148E",
         "tassel_fringe":                 "#7E6FEF",
+        "focus_marker":                  "#D2D89B",
         "placeholder_cover":             "#5AACCC",
         "carousel_stripe":               "#1D93B4",
     },
