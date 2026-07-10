@@ -267,6 +267,24 @@ class LibraryPanel(QFrame):
     "Finished":    False,  # descending, most recently finished first
     }
 
+    # Keyboard shortcuts handled by _list_key while the book LIST has focus (not the search
+    # field — see _list_key). Values are sort_combo DATA keys (not display text): 'r' → "Last
+    # Played" because the combo displays "Recent" but its data key is "Last Played". Progress /
+    # Finished are conditional dropdown entries (only present when such books exist); the
+    # handler no-ops silently when the field isn't in the combo (findData == -1).
+    _SORT_KEY_SHORTCUTS = {
+        Qt.Key.Key_P: "Progress",     Qt.Key.Key_T: "Title",
+        Qt.Key.Key_A: "Author",       Qt.Key.Key_R: "Last Played",
+        Qt.Key.Key_D: "Duration",     Qt.Key.Key_Y: "Year",
+        Qt.Key.Key_F: "Finished",
+    }
+    # Digit → style_combo index. VIEW_MODES order == dropdown population order, so digit N maps
+    # directly to index N-1 (1→1-per-row, 2→2-per-row, 3→3-per-row, 4→Square, 5→List).
+    _VIEW_MODE_SHORTCUTS = {
+        Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2,
+        Qt.Key.Key_4: 3, Qt.Key.Key_5: 4,
+    }
+
     def __init__(self, db, config, player_instance=None, parent=None):
         super().__init__(parent)
         self.db              = db
@@ -445,6 +463,17 @@ class LibraryPanel(QFrame):
                 idx = self._list_view.currentIndex()
                 if idx.isValid():
                     self._on_item_clicked(idx)
+            elif key in self._SORT_KEY_SHORTCUTS:
+                # Sort-field shortcut. Autorepeat guard scoped to THESE keys only (nav keys
+                # above stay repeatable) — a held letter must not machine-gun the toggle.
+                # Every path consumes the key (no fall-through), so an unhandled letter never
+                # triggers QListView type-ahead or bubbles up to the global dispatcher.
+                if not e.isAutoRepeat():
+                    self._apply_sort_shortcut(key)
+            elif key in self._VIEW_MODE_SHORTCUTS:
+                # View-mode shortcut. Same autorepeat guard + always-consume rationale.
+                if not e.isAutoRepeat():
+                    self._apply_view_mode_shortcut(key)
             else:
                 QListView.keyPressEvent(self._list_view, e)
         self._list_view.keyPressEvent = _list_key
@@ -1138,6 +1167,36 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(self._sort_ascending)
         self._last_filter_mode = sort_key
         QTimer.singleShot(0, self._load_visible_covers)
+
+    def _apply_sort_shortcut(self, key) -> None:
+        """Keyboard sort-field shortcut decision (see _SORT_KEY_SHORTCUTS). Three outcomes,
+        all reusing existing mouse-path handlers — no duplicated sort logic:
+          field absent from the current dropdown (conditional Progress/Finished) → no-op;
+          field already active                                                   → toggle
+            direction via _toggle_sort_direction (the exact asc/desc arrow-button path);
+          otherwise                                                              → select the
+            field via setCurrentIndex, whose currentTextChanged fires _on_sort_changed and
+            applies the field's fixed fresh-selection default direction.
+        Split out of _list_key's closure so the branch decision is unit-testable against a
+        fake combo (tests/test_library_shortcuts.py)."""
+        target = self._SORT_KEY_SHORTCUTS[key]
+        idx = self.sort_combo.findData(target)
+        if idx == -1:
+            return  # Progress/Finished not present for this library → silent no-op
+        if self.sort_combo.currentData() == target:
+            self._toggle_sort_direction()
+        else:
+            self.sort_combo.setCurrentIndex(idx)
+
+    def _apply_view_mode_shortcut(self, key) -> None:
+        """Keyboard view-mode shortcut decision (see _VIEW_MODE_SHORTCUTS). Selecting the
+        already-active mode is an explicit no-op (setCurrentIndex on the current index wouldn't
+        fire currentTextChanged anyway, but the guard makes the no re-layout/re-animation
+        guarantee unmistakable); otherwise setCurrentIndex fires _on_view_mode_changed (the
+        mouse path). Split out for the same unit-testability reason as _apply_sort_shortcut."""
+        target_idx = self._VIEW_MODE_SHORTCUTS[key]
+        if self.style_combo.currentIndex() != target_idx:
+            self.style_combo.setCurrentIndex(target_idx)
 
     def _on_search_changed(self, text):
         if not self._programmatic_search_update:

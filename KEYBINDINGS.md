@@ -108,6 +108,8 @@ Handled directly by `LibraryPanel`/`BookDelegate` (`ui/library.py`) — not part
 | `Tab` | Toggle focus between the search field and the list. From the list: focus moves to the search field. From the search field: focus moves back to the list (current selection, or the first row if none). This is a dedicated two-way toggle, not Qt's native tab-order chain — it never reaches the sort combo, view-mode combo, sort-direction button, or Back button. |
 | `Up` / `Down` (search field focused) | Move the book selection by one and hand focus to the list immediately. `Left`/`Right` in the search field are unaffected (normal text-cursor movement). |
 | `Escape` (search field focused) | See "Text fields" above — clears the field and drops focus. |
+| `t` / `a` / `r` / `d` / `y` / `p` / `f` (list focused) | Sort by Title / Author / Recent / Duration / Year / Progress / Finished — mirrors the sort dropdown. Pressing the letter of the **inactive** field switches to it at that field's default direction; pressing the letter of the **already-active** field toggles direction (asc↔desc, same as the ↑/↓ button). `p` (Progress) and `f` (Finished) are silent no-ops when those fields aren't in the dropdown (no book with progress / no finished book). Held keys do not repeat. |
+| `1` / `2` / `3` / `4` / `5` (list focused) | Switch view mode to 1-per-row / 2-per-row / 3-per-row / Square / List — mirrors the view-mode dropdown (by row count). The digit for the already-active mode is a no-op (no flicker/re-animation). Held keys do not repeat. |
 
 A keyboard-selected row shows a highlight: 1-per-row gets a themed tint; the three grid
 modes (2-per-row/3-per-row/Square) show the same duration/progress overlay a mouse hover
@@ -125,10 +127,14 @@ by mouse or keyboard, whichever moved last.
 matches only **titles that start with** the remainder (case-insensitive) — e.g. `_the`
 matches "The Hobbit" but not "In the Woods". Title only, not author/narrator.
 
-**Sort / view-mode dropdowns are deliberately mouse-only** — no keyboard shortcut opens
-or drives them, same tier as tag-name editing elsewhere in the app. Clicking one to make
-a selection (or dismissing it without choosing) returns keyboard focus to the list
-afterward, so arrows keep driving book navigation rather than getting stranded on the
+**Sort / view-mode selection** — the dropdowns themselves are still mouse-only to *open*,
+but sort field/direction and view mode are now also driveable from the keyboard while the
+list has focus (the `t/a/r/d/y/p/f` and `1`–`5` rows above), routing through the same
+handlers the dropdowns use (`_apply_sort_shortcut` / `_apply_view_mode_shortcut` →
+`_on_sort_changed` / `_toggle_sort_direction` / `_on_view_mode_changed`). These keys are
+scoped to list focus: with the search field focused they type normally. Clicking a dropdown
+to make a selection (or dismissing it without choosing) still returns keyboard focus to the
+list afterward, so arrows keep driving book navigation rather than getting stranded on the
 dropdown.
 
 **Book Detail Panel re-open guard:** requesting detail (via `Alt+Enter`, right-click, or
