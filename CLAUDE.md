@@ -811,7 +811,7 @@ several rounds) — `2×237+3=477` exactly, no 3rd-row sliver, near-flush top gu
 DO-NOT rule; the two transferable lessons (remainder-push margins only work invisibly when the
 leftover is small; a delegate's cover-draw size and its cell height are independently sized code
 paths that must be changed together) are in NOTES.md "Grid-mode geometry, final pass," not
-elevated to app-wide rules. `06ab86b`, `ef4b826`, `352b72f`, `f0c0f62`.*
+elevated to app-wide rules. `06ab86b`, `ef4b826`, `352b72f`, `f0c0f62`, `3e929b4`.*
 
 *Previously: 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts. While
 the book list has focus (not the search field), `t/a/r/d/y/p/f` drive the sort dropdown and `1`–`5`

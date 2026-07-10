@@ -1,7 +1,8 @@
 ## Session Summary — 2026-07-10 Session 5 — Grid geometry, final pass: List drift, 3-per-row/Square alignment, 2-per-row whole-system solve
 
 **Branch:** `main`. **Commits:** `06ab86b` (List 1px drift), `ef4b826` + `352b72f` (3-per-row
-alignment to Square), `f0c0f62` (2-per-row cover growth + top-gap/sliver fix).
+alignment to Square), `f0c0f62` (2-per-row cover growth + top-gap/sliver fix), `3e929b4`
+(2-per-row margin final nudge — the true final state).
 
 Closes out the multi-session grid-view-mode geometry work — all five view modes (1-per-row,
 2-per-row, 3-per-row, Square, List) now have clean, drift-free scroll boundaries. Full technical
@@ -37,6 +38,9 @@ gaps) was hand-tuned live by the user directly and cross-checked in Photopea rat
 recomputed — code comments say so explicitly, so a future pass doesn't try to "fix" hand-tuned
 values back to stale arithmetic. One piece of debt confirmed and explicitly declined to chase:
 2-per-row's top edge sits 1px below Square's; fixing it "would break the viewport," not worth it.
+One last follow-up landed the same day: `_TWO_PER_ROW_LEFT_MARGIN` (`9, 8` → `11, 6`) — the 16px
+middle gap read as too tight next to the outer margins; shifted 2px each side for a near-even
+11px/12px split. Declared done ("Thing of beauty") after this.
 
 No new CLAUDE.md DO-NOT rule — this is geometry-tuning debt closure across several already-
 established patterns (remainder-push margins, flat eyeballed pushes, per-column margins), not a

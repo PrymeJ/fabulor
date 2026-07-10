@@ -95,8 +95,16 @@ comments instead say "confirmed live, do not recompute against fresh arithmetic.
 lower than Square's, and explicitly declined to chase it — "that would break the viewport." This
 is accepted, permanent, cosmetic-only debt, not a bug to revisit.
 
+**Final follow-up (same day):** `_TWO_PER_ROW_LEFT_MARGIN` was `(9, 8)` (16px middle gap) after
+the whole-system solve above — confirmed live as reading "too tight in the middle relative to
+the outer edges." One more nudge, shifting 2px from middle to outer: `(11, 6)` — outer=11px each,
+middle=12px, close to visually even. Total per-column slack (`outer + middle_half = 17`, fixed by
+`cover_w=128`/`cell_w=145`) is unchanged; only how it's split moved. Declared done — "Thing of
+beauty" — after this change. If revisiting 2-per-row's margins in the future, `(11, 6)` is the
+final value, not `(9, 8)`.
+
 **Commits:** `ef4b826` (3-per-row width-only alignment), `352b72f` (3-per-row margins + 2px
-push), `f0c0f62` (2-per-row whole-system solve, final).
+push), `f0c0f62` (2-per-row whole-system solve), `3e929b4` (2-per-row margin final nudge).
 
 ---
 
