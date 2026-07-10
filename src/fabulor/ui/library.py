@@ -2599,11 +2599,12 @@ class BookDelegate(QStyledItemDelegate):
     # not the naive 292 nominal viewport width (see ITEM_DIMENSIONS' "2 per row" comment for
     # why an exact 292 match collapsed the grid to 1 column live). Middle gap stays exactly
     # 16px (right_of_col0 + left_of_col1 = 8+8) as originally chosen.
-    # 2026-07-10: cover grown 118->128 (see _paint_two_per_row / ITEM_DIMENSIONS), so the
-    # margin split changed to (9, 8) to keep the exact same proven 16px middle gap (8+8) while
-    # absorbing the cover-width growth into the outer margins (19->9). cell_w=145 unchanged
-    # (9+128+8=145, 8+128+9=145).
-    _TWO_PER_ROW_LEFT_MARGIN = (9, 8)
+    # 2026-07-10: cover grown 118->128 (see _paint_two_per_row / ITEM_DIMENSIONS). Margin split
+    # (9, 8) [16px middle gap] read as too tight in the middle relative to the outer edges once
+    # live — shifted 2px from the middle to the outer margins: (11, 6) gives an 11px outer /
+    # 12px middle split, close to even rather than the middle being visibly narrower.
+    # cell_w=145 unchanged (11+128+6=145, 6+128+11=145).
+    _TWO_PER_ROW_LEFT_MARGIN = (11, 6)
 
     def _paint_two_per_row(self, painter, option, index, book, cover, hovered, show_rem, live_pos, live_dur):
         r = option.rect
