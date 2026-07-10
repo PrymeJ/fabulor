@@ -1,4 +1,56 @@
-## Session Summary — 2026-07-11 — History tab delete-session animation, partial fix (stutter + viewport quantization still open)
+## Session Summary — 2026-07-11 Session 2 — Book Detail keyboard: library-leak fix + Tab/Escape handling
+
+**Branch:** `main`. **Commits:** `4480e7a` (library shortcuts no longer fire under Book Detail),
+`a4d233f` (Escape clears the tag field instead of closing the panel), `76f4577` (Tab cycles
+metadata / toggles the tag input), `0a4e558` (Tab on Stats/History enters metadata edit),
+`9ae8506` (TODO: Cover tab keyboard support, deferred).
+
+All four functional fixes trace to one structural fact: **the Book Detail Panel overlays the
+library (both visible), and `PanelManager.active_full_panel()` checks `library` before
+`book_detail` in its priority chain — so it reports `"library"` while detail is open.** Every
+keyboard handler that gated on `active_full_panel() == "library"` therefore fired while the user
+was actually interacting with the detail panel on top.
+
+**1. Library shortcuts leaking under Book Detail (`4480e7a`).** The reported bug: typing into the
+detail panel's tag field or inline metadata editors, the sort/view-mode shortcut keys
+(`t/a/r/d/y/p/f`, `1-5`) got stolen by `_handle_library_nothing_focused_key` (app.py) and
+forwarded to the library list underneath — changing its sort/view mode and yanking focus away
+mid-edit. Fixed with two guards in that handler: bail if the Book Detail Panel is visible, and
+defer to any focused `QLineEdit` (mirroring the guard `_handle_tab_escape` already uses).
+
+**2. Escape in the tag field (`a4d233f`).** The panel's own `eventFilter` Escape branch only knew
+`_editing` (the inline-metadata mode); Escape while typing a tag fell through to the panel-close
+branch — dismissing the panel immediately AND leaving the half-typed text to reappear next open
+(nothing cleared it but a successful add). Now Escape while the tag input is focused clears +
+defocuses it (the add-field analog to metadata's revert-on-Escape — no prior value, so "revert" =
+clear), panel stays open; a second Escape closes as before. `load_book()` also clears the field on
+every fresh open, so a stale tag can't survive any close path.
+
+**3 + 4. Tab handling, all four detail tabs (`76f4577`, `0a4e558`).** Tab is now handled locally in
+the panel's `eventFilter` (which runs before MainWindow's, per QApplication reverse-install order)
+and **always consumed**, on every tab — this alone seals the same library-leak for Tab (a leaked
+Tab could reach the library search field, and from there arrows could change the library view — the
+user flagged this as strictly worse than any missing in-panel Tab feature, which is why sealing it
+took priority over the feature). On top of that consumed base:
+- **Stats / History** (the read-only info tabs, no interactive body of their own): Tab enters
+  metadata edit mode (focuses the title); further Tabs cycle the four header fields
+  (title→author→narrator→year, wrapping; Shift+Tab reverses). No archived-book guard — matches the
+  existing click-to-edit path, which also enters edit mode regardless of archived state.
+- **Tags**: Tab toggles the tag-add field ↔ nothing-focused (mirrors the library's search↔nothing
+  cycle); Tab-away clears+defocuses, reusing the same `_clear_tag_input` helper as Escape.
+- **Cover**: consumed no-op (its own thumbnails/fit controls should own Tab's context eventually —
+  deferred, `9ae8506` / TODO.md). Sealing the leak here means wiring real Cover nav later is purely
+  additive.
+
+The tab-context checks (`_on_tags_tab`, `_on_info_tab`) key on tab TEXT, not a hardcoded index, so
+they survive any future tab reorder. No new CLAUDE.md DO-NOT rule — these are behavior additions
+plus a leak fix, all composing with the existing Tab/Escape infrastructure rather than resolving a
+hard-won architectural bug. No automated coverage added (Qt focus/event-dispatch behavior, verified
+live per the project norm); full suite stayed green (88) throughout.
+
+---
+
+## Session Summary — 2026-07-11 Session 1 — History tab delete-session animation, partial fix (stutter + viewport quantization still open)
 
 **Branch:** `main`. **Commits:** `813f7d9` (fix minimumHeight floor stalling the collapse), `86b6cc9`
 (restripe surviving rows in place instead of a full rebuild). One further attempt (fixed-row-count
