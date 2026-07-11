@@ -14,7 +14,7 @@ from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -3603,6 +3603,29 @@ class StatsPanel(QWidget):
         elif self.tabs.tabText(index) == "⚙":
             if hasattr(self, '_tag_manager'):
                 self._tag_manager.refresh()
+
+    # ── Day/Week/Month keyboard nav ───────────────────────────────────────────
+    # StatsPanel itself is granted real Qt focus on open (PanelManager._claim_panel_focus —
+    # it isn't in panel_tab_widgets, so the panel root is the claim target), so this is the
+    # widget that actually owns keyboard focus while Stats is open, per the focus-ownership
+    # invariant — the same shape as ChapterList's own keyPressEvent, not the app-level
+    # eventFilter (Tab/Escape lane), since this only needs to react while ITS tab is active
+    # and doesn't need to intercept anything before a more-specific widget sees it.
+    _NAV_METHODS = {
+        "Day":   ("_day_prev", "_day_next"),
+        "Week":  ("_week_prev", "_week_next"),
+        "Month": ("_month_prev", "_month_next"),
+    }
+
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            pair = self._NAV_METHODS.get(self.tabs.tabText(self.tabs.currentIndex()))
+            if pair is not None:
+                prev_name, next_name = pair
+                getattr(self, prev_name if key == Qt.Key.Key_Left else next_name)()
+                return
+        super().keyPressEvent(event)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)

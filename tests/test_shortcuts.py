@@ -205,10 +205,13 @@ def test_default_table_shape(qapp):
     ):
         assert DEFAULT_BINDINGS[action].key == key
         assert DEFAULT_BINDINGS[action].guard is GuardKind.COOLDOWN_DROP
-    # Only the volume/speed nudges repeat on hold; everything else fires once per press.
+    # Volume/speed/seek/chapter-nav/long-skip repeat on hold; panel-open/theme/etc. don't.
     autorepeating = {a for a, b in DEFAULT_BINDINGS.items() if b.allow_autorepeat}
     assert autorepeating == {
         Action.VOLUME_UP, Action.VOLUME_DOWN, Action.SPEED_UP, Action.SPEED_DOWN,
+        Action.SEEK_BACK, Action.SEEK_FORWARD,
+        Action.LONG_SKIP_BACK, Action.LONG_SKIP_FORWARD,
+        Action.CHAPTER_PREV, Action.CHAPTER_NEXT,
     }
     # No two actions share a (key, modifiers) pair — the uniqueness that keeps bare Up
     # (volume) distinct from Alt+Up (speed) and Shift/Ctrl+Left distinct from each other.
@@ -233,6 +236,8 @@ def test_transport_bindings_fire_their_actions(qapp):
         (Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier,      Action.PLAY_PAUSE),
         (Qt.Key.Key_Up,    Qt.KeyboardModifier.NoModifier,      Action.VOLUME_UP),
         (Qt.Key.Key_Down,  Qt.KeyboardModifier.NoModifier,      Action.VOLUME_DOWN),
+        (Qt.Key.Key_Left,  Qt.KeyboardModifier.NoModifier,      Action.SEEK_BACK),
+        (Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier,      Action.SEEK_FORWARD),
         (Qt.Key.Key_Left,  Qt.KeyboardModifier.ShiftModifier,   Action.LONG_SKIP_BACK),
         (Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier,   Action.LONG_SKIP_FORWARD),
         (Qt.Key.Key_Left,  Qt.KeyboardModifier.ControlModifier, Action.CHAPTER_PREV),
@@ -248,8 +253,8 @@ def test_transport_bindings_fire_their_actions(qapp):
 
 
 def test_modifier_disambiguates_same_key(qapp):
-    # The whole point of adding modifier support: bare Up != Alt+Up, and Shift+Left,
-    # Ctrl+Left, and bare Left are three different things (bare Left is unbound).
+    # The whole point of adding modifier support: bare Up != Alt+Up, and bare Left,
+    # Shift+Left, and Ctrl+Left are three different actions on the same physical key.
     disp, counts = _make(DEFAULT_BINDINGS)
 
     assert _press(disp, Qt.Key.Key_Up) is True              # bare -> volume, not speed
@@ -271,8 +276,11 @@ def test_modifier_disambiguates_same_key(qapp):
     assert counts[Action.CHAPTER_PREV] == 1
     assert counts[Action.LONG_SKIP_BACK] == 1               # unchanged
 
-    # Bare Left is not bound to anything (only Shift/Ctrl variants exist).
-    assert _press(disp, Qt.Key.Key_Left) is False
+    # Bare Left -> seek, not long-skip or chapter-nav.
+    assert _press(disp, Qt.Key.Key_Left) is True
+    assert counts[Action.SEEK_BACK] == 1
+    assert counts[Action.LONG_SKIP_BACK] == 1                # unchanged
+    assert counts[Action.CHAPTER_PREV] == 1                  # unchanged
 
 
 def test_keypad_modifier_does_not_defeat_bare_binding(qapp):

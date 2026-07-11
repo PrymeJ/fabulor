@@ -1,16 +1,24 @@
 """Behavior contract for the MainWindow-level transport shortcut handlers
-(`_nudge_volume` / `_nudge_speed` / `_toggle_mute` / `_undo_shortcut` in app.py).
+(`_nudge_volume` / `_nudge_speed` / `_nudge_chapter` / `_nudge_long_skip` / `_toggle_mute` /
+`_undo_shortcut` in app.py).
 
 The hard requirement for these shortcuts is REUSE, not a parallel implementation: each
 must drive the SAME path the on-screen button or wheel already uses. Standing up a real
 MainWindow needs mpv + the DB + the full widget tree, so — following the pattern in
 `test_panel_exclusion.py` — these tests bind the REAL unbound methods to a tiny fake that
 supplies exactly the collaborators each method reads (the volume slider, `_set_speed`,
-`_perform_undo`, the undo overlay's visibility). That pins the reuse contract:
+`handle_prev`/`handle_next`/`handle_rewind`/`handle_forward`, `_perform_undo`, the undo
+overlay's visibility). That pins the reuse contract:
 
 - `_nudge_volume` steps ±5 and writes through `volume_slider.setValue()` (the wheel's path).
 - `_nudge_speed` steps ±speed_increment through `_set_speed()` (the wheel's path), and
   self-throttles held-key (autorepeat) calls while applying every single tap.
+- `_nudge_chapter` calls `handle_prev()`/`handle_next()` — the same methods the chapter nav
+  buttons and progress-slider wheel use — and self-throttles held-key repeats to
+  `_CHAPTER_NUDGE_THROTTLE_S` (its own constant, independent of speed's).
+- `_nudge_long_skip` calls `handle_rewind(long_skip=True)`/`handle_forward(long_skip=True)` —
+  the same methods the rewind/forward buttons' right-click uses — and self-throttles held-key
+  repeats to `_LONG_SKIP_THROTTLE_S` (also its own constant).
 - `_toggle_mute` stores/restores volume purely via `volume_slider.setValue()`.
 - `_undo_shortcut` no-ops unless `undo_overlay.isVisible()`, then calls `_perform_undo()`.
 
@@ -22,7 +30,9 @@ import time
 
 import pytest
 
-from fabulor.app import MainWindow, _SPEED_NUDGE_THROTTLE_S
+from fabulor.app import (
+    MainWindow, _SPEED_NUDGE_THROTTLE_S, _CHAPTER_NUDGE_THROTTLE_S, _LONG_SKIP_THROTTLE_S,
+)
 
 
 class _FakeSlider:
@@ -71,7 +81,7 @@ class _FakeOverlay:
 
 
 class _FakeMW:
-    """Supplies exactly the collaborators the four transport handlers read off self."""
+    """Supplies exactly the collaborators the transport handlers read off self."""
     def __init__(self, *, current_file="book.m4b", volume=50, speed=1.0,
                  increment=0.1, is_autorepeat=False, undo_visible=True):
         self.current_file = current_file
@@ -81,9 +91,15 @@ class _FakeMW:
         self.shortcuts = _FakeShortcuts(is_autorepeat=is_autorepeat)
         self._pre_mute_volume = None
         self._last_speed_nudge_ts = 0.0
+        self._last_chapter_nudge_ts = 0.0
+        self._last_long_skip_nudge_ts = 0.0
         self.undo_overlay = _FakeOverlay(undo_visible)
         self.set_speed_calls = []
         self.perform_undo_calls = 0
+        self.handle_prev_calls = 0
+        self.handle_next_calls = 0
+        self.handle_rewind_calls = []   # list of long_skip kwargs passed
+        self.handle_forward_calls = []
 
     def _set_speed(self, value):
         # Mirror the real app: applying a speed updates player.speed, so a subsequent
@@ -94,6 +110,18 @@ class _FakeMW:
 
     def _perform_undo(self):
         self.perform_undo_calls += 1
+
+    def handle_prev(self):
+        self.handle_prev_calls += 1
+
+    def handle_next(self):
+        self.handle_next_calls += 1
+
+    def handle_rewind(self, long_skip=False):
+        self.handle_rewind_calls.append(long_skip)
+
+    def handle_forward(self, long_skip=False):
+        self.handle_forward_calls.append(long_skip)
 
 
 # ── _nudge_volume: reuse the slider path ─────────────────────────────────────────
@@ -173,6 +201,71 @@ def test_nudge_speed_autorepeat_is_throttled():
     mw._last_speed_nudge_ts = time.monotonic() - (_SPEED_NUDGE_THROTTLE_S + 0.01)
     MainWindow._nudge_speed(mw, 1)
     assert len(mw.set_speed_calls) == 1          # now applies
+
+
+# ── _nudge_chapter: reuse handle_prev/handle_next + its own throttle ─────────────
+
+def test_nudge_chapter_calls_handle_prev_and_next():
+    mw = _FakeMW()
+    MainWindow._nudge_chapter(mw, -1)
+    assert mw.handle_prev_calls == 1
+    assert mw.handle_next_calls == 0
+    MainWindow._nudge_chapter(mw, 1)
+    assert mw.handle_next_calls == 1
+
+
+def test_nudge_chapter_tap_always_applies_even_when_recent():
+    mw = _FakeMW(is_autorepeat=False)
+    mw._last_chapter_nudge_ts = time.monotonic()   # "just applied"
+    MainWindow._nudge_chapter(mw, 1)
+    assert mw.handle_next_calls == 1
+
+
+def test_nudge_chapter_autorepeat_is_throttled_independently_of_speed():
+    mw = _FakeMW(is_autorepeat=True)
+    mw._last_chapter_nudge_ts = time.monotonic()
+    MainWindow._nudge_chapter(mw, 1)
+    assert mw.handle_next_calls == 0                # throttled
+
+    mw._last_chapter_nudge_ts = time.monotonic() - (_CHAPTER_NUDGE_THROTTLE_S + 0.01)
+    MainWindow._nudge_chapter(mw, 1)
+    assert mw.handle_next_calls == 1                 # window elapsed -> applies
+
+    # Own constant, not derived from / shared with speed's.
+    assert _CHAPTER_NUDGE_THROTTLE_S != _SPEED_NUDGE_THROTTLE_S
+
+
+# ── _nudge_long_skip: reuse handle_rewind/handle_forward(long_skip=True) + its own throttle ──
+
+def test_nudge_long_skip_calls_handle_rewind_and_forward_with_long_skip_true():
+    mw = _FakeMW()
+    MainWindow._nudge_long_skip(mw, -1)
+    assert mw.handle_rewind_calls == [True]
+    assert mw.handle_forward_calls == []
+    MainWindow._nudge_long_skip(mw, 1)
+    assert mw.handle_forward_calls == [True]
+
+
+def test_nudge_long_skip_tap_always_applies_even_when_recent():
+    mw = _FakeMW(is_autorepeat=False)
+    mw._last_long_skip_nudge_ts = time.monotonic()
+    MainWindow._nudge_long_skip(mw, 1)
+    assert mw.handle_forward_calls == [True]
+
+
+def test_nudge_long_skip_autorepeat_is_throttled_independently_of_speed_and_chapter():
+    mw = _FakeMW(is_autorepeat=True)
+    mw._last_long_skip_nudge_ts = time.monotonic()
+    MainWindow._nudge_long_skip(mw, 1)
+    assert mw.handle_forward_calls == []             # throttled
+
+    mw._last_long_skip_nudge_ts = time.monotonic() - (_LONG_SKIP_THROTTLE_S + 0.01)
+    MainWindow._nudge_long_skip(mw, 1)
+    assert mw.handle_forward_calls == [True]          # window elapsed -> applies
+
+    # Own constant, not derived from / shared with speed's or chapter-nav's.
+    assert _LONG_SKIP_THROTTLE_S != _SPEED_NUDGE_THROTTLE_S
+    assert _LONG_SKIP_THROTTLE_S != 0.12  # not accidentally hardcoded to speed's literal
 
 
 # ── _toggle_mute: store then restore via the slider path ─────────────────────────

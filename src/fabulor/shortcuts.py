@@ -33,10 +33,10 @@ other stray bits so a numeric-keypad or platform-set flag on an arrow press can'
 bare-key binding's match.
 
 Autorepeat is a per-binding property (``Binding.allow_autorepeat``), NOT a global
-dispatcher rule: all of today's bindings suppress held-key repeat (holding C otherwise
-re-toggles the chapter dropdown every tick, holding T spams rotations), but a future
-hold-to-repeat binding (skip/seek/volume — see KEYBINDINGS.md) can opt in. A
-dispatcher-wide block would silently break those the moment they're added.
+dispatcher rule: bindings that make no sense held down (C, T, Q, L and the panel-open
+family) suppress held-key repeat, while volume/speed/seek/chapter-nav/long-skip opt in
+(holding C otherwise re-toggles the chapter dropdown every tick, holding T spams
+rotations). A dispatcher-wide block would silently break the ones that opt in.
 """
 
 from dataclasses import dataclass
@@ -81,6 +81,8 @@ class Action(Enum):
     SPEED_DOWN = auto()
     MUTE = auto()
     UNDO = auto()
+    SEEK_BACK = auto()
+    SEEK_FORWARD = auto()
 
 
 class GuardKind(Enum):
@@ -114,13 +116,15 @@ class Binding:
     Defaults to NoModifier (a bare-key binding — matches only an unmodified press). Set e.g.
     ``ShiftModifier`` so ``Shift+Left`` is told apart from bare ``Left`` and ``Ctrl+Left``,
     which now key on distinct ``(key, modifiers)`` pairs."""
-    """Whether a held-key autorepeat tick dispatches. Defaults False: none of today's
-    bindings (C/T/Q/L) make sense held down — holding C otherwise re-toggles the chapter
-    dropdown on every repeat, holding T would spam rotations, etc. Set True for a future
-    binding that genuinely wants hold-to-repeat — e.g. the held Left/Right skip and
-    Up/Down chapter-skip/volume keys sketched in KEYBINDINGS.md's planned-keys section,
-    which will live in this same global dispatcher. Without this flag those would work on
-    a single tap and silently NOT repeat on hold — an easy-to-miss regression."""
+    """Whether a held-key autorepeat tick dispatches. Defaults False: bindings that don't
+    make sense held down (C/T/Q/L/panel-open family) leave this False — holding C otherwise
+    re-toggles the chapter dropdown on every repeat, holding T would spam rotations, etc.
+    Set True for hold-to-repeat bindings — volume, speed, seek, chapter-nav, long-skip all
+    opt in. Without this flag those would work on a single tap and silently NOT repeat on
+    hold — an easy-to-miss regression. Handlers for anything higher-consequence-per-step
+    than a small nudge (speed, chapter-nav, long-skip) additionally self-throttle inside
+    the handler — see the ``_*_THROTTLE_S`` constants in app.py — since raw OS repeat rate
+    is too fast for those."""
 
 
 # Default table. A future Config-backed source builds an equivalent dict and passes it
@@ -141,16 +145,20 @@ DEFAULT_BINDINGS: dict[Action, Binding] = {
     Action.SHOW_SLEEP:        Binding(Qt.Key.Key_Z, GuardKind.COOLDOWN_DROP, 500),
 
     # Transport / player keys. All GuardKind.NONE (fire on every press — no leading/coalesce
-    # semantics apply to a play/pause toggle or a per-step nudge). Volume/speed opt into
-    # allow_autorepeat so holding the key repeats the step; speed additionally self-throttles
-    # inside its handler (raw OS repeat rate is too fast at 0.05 increments).
+    # semantics apply to a play/pause toggle or a per-step nudge). Volume/speed/seek/chapter-nav/
+    # long-skip opt into allow_autorepeat so holding the key repeats the step; speed/chapter-nav/
+    # long-skip additionally self-throttle inside their handlers (raw OS repeat rate is too fast
+    # for anything higher-consequence-per-step than a small volume/seek nudge — see
+    # _SPEED_NUDGE_THROTTLE_S / _CHAPTER_NUDGE_THROTTLE_S / _LONG_SKIP_THROTTLE_S in app.py).
     Action.PLAY_PAUSE:        Binding(Qt.Key.Key_Space),
     Action.VOLUME_UP:         Binding(Qt.Key.Key_Up,   allow_autorepeat=True),
     Action.VOLUME_DOWN:       Binding(Qt.Key.Key_Down, allow_autorepeat=True),
-    Action.LONG_SKIP_BACK:    Binding(Qt.Key.Key_Left,  modifiers=Qt.KeyboardModifier.ShiftModifier),
-    Action.LONG_SKIP_FORWARD: Binding(Qt.Key.Key_Right, modifiers=Qt.KeyboardModifier.ShiftModifier),
-    Action.CHAPTER_PREV:      Binding(Qt.Key.Key_Left,  modifiers=Qt.KeyboardModifier.ControlModifier),
-    Action.CHAPTER_NEXT:      Binding(Qt.Key.Key_Right, modifiers=Qt.KeyboardModifier.ControlModifier),
+    Action.SEEK_BACK:         Binding(Qt.Key.Key_Left,  allow_autorepeat=True),
+    Action.SEEK_FORWARD:      Binding(Qt.Key.Key_Right, allow_autorepeat=True),
+    Action.LONG_SKIP_BACK:    Binding(Qt.Key.Key_Left,  allow_autorepeat=True, modifiers=Qt.KeyboardModifier.ShiftModifier),
+    Action.LONG_SKIP_FORWARD: Binding(Qt.Key.Key_Right, allow_autorepeat=True, modifiers=Qt.KeyboardModifier.ShiftModifier),
+    Action.CHAPTER_PREV:      Binding(Qt.Key.Key_Left,  allow_autorepeat=True, modifiers=Qt.KeyboardModifier.ControlModifier),
+    Action.CHAPTER_NEXT:      Binding(Qt.Key.Key_Right, allow_autorepeat=True, modifiers=Qt.KeyboardModifier.ControlModifier),
     Action.SPEED_UP:          Binding(Qt.Key.Key_Up,   allow_autorepeat=True, modifiers=Qt.KeyboardModifier.AltModifier),
     Action.SPEED_DOWN:        Binding(Qt.Key.Key_Down, allow_autorepeat=True, modifiers=Qt.KeyboardModifier.AltModifier),
     Action.MUTE:              Binding(Qt.Key.Key_M),

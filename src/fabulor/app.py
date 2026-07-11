@@ -67,6 +67,16 @@ _CHAPTER_SLIVER_EPS = _CHAPTER_BOUNDARY_EPSILON + 0.25  # 0.35 + 0.25 = 0.60
 # never throttled. Hand-tunable by feel — start conservative and adjust after live testing.
 _SPEED_NUDGE_THROTTLE_S = 0.12
 
+# Same shape as _SPEED_NUDGE_THROTTLE_S (held-key autorepeat only; single taps never
+# throttled — see _nudge_chapter/_nudge_long_skip), but each is its OWN constant, tuned
+# separately and NOT derived from _SPEED_NUDGE_THROTTLE_S's value: a chapter-nav or
+# long-skip repeat is a whole chapter or a large skip per step, not a small continuous
+# adjustment, so blowing through several in under a second is a real problem, not just
+# mildly fast — these start meaningfully slower than speed's 0.12s. Hand-tunable by feel;
+# adjust independently after live testing.
+_CHAPTER_NUDGE_THROTTLE_S = 0.45
+_LONG_SKIP_THROTTLE_S = 0.45
+
 
 def _sliver_clamp(pause: bool, c_elapsed: float) -> float:
     """Display-only: collapse the sub-second chapter-start landing residue to 0 on the
@@ -327,6 +337,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._pre_mute_volume = None
         # monotonic() of the last applied speed nudge, for throttling Alt+Up/Down autorepeat.
         self._last_speed_nudge_ts = 0.0
+        # Same shape as _last_speed_nudge_ts, one per throttled action (chapter-nav and
+        # long-skip each self-throttle independently — see _nudge_chapter/_nudge_long_skip).
+        self._last_chapter_nudge_ts = 0.0
+        self._last_long_skip_nudge_ts = 0.0
         self._undo_timer = QTimer(self)
         self._last_saved_pct = -1
         self._last_undo_click_time = 0
@@ -487,10 +501,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.shortcuts.register(Action.PLAY_PAUSE, self.toggle_play_pause)
         self.shortcuts.register(Action.VOLUME_UP, lambda: self._nudge_volume(1))
         self.shortcuts.register(Action.VOLUME_DOWN, lambda: self._nudge_volume(-1))
-        self.shortcuts.register(Action.LONG_SKIP_BACK, lambda: self.handle_rewind(long_skip=True))
-        self.shortcuts.register(Action.LONG_SKIP_FORWARD, lambda: self.handle_forward(long_skip=True))
-        self.shortcuts.register(Action.CHAPTER_PREV, self.handle_prev)
-        self.shortcuts.register(Action.CHAPTER_NEXT, self.handle_next)
+        self.shortcuts.register(Action.SEEK_BACK, lambda: self.handle_rewind(long_skip=False))
+        self.shortcuts.register(Action.SEEK_FORWARD, lambda: self.handle_forward(long_skip=False))
+        self.shortcuts.register(Action.LONG_SKIP_BACK, lambda: self._nudge_long_skip(-1))
+        self.shortcuts.register(Action.LONG_SKIP_FORWARD, lambda: self._nudge_long_skip(1))
+        self.shortcuts.register(Action.CHAPTER_PREV, lambda: self._nudge_chapter(-1))
+        self.shortcuts.register(Action.CHAPTER_NEXT, lambda: self._nudge_chapter(1))
         self.shortcuts.register(Action.SPEED_UP, lambda: self._nudge_speed(1))
         self.shortcuts.register(Action.SPEED_DOWN, lambda: self._nudge_speed(-1))
         self.shortcuts.register(Action.MUTE, self._toggle_mute)
@@ -2146,6 +2162,42 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if new_speed != current:
             self._set_speed(new_speed)
             self._last_speed_nudge_ts = time.monotonic()
+
+    def _nudge_chapter(self, direction):
+        """Chapter prev/next (direction -1/+1) via handle_prev/handle_next — the same
+        methods the chapter nav buttons and progress-slider wheel already use. Bound to
+        Ctrl+Left/Ctrl+Right with allow_autorepeat=True; held-key calls self-throttle to
+        _CHAPTER_NUDGE_THROTTLE_S (each repeat is a whole chapter, not a small continuous
+        adjustment, so this is deliberately much slower than _SPEED_NUDGE_THROTTLE_S — see
+        that constant's comment). A single tap always applies exactly one step; handle_prev/
+        handle_next themselves already no-op cleanly at the first/last chapter boundary, so
+        no boundary check is needed here."""
+        if self.shortcuts.is_autorepeat:
+            now = time.monotonic()
+            if now - self._last_chapter_nudge_ts < _CHAPTER_NUDGE_THROTTLE_S:
+                return
+        if direction > 0:
+            self.handle_next()
+        else:
+            self.handle_prev()
+        self._last_chapter_nudge_ts = time.monotonic()
+
+    def _nudge_long_skip(self, direction):
+        """Long skip back/forward (direction -1/+1) via handle_rewind/handle_forward
+        (long_skip=True) — the same methods the rewind/forward buttons' right-click
+        already use. Bound to Shift+Left/Shift+Right with allow_autorepeat=True; held-key
+        calls self-throttle to _LONG_SKIP_THROTTLE_S (each repeat is a large skip, not a
+        small continuous adjustment — deliberately much slower than
+        _SPEED_NUDGE_THROTTLE_S). A single tap always applies exactly one step."""
+        if self.shortcuts.is_autorepeat:
+            now = time.monotonic()
+            if now - self._last_long_skip_nudge_ts < _LONG_SKIP_THROTTLE_S:
+                return
+        if direction > 0:
+            self.handle_forward(long_skip=True)
+        else:
+            self.handle_rewind(long_skip=True)
+        self._last_long_skip_nudge_ts = time.monotonic()
 
     def _toggle_mute(self):
         """Keyboard mute (m): drop volume to 0, restore on next press. Minimal, built on
