@@ -6,6 +6,22 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-11] DESIGN + IMPLEMENT: keyboard shortcuts for Book Detail's Finished-toggle and
+  Remove/exclude button.** Surfaced while scoping panel-local shortcuts alongside the bare-Left/
+  Right seek + chapter-nav/long-skip autofire work. Both are currently mouse-only two-step-confirm
+  actions with no keyboard equivalent and no Tab-cycle entry (`_cycle_metadata_field` only covers
+  title/author/narrator/year): `_finished_label` (`_ClickableLabel`) → `_on_finished_clicked` →
+  `_confirm_finished_label` (7s auto-cancel confirm timer); `_remove_btn` (`QToolButton`) →
+  `_on_remove_clicked` → `_confirm_remove_label` (same two-step-confirm shape). Both would route
+  through Book Detail's own `eventFilter` (`book_detail_panel.py`, the same lane already handling
+  Tab/Escape there — NOT the global dispatcher, since Book Detail gates that off entirely while
+  open per the focus-ownership invariant). Candidate keys floated but not decided: `F` for Finished,
+  `X`/`Delete` for Remove (Remove is destructive — a keyboard flow needs the same two-step-confirm
+  semantics as the mouse click-click, not a single-key instant action). Also noted but explicitly
+  NOT low-risk single bindings, deferred as a separate/bigger "list & grid keyboard nav" design
+  conversation: Book Detail's per-session History-row trash buttons, Tag list rows, Tag
+  book-thumbnail grid, Excluded Books popup rows, Stats' Overall-tab bar-chart date click — all
+  need row/grid selection invented first, same shape as the already-deferred Cover-tab item below.
 - **[2026-07-11] DESIGN + IMPLEMENT: Cover tab keyboard support in Book Detail.** Tab in the Book
   Detail Panel now does something sensible on every tab EXCEPT Cover: Stats/History enter metadata
   edit, Tags toggles the tag-add field, and Cover is a deliberate consumed no-op (Tab is swallowed

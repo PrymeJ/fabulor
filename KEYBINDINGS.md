@@ -53,9 +53,10 @@ press). These keys act on the player, so most are inert with no book loaded.
 |-----|--------|------------------------|-------|
 | `Space` | Play/pause toggle | Whenever a book is loaded. | Same method as the play/pause button (`toggle_play_pause`). Transport buttons are `Qt.NoFocus` so a focused button can't swallow `Space`. Correctly inert whenever any panel/overlay is open — the focus-ownership invariant above means `Space` belongs to whatever panel-local widget currently has focus (the library list, the chapter list, a text field, etc.), never to global shortcuts, while one is open. |
 | `Up` / `Down` | Volume +5 / −5 | Book loaded (volume inert otherwise). | Same step path as the cover-area wheel (`_nudge_volume` → volume slider). **Repeats on hold.** |
+| `Left` / `Right` | Seek back / forward (`skip_duration`) | Book loaded. | Same method as the rewind/forward button **left-click** (`handle_rewind(long_skip=False)` / `handle_forward(long_skip=False)`, `long_skip=False` is the default). **Repeats on hold** (no throttle — same small-step category as volume). Added 2026-07-12, alongside the Shift/Ctrl-modified variants below. |
 | `Alt`+`Up` / `Alt`+`Down` | Speed up / down (± configured increment, clamped 0.25×–8.0×) | Book loaded. | Same step path as the speed-button wheel (`_nudge_speed` → `_set_speed`). **Repeats on hold**, self-throttled to one step per `_SPEED_NUDGE_THROTTLE_S` (0.12s, hand-tunable) so held repeat doesn't blow past a value at 0.05 increments; a single tap always applies one step. |
-| `Shift`+`Left` / `Shift`+`Right` | Long skip back / forward (`long_skip_duration`) | Book loaded. | Same method as the rewind/forward button **right-click** (`handle_rewind(long_skip=True)` / `handle_forward(long_skip=True)`), including the undo capture. |
-| `Ctrl`+`Left` / `Ctrl`+`Right` | Previous / next chapter | Book loaded with chapters. | Same method as the chapter nav buttons and the progress-slider wheel (`handle_prev` / `handle_next`). |
+| `Shift`+`Left` / `Shift`+`Right` | Long skip back / forward (`long_skip_duration`) | Book loaded. | Same method as the rewind/forward button **right-click** (`_nudge_long_skip` → `handle_rewind(long_skip=True)` / `handle_forward(long_skip=True)`), including the undo capture. **Repeats on hold**, self-throttled to one step per `_LONG_SKIP_THROTTLE_S` (0.45s, hand-tunable, own constant — NOT derived from speed's) since each repeat is a large skip, not a small continuous adjustment; a single tap always applies one step. |
+| `Ctrl`+`Left` / `Ctrl`+`Right` | Previous / next chapter | Book loaded with chapters. | Same method as the chapter nav buttons and the progress-slider wheel (`_nudge_chapter` → `handle_prev` / `handle_next`). **Repeats on hold**, self-throttled to one step per `_CHAPTER_NUDGE_THROTTLE_S` (0.45s, hand-tunable, own constant) since each repeat is a whole chapter, not a small continuous adjustment; a single tap always applies one step. |
 | `m` | Mute toggle | Book loaded. | Minimal, built on the volume-slider path (no dedicated mute control exists): stores current volume, drops to 0, restores on next press. Moving the slider off 0 while muted counts as unmuted. |
 | `u` | Undo last seek | Only while the on-screen undo affordance is showing (no-op otherwise). | Same method + visibility gate as clicking the undo overlay (`_perform_undo`, gated on `undo_overlay.isVisible()`). |
 
@@ -195,6 +196,20 @@ dropdown.
 any other entry point) while the panel is already visible is dropped entirely — it does
 not re-animate, and it does not retarget onto a different book. The panel must be closed
 first via its own close button or an existing close flow.
+
+## Stats panel (added 2026-07-12)
+
+`StatsPanel` is granted real Qt focus when opened (`PanelManager._claim_panel_focus` — it isn't
+in `panel_tab_widgets`, so the panel root itself is the claim target), so it owns the key while
+open, same shape as `ChapterList`'s own `keyPressEvent` — not the global dispatcher lane, which
+is gated off entirely while any panel is open (see the focus-ownership invariant above).
+
+| Key | Does | Scope |
+|-----|------|-------|
+| `Left` / `Right` | Previous / next period, same method as the `‹`/`›` nav buttons (`_day_prev`/`_day_next`, `_week_prev`/`_week_next`, `_month_prev`/`_month_next`) | Only while the Day, Week, or Month tab is the active tab. No-op (falls through) on Overall/Timeline/⚙ or any other key. |
+
+Everything else in Stats (Options-tab toggles, the reset-stats confirm, etc.) is mouse-only —
+not yet Tab-cycled (Stats isn't in `panel_tab_widgets`, unlike Settings/Speed/Sleep).
 
 ## Planned keys from a Claude chat conversation dated May 9 (Some of them are already stale and they are mostly tentative, pending decision)
 
