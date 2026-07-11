@@ -211,6 +211,108 @@ is gated off entirely while any panel is open (see the focus-ownership invariant
 Everything else in Stats (Options-tab toggles, the reset-stats confirm, etc.) is mouse-only —
 not yet Tab-cycled (Stats isn't in `panel_tab_widgets`, unlike Settings/Speed/Sleep).
 
+## Book Detail Panel (added 2026-07-12)
+
+`BookDetailPanel` is granted real Qt focus when opened (`PanelManager._claim_panel_focus`, no
+`panel_key` — the panel root itself is the claim target), so it owns keys the app-installed
+`eventFilter` doesn't already intercept — same lane as `ChapterList`/`StatsPanel`'s own
+`keyPressEvent`, not the global dispatcher (gated off entirely while any panel is open).
+`Tab`/`Backtab`/`Escape` stay entirely in the `eventFilter` (unchanged by this work — Tab
+toggles inline metadata edit / the tag-add field, Escape does tag-clear → edit-cancel →
+panel-close in that priority). All bindings below are only reachable while NOT editing a
+metadata field — entering edit mode gives a `QLineEdit` real focus instead, so it naturally
+owns Left/Right/Del/letters/Enter for normal text editing (Enter specifically triggers the
+field's native `returnPressed` → `_on_inline_save`, saving any dirty field exactly like
+clicking the save icon would).
+
+**While editing, `Up`/`Down` cycle metadata fields** (title → author → narrator → year,
+wrapping) — the same `_cycle_metadata_field` method `Tab`/`Shift+Tab` already use. This is an
+explicit exception, not a gap: a single-line `QLineEdit` has no native handling for `Up`/`Down`,
+so unlike `Left`/`Right`/`Del`/letters (which the field genuinely owns), those two keys were
+left unaccepted and propagated up to `BookDetailPanel.keyPressEvent` — before this fix
+(2026-07-12) that meant they fired whatever TAB-LOCAL binding was active underneath the edit
+(e.g. History row selection moving while the user was mid-edit of a metadata field). Fixed by
+checking `_editing` first in `keyPressEvent` and routing `Up`/`Down` to field-cycling; every
+other key still falls through to the field's own native handling untouched.
+
+Every binding calls the exact same method the corresponding mouse control already uses — see
+each row below.
+
+**Focus-reclaim safety net (added 2026-07-12):** several buttons a user can mouse-click
+(`_remove_btn`, the tag-chip `x` buttons, `_trash_btn` on a History row, `_delete_history_btn`)
+hold real Qt focus while clicked, and Qt does NOT reliably hand that focus back to
+`BookDetailPanel` when the widget is later hidden, disabled, or deleted (a confirm banner
+appearing, a tag-chip rebuild after removal, a per-row delete). Left unhandled, this silently
+broke the focus-ownership invariant above — with focus at `None`, the global dispatcher took
+over and arrow keys fired volume/seek instead of this panel's own bindings, closing the panel
+via `hide_all_panels()` in some cases. Fixed two ways: individual known-risk sites reclaim focus
+directly (`_clear_tag_input`, `_exit_edit_mode`, `_rebuild_tag_chips`, the History per-row
+delete callback), and `BookDetailPanel._ensure_panel_owns_focus()` — called at the top of
+`eventFilter` on every `KeyPress` — is a general safety net that reclaims focus for the panel
+whenever it's drifted outside the panel's widget tree, so any other site with the same shape
+(found or not yet found) self-heals on the very next keypress rather than staying broken.
+
+**Modal-dialog exception:** the safety net above (and `eventFilter`'s Tab/Escape handling)
+must NOT run while a modal dialog — e.g. the Cover tab's `+` → `QFileDialog.getOpenFileName`
+— is on top, since the `QApplication`-wide filter would otherwise intercept keys meant for the
+dialog (confirmed live: `Escape` closed the panel BEFORE the dialog's own native
+Escape-to-cancel ran, requiring a second `Escape` to actually cancel the dialog — backwards
+from the expected order). `eventFilter` checks `QApplication.activeModalWidget() is not None`
+first and declines to handle the event at all when true, letting Qt's normal modal-dialog
+input delivery proceed untouched.
+
+### Tab switching
+
+| Key | Does |
+|-----|------|
+| `Left` / `Right` | Cycle Stats → History → Tags → Cover, wrapping both directions. Plain `QTabWidget.setCurrentIndex` — the same mechanism a mouse click on a tab header uses. |
+
+### Top-level actions (any tab, not editing)
+
+| Key | Does | Notes |
+|-----|------|-------|
+| `F` | Arm mark-finished/unfinished | Calls `_on_finished_clicked()` — the exact method the header icon's click uses. Shows the same real confirm banner (`"Confirm to mark finished"` / `"Confirm to mark unfinished"` — shortened 2026-07-12 so it fits), 7s auto-cancel. **Yields to the Cover tab's own `F` (fit mode) while that tab is active with a cover selected** — see the Cover section below; confirmed live, not assumed. |
+| `Del` / `x` | Arm remove-from-library | Calls `_on_remove_clicked()` — the exact method the trash icon's click uses. Same real confirm banner (`"Confirm to remove from the library"`), 7s auto-cancel. |
+| `k` | Metadata lock button | Calls `_on_meta_action_clicked()` only if the button is currently visible (`DIRTY`/`LOCKED` states). **No confirmation exists on the mouse path either** — DIRTY saves immediately, LOCKED clears all locks immediately (confirmed live) — so `k` matches that exactly: no arm/confirm step. |
+| `Space` / `Enter` | Confirm whichever of finished/remove is currently armed | Calls `_on_confirm_finished()` / `_on_confirm_remove()` — the exact methods the confirm-label click uses. No-op if nothing is armed and the active tab has no local claim on Space/Enter (see History/Cover below). |
+| `Escape` | Disarm whichever of the four confirmations (remove / mark finished-unfinished / bulk delete-history / per-row delete-session) is currently armed, panel stays open | Added 2026-07-12 after live feedback: with only a mouse, Escape while a confirm was armed fell through to the panel-close branch — the mouse-driven rationale ("clicked X but meant to cancel, hit Esc") has no keyboard equivalent otherwise. Checked FIRST, ahead of the tag-input-clear/edit-cancel/panel-close chain below — a confirmation being armed always wins. If nothing is armed, Escape falls through to its prior behavior unchanged (tag-clear → edit-cancel → panel-close). |
+
+Confirmation copy was reworded from "Click to..." to **"Confirm to..."** so it reads
+correctly for both mouse and keyboard users (`_confirm_remove_label`, `_confirm_finished_label`
+— both branches, the latter shortened to drop "this book" so it fits the available width).
+The metadata lock button has no such copy to update (icon-only, no confirmation step exists on
+either input path).
+
+### History tab
+
+| Key | Does | Notes |
+|-----|------|-------|
+| `Up` / `Down` | Move keyboard row selection by one, clamped (no wrap) | Reuses `_HistoryRow.set_keyboard_selected`, which drives the exact same `_slide_overlay`/`_state` transition real mouse hover already uses — the trash-icon reveal on the row's right edge is the selection indicator, not a new visual. Moving selection clears the previous row's indicator first (mirrors `enterEvent`/`leaveEvent`'s own hover hand-off) and scrolls the row into view (`_history_scroll.ensureWidgetVisible`). |
+| `Del` | Arm delete-confirmation for the selected row | Calls that row's own `_on_trash_clicked()` — the exact method its trash-icon click uses. |
+| `Space` / `Enter` | Confirm the row currently armed (via the top-level Space/Enter row above) | Calls that row's own `_on_confirm_clicked()` — the exact method its "Delete this session?" label click uses. |
+
+The bulk **"Delete listening history"** button is deliberately **not** given a keyboard path —
+mouse-only, by explicit decision, not an oversight.
+
+### Cover tab
+
+The navigable sequence is: cover 1, cover 2, ..., last cover, then the **`+` add-cover slot**
+IF it's visible (fewer than 4 custom covers) — clamped, no wrap in either direction. With
+exactly 4 covers (`+` hidden — no room to add more), `Down` from the last cover wraps to the
+first cover that ISN'T the book's currently-active one, rather than no-op'ing (landing back on
+the cover already shown as active would be a wasted, indistinguishable-feeling wrap) — this
+skip is scoped ONLY to that wrap; normal step-by-step `Up`/`Down` still visits the active cover
+like any other on the way there. Redesigned 2026-07-12 from an earlier plain cover-only version
+per live feedback that the active cover's accent border alone wasn't enough of a visual cue for
+"where does Up/Down go next."
+
+| Key | Does | Notes |
+|-----|------|-------|
+| `Up` / `Down` | Move the previewed cover to the prev/next entry (or to/from the `+` slot at the boundary — see above) | Cover-to-cover moves reuse `CoverPanel._select_cover` — the exact mechanism a mouse click-to-preview already uses (updates the large 208×266 preview pane and syncs the fit-mode buttons' checked state); this pane, not a new ring on the thumbnail, is the "what would Space/Enter/F-T-S-C apply to" indicator. Selecting `+` shows the **same visual a mouse hover over it already produces** (`QPushButton#CoverAddButton:hover`) via a `kbdSelected` dynamic QSS property, **not real Qt keyboard focus** — granting the button real focus was tried and reverted live: it broke Left/Right tab-cycling while `+` was selected, since a focused `QPushButton` starts owning keys itself. `BookDetailPanel` stays the sole real focus holder throughout. |
+| `Space` / `Enter` | Set the previewed cover active, or — if the `+` slot is selected — open the add-cover file dialog | Calls `_on_thumb_set_active(cover_id)` (cover) or `_on_add_cover()` (`+`) — the exact methods their respective mouse click zones use. |
+| `Del` | Delete the previewed cover | Calls `_on_thumb_delete(cover_id)` — the exact method a thumbnail's delete click zone uses. **No confirmation step exists on the mouse path either** — fires immediately, matching exactly. Already a no-op on the locked/embedded scanner cover (slot 0) via that same method's own `is_locked` guard, and a no-op while the `+` slot is selected (nothing to delete there) — confirmed live: the locked cover cannot be deleted via this UI at all, keyboard or mouse. |
+| `F` / `T` / `S` / `C` | Fit / Top / Stretch / Crop | Simulates a click on the matching fit-mode button (`.click()`, reusing `QButtonGroup`'s exclusivity + the existing handler exactly). No-op while the `+` slot is selected (nothing to apply a fit mode to). **Wins over the top-level `F` (finished-toggle) while this tab is active with a cover selected** — confirmed live: pressing `F` on Cover tab changes fit mode and does NOT arm the finished-toggle banner; switching to any other tab (or Cover with nothing selected/`+` selected) restores `F`'s normal top-level meaning. |
+
 ## Planned keys from a Claude chat conversation dated May 9 (Some of them are already stale and they are mostly tentative, pending decision)
 
 Implemented (see the tables above):

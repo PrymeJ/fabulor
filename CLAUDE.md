@@ -249,6 +249,39 @@ stop** — otherwise it becomes a focus candidate indistinguishable from a real 
 and the whole dispatch guard silently breaks for exactly the same reason the speed button used to
 steal `Space` at startup before this sweep.
 
+**Generalization, found 2026-07-12 while extending this invariant to Book Detail: ANY mouse-
+clickable `QPushButton`/`QToolButton`/`QLineEdit` inside a panel is a focus-strand risk, not
+just the panel's own open/close transition.** A user's click grants that widget real Qt focus;
+if a later code path then hides, disables (`setEnabled(False)`), or deletes (`deleteLater()`)
+that same widget — a confirm banner appearing over it, a list/grid rebuild after add/remove,
+a bulk-action button disabling itself on click — Qt does NOT reliably hand focus back to the
+panel. Found three more live instances of this beyond the panel-open/close case the invariant
+was first written for: a tag-chip's remove button (`_rebuild_tag_chips`), a History row's
+trash button (deleted after a confirmed delete), and a bulk-delete button disabling itself on
+arm. Fixing each site individually is necessary but not sufficient — a general safety net
+(`BookDetailPanel._ensure_panel_owns_focus()`, called at the top of `eventFilter` on every
+`KeyPress`: reclaim focus for the panel whenever `QApplication.focusWidget()` is `None` or not
+a descendant of the panel) makes any future site with this same shape self-heal on the very
+next keypress instead of silently reintroducing the bug. **Any panel with a clickable button/
+field that can be hidden, disabled, or deleted by its own click handler should have — or be
+covered by — an equivalent safety net, not rely on remembering to add a reclaim at every site.**
+
+**Modal-dialog exception, found 2026-07-12: a `QApplication`-installed `eventFilter` (the
+mechanism every panel's Tab/Escape handling and the focus-reclaim safety net above are built
+on) intercepts EVERY key event app-wide, including ones meant for an unrelated modal dialog
+(e.g. `QFileDialog.getOpenFileName`) that a panel opened.** Confirmed live: pressing `Escape`
+while Book Detail's Cover-tab file picker was open closed the PANEL first (the panel's own
+Escape-priority chain ran before the dialog's native Escape-to-cancel ever got a turn), leaving
+the dialog open — a second `Escape` was then needed to actually cancel it, backwards from the
+expected order. The focus-reclaim safety net had the identical shape of bug layered on top: it
+would fight to steal focus back from the dialog's own internal widgets every keystroke, since
+they're a separate top-level window, not descendants of the panel. **Any `QApplication`-wide
+`eventFilter` that owns Escape/Tab/focus-reclaim logic MUST check
+`QApplication.activeModalWidget() is not None` first and decline to handle the event
+(`return False`) whenever true** — this is not scoped to dialogs the panel itself opened; any
+modal dialog anywhere in the app must win. `BookDetailPanel.eventFilter` does this at its very
+top, before any other branch.
+
 ### DO NOT give always-on MainWindow chrome any focus policy other than `Qt.NoFocus`
 Every widget that is part of the permanent transport/chrome (not inside a slide-out panel) must
 be `Qt.NoFocus`: the five transport buttons, the two title-bar buttons, `speed_button`,
@@ -785,6 +818,8 @@ Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style —
 ### DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`, and DO NOT clear focus before `hide()`
 Exactly one widget owns real Qt keyboard focus at a time; `MainWindow._focus_allows_global_shortcuts()` only lets the shortcut dispatcher act when the focus owner is `MainWindow` itself or `None` — never when a panel-local widget holds it. Every panel/overlay must call `PanelManager._claim_panel_focus` in its open flow (after `.raise_()`) and `_release_panel_focus` in its close handler (after `.hide()` — ordering is load-bearing: Qt re-grants focus to a widget during `hide()` if it's the only `StrongFocus` candidate around, silently undoing a `clearFocus()` placed before it). Skipping either call on a future panel reintroduces the exact bug this fixed: a stale-focused widget from underneath bleeds keys through (arrows/Space acting on a different, obscured panel), or a key a focused field doesn't consume leaks out to global shortcuts (e.g. `Up`/`Down` dismissing an in-progress edit). See the fuller "Keyboard focus ownership" rule above, including why every always-on chrome widget outside a panel must stay `Qt.NoFocus` for this to keep working.
 
+This applies WITHIN a panel too, not just at its open/close boundary: any mouse-clickable button/field that a panel later hides, disables, or deletes (a confirm banner covering it, a rebuild after add/remove, a bulk-action button disabling itself on click) is the same focus-strand risk — a panel with several such sites should have (or be covered by) a general per-keypress reclaim, like `BookDetailPanel._ensure_panel_owns_focus()`, rather than relying on remembering a fix at every site. And any `QApplication`-wide `eventFilter` doing this reclaim (or owning Tab/Escape) MUST check `QApplication.activeModalWidget() is not None` first and step aside — otherwise it steals input from an unrelated modal dialog (e.g. a file picker) the panel opened, confirmed live as a reversed-Escape-order bug.
+
 ---
 
 ## Pending / Known Debt
@@ -875,7 +910,36 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-11 Session 3 — main-window transport keyboard shortcuts + the keyboard
+*Last updated: 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts, extending the
+focus-ownership invariant from Session 3 into a panel with far more clickable-then-hideable
+widgets than any panel tested so far. Left/Right cycles Stats/History/Tags/Cover; top-level
+F/Del-x/k arm the same finished-toggle/remove/lock actions their buttons already call;
+History gets Up/Down row selection + Del/Space/Enter; Cover gets Up/Down through covers and a
+`+` add-slot (first attempt gave `+` real Qt focus to reuse its `:hover` QSS — reverted live
+when it broke Left/Right tab-cycling; fixed instead with a `kbdSelected` dynamic QSS property,
+keeping the panel as sole real-focus-holder). Four live-found bugs fixed in this same arc, two
+of which generalized the Session 3 invariant rather than being one-offs: (1) three more
+widget-deletion-strands-focus sites beyond the ones Session 3 fixed (tag-chip remove button,
+History row trash button, bulk-delete button disabling itself) — fixed individually AND with a
+new general safety net, `_ensure_panel_owns_focus()`, checked on every keypress so future sites
+self-heal; (2) `Up`/`Down` while editing a metadata field fired History row-selection instead
+of cycling fields — a single-line QLineEdit has no native Up/Down handling, so the keys
+propagated to the panel's dispatch exactly like the Session 3 Up/Down-in-a-field bug, just
+inside one panel's own local dispatch instead of the global one; (3) the modal file-picker's
+Escape was intercepted by the panel's QApplication-wide eventFilter before the dialog's own
+native cancel ever ran — reported by the user as "backwards from expected," which correctly
+overrode an initial (wrong) assessment that it was normal modal-dialog behavior; fixed with an
+`activeModalWidget()` guard, a genuinely new gotcha this invariant hadn't covered before. Two
+new CLAUDE.md paragraphs added to the existing "Keyboard focus ownership" rule (both the full
+and condensed copies) for the widget-deletion generalization and the modal-dialog exception —
+no new standalone rule, since both extend rather than replace Session 3's invariant. One design
+question (whether Cover's tab-local key overrides should be "consistent" by removing top-level
+actions from History/Tags) was raised and explicitly kept as-is: the asymmetry is the SAME
+tab-local-wins pattern History's own Del/Space/Enter already use uncontroversially, not a
+special case. `pytest tests/ -q` — 174 tests (`tests/test_book_detail_panel_keys.py` extended,
+`tests/test_cover_panel_nav.py` added). Full trace-by-trace root-cause writeup in NOTES.md.*
+
+*Previously: 2026-07-11 Session 3 — main-window transport keyboard shortcuts + the keyboard
 focus-ownership invariant. Added Space/volume/speed/skip/chapter/mute/undo as global shortcuts
 (`shortcuts.py` gained real Shift/Ctrl/Alt modifier support — a bare-key binding now matches only
 an unmodified press, so Ctrl+T no longer rotates the theme), each calling the exact method its

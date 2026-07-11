@@ -1,3 +1,152 @@
+## Book Detail Panel keyboard shortcuts: four more focus/dispatch bugs, two of them generalizing the Session 3 invariant (2026-07-12)
+
+Extending the keyboard focus-ownership invariant (see the entry below this one) from the
+main-window transport keys into `BookDetailPanel` — a panel with far more clickable, later-
+hideable widgets than any panel exercised so far — surfaced four more bugs, each traced live
+before any fix. Two were new instances of the exact class Session 3 already understood; two
+were genuinely new failure modes the invariant hadn't covered. All four are fixed; this note is
+the trace record, including one case where the user's live report directly overrode an
+incorrect first assessment.
+
+### Bug 1 — three more widget-deletion-strands-focus sites (tag chip, History row, bulk-delete button)
+
+**Symptom (live report):** deleting a tag chip closed the whole Book Detail panel; arrow keys
+also started changing volume afterward.
+
+**Trace:** `_rebuild_tag_chips()` (`book_detail_panel.py`) deletes every tag chip's `x`
+(remove) `QPushButton` — including the one the user just clicked, which held real Qt focus at
+that exact moment — via `deleteLater()`, with no reclaim. Confirmed the SAME shape already
+found and fixed for Library/ChapterList/Settings-etc. in Session 3, just at a site inside a
+panel's own internal rebuild rather than at panel open/close. Two more sites with the identical
+shape turned up on inspection, all fixed the same session, before shipping:
+- `_on_history_delete_confirmed`'s `_finish()` callback deletes a `_HistoryRow`, whose
+  `_trash_btn` (`QToolButton`) could hold real focus if the user mouse-clicked it before
+  keyboard-confirming the delete.
+- `_on_delete_book_stats` (bulk "Delete listening history") calls
+  `self._delete_history_btn.setEnabled(False)` on the very button that was just clicked to
+  reach this method — `setEnabled(False)` drops Qt focus exactly like `hide()`/`deleteLater()`
+  do, immediately and synchronously.
+
+**Why "arrow keys manipulate volume" is the SAME bug, not a second one:** once focus drops to
+`None`, `MainWindow._focus_allows_global_shortcuts()` reads "nothing panel-local has focus" and
+the GLOBAL dispatcher takes over for EVERY subsequent key, not just the one that happened to
+close the panel — `Up`/`Down` firing `VOLUME_UP`/`VOLUME_DOWN` and arrow-driven panel-close are
+two visible symptoms of one root state (focus at `None`), confirmed by tracing that both stop
+reproducing together once focus is correctly reclaimed.
+
+**Fix, two layers (per explicit instruction not to keep patching individual sites reactively
+after the third one turned up):**
+1. Individual reclaim at each known site (`_rebuild_tag_chips`, the History per-row delete
+   callback, `_on_delete_book_stats`) — immediate, doesn't wait for the next keypress.
+2. A general safety net, `BookDetailPanel._ensure_panel_owns_focus()`, called at the top of
+   `eventFilter` on every `KeyPress`: if `QApplication.focusWidget()` is `None` or not a
+   descendant of the panel (`isAncestorOf`), reclaim focus for the panel before the key is
+   processed. Cheap (`setFocus()` on an already-focused widget is a no-op) and makes any FUTURE
+   site with this same shape self-heal on the very next keypress instead of silently
+   reintroducing the bug — this is the piece that generalizes beyond Session 3, which fixed
+   each known site individually with no equivalent net.
+
+Verified live, 3/3 deterministic runs: tab-cycling, F/Del/K, and History/Cover nav all survive
+a full pass of tag-deletion → History-row-delete → bulk-delete-arm in sequence.
+
+### Bug 2 — Up/Down while editing metadata fired History row-selection instead of cycling fields
+
+**Symptom (live report):** in the History tab, `Tab` into metadata edit mode, then `Up`/`Down`
+moved the History row selection (and its hover-reveal visual) instead of moving between the
+title/author/narrator/year fields.
+
+**Trace:** `BookDetailPanel.keyPressEvent`'s own docstring had claimed (written earlier the
+same session, before this bug was found) that editing fully shields the method from ever being
+reached — reasoning that `_enter_edit_mode` grants a `QLineEdit` real focus, so that field
+should own every key. **Disproven by direct instrumented trace**, same mechanism already
+documented in the Session 3 note below for the main-window case: a single-line `QLineEdit` has
+NO native handling for `Up`/`Down` (unlike `Left`/`Right`/`Del`/letters, which it genuinely
+consumes for cursor movement/delete/typing) — Qt delivered `Up`/`Down` to the focused
+`QLineEdit` first, it left them unaccepted, and they propagated to `BookDetailPanel
+.keyPressEvent`, which — with no `_editing` check — dispatched them as whatever tab-local
+binding was active underneath the edit (History's own `Up`/`Down` row-selection, since the
+user was on the History tab). This is the SAME class of bug as Session 3's main-window
+Up/Down-in-a-field case, just manifesting inside one panel's own local dispatch instead of the
+global one — confirming the underlying Qt behavior (a widget can legitimately own SOME keys
+and not others, and the ones it doesn't own still propagate) is general, not scoped to
+`MainWindow`'s dispatcher specifically.
+
+**Fix:** `keyPressEvent` now checks `self._editing` FIRST. If editing: `Up`/`Down` route to
+`_cycle_metadata_field(backward=...)` — the exact method `Tab`/`Shift+Tab` already use, so
+there's one field-cycling implementation, not two; every other key falls through to
+`super().keyPressEvent(event)` untouched, since `QLineEdit` already correctly owns and consumes
+`Left`/`Right`/`Del`/letters/`Enter` (`Enter` specifically triggers the field's native
+`returnPressed` → `_on_inline_save`, confirmed already working correctly — no fix needed there,
+that part of the original report described existing correct behavior, not a bug). If not
+editing: dispatch proceeds exactly as before (tab-local bindings, then top-level).
+
+Verified live: `Down`/`Down`/`Up` while editing correctly moved title→author→narrator→author
+with zero History-selection-index change; `Left`/`Right`/`Del` while editing confirmed to NOT
+fire tab-cycling or remove-confirm (fall through to native `QLineEdit` behavior as intended).
+
+### Bug 3 — modal file-picker's Escape order was backwards (initial assessment was WRONG, corrected by user pushback)
+
+**Symptom (live report):** Cover tab, keyboard-select the `+` slot, press `Enter` → opens the
+native file picker. Press `Escape` once → Book Detail closes (picker stays open). Press
+`Escape` again → NOW the picker closes.
+
+**First response — WRONG, corrected before any code changed:** initially characterized this as
+"expected modal-dialog behavior" (a genuinely modal dialog should own `Escape` while it's on
+top, so needing an extra `Escape` to fully back out seemed like an inherent, low-priority cost
+of using a modal file picker at all). **The user directly pushed back**: "the order is opposite
+of expected" — first `Escape` should cancel the topmost thing (the picker), not the panel
+underneath it. This is exactly the kind of correction this project's collaboration model is
+built to catch (flag → the user corrects the framing → re-investigate), and re-tracing
+immediately found the real, fixable bug the first assessment had talked past.
+
+**Re-trace, this time live with a real `QFileDialog`:** `BookDetailPanel.eventFilter` is
+installed on `QApplication.instance()` in `showEvent`/removed in `hideEvent` — meaning it
+intercepts EVERY `KeyPress` event app-wide for as long as Book Detail is open, INCLUDING ones
+destined for a modal dialog it opened but doesn't own the input routing for. Confirmed by
+direct trace (a real, shown `QFileDialog(modal=True)`, `QApplication.activeModalWidget()`
+correctly returning the dialog): sending `Escape` to the dialog's own focused child
+(`fileNameEdit`) still reached `BookDetailPanel.eventFilter` first — event filters installed
+on `QApplication` run ahead of ANY target widget's own handling, dialog or not — and the
+filter's own Escape-priority chain (tag-clear → edit-cancel → panel-close) ran and closed the
+panel before the dialog's native Escape-to-cancel ever got a turn. `_ensure_panel_owns_focus()`
+(Bug 1's fix) had the identical shape of bug layered on top, confirmed by the same trace: it
+would have fought to steal focus back to the panel from the dialog's own internal widgets on
+EVERY keystroke while the dialog was up, since those widgets belong to a separate top-level
+window and are not descendants of `BookDetailPanel` (`isAncestorOf` correctly returns `False`
+for them) — so the safety net's own logic ("focus isn't a descendant, reclaim it") was, in this
+one case, actively wrong instead of protective.
+
+**Fix:** a single guard at the very top of `eventFilter` — `if event.type() ==
+QEvent.Type.KeyPress and QApplication.activeModalWidget() is not None: return False` — declines
+to handle the event at all whenever ANY modal dialog anywhere in the app is active, not scoped
+to dialogs this panel itself opened (so it also protects against any future modal a later
+feature adds). This single check covers both the Escape-interception bug and the focus-reclaim
+overreach, since both were downstream of the same missing "am I allowed to act right now"
+question.
+
+Verified live, 3/3 deterministic runs with a real (non-blocking `.open()`, since
+`getOpenFileName()`'s blocking call can't be exercised from the same test script)
+`QFileDialog`: first `Escape` now correctly cancels ONLY the dialog; Book Detail is fully
+unaffected (`isVisible()` stays `True` throughout). Confirmed the fix does not change normal
+(no-dialog) `Tab`/`Escape`/tab-cycling behavior — the guard is scoped strictly to "a modal is
+active," not a blanket change (separate control-case test, both live and in
+`tests/test_book_detail_panel_keys.py`).
+
+### Bug 4 (design question, not a bug) — should Cover's tab-local key overrides be "made consistent" by removing top-level actions from History/Tags?
+
+Raised, not a defect: since Cover tab's own `Up`/`Down`/`Space`/`Enter`/`Del`/`F`/`T`/`S`/`C`
+take priority over the top-level `F`(finished-toggle)/`Del`(remove)/`k`(lock) bindings while
+that tab is active, top-level actions are effectively unreachable from Cover — raising the
+question of whether to remove them from History/Tags too, for symmetry. **Kept as-is, no code
+change:** the asymmetry is the exact same "more specific tab-local binding wins" pattern
+History's own `Up`/`Down`/`Del`/`Space`/`Enter` already apply over the SAME top-level bindings,
+uncontroversially — Cover is simply the tab with the most local meaning today, not a special
+case needing correction. Removing top-level reach from History/Tags would trade away real
+functionality (keyboard mark-finished/remove/lock from most tabs) to fix a labeling
+inconsistency, not a functional one.
+
+---
+
 ## Keyboard focus ownership: three related bugs surfaced by adding transport shortcuts (2026-07-11)
 
 Adding main-window transport shortcuts (Space/volume/speed/skip/chapter/mute/undo,

@@ -6,35 +6,23 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-11] DESIGN + IMPLEMENT: keyboard shortcuts for Book Detail's Finished-toggle and
-  Remove/exclude button.** Surfaced while scoping panel-local shortcuts alongside the bare-Left/
-  Right seek + chapter-nav/long-skip autofire work. Both are currently mouse-only two-step-confirm
-  actions with no keyboard equivalent and no Tab-cycle entry (`_cycle_metadata_field` only covers
-  title/author/narrator/year): `_finished_label` (`_ClickableLabel`) → `_on_finished_clicked` →
-  `_confirm_finished_label` (7s auto-cancel confirm timer); `_remove_btn` (`QToolButton`) →
-  `_on_remove_clicked` → `_confirm_remove_label` (same two-step-confirm shape). Both would route
-  through Book Detail's own `eventFilter` (`book_detail_panel.py`, the same lane already handling
-  Tab/Escape there — NOT the global dispatcher, since Book Detail gates that off entirely while
-  open per the focus-ownership invariant). Candidate keys floated but not decided: `F` for Finished,
-  `X`/`Delete` for Remove (Remove is destructive — a keyboard flow needs the same two-step-confirm
-  semantics as the mouse click-click, not a single-key instant action). Also noted but explicitly
-  NOT low-risk single bindings, deferred as a separate/bigger "list & grid keyboard nav" design
-  conversation: Book Detail's per-session History-row trash buttons, Tag list rows, Tag
-  book-thumbnail grid, Excluded Books popup rows, Stats' Overall-tab bar-chart date click — all
-  need row/grid selection invented first, same shape as the already-deferred Cover-tab item below.
-- **[2026-07-11] DESIGN + IMPLEMENT: Cover tab keyboard support in Book Detail.** Tab in the Book
-  Detail Panel now does something sensible on every tab EXCEPT Cover: Stats/History enter metadata
-  edit, Tags toggles the tag-add field, and Cover is a deliberate consumed no-op (Tab is swallowed
-  so it can't leak to the library underneath — see `book_detail_panel.py` eventFilter's Tab branch,
-  `0a4e558` — but does nothing in-panel). The Cover tab has its own interactive content (the cover
-  thumbnails strip + fit-mode buttons, a `CoverPanel`), so it should get real keyboard nav rather
-  than a dead Tab. Looks simple (a `CoverPanel` with a handful of focusable controls — thumbnails
-  to select/activate, fit buttons, add-cover button), but deferred anyway. When picking it up: the
-  Tab handler already consumes Tab on the Cover tab, so wiring in-panel nav there is purely additive
-  (add an `elif self._on_cover_tab():` branch alongside the existing Stats/History and Tags
-  branches); the leak is already sealed, so there's no risk in taking it slowly. Decide whether
-  Tab cycles the cover controls, or arrows navigate the thumbnail strip (like the library grid),
-  or both.
+- **[2026-07-12] DEFERRED (not planned for the current shipping push): Stats Day/Week/Month
+  sub-navigation and Tags panel keyboard nav.** Explicitly scoped OUT while implementing Book
+  Detail's Left/Right tab-switching + per-tab actions (History row nav, Cover thumbnail nav) the
+  same session — those turned out to be low-risk once designed, because they fit within a panel
+  that's ALREADY the sole real-Qt-focus owner (`PanelManager._claim_panel_focus`), so a new
+  `keyPressEvent` override on the panel itself was enough (same shape as `ChapterList`/
+  `StatsPanel`'s existing Left/Right). Stats sub-nav and Tags panel nav are a materially
+  different, LARGER scope: they'd require inventing a "focus-zone" model — a way to enter/exit
+  sub-navigation inside an already-focused panel (e.g. "arrow into the Day/Week/Month `‹`/`›`
+  controls" as a distinct mode from whatever else that panel's keys might mean), plus a new
+  visual focus indicator for controls that have never needed one (Stats' `‹`/`›` nav buttons have
+  no existing hover-equivalent to reuse the way History-row keyboard-selection reused mouse
+  hover, or Cover-tab nav reused the existing preview pane). Every binding shipped in this and the
+  prior two sessions fit the simpler "add shortcuts to an already-focused panel" shape; these two
+  don't. Sleep/Playback/Settings are considered adequately served by their existing
+  `panel_tab_widgets` Tab-cycling and are NOT being extended further either (no focus-zone gap
+  there — Tab-cycle already reaches every control).
 - **[2026-07-11] FIX (blocked on upcoming tags-gutter layout work): History tab's `_history_scroll`
   has no row-height viewport quantization, unlike every other scrollable list in the app.**
   `book_detail_panel.py`'s `_history_scroll` (`QScrollArea`) is added via `outer.addWidget(...,
