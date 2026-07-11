@@ -1,3 +1,84 @@
+## Session Summary — 2026-07-11 Session 3 — Main-window transport shortcuts + keyboard focus-ownership invariant
+
+**Branch:** `main`. **Commit:** `9664554` (single commit — shortcuts + all three focus fixes,
+kept together since they're one coherent arc: the shortcuts work is what surfaced each focus bug
+in turn, and none of the three fixes is independently meaningful without the shortcuts that
+exposed it).
+
+Started from a prompt to add main-window transport shortcuts (Space, volume, speed, skip,
+chapter nav, mute, undo) — reusing existing button/wheel methods, not reimplementing playback
+logic. That work itself was clean: `shortcuts.py` gained a `modifiers` field on `Binding` plus
+`(key, modifiers)`-keyed dispatch (previously bare-key, so Ctrl+T and T were indistinguishable —
+now a bare binding matches only an unmodified press), and `_nudge_volume`/`_nudge_speed` were
+extracted from `wheelEvent` so the wheel and the new `Up`/`Down`/`Alt+Up`/`Alt+Down` keys share
+one implementation instead of two. Mute (`m`) was built from scratch (nothing existed to reuse);
+undo (`u`) reuses `_perform_undo` gated on the existing `undo_overlay.isVisible()`. Full detail
+and the reuse-target table in the commit and `KEYBINDINGS.md`.
+
+**What followed was three rounds of live-reported bugs, each traced to ground truth before any
+fix — per the project's live-behavior-is-authoritative norm — rather than patched reactively:**
+
+**Round 1 — always-on chrome widgets stole keyboard focus.** At startup, `Space` opened the
+speed menu instead of toggling play/pause; arrow keys surfaced the hidden volume control and
+then cycled through the off-screen-but-`show()`n sidebar, opening panels one by one. Traced live:
+`speed_button` was the first `StrongFocus` widget constructed, so Qt auto-focused it at startup,
+and `Space` fired its `clicked`. Fixed by sweeping `Qt.NoFocus` across every always-on chrome
+widget outside a panel (speed button, sidebar triggers + `sleep_cancel_btn`, `sleep_timer_label`,
+`undo_overlay`, `eof_revert_btn`/`eof_close_btn`/`cancel_scan_btn`, `scan_now_btn`,
+`go_to_library_btn`) — matches the treatment the five transport buttons already had. Verified via
+an instrumented headless trace: `focusWidget()` is `None` at startup and stays `None` throughout
+the transport view once the sweep landed.
+
+**Round 2 — stuck focus after closing Library / ChapterList / BookDetail.** Reported: after
+closing Library, every shortcut (not just modified ones) stopped firing; after opening then
+closing the chapter list once, focus stayed stuck on it (arrows navigated chapters, Space
+activated the highlighted one) even though it was visually closed. Traced live, first attempt
+wrong: adding `clearFocus()` BEFORE `hide()` looked right but didn't work — a repeated live trace
+showed `clearFocus()` correctly clears focus to `None`, and then `hide()` on that still-technically-
+focused widget **silently re-grants it focus** (confirmed reproducibly, not theorized — Qt falls
+back to the best remaining `StrongFocus` candidate, which in a NoFocus-swept chrome is often the
+same widget being hidden). Fix: `clearFocus()` must run AFTER `hide()`. Also had to target the
+actual focused descendant (`_list_view`, not `library_panel` itself — `clearFocus()` only acts on
+`self`, and a container rarely holds focus directly). Applied to `_on_library_hidden`,
+`ChapterList._on_fade_out_finished` (covers BOTH its close paths — the external
+`_show_chapter_dropdown` toggle and the widget's own `Escape`/`C` `keyPressEvent` branch, since
+both funnel through the same completion handler), and defensively to `_on_book_detail_hidden`.
+5 consecutive live re-runs confirmed deterministic after the fix.
+
+**Round 3 — two more bugs, investigated together as one invariant per explicit user direction
+rather than patched as two special cases.** (a) Arrow keys inside a focused Book Detail
+inline/tag edit field dismissed the whole panel. Traced: the focused `QLineEdit` correctly gets
+first refusal on every key, but doesn't itself handle `Up`/`Down` in a single-line field, so the
+event propagates up to `MainWindow.keyPressEvent` — which had zero focus-awareness and handed
+every key to the dispatcher regardless, firing `VOLUME_UP/DOWN` → `hide_all_panels()`. (b) Opening
+Book Detail from Library let arrow/Space act on the Library underneath (navigate its selection,
+even load a book) — traced to `open_book_detail`/`_start_book_detail_entry` never calling
+`.setFocus()` on anything; `raise_()` only changes Z-order, so Library's `_list_view` kept real
+focus and kept consuming every key itself, never reaching `MainWindow.keyPressEvent` at all. Two
+opposite failure directions (a: the right widget has focus but silently declines a key which then
+leaks to global scope; b: the wrong widget has focus and hoards a key that never reaches global
+scope), fixed as one invariant: **exactly one widget owns keyboard focus, and the dispatcher only
+acts when that owner is `MainWindow` itself or nothing panel-local** —
+`MainWindow._focus_allows_global_shortcuts()` (dispatch half) + `PanelManager
+._claim_panel_focus`/`_release_panel_focus` (ownership half, wired into all six panel open/close
+flows — Settings/Speed/Sleep/Stats/Tags/BookDetail, not just the one reported). Verification
+caught two false signals in the FIRST test pass that both turned out to be test-harness bugs, not
+code bugs: a mislabeled assertion (checking whether `keyPressEvent` ran, when it always legitimately
+runs — the guard is inside it) and a test that tried opening a second panel while Library was
+already open, which the app's pre-existing `is_overlay_open_or_committed()` one-overlay gate
+correctly refuses regardless of this fix. Both caught by re-tracing rather than trusting the first
+red result; the corrected trace (3 consecutive runs) confirmed the fix clean.
+
+Three new CLAUDE.md rules record this as durable architecture, not a one-off: the focus-ownership
+invariant itself (with the generalized `clearFocus()`-after-`hide()` Qt gotcha), the NoFocus-sweep
+dependency this mechanism relies on, and a reminder that any future panel must call the two new
+helpers or silently reintroduce Symptom B. `KEYBINDINGS.md`'s top note and the `Space` row updated
+to describe the invariant rather than "shadowing." See NOTES.md for the full trace-by-trace
+root-cause writeup (useful if this class of bug resurfaces) and TESTING.md for the live-focus
+checklist this session's fixes need re-run against on any future panel/shortcut work.
+
+---
+
 ## Session Summary — 2026-07-11 Session 2 — Book Detail keyboard: library-leak fix + Tab/Escape handling
 
 **Branch:** `main`. **Commits:** `4480e7a` (library shortcuts no longer fire under Book Detail),

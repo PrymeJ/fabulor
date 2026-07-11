@@ -8,10 +8,16 @@ Global keys are dispatched by `src/fabulor/shortcuts.py` (`ShortcutDispatcher`, 
 widget that owns it and is **not** part of that module — it's documented here only so
 this file is a complete map.
 
-A note that applies to every keyboard binding: a key only reaches these handlers if no
-focused widget consumes it first. Typing in a text field (library search, sleep custom
-time, metadata edit, tag name) sends the keystroke to that field, not to a global
-shortcut.
+**Focus-ownership invariant (added 2026-07-11):** exactly one widget owns keyboard focus at
+a time, and the global dispatcher only acts on a key when the focus owner is `MainWindow`
+itself or nothing panel-local currently holds real focus (`MainWindow._focus_allows_global_
+shortcuts`). Whenever a panel/overlay is open, its own widget owns focus for the whole time
+it's open (`PanelManager._claim_panel_focus` on open, `_release_panel_focus` on close) — so
+a key that widget doesn't want (e.g. `Up`/`Down` inside a text field) is simply dropped, not
+forwarded to global shortcuts, and a key typed while editing never leaks out to change
+volume/speed/etc. This is why, below, Library/Chapter-list keys "shadow" the global ones
+while open — it isn't incidental first-refusal, it's the enforced invariant. See CLAUDE.md's
+"Keyboard focus ownership" rule for the full architecture and the Qt gotchas behind it.
 
 ---
 
@@ -37,8 +43,30 @@ its own panel is already open does nothing — these keys never close a panel, o
 own buttons and the panel's own close controls do that) and gated by the same one-overlay-at-a-time
 rule (`is_overlay_open_or_committed`) as every other panel-open path.
 
-Modifiers are ignored: `T` and `Ctrl+T` both rotate the theme, etc. (This matches the
-pre-migration behavior and is intentional until configurable bindings land.)
+### Transport / player keys (added 2026-07-11)
+
+Wired through the same dispatcher; each fires the **same method** the on-screen button or
+wheel already uses (no parallel playback logic). All use `GuardKind.NONE` (fire on every
+press). These keys act on the player, so most are inert with no book loaded.
+
+| Key | Action | When it does something | Notes |
+|-----|--------|------------------------|-------|
+| `Space` | Play/pause toggle | Whenever a book is loaded. | Same method as the play/pause button (`toggle_play_pause`). Transport buttons are `Qt.NoFocus` so a focused button can't swallow `Space`. Correctly inert whenever any panel/overlay is open — the focus-ownership invariant above means `Space` belongs to whatever panel-local widget currently has focus (the library list, the chapter list, a text field, etc.), never to global shortcuts, while one is open. |
+| `Up` / `Down` | Volume +5 / −5 | Book loaded (volume inert otherwise). | Same step path as the cover-area wheel (`_nudge_volume` → volume slider). **Repeats on hold.** |
+| `Alt`+`Up` / `Alt`+`Down` | Speed up / down (± configured increment, clamped 0.25×–8.0×) | Book loaded. | Same step path as the speed-button wheel (`_nudge_speed` → `_set_speed`). **Repeats on hold**, self-throttled to one step per `_SPEED_NUDGE_THROTTLE_S` (0.12s, hand-tunable) so held repeat doesn't blow past a value at 0.05 increments; a single tap always applies one step. |
+| `Shift`+`Left` / `Shift`+`Right` | Long skip back / forward (`long_skip_duration`) | Book loaded. | Same method as the rewind/forward button **right-click** (`handle_rewind(long_skip=True)` / `handle_forward(long_skip=True)`), including the undo capture. |
+| `Ctrl`+`Left` / `Ctrl`+`Right` | Previous / next chapter | Book loaded with chapters. | Same method as the chapter nav buttons and the progress-slider wheel (`handle_prev` / `handle_next`). |
+| `m` | Mute toggle | Book loaded. | Minimal, built on the volume-slider path (no dedicated mute control exists): stores current volume, drops to 0, restores on next press. Moving the slider off 0 while muted counts as unmuted. |
+| `u` | Undo last seek | Only while the on-screen undo affordance is showing (no-op otherwise). | Same method + visibility gate as clicking the undo overlay (`_perform_undo`, gated on `undo_overlay.isVisible()`). |
+
+`Shift`+`Up`/`Down` and `Ctrl`+`Up`/`Down` are deliberately left unbound.
+
+Modifier matching (changed 2026-07-11): a bare-key binding now matches **only** an
+unmodified press, so `Ctrl+T` no longer rotates the theme (bare `T` still does). This was a
+necessary consequence of adding real modifier support — `Up` (volume) and `Alt+Up` (speed),
+and `Shift+Left` / `Ctrl+Left`, must be told apart. Matching masks `event.modifiers()` to
+Shift/Ctrl/Alt only, so a keypad/platform-set flag on an arrow key can't defeat a bare-key
+binding.
 
 ---
 
@@ -77,7 +105,9 @@ it has focus. They are not global shortcuts and are not part of `shortcuts.py`.
 ## Mouse and wheel
 
 Handled in `MainWindow` (`_on_drag_area_pressed`, `wheelEvent`) and the chapter list.
-Untouched by the shortcuts work; listed for completeness.
+Behavior unchanged by the shortcuts work, though the cover-area volume and speed-button
+wheel now share their ±step logic with the `Up`/`Down` and `Alt`+`Up`/`Down` keys via the
+extracted `_nudge_volume` / `_nudge_speed` methods (one implementation, two entry points).
 
 | Gesture | Over | Does |
 |---------|------|------|
@@ -168,26 +198,22 @@ first via its own close button or an existing close flow.
 
 ## Planned keys from a Claude chat conversation dated May 9 (Some of them are already stale and they are mostly tentative, pending decision)
 
-Space — play/pause
-Left/Right — skip back/forward (short skip)
-l — library (already implemented)
-c — chapter list (already implemented)
-g — tags (already implemented)
-p — playback (already implemented)
-a — stats (already implemented)
-s — settings (already implemented)
-z — sleep timer (already implemented)
+Implemented (see the tables above):
 
-Skip/chapter/volume resolution:
+- `Space` — play/pause ✅
+- `l`/`c`/`g`/`p`/`a`/`s`/`z` — panel/chapter-list keys ✅
+- `Up`/`Down` — volume ✅ (kept on the bare arrows rather than the tentative `Shift+Up/Down`)
+- `Alt+Up`/`Alt+Down` — speed ✅
+- `Shift+Left`/`Shift+Right` — long skip ✅
+- `Ctrl+Left`/`Ctrl+Right` — prev/next chapter ✅ (the "reassign `Up/Down` to chapters" idea below was **not** taken — `Up/Down` stayed volume, chapters live on `Ctrl+arrow`)
+- `m` — mute ✅ (the "mini-player" alternative meaning was not built)
+- `u` — undo last seek ✅ (was not in the original list; added because the on-screen undo affordance had no keyboard equivalent)
 
-Up/Down — next/prev chapter (reassigned from volume — chapters matter more than volume during a session)
-Shift+Up/Down — volume (or left keyboard-free)
-Shift+Left/Right — long skip
-Ctrl+Left/Right — prev/next chapter (alternate binding, redundant with Up/Down)
+Short skip (`Left`/`Right` with no modifier) was **not** bound — the arrows are used by the
+Library/Chapter overlays, and only long skip (`Shift+arrow`) was requested this pass.
 
-Remaining ideas:
+Still open / not yet built:
 
-m — mini-player toggle | mute
 b — back/dismiss current panel
 Enter/Shift+Enter — book details for active book (different scope from the 2026-07-09 Alt+Enter added to the Library view above — that one acts on whichever row is keyboard-selected in the list, not the globally currently-playing book from anywhere in the app; this idea is still open)
 f or / — search/filter in library (Library's own search field exists and can be Tab-focused as of 2026-07-09 — this idea may now just mean "a global shortcut to jump straight to it")

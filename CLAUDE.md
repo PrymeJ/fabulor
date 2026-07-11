@@ -191,6 +191,79 @@ The metadata action button state is driven exclusively by `_MetaActionState` enu
 ### DO NOT call `_set_chapter_ui_active(False)` unconditionally at book selection time
 For chaptered→chaptered switches, the chapter slider must remain visible and at the old position — it is the flow animation's start point. Hiding it unconditionally kills the flow: the slider clears, blinks, then animates from the old position instead of flowing smoothly. Protection against the `_set_bg_suppressed` repolish is handled by a lightweight `bg_color`/`fill_color` re-assert in `_set_bg_suppressed` itself, guarded by `not _chapter_ui_active`. That re-assert fires only when the slider is already inactive and is the correct and only place for this protection. The preemptive `_set_chapter_ui_active(False)` that previously lived in `_on_book_selected_from_library` was removed for exactly this reason — do not restore it.
 
+### Keyboard focus ownership: exactly one widget owns focus, and the global dispatcher only acts when that owner is MainWindow itself or nothing panel-local (added 2026-07-11)
+This is now load-bearing architecture, not a one-off fix — added after the main-window transport
+shortcuts (Space/volume/speed/skip/chapter/mute/undo) surfaced three related bugs in one session.
+The invariant: **exactly one widget owns real Qt keyboard focus at a time, and
+`MainWindow.keyPressEvent` only hands a key to the shortcut dispatcher
+(`MainWindow._focus_allows_global_shortcuts()`) when `QApplication.focusWidget()` is `None` or
+`MainWindow` itself** — never when a panel/overlay is open and one of its own widgets holds real
+focus. A panel-local focused widget gets first AND FINAL say over a key, even if it declines it
+(leaves it unaccepted and lets Qt propagate the event upward) — the key must NOT fall through to
+global shortcuts just because the local widget didn't want it.
+
+Two enforcement points, both required (fixing only one leaves the other's failure mode open):
+- **Ownership** (`PanelManager._claim_panel_focus`, called from every panel's `_start_*_entry`
+  after `.raise_()`): every panel/overlay must claim focus for one of its own widgets on open.
+  `raise_()`/`.show()` only change Z-order/paint stacking — they have ZERO effect on keyboard
+  focus. Without this, a panel opened over an already-focused panel (e.g. Book Detail opened from
+  Library) leaves the PREVIOUS panel's widget (e.g. Library's `_list_view`) holding real focus,
+  so arrow keys/Space silently navigate and activate the panel underneath the visible one — this
+  is reachable in practice because `open_book_detail` is the one intentionally-ungated overlay
+  path (see the `open_book_detail` rule above). Settings/Speed/Sleep reuse
+  `panel_tab_widgets(panel_key)` (the same "first focusable widget" list Tab-cycling already
+  uses) as the claim target; Stats/Tags/BookDetail (not in that list) claim the panel root
+  itself. Library and ChapterList self-manage this already (their own `showEvent`/`show_above`)
+  and are NOT routed through the shared helper — leave them as-is.
+- **Dispatch** (`MainWindow._focus_allows_global_shortcuts`): without this, a key a focused
+  input widget doesn't itself consume (e.g. `Up`/`Down` inside a `QLineEdit`, which only handles
+  cursor-relevant keys) propagates up to `MainWindow.keyPressEvent`, which — with no
+  focus-awareness — hands it to the dispatcher regardless of what has focus. This is how pressing
+  `Up`/`Down` while editing a Book Detail metadata/tag field used to dismiss the whole panel
+  (`VOLUME_UP/DOWN` → `_on_volume_changed` → `hide_all_panels()`). The fix does NOT special-case
+  volume or any individual handler — that would only close the hole for that one key and leave
+  every other bound key (`m`, `u`, future bindings) free to leak the same way. It must live at
+  the dispatch decision point, once, for every key.
+
+**Any future panel/overlay MUST call `_claim_panel_focus`/`_release_panel_focus` (or self-manage
+focus like Library/ChapterList) in its open/close flow, or it will silently reintroduce the
+bleed-through bug** — nothing else in the codebase enforces this per-panel; it is opt-in by
+construction, not automatic.
+
+**Qt gotcha, generalized beyond this specific bug:** clearing focus must happen AFTER `.hide()`,
+never before. Confirmed live, repeatedly, during this fix: `hide()` on a widget that still holds
+real Qt focus makes Qt fall back and silently RE-GRANT focus to that same now-hidden widget if
+it's the only (or best) `StrongFocus` candidate around — so a `clearFocus()` call placed before
+`hide()` gets invisibly undone by `hide()` itself, and the symptom looks identical to the bug
+never being fixed at all. `_release_panel_focus` is deliberately called AFTER `panel.hide()` in
+every close handler for this reason. Also: `clearFocus()` only acts on `self` — call it on the
+actual focused descendant (`QApplication.focusWidget()`, checked via `panel.isAncestorOf(...)`),
+never on the panel container, which typically never holds focus directly itself.
+
+**This entire mechanism depends on the NoFocus sweep (below) being complete.**
+`_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
+true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **Any new always-on
+widget added outside a panel (a new transport button, a new status indicator, anything parented
+directly to `MainWindow`'s always-visible chrome) MUST be `setFocusPolicy(Qt.NoFocus)`, full
+stop** — otherwise it becomes a focus candidate indistinguishable from a real panel-local widget,
+and the whole dispatch guard silently breaks for exactly the same reason the speed button used to
+steal `Space` at startup before this sweep.
+
+### DO NOT give always-on MainWindow chrome any focus policy other than `Qt.NoFocus`
+Every widget that is part of the permanent transport/chrome (not inside a slide-out panel) must
+be `Qt.NoFocus`: the five transport buttons, the two title-bar buttons, `speed_button`,
+`sleep_timer_label`, the six sidebar trigger buttons + `sleep_cancel_btn`, `undo_overlay`,
+`eof_revert_btn`/`eof_close_btn`/`cancel_scan_btn`, `scan_now_btn`, `go_to_library_btn`. This is
+not cosmetic — `MainWindow._focus_allows_global_shortcuts()` (see the focus-ownership rule above)
+relies on "focus is not `None` and not `MainWindow`" being equivalent to "focus is panel-local."
+A single missed chrome widget with a default (`StrongFocus`) policy reintroduces the exact bug
+this sweep fixed: keyboard focus can land on it (Qt auto-focuses the first focusable widget at
+startup, and Tab/arrow navigation can land on any focusable widget), `Space` fires its `clicked`
+instead of play/pause, and the global shortcut dispatcher is silently starved for as long as that
+widget holds focus. `ClickSlider` (progress/chapter/volume sliders) is a `QWidget` subclass and
+`NoFocus` by default with no `keyPressEvent` override — it does not need an explicit call, but do
+not change its base class or add key handling to it without re-adding one.
+
 ---
 
 ## Tech Stack
@@ -272,7 +345,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Drag-area press** — `visual_area.mousePressEvent` is monkey-patched to `_on_drag_area_pressed`: left-click closes open panels, else toggles play/pause; empty library short-circuits. (No window-move logic lives here.)
 - **Cover scaling** — `_update_cover_art_scaling()` implements four fit modes (`fit` KeepAspectRatio / `stretch` IgnoreAspectRatio / `crop` center-crop / `top` top-aligned on black canvas), all sized to `COVER_AREA_HEIGHT` (module constant), not the live label height. No-cover books render a themed `fabulor.svg` placeholder. Cover-theme application defers while a panel is open (`_pending_cover_pixmap` → `_apply_pending_cover_theme`).
 - **200 ms `ui_timer` (`_update_ui_sync`)** — the heartbeat. Reads time/dur/pause/speed/eof; feeds `session_recorder.update_furthest_position`; on EOF synthesizes `pos = dur`, sets the restart icon, writes one `'finished'` event, shows the revert/close banner, and closes the session. Delegates to `_sync_playback_state`, `_sync_ui_render`, `_sync_progress_sliders` (skips setValue during flow anim / seeking / `flow_pending_progress`), `_sync_chapter_ui` (derives chapter from `pos`, skips during reload / no chapters / `flow_pending_chapter` / seeking), `_sync_persistence` (saves position every 0.1%, skips during drag / deadzone). Stopped during the flow animation; resumed via `_resume_ui_timer`.
-- **Keyboard** — global keys route through `ShortcutDispatcher` (`shortcuts.py`), wired in `MainWindow.keyPressEvent`. `C` opens/closes the chapter dropdown (2+ chapters only); `T` rotates theme (`COOLDOWN_COALESCE` 2s — leading fire, repeats coalesce to one trailing fire, migrated from the old `_theme_rotate_cooldown`/`_pending` attrs); `Q` rotates the no-book quote (testing-only); `L` opens the library (`COOLDOWN_DROP` 500ms — open-only, no-op if the library/any full panel is already open or in the empty state, sidebar-open flows via `_open_library_flow`). The dispatcher owns binding + spam-guard ONLY; each action's app-state gating stays in its handler. Full input map (incl. chapter-list keys, text-field Escape handlers, mouse/wheel) in `KEYBINDINGS.md`.
+- **Keyboard** — global keys route through `ShortcutDispatcher` (`shortcuts.py`), wired in `MainWindow.keyPressEvent`. `C` opens/closes the chapter dropdown (2+ chapters only); `T` rotates theme (`COOLDOWN_COALESCE` 2s — leading fire, repeats coalesce to one trailing fire, migrated from the old `_theme_rotate_cooldown`/`_pending` attrs); `Q` rotates the no-book quote (testing-only); `L` opens the library (`COOLDOWN_DROP` 500ms — open-only, no-op if the library/any full panel is already open or in the empty state, sidebar-open flows via `_open_library_flow`). The dispatcher owns binding + spam-guard ONLY; each action's app-state gating stays in its handler. **Transport keys (added 2026-07-11)** — `Space` play/pause, `Up`/`Down` volume (repeats on hold), `Alt+Up`/`Alt+Down` speed (repeats on hold, self-throttled — `_SPEED_NUDGE_THROTTLE_S`), `Shift+Left`/`Shift+Right` long skip, `Ctrl+Left`/`Ctrl+Right` chapter prev/next, `m` mute, `u` undo (only while the undo affordance is shown) — each calls the exact method its on-screen button/wheel already uses; volume/speed share `_nudge_volume`/`_nudge_speed` with `wheelEvent`. Added real modifier support to `Binding`/the dispatcher (masked to Shift/Ctrl/Alt) — a bare-key binding now matches only an unmodified press (Ctrl+T no longer rotates the theme). **Gated by the focus-ownership invariant** (see the CLAUDE.md rule of that name): the dispatcher only acts when `QApplication.focusWidget()` is `None` or `MainWindow` itself, never when a panel/overlay's own widget holds real focus — this is what stops these keys from leaking into text fields or firing while any panel is open. Full input map (incl. chapter-list keys, text-field Escape handlers, mouse/wheel) in `KEYBINDINGS.md`.
 - **Wheel zones** — over `visual_area`: volume ±5 (2s overlay); over `speed_button`: speed ±`speed_increment`, clamped 0.25–8.0; over `progress_slider`: chapter Prev/Next (up → next chapter, down → previous; no-op when no chapters or at last/first boundary — delegates to `handle_next`/`handle_prev` so all guards are inherited); over `chapter_progress_slider`: seek by `max(10, chap_dur × 0.05)` with undo capture.
 - **Module-level interface classes** — thin one-way facades so controllers don't hold a raw `MainWindow`: `UIInterface` + `AppInterface` + `BrowserInterface` (→ `LibraryController`); `VisualsInterface` + `PanelInterface` + `UICallbackInterface` + `LibraryInterface` + `PlayerInterface` (→ `SettingsController`).
 - **Startup** (`__init__`) — build core objects → seed streak-grid cache → `_setup_ui` → wire timers/signals → instantiate `LibraryController` → restore last book (validated against active locations + `os.path.exists`) → `_check_library_status` → `ui_timer.start(200)` → instantiate `SettingsController` → `show()` → defer `start_idle_preload` by 4 s.
@@ -355,6 +428,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - Manages sidebar, library, settings, speed, sleep, stats, tags, book-detail, and chapter-list visibility. All slide via `QPropertyAnimation` on position; re-entry guarded.
 - Library slides full-width from the left (sets `_is_animating` to suppress cover emits; `refresh()` on shown). Settings/speed/sleep/stats/tags slide from the left at 90% width, fixed 500px height. **Book detail uniquely enters from the right.** Optional blur animation (`blur_effect.blurRadius` 0↔10) per `config.get_blur_enabled`.
 - Sidebar uses a queued-open pattern (closes first, then dispatches the panel). `_on_library_hidden` ends the deadzone (`mw._switch.library_revealed`), calls `ungate_play`, then drains deferred file-ready events or applies the pending cover theme.
+- **Keyboard focus ownership (added 2026-07-11)** — every panel/overlay claims real Qt focus on open (`_claim_panel_focus`, called after `.raise_()`) and releases it on close (`_release_panel_focus`, called after `.hide()`), enforcing that exactly one widget owns focus at a time app-wide. Settings/Speed/Sleep claim the first entry of `panel_tab_widgets(panel_key)` (same list Tab-cycling uses); Stats/Tags/BookDetail claim the panel root itself (granted `StrongFocus` if it doesn't already have it). Library and ChapterList self-manage this in their own `showEvent`/`show_above` and are not routed through these helpers. See the "Keyboard focus ownership" CLAUDE.md rule for the full invariant and the `hide()`-before-`clearFocus()` Qt gotcha this depends on getting right.
 
 ### Controls & widgets (`controls.py`, `audio_controls.py`, `carousel.py`, `icon_utils.py`, `text_context_menu.py`)
 
@@ -708,6 +782,9 @@ Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style —
 ### DO NOT let `open_book_detail` retarget or re-animate an already-visible Book Detail Panel
 `open_book_detail` (`panels.py`) now no-ops entirely — does not call `load_book`, does not restart the slide-in animation — whenever `book_detail_panel.isVisible()` is already `True`, regardless of which book is showing. `_start_book_detail_entry` is unconditional (always moves the panel off-screen right then slides it back to `x=0`), so calling `open_book_detail` while already open visibly yanks the panel out and back — this is what Library's new Alt+Enter shortcut surfaced (repeatedly pressing it on the already-open book re-triggered the slide every time). Worse without the guard: arrow-navigating to a DIFFERENT book while detail is already open (e.g. after a right-click) and then pressing Alt+Enter would hijack the visible panel onto the new book instead of being blocked — same call path, no protection. The fix is scoped to book-detail-vs-book-detail only; it does **not** touch or weaken `PanelManager.is_overlay_open_or_committed()` (the cross-panel — library/settings/speed/sleep/stats/tags — one-overlay-at-a-time gate), which deliberately still excludes `open_book_detail` for the unrelated reason documented above (it's reachable only from within an already-open library/stats/tags panel, so it never races a *different* panel's opening animation). The user must close the panel via an existing close path (`_close_book_detail_flow` / the panel's own close button) before opening another book's detail.
 
+### DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`, and DO NOT clear focus before `hide()`
+Exactly one widget owns real Qt keyboard focus at a time; `MainWindow._focus_allows_global_shortcuts()` only lets the shortcut dispatcher act when the focus owner is `MainWindow` itself or `None` — never when a panel-local widget holds it. Every panel/overlay must call `PanelManager._claim_panel_focus` in its open flow (after `.raise_()`) and `_release_panel_focus` in its close handler (after `.hide()` — ordering is load-bearing: Qt re-grants focus to a widget during `hide()` if it's the only `StrongFocus` candidate around, silently undoing a `clearFocus()` placed before it). Skipping either call on a future panel reintroduces the exact bug this fixed: a stale-focused widget from underneath bleeds keys through (arrows/Space acting on a different, obscured panel), or a key a focused field doesn't consume leaks out to global shortcuts (e.g. `Up`/`Down` dismissing an in-progress edit). See the fuller "Keyboard focus ownership" rule above, including why every always-on chrome widget outside a panel must stay `Qt.NoFocus` for this to keep working.
+
 ---
 
 ## Pending / Known Debt
@@ -798,7 +875,35 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 ---
 
-*Last updated: 2026-07-10 Session 5 — Grid-view-mode geometry, final pass. All five library view
+*Last updated: 2026-07-11 Session 3 — main-window transport keyboard shortcuts + the keyboard
+focus-ownership invariant. Added Space/volume/speed/skip/chapter/mute/undo as global shortcuts
+(`shortcuts.py` gained real Shift/Ctrl/Alt modifier support — a bare-key binding now matches only
+an unmodified press, so Ctrl+T no longer rotates the theme), each calling the exact method its
+on-screen button/wheel already uses (`_nudge_volume`/`_nudge_speed` extracted so the wheel and the
+new keys share one implementation). This surfaced three related keyboard-focus bugs, all traced
+live before any fix (per the project's live-trace-first norm) and fixed as one invariant rather
+than three patches: (1) always-on chrome widgets (speed button, sidebar triggers, sleep label,
+undo overlay, status/no-book buttons) accepted keyboard focus, so `Space`/arrows landed on them
+instead of the dispatcher — swept to `Qt.NoFocus`, mirroring the transport buttons' existing
+treatment; (2) panels that grab focus on open (Library, ChapterList) never released it
+symmetrically on close (`hide()` on a still-focused widget silently re-grants it focus — confirmed
+by direct trace, not assumed — so `clearFocus()` must run AFTER `hide()`, never before); (3)
+Settings/Speed/Sleep/Stats/Tags/BookDetail never claimed focus on open at all, so a panel opened
+over an already-focused one (Book Detail from Library is the one reachable case,
+`open_book_detail` being intentionally ungated) left the panel underneath's widget bleeding
+keys through. Fixed via one invariant, both halves required together: `PanelManager
+._claim_panel_focus`/`_release_panel_focus` (ownership, called from every panel's open/close
+flow) + `MainWindow._focus_allows_global_shortcuts()` (dispatch, gates `keyPressEvent` on
+`focusWidget()` being `None`/`MainWindow`). Three new CLAUDE.md rules (keyboard focus ownership,
+the NoFocus-sweep dependency, don't skip the helpers on a new panel). `KEYBINDINGS.md` updated
+with the transport-key table and the invariant explained inline. Two new test files/extensions
+(`tests/test_shortcuts.py` extended, `tests/test_transport_shortcuts.py` added) — see TESTING.md
+for the live-verification checklist this session's Qt-focus-specific bugs required (headless
+traces caught real bugs here, unlike the settings-panel-layout class of bug documented earlier —
+see NOTES.md for why headless traces were trustworthy this time but two of the traces still gave
+false signals from test-harness bugs, not code bugs, and had to be re-verified).*
+
+*Previously: 2026-07-10 Session 5 — Grid-view-mode geometry, final pass. All five library view
 modes (1-per-row, 2-per-row, 3-per-row, Square, List) now have clean, drift-free scroll
 boundaries with no stray gaps. List got the same 1px top/bottom drift fix Square had (remainder
 absorbed into a top viewport margin). 3-per-row was aligned to Square (same 3-column shape,

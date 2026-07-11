@@ -1,3 +1,197 @@
+## Keyboard focus ownership: three related bugs surfaced by adding transport shortcuts (2026-07-11)
+
+Adding main-window transport shortcuts (Space/volume/speed/skip/chapter/mute/undo,
+`shortcuts.py`/`app.py`) surfaced three keyboard-focus bugs in sequence, each traced live before
+any fix — per the project's rule that live Qt behavior is ground truth, not a script's assertion.
+All three share one underlying gap and were ultimately fixed as a single enforced invariant (see
+the CLAUDE.md "Keyboard focus ownership" rule). This note is the trace-by-trace record, including
+two dead ends worth knowing about if this class of bug resurfaces.
+
+### Background: how a key reaches (or doesn't reach) the dispatcher
+
+`MainWindow.keyPressEvent` delegates to `ShortcutDispatcher.handle_key_event`
+(`shortcuts.py`). Two independent facts about Qt matter here, both confirmed by direct
+instrumented trace (not assumed from documentation):
+
+1. A key event is delivered to the **focused widget first**. If that widget's `keyPressEvent`
+   leaves it unaccepted (e.g. a plain `QLineEdit` doesn't handle `Up`/`Down` in a single-line
+   field), Qt propagates the SAME event up the parent chain, and `MainWindow.keyPressEvent`
+   still runs — it is NOT skipped just because a child widget saw the key first.
+2. `raise_()`/`.show()` change paint/Z-order stacking only. They have **zero effect on Qt
+   keyboard focus**. A widget "underneath" a freshly-raised panel can still hold real focus and
+   keep consuming every key exactly as if the panel on top of it didn't exist.
+
+### Round 1 — always-on chrome widgets stole keyboard focus at startup and via Tab/arrow nav
+
+**Symptom (live report):** `Space` at startup opened the speed menu instead of toggling
+play/pause. Arrow keys moved a focus highlight through hidden controls (the volume slider) and
+then began opening sidebar panels one by one.
+
+**Trace:** `speed_button` (`ShimmerButton`, a `QPushButton` subclass) was the first
+`Qt.StrongFocus`-default widget constructed in `MainWindow._setup_ui`, so Qt auto-focused it at
+startup with no explicit `setFocus()` call needed — Qt does this automatically for the first
+eligible widget in tab order when nothing else claims focus. `Space` then fired the focused
+button's own `clicked`. The sidebar (`build_sidebar`) is `move(-50, 56)` then `show()`n — visible
+to Qt (in the focus/tab chain) despite being off-screen; nothing ever `hide()`s it, only moves it.
+Its six trigger buttons + `sleep_cancel_btn` carried Qt's default `StrongFocus`, so arrow/Tab
+navigation could land on them and `Space` would fire whichever was focused.
+
+**Fix:** `setFocusPolicy(Qt.NoFocus)` on every always-on chrome widget outside a panel: the five
+transport buttons (already done in an earlier pass this session), the two title-bar buttons
+(already done), `speed_button`, `sleep_timer_label`, the six sidebar triggers +
+`sleep_cancel_btn`, `undo_overlay`, `eof_revert_btn`/`eof_close_btn`/`cancel_scan_btn`,
+`scan_now_btn`, `go_to_library_btn`. `ClickSlider` (progress/chapter/volume sliders) needed no
+change — it's a `QWidget` subclass, `NoFocus` by default, with no `keyPressEvent` override, so it
+was never a candidate.
+
+**Verification:** instrumented headless trace confirmed `QApplication.focusWidget()` is `None` at
+startup and stays `None` through the transport view with nothing clicked, and a synthetic `Space`
+press is consumed by the dispatcher (fires `PLAY_PAUSE`).
+
+### Round 2 — stuck focus after Library / ChapterList / BookDetail close
+
+**Symptom (live report):** After closing Library, every shortcut — not just modified ones —
+stopped firing. After opening the chapter list once and closing it once, focus stayed stuck on it:
+arrows navigated chapters, `Space` activated the highlighted one, even though it was visually
+closed.
+
+**Trace, first attempt (WRONG, corrected via re-trace, not assumption):** `LibraryPanel.showEvent`
+calls `self._list_view.setFocus()` unconditionally on open; nothing in `_on_library_hidden`
+(`panels.py`) ever called `clearFocus()`. First fix: add `clearFocus()` targeting the actual
+focused descendant, placed BEFORE `self.library_panel.hide()`. This looked correct by inspection
+and matched the obvious "undo what open did" shape — but a live re-test after applying it showed
+the bug **still reproduced**. Fine-grained tracing (print statements at every line of
+`_on_library_hidden`, run 3× for determinism) showed exactly why:
+```
+[traced] before clear, focused=QListView isAncestorOf: True
+[traced] called clearFocus() on QListView
+[traced] immediately after clearFocus(), focusWidget = None      # <- worked!
+[traced] immediately after hide(), focusWidget = QListView       # <- undone by hide()!
+```
+`hide()` on a widget that had JUST been cleared of focus **silently re-grants it focus** if
+nothing else in the window is a viable focus candidate — confirmed reproducibly across 3 runs,
+not a one-off. This is a real Qt behavior (widget hide/show focus reassignment falls back to the
+"best" remaining candidate), and in a codebase where chrome is NoFocus-swept, the widget being
+hidden can BE that fallback candidate, defeating a clear that ran moments earlier.
+
+**Fix (verified, 5/5 deterministic re-runs):** move `clearFocus()` to run AFTER `hide()`, not
+before — ordering is load-bearing. Applied to `_on_library_hidden` (`panels.py`),
+`ChapterList._on_fade_out_finished` (`chapter_list.py` — this single completion handler is
+reached from BOTH of the chapter list's close paths: `MainWindow._show_chapter_dropdown`'s
+external toggle branch, and the widget's OWN `keyPressEvent` handling `Escape`/`C` directly — the
+second path matters because when the list holds real focus, a user's second `C` press is
+delivered by Qt straight to the list's own handler, never reaching `MainWindow` at all, so a fix
+only in the external toggle path would have missed the common case), and defensively to
+`_on_book_detail_hidden` (Book Detail didn't grab focus on open yet at this point in the session,
+so this was a no-op then — it became load-bearing once Round 3's fix added the claim).
+
+**Also confirmed via `git log -p --follow`:** neither `_on_library_hidden` nor the chapter list's
+close paths ever had a focus-restore step in their history. This predates the transport-shortcuts
+work; it was invisible before because nothing important lived in `MainWindow.keyPressEvent` for
+the transport controls until this session made Space/arrows/etc. load-bearing global shortcuts.
+
+### Round 3 — arrow-in-field dismissed edits, Book Detail bled through to Library underneath
+
+**Symptom (live report, two distinct repros in one message):** (a) Focus a Book Detail
+inline/tag edit field, press `Up`/`Down` — the whole panel dismisses. (b) Open Book Detail from
+Library, press arrow keys a few times, then `Space` — the Library underneath visibly navigates and
+a book loads, even though Book Detail is the only thing visible.
+
+Per explicit user direction, this round was investigated fully (both mechanisms traced to their
+actual root cause) BEFORE any fix was written, to avoid a third round of reactive whack-a-mole.
+
+**Trace (a):** `QLineEdit.keyPressEvent` for `Up` correctly receives the key first (confirmed via
+a direct instrumented `sendEvent`), but a plain single-line `QLineEdit` has no special handling
+for `Up`/`Down`, so it calls the base `QWidget.keyPressEvent`, which leaves the event
+**unaccepted**. Qt's propagation then delivers the SAME event to `MainWindow.keyPressEvent` next
+— confirmed by trace (`accepted_before=True` going in per-handler, `accepted=False` coming out of
+the QLineEdit call). `MainWindow.keyPressEvent` had ZERO focus-awareness — it unconditionally
+handed every key to the dispatcher regardless of what was focused. `VOLUME_UP`/`VOLUME_DOWN`'s
+handler chain ends in `_on_volume_changed`, which unconditionally calls
+`self.panel_manager.hide_all_panels()` — that's what dismissed the panel. Confirmed this is
+GENERAL, not Up/Down-specific: ordinary letters typed into the same field never leaked, because
+`QLineEdit` DOES accept/consume plain character keys itself (never reaches step 2 of
+propagation) — the bug is confined to whichever specific keys a given focused widget happens not
+to care about, which today is Up/Down/m/u for a `QLineEdit`, but would be different keys for a
+different widget type.
+
+**Trace (b):** `PanelManager.open_book_detail` → `load_book` → `_start_book_detail_entry`
+(`panels.py`) read in full — none of the three ever call `.setFocus()` on anything; they only
+`.show()`/`.raise_()`. Confirmed live: immediately after Book Detail opens, `QApplication
+.focusWidget()` is STILL `Library._list_view`, and `_list_view.hasFocus()` is `True`. Sending
+three real `Down` presses (to whatever currently has real focus, exactly as the OS would) never
+reached `MainWindow.keyPressEvent` even once — they went straight to `_list_view`'s own key
+handling, and `currentRow` advanced 1→2→3 exactly. A subsequent `Space` activated the current item
+directly, and `MainWindow.current_file` was observed to actually change. This is Book Detail's
+open path never claiming focus, combined with Library's `_list_view` still legitimately holding
+it from before Book Detail opened over it.
+
+**Why these are two different mechanisms sharing one gap, not one bug:** (a) the CORRECT widget
+has focus and gets first refusal, but silently declines a key it doesn't want, and nothing stops
+the leftover from reaching global scope. (b) the WRONG widget (belonging to a different, now-
+obscured panel) has focus and fully consumes the key itself — it never reaches global scope at
+all. Opposite failure directions. But both stem from the same absence: nothing in the codebase
+ever established "the currently active panel owns keyboard focus" as an enforced invariant —
+panels either grab focus ad hoc on their own open (Library, ChapterList) or never grab it at all
+(the other six), and nothing arbitrates when panels open over each other.
+
+**Fix, both halves together (per explicit user direction — fixing only one leaves the other's
+failure mode open):**
+- **Ownership** — `PanelManager._claim_panel_focus(panel_widget, panel_key=None)`, called from
+  every one of the six `_start_*_entry` methods (Settings/Speed/Sleep/Stats/Tags/BookDetail —
+  audited via a full read of every panel's open path in `panels.py`, confirmed NONE of the six
+  grabbed focus before this fix, not just Book Detail) right after `.raise_()`. Settings/Speed/
+  Sleep reuse `panel_tab_widgets(panel_key)` — the SAME "first focusable widget" list Tab-cycling
+  already treats as canonical — as the claim target, so opening a panel and immediately pressing
+  Tab continues into its second control, matching the existing Tab-cycle's own notion of order.
+  Stats/Tags/BookDetail (not in that list) claim the panel root itself, granting it
+  `Qt.StrongFocus` if it doesn't already have a Tab-accepting policy. Library/ChapterList's
+  existing self-managed grabs were left untouched (working, no reason to route them through a
+  second mechanism).
+- **Dispatch** — `MainWindow._focus_allows_global_shortcuts()`: `keyPressEvent` only calls
+  `handle_key_event` when `QApplication.focusWidget()` is `None` or `MainWindow` itself. This
+  form (rather than enumerating every panel and checking `isAncestorOf`) is deliberately simple:
+  because Round 1's NoFocus sweep already guarantees no chrome widget outside a panel can hold
+  focus, and Round 3's ownership fix guarantees every open panel's widget genuinely does, "focus
+  is not None and not MainWindow" is EQUIVALENT to "focus is panel-local" by construction — no
+  panel list to keep in sync, and it can't silently drift if a panel is added later (though a new
+  panel/overlay still MUST call the claim/release helpers itself, or it becomes invisible to this
+  equivalence in a different way — see the CLAUDE.md rule).
+- Also released the five newly-focus-claiming panels' close handlers symmetrically
+  (`_on_settings_hidden`/`_on_speed_hidden`/`_on_sleep_hidden`/`_on_stats_hidden`/
+  `_on_tags_hidden`), same `_release_panel_focus` helper, same after-`hide()` ordering from
+  Round 2's lesson. Book Detail's pre-existing inline clearFocus was consolidated into the same
+  shared helper rather than left as duplicated logic.
+
+**Verification — two false signals caught by re-tracing, both test-harness bugs, not code bugs:**
+1. First test run reported Symptom A "still failing" (`MainWindow.keyPressEvent ran (SHOULD BE
+   False)?: True` for every key). Re-traced with fine-grained logging and confirmed the fix DOES
+   work — `_focus_allows_global_shortcuts()` correctly returned `False`, and the dispatcher never
+   fired. The test's assertion was checking the wrong thing: `keyPressEvent` is SUPPOSED to run
+   every time (it's where the new guard lives) — the test needed to check whether the dispatcher's
+   HANDLER executed (panel closed? volume changed?), not whether the outer method was invoked.
+2. First test run reported Symptom B "still failing" for all five non-Book-Detail panels (focus
+   stayed on Library's `_list_view` after "opening" Settings/Speed/etc.). Traced: the test called
+   the GATED `_open_settings_flow()` while Library was already open — and `is_overlay_open_or_
+   committed()` (a pre-existing, correct, unrelated policy) silently dropped the open request, so
+   `settings_panel.isVisible()` was `False` the whole time; there was nothing to test. Re-ran
+   calling `_start_settings_entry()` directly (bypassing the gate, isolating the focus-claim
+   mechanic from the separate one-overlay-at-a-time policy) and confirmed the claim mechanic works
+   correctly for all five panels, 3/3 deterministic runs. Also separately confirmed, in a
+   REALISTIC single-panel-open scenario (matching how these five are actually reached in the real
+   app — from the sidebar, never over Library, since the gate prevents that combination), that
+   `_release_panel_focus` correctly returns focus to `None` on close, 3/3 runs.
+
+Both false signals were caught by re-tracing with more targeted instrumentation rather than either
+trusting the first red result or trusting the fix's own reasoning — same discipline as Round 2's
+correction. General lesson for this class of bug: a headless Qt focus trace is trustworthy ground
+truth here (unlike the settings-panel-layout class of bug documented elsewhere in this file, where
+headless scripts repeatedly lied) — but the TEST's assertions and the TEST's scenario setup are
+just as capable of being wrong as the code, and both need to be independently sanity-checked
+against what the code is actually doing before accepting a red (or a green) result at face value.
+
+---
+
 ## History tab delete-session animation: stall, above-row-shift, and color-flash — three distinct bugs in one code path (2026-07-11)
 
 Bug report: confirming "Delete this session?" in the Book Detail Panel's History tab animated a

@@ -434,6 +434,69 @@ handling (search field, list) is a separate, more specific mechanism — see the
 - [ ] Tag manager's tag-name edit field focused, press Escape: field's own existing Escape behavior runs, does not also close the Tags panel
 - [ ] `pytest tests/ -q` stays green (no seek/session paths touched by this feature)
 
+## Main-window transport keyboard shortcuts (added 2026-07-11)
+
+Each key below calls the exact same method the corresponding on-screen button/wheel already
+uses — see KEYBINDINGS.md's "Transport / player keys" table for the reuse mapping. Test with a
+book loaded unless noted.
+
+- [ ] `Space`: toggles play/pause, at startup and mid-playback — does NOT open the speed menu
+- [ ] `Up` / `Down`: volume ±5, same visual overlay as the wheel; holding the key repeats
+- [ ] `Alt+Up` / `Alt+Down`: speed ± the configured increment, clamped 0.25×–8.0×; holding the key
+      repeats but is throttled (not a raw per-tick jump — feel should be a controlled ramp, not an
+      instant jump to the ceiling/floor); a single tap always applies exactly one step
+- [ ] `Shift+Left` / `Shift+Right`: long skip back/forward (`long_skip_duration`), same as the
+      rewind/forward button's right-click, including the undo-overlay capture
+- [ ] `Ctrl+Left` / `Ctrl+Right`: previous/next chapter, same as the chapter nav buttons and the
+      progress-slider wheel
+- [ ] `m`: mutes (drops to 0); pressing again restores the prior volume; manually dragging the
+      slider back up while "muted" and then pressing `m` again stores a FRESH value (does not
+      restore the old pre-mute value)
+- [ ] `u`: undoes the last seek ONLY while the undo affordance is visibly showing; no-op (and no
+      crash) when it isn't
+- [ ] Bare `Left`/`Right` (no modifier) do nothing — this is intentional, not a bug (only the
+      Shift/Ctrl variants are bound)
+- [ ] `Ctrl+T` no longer rotates the theme (bare `T` still does) — a deliberate side effect of
+      adding real modifier support to the dispatcher
+- [ ] No book loaded: `Space`/`Up`/`Down`/`Alt+Up`/`Alt+Down`/`m` are inert (no crash, no
+      change) — the transport is hidden/disabled in this state anyway, but confirm no stray
+      exception if a key is fired in a race with book unload
+
+## Keyboard focus ownership (added 2026-07-11)
+
+The invariant: exactly one widget owns real keyboard focus at a time, and global shortcuts only
+fire when that owner is MainWindow itself or nothing panel-local — never while a panel/overlay is
+open and one of its own widgets holds focus. See CLAUDE.md's "Keyboard focus ownership" rule and
+NOTES.md's "Keyboard focus ownership" writeup for the full mechanism and the two dead ends found
+while fixing it (do not re-attempt clearing focus BEFORE `hide()` — confirmed live to be silently
+undone by `hide()` itself).
+
+- [ ] **Startup, nothing clicked:** `Space` toggles play/pause immediately (not the speed menu);
+      no widget shows a focus highlight
+- [ ] **Arrow-key spam at idle, nothing clicked:** never opens a sidebar panel, never surfaces the
+      volume control's focus ring, never cycles through hidden controls
+- [ ] **Library open → close → any shortcut:** every global shortcut (`a`/`s`/`t`/`Space`/etc.,
+      not just arrows) fires normally immediately after Library closes
+- [ ] **Chapter list open (`C`) → close via a SECOND `C` press → any shortcut:** fires normally
+      afterward; the list is not still capturing arrows/Space while visually closed
+- [ ] **Chapter list open → close via `Escape`:** same check — shortcuts work immediately after
+- [ ] **Book Detail opened from Library (right-click or Alt+Enter a book):**
+  - [ ] Library's arrow-key navigation and Space-to-play do NOT fire while Book Detail is the
+        visible panel — pressing arrows/Space repeatedly must not silently move the library
+        selection or load a book underneath
+  - [ ] Book Detail's own Tab-cycle / click-to-edit still works normally
+  - [ ] Closing Book Detail returns to Library in its prior state (selection unchanged)
+- [ ] **Book Detail: focus a metadata field (click to edit) or the tag-add field, then press
+      `Up`/`Down`/`m`/`u`:** the field keeps editing focus, nothing happens to volume/speed/mute/
+      undo, and the panel does NOT close
+- [ ] **Same check inside Library's search field and any Settings text input:** `Up`/`Down`/`m`/`u`
+      typed/pressed there do not leak out to global shortcuts (should type or no-op locally, per
+      that field's own behavior — never dismiss the panel or change volume)
+- [ ] **Settings / Speed / Sleep / Stats / Tags, opened via the sidebar (the normal path):** each
+      panel's own Tab-cycle and mouse interaction work exactly as before this fix; global shortcuts
+      (arrows, Space, letters) do nothing while the panel is open, and resume normally after close
+- [ ] `pytest tests/ -q` stays green
+
 ## Sidebar
 
 - [x] Slides on right click on cover art field
