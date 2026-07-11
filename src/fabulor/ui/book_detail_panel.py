@@ -1198,6 +1198,24 @@ class BookDetailPanel(QWidget):
             self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def eventFilter(self, obj, event):
+        # Get out of the way entirely while a modal dialog (e.g. the Cover tab's "+" ->
+        # QFileDialog.getOpenFileName) is on top. This filter is installed on the whole
+        # QApplication (showEvent/hideEvent), so without this guard it intercepts EVERY key
+        # event app-wide, including ones meant for the modal dialog — confirmed live,
+        # 2026-07-12: pressing Escape while the file dialog was open closed BookDetailPanel
+        # first (this filter's Escape branch ran before the dialog's own native Escape-to-
+        # cancel got a chance), leaving the dialog open; a SECOND Escape was needed to
+        # actually cancel it — backwards from the expected order. _ensure_panel_owns_focus()
+        # had the same shape of bug: it would fight to steal focus back to the panel on every
+        # keystroke while the dialog had it, since the dialog's internal widgets aren't
+        # descendants of this panel (isAncestorOf returns False for a separate top-level
+        # window). QApplication.activeModalWidget() is the correct check — it's set to the
+        # dialog itself while ANY modal dialog anywhere in the app is up, not just ones this
+        # panel opened, so this also protects against any other modal a future feature adds.
+        if (event.type() == QEvent.Type.KeyPress
+                and QApplication.activeModalWidget() is not None):
+            return False
+
         if event.type() == QEvent.Type.KeyPress:
             self._ensure_panel_owns_focus()
 

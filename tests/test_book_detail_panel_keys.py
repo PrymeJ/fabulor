@@ -513,3 +513,52 @@ def test_exit_edit_mode_is_a_noop_when_not_editing(qapp):
     panel._editing = False
     panel._exit_edit_mode(save=False)
     assert panel.setFocus_calls == 0
+
+
+# ── Regression: eventFilter must get out of the way while a modal dialog is up ──
+#
+# Bug (found live, 2026-07-12): this eventFilter is installed on the whole QApplication
+# (showEvent/hideEvent), so it intercepted EVERY KeyPress app-wide, including ones meant for
+# a modal QFileDialog (opened by Cover tab's '+' -> _on_add_cover). Pressing Escape while the
+# dialog was open closed BookDetailPanel FIRST (this filter's Escape branch ran before the
+# dialog's own native Escape-to-cancel got a chance), leaving the dialog still open — a
+# SECOND Escape was then needed to actually cancel it. Backwards from the expected order
+# (dialog should own Escape while it's on top; BookDetailPanel should be unaffected).
+# _ensure_panel_owns_focus() had the same shape of bug — it would fight to steal focus back
+# from the dialog's own widgets on every keystroke, since they aren't descendants of this
+# panel. Fixed with a QApplication.activeModalWidget() check at the very top of eventFilter.
+
+def test_event_filter_ignores_keypress_while_a_modal_dialog_is_active(qapp):
+    panel = _FocusSpyBookDetailPanel()
+    from PySide6.QtWidgets import QFileDialog
+    dlg = QFileDialog(panel)
+    dlg.setModal(True)
+    dlg.show()   # does not need to be exec()'d/blocking — activeModalWidget() reflects a
+                 # shown modal QDialog regardless of whether it's actively blocking this thread
+    qapp.processEvents()
+    try:
+        assert QApplication.activeModalWidget() is dlg
+        ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+        result = panel.eventFilter(dlg, ev)
+        assert result is False   # filter must decline to handle it, not consume/act on it
+        assert panel.setFocus_calls == 0   # _ensure_panel_owns_focus must not have run either
+    finally:
+        dlg.close()
+
+
+def test_event_filter_processes_keypress_normally_with_no_modal_dialog(qapp):
+    # Control case: confirms the guard is scoped to "a modal dialog is active," not a
+    # blanket change to eventFilter's behavior — _ensure_panel_owns_focus still runs when
+    # nothing modal is up. (The minimal _FocusSpyBookDetailPanel fake doesn't define every
+    # real attribute eventFilter's LATER branches read — e.g. _remove_btn — so this only
+    # asserts the part relevant to the guard, past which an AttributeError is expected and
+    # irrelevant here; the full real-attribute dispatch is covered by _FakeBookDetailPanel's
+    # tests elsewhere in this file.)
+    panel = _FocusSpyBookDetailPanel()
+    assert QApplication.activeModalWidget() is None
+    ev = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    try:
+        panel.eventFilter(panel, ev)
+    except AttributeError:
+        pass
+    assert panel.setFocus_calls == 1   # _ensure_panel_owns_focus ran as normal
