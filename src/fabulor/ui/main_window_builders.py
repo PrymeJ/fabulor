@@ -72,18 +72,21 @@ def build_status_banner(mw):
     mw.eof_revert_btn.setObjectName("eof_revert_btn")
     mw.eof_revert_btn.setFixedSize(22, 22)
     mw.eof_revert_btn.setCursor(Qt.PointingHandCursor)
+    mw.eof_revert_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
     mw.eof_revert_btn.hide()
 
     mw.eof_close_btn = QPushButton("✕")
     mw.eof_close_btn.setObjectName("eof_close_btn")
     mw.eof_close_btn.setFixedSize(18, 18)
     mw.eof_close_btn.setCursor(Qt.PointingHandCursor)
+    mw.eof_close_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
     mw.eof_close_btn.hide()
 
     mw.cancel_scan_btn = QPushButton("✕")
     mw.cancel_scan_btn.setObjectName("cancel_scan_btn")
     mw.cancel_scan_btn.setFixedSize(20, 20)
     mw.cancel_scan_btn.setToolTip("Cancel scan")
+    mw.cancel_scan_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
 
     layout.addStretch()
     layout.addWidget(mw.status_label, 0, Qt.AlignVCenter)
@@ -141,6 +144,7 @@ def build_metadata(mw):
                                         # (exact value depends on label height; tune if needed)
     mw.scan_now_btn = QPushButton("Scan now")
     mw.scan_now_btn.setFixedWidth(120)
+    mw.scan_now_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
     scan_layout.addWidget(mw.scan_now_btn, 0, Qt.AlignCenter)
     scan_layout.addStretch()            # eat remaining space below the button
     mw.visual_layout.addWidget(mw.scan_section, 1)  # stretch 1: claims remaining space
@@ -180,6 +184,7 @@ def build_metadata(mw):
     mw.go_to_library_btn = QPushButton("Go to Library")
     mw.go_to_library_btn.setObjectName("go_to_library_btn")
     mw.go_to_library_btn.setFixedWidth(110)
+    mw.go_to_library_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
     nb_layout.addWidget(mw.go_to_library_btn, 0, Qt.AlignCenter)
 
     nb_layout.addStretch()
@@ -208,6 +213,11 @@ def build_controls(mw):
     mw.speed_button.setObjectName("speed_btn")
     mw.speed_button.setFixedWidth(60)
     mw.speed_button.setFixedHeight(33)
+    # No keyboard focus: otherwise this is the first StrongFocus widget created, so Qt
+    # auto-focuses it at startup and Space fires its clicked (opens speed menu) instead of
+    # reaching the global play/pause shortcut. Still fully mouse-clickable. See title-bar /
+    # transport buttons for the same treatment.
+    mw.speed_button.setFocusPolicy(Qt.NoFocus)
     mw.speed_button.setContextMenuPolicy(Qt.CustomContextMenu)
     mw.speed_button.customContextMenuRequested.connect(mw._on_speed_right_clicked)
     mw.speed_button.clicked.connect(mw._on_speed_button_clicked)
@@ -285,6 +295,10 @@ def build_controls(mw):
     for btn in [mw.prev_button, mw.rewind_button, mw.play_pause_button,
                 mw.forward_button, mw.next_button]:
         btn.setFixedHeight(33)
+        # No keyboard focus: otherwise QPushButton fires clicked on Space, swallowing the
+        # global Space=play/pause shortcut whenever a transport button held focus (e.g.
+        # right after being clicked). Still fully mouse-clickable. Mirrors title-bar chrome.
+        btn.setFocusPolicy(Qt.NoFocus)
         controls_layout.addWidget(btn)
     mw.transport_controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     mw.content_layout.addWidget(mw.transport_controls)
@@ -365,6 +379,7 @@ def build_secondary_controls(mw):
     mw.sleep_timer_label = QPushButton("")
     mw.sleep_timer_label.setObjectName("sleep_timer_display")
     mw.sleep_timer_label.setFixedWidth(104)
+    mw.sleep_timer_label.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
     mw.sleep_timer_label.clicked.connect(mw.sleep_panel.disable_sleep_timer)
 
     for lbl in [mw.current_time_label, mw.total_time_label, mw.sleep_timer_label]:
@@ -522,6 +537,16 @@ def build_sidebar(mw):
     mw.sleep_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
     mw.sleep_cancel_btn.clicked.connect(mw.sleep_panel.disable_sleep_timer)
     mw.sleep_cancel_btn.hide()
+
+    # The sidebar is moved off-screen (move(-50,56)) but stays show()n when "closed", so its
+    # buttons live in the keyboard focus chain permanently. Without NoFocus, arrow/Tab keys
+    # cycle focus onto these hidden triggers and Space fires their clicked — opening panels
+    # one by one — instead of reaching the global transport shortcuts. NoFocus keeps them
+    # mouse-only; the sidebar's own open/close mechanics are untouched.
+    for _btn in (mw.library_trigger_btn, mw.settings_trigger_btn, mw.speed_trigger_btn,
+                 mw.sleep_trigger_btn, mw.stats_trigger_btn, mw.tags_trigger_btn,
+                 mw.sleep_cancel_btn):
+        _btn.setFocusPolicy(Qt.NoFocus)
 
     mw.sidebar_layout.addStretch()
     mw.sidebar.move(-50, 56)

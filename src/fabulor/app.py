@@ -61,6 +61,12 @@ logger = logging.getLogger(__name__)
 # settle jitter is ~0.0004s, so 0.25s headroom is ~600x the real landing error.
 _CHAPTER_SLIVER_EPS = _CHAPTER_BOUNDARY_EPSILON + 0.25  # 0.35 + 0.25 = 0.60
 
+# Minimum seconds between held-key (Alt+Up/Down autorepeat) speed steps. Raw OS repeat rate
+# would blow past a meaningful speed value in under a second at 0.05 increments, so
+# _nudge_speed swallows repeat-sourced calls that arrive faster than this. Single taps are
+# never throttled. Hand-tunable by feel — start conservative and adjust after live testing.
+_SPEED_NUDGE_THROTTLE_S = 0.12
+
 
 def _sliver_clamp(pause: bool, c_elapsed: float) -> float:
     """Display-only: collapse the sub-second chapter-start landing residue to 0 on the
@@ -316,6 +322,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scanner = LibraryScanner(self.db.db_path)
         self._undo_pos = None
         self._paused_time = None
+        # Volume before a keyboard mute (m); None = not muted. Any manual move off 0 while
+        # "muted" is treated as unmuted, so the next m stores fresh (see _toggle_mute).
+        self._pre_mute_volume = None
+        # monotonic() of the last applied speed nudge, for throttling Alt+Up/Down autorepeat.
+        self._last_speed_nudge_ts = 0.0
         self._undo_timer = QTimer(self)
         self._last_saved_pct = -1
         self._last_undo_click_time = 0
@@ -412,6 +423,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_overlay = QPushButton("Undo", self)
         self.undo_overlay.setObjectName("undo_overlay")
         self.undo_overlay.setFixedSize(32, 21)
+        self.undo_overlay.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
         self.undo_overlay.hide()
         self.undo_overlay.clicked.connect(self._perform_undo)
         self.undo_anim = QPropertyAnimation(self.undo_overlay, b"pos")
@@ -469,6 +481,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.shortcuts.register(Action.SHOW_STATS, self._open_stats_shortcut)
         self.shortcuts.register(Action.SHOW_SETTINGS, self._open_settings_shortcut)
         self.shortcuts.register(Action.SHOW_SLEEP, self._open_sleep_shortcut)
+        # Transport / player keys. Each wires to the SAME method the on-screen button or
+        # wheel uses (no reimplemented playback logic); volume/speed share the extracted
+        # _nudge_* step helpers with wheelEvent. App-state gating lives in the handlers.
+        self.shortcuts.register(Action.PLAY_PAUSE, self.toggle_play_pause)
+        self.shortcuts.register(Action.VOLUME_UP, lambda: self._nudge_volume(1))
+        self.shortcuts.register(Action.VOLUME_DOWN, lambda: self._nudge_volume(-1))
+        self.shortcuts.register(Action.LONG_SKIP_BACK, lambda: self.handle_rewind(long_skip=True))
+        self.shortcuts.register(Action.LONG_SKIP_FORWARD, lambda: self.handle_forward(long_skip=True))
+        self.shortcuts.register(Action.CHAPTER_PREV, self.handle_prev)
+        self.shortcuts.register(Action.CHAPTER_NEXT, self.handle_next)
+        self.shortcuts.register(Action.SPEED_UP, lambda: self._nudge_speed(1))
+        self.shortcuts.register(Action.SPEED_DOWN, lambda: self._nudge_speed(-1))
+        self.shortcuts.register(Action.MUTE, self._toggle_mute)
+        self.shortcuts.register(Action.UNDO, self._undo_shortcut)
 
         # Ensure initial visuals are synchronized via the controller (was previously done
         # during _build_settings_panel when these methods existed on MainWindow).
@@ -2085,6 +2111,65 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.speed_panel:
             self.speed_panel.set_speed(value, self.current_file, save)
 
+    def _nudge_volume(self, direction):
+        """Steps volume by ±5 (direction +1/-1) and routes through the volume slider —
+        the same path the cover-area wheel uses. Inert with no book loaded. Shared by
+        wheelEvent and the Up/Down shortcuts so the step/clamp lives in one place."""
+        if not self.current_file:  # no book loaded — volume control inert
+            return
+        current = self.volume_slider.value()
+        step = 5
+        if direction > 0:
+            new_vol = min(100, current + step)
+        else:
+            new_vol = max(0, current - step)
+        if new_vol != current:
+            self.volume_slider.setValue(new_vol)  # -> _on_volume_changed + overlay
+
+    def _nudge_speed(self, direction):
+        """Steps speed by ±speed_increment (direction +1/-1) via _set_speed — the same
+        path the speed-button wheel uses. Shared by wheelEvent and the Alt+Up/Down
+        shortcuts. Held-key (autorepeat) calls self-throttle to _SPEED_NUDGE_THROTTLE_S;
+        a single tap always applies exactly one step."""
+        if not self.player:
+            return
+        if self.shortcuts.is_autorepeat:
+            now = time.monotonic()
+            if now - self._last_speed_nudge_ts < _SPEED_NUDGE_THROTTLE_S:
+                return
+        step = self.config.get_speed_increment()
+        current = self.player.speed or self.config.get_default_speed()
+        if direction > 0:
+            new_speed = min(8.0, current + step)
+        else:
+            new_speed = max(0.25, current - step)
+        if new_speed != current:
+            self._set_speed(new_speed)
+            self._last_speed_nudge_ts = time.monotonic()
+
+    def _toggle_mute(self):
+        """Keyboard mute (m): drop volume to 0, restore on next press. Minimal, built on
+        the existing volume-slider path (no dedicated mute control exists). Inert with no
+        book. If the user moved the slider off 0 while 'muted', that counts as unmuted and
+        the next press stores fresh rather than restoring a stale pre-mute value."""
+        if not self.current_file:  # no book loaded — matches volume inertness
+            return
+        current = self.volume_slider.value()
+        if current > 0:
+            # Store then mute. (current > 0 also covers the "moved off 0 while muted" case.)
+            self._pre_mute_volume = current
+            self.volume_slider.setValue(0)  # -> _on_volume_changed + overlay
+        else:
+            restore = self._pre_mute_volume if self._pre_mute_volume else 100
+            self._pre_mute_volume = None
+            self.volume_slider.setValue(restore)
+
+    def _undo_shortcut(self):
+        """Undo (u): reuses the on-screen undo affordance's exact path and its visibility
+        gate — a no-op unless the undo overlay is currently shown, matching the button."""
+        if self.undo_overlay.isVisible():
+            self._perform_undo()
+
     @staticmethod
     def _label_click_in_text(lbl, x):
         """True if x (in lbl's local coords) falls within the label's
@@ -2125,13 +2210,32 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if hasattr(self, 'speed_button'):
             self.speed_button.setText(f"{value:.2f}x")
 
+    def _focus_allows_global_shortcuts(self) -> bool:
+        """True iff no panel-local widget holds real keyboard focus — i.e. the shortcut
+        dispatcher may act on this key. False whenever an open panel/overlay's own widget
+        (a text field, the library list, etc.) currently has focus; that widget gets first
+        AND FINAL say over the key, even if it declines it (leaves it unaccepted) — the key
+        must NOT fall through to global shortcuts just because the local widget didn't want
+        it. Every chrome widget in the always-on transport view is Qt.NoFocus (transport
+        buttons, speed button, sidebar triggers, sleep label, undo overlay, status/no-book
+        buttons), and every panel now explicitly claims focus for one of its own widgets on
+        open (see PanelManager._claim_panel_focus) — so "focus is not None and not
+        MainWindow itself" is equivalent to "focus is panel-local" by construction; no panel
+        enumeration is needed here, and it can't drift out of sync with the panel list."""
+        focus = QApplication.focusWidget()
+        return focus is None or focus is self
+
     def keyPressEvent(self, event):
         # All global key bindings route through the dispatcher (shortcuts.py). It owns
         # binding + spam-guard; the registered handlers own app-state gating. A bound
         # key is consumed even if its handler no-ops on the current state — harmless,
         # MainWindow is the top-level widget so an un-consumed key went nowhere anyway.
-        if not self.shortcuts.handle_key_event(event):
-            super().keyPressEvent(event)
+        # Gated on _focus_allows_global_shortcuts: a panel-local focused widget (a text
+        # field, the library list) owns the key even when it doesn't accept it — see that
+        # method's docstring.
+        if self._focus_allows_global_shortcuts() and self.shortcuts.handle_key_event(event):
+            return
+        super().keyPressEvent(event)
 
     def _rotate_quote_shortcut(self):
         # TODO: remove before release — testing only
@@ -2693,32 +2797,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if self.visual_area.underMouse():
             if not self.current_file:  # no book loaded — volume control inert
                 return
-            delta = event.angleDelta().y()
-            current = self.volume_slider.value()
-            # Adjust volume in steps of 5
-            step = 5
-            if delta > 0:
-                new_vol = min(100, current + step)
-            else:
-                new_vol = max(0, current - step)
-            
-            if new_vol != current:
-                self.volume_slider.setValue(new_vol)
+            self._nudge_volume(1 if event.angleDelta().y() > 0 else -1)
             event.accept()
         elif self.speed_button.underMouse():
             if not self.player: return
             self.panel_manager.dismiss_sidebar()
-            delta = event.angleDelta().y()
-            step = self.config.get_speed_increment()
-            current = self.player.speed or self.config.get_default_speed()
-            
-            if delta > 0:
-                new_speed = min(8.0, current + step)
-            else:
-                new_speed = max(0.25, current - step)
-                
-            if new_speed != current:
-                self._set_speed(new_speed)
+            self._nudge_speed(1 if event.angleDelta().y() > 0 else -1)
             event.accept()
         elif self.progress_slider.underMouse():
             if not self.player or not self.current_file:

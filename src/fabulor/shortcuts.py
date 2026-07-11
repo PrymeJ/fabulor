@@ -22,10 +22,15 @@ action's registered handler — the dispatcher never inspects app state. This mi
 composition philosophy in ``book_switch.py``: one object owns one concern and composes
 with the orthogonal guards rather than absorbing them.
 
-Key-matching parity note: matching is on ``event.key()`` vs ``Qt.Key`` and deliberately
-ignores modifiers, because that is exactly what the pre-migration code did (Ctrl+T
-rotated the theme). Strict ``QKeySequence`` matching would *change* behavior, so
-``Binding.key`` stays a bare ``Qt.Key`` until configurability lands and can widen it.
+Key-matching note: matching is on ``(event.key(), modifiers)`` where ``modifiers`` is
+``event.modifiers()`` masked to Shift/Ctrl/Alt (see ``_MODIFIER_MASK``). A binding's
+``modifiers`` defaults to ``NoModifier``, so bare-key bindings (C/T/Q/L/...) match only an
+unmodified press — this is a deliberate change from the original modifier-ignoring behavior
+(where Ctrl+T also rotated the theme), made when the transport shortcuts added genuinely
+modified combos (Shift/Ctrl/Alt+arrow) that must be told apart from their bare-key siblings
+(e.g. bare ``Up`` = volume vs. ``Alt+Up`` = speed). The mask excludes ``KeypadModifier`` and
+other stray bits so a numeric-keypad or platform-set flag on an arrow press can't defeat a
+bare-key binding's match.
 
 Autorepeat is a per-binding property (``Binding.allow_autorepeat``), NOT a global
 dispatcher rule: all of today's bindings suppress held-key repeat (holding C otherwise
@@ -41,6 +46,16 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt, QObject, QTimer
 
 
+# Only these modifiers participate in key matching. event.modifiers() is masked to this
+# before lookup, so KeypadModifier (which Qt sets on some arrow-key presses) and other
+# stray bits can't stop a bare-key binding (NoModifier) from matching. See module docstring.
+_MODIFIER_MASK = (
+    Qt.KeyboardModifier.ShiftModifier
+    | Qt.KeyboardModifier.ControlModifier
+    | Qt.KeyboardModifier.AltModifier
+)
+
+
 class Action(Enum):
     """Semantic MainWindow-level actions. Not key literals — the key lives in the
     binding table so it can be rebound without touching handler wiring."""
@@ -53,6 +68,19 @@ class Action(Enum):
     SHOW_STATS = auto()
     SHOW_SETTINGS = auto()
     SHOW_SLEEP = auto()
+    # Transport / player actions (added alongside modifier support). Availability gating
+    # (no book loaded, undo affordance not shown, etc.) lives in each MainWindow handler.
+    PLAY_PAUSE = auto()
+    VOLUME_UP = auto()
+    VOLUME_DOWN = auto()
+    LONG_SKIP_BACK = auto()
+    LONG_SKIP_FORWARD = auto()
+    CHAPTER_PREV = auto()
+    CHAPTER_NEXT = auto()
+    SPEED_UP = auto()
+    SPEED_DOWN = auto()
+    MUTE = auto()
+    UNDO = auto()
 
 
 class GuardKind(Enum):
@@ -75,11 +103,17 @@ class GuardKind(Enum):
 
 @dataclass(frozen=True)
 class Binding:
-    """A key + its spam-guard. ``cooldown_ms`` is ignored when ``guard`` is NONE."""
+    """A key (+ optional modifiers) + its spam-guard. ``cooldown_ms`` is ignored when
+    ``guard`` is NONE."""
     key: Qt.Key
     guard: GuardKind = GuardKind.NONE
     cooldown_ms: int = 0
     allow_autorepeat: bool = False
+    modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier
+    """Modifiers that must be held for this binding to match, masked to Shift/Ctrl/Alt.
+    Defaults to NoModifier (a bare-key binding — matches only an unmodified press). Set e.g.
+    ``ShiftModifier`` so ``Shift+Left`` is told apart from bare ``Left`` and ``Ctrl+Left``,
+    which now key on distinct ``(key, modifiers)`` pairs."""
     """Whether a held-key autorepeat tick dispatches. Defaults False: none of today's
     bindings (C/T/Q/L) make sense held down — holding C otherwise re-toggles the chapter
     dropdown on every repeat, holding T would spam rotations, etc. Set True for a future
@@ -105,6 +139,22 @@ DEFAULT_BINDINGS: dict[Action, Binding] = {
     Action.SHOW_STATS:        Binding(Qt.Key.Key_A, GuardKind.COOLDOWN_DROP, 500),
     Action.SHOW_SETTINGS:     Binding(Qt.Key.Key_S, GuardKind.COOLDOWN_DROP, 500),
     Action.SHOW_SLEEP:        Binding(Qt.Key.Key_Z, GuardKind.COOLDOWN_DROP, 500),
+
+    # Transport / player keys. All GuardKind.NONE (fire on every press — no leading/coalesce
+    # semantics apply to a play/pause toggle or a per-step nudge). Volume/speed opt into
+    # allow_autorepeat so holding the key repeats the step; speed additionally self-throttles
+    # inside its handler (raw OS repeat rate is too fast at 0.05 increments).
+    Action.PLAY_PAUSE:        Binding(Qt.Key.Key_Space),
+    Action.VOLUME_UP:         Binding(Qt.Key.Key_Up,   allow_autorepeat=True),
+    Action.VOLUME_DOWN:       Binding(Qt.Key.Key_Down, allow_autorepeat=True),
+    Action.LONG_SKIP_BACK:    Binding(Qt.Key.Key_Left,  modifiers=Qt.KeyboardModifier.ShiftModifier),
+    Action.LONG_SKIP_FORWARD: Binding(Qt.Key.Key_Right, modifiers=Qt.KeyboardModifier.ShiftModifier),
+    Action.CHAPTER_PREV:      Binding(Qt.Key.Key_Left,  modifiers=Qt.KeyboardModifier.ControlModifier),
+    Action.CHAPTER_NEXT:      Binding(Qt.Key.Key_Right, modifiers=Qt.KeyboardModifier.ControlModifier),
+    Action.SPEED_UP:          Binding(Qt.Key.Key_Up,   allow_autorepeat=True, modifiers=Qt.KeyboardModifier.AltModifier),
+    Action.SPEED_DOWN:        Binding(Qt.Key.Key_Down, allow_autorepeat=True, modifiers=Qt.KeyboardModifier.AltModifier),
+    Action.MUTE:              Binding(Qt.Key.Key_M),
+    Action.UNDO:              Binding(Qt.Key.Key_U),
 }
 
 
@@ -162,9 +212,23 @@ class ShortcutDispatcher(QObject):
             for action, binding in self._bindings.items()
             if binding.guard is not GuardKind.NONE
         }
-        self._key_to_action: dict[int, Action] = {
-            int(binding.key): action for action, binding in self._bindings.items()
+        # Keyed by (Qt.Key int, masked-modifiers int) so e.g. Left / Shift+Left / Ctrl+Left
+        # are three distinct bindings rather than colliding on the bare key. Note: Qt.Key is
+        # int-backed (int() works), but Qt.KeyboardModifier is a Flag — use .value for it.
+        self._key_to_action: dict[tuple[int, int], Action] = {
+            (int(binding.key), (binding.modifiers & _MODIFIER_MASK).value): action
+            for action, binding in self._bindings.items()
         }
+        # True only while a handler triggered by an autorepeat tick is executing. Handlers
+        # that self-throttle held-key repeat (e.g. speed nudge) read this via is_autorepeat.
+        self._current_is_autorepeat = False
+
+    @property
+    def is_autorepeat(self) -> bool:
+        """Whether the handler currently executing was fired by a held-key autorepeat tick.
+        Valid only during a handler call; False otherwise. Lets a handler distinguish a
+        single tap from a repeat without the dispatcher passing the event through."""
+        return self._current_is_autorepeat
 
     def register(self, action: Action, handler: Callable[[], None]) -> None:
         """Bind a no-arg callable to an action. Overwrites any prior handler."""
@@ -176,7 +240,8 @@ class ShortcutDispatcher(QObject):
         guard suppresses the fire — the key is still 'ours', it's just throttled. But a
         held-key autorepeat tick on a binding that disallows repeat returns False (same
         as an unbound key), so the caller's fallthrough to super() is consistent."""
-        action = self._key_to_action.get(event.key())
+        modifiers = (event.modifiers() & _MODIFIER_MASK).value
+        action = self._key_to_action.get((event.key(), modifiers))
         if action is None:
             return False
         binding = self._bindings[action]
@@ -184,7 +249,11 @@ class ShortcutDispatcher(QObject):
             return False
         guard = self._guards.get(action)
         if guard is None or guard.allow():
-            self._fire(action)
+            self._current_is_autorepeat = event.isAutoRepeat()
+            try:
+                self._fire(action)
+            finally:
+                self._current_is_autorepeat = False
         return True
 
     def _fire(self, action: Action) -> None:

@@ -1,7 +1,7 @@
 import logging
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QLineEdit, QApplication
 from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
 from .title_bar import ThemeItem
 
@@ -230,6 +230,7 @@ class PanelManager:
         )
         self.settings_panel.show()
         self.settings_panel.raise_()
+        self._claim_panel_focus(self.settings_panel, panel_key="settings")
         logger.debug(
             f"t={time.perf_counter():.6f} [_start_settings_entry] "
             f"AFTER settings_panel.show()/raise_ "
@@ -296,7 +297,8 @@ class PanelManager:
         self.speed_panel.move(-panel_w, sidebar_y)
         self.speed_panel.show()
         self.speed_panel.raise_()
-        
+        self._claim_panel_focus(self.speed_panel, panel_key="speed")
+
         self.speed_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.speed_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.speed_panel_animation.start()
@@ -393,6 +395,18 @@ class PanelManager:
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
         self.library_panel.hide()
+        # Symmetric with showEvent's _list_view.setFocus(): hiding a widget does NOT clear
+        # Qt focus from it, so without this every subsequent keypress silently routes to the
+        # now-invisible list view instead of MainWindow — the whole shortcut dispatcher goes
+        # dead. MUST run AFTER hide() (confirmed live, traced): hide() on a still-focused
+        # descendant makes Qt fall back and re-grant focus to that same (now hidden) widget —
+        # clearing focus BEFORE hide() gets silently undone by hide() itself. Also must target
+        # the actual focused widget (e.g. _list_view or search_field), not library_panel
+        # itself — clearFocus() only acts on `self`, and the panel container never holds
+        # focus directly, only its descendants do.
+        focused = QApplication.focusWidget()
+        if focused is not None and self.library_panel.isAncestorOf(focused):
+            focused.clearFocus()
         mw = self.main_window
         # LOADING → RESTORING: the library slide-out is done, so the deadzone ends.
         mw._switch.library_revealed()
@@ -428,6 +442,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.speed_panel.hide()
+        self._release_panel_focus(self.speed_panel)
         self._notify_panel_closed()
 
     def _open_stats_flow(self):
@@ -452,6 +467,7 @@ class PanelManager:
         self.stats_panel.show()
         self.stats_panel.refresh_current_tab()
         self.stats_panel.raise_()
+        self._claim_panel_focus(self.stats_panel)
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(0, sidebar_y))
@@ -487,7 +503,8 @@ class PanelManager:
         self.sleep_panel.move(-panel_w, sidebar_y)
         self.sleep_panel.show()
         self.sleep_panel.raise_()
-        
+        self._claim_panel_focus(self.sleep_panel, panel_key="sleep")
+
         self.sleep_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.sleep_panel_animation.start()
@@ -519,6 +536,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.sleep_panel.hide()
+        self._release_panel_focus(self.sleep_panel)
         self._notify_panel_closed()
 
     def _close_stats_flow(self):
@@ -544,6 +562,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.stats_panel.hide()
+        self._release_panel_focus(self.stats_panel)
         self._notify_panel_closed()
 
     def _open_tags_flow(self):
@@ -574,6 +593,7 @@ class PanelManager:
         self.tags_panel.show()
         self.tags_panel.refresh()
         self.tags_panel.raise_()
+        self._claim_panel_focus(self.tags_panel)
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.tags_panel_animation.start()
@@ -602,6 +622,7 @@ class PanelManager:
         except RuntimeError:
             pass
         self.tags_panel.hide()
+        self._release_panel_focus(self.tags_panel)
         self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
@@ -635,6 +656,7 @@ class PanelManager:
         self.book_detail_panel.move(panel_w, book_detail_panel_y)
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
+        self._claim_panel_focus(self.book_detail_panel)
 
         self.book_detail_panel_animation.setStartValue(QPoint(panel_w, book_detail_panel_y))
         self.book_detail_panel_animation.setEndValue(QPoint(0, book_detail_panel_y))
@@ -656,6 +678,7 @@ class PanelManager:
         except:
             pass
         self.book_detail_panel.hide()
+        self._release_panel_focus(self.book_detail_panel)
         self._notify_panel_closed()
 
     def _close_settings_flow(self):
@@ -694,6 +717,7 @@ class PanelManager:
         except:
             pass
         self.settings_panel.hide()
+        self._release_panel_focus(self.settings_panel)
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
@@ -899,6 +923,46 @@ class PanelManager:
                 continue
             result.append(w)
         return result
+
+    # ── Panel-local keyboard focus ownership ─────────────────────────────────
+    # Enforces the invariant that MainWindow.keyPressEvent's _focus_allows_global_shortcuts
+    # relies on: whenever a panel/overlay is open, SOME widget inside it must hold real Qt
+    # focus, so a) that widget (not global shortcuts) has first-and-final say over every key,
+    # and b) no OTHER panel's stale-focused widget can bleed through from underneath (Z-order
+    # via raise_()/show() has zero effect on keyboard focus — only setFocus()/clearFocus() do).
+    # Library and ChapterList already self-manage this (their own showEvent/show_above grab
+    # focus); every other panel routes through these two helpers instead of duplicating the
+    # isAncestorOf/ordering logic six times.
+
+    def _claim_panel_focus(self, panel_widget, panel_key: str = None):
+        """Call once a panel/overlay has been shown and raised, to give it real Qt focus.
+        Prefers the first Tab-order-eligible child (panel_tab_widgets, panel_key given) —
+        the same target Tab-cycling already treats as "first" — so opening a panel and then
+        pressing Tab immediately continues into its SECOND control, not its first, matching
+        the existing Tab-cycle's own notion of order. Falls back to the panel widget itself
+        (granting it StrongFocus if it doesn't already accept focus) when there's no
+        Tab-order list for it (stats/tags/book_detail) or the list is empty."""
+        target = None
+        if panel_key is not None:
+            widgets = self.panel_tab_widgets(panel_key)
+            if widgets:
+                target = widgets[0]
+        if target is None:
+            if not (panel_widget.focusPolicy() & Qt.FocusPolicy.StrongFocus):
+                panel_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            target = panel_widget
+        target.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _release_panel_focus(self, panel_widget):
+        """Call AFTER panel_widget.hide(), symmetric with _claim_panel_focus. Ordering is
+        load-bearing (confirmed live): hide() on a still-focused descendant makes Qt fall
+        back and re-grant focus to that same now-hidden widget, so clearing BEFORE hide()
+        gets silently undone by hide() itself. Must target the actual focused widget, not
+        panel_widget — clearFocus() only acts on `self`, and a container rarely holds focus
+        directly, only its descendants do."""
+        focused = QApplication.focusWidget()
+        if focused is not None and panel_widget.isAncestorOf(focused):
+            focused.clearFocus()
 
     def dismiss_sidebar(self):
         """Closes the sidebar if it's expanded; no-op otherwise. Idempotent (safe to call

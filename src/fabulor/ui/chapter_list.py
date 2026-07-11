@@ -255,6 +255,17 @@ class ChapterList(QListWidget):
         self._expand_btn.setText("▲")
         self._expand_btn.hide()
         self.hide()
+        # Symmetric with show_above's setFocus(): hiding does NOT clear Qt focus, so without
+        # this the list stays the focused widget after close and silently swallows every
+        # subsequent keypress (including the MainWindow global shortcuts) instead of
+        # MainWindow ever seeing them. Covers BOTH close paths — the external
+        # _show_chapter_dropdown toggle and this widget's own keyPressEvent Escape/C branch —
+        # since both call fade_out(), which always finishes here. MUST run AFTER hide()
+        # (confirmed live, traced on the panels.py sibling fixes): hide() on a still-focused
+        # widget makes Qt fall back and re-grant focus to that same now-hidden widget —
+        # clearing focus BEFORE hide() gets silently undone by hide() itself.
+        if self.hasFocus():
+            self.clearFocus()
 
     def _disconnect_hide(self):
         if self._hide_connected:

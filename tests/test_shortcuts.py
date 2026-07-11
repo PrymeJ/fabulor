@@ -35,11 +35,12 @@ def qapp():
 COOLDOWN_MS = 30
 
 
-def _press(dispatcher, key, autorepeat=False):
+def _press(dispatcher, key, autorepeat=False,
+           modifiers=Qt.KeyboardModifier.NoModifier):
     """Deliver a synthetic key press to the dispatcher; return whether it was consumed.
-    Pass autorepeat=True to simulate a held-key repeat tick (QKeyEvent's autorep flag)."""
-    ev = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier,
-                   "", autorepeat)
+    Pass autorepeat=True to simulate a held-key repeat tick (QKeyEvent's autorep flag),
+    and modifiers=... to test modified combos (Shift/Ctrl/Alt+key)."""
+    ev = QKeyEvent(QEvent.Type.KeyPress, key, modifiers, "", autorepeat)
     return dispatcher.handle_key_event(ev)
 
 
@@ -204,11 +205,15 @@ def test_default_table_shape(qapp):
     ):
         assert DEFAULT_BINDINGS[action].key == key
         assert DEFAULT_BINDINGS[action].guard is GuardKind.COOLDOWN_DROP
-    # None of the current bindings should repeat on hold.
-    assert all(b.allow_autorepeat is False for b in DEFAULT_BINDINGS.values())
-    # No two actions share a key.
-    keys = [b.key for b in DEFAULT_BINDINGS.values()]
-    assert len(keys) == len(set(keys))
+    # Only the volume/speed nudges repeat on hold; everything else fires once per press.
+    autorepeating = {a for a, b in DEFAULT_BINDINGS.items() if b.allow_autorepeat}
+    assert autorepeating == {
+        Action.VOLUME_UP, Action.VOLUME_DOWN, Action.SPEED_UP, Action.SPEED_DOWN,
+    }
+    # No two actions share a (key, modifiers) pair — the uniqueness that keeps bare Up
+    # (volume) distinct from Alt+Up (speed) and Shift/Ctrl+Left distinct from each other.
+    pairs = [(b.key, b.modifiers) for b in DEFAULT_BINDINGS.values()]
+    assert len(pairs) == len(set(pairs))
 
 
 def test_unregistered_action_is_a_silent_noop(qapp):
@@ -216,3 +221,91 @@ def test_unregistered_action_is_a_silent_noop(qapp):
     # (the state where L's binding exists before its handler is wired).
     disp = ShortcutDispatcher(bindings={Action.SHOW_LIBRARY: Binding(Qt.Key.Key_L)})
     assert _press(disp, Qt.Key.Key_L) is True   # bound -> consumed, no handler -> no crash
+
+
+# ── Transport keys + modifier matching ───────────────────────────────────────────
+
+def test_transport_bindings_fire_their_actions(qapp):
+    # Each transport binding, delivered with its exact key+modifiers, fires exactly its
+    # own action against the SHIPPED default table.
+    disp, counts = _make(DEFAULT_BINDINGS)
+    cases = [
+        (Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier,      Action.PLAY_PAUSE),
+        (Qt.Key.Key_Up,    Qt.KeyboardModifier.NoModifier,      Action.VOLUME_UP),
+        (Qt.Key.Key_Down,  Qt.KeyboardModifier.NoModifier,      Action.VOLUME_DOWN),
+        (Qt.Key.Key_Left,  Qt.KeyboardModifier.ShiftModifier,   Action.LONG_SKIP_BACK),
+        (Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier,   Action.LONG_SKIP_FORWARD),
+        (Qt.Key.Key_Left,  Qt.KeyboardModifier.ControlModifier, Action.CHAPTER_PREV),
+        (Qt.Key.Key_Right, Qt.KeyboardModifier.ControlModifier, Action.CHAPTER_NEXT),
+        (Qt.Key.Key_Up,    Qt.KeyboardModifier.AltModifier,     Action.SPEED_UP),
+        (Qt.Key.Key_Down,  Qt.KeyboardModifier.AltModifier,     Action.SPEED_DOWN),
+        (Qt.Key.Key_M,     Qt.KeyboardModifier.NoModifier,      Action.MUTE),
+        (Qt.Key.Key_U,     Qt.KeyboardModifier.NoModifier,      Action.UNDO),
+    ]
+    for key, mods, action in cases:
+        assert _press(disp, key, modifiers=mods) is True
+        assert counts[action] == 1, f"{action} should have fired once for {key}/{mods}"
+
+
+def test_modifier_disambiguates_same_key(qapp):
+    # The whole point of adding modifier support: bare Up != Alt+Up, and Shift+Left,
+    # Ctrl+Left, and bare Left are three different things (bare Left is unbound).
+    disp, counts = _make(DEFAULT_BINDINGS)
+
+    assert _press(disp, Qt.Key.Key_Up) is True              # bare -> volume, not speed
+    assert counts[Action.VOLUME_UP] == 1
+    assert counts[Action.SPEED_UP] == 0
+
+    assert _press(disp, Qt.Key.Key_Up,
+                  modifiers=Qt.KeyboardModifier.AltModifier) is True  # Alt -> speed
+    assert counts[Action.SPEED_UP] == 1
+    assert counts[Action.VOLUME_UP] == 1                    # unchanged
+
+    assert _press(disp, Qt.Key.Key_Left,
+                  modifiers=Qt.KeyboardModifier.ShiftModifier) is True
+    assert counts[Action.LONG_SKIP_BACK] == 1
+    assert counts[Action.CHAPTER_PREV] == 0
+
+    assert _press(disp, Qt.Key.Key_Left,
+                  modifiers=Qt.KeyboardModifier.ControlModifier) is True
+    assert counts[Action.CHAPTER_PREV] == 1
+    assert counts[Action.LONG_SKIP_BACK] == 1               # unchanged
+
+    # Bare Left is not bound to anything (only Shift/Ctrl variants exist).
+    assert _press(disp, Qt.Key.Key_Left) is False
+
+
+def test_keypad_modifier_does_not_defeat_bare_binding(qapp):
+    # Qt sets KeypadModifier on some arrow-key presses; the mask strips it so bare Up
+    # (VOLUME_UP) still matches even when the event carries KeypadModifier.
+    disp, counts = _make(DEFAULT_BINDINGS)
+    assert _press(disp, Qt.Key.Key_Up,
+                  modifiers=Qt.KeyboardModifier.KeypadModifier) is True
+    assert counts[Action.VOLUME_UP] == 1
+    assert counts[Action.SPEED_UP] == 0
+
+
+def test_ctrl_t_no_longer_matches_bare_theme_binding(qapp):
+    # Adding real modifier support means a bare-key binding matches only NoModifier now —
+    # Ctrl+T no longer rotates the theme (documented behavior change), bare T still does.
+    disp, counts = _make(DEFAULT_BINDINGS)
+    assert _press(disp, Qt.Key.Key_T,
+                  modifiers=Qt.KeyboardModifier.ControlModifier) is False
+    assert counts[Action.TOGGLE_THEME] == 0
+    assert _press(disp, Qt.Key.Key_T) is True
+    assert counts[Action.TOGGLE_THEME] == 1
+
+
+def test_is_autorepeat_reflects_current_dispatch(qapp):
+    # The flag the speed-nudge handler reads to self-throttle held-key repeats: True only
+    # while a repeat-sourced handler runs, False for a tap, False again after dispatch.
+    seen = []
+    disp = ShortcutDispatcher(bindings={
+        Action.VOLUME_UP: Binding(Qt.Key.Key_Up, allow_autorepeat=True)
+    })
+    disp.register(Action.VOLUME_UP, lambda: seen.append(disp.is_autorepeat))
+
+    _press(disp, Qt.Key.Key_Up, autorepeat=False)
+    _press(disp, Qt.Key.Key_Up, autorepeat=True)
+    assert seen == [False, True]
+    assert disp.is_autorepeat is False   # reset after each dispatch
