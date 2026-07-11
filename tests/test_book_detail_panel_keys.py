@@ -112,7 +112,8 @@ class _FakeBookDetailPanel(BookDetailPanel):
     def __init__(self, active_tab="Stats", meta_btn_visible=False,
                  confirming_finished=False, confirming_remove=False,
                  history_rows=None, history_selected_index=-1,
-                 confirming_history_row=None, cover_has_selection=True):
+                 confirming_history_row=None, cover_has_selection=True,
+                 editing=False):
         QWidget.__init__(self)   # bypass BookDetailPanel.__init__ (needs db/config)
         self.tabs = _FakeTabs(active_tab)
         self._meta_action_btn = _FakeMetaBtn(meta_btn_visible)
@@ -123,6 +124,7 @@ class _FakeBookDetailPanel(BookDetailPanel):
         self._confirming_history_row = confirming_history_row
         self._history_scroll = _FakeHistoryScroll()
         self._cover_panel = _FakeCoverPanel(has_selection=cover_has_selection)
+        self._editing = editing
         self.calls = []
 
     def _on_finished_clicked(self):
@@ -158,6 +160,74 @@ class _FakeMetaBtn:
 def _press(obj, key, mods=Qt.KeyboardModifier.NoModifier):
     ev = QKeyEvent(QEvent.Type.KeyPress, key, mods)
     obj.keyPressEvent(ev)
+
+
+# ── While editing: Up/Down cycle metadata fields, everything else falls through ──
+#
+# Bug (found live, 2026-07-12): a single-line QLineEdit has no native handling for Up/Down,
+# so it left those events unaccepted and Qt propagated them to BookDetailPanel.keyPressEvent
+# — which, before this fix, dispatched them as whatever tab-local binding was active (e.g.
+# History row selection), firing WHILE the user was mid-edit of a metadata field. Fixed by
+# checking self._editing first and routing Up/Down through _cycle_metadata_field (the same
+# method Tab/Shift-Tab already use) instead. Uses a REAL BookDetailPanel with real QLineEdit
+# fields (not the tabs/confirm-state fake above) since this exercises real Qt focus transfer
+# between the four fields, not just dispatch logic.
+
+class _EditingHarness(BookDetailPanel):
+    def __init__(self):
+        QWidget.__init__(self)
+        from PySide6.QtWidgets import QLineEdit
+        self._title_label = QLineEdit(self)
+        self._author_label = QLineEdit(self)
+        self._narrator_label = QLineEdit(self)
+        self._year_label = QLineEdit(self)
+        self._editing = True
+        self.tabs = _FakeTabs("History")   # would claim Up/Down for row-nav if editing didn't win
+        self._history_rows = [_FakeHistoryRow("row0")]
+        self._history_selected_index = -1
+        self.cycle_calls = []
+
+    # Spy on the real dispatch target rather than asserting QApplication.focusWidget()
+    # directly — headless/offscreen Qt does not reliably register setFocus() synchronously
+    # without a real window-manager-activated top-level window (same limitation noted
+    # elsewhere in this test suite's history), so focusWidget()-based assertions here would
+    # be flaky. _cycle_metadata_field itself (the real, unfaked method) is what's under test.
+    def _cycle_metadata_field(self, backward):
+        self.cycle_calls.append(backward)
+
+
+def test_down_while_editing_calls_cycle_metadata_field_forward(qapp):
+    h = _EditingHarness()
+    _press(h, Qt.Key.Key_Down)
+    assert h.cycle_calls == [False]          # backward=False -> next field
+    assert h._history_selected_index == -1   # untouched — History row-nav did NOT fire
+
+
+def test_up_while_editing_calls_cycle_metadata_field_backward(qapp):
+    h = _EditingHarness()
+    _press(h, Qt.Key.Key_Up)
+    assert h.cycle_calls == [True]           # backward=True -> previous field
+    assert h._history_selected_index == -1
+
+
+def test_left_right_while_editing_do_not_cycle_tabs(qapp):
+    # Left/Right must fall through to super() while editing (QLineEdit owns them for cursor
+    # movement) — NOT be reinterpreted as BookDetailPanel's own tab-cycle binding.
+    h = _EditingHarness()
+    before = h.tabs.currentIndex()
+    _press(h, Qt.Key.Key_Right)
+    assert h.tabs.currentIndex() == before   # tab did not change
+    assert h.cycle_calls == []               # and not misrouted to field-cycling either
+
+
+def test_delete_while_editing_does_not_arm_remove(qapp):
+    # Del must fall through to super() (QLineEdit's native delete-char) while editing, not
+    # be reinterpreted as the top-level remove-from-library binding.
+    h = _EditingHarness()
+    h._confirming_remove = False
+    _press(h, Qt.Key.Key_Delete)
+    assert h._confirming_remove is False
+    assert h.cycle_calls == []
 
 
 # ── Tab switching (Left/Right) ────────────────────────────────────────────────────

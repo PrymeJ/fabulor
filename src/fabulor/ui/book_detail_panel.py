@@ -654,9 +654,13 @@ class BookDetailPanel(QWidget):
 
     def _cycle_metadata_field(self, backward: bool) -> None:
         """Move focus to the next/previous inline-metadata header field (title → author →
-        narrator → year, wrapping), while in edit mode. Called only from the Tab handler, which
-        consumes the event — so this never leaks to the library. All four are visible+editable
-        during edit mode (_enter_edit_mode), so no visibility filtering is needed."""
+        narrator → year, wrapping), while in edit mode. Called from the Tab/Backtab handler
+        (eventFilter, which consumes the event so it never leaks to the library) AND from
+        keyPressEvent's Up/Down-while-editing branch (added 2026-07-12 — Up/Down have no
+        native QLineEdit meaning, so without this they fell through to whatever tab-local
+        binding was active, e.g. History row selection, while the user was mid-edit). All four
+        fields are visible+editable during edit mode (_enter_edit_mode), so no visibility
+        filtering is needed."""
         fields = [self._title_label, self._author_label,
                   self._narrator_label, self._year_label]
         try:
@@ -1027,18 +1031,38 @@ class BookDetailPanel(QWidget):
         real Qt focus while open (PanelManager._claim_panel_focus, no panel_key), so this is
         where Left/Right/F/Del/K/Space/Enter live. Tab/Backtab/Escape stay entirely in
         eventFilter (untouched) — this method is never reached for those (event filters run
-        before a widget's own keyPressEvent). Only reached when NOT editing: _enter_edit_mode
-        gives a QLineEdit real focus instead, so this method naturally never sees a key while
-        a metadata field is being typed into — no explicit _editing guard needed here, it
-        falls out of the focus mechanics.
+        before a widget's own keyPressEvent).
 
-        Dispatch order is deliberate: tab-LOCAL meanings (History's row nav, Cover's thumbnail
-        nav/fit-mode keys) are checked BEFORE the top-level meanings (F=finished-toggle,
-        Del/X=remove, K=lock), so e.g. Cover-tab F (fit mode) wins over top-level F while that
-        tab is active — same 'more specific handler gets first-and-final say' precedent as the
-        focus-ownership fix between panels, applied within one panel's own dispatch here.
+        Reached DURING editing too, for any key the focused QLineEdit itself doesn't
+        natively consume — confirmed live (2026-07-12): a single-line QLineEdit has no native
+        handling for Up/Down, so it leaves the event unaccepted and Qt propagates it here,
+        same mechanism already documented for Left/Right/Del bubbling out of an unfocused
+        field. (An earlier version of this docstring claimed editing fully shields this
+        method — that was wrong specifically for Up/Down, which is why History's Up/Down row
+        nav was firing while editing metadata.) Handled explicitly below: while editing,
+        Up/Down cycle metadata fields (the exact _cycle_metadata_field Tab/Shift-Tab already
+        use) instead of falling through to a tab-local meaning like History row selection.
+        Left/Right/Del/letters/Enter are NOT re-handled here — QLineEdit already owns and
+        correctly consumes all of those itself (cursor movement, delete-char,
+        typing, returnPressed->_on_inline_save), so re-intercepting them would fight or
+        duplicate that native behavior; this method must fall through to super() for
+        everything else while editing.
+
+        Dispatch order when NOT editing is deliberate: tab-LOCAL meanings (History's row nav,
+        Cover's thumbnail nav/fit-mode keys) are checked BEFORE the top-level meanings
+        (F=finished-toggle, Del/X=remove, K=lock), so e.g. Cover-tab F (fit mode) wins over
+        top-level F while that tab is active — same 'more specific handler gets first-and-final
+        say' precedent as the focus-ownership fix between panels, applied within one panel's
+        own dispatch here.
         """
         key = event.key()
+
+        if self._editing:
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                self._cycle_metadata_field(backward=(key == Qt.Key.Key_Up))
+                return
+            super().keyPressEvent(event)
+            return
 
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
             self._cycle_tab(-1 if key == Qt.Key.Key_Left else 1)
