@@ -74,8 +74,8 @@ _SPEED_NUDGE_THROTTLE_S = 0.12
 # adjustment, so blowing through several in under a second is a real problem, not just
 # mildly fast — these start meaningfully slower than speed's 0.12s. Hand-tunable by feel;
 # adjust independently after live testing.
-_CHAPTER_NUDGE_THROTTLE_S = 0.45
-_LONG_SKIP_THROTTLE_S = 0.45
+_CHAPTER_NUDGE_THROTTLE_S = 0.15
+_LONG_SKIP_THROTTLE_S = 0.18
 
 
 def _sliver_clamp(pause: bool, c_elapsed: float) -> float:
