@@ -164,6 +164,7 @@ class CoverPanel(QWidget):
         self._covers      = []       # list[dict] from get_covers_for_book
         self._thumbnails  = {}       # cover_id → CoverThumbnail
         self._selected    = None     # currently previewed cover dict
+        self._add_btn_selected = False  # keyboard-nav target is the '+' slot, not a cover
         self._accent      = "#5A8A9F"
         self._preview_bg  = QColor("#000000")
 
@@ -174,6 +175,7 @@ class CoverPanel(QWidget):
     def load_book(self, book_path: str | None):
         self._book_path = book_path
         self._covers = self._db.get_covers_for_book(book_path) if book_path else []
+        self._set_add_button_selected(False)
         self._rebuild_thumbnails()
 
         active = next((c for c in self._covers if c['is_active']), None)
@@ -185,6 +187,131 @@ class CoverPanel(QWidget):
             self._selected = None
             self._set_fit_buttons_visible(False)
             self._preview_label.clear()
+
+    def _set_add_button_selected(self, selected: bool):
+        """Keyboard-select (or deselect) the '+' add-cover slot. Deliberately does NOT grant
+        it real Qt focus (tried first, reverted — confirmed live: once a QPushButton holds
+        real focus, it starts owning key events itself, which broke BookDetailPanel's own
+        Left/Right tab-cycling while '+' was selected). Instead uses a plain dynamic property
+        (`kbdSelected`) + a style repolish, matching the exact QSS colors :hover already uses
+        (QPushButton#CoverAddButton:hover, QPushButton#CoverAddButton[kbdSelected="true"] —
+        themes.py) — same 'reuse the existing visual, don't invent a second one' approach as
+        _HistoryRow.set_keyboard_selected reusing its own hover mechanism. BookDetailPanel
+        stays the sole real focus holder throughout, so its keyPressEvent keeps receiving
+        every key regardless of which cover-tab target is keyboard-selected."""
+        self._add_btn_selected = selected
+        self._add_btn.setProperty("kbdSelected", selected)
+        self._add_btn.style().unpolish(self._add_btn)
+        self._add_btn.style().polish(self._add_btn)
+        if selected:
+            self._selected = None
+            self._set_fit_buttons_visible(False)
+            self._preview_label.clear()
+
+    def select_adjacent(self, direction: int):
+        """Keyboard Up/Down (direction -1/+1). The navigable sequence is: cover 0, cover 1,
+        ..., cover N-1, then the '+' add-cover slot IF it's visible (fewer than 4 custom
+        covers) — clamped, no wrap, matching every other list-nav this session (History rows,
+        Stats periods). Calls the EXACT same _select_cover(cover) a mouse click-to-preview
+        already uses for cover-to-cover moves — this IS the 'what would Space/Enter/F-T-S-C
+        currently apply to' indicator: the large preview pane plus the fit-mode buttons' synced
+        checked state, not a new visual on the thumbnail grid.
+
+        Special case, exactly 4 covers (the '+' slot is hidden — no room to add more): Down
+        from the last cover has nowhere to clamp to that isn't the cover the user is already
+        looking at, so instead of a no-op it wraps to the first NON-active cover (skipping the
+        book's currently-active/visible cover — landing back on the cover already shown as the
+        active one would be a wasted, indistinguishable-feeling wrap). This skip is deliberately
+        scoped to ONLY this wrap-boundary case — normal step-by-step Up/Down still visits every
+        cover in order, including the active one, along the way."""
+        add_btn_visible = self._add_btn.isVisible()
+
+        if self._add_btn_selected:
+            # Currently on '+': Up goes back to the last cover; Down clamps (no-op).
+            if direction < 0 and self._covers:
+                self._set_add_button_selected(False)
+                self._select_cover(self._covers[-1])
+            return
+
+        if not self._covers:
+            if add_btn_visible:
+                self._set_add_button_selected(True)
+            return
+
+        if self._selected is None:
+            self._select_cover(self._covers[0])
+            return
+
+        try:
+            idx = next(i for i, c in enumerate(self._covers) if c['id'] == self._selected['id'])
+        except StopIteration:
+            self._select_cover(self._covers[0])
+            return
+
+        new_idx = idx + direction
+        if 0 <= new_idx < len(self._covers):
+            self._select_cover(self._covers[new_idx])
+            return
+
+        # Fell off the end.
+        if direction > 0 and idx == len(self._covers) - 1:
+            if add_btn_visible:
+                self._set_add_button_selected(True)
+            elif len(self._covers) == 4:
+                # Wrap, skipping the active cover (see docstring). If EVERY cover is somehow
+                # active (shouldn't happen — only one cover can be is_active — but guard
+                # defensively) fall back to the first cover rather than doing nothing.
+                non_active = next((c for c in self._covers if not c.get('is_active')), None)
+                self._select_cover(non_active if non_active is not None else self._covers[0])
+            # else: fewer than 4 covers and '+' hidden shouldn't happen (add_btn is only
+            # hidden at >=4), but clamp (no-op) defensively if it ever does.
+        # direction < 0 past the first cover: clamp, no-op (no wrap backward either).
+
+    def activate_selected(self):
+        """Keyboard Space/Enter: sets the currently-previewed cover active, via the EXACT
+        method a mouse click on a thumbnail's set-active zone already calls. If the '+' slot
+        is the current keyboard target instead, triggers it via the EXACT method its click
+        already uses (_on_add_cover) — Space/Enter on '+' behaves like clicking it."""
+        if self._add_btn_selected:
+            self._on_add_cover()
+            return
+        if self._selected:
+            self._on_thumb_set_active(self._selected['id'])
+
+    def delete_selected(self):
+        """Keyboard Del: deletes the currently-previewed cover, via the EXACT method a mouse
+        click on a thumbnail's delete zone already calls — which already no-ops for a locked
+        cover (see _on_thumb_delete), so this correctly can't delete the locked/embedded
+        cover, matching mouse behavior with no new guard needed. No confirmation step exists
+        on the mouse path either (confirmed) — this fires immediately, matching that. No-op
+        while the '+' slot is the current keyboard target (nothing to delete there)."""
+        if self._add_btn_selected:
+            return
+        if self._selected:
+            self._on_thumb_delete(self._selected['id'])
+
+    def click_fit_button(self, key: str):
+        """Keyboard F/T/S/C: simulates a click on the given fit-mode button (key in
+        'fit'/'top'/'stretch'/'crop'), reusing QButtonGroup's exclusivity bookkeeping and the
+        existing _on_fit_mode_clicked handler exactly — no direct call to that handler, since
+        .click() already routes through the same code path a mouse click uses. No-op if no
+        cover is currently selected (mirrors _on_fit_mode_clicked's own no-op shape when
+        self._selected is falsy — this also covers the '+' slot being selected, since selecting
+        it clears self._selected) or if the key isn't one of the four fit buttons."""
+        if not self._selected:
+            return
+        btn = self._fit_buttons.get(key)
+        if btn is not None:
+            btn.click()
+
+    def has_selection(self) -> bool:
+        """True iff a cover is currently previewed OR the '+' slot is the current keyboard
+        target — used by BookDetailPanel.keyPressEvent to decide whether Cover-tab-local keys
+        (Space/Enter/Del/F/T/S/C) have anything to act on, so an empty cover list correctly
+        falls through to no-op rather than silently doing nothing with no feedback path.
+        Individual action methods (activate_selected/delete_selected/click_fit_button) still
+        own their own finer-grained '+' vs. cover distinction — this is only the coarse gate."""
+        return self._selected is not None or self._add_btn_selected
 
     def on_theme_changed(self, theme: dict):
         from ..themes import get_cover_panel_stylesheet
@@ -584,7 +711,18 @@ class CoverPanel(QWidget):
         if is_first_user_cover:
             self._select_cover(new_cover)
             self.active_cover_changed.emit(dest_path)
+        else:
+            # Non-first cover: mouse path leaves self._selected untouched (whatever was
+            # previously previewed). Keyboard path is different — reaching '+' via Down
+            # cleared self._selected and set _add_btn_selected, so without this the panel
+            # would be left with NEITHER a previewed cover NOR '+' selected after adding one.
+            # The newly added cover is also the most useful thing to land on (it's what the
+            # user just created). Mouse-triggered adds are unaffected: _add_btn_selected is
+            # only ever True via the keyboard path, so this is a no-op there.
+            if self._add_btn_selected:
+                self._select_cover(new_cover)
 
+        self._set_add_button_selected(False)
         self._add_btn.setVisible(len(self._covers) < 4)
 
     # ── Error display ─────────────────────────────────────────────────────────

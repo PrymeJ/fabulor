@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QStackedLayout
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator, QKeyEvent
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 
@@ -107,6 +107,13 @@ class BookDetailPanel(QWidget):
         self._pre_edit_meta_state: _MetaActionState | None = None
         self._unlock_timer: QTimer | None = None
         self._confirming_history_row: '_HistoryRow | None' = None
+        # Keyboard-navigated "current" row in the History tab (-1 = none). Independent of
+        # _confirming_history_row (which row is armed) — a row can be keyboard-selected
+        # without being armed, same as mouse hover without a click. Reset in hideEvent,
+        # _on_tab_changed (leaving History), _populate_history (full rebuild), and clamped in
+        # _on_history_delete_confirmed (single-row delete) — no single existing choke point
+        # covers all four cases, so each needs its own reset line.
+        self._history_selected_index: int = -1
         self.setObjectName("book_detail_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._assets_dir = os.path.normpath(
@@ -174,7 +181,7 @@ class BookDetailPanel(QWidget):
         self._duration_label.clicked.connect(self._toggle_duration)
         self._duration_label.setContentsMargins(3, 0, 0, 0)
 
-        self._confirm_remove_label = _ClickableLabel("Click to remove from the library")
+        self._confirm_remove_label = _ClickableLabel("Confirm to remove from the library")
         self._confirm_remove_label.setObjectName("book_detail_confirm_remove")
         self._confirm_remove_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_remove_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -501,10 +508,19 @@ class BookDetailPanel(QWidget):
         return widget
 
     def _rebuild_tag_chips(self):
+        # A tag chip's remove (x) button is a QPushButton — if the user just clicked it, it
+        # holds real Qt focus at this exact moment, and the loop below deletes it (and every
+        # other chip). Qt does not reliably hand focus back to this panel when a focused
+        # widget is destroyed — it can land on another chip's button if one survives, or drop
+        # to None entirely (last/only tag removed) — either way, MainWindow._focus_allows_
+        # global_shortcuts() reads "no panel-local widget has focus" once it's None, letting
+        # global shortcuts (arrows -> hide_all_panels()) silently close the panel. Same class
+        # of bug as _clear_tag_input/_exit_edit_mode — reclaim focus unconditionally.
         while self._tag_chip_layout.count():
             item = self._tag_chip_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
         tags = self.db.get_book_tags(self._book_data['id'])
         tag_colors = {t: self.db.get_tag_color(t) for t in tags}
@@ -604,12 +620,37 @@ class BookDetailPanel(QWidget):
         metadata header (enter edit) there. Keyed on tab text, not an index."""
         return self.tabs.tabText(self.tabs.currentIndex()) in ("Stats", "History")
 
+    def _on_history_tab(self) -> bool:
+        """True iff the History tab is the currently-shown tab. Keyed on tab text, matching
+        _on_tags_tab/_on_info_tab's convention — used by keyPressEvent's Up/Down/Del row nav,
+        which is History-specific unlike _on_info_tab (Stats has no row list)."""
+        return self.tabs.tabText(self.tabs.currentIndex()) == "History"
+
+    def _on_cover_tab(self) -> bool:
+        """True iff the Cover tab is the currently-shown tab. Keyed on tab text, matching
+        _on_tags_tab's convention. Used by keyPressEvent to route Up/Down/Space/Enter/Del/
+        F-T-S-C to the cover panel instead of their top-level meanings while this tab is
+        active — see the keyPressEvent docstring for why Cover-tab F must win over the
+        top-level finished-toggle F."""
+        return self.tabs.tabText(self.tabs.currentIndex()) == "Cover"
+
     def _clear_tag_input(self) -> None:
         """Clear the tag-add field and drop its focus — the shared 'leave the field' action for
         both Escape and Tab-away (they're the same gesture: abandon the half-typed tag). No
-        prior value to revert to, so 'revert' is just clear."""
+        prior value to revert to, so 'revert' is just clear.
+
+        clearFocus() alone leaves QApplication.focusWidget() at None, not this panel — Qt does
+        NOT automatically reassign a cleared child's focus back to its parent. With nothing
+        panel-local holding focus, MainWindow._focus_allows_global_shortcuts() then reads True
+        and the global dispatcher takes over: any arrow/Space/etc. press fires the GLOBAL
+        transport action instead of this panel's own keyPressEvent — and since handle_rewind/
+        handle_forward/hide_all_panels-reaching handlers call hide_all_panels() unconditionally,
+        this silently closed the whole panel (confirmed live, 2026-07-12). Fix: explicitly
+        reclaim focus for the panel itself afterward, same target _claim_panel_focus already
+        grants StrongFocus to on open."""
         self._tag_input.clear()
         self._tag_input.clearFocus()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _cycle_metadata_field(self, backward: bool) -> None:
         """Move focus to the next/previous inline-metadata header field (title → author →
@@ -895,7 +936,7 @@ class BookDetailPanel(QWidget):
             self._cancel_remove()
         self._confirming_finished = True
         self._confirm_finished_label.setText(
-            "Click to mark this book unfinished" if self._is_finished else "Click to mark this book finished"
+            "Confirm to mark unfinished" if self._is_finished else "Confirm to mark finished"
         )
         self._narrator_stack.setCurrentWidget(self._confirm_finished_container)
         color = self._theme.get("accent", "#888888")
@@ -973,9 +1014,169 @@ class BookDetailPanel(QWidget):
         self._cancel_remove()
         self._cancel_finished_confirm()
         self._dismiss_history_confirm()
+        self._clear_history_selection()
         super().hideEvent(event)
 
+    _COVER_FIT_KEYS = {
+        Qt.Key.Key_F: "fit", Qt.Key.Key_T: "top",
+        Qt.Key.Key_S: "stretch", Qt.Key.Key_C: "crop",
+    }
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """Book Detail's own key lane — same shape as ChapterList/StatsPanel: the panel holds
+        real Qt focus while open (PanelManager._claim_panel_focus, no panel_key), so this is
+        where Left/Right/F/Del/K/Space/Enter live. Tab/Backtab/Escape stay entirely in
+        eventFilter (untouched) — this method is never reached for those (event filters run
+        before a widget's own keyPressEvent). Only reached when NOT editing: _enter_edit_mode
+        gives a QLineEdit real focus instead, so this method naturally never sees a key while
+        a metadata field is being typed into — no explicit _editing guard needed here, it
+        falls out of the focus mechanics.
+
+        Dispatch order is deliberate: tab-LOCAL meanings (History's row nav, Cover's thumbnail
+        nav/fit-mode keys) are checked BEFORE the top-level meanings (F=finished-toggle,
+        Del/X=remove, K=lock), so e.g. Cover-tab F (fit mode) wins over top-level F while that
+        tab is active — same 'more specific handler gets first-and-final say' precedent as the
+        focus-ownership fix between panels, applied within one panel's own dispatch here.
+        """
+        key = event.key()
+
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            self._cycle_tab(-1 if key == Qt.Key.Key_Left else 1)
+            return
+
+        if self._on_history_tab():
+            if self._history_key_event(key):
+                return
+        elif self._on_cover_tab():
+            if self._cover_key_event(key):
+                return
+
+        if key == Qt.Key.Key_F:
+            # Reaching here means Cover tab did NOT claim F (either a different tab is active,
+            # or Cover has no selection) — top-level F always means finished-toggle.
+            # _on_finished_clicked() already no-ops correctly with no book loaded.
+            self._on_finished_clicked()
+            return
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_X):
+            self._on_remove_clicked()
+            return
+        if key == Qt.Key.Key_K:
+            if self._meta_action_btn.isVisible():
+                self._on_meta_action_clicked()
+            return
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._confirming_finished:
+                self._on_confirm_finished()
+                return
+            if self._confirming_remove:
+                self._on_confirm_remove()
+                return
+            # Nothing armed and no tab-local claim (History/Cover already returned above if
+            # they had one) — explicit no-op, falls through to super() below.
+
+        super().keyPressEvent(event)
+
+    def _cycle_tab(self, direction: int):
+        """Left/Right: cycles Stats -> History -> Tags -> Cover, wrapping both ways. Reuses
+        QTabWidget.setCurrentIndex — the exact mechanism a mouse click on a tab header already
+        triggers (currentChanged -> _on_tab_changed fires identically either way)."""
+        count = self.tabs.count()
+        if count == 0:
+            return
+        self.tabs.setCurrentIndex((self.tabs.currentIndex() + direction) % count)
+
+    def _history_key_event(self, key) -> bool:
+        """History-tab-local key handling. Returns True if the key was claimed here (caller
+        must not also apply a top-level meaning to the same press)."""
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self._move_history_selection(-1 if key == Qt.Key.Key_Up else 1)
+            return True
+        if key == Qt.Key.Key_Delete or key == Qt.Key.Key_X:
+            if 0 <= self._history_selected_index < len(self._history_rows):
+                self._history_rows[self._history_selected_index]._on_trash_clicked()
+            return True
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            row = self._confirming_history_row
+            if row is not None:
+                row._on_confirm_clicked()
+                return True
+            return False  # nothing armed — let the top-level Space/Enter no-op apply
+        return False
+
+    def _move_history_selection(self, direction: int):
+        """Up/Down: moves keyboard row selection by one, clamped (no wrap). Reuses
+        _HistoryRow.set_keyboard_selected — the SAME _slide_overlay/_state transition real
+        mouse hover uses, so the visual is identical to hovering that row with the mouse (per
+        spec: 'hover styling animates an X on the right side, this will be the indicator')."""
+        n = len(self._history_rows)
+        if n == 0:
+            return
+        if self._history_selected_index == -1:
+            new_index = 0
+        else:
+            new_index = self._history_selected_index + direction
+        if not (0 <= new_index < n):
+            return
+        if 0 <= self._history_selected_index < n:
+            self._history_rows[self._history_selected_index].set_keyboard_selected(False)
+        self._history_selected_index = new_index
+        self._history_rows[new_index].set_keyboard_selected(True)
+        self._history_scroll.ensureWidgetVisible(self._history_rows[new_index])
+
+    def _cover_key_event(self, key) -> bool:
+        """Cover-tab-local key handling. Returns True if the key was claimed here (caller
+        must not also apply a top-level meaning — this is what makes Cover-tab F win over the
+        top-level finished-toggle F while this tab is active)."""
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            self._cover_panel.select_adjacent(-1 if key == Qt.Key.Key_Up else 1)
+            return True
+        if key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if self._cover_panel.has_selection():
+                self._cover_panel.activate_selected()
+            return True
+        if key == Qt.Key.Key_Delete or key == Qt.Key.Key_X:
+            if self._cover_panel.has_selection():
+                self._cover_panel.delete_selected()
+            return True
+        fit_key = self._COVER_FIT_KEYS.get(key)
+        if fit_key is not None:
+            if self._cover_panel.has_selection():
+                self._cover_panel.click_fit_button(fit_key)
+            return True
+        return False
+
+    def _ensure_panel_owns_focus(self):
+        """General safety net, called at the top of eventFilter on every KeyPress while this
+        panel is open: if real Qt focus has drifted to None or outside this panel's widget
+        tree, reclaim it before the key is processed.
+
+        This class of bug hit multiple times live (2026-07-12): several widgets a user can
+        mouse-click hold real Qt focus (QPushButton/QToolButton/QLineEdit — plain QLabel-based
+        widgets like _ClickableLabel are NOT focusable and are not a risk), and Qt does NOT
+        reliably reassign focus to this panel when that widget is later hidden, disabled, or
+        deleted (a confirm-armed button hiding itself, a widget rebuild after add/remove/
+        delete, a metadata field going read-only). Once focus drops to None, MainWindow.
+        _focus_allows_global_shortcuts() reads 'nothing panel-local has focus' and the GLOBAL
+        dispatcher fires instead of this panel's own keyPressEvent — arrow keys silently
+        change volume/seek instead of navigating tabs/rows/covers, and since some global
+        handlers (handle_rewind/handle_forward) call hide_all_panels() unconditionally, the
+        whole panel can silently close.
+
+        Individual known-risk sites (_clear_tag_input, _exit_edit_mode, _rebuild_tag_chips,
+        the History per-row delete) ALSO reclaim focus directly at the point of loss — this
+        method is defense-in-depth for any other site (found or not-yet-found) that shares the
+        same shape, so a future rebuild/hide/delete elsewhere in this panel can't silently
+        reintroduce the bug. Cheap and safe to call on every keypress: setFocus() on an
+        already-focused widget is a no-op, and this never steals focus from a genuinely
+        focused child (isAncestorOf covers that case)."""
+        focus = QApplication.focusWidget()
+        if focus is None or not self.isAncestorOf(focus):
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress:
+            self._ensure_panel_owns_focus()
+
         if obj is self._remove_btn:
             if not self._confirming_remove:
                 if event.type() == QEvent.Type.Enter:
@@ -1039,16 +1240,34 @@ class BookDetailPanel(QWidget):
 
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             # Priority order — one Escape does exactly one thing, panel-close last:
+            #   0. Any of the four confirmations armed (remove / mark finished-unfinished /
+            #      bulk delete-history / per-row delete-session) → disarm it, panel stays open.
+            #      Mirrors the mouse-driven "click X instead of the confirm label" cancel path —
+            #      the rationale being that a user reaching for Escape after arming one of these
+            #      almost always means "actually, never mind," not "close the whole panel."
+            #      Added 2026-07-12 after live feedback that Escape had no way to back out of an
+            #      armed confirmation via keyboard (only an outside click or the 7s timer could).
+            #      Checked first, ahead of tag-input/editing, since a confirmation can be armed
+            #      independently of either of those states.
             #   1. Tag input focused → clear it + drop focus, panel stays open. The tag field's
             #      analog to metadata's revert-on-Escape: there's no prior value to revert to
             #      (it's an add field), so "revert" just means clear. Without this, Escape while
             #      typing a tag fell straight through to the close branch, dismissing the panel
             #      immediately AND leaving the half-typed text to persist to the next open.
             #   2. Editing metadata → cancel the edit, panel stays open.
-            #   3. Neither → close the panel via the sole close path.
-            # 1 and 2 are mutually exclusive (you can't be mid-metadata-edit while the separate
-            # tag field holds focus), so one Escape can never both cancel an edit and close.
-            if self._tag_input.hasFocus():
+            #   3. None of the above → close the panel via the sole close path.
+            # These are mutually exclusive in practice (arming a confirmation cancels the others
+            # per their own arm methods; editing and tag-input-focus can't co-occur), so one
+            # Escape can never do two of these at once.
+            if self._confirming_remove:
+                self._cancel_remove()
+            elif self._confirming_finished:
+                self._cancel_finished_confirm()
+            elif self._delete_history_confirm_label.isVisible():
+                self._cancel_delete_history()
+            elif self._confirming_history_row is not None:
+                self._dismiss_history_confirm()
+            elif self._tag_input.hasFocus():
                 self._clear_tag_input()
             elif self._editing:
                 self._exit_edit_mode(save=False)
@@ -1098,12 +1317,22 @@ class BookDetailPanel(QWidget):
             self._confirming_history_row.dismiss_confirmation()
             self._confirming_history_row = None
 
+    def _clear_history_selection(self):
+        """Clears keyboard row selection in the History tab, same shape as
+        _dismiss_history_confirm — reset from hideEvent, leaving the History tab, and a full
+        _populate_history rebuild (see _history_selected_index's declaration for why there's
+        no single choke point covering all three)."""
+        if 0 <= self._history_selected_index < len(self._history_rows):
+            self._history_rows[self._history_selected_index].set_keyboard_selected(False)
+        self._history_selected_index = -1
+
     def _on_tab_changed(self):
         if self._editing:
             self._exit_edit_mode(save=False)
         # History tab is index 1; leaving it dismisses any armed confirmation
         if self.tabs.currentIndex() != 1:
             self._dismiss_history_confirm()
+            self._clear_history_selection()
 
     def _on_field_click(self, event, field):
         QLineEdit.mousePressEvent(field, event)
@@ -1178,6 +1407,12 @@ class BookDetailPanel(QWidget):
         year = self._book_data.get('year')
         self._narrator_label.setVisible(bool(narrator))
         self._year_label.setVisible(bool(year))
+        # setReadOnly(True) does NOT clear Qt focus — whichever field was being edited can
+        # still hold real focus after this, leaving MainWindow's dispatcher gate open to
+        # global shortcuts instead of this panel's own keyPressEvent (same class of bug fixed
+        # in _clear_tag_input above — see its comment for the full mechanism). Reclaim focus
+        # for the panel unconditionally; harmless no-op if focus was already elsewhere.
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _on_inline_save(self):
         self._exit_edit_mode(save=True)
@@ -1306,6 +1541,9 @@ class BookDetailPanel(QWidget):
         self._delete_history_confirm_label.raise_()
         self._delete_history_btn.setEnabled(False)
         self._delete_history_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        # setEnabled(False) drops Qt focus immediately if this button was just clicked (the
+        # normal way to reach this method) — same reclaim as _clear_tag_input/_rebuild_tag_chips.
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
         if self._delete_history_cancel_timer:
             self._delete_history_cancel_timer.stop()
         self._delete_history_cancel_timer = QTimer(self)
@@ -1331,6 +1569,9 @@ class BookDetailPanel(QWidget):
             row.deleteLater()
         self._history_rows.clear()
         self._confirming_history_row = None
+        # Full rebuild — the previously-selected row object no longer exists, so a flat
+        # reset (not _clear_history_selection, which reads into _history_rows) is correct.
+        self._history_selected_index = -1
 
         accent = QColor(self._theme.get('library_slider_fill', '#888888'))
         bg     = QColor(self._theme.get('library_slider_bg',   '#333333'))
@@ -1375,6 +1616,16 @@ class BookDetailPanel(QWidget):
         # right after the collapse finished).
         for i, r in enumerate(self._history_rows[deleted_at:], start=deleted_at):
             r.restripe(i, self._theme)
+        # Clamp keyboard selection: the deleted row (index deleted_at) no longer exists, and
+        # every row after it shifted up one slot along with its stripe. If the deleted row
+        # WAS the selection (the usual case — Del arms the selected row), drop selection to
+        # -1 rather than silently landing on whatever row slides into that slot. If selection
+        # was elsewhere, keep it pointing at the same row (shift index down by one only when
+        # the deletion happened strictly before it).
+        if self._history_selected_index == deleted_at:
+            self._history_selected_index = -1
+        elif self._history_selected_index > deleted_at:
+            self._history_selected_index -= 1
 
         # setFixedHeight() in __init__ pins minimumHeight to ROW_H too, which
         # would otherwise floor this collapse animation partway instead of
@@ -1388,6 +1639,11 @@ class BookDetailPanel(QWidget):
 
         def _finish():
             row.deleteLater()
+            # row's own trash button (_trash_btn) is a QToolButton that could hold real Qt
+            # focus if the user mouse-clicked it before confirming via keyboard (Space/Enter)
+            # — deleting it can drop focus to None the same way _rebuild_tag_chips'/
+            # _clear_tag_input's widget deletion does. Reclaim unconditionally.
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
             self._resize_history_container()
             # Only the Stats-tab numbers need a re-query here — restriping
             # already happened above, in place, right when the row was
@@ -1913,6 +2169,24 @@ class _HistoryRow(QWidget):
         if self._state == 'hover':
             self._state = 'idle'
             self._slide_overlay(0)
+
+    def set_keyboard_selected(self, selected: bool):
+        """Keyboard-driven equivalent of enterEvent/leaveEvent — reuses the exact same
+        _state/_slide_overlay transition real mouse hover uses, so there is one visual
+        implementation, not two. Guarded the same way enterEvent/leaveEvent guard each other:
+        selecting is a no-op if the row is already 'hover' (real mouse hover already showing
+        the same reveal) or 'confirming' (already armed — never regress that back to hover).
+        Deselecting only acts if the row is 'hover' with nothing else keeping it there (a real
+        mouse hover taking over is handled by enterEvent/leaveEvent themselves, independent of
+        this call)."""
+        if selected:
+            if self._state == 'idle':
+                self._state = 'hover'
+                self._slide_overlay(self._TRASH_W)
+        else:
+            if self._state == 'hover' and not self.underMouse():
+                self._state = 'idle'
+                self._slide_overlay(0)
 
     def _on_trash_clicked(self):
         self._state = 'confirming'

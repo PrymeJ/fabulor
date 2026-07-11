@@ -4280,7 +4280,7 @@ def get_cover_panel_stylesheet(theme_name="default"):
             font-size: 18px;
             font-weight: bold;
         }}
-        QPushButton#CoverAddButton:hover {{
+        QPushButton#CoverAddButton:hover, QPushButton#CoverAddButton[kbdSelected="true"] {{
             background-color: {accent_dark};
             color: {text};
         }}
