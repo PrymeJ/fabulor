@@ -1,7 +1,7 @@
 ## Session Summary — 2026-07-12 Session 5 — Theme pool right-click investigation: hover-debounce race fixed, mouse hardware confirmed as the primary cause
 
-**Branch:** `main`. **Commit:** `017924e` (hover-debounce cancellation fix). Docs (this entry,
-`KEYBINDINGS.md`, `NOTES.md`, `DEBT_INVENTORY.md`) committed separately, after the code.
+**Branch:** `main`. **Commits:** `017924e` (hover-debounce cancellation fix), `4eff112` (docs),
+`435fd14` (debounce 60ms → 80ms tuning + investigation-logging removal).
 
 User reported right-clicks intermittently not registering, worse on the theme pool (Settings →
 Themes tab, both individual theme swatches and the "Cover art based theme" pool button) than
@@ -46,6 +46,30 @@ click-tester website that their own mouse/right-click hardware is already unreli
    the `theme_manager.py` tracking/method) once it had served its purpose — it was never intended
    to ship, and its targeting mechanism (mouse-hover state) doesn't fit the real keyboard-nav
    feature described below anyway.
+4. **User flagged a concern before fully trusting `017924e`**: they'd only tested it via the `.`
+   diagnostic, not enough live mouse use, and worried the fix might have silently broken the
+   sweep-coalescing debounce itself — describing hovering across several themes in quick
+   succession and seeing all of them fire their preview instead of only the one settled on
+   (the exact behavior the debounce exists to prevent). Investigated rather than assumed either
+   way: re-read `017924e`'s diff (only touches the two right-click handlers, never
+   `_on_theme_hovered`/`_fire_pending_hover`), confirmed `QTimer.start()` on an already-running
+   singleShot timer genuinely restarts/coalesces in isolation (a small standalone repro, not
+   trusted alone per the project's "verify live" norm), then had the user reproduce with
+   `FABULOR_LOG_LEVEL=DEBUG` on and read the actual log. The log showed every fired preview was
+   400ms–1.1s apart — well outside the 60ms window — so each one legitimately settled and fired
+   on its own; the coalescing logic itself was never broken by the fix. **User's own conclusion
+   after seeing the log: their test sweep simply wasn't as fast as it felt subjectively**, not a
+   regression. Confirms the discipline of re-verifying a "did my fix break something" report
+   with real evidence (a log capture) rather than either dismissing it or reflexively reverting
+   working code on an unconfirmed suspicion.
+5. That exchange did surface a legitimate tuning question — whether 60ms was ever the right
+   debounce window for real sweep speed, separate from whether it was "broken." Bumped
+   `_HOVER_DEBOUNCE_MS` 60 → 80; user confirmed it tests better. Also removed the two
+   `logger.debug(...)` calls added in `017924e` (in `_on_theme_right_clicked` and
+   `_on_cover_pool_btn_right_clicked`) now that the log capture above had already served its
+   purpose — the pre-existing `[hover debounce] firing preview...` trace in `_fire_pending_hover`
+   and the `[_on_theme_changed GUARD]`/fade-pipeline DEBUG tracing predate this session and were
+   deliberately left untouched (scoped removal, not a blanket instrumentation strip). `435fd14`.
 
 **Follow-up design conversation (not built, captured for later):** the user has a personal-list
 item (not `TODO.md`) to add full keyboard navigation to the theme pool — arrow-key selection
