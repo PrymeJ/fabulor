@@ -808,6 +808,17 @@ class ThemeManager(QObject):
         self.update_interval_visuals()
     def _on_theme_right_clicked(self, theme_name):
         """Selects a theme and immediately activates it."""
+        # A hover preview may still be queued (debounce hasn't fired yet) or
+        # in flight for this or another swatch the cursor swept over en route.
+        # Cancel it so a stale delayed preview can't land after this commit and
+        # win the last-write race on _active_display_theme / the underline.
+        if logger.isEnabledFor(logging.DEBUG) and self._pending_hover_theme is not None:
+            logger.debug(
+                f"[right-click {theme_name!r}] cancelling pending hover preview "
+                f"for {self._pending_hover_theme!r} (debounce still armed)"
+            )
+        self._hover_debounce_timer.stop()
+        self._pending_hover_theme = None
         if theme_name not in self.selected_themes:
             self.selected_themes.append(theme_name)
             self.config.set_theme(",".join(self.selected_themes))
@@ -946,6 +957,15 @@ class ThemeManager(QObject):
             self.set_cover_art_mode("off")
 
     def _on_cover_pool_btn_right_clicked(self):
+        # Same race as _on_theme_right_clicked: cancel any queued/in-flight hover
+        # preview so it can't fire after this click and clobber the committed state.
+        if logger.isEnabledFor(logging.DEBUG) and self._pending_hover_theme is not None:
+            logger.debug(
+                f"[right-click cover-pool] cancelling pending hover preview "
+                f"for {self._pending_hover_theme!r} (debounce still armed)"
+            )
+        self._hover_debounce_timer.stop()
+        self._pending_hover_theme = None
         mode = self.config.get_cover_art_theme_mode()
         if not self._cover_theme:
             return
