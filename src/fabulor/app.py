@@ -2883,20 +2883,51 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                 for i, chap in enumerate(chap_list):
                     if chap.get('time', 0) <= current_pos + _CHAPTER_WALK_TOLERANCE:
                         curr_chap_idx = i
-                chap_start = chap_list[curr_chap_idx].get('time', 0)
-                if curr_chap_idx + 1 < len(chap_list):
-                    chap_dur = chap_list[curr_chap_idx + 1].get('time', 0) - chap_start
+                # Backward scroll while already parked exactly on the current
+                # chapter's own start (landed there via a prior boundary-clamped
+                # scroll, or via Prev/a chapter-list click) must act on the
+                # PREVIOUS chapter instead — otherwise curr_chap_idx keeps
+                # resolving to the same chapter and the clamp below re-snaps to
+                # the same spot forever, permanently stalling backward scroll at
+                # every boundary. Forward doesn't need the mirror case: landing
+                # on chap_end (== the next chapter's start) already re-resolves
+                # curr_chap_idx into that next chapter on the following scroll.
+                ref_idx = curr_chap_idx
+                if (delta < 0 and curr_chap_idx > 0
+                        and current_pos <= chap_list[curr_chap_idx].get('time', 0) + _CHAPTER_WALK_TOLERANCE):
+                    ref_idx = curr_chap_idx - 1
+                chap_start = chap_list[ref_idx].get('time', 0)
+                if ref_idx + 1 < len(chap_list):
+                    chap_end = chap_list[ref_idx + 1].get('time', 0)
                 else:
-                    chap_dur = (self.player.duration or 0) - chap_start
-                skip = max(10.0, chap_dur * 0.05)
+                    chap_end = self.player.duration or 0
+                chap_dur = chap_end - chap_start
+                # Step is a fraction of the reference chapter's own (logical) length —
+                # already speed-independent, since chapter_list times don't move with
+                # speed. Do NOT scale by speed here (see NOTES.md 2026-07-12 "Chapter
+                # slider wheel step scaled by speed twice").
+                skip = max(10.0, chap_dur * 0.10)
+                if delta > 0:
+                    # Never overshoot past this chapter's own end in one scroll — land
+                    # exactly on the next chapter's start instead, even if less than a
+                    # full step remains. A second scroll continues from there.
+                    new_pos = min(current_pos + skip, chap_end)
+                else:
+                    # Mirror image: never undershoot past the reference chapter's own
+                    # start in one scroll — land exactly on it instead of crossing
+                    # further back. A second scroll continues from there.
+                    new_pos = max(current_pos - skip, chap_start)
             else:
-                skip = self.config.get_skip_duration()
-            speed = self.player.speed or 1.0
-            skip *= speed
-            if delta > 0:
-                new_pos = min(self.player.duration or 0, current_pos + skip)
-            else:
-                new_pos = max(0, current_pos - skip)
+                # No chapters: falls back to the flat configured skip, same
+                # semantics as the skip/long-skip buttons — a fixed amount of
+                # *listened* content, so this one DOES scale by speed.
+                speed = self.player.speed or 1.0
+                skip = self.config.get_skip_duration() * speed
+                if delta > 0:
+                    new_pos = current_pos + skip
+                else:
+                    new_pos = current_pos - skip
+            new_pos = max(0, min(self.player.duration or 0, new_pos))
             self._trigger_undo(current_pos)
             self.player.seek_async(new_pos)
             event.accept()
