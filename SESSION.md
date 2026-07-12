@@ -1,3 +1,78 @@
+## Session Summary — 2026-07-12 Session 6 — Chapter slider wheel-scroll fix (speed double-scaling, boundary clamps) + compounding seek-drift design plan (not implemented)
+
+**Branch:** `main`. **Commit:** `981fddd` (wheel-scroll fix). A separate, larger design plan for
+a related-but-distinct drift bug was produced (`/home/pryme/.claude/plans/come-to-think-of-silly-sun.md`)
+but explicitly NOT implemented this session — see below.
+
+**Part 1 — fixed, shipped (`981fddd`):** the chapter-progress-slider's mouse-wheel scroll step
+(`wheelEvent`'s `chapter_progress_slider.underMouse()` branch, `app.py`) was the user's own
+earlier invention (5% of the current chapter's length, floored at 10s) but had a real bug: the
+step was computed from `chapter_list` times — already logical/speed-independent — and then
+multiplied by `speed` again, so the effective step grew with playback speed instead of staying
+constant. Confirmed live with two examples that landed on an identical 1:41 step by coincidence
+(a 10:02 chapter at 3.35x and a 33:39 chapter at 1x — the chapter-length ratio and the erroneous
+speed multiply happened to cancel out, which is what made it look speed-related at first glance).
+Fixed: dropped the speed multiply on the chapter-percentage path; bumped the fraction 5% → 10%
+per the user's request. Also added chapter-boundary clamping that didn't exist before: forward
+scroll now clamps to the next chapter's start instead of overshooting into its content; backward
+mirrors this at the current chapter's start. A follow-up live report caught a stall the first
+version of this fix introduced — once parked exactly on a chapter-start boundary from a prior
+backward clamp, every further backward scroll re-resolved to the SAME chapter and re-clamped to
+the same spot forever, permanently stalling backward scroll at every boundary. Fixed by resolving
+against the PREVIOUS chapter specifically when a backward scroll starts already parked on the
+current chapter's own boundary (forward doesn't need the mirror case — landing on the next
+chapter's start naturally re-resolves into that chapter on the following scroll). The no-chapters
+fallback (flat configured skip) kept its original speed-scaling — that path represents a fixed
+amount of *listened* content, same semantics as the skip/long-skip transport buttons, a
+legitimately different case from the chapter-percentage path this fix targets; this was almost
+lost as an unintended side effect of the same edit and caught before committing.
+
+**Part 2 — investigated and PLANNED, not implemented, per explicit instruction:** the user then
+raised two things. First, whether chapter-wheel-scroll is even worth keeping given Next/Prev and
+the chapter list cover the same use case — answered directly (harmless, low-value overlap, no
+decision needed; user confirmed wheel-scroll stays as-is). Second, and the substantial part: a
+demonstrated live bug where alternating forward/backward wheel-scrolls (or even plain skip-button
+presses, no chapter boundaries involved) do NOT cancel out — position creeps forward every full
+cycle, e.g. `20:40 → forward → ~25:00ish → back (same magnitude) → 20:41 → ...`, eventually able
+to reach the end of the book purely by scrolling back and forth. Traced (Explore agent, then
+independently verified by reading `player.py` directly) to the exact same root cause already
+found and DELIBERATELY DEFERRED in NOTES.md's "Near-zero saved positions..." entry (2026-07-06)
+and TODO.md's matching `[2026-07-06] FIX (batched with the mpv-playback pass)` item, for a
+different symptom: `Player.time_pos`'s getter returns `_cached_time_pos`, which
+`_on_time_pos_change` unconditionally overwrites with mpv's RAW reported position on every
+sample — including right after a seek settles, when mpv's real landing differs from the app's own
+nominal `_seek_target` by a small residual (the reason `_PAUSED_SEEK_UNDERSHOOT_COMP = 0.37`
+exists at all). Every subsequent seek computes its new target from this raw, imprecision-laden
+`time_pos` rather than from the correct nominal position the app already tracks in
+`_seek_target` — so per-seek residuals compound instead of cancelling. 18 call sites across
+`app.py`/`ui/chapter_list.py`/`ui/theme_manager.py`/`ui/library.py` read `player.time_pos`.
+
+User's explicit instruction: do NOT fix this now — report findings and produce a real
+implementation-ready design plan for later, since (their words) "You fix this, something else
+would give way, very most probably clicking Next would go to the current chapter's end rather
+than the start of the next chapter. We had this issue for a long time, hence the epsilon, which
+comes with own damn issues." A Plan agent (given the full traced root cause plus every existing
+epsilon/offset constant and CLAUDE.md's guarded MPV-seek invariants) produced a design centered
+on a NEW `_logical_pos` field on `Player`, set to the nominal target at every existing
+`_seek_target` write site and advanced by delta (not raw snap-in) during normal playback, with
+`Player.time_pos`'s getter as the SOLE blast-radius-limiting seam — every one of the 18 call
+sites needs zero code changes, since they all already go through the property. Critically, the
+chapter-walk-and-emit block inside `_on_time_pos_change` (which drives `chapter_changed` and is
+what all four epsilon/offset constants are calibrated against) is explicitly left reading RAW
+mpv data, unchanged — the whole design is built around never letting the epsilons consume
+already-corrected data, directly addressing the user's specific warning. The plan itself
+(honestly, not optimistically) flags five residual risk areas — most notably VT cross-file delta
+continuity (the app's single most historically fragile seek path, `29b266c`/`[VT-DESYNC]`) and
+whether chapter-current-index resolution reading logical instead of raw is truly a no-op for
+Next/Prev landing, which is exactly the regression the user warned about and must be the primary
+focus of live verification whenever this is actually implemented. Full plan, including the
+call-site inventory, exact reconciliation algorithm, and verification checklist, is saved at
+`/home/pryme/.claude/plans/come-to-think-of-silly-sun.md` — not executed this session.
+
+`pytest tests/ -q` — 174 tests, unaffected by Part 1 (no test changes needed; existing
+`tests/test_seek_state.py` asserts against `_cached_time_pos` directly, which Part 1 never
+touches). Part 2 adds no code and thus no test changes.
+
 ## Session Summary — 2026-07-12 Session 5 — Theme pool right-click investigation: hover-debounce race fixed, mouse hardware confirmed as the primary cause
 
 **Branch:** `main`. **Commits:** `017924e` (hover-debounce cancellation fix), `4eff112` (docs),
