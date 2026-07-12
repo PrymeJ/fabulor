@@ -1,3 +1,35 @@
+## Cover-pool right-click silent no-op (2026-07-12)
+
+Found while investigating a user report that right-clicks aren't always registered — especially
+on the cover-pool theme button (Settings → Themes → "Cover art based theme"). This is a
+distinct, minor issue from the main fade-overlay investigation (see the theme-fade-overlay entry
+below for the primary finding); noted here for completeness, not currently prioritized for a fix.
+
+`ThemeManager._on_cover_pool_btn_right_clicked` (`theme_manager.py:948-959`) starts with:
+
+```python
+if not self._cover_theme:
+    return
+```
+
+`self._cover_theme` is only populated once cover-art theme extraction has run for the current
+book's cover (`apply_cover_theme`) — so a right-click on the pool button before that (no book
+loaded, or extraction still pending right after a book switch) is a complete, silent no-op: no
+visual change, no log, no signal. This will read identically to "my right-click didn't
+register," but it's a deliberate state gate, not an event-handling bug — the button's associated
+feature genuinely doesn't apply yet.
+
+Same shape as the main-window drag-area's `db.get_book_count() > 0` gate
+(`app.py:_on_drag_area_pressed`) — both silently swallow a right-click when the feature they'd
+activate has no valid target yet. The drag-area case is a one-time "any books indexed at all"
+check, so it's rarely hit after first launch; the pool-button case is easier to hit repeatedly
+since cover-theme availability is per-book and can be momentarily unset right after switching
+books.
+
+Not fixed — deferred, see DEBT_INVENTORY.md "Theme system". If revisited, the straightforward
+fix is a brief visual nudge (e.g. a quick shake/flash) when the right-click is a no-op for this
+reason, so it reads as "not available yet" rather than "nothing happened."
+
 ## Book Detail Panel keyboard shortcuts: four more focus/dispatch bugs, two of them generalizing the Session 3 invariant (2026-07-12)
 
 Extending the keyboard focus-ownership invariant (see the entry below this one) from the

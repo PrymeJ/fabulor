@@ -331,8 +331,36 @@ Library/Chapter overlays, and only long skip (`Shift+arrow`) was requested this 
 
 Still open / not yet built:
 
-b — back/dismiss current panel
-Enter/Shift+Enter — book details for active book (different scope from the 2026-07-09 Alt+Enter added to the Library view above — that one acts on whichever row is keyboard-selected in the list, not the globally currently-playing book from anywhere in the app; this idea is still open)
+b — back/dismiss current panel | superseded by Esc, defunct now
+Enter/Shift+Enter — book details for active book (different scope from the 2026-07-09 Alt+Enter added to the Library view above — that one acts on whichever row is keyboard-selected in the list, not the globally currently-playing book from anywhere in the app; this idea is still open) | no need to change it, Alt+Enter could serve in the main window
 f or / — search/filter in library (Library's own search field exists and can be Tab-focused as of 2026-07-09 — this idea may now just mean "a global shortcut to jump straight to it")
 r — toggle remaining/total time
 Escape — dismiss any open panel/overlay
+
+### Theme pool (Settings → Themes tab) — not yet built (2026-07-12)
+
+Prompted by investigating an intermittent right-click-miss report on the theme pool (traced to
+mouse hardware, not app logic — see NOTES.md "Cover-pool right-click silent no-op" and the
+hover-debounce race fix in `_on_theme_right_clicked`/`_on_cover_pool_btn_right_clicked`,
+`theme_manager.py`). A keyboard path through the pool would sidestep mouse reliability
+entirely, not just diagnose it. None of this is built — no keyboard-selection cursor exists yet
+for the pool grid (unlike Library's `_kbd_selected_path`/`_move_selection_by`, the closest
+existing precedent for this shape of feature). Needs its own selection cursor, not a rehash of
+the "." diagnostic that was used to confirm the mouse theory and then removed (it borrowed
+mouse-hover state as its target, which the real feature can't rely on).
+
+- `Up`/`Down`/`Left`/`Right` (or just `Up`/`Down`) — move a keyboard-selection cursor through the
+  pool grid, mirroring Library's arrow-nav pattern
+- `Enter`/`Space` — act as left-click on the selected entry (toggle pool membership / select)
+- Right-click equivalent — **undecided**; candidates not yet chosen. Worth revisiting whether a
+  distinct key is even needed once Enter/Space + letter-jump + `T` exist, since right-click today
+  is mostly "select and activate immediately," which overlaps those
+- Letter keys — jump to / cycle through themes by name (e.g. press `a` to land on "Alzabo," press
+  again to advance to "Anomander," etc.)
+- `Ctrl+A` — Add all (bare `A` reserved for the existing `SHOW_STATS` global shortcut, so this
+  needs the modifier even though it's panel-local, to avoid the same letter meaning two things
+  depending on tab state)
+- Remove all — **undecided modifier**; `Ctrl+D` or `Ctrl+R` are the two candidates, not yet chosen
+- `T` — Change now (already implemented and working: `Action.TOGGLE_THEME`, bare `T`,
+  `GuardKind.COOLDOWN_COALESCE` — see the main-window table above; no change needed here, just
+  confirming it stays as-is when the rest of this is built)

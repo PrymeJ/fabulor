@@ -1,3 +1,71 @@
+## Session Summary — 2026-07-12 Session 5 — Theme pool right-click investigation: hover-debounce race fixed, mouse hardware confirmed as the primary cause
+
+**Branch:** `main`. **Commit:** `017924e` (hover-debounce cancellation fix). Docs (this entry,
+`KEYBINDINGS.md`, `NOTES.md`, `DEBT_INVENTORY.md`) committed separately, after the code.
+
+User reported right-clicks intermittently not registering, worse on the theme pool (Settings →
+Themes tab, both individual theme swatches and the "Cover art based theme" pool button) than
+elsewhere, and asked for it to be checked — while independently confirming via an external
+click-tester website that their own mouse/right-click hardware is already unreliable.
+
+**Investigation, in order:**
+
+1. First pass (Explore agent) audited every right-click code path (`RightClickButton`/
+   `HoverButton` mouse-press overrides, `_on_drag_area_pressed`, all six app-wide `eventFilter`s)
+   and found no event-eating mechanism anywhere — no `eventFilter` branches on `event.button()`,
+   no context-menu-policy conflicts, no debounce/cooldown gating either handler. Flagged one
+   real-but-secondary finding (`_on_cover_pool_btn_right_clicked` silently no-ops if
+   `self._cover_theme is None`) and one hypothesis that turned out wrong: the theme-fade
+   overlay's panel-exclusion mask never excluded `settings_panel`, so the pool button sits under
+   a frozen screenshot during a fade. **This hypothesis was corrected by the user**: the overlay
+   covering the Themes tab during its own fade is the intended design (that fade IS the visual
+   feedback), not a bug — the fix attempt was reverted on the spot. Lesson: a plausible-looking
+   overlay/masking theory doesn't override the user's understanding of what a given animation is
+   *for* — worth confirming intent before treating "widget X isn't excluded from mask Y" as a gap.
+2. Re-scoped with the corrected framing ("the preview already fires correctly — it's the
+   underline commit that doesn't always move") led to the real bug: `_on_theme_hovered` queues
+   a theme preview via a 60ms debounce timer (`_hover_debounce_timer`/`_fire_pending_hover`) so a
+   cursor sweep across several names coalesces into one restyle. Neither `_on_theme_right_clicked`
+   nor `_on_cover_pool_btn_right_clicked` cancelled that timer before committing — unlike
+   `_on_theme_unhovered` and `_on_cover_pool_btn_hovered`, which both already do this defensively
+   for the identical reason. A hover queued from a swatch the cursor swept past en route to the
+   click target could fire its preview *after* the click's own `_on_theme_changed` call and win
+   the last-write race on `_active_display_theme` — explains why the pool button (at the edge of
+   the swatch grid, more likely to be reached via a sweep) was reported as worse than other
+   targets. Fixed: both right-click handlers now `stop()` the timer and clear
+   `_pending_hover_theme` up front, mirroring the existing pattern. `017924e`.
+3. To let the user rule mouse hardware in/out with certainty (not just suspect it), added a
+   temporary keyboard-only diagnostic: `.` (Themes tab only) replayed whichever right-click
+   handler applied to the last-hovered target, via a new `_last_hovered_target` tracker and
+   `ThemeManager.simulate_hovered_right_click()`, routed through `MainWindow.eventFilter` (not
+   `ShortcutDispatcher` — the Settings panel claims real focus on open, which blocks the global
+   dispatcher by design; see the focus-ownership invariant in CLAUDE.md). **User confirmed via
+   this diagnostic that the fix's logic is correct and the mouse is the primary remaining
+   cause** — `.` reliably worked where physical right-clicks still occasionally missed. Per
+   instruction, the diagnostic was then fully removed (both the `app.py` eventFilter branch and
+   the `theme_manager.py` tracking/method) once it had served its purpose — it was never intended
+   to ship, and its targeting mechanism (mouse-hover state) doesn't fit the real keyboard-nav
+   feature described below anyway.
+
+**Follow-up design conversation (not built, captured for later):** the user has a personal-list
+item (not `TODO.md`) to add full keyboard navigation to the theme pool — arrow-key selection
+cursor, Enter/Space as the left-click equivalent, letter keys to jump/cycle through themes by
+name, `Ctrl+A` for Add-all, `Ctrl+D`/`Ctrl+R` (undecided) for Remove-all, `T` for Change-now
+(already implemented, no change needed). Asked whether the `.` diagnostic's approach would fit
+that architecture or need to be rewritten regardless. Answer: rewritten regardless — no
+keyboard-selection cursor exists yet for the pool grid (Library's `_kbd_selected_path`/
+`_move_selection_by` is the closest existing precedent for this shape of feature), and the real
+feature needs its own selection state independent of mouse hover, not a reuse of
+`_last_hovered_target`. Captured as a new "Theme pool" subsection under KEYBINDINGS.md's "Still
+open / not yet built," including the still-undecided right-click-equivalent key and Remove-all
+modifier.
+
+**Two minor items filed, not fixed:** `_on_cover_pool_btn_right_clicked`'s silent no-op before a
+cover theme is computed (DEBT_INVENTORY.md "Theme system", NOTES.md "Cover-pool right-click
+silent no-op") — not currently prioritized. No new automated tests (this is Qt hover/timing-
+driven, not a pure state machine); `pytest tests/ -q` stayed green (174 tests) throughout as a
+non-regression check on each edit.
+
 ## Session Summary — 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts + a second round of focus-loss bugs
 
 **Branch:** `main`. **Commits:** `ee27338` (Book Detail tab-switching + per-tab actions +
