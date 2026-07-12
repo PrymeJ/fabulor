@@ -109,6 +109,19 @@ The settle in `_on_time_pos_change` is `abs((value + _file_offset) − _seek_tar
 ### Automated tests exist (`tests/`, pytest, dev-only)
 `_on_time_pos_change`/seek-state is a near-pure state machine (no mpv, no QApplication). Run `source fabulorenv/bin/activate && pytest tests/ -q`. Keep green on any seek-path change — these encode the `is_seeking`/`_seek_target` invariants whose violations caused repeated freezes/regressions. pytest is in `requirements-dev.txt` (NOT runtime `requirements.txt`).
 
+### Seek/position tracking — VT+Undo is the known-fragile zone
+Any change to how `time_pos`, `_seek_target`, `_cached_time_pos`, or a seek-settle boundary is computed or read must be live-verified against VT (multi-file) books and Undo before being considered done — not as a general precaution, but because this specific combination has broken three independent times:
+
+- **2026-06-06:** `seek_settled` signal attempt — reverted. Broke slider/fill desync, undo, notch reanimation, VT slider corruption, chapterless-book snaps. Root cause on record: "the 200ms timer is the silent antagonist — it fires regardless of load state and requires guards that have a one-tick gap."
+- **2026-06-06:** `file_switched`-deferral attempt — reverted. Broke undo (VT slider stuck after undo).
+- **2026-06-15 (`b6a4023`):** backward-jump rejection heuristic (`_STALE_BACKWARD_TOLERANCE`) — verified clean via instrumentation (32/32 known artifacts correctly classified, zero false positives) — shipped, then reverted. Broke VT backward-seek, the play/pause icon, and chapter[1]→[0] click. No mechanism-level cause for any of the three was ever diagnosed — the record stops at "regressed X/Y/Z."
+
+The load-bearing lesson is not any one of these bugs — it's that clean instrumentation data has already been proven insufficient evidence of safety on this exact bug class. A heuristic or new tracking field can score perfectly against captured samples and still break something live, for reasons that may never be diagnosed. Do not treat a green instrumentation run as a stopping point before live testing; do not treat a clean live pass on the presenting symptom (e.g. drift, slider bounce) as sufficient without separately checking VT playback, VT cross-file seeking, and Undo.
+
+**Standing rule:** any seek/position-tracking change verifies VT+Undo FIRST, before verifying the symptom the change was meant to fix. If something regresses, stop and report rather than patching inline — patching around an undiagnosed regression in this zone has not worked before.
+
+Full incident detail: NOTES.md entries dated 2026-06-06 (×2) and 2026-06-15; commits `12dcf32`→`a506de9`, `4ae0783`/`92902cd`.
+
 ### DO NOT let `_do_fade_with_slider_animation` iterate `chapter_progress_slider` when `_chapter_ui_active` is False
 The slider loop in `_do_fade_with_slider_animation` must skip `chapter_progress_slider` when `mw._chapter_ui_active` is `False`. The theme overlay punch-through re-exposes the slider during the window between `_apply_stylesheets` (which repolishes child widgets and overwrites transparent colors with theme colors) and the `_set_chapter_ui_active` reapplication at the end of `_apply_stylesheets`. Without the guard the slider briefly renders at full opacity, causing a visible flash. Guard: `if attr == 'chapter_progress_slider' and not mw._chapter_ui_active: continue`.
 
@@ -535,6 +548,9 @@ Always use `seek_async(nominal + _chapter_seek_offset())` with a position-based 
 
 ### DO NOT restore any emit in `_on_chapter_change` — it is fully suppressed
 `_on_chapter_change` always returns immediately. `_on_time_pos_change` is the sole driver of `chapter_changed` for all book types. The old `_is_seeking` guard was insufficient — it cleared before `_on_chapter_change` fired, causing paused-state snap-back.
+
+### Seek/position tracking — VT+Undo is the known-fragile zone
+Any change to `time_pos`/`_seek_target`/`_cached_time_pos`/a seek-settle boundary must be live-verified against VT (multi-file) books and Undo FIRST, before verifying the symptom the change was meant to fix — this exact combination has broken three independent times (2026-06-06 ×2, 2026-06-15's `b6a4023`), including once after a heuristic scored 32/32 clean against real instrumentation and still broke live. Clean instrumentation is not sufficient evidence of safety here. See the fuller rule above.
 
 ### DO NOT set `_virtual_timeline` for CUE books
 CUE mode = `_chapter_list is not None` and `_virtual_timeline is None`. Setting `_virtual_timeline` activates VT file-switching on a single-file book.
