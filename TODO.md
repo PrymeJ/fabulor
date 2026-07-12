@@ -6,6 +6,34 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-12] Chapter-slider load-time retrace: the flow-animation target and the actual
+  restore seek disagree by `_CHAPTER_BOUNDARY_EPSILON` (0.35s).** Found while investigating the
+  compounding seek-drift bug (branch `fix/seek-drift-logical-position`, not yet merged) — this
+  started as a hypothesis (originally called "Finding 5" on that branch) that the retrace was the
+  same `_logical_pos`-fixable raw-`time_pos` residual as the drift bug, but that hypothesis was
+  **disproven by live log data, not assumption**: every captured book-load restore-seek settles
+  with zero residual (`_is_embedded_m4b` isn't set yet when `_restore_position`'s seek runs, so the
+  paused-undershoot compensation never applies to it — separate quirk, not this bug). The REAL
+  cause, traced after that disproof: `_on_file_loaded_populate_chapters` (`app.py:1574`,
+  `_on_file_loaded_populate_chapters`) computes the CHAPTER SLIDER's flow-animation target with
+  `_CHAPTER_BOUNDARY_EPSILON` (+0.35s) baked in unconditionally for every non-VT book
+  (`seek_offset = 0.0 if VT else _CHAPTER_BOUNDARY_EPSILON`), while `_restore_position`'s actual
+  seek (`app.py:1665`, `seek_async(book_data.progress)`) deliberately omits any offset — per its
+  own comment, restore is not chapter navigation and has no boundary to clear. **The bug is that
+  these two independently-computed values disagree, not that either is individually wrong for its
+  own purpose** — the animation target assumes a chapter-navigation-style landing offset that the
+  real seek was never going to produce. On a short chapter (5-25s, confirmed live) the mismatch is
+  a large, highly visible fraction of the slider's width: the slider animates to
+  `progress + 0.35`, then visibly retraces back to the true `progress` once the 200ms timer starts
+  reading the real (unoffset) position. **This is a separate, third bug from the compounding-drift
+  fix on that branch and is NOT fixed by `_logical_pos`** — neither of the two mismatched values
+  reads `player.time_pos`, so nothing about the drift-fix branch's `time_pos`-getter change touches
+  this at all. If revisited: `_on_file_loaded_populate_chapters` should not apply
+  `_CHAPTER_BOUNDARY_EPSILON` when computing the load/restore animation target, mirroring
+  `_restore_position`'s own no-epsilon reasoning. Full trace (Finding 5, corrected, and Finding 5b)
+  in `SEEK_DRIFT_MEASUREMENTS.md` on the `fix/seek-drift-logical-position` branch — branch-local,
+  re-derive from `app.py:1574` vs `app.py:1665` if that branch is ever discarded before merge.
+
 - **[2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37s) is applied unconditionally to every paused
   embedded-M4B seek, not gated on chapter-boundary proximity.** Found while investigating the
   compounding seek-drift bug (branch `fix/seek-drift-logical-position`, not yet merged). The
