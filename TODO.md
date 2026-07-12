@@ -6,31 +6,50 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-13] VT restore-seek silently never executes in mpv during initial file load.**
+- **[2026-07-13] VT restore-on-load is broken: the restore-seek never executes in mpv, and the
+  `_logical_pos` drift fix surfaces it (one entangled item — clobber-guard + seek-execution).**
   Found while fixing the compounding seek-drift bug (branch `fix/seek-drift-logical-position`).
-  On opening a VT (multi-file MP3) book with saved progress, `_restore_position` (`app.py`) issues
+  Two entangled layers, deferred together as ONE investigation because neither is fixable without
+  the other:
+
+  **Layer 1 — the underlying bug (pre-existing, the real root cause):** on opening a VT (multi-file
+  MP3) book with saved progress, `_restore_position` (`app.py`) issues
   `seek_async(book_data.progress)` → VT same-file branch → `command_async('seek', <local>,
-  'absolute+exact')`. But mpv **never moves off ~0** — the seek command is issued yet never takes
-  effect (it races the VT file being loaded). Captured raw evidence (2026-07-13, DEBUG log, two
-  books — Sometimes a Great Notion and Colorless Tsukuru Tazaki): after `seek_async: entry
-  target=63.457598`, every subsequent `raw time_pos=` sample is `0.0` / `5.16e-07` — the target
-  ~63 position is never reported. So the book genuinely resumes playing from 0, not the saved
-  position. **This is a PRE-EXISTING bug** — pre-`_logical_pos`, `time_pos` read the raw
-  `_cached_time_pos` (which just showed ~0), so it silently "resumed at 0" and nobody noticed; the
-  `_logical_pos` drift fix surfaced it (the restore target was held in `_logical_pos` while mpv
-  actually played from 0, producing a visible slider/audio desync + freeze — which the two guards
-  committed on that branch now prevent from turning into data loss, but they do NOT make the seek
-  execute). **Deliberately deferred, NOT chased tonight** — it's a new, undiagnosed root cause in
-  the VT file-load/seek-race machinery, out of scope for the drift fix and needs its own
-  investigate-first cycle (instrument the seek-command-vs-file-load ordering; likely fix directions:
-  re-issue the restore-seek AFTER the file is confirmed loaded, or serialize restore against the
-  first `file_switched`, rather than issuing it while the file is still loading). The branch's
-  `_on_vt_file_switched` guard (don't clear `is_seeking` while `_seek_target` is set) and the
-  `_on_time_pos_change` maintenance guard (don't touch `_logical_pos` while a seek is pending) close
-  the data-loss/freeze consequences; this entry is the remaining *correctness* gap (VT books not
-  resuming at the saved position). Full trace context in `SEEK_DRIFT_MEASUREMENTS.md` on that
-  branch — re-derive from the `raw time_pos` staying ~0 after a VT restore `seek_async` if the
-  branch is discarded before merge.
+  'absolute+exact')`, but mpv **never moves off ~0** — the seek command is issued yet never takes
+  effect (races the VT file being loaded). Captured raw evidence (2026-07-13, DEBUG log, two books
+  — Sometimes a Great Notion, Colorless Tsukuru Tazaki): after `seek_async: entry target=63.457598`,
+  every subsequent `raw time_pos=` sample is `0.0` / `5.16e-07`; the ~63 target is never reported.
+  So VT books genuinely resume from 0, not the saved position. Pre-`_logical_pos` this was silent
+  (the getter read raw `_cached_time_pos` ≈ 0, so it "resumed at 0" and nobody noticed).
+
+  **Layer 2 — what the drift fix surfaced, and why guarding it in the drift branch was rejected:**
+  with `_logical_pos`, the restore target (~63) is written at the seek site and held while
+  `is_seeking` is True. But `_on_vt_file_switched` (`app.py`, **undo-fragile zone** per CLAUDE.md)
+  unconditionally clears `is_seeking` on the VT book's first file-load, stranding `_seek_target`
+  (the settle needs `is_seeking=True` and never fires because mpv is at 0, not 63). The stale ~0
+  sample then clobbers `_logical_pos`, persisting 0 as progress (data loss). Two guards were tried
+  on the branch and **reverted**: (a) narrow `_on_vt_file_switched` to not clear `is_seeking` while
+  `_seek_target` is set, and (b) guard the `_on_time_pos_change` maintenance block on
+  `_seek_target is None`. Together they stopped the data-loss clobber — but only **traded it for a
+  UI freeze**: slider correct at ~63, but time labels stuck on the PREVIOUS book's values, no
+  chapter name, frozen until manual nav (because `is_seeking` stays True to prevent the strand, and
+  the seek never settles to clear it, since mpv is at 0). A frozen UI with stale labels is arguably
+  worse UX than the old silent resume-at-0, and fixing it properly requires making the seek actually
+  execute (Layer 1). So the guards were reverted; VT restore-on-load behaves exactly as on `main`
+  (resumes near 0), neither improved nor worsened by the drift branch. The branch keeps only an
+  explanatory comment at the maintenance block marking this as a known out-of-scope gap;
+  `_on_vt_file_switched` is left completely untouched.
+
+  **Deliberately deferred, NOT chased inline** — a new, undiagnosed root cause in the VT
+  file-load/seek-race machinery, in the documented-fragile VT+undo zone. Needs its own
+  investigate-first cycle. Likely fix directions for Layer 1: re-issue the restore-seek AFTER the
+  file is confirmed loaded, or serialize the restore against the first `file_switched`, rather than
+  issuing it while the file is still loading. Once Layer 1 is fixed (seek actually reaches 63 and
+  settles), the clobber and freeze both disappear on their own and no `_on_vt_file_switched` /
+  maintenance-block guard is needed — confirming Layer 2's guards were treating the symptom, not the
+  cause. Full trace context (the `raw time_pos` staying ~0, the guard freeze-finding) in
+  `SEEK_DRIFT_MEASUREMENTS.md` on that branch — re-derive from a VT restore `seek_async` whose
+  subsequent `raw time_pos` never reaches the target if the branch is discarded before merge.
 
 - **[2026-07-12] Chapter-slider load-time retrace: the flow-animation target and the actual
   restore seek disagree by `_CHAPTER_BOUNDARY_EPSILON` (0.35s).** Found while investigating the
