@@ -6,6 +6,30 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37s) is applied unconditionally to every paused
+  embedded-M4B seek, not gated on chapter-boundary proximity.** Found while investigating the
+  compounding seek-drift bug (branch `fix/seek-drift-logical-position`, not yet merged). The
+  constant's ORIGINAL purpose (CLAUDE.md, Session 3, 2026-06-13) was chapter-boundary landing
+  precision — Prev/Next skipping a chapter's first word, or paused Prev/Next re-resolving the
+  chapter just left. But the actual gate in `seek_async` (`player.py:704`,
+  `if self._is_embedded_m4b and self._cached_pause:`) checks only file format and pause state — no
+  boundary-proximity check at all. It fires on every paused seek, including genuinely mid-chapter
+  ones (`seek_within_chapter` via a chapter-slider click, `_restore_position` on book-load) that
+  have nothing to do with chapter navigation. Visible live on short chapters (~5-25s), where the
+  0.37s residual is a large fraction of the total width: a chapter-slider click "moves to the click
+  point, then jumps forward ~0.37s further"; book-load on a short chapter shows a brief
+  land-then-retrace. Real but NOT compounding/urgent — a single bounded per-seek error, not a
+  progressive drift (confirmed: the sample immediately after a plain paused settle has near-zero
+  delta, so nothing stacks across repeated loads/clicks). **Deliberately deferred, not folded into
+  the drift-fix branch**: `seek_async` is exactly the heavily-scarred, repeatedly-reverted function
+  the "Seek/position tracking — VT+Undo is the known-fragile zone" CLAUDE.md rule is about;
+  narrowing the compensation's scope is a second, independent change that deserves its own
+  investigate-then-plan cycle (what boundary tolerance is safe, live-verify it doesn't reintroduce
+  the exact stuck-Next/Prev bug the constant was built to fix), not a rushed addition to an
+  already-large fix. Full trace in `SEEK_DRIFT_MEASUREMENTS.md` (Finding 7) on the drift-fix branch
+  — that file's branch-local, so re-derive from `player.py:704` if the branch is ever discarded
+  before merge.
+
 - **[2026-07-12] DEFERRED (not planned for the current shipping push): Stats Day/Week/Month
   sub-navigation and Tags panel keyboard nav.** Explicitly scoped OUT while implementing Book
   Detail's Left/Right tab-switching + per-tab actions (History row nav, Cover thumbnail nav) the
