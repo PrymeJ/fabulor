@@ -1,3 +1,36 @@
+## Session Summary — 2026-07-13 — Documentation hygiene: CLAUDE.md dedup, narrative extraction, root-level file organization
+
+**Branch:** `main`. **Commits:** `8b89fdd` (merge duplicate rules), `567aba5` (extract narrative
+to SESSION.md pointers), `855f5c2` (move stale spec, flag stale debt inventory). No code changes.
+
+**Part 1 — CLAUDE.md had two full "Critical Architecture Rules" sections back to back** — a
+full-prose pass and a later condensed pass that re-covered about a dozen of the same rules in
+shorter form. Merged the condensed restatements into their fuller originals, and grouped a few
+other rules that shared one underlying fact (soft-delete flags, upsert lock guards, streak
+day-set, sized-cover-cache) under a single statement of that fact with consequences as bullets.
+No rule, constant, date, commit hash, or reasoning dropped — verified via diff-based checks on
+every backtick-quoted constant, commit hash, date, and `file.py:line` reference between the
+before/after versions. 1265 → 1224 lines.
+
+**Part 2 — several CLAUDE.md rules had session-narrative writeups embedded in them** (what was
+tried first, what broke, what got reverted) instead of just stating the standing rule — the
+Keyboard focus ownership rule was the worst offender. Checked each case against SESSION.md first;
+all were already fully (often more fully) documented there, so no backfill was needed. Condensed
+each down to the fact/invariant/DO-NOT with a pointer to the relevant SESSION.md entry, same
+verification method as Part 1. 1224 → 1204 lines.
+
+**Part 3 — root directory had accumulated one dead file.** `SPEC_cover_management.md` (a
+one-off implementation spec for the Cover Management panel, shipped over two months ago and
+fully documented in CLAUDE.md's "What's Built") moved into `review/`, alongside the other
+historical one-off audit/spec artifacts already living there. Also added a stale-snapshot header
+to `review/DEBT_INVENTORY.md` (a frozen 2026-06-12 review-batch artifact, distinct from the
+actively-maintained root `DEBT_INVENTORY.md`) pointing at the real file, so a bare "add this to
+DEBT_INVENTORY.md" instruction can't land in the wrong one. `CLAUDE_CHAT_INDEX.md` was
+considered and left at root — still being actively appended to, same living-log role as
+SESSION.md/NOTES.md/TODO.md, not a dead artifact despite the less-obvious name.
+
+---
+
 ## Session Summary — 2026-07-12 Session 6 — Chapter slider wheel-scroll fix (speed double-scaling, boundary clamps) + compounding seek-drift design plan (not implemented)
 
 **Branch:** `main`. **Commit:** `981fddd` (wheel-scroll fix). A separate, larger design plan for
