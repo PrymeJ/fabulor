@@ -6,6 +6,28 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-13] Chapter-elapsed label reads ~1s short for up to `_CHAPTER_WALK_TOLERANCE` after
+  crossing a chapter boundary (chapter-relative display only; absolute position is exact).**
+  Surfaced (NOT caused) by the `_logical_pos` seek-drift fix — with absolute position now exact,
+  this pre-existing chapter-display artifact became cleanly visible instead of being drowned in the
+  old compounding drift (per the user: "it was worse before, drifting all around, impossible to
+  tell them apart"). Mechanism: `_sync_chapter_ui` (`app.py`, ~line 1987) resolves the current
+  chapter with the tolerance-padded walk `chap.time <= pos + _CHAPTER_WALK_TOLERANCE` (0.5s), then
+  computes `c_elapsed = max(0, pos - chap_start)`. When a skip/seek lands within ~0.5s BEFORE a
+  boundary, the walk already resolves to the NEXT chapter (tolerance), so `c_elapsed` clamps toward
+  0 while the true position is still just short of the boundary — a chapter-relative offset up to
+  ~1s (the chapter-remaining label uses `end - pos` with no tolerance, so the two can disagree at
+  the seam). **Confirmed observationally NOT the drift bug:** absolute total-elapsed / total-
+  remaining / chapter-remaining all read reliably ("10s is 10s, 30s is 30s"); the step size is
+  steady (5s skips land 5s apart), it only shifts ~1s at a boundary crossing and stays consistent
+  within the new chapter. Also: this touches `_CHAPTER_WALK_TOLERANCE` and the chapter-walk block,
+  both of which the drift-fix plan explicitly did NOT touch (heavily-scarred epsilon zone). **Its
+  own investigate-first cycle** — the tolerance exists to stop paused Next/Prev sticking (see the
+  constant's own comment in `player.py`), so narrowing/removing it for the display walk risks
+  reintroducing that; a display-only fix (e.g. resolve the chapter-elapsed label's chapter without
+  the tolerance, or clamp `c_elapsed` differently at the seam) is the likely direction but needs
+  its own repro + verification against the stuck-Next/Prev symptom. Not blocking the drift fix.
+
 - **[2026-07-13] VT restore-on-load is broken: the restore-seek never executes in mpv, and the
   `_logical_pos` drift fix surfaces it (one entangled item — clobber-guard + seek-execution).**
   Found while fixing the compounding seek-drift bug (branch `fix/seek-drift-logical-position`).
