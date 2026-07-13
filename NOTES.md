@@ -1,3 +1,88 @@
+## Compounding seek drift fixed via `_logical_pos` — measure-first, VT-first, and the same-shape-as-`b6a4023` risk that did NOT recur (2026-07-13)
+
+**Branch:** `fix/seek-drift-logical-position` (`9521ee4` fix + follow-up docs). Core claim
+**live-verified**, not merely designed/unit-tested — see the verification section below.
+
+**The bug.** `Player.time_pos` returned `_cached_time_pos`, which `_on_time_pos_change` overwrites
+with mpv's RAW reported position on every sample — including right after a seek settles, when
+mpv's real landing differs from the nominal `_seek_target` by a small residual (the ~0.09s playing
+overshoot / ~0.37s paused undershoot `_PAUSED_SEEK_UNDERSHOOT_COMP` was built to compensate). Every
+subsequent seek computed its target from that raw, imprecision-laden `time_pos` rather than the
+logical target the app already tracked in `_seek_target`, so residuals compounded — alternating
+forward/back wheel-scroll or skip-button cycles crept forward every round, enough to reach EOF by
+scrolling back and forth. Same root cause already caught and deferred 2026-07-06 (the entry below,
+"Near-zero saved positions…").
+
+**The fix.** A new `_logical_pos` field (always GLOBAL, like `_seek_target`), returned by the
+`time_pos` getter when set. Adopted EXACTLY from `_seek_target` at settle (discarding the residual);
+the first post-settle sample is SKIPPED so the discarded residual is not re-added; advanced by
+raw-sample delta during normal playback; resynced to raw on a delta above
+`_LOGICAL_POS_RESYNC_THRESHOLD` (2.5s). The getter is the single seam — all 18 `player.time_pos`
+call sites are unchanged. `_cached_time_pos` and the chapter-walk stay raw and untouched (so the
+epsilons stay calibrated against mpv's actual landing).
+
+**Two design traps found and closed — both by re-deriving from real numbers, not trusting a
+plausible label:**
+1. *The reprime trap.* An early "reprime the delta baseline at settle" idea was traced against real
+   data and found CASE-INCOMPATIBLE: same-file-paused and VT-cross-file settles want OPPOSITE
+   baselines (paused → the next raw sample stays at mpv's actual landing; VT cross-file → the next
+   raw sample catches UP to the target), so no single reprime value works for both. "Skip exactly
+   the first post-settle sample" is the only case-agnostic fix — it refuses to reconcile the
+   deliberately-created raw/logical divergence via a delta at all, waits one tick for mpv's stream
+   to stabilize, then resumes lockstep. This superseded an earlier "no-op by construction" framing
+   (which was TRUE for same-file but never validated against VT cross-file — exactly where it
+   breaks).
+2. *The `settled_this_call` ordering.* First implementation consumed the `_just_settled` skip on
+   the settle sample itself instead of the next one; caught by hand-tracing the VT numbers
+   (694.51/694.86) BEFORE testing. Fixed with a `settled_this_call` local so the skip lands on the
+   first post-settle sample.
+
+**Measured, not guessed.** `_LOGICAL_POS_RESYNC_THRESHOLD = 2.5` and the "exactly one ragged
+post-settle sample" assumption both came from live instrumentation (5879 samples / 593 settles;
+482 post-settle sequences, second sample always clean, max |delta| 0.128s, zero two-ragged cases).
+One precisely-bounded residual risk carried forward: a sub-2.5s SECOND consecutive ragged
+post-settle sample would leak, but it never occurred in the data, is capped below the resync
+threshold by construction, and cannot compound — falsification signal is "two consecutive
+post-settle samples both above the normal-playback floor."
+
+**The `b6a4023`-shape risk that did NOT recur — the whole point of the VT-first discipline.** This
+was the standing worry (CLAUDE.md "VT+Undo is the known-fragile zone"): `b6a4023` was a
+structurally similar heuristic (new tracking field + per-sample decision) that scored 32/32 clean
+under instrumentation, shipped, and still broke VT backward-seek / play-pause-icon / chapter[1]→[0]
+click for reasons never diagnosed. Per the plan, VT+Undo + those three exact surfaces were
+verified FIRST, before the drift symptom. They came back **clean** — so this fix, though the same
+SHAPE as `b6a4023`, did not share its undiagnosed failure. That is the direct payoff of not
+trusting the clean instrumentation run and front-loading the historically-fragile checks.
+
+**Live verification (the core claim, confirmed — not assumed):**
+- Chapter Next/Prev (paused + playing), Undo after a seek (VT and non-VT), VT backward-seek, the
+  play/pause icon after a settle, chapter[1]→[0] click — all clean (the `b6a4023` regression
+  surface).
+- The drift symptom itself: alternating wheel-scroll and skip-button cycles, paused and playing,
+  embedded M4B — position returns to origin instead of creeping; absolute total-elapsed/remaining
+  read exactly ("10s is 10s"); steps are steady, not compounding. Was chaotic before ("drifting
+  all around, impossible to tell boundaries apart"), now steady.
+
+**Three things this fix SURFACED but deliberately did NOT fix (each its own deferred TODO,
+2026-07-13, on `main`):**
+1. *VT restore-on-load* — the restore seek never actually executes in mpv (races the file load),
+   so VT books resume near 0. Pre-existing (silent before, because raw `time_pos` just showed 0);
+   the fix made it a visible desync. Two guards were tried and REVERTED — they only trade the
+   data-loss clobber for a UI freeze, because the seek never settles regardless; the real fix is to
+   make the seek execute. VT restore-on-load behaves exactly as on `main` — neither improved nor
+   worsened. (Entangled clobber + seek-execution item in TODO.md.)
+2. *Chapter-elapsed ~1s boundary offset* — a pre-existing `_CHAPTER_WALK_TOLERANCE` (0.5s)
+   chapter-DISPLAY artifact (absolute position stays exact), now visible because absolute got
+   exact. Untouched (epsilon zone the plan avoided).
+3. *`_PAUSED_SEEK_UNDERSHOOT_COMP` over-application* and the *chapter-slider load-time retrace*
+   (both found earlier this arc, already logged).
+
+**Discipline that paid off, recorded for the next attempt in this zone:** measure before picking
+constants; VT+Undo FIRST; re-derive from real numbers rather than defending a plausible label
+(the reprime trap and the `settled_this_call` ordering were both caught this way); and when the
+fix surfaces a deeper pre-existing bug, scope it OUT and defer it as its own item rather than
+letting the branch grow a fourth tail (VT restore-on-load).
+
 ## Cover-pool right-click silent no-op (2026-07-12)
 
 Found while investigating a user report that right-clicks aren't always registered — especially
@@ -1133,6 +1218,15 @@ other open mpv-playback issues (see the heavily-guarded MPV-seek / `_seek_target
 CLAUDE.md). Fixing it in isolation risks a can of worms. To be tackled together with the other mpv
 problems as a set, not one-by-one. Already-poisoned config/DB values won't self-heal — a one-time
 cleanup zeroing sub-threshold `pos_`/`progress` entries is a candidate when the source fix lands.
+
+**RESOLVED 2026-07-13 (`9521ee4`, branch `fix/seek-drift-logical-position`) — the "source fix" this
+entry anticipated.** The root cause named here (persisting/reading mpv's raw `time_pos` instead of
+the logical position) is exactly what `_logical_pos` fixes — the getter now returns the logical
+position, so `_save_current_progress` persists it, and the open-without-play creep no longer
+accumulates. See the top-of-NOTES entry "Compounding seek drift fixed via `_logical_pos`". The
+one-time cleanup zeroing already-poisoned sub-threshold `pos_`/`progress` values is still
+outstanding — logged as a follow-up (do it after the fix has been on `main` long enough to be
+confident, so a bad cleanup can't compound a not-yet-trusted fix).
 
 ---
 

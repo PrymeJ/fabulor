@@ -1,3 +1,51 @@
+## Session Summary — 2026-07-13 — Compounding seek-drift fix implemented, live-verified, soak-tested, and MERGED (`_logical_pos`)
+
+**Merged to `main`.** Code + tests came in as `8c51ca9` (the branch's `9521ee4` fix + `f16fa6c`
+out-of-scope comment, brought over as code-only since `main` had diverged with independent
+doc-hygiene work — see below). Docs reconciled by hand on `main` afterward rather than merging the
+branch's doc commits, to preserve that hygiene work. The `fix/seek-drift-logical-position` branch
+was the working branch; its doc edits were NOT merged (main's versions win). Deferred items logged
+directly on `main` during the session (they survive the branch): VT restore-on-load (entangled
+seek-execution + clobber, `51d0aed`→`918efe8`), chapter-elapsed ~1s boundary offset (`d1b057c`),
+plus earlier design-phase deferrals (`830e474`/`017bd69`).
+
+Implemented the design planned in Session 6 (plan file `come-to-think-of-silly-sun.md`). The fix,
+the measure-first discipline, the two design traps caught by re-deriving from real numbers (the
+reprime case-incompatibility; the `settled_this_call` ordering), the measured constants, the
+`b6a4023`-shape risk that did NOT recur because VT+Undo was verified first, and the full live
+verification are all written up at the top of NOTES.md ("Compounding seek drift fixed via
+`_logical_pos`") — not duplicated here.
+
+**Session-level arc worth remembering (the process, not the fix):**
+- Followed the plan's load-bearing order exactly: measure (already done Session 6) → implement →
+  unit tests → **live-verify VT+Undo + the three `b6a4023` surfaces FIRST** → then the drift
+  symptom → soak test → merge. All clean. This is the discipline the CLAUDE.md "VT+Undo fragile
+  zone" rule demands, and it paid off — a fix that is the same SHAPE as the reverted `b6a4023` did
+  not share its failure.
+- Hit the escalation protocol once, correctly: broad live testing surfaced a VT progress-reset
+  (data loss). Stopped, instrumented, traced it three layers deep (clobber → stranded settle →
+  restore-seek-never-executes) rather than patching inline. Tried two guards, both REVERTED once
+  live-testing showed they only traded the clobber for a UI freeze (because the underlying seek
+  never executes). Scoped VT restore-on-load fully OUT — `app.py` shipped with ZERO diff vs. the
+  pre-fix `main` (undo-fragile `_on_vt_file_switched` completely untouched); only a comment in
+  `player.py` marks the gap. The deeper bug is deferred as its own entangled item.
+- Three separate pre-existing bugs were SURFACED (not caused) by the fix making absolute position
+  exact, and each was logged and deferred rather than chased inline: VT restore-on-load, the
+  chapter-elapsed ~1s boundary display offset, and (earlier) the `_PAUSED_SEEK_UNDERSHOOT_COMP`
+  over-application + chapter-slider load retrace. Same Findings-5b/7 discipline from the design
+  phase — surface, document with evidence, defer.
+- Merge hygiene: `main` had moved since the branch point (the doc-hygiene entry below + the deferral
+  TODOs), so the merge was done as code-only (`git checkout <branch> -- player.py tests/…` after
+  confirming main hadn't touched those files) rather than a blind `git merge` that would have
+  conflicted on / duplicated the CLAUDE.md `_logical_pos` rule and clobbered main's reorg. NOTES.md
+  brought over wholesale (main hadn't touched it); SESSION/TODO reconciled by hand.
+
+**Remaining follow-up (NOT this fix):** the one-time DB/config cleanup zeroing already-poisoned
+sub-threshold `pos_`/`progress` values (the residual half of the 2026-07-06 deferral, now that the
+source fix has landed) — user cleared it to proceed; tracked in TODO.md. The
+`SEEK_DRIFT_MEASUREMENTS.md` raw-findings file lives on the branch as backup; its substance is in
+NOTES.md.
+
 ## Session Summary — 2026-07-13 — Documentation hygiene: CLAUDE.md dedup, narrative extraction, root-level file organization
 
 **Branch:** `main`. **Commits:** `8b89fdd` (merge duplicate rules), `567aba5` (extract narrative
