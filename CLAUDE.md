@@ -50,6 +50,12 @@ If you believe the cleanest solution requires crossing one of them, stop and exp
 proceeding. Don't route around them silently. The bar for crossing one is: you've identified a
 specific reason the rule doesn't apply in this case, not just that it would be simpler to ignore it.
 
+This section was reorganized 2026-07-13 to group rules that share one underlying fact under a
+single statement of that fact, instead of re-explaining the same fact in each rule's own
+paragraph. No rule, constant, date, commit hash, or piece of reasoning was removed in that pass —
+only repeated explanations were consolidated. A rule with multiple consequences lists them as
+bullets beneath the shared fact.
+
 ---
 
 ### The user sees the rendered pixels. You do not. When they say something is visually off, that is ground truth — your calculation is what's wrong.
@@ -65,27 +71,43 @@ erodes trust. Take the visual correction at face value, apply it, move on. (Adde
 exactly this failure: clinging to a wrong SCROLLBAR_EXTENT/window-width calculation and repeatedly
 questioning the user instead of applying a simple 4px nudge they'd already measured and mocked up.)
 
+Two later rules are direct consequences of this same lesson, applied to a specific widget class
+(settings-panel/tab layout bugs) where even careful headless verification kept giving false
+confidence relative to what the live app actually showed — see "DO NOT verify a settings-panel/tab
+visual layout bug with headless test scripts alone" and "DO NOT trust `QComboBox` popup
+pseudo-state QSS ... on this app's target desktop" further below.
+
 ---
 
-### DO NOT modify, refactor, or touch any code related to MPV initialization under any circumstances. This includes the _ensure_mpv() method, the load_book() method's MPV init block, the locale.setlocale(locale.LC_NUMERIC, "C") call, and all MPV constructor arguments (vo, ao, vid, ytdl, keep_open, audio_client_name). This code resolves a hard-won, non-obvious bug involving libcaca, libtinfo, and Qt's locale reset on Wayland/openSUSE. Any "improvement," "cleanup," or "fix" to this block will break the app. If you think something in this block needs changing, say so explicitly and wait for confirmation before touching it.
+### DO NOT modify, refactor, or touch any code related to MPV initialization under any circumstances.
+This includes the `_ensure_mpv()` method, the `load_book()` method's MPV init block, the
+`locale.setlocale(locale.LC_NUMERIC, "C")` call, and all MPV constructor arguments (`vo`, `ao`,
+`vid`, `ytdl`, `keep_open`, `audio_client_name`). This code resolves a hard-won, non-obvious bug
+involving libcaca, libtinfo, and Qt's locale reset on Wayland/openSUSE. Any "improvement,"
+"cleanup," or "fix" to this block will break the app. If you think something in this block needs
+changing, say so explicitly and wait for confirmation before touching it.
 
 `audio_client_name='fabulor'` (added 2026-06-26) sets mpv's `--audio-client-name`, which maps to the PulseAudio/PipeWire sink-input `application.name` property. Without it, mpv's `ao='pulse'` stream gets an unstable name (`mpv` or PID-derived), so `module-stream-restore` can't reliably remember a per-app volume across launches — symptom: openSUSE/PulseAudio resets the app's OS-level volume to some stale value (e.g. 5%) on every load, independent of the in-app volume which is correctly persisted. This does NOT fix an already-poisoned stream-restore entry — that must be cleared once via `pavucontrol` or the PipeWire/Pulse stream-restore DB; this just makes the restore key stable going forward.
 
-### DO NOT use self.player.chapter to derive which chapter the UI should display. It looks like the obvious choice but it is wrong — mpv updates the chapter property asynchronously and it will be ahead of or behind time_pos after any seek. Always derive the current chapter by walking self.player.chapter_list and finding the last entry whose time <= pos + _CHAPTER_WALK_TOLERANCE. As of Session 3 (2026-06-13) that tolerance is 0.5 (was 0.35); it must exceed mpv's measured ~0.37s PAUSED-seek undershoot, else a paused Next/Prev resolves the chapter just left and the chapter slider sticks. (The old "~0.25s short of nominal" rationale was disproven by measurement: mpv overshoots ~0.09s while playing and undershoots ~0.37s while paused.) This rule applies everywhere in _sync_chapter_ui and any future method that maps a playback position to a chapter index.
+### DO NOT use `self.player.chapter` to derive which chapter the UI should display
+It looks like the obvious choice but it is wrong — mpv updates the chapter property asynchronously and it will be ahead of or behind time_pos after any seek. Always derive the current chapter by walking `self.player.chapter_list` and finding the last entry whose `time <= pos + _CHAPTER_WALK_TOLERANCE`. As of Session 3 (2026-06-13) that tolerance is 0.5 (was 0.35); it must exceed mpv's measured ~0.37s PAUSED-seek undershoot, else a paused Next/Prev resolves the chapter just left and the chapter slider sticks. (The old "~0.25s short of nominal" rationale was disproven by measurement: mpv overshoots ~0.09s while playing and undershoots ~0.37s while paused.) This rule applies everywhere in `_sync_chapter_ui` and any future method that maps a playback position to a chapter index.
 
-### DO NOT connect _on_file_ready to the file_loaded signal. It must only connect to book_ready. book_ready fires once per book (before any file for VT books; after file-loaded for non-VT). file_loaded fires on every mpv file-loaded event including VT file switches mid-book. If _on_file_ready runs on every file switch, it triggers position restore, which triggers another file switch, causing a quadruple-advance feedback loop. This was the root cause of two reverted stage 3 implementations.
+### DO NOT connect `_on_file_ready` to the `file_loaded` signal — it must only connect to `book_ready`
+`book_ready` fires once per book (before any file for VT books; after file-loaded for non-VT). `file_loaded` fires on every mpv file-loaded event including VT file switches mid-book. If `_on_file_ready` runs on every file switch, it triggers position restore, which triggers another file switch, causing a quadruple-advance feedback loop. This was the root cause of two reverted stage 3 implementations.
 
 **book_ready invariant:** For VT books, `book_ready` is emitted from `ungate_play` or `_on_playlist_resolved` (before any file loads, while VT state is ready). `_on_file_loaded` never emits `book_ready` for VT books — it emits `file_switched` instead. For non-VT books (M4B, single-file), `_on_file_loaded` is the only emitter of `book_ready`. These two paths are mutually exclusive and must never converge.
 
 **Book-switch state machine (`book_switch.py`, `self._switch: BookSwitchState`):** The switch-specific transition flags live on one object, not as loose `MainWindow` attributes. `phase` (`IDLE`/`LOADING`/`RESTORING`) is *derived* from the sub-flags, so there is no fragile terminal transition. Flag mapping (old attr → SM): `_mpv_ready` → `in_deadzone` (inverted; set by `begin()` at selection, cleared by `library_revealed()` in `panels._on_library_hidden`); `_pre_switch_slider_value` → `flow_pending_progress` + `take_progress_target()`; `_pre_switch_chap_slider_value` → `flow_pending_chapter` + `take_chapter_target()`; `_chaps_dur_retried`/`_file_ready_deferred`/`_chaps_deferred` → same-named SM members. The SM owns ONLY switch-specific state. The **orthogonal** guards — `player._is_seeking`/`_seek_target`, the slider-drag flags, `_flow_anim` running state, `mp3_seek_reload_pending` — stay separate and the SM composes with them (e.g. `_sync_progress_sliders` reads `not is_seeking and not slider_animating and not self._switch.flow_pending_progress`). Do NOT fold those into the SM: they fire for chapter nav / manual seeks / theme color animations and are the fixes for the rules below. Known gap: no stale-book guard on rapid switching (the SM is the natural home for a future `generation` counter, deliberately not added). **Consume-once constraint:** `take_progress_target()`/`take_chapter_target()` are consuming reads — each captured value can be read exactly once, which is what flips `flow_pending_*` to False and tears the switch down. A future fix that needs to *inspect* a pre-value without consuming it must add a non-consuming peek property; do NOT read-then-restore via `take()`, and do NOT make a guard depend on `take()`'s side effect.
 
-### DO NOT read self.progress_slider.value() (or any slider's .value()) in _on_file_ready to compute the "new position" for a switch animation. The slider value is stale at that point — _update_ui_sync's setValue call is gated on not slider_animating, not is_seeking, and not self._switch.flow_pending_progress, and may not have run yet. The legitimate pre-switch capture happens earlier, in self._switch.begin(...) at selection time; _on_file_ready consumes it via self._switch.take_progress_target(). Always compute the target slider value from the authoritative data: int((new_progress / self.player.duration) * 1000).
+### DO NOT read `self.progress_slider.value()` (or any slider's `.value()`) in `_on_file_ready` to compute the "new position" for a switch animation
+The slider value is stale at that point — `_update_ui_sync`'s `setValue` call is gated on `not slider_animating`, `not is_seeking`, and `not self._switch.flow_pending_progress`, and may not have run yet. The legitimate pre-switch capture happens earlier, in `self._switch.begin(...)` at selection time; `_on_file_ready` consumes it via `self._switch.take_progress_target()`. Always compute the target slider value from the authoritative data: `int((new_progress / self.player.duration) * 1000)`.
 
-**Duration race corollary (also _on_file_ready and _on_file_loaded_populate_chapters):** For non-VT books, `player.duration` (`_cached_duration`) is populated by an mpv property observer on the mpv thread. In rare timing conditions it may be None when the queued `book_ready` signal is processed on the Qt main thread. Two rules apply: (1) in `_on_file_ready`, if `not dur`, set `new_val = None` and skip the animation entirely — never animate to 0 as a fallback, because `not dur` and `new_progress == 0` are different cases; (2) in `_on_file_loaded_populate_chapters`, if `not dur`, schedule a 150ms retry via the `self._switch.chaps_dur_retried` flag (reset on each book selection by `self._switch.begin(...)` in `_on_book_selected_from_library`) rather than calling `_set_chapter_ui_active(False)` prematurely — that makes the chapter label text transparent for the entire session.
+**Duration race corollary (also `_on_file_ready` and `_on_file_loaded_populate_chapters`):** For non-VT books, `player.duration` (`_cached_duration`) is populated by an mpv property observer on the mpv thread. In rare timing conditions it may be None when the queued `book_ready` signal is processed on the Qt main thread. Two rules apply: (1) in `_on_file_ready`, if `not dur`, set `new_val = None` and skip the animation entirely — never animate to 0 as a fallback, because `not dur` and `new_progress == 0` are different cases; (2) in `_on_file_loaded_populate_chapters`, if `not dur`, schedule a 150ms retry via the `self._switch.chaps_dur_retried` flag (reset on each book selection by `self._switch.begin(...)` in `_on_book_selected_from_library`) rather than calling `_set_chapter_ui_active(False)` prematurely — that makes the chapter label text transparent for the entire session.
 
 **Chapter flow animation target:** `_on_file_loaded_populate_chapters` must compute `new_chap_val` from a chapter-list walk against `new_progress` (same algorithm as `_sync_chapter_ui`), NOT from `self.chapter_progress_slider.value()`. At the time this handler runs, the 200ms timer has not ticked; the slider still holds the previous book's chapter position, which equals `pre_chap`, making `pre_chap != new_chap_val` always False and degrading `animate_to` to `setValue`.
 
-### DO NOT remove the animation-state guard in _sync_progress_sliders or _sync_chapter_ui. Both methods check whether the flow animation is running before calling setValue. If that check is removed, the 200ms UI timer will fight the animation frame-by-frame, causing visible jitter. The guard must survive any refactor of those methods.
+### DO NOT remove the animation-state guard in `_sync_progress_sliders` or `_sync_chapter_ui`
+Both methods check whether the flow animation is running before calling `setValue`. If that check is removed, the 200ms UI timer will fight the animation frame-by-frame, causing visible jitter. The guard must survive any refactor of those methods.
 
 ### DO NOT remove the `self._switch.flow_pending_chapter` guard from `_sync_chapter_ui`
 (Formerly `_pre_switch_chap_slider_value is not None` — same predicate, now read off the switch state machine.) Without this guard the 200ms timer can fire between the pre-switch capture in `self._switch.begin(...)` (`_on_book_selected_from_library`) and the `animate_to()` call in `_on_file_loaded_populate_chapters`, writing `setValue(chapter_at_pos_0)` to the slider. `animate_to()` then resets `_value = start` (= pre_chap) before animating, so the user sees: pre_chap → 0 (timer) → pre_chap (animate_to reset) → flow. This is the "blinks first, jumps, then flows" artifact. Mirrors the `flow_pending_progress` guard in `_sync_progress_sliders`. The capture is consumed once via `self._switch.take_chapter_target()`.
@@ -102,6 +124,10 @@ The original `if self._seek_target is None or abs(...) < 1.0` condition caused a
 
 ### DO NOT store `_seek_target` in LOCAL coordinate space (it must be GLOBAL)
 The settle in `_on_time_pos_change` is `abs((value + _file_offset) − _seek_target) < 1.0` — `_seek_target` is compared against the GLOBAL position, so it MUST be global. The VT cross-file follow-up seek in `_on_file_loaded` previously stored `_seek_target = pending` (a LOCAL offset into the just-loaded file); for any file past the first, `abs(global − local) ≈ cumulative_start` never fell below 1.0, so `is_seeking` stuck True forever → permanent chapter-UI freeze (FIXED 2026-06-15, `29b266c`). Correct form there: `_seek_target = pending + target_file['cumulative_start']` (use the timeline entry, self-consistent with `_current_vt_index`, not the bare `_file_offset` field); the mpv `command_async('seek', pending, ...)` stays LOCAL. The `[VT-DESYNC]` tripwire in `_on_file_loaded` guards the assumption that VT loads are serialized (verified — see NOTES).
+
+This is the GLOBAL/local coordinate convention `_logical_pos` (added 2026-07-13, see the
+"`Player.time_pos` returns `_logical_pos`" rule further below) also follows — always GLOBAL,
+matching `_seek_target`'s convention.
 
 ### DO NOT set `is_seeking = True` outside of `seek_async` / a path that also sets `_seek_target`
 `is_seeking` and `_seek_target` are cleared together by the settle (`...and _seek_target is not None`), so any path that sets `is_seeking = True` WITHOUT a matching `_seek_target` strands the flag → settle can never clear it → permanent freeze. This bit twice: the chapter-list-click native path (fixed) and `handle_prev`/`handle_next`/`_on_prev_right_click` setting `is_seeking = True` unconditionally after a nav call that no-ops at the chapter[0]/last-chapter boundary (FIXED 2026-06-15, `29b266c`). Rule: let `seek_async` own `is_seeking` — it sets both together, and ONLY when it actually seeks. Do not re-add app-level `is_seeking = True` to nav handlers.
@@ -121,6 +147,12 @@ The load-bearing lesson is not any one of these bugs — it's that clean instrum
 **Standing rule:** any seek/position-tracking change verifies VT+Undo FIRST, before verifying the symptom the change was meant to fix. If something regresses, stop and report rather than patching inline — patching around an undiagnosed regression in this zone has not worked before.
 
 Full incident detail: NOTES.md entries dated 2026-06-06 (×2) and 2026-06-15; commits `12dcf32`→`a506de9`, `4ae0783`/`92902cd`.
+
+**`Player.time_pos` returns `_logical_pos` (the app's believed position), NOT raw mpv `_cached_time_pos` — and the two must stay decoupled** (added 2026-07-13 to fix compounding seek drift, `9521ee4`, live-verified — this change also fell under, and was verified against, the VT+Undo standing rule above). `time_pos`'s getter returns `_logical_pos` when set, falling back to the raw `_cached_time_pos` path only before the first sample of a book. `_logical_pos` is the fix for the drift class where `time_pos` was reading mpv's raw per-seek landing residual (the ~0.09/0.37s over/undershoot `_PAUSED_SEEK_UNDERSHOOT_COMP` compensates), so every subsequent seek computed its target from an imprecise base and residuals compounded (alternating scroll/skip crept to EOF). Load-bearing invariants:
+- **`_logical_pos` is ALWAYS GLOBAL** (matches `_seek_target`'s convention — never add `_file_offset` to it). Never conflate with `_cached_time_pos`, which is FILE-LOCAL for VT. Do NOT couple a `_logical_pos` write to any `_cached_time_pos` write.
+- **`_cached_time_pos` stays raw, unconditional, every sample** — untouched by this fix. It is the raw mirror the chapter-walk and settle-detection read, pinned by `tests/test_seek_state.py::test_cached_time_pos_tracks_every_sample`. The chapter-walk-and-emit block in `_on_time_pos_change` MUST keep reading raw `value`/`global_pos`, never `_logical_pos` — that is what keeps `_CHAPTER_WALK_TOLERANCE`/the seek epsilons calibrated against mpv's actual landing.
+- **Lifecycle** (`_on_time_pos_change` maintenance block): set to the target at every `_seek_target` write site; adopted EXACTLY from `_seek_target` at settle (discarding the residual) with `_just_settled = True`; the first post-settle sample is SKIPPED (does not accumulate) so the discarded residual is not re-added; advanced by raw-sample delta during normal playback; resynced to raw on a delta above `_LOGICAL_POS_RESYNC_THRESHOLD` (2.5s, measured). Do NOT replace the `_just_settled` skip-one with a "reprime the baseline at settle" formulation — that was traced and found case-incompatible (same-file-paused vs. VT cross-file want opposite baselines; the reprime breaks whichever it isn't tuned for). Skip-one is the only case-agnostic fix.
+- **Known out-of-scope gap (deferred, NOT a regression vs. main):** VT restore-on-load. `_on_vt_file_switched` clears `is_seeking` while the restore seek is still pending, and the restore seek itself never executes in mpv (a separate pre-existing bug) — so VT books resume near 0 exactly as on main. This fix neither improves nor worsens that; do NOT add a `_seek_target is None` guard to the maintenance block or narrow `_on_vt_file_switched` to "fix" it (both were tried and reverted — they only trade the data-loss clobber for a UI freeze, because the seek never settles regardless). See TODO.md 2026-07-13 (the entangled VT restore-on-load item).
 
 ### DO NOT let `_do_fade_with_slider_animation` iterate `chapter_progress_slider` when `_chapter_ui_active` is False
 The slider loop in `_do_fade_with_slider_animation` must skip `chapter_progress_slider` when `mw._chapter_ui_active` is `False`. The theme overlay punch-through re-exposes the slider during the window between `_apply_stylesheets` (which repolishes child widgets and overwrites transparent colors with theme colors) and the `_set_chapter_ui_active` reapplication at the end of `_apply_stylesheets`. Without the guard the slider briefly renders at full opacity, causing a visible flash. Guard: `if attr == 'chapter_progress_slider' and not mw._chapter_ui_active: continue`.
@@ -164,36 +196,41 @@ player both still valid, so the position read is also correct), THEN clear `_cur
 `current_file`, THEN `player.terminate()`. `tests/test_session_recorder.py` pins this contract —
 keep it green on any change to `_on_book_removed` or to `SessionRecorder.close()`'s guard.
 
-### DO NOT hard-delete from the `books` table
-`remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
+---
 
-### DO NOT conflate `is_deleted`, `is_excluded`, and `is_missing`
-Three independent soft-delete-ish flags on `books`. `is_deleted = 1` is set by `remove_scan_location` (location removed from scan list). `is_excluded = 1` is set by `set_book_excluded` (user explicitly removed a book via the trash button) — ONLY. `is_missing = 1` is set by `set_book_missing`/`mark_books_missing` (confirmed gone from disk) — a separate flag, added 2026-06-27 specifically to stop conflating it with `is_excluded` (see the ping-pong bug below). `is_deleted` and `is_missing` both reset to `0` in the `upsert_book`/`upsert_books_batch` ON CONFLICT blocks (self-healing — the upsert only ever runs for a path the scanner just found on disk, so rediscovery is unambiguous); **`is_excluded` is sticky and does NOT reset on upsert** (`is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END`). Stats queries are intentionally unfenced by all three flags — listening history and progress survive removal permanently.
+#### Soft-delete flags on `books` (`is_deleted` / `is_excluded` / `is_missing`) — one shared fact, five consequences
+
+`books` has three independent soft-delete-ish flags, each with a distinct owner and a distinct reset policy. Getting any of the consequences below wrong re-opens a bug that has already shipped and been fixed once.
+
+- `is_deleted = 1` — set by `remove_scan_location` (location removed from scan list); cleared by `restore_books_under_path` (only when `is_excluded=0`) or by any upsert (self-healing).
+- `is_excluded = 1` — set by `set_book_excluded` (user explicitly removed a book via the trash button) — ONLY. Untouched by removal/restore. **Sticky**: does NOT reset on upsert (`CASE WHEN books.is_excluded THEN 1 ELSE 0 END`, added 2026-06-27, reversing the old "rescan resets both flags" behavior). The ONLY restore path is `set_book_excluded(path, False)` — called from the **Excluded Books** popup in the Library settings tab (`ui/excluded_books.py`, driven by `db.get_excluded_books()`); `restore_books_under_path` is NOT one (it only touches `is_deleted`).
+- `is_missing = 1` — set by `set_book_missing`/`mark_books_missing` (confirmed gone from disk) — a separate flag, added 2026-06-27 specifically to stop conflating it with `is_excluded`. **Self-heals** on any upsert, unconditionally — the OPPOSITE of `is_excluded`'s stickiness; do not copy the `is_excluded` CASE WHEN pattern onto it.
 
 **The ping-pong bug (2026-06-27) — why `is_missing` exists as its own flag:** `mark_books_missing`/`_mark_book_missing` used to write `is_excluded=1` for a book confirmed gone from disk (same flag as user-trash). The Excluded Books popup's eye-click restore (`set_book_excluded(path, False)`) treated every row identically — for a missing-flagged row, that put a file-less book back in the visible library; the user tried to load it; `_mark_book_missing` fired again (still no file) and put it right back in Excluded Books. Infinite loop ("Schrödinger's audiobook"). Fix: missing-detection now writes the dedicated `is_missing` flag instead, and `get_excluded_books()` filters `is_missing=1` rows out entirely — there's no restore action that makes sense for a book that isn't there. **Accepted edge case, not a bug:** a book can be both `is_excluded=1` AND `is_missing=1` (trashed an already-missing book, or trashed before discovery). While missing it's correctly hidden from the popup; when the file returns, `is_missing` self-heals on upsert but `is_excluded` stays sticky — the book reappears in the popup (visible again) but not the library, with no proactive notification. The user could forget about it. Out of scope, accepted.
 
-**Scanner resurrection behaviour:** `scanner.py` builds `known_paths` from `get_all_book_paths()` (unfenced — all rows regardless of flags). Excluded/deleted/missing books are therefore recognised as known and skipped during non-force scans, so they are NOT automatically resurfaces. A force rescan (`force_refresh=True`, triggered by the Rescan button) re-processes all paths and calls `upsert_books_batch`, which resets `is_deleted` and `is_missing` to 0 (resurrecting location-removed/rediscovered books) but **keeps `is_excluded` sticky**. Do NOT change `known_paths` to use `get_all_books()` or any fenced query — doing so caused excluded books to be silently resurfaces on every scan (2026-06-06 bug).
+Consequences of this shared fact, each independently load-bearing:
 
-**Sticky `is_excluded` (2026-06-27):** Both upserts use `is_excluded=CASE WHEN books.is_excluded THEN 1 ELSE 0 END`, NOT a bare `is_excluded=0`. A user-trashed book stays excluded across any number of rescans. The ONLY restore path is `set_book_excluded(path, False)` — called from the **Excluded Books** popup in the Library settings tab (`ui/excluded_books.py`, driven by `db.get_excluded_books()`); `restore_books_under_path` is NOT one (it only touches `is_deleted`). Keep both upserts in lockstep on this (the "DO NOT keep upsert_book and upsert_books_batch out of sync" rule covers it). `is_missing` is the OPPOSITE — see below — do not give it the same sticky treatment.
-
-**Scanner missing-book detection (force rescan only, 2026-06-26, flag corrected 2026-06-27):** A force rescan also *creates* `is_missing=1` rows (it is no longer purely additive/resurrective). After Phase 1, for each location whose root `exists()` (`walked_locations`), `ScannerWorker.run_scan` diffs `db.get_visible_book_paths_under(loc)` (currently-visible books, `is_deleted=0 AND is_excluded=0 AND is_missing=0`) against the folders rediscovered on disk and calls `db.mark_books_missing(paths)` (batch `is_missing=1`) for any visible book whose folder is gone. **This writes `is_missing`, NOT `is_excluded`** — see the ping-pong bug note above for why that distinction is load-bearing. The book stays in DB/stats and self-heals (is_missing clears) the moment a later scan rediscovers the folder — no sticky-flag exception needed for that, unlike `is_excluded`. Two guards are load-bearing and must survive any refactor: (1) it runs ONLY on `force_refresh=True`, never on non-force scans; (2) it is scoped to `walked_locations` ONLY — an offline/unmounted location (root `exists()` False) is never in that list, so its books are NEVER falsely flagged when its drive is detached. The inner per-folder `entry.iterdir()` audio check is wrapped in `try/except (PermissionError, OSError)`; skipped folders accumulate in a function-scoped `skipped_dirs` set (initialized once at the top of `run_scan`, only `.add()`ed, never reassigned) that is folded into the `discovered` set, so a transient per-folder I/O error never reads as "folder gone". Do NOT scope `skipped_dirs`/`walked_locations` inside the loop or the except block.
-
-**Location-readd resurrection (`restore_books_under_path`, 2026-06-08):** Re-adding a previously-removed scan location used to leave its books permanently hidden — `remove_scan_location` soft-deletes (`is_deleted=1`) but the scanner's `known_paths` skip (above) means a routine scan never re-processes those paths to flip the flag back, forcing a manual force rescan. `db.restore_books_under_path(path)` un-soft-deletes (`is_deleted=0`) books under `path`, called from `_on_scan_now_clicked` immediately after `add_scan_location`. It is intentionally narrower than a force rescan: it only flips `is_deleted`, gated on `is_excluded = 0`, so user-trashed books stay hidden and still require a manual force rescan — it must NOT touch `is_excluded`. This is a different code path from the scanner/`upsert_books_batch` resurrection above; keep them conceptually separate.
+1. **DO NOT hard-delete from the `books` table.** `remove_scan_location` soft-deletes via `UPDATE books SET is_deleted = 1` — never `DELETE FROM books`. All rows, progress, covers, `book_files`, and session history must survive a location removal so they can be resurrected when the location is re-added. Any query that drives the library view must include `WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0`. Stats queries must not — they key off `book_path`/`book_title` in the sessions tables directly and must see all historical rows.
+2. **DO NOT conflate the three flags** with each other — see the per-flag descriptions above. "Visible" = all three 0. Stats queries are intentionally unfenced by all three flags — listening history and progress survive removal permanently.
+3. **Scanner resurrection behaviour:** `scanner.py` builds `known_paths` from `get_all_book_paths()` (unfenced — all rows regardless of flags). Excluded/deleted/missing books are therefore recognised as known and skipped during non-force scans, so they are NOT automatically resurfaced. A force rescan (`force_refresh=True`, triggered by the Rescan button) re-processes all paths and calls `upsert_books_batch`, which resets `is_deleted` and `is_missing` to 0 (resurrecting location-removed/rediscovered books) but **keeps `is_excluded` sticky**. Do NOT change `known_paths` to use `get_all_books()` or any fenced query — doing so caused excluded books to be silently resurfaced on every scan (2026-06-06 bug).
+4. **Scanner missing-book detection (force rescan only, 2026-06-26, flag corrected 2026-06-27):** A force rescan also *creates* `is_missing=1` rows (it is no longer purely additive/resurrective). After Phase 1, for each location whose root `exists()` (`walked_locations`), `ScannerWorker.run_scan` diffs `db.get_visible_book_paths_under(loc)` (currently-visible books, `is_deleted=0 AND is_excluded=0 AND is_missing=0`) against the folders rediscovered on disk and calls `db.mark_books_missing(paths)` (batch `is_missing=1`) for any visible book whose folder is gone. **This writes `is_missing`, NOT `is_excluded`** — see the ping-pong bug note above for why that distinction is load-bearing. The book stays in DB/stats and self-heals (is_missing clears) the moment a later scan rediscovers the folder — no sticky-flag exception needed for that, unlike `is_excluded`. Two guards are load-bearing and must survive any refactor: (1) it runs ONLY on `force_refresh=True`, never on non-force scans; (2) it is scoped to `walked_locations` ONLY — an offline/unmounted location (root `exists()` False) is never in that list, so its books are NEVER falsely flagged when its drive is detached. The inner per-folder `entry.iterdir()` audio check is wrapped in `try/except (PermissionError, OSError)`; skipped folders accumulate in a function-scoped `skipped_dirs` set (initialized once at the top of `run_scan`, only `.add()`ed, never reassigned) that is folded into the `discovered` set, so a transient per-folder I/O error never reads as "folder gone". Do NOT scope `skipped_dirs`/`walked_locations` inside the loop or the except block.
+5. **Location-readd resurrection (`restore_books_under_path`, 2026-06-08):** Re-adding a previously-removed scan location used to leave its books permanently hidden — `remove_scan_location` soft-deletes (`is_deleted=1`) but the scanner's `known_paths` skip (above) means a routine scan never re-processes those paths to flip the flag back, forcing a manual force rescan. `db.restore_books_under_path(path)` un-soft-deletes (`is_deleted=0`) books under `path`, called from `_on_scan_now_clicked` immediately after `add_scan_location`. It is intentionally narrower than a force rescan: it only flips `is_deleted`, gated on `is_excluded = 0`, so user-trashed books stay hidden and still require a manual force rescan — it must NOT touch `is_excluded`. This is a different code path from the scanner/`upsert_books_batch` resurrection above; keep them conceptually separate.
 
 ### DO NOT swap `get_book_count()` and `get_visible_book_count()` — they serve different purposes
 `get_book_count()` queries `SELECT COUNT(*) FROM books` — all rows, including `is_deleted=1` and `is_excluded=1`. Correct for stats (which must see all historical rows). `get_visible_book_count()` queries with `WHERE is_deleted = 0 AND is_excluded = 0` — only rows visible in the library. `compute_library_state` uses `get_visible_book_count()` for `has_indexed_books`; never change it to `get_book_count()`. Using the unfenced count would make `has_indexed_books=True` even when the library panel shows 0 books (soft-deleted rows from a prior scan remain in the DB), routing the empty state into the no-book carousel instead of the scan/quote prompt.
 
-### DO NOT pass `0.0` as `progress` to `upsert_book` or `upsert_books_batch`
-The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
+---
 
-### DO NOT keep upsert_book and upsert_books_batch out of sync
-Both methods share identical SQL logic — any schema or ON CONFLICT guard change in one MUST be applied to the other. They differ only in execute vs executemany. The `CASE WHEN books.X_locked` guards for title, author, narrator, year are load-bearing: they prevent rescans from overwriting user-edited metadata. Skipping this sync causes silent data loss on rescans. (Implementation uses the bare-truthy form `CASE WHEN books.title_locked THEN ...`, not `= 1` — equivalent in SQLite since the column is `INTEGER NOT NULL DEFAULT 0`.)
+#### Metadata-preservation guards in `upsert_book`/`upsert_books_batch`/`reparse_library` — one shared fact, three consequences
 
-### DO NOT remove the CASE WHEN books.X_locked guards from upsert ON CONFLICT
-The guards `CASE WHEN books.title_locked THEN books.title ELSE excluded.title END` (and narrator/author/year equivalents) protect user-edited metadata from being overwritten by rescans. They must survive any future refactor. (The guard reads `books.title` on the locked branch and `excluded.title` on the unlocked branch; the bare-truthy `WHEN books.title_locked` is equivalent to `= 1` in SQLite.)
+`upsert_book` and `upsert_books_batch` share identical SQL logic (execute vs executemany) and both use `CASE WHEN books.X_locked THEN books.X ELSE excluded.X END` guards (title/author/narrator/year) so a rescan cannot silently clobber user-edited, locked metadata. (Implementation uses the bare-truthy form `CASE WHEN books.title_locked THEN ...`, not `= 1` — equivalent in SQLite since the column is `INTEGER NOT NULL DEFAULT 0`.) `reparse_library` (the naming-pattern re-split) shares the same underlying concern from a different code path.
 
-### DO NOT remove the lock guard from `reparse_library`
-`reparse_library(pattern)` re-splits every book's `title`/`author` from `folder_name_raw` when the Library tab's naming-pattern button is clicked. Its `UPDATE` MUST keep the `CASE WHEN title_locked THEN title ELSE ? END` / `CASE WHEN author_locked THEN author ELSE ? END` guards (added 2026-06-27) — without them a naming-pattern click silently clobbers user-edited, locked title/author for the WHOLE library (it was the one write path that ignored locks; every other path — both upserts — guards them). `folder_name_raw` still re-stores unconditionally (it is the raw source string, not user-editable metadata). Param order is `(new_title, new_author, raw, id)`; the CASE WHEN handles preservation. `tests/test_reparse_library.py` pins this (both-locked preserved, title-only, author-only) — keep it green.
+1. **DO NOT pass `0.0` as `progress`** to `upsert_book` or `upsert_books_batch`. The scanner does not know a book's saved playback position. Pass `None` if progress is unknown. The `COALESCE(NULLIF(excluded.progress, 0.0), books.progress)` in both upserts is a safety net against accidental `0.0` — it is not a contract that callers can rely on. Passing `0.0` would overwrite saved progress on any future DB engine that handles `NULLIF` differently.
+2. **DO NOT keep `upsert_book` and `upsert_books_batch` out of sync.** Any schema or ON CONFLICT guard change in one MUST be applied to the other. Skipping this sync causes silent data loss on rescans.
+3. **DO NOT remove the `CASE WHEN books.X_locked` guards** from either upsert's ON CONFLICT clause. They must survive any future refactor. (The guard reads `books.title` on the locked branch and `excluded.title` on the unlocked branch.)
+4. **DO NOT remove the lock guard from `reparse_library`.** `reparse_library(pattern)` re-splits every book's `title`/`author` from `folder_name_raw` when the Library tab's naming-pattern button is clicked. Its `UPDATE` MUST keep the `CASE WHEN title_locked THEN title ELSE ? END` / `CASE WHEN author_locked THEN author ELSE ? END` guards (added 2026-06-27) — without them a naming-pattern click silently clobbers user-edited, locked title/author for the WHOLE library (it was the one write path that ignored locks; every other path — both upserts — guards them). `folder_name_raw` still re-stores unconditionally (it is the raw source string, not user-editable metadata). Param order is `(new_title, new_author, raw, id)`; the CASE WHEN handles preservation. `tests/test_reparse_library.py` pins this (both-locked preserved, title-only, author-only) — keep it green.
+
+---
 
 ### DO NOT add separate save/lock widgets to BookDetailPanel
 The metadata action button state is driven exclusively by `_MetaActionState` enum. Do not add `_save_label` or `_lock_btn` widgets — use `_set_meta_state()` to manage appearance.
@@ -203,6 +240,220 @@ The metadata action button state is driven exclusively by `_MetaActionState` enu
 
 ### DO NOT call `_set_chapter_ui_active(False)` unconditionally at book selection time
 For chaptered→chaptered switches, the chapter slider must remain visible and at the old position — it is the flow animation's start point. Hiding it unconditionally kills the flow: the slider clears, blinks, then animates from the old position instead of flowing smoothly. Protection against the `_set_bg_suppressed` repolish is handled by a lightweight `bg_color`/`fill_color` re-assert in `_set_bg_suppressed` itself, guarded by `not _chapter_ui_active`. That re-assert fires only when the slider is already inactive and is the correct and only place for this protection. The preemptive `_set_chapter_ui_active(False)` that previously lived in `_on_book_selected_from_library` was removed for exactly this reason — do not restore it.
+
+### DO NOT seek to a position within 2 seconds of a file's duration
+mpv hangs silently when seeked within ~2s of EOF — no error, no event, no recovery. Every `command_async('seek', ...)` or `loadfile start=X` call must be preceded by a guard that returns early if `duration - pos < 2.0`. Guards currently live in `seek_async` (player.py): VT same-file branch checks `target_file['duration'] - local_pos < 2.0`; non-VT branch checks `self._cached_duration - pos < 2.0`. The stop-and-load path has its own 5s buffer. If any new seek path is added, the buffer must be present.
+
+### DO NOT join `book_events` directly into a query that aggregates `listening_sessions`
+The join produces a cartesian product (sessions × finished events per book) before GROUP BY, inflating `SUM(listened_seconds)` by the finished event count. Always use a correlated scalar subquery: `(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) FROM book_events be WHERE be.book_id = b.id) as is_finished`. Applies to `get_daily_book_breakdown`, `get_books_listened_in_period`, and any future query with the same shape.
+
+### DO NOT query `books.finished_at` for finished state — it is never written
+`books.finished_at` exists in the schema but is only ever reset to NULL (`reset_stats`/`delete_book_stats`); nothing populates it. The authoritative source is `book_events` with `event_type = 'finished'`. All finished-book queries use it (`get_finished_book_data`, `get_recently_finished`, `get_streak_grid_finished_dates`). Querying `books.finished_at` returns silently empty.
+
+---
+
+#### `get_streaks()` and `StreakGrid`'s cache must derive the longest run from the SAME listened-day set — one shared fact, two consequences
+
+As of 2026-06-12 a "listened day" is `session (start OR end adjusted-date) OR 'finished' book_event` (finished ⟹ listened). Both the SQL side (`get_streaks`, `build_streak_grid_cache`) and the Python side (`StreakGrid._compute_longest_run`) must agree on this exact day-set, or the streak count and the grid's visual longest-run/cell fills silently diverge.
+
+1. **DO NOT keep `StreakGrid` from cross-checking its longest run against `get_streaks()['longest']`.** `get_streaks(day_start_hour)` returns only counts (`current`/`longest`), not which days. `StreakGrid._compute_longest_run(cache)` derives the longest-run **date set** independently (ISO sort + consecutive scan; most-recent wins on tie via `>=`). The invariant `len(self._longest_dates) == streak_info['longest']` must hold — two independent paths over the same listened-day set (SQL `get_streaks` union vs. Python scan over `streak_grid_cache`). Both paths must include finished adjusted-dates: `get_streaks` unions them into its day set; the cache write sites add them to `streak_grid_cache`. A divergence means the two drifted — an attribution change applied to some of the six finished⟹listened sites but not all (`build_streak_grid_cache`, `_update_streak_grid_cache_for_date`, `write_book_event`, `unfinish_book`, `delete_book_stats`, `get_streaks` — see NOTES.md "StreakGrid invariant: a 'finished' day is ALWAYS a listened day"). That mismatch is the diagnostic; do NOT clamp one to the other to hide it.
+2. **DO NOT make `get_streaks` use start-date-only attribution — it must union `session_end`, matching the grid.** The streak grid (`build_streak_grid_cache`/`_update_streak_grid_cache_for_date`) has always correctly lit a cell if a session's start OR end adjusted-date matches it — a session spanning the `day_start_hour` boundary (e.g. 23:55→00:05, or 04:53→06:02 with `day_start_hour=5`) genuinely was listened to on both of those adjusted-days, and the grid cells were right to reflect that. The bug (found 2026-06-19, see NOTES.md "Streak count / grid cell mismatch") was that `get_streaks` — which drives the streak NUMBER, not the cells — built its day-set from `get_active_periods` (start-date only, by design: it also drives Day/Week/Month nav and must stay start-only there) plus finished events, but never unioned session end-dates. So a spanning session lit two grid cells while the streak count/label only credited one of those days. Fixed by adding a session_end-date query directly inside `get_streaks` (NOT by changing `get_active_periods`, which must remain start-only for the period navigator) and unioning it into `active_set` alongside the existing finished-event union — mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly. Do NOT "fix" this again by making the grid start-only to match `get_active_periods` — that direction was tried and reverted; the grid was correct, the streak count was the thing missing data. The Day/Week/Month tabs are explicitly start-date-only and intentionally do NOT show a spanning session twice — see NOTES.md for why full session-splitting there was scoped out as too large a change for too small a benefit.
+
+---
+
+### DO NOT add a key to "The Color Purple" without checking `_NO_BASE_INHERIT_KEYS` (themes.py)
+Every theme is resolved by `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with
+the requested theme's own dict — "The Color Purple" is the base template every other theme
+inherits from for any key it doesn't set itself. This is correct for plain literal-value keys
+(a theme that doesn't set `bg_deep` should get Purple's), but WRONG for any key whose intended
+"unset" behavior is a *derived* per-theme fallback rather than Purple's literal value — e.g.
+`streak_grid_outline`/`streak_grid_dot` (meant to fall back to a value derived from that theme's
+own `accent`, via `StreakGrid._derive_longest_fill`/`_derive_finished_dot`) and `slider_progress`
+(meant to fall back to `text_on_light_bg` → `text`). Without exclusion, Purple's literal value
+would silently inherit into every theme that doesn't define its own, masking the derived fallback
+entirely. `_NO_BASE_INHERIT_KEYS` (a tuple near `_resolve_theme`) lists every such key; `_resolve_theme`
+pops them from the copied base before overlaying. **Any new optional/fallback-driven theme key
+that "The Color Purple" itself ever defines a value for MUST be added to `_NO_BASE_INHERIT_KEYS` in
+the same change** — added 2026-06-19 (Session 4): the five tassel/bookmark keys
+(`bookmark_body`/`bookmark_icon`/`tassel_cord`/`tassel_head`/`tassel_fringe`) do NOT need to be in
+the tuple today because "The Color Purple" doesn't set any of them yet — but if it ever does (e.g.
+giving the reference theme an explicit tassel color), that addition must land together with adding
+those keys to `_NO_BASE_INHERIT_KEYS`, or every other theme that relies on the
+`tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light` fallback chain will silently start
+showing Purple's literal tassel color instead.
+
+### DO NOT fold `animate_conceal` duration logic into `HourlyHeatmap.animate_reveal`
+`animate_conceal` (on both `HourlyHeatmap` and `StreakGrid`) is **additive-only**: it reuses the `reveal_progress` property in reverse (1.0→0.0, 600ms) and is the streak↔heatmap transition's drain phase. `HourlyHeatmap.animate_reveal` and `paintEvent` stay byte-for-byte unchanged. `animate_conceal` restores the 1000ms reveal duration in its `finished` callback so the following construct wave runs full-length, and tracks its pending slot in `self._conceal_slot` (disconnect only when present — avoids `Failed to disconnect (None)`). The asymmetric duration restore is the whole point; do NOT share a `setDuration(600)` between the two methods. Relatedly: `StreakGrid.set_data` must NOT call `animate_reveal()` — the caller (`_switch_timeline_view` / `_on_tab_changed`) fires exactly one reveal on the visible grid, else the tab-change reveal double-fires and hitches.
+
+### DO NOT give the label-cascade enter/exit `_label_local` the same opacity-window formula
+`HourlyHeatmap`/`StreakGrid`'s per-label cascade (top date labels, left-gutter date/hour labels) must
+use a DIFFERENT window-placement formula for entering vs. exiting, not the same formula run with
+`_label_progress` going the other direction. Enter anchors each label's fade-in window from the START
+of the timeline (`start` to `start + span`); exit must anchor from the END (`end - span` to `end`,
+where `end = 1.0 - start`). Reusing the enter formula for exit (just feeding it a falling
+`_label_progress`) silently breaks because clamping (`max(0, min(1, ...))`) masks the asymmetry: the
+"leading" label ends up holding at full opacity until late in the exit animation instead of fading
+first, which reads as the wrong cascade direction even though the per-label rank assignment
+(`cascade_pos`) is correct. This was found and fixed 2026-06-18 — see NOTES.md "Timeline tab visual
+rework" for the verification approach (hand-computed opacity at several progress values per rank
+before trusting it visually). Also: `_label_sweep_in` must be initialized in `__init__` (both
+classes) — it was previously only ever set inside `animate_labels_in`/`animate_labels_out`, so the
+very first paint before either had run raised `AttributeError`.
+
+### DO NOT keep the streak count-up's "previous shown" value in-memory only
+`StreakGrid.animate_streak_count(previous=...)` needs to know the streak value as of the last time it
+actually animated, to decide whether to run the pause-then-tick second leg. That value MUST be
+persisted via `Config.get_last_shown_streak()`/`set_last_shown_streak()` (QSettings-backed), not kept
+only in `StreakGrid._last_animated_streak` (in-memory instance state). An in-memory-only value resets
+to `None` on every app launch, so the session's first reveal always falls into the "no prior value,
+skip the pause" branch — even when the streak genuinely grew while the app was closed. `None` (not
+`0`) is the correct "never tracked" sentinel: defaulting to `0` would make a pre-feature upgrade with
+a real non-zero streak misread "never tracked" as "previous was 0" and spuriously play a 0→N
+pause-then-tick that implies growth from nothing.
+
+### DO NOT let the Stats panel's Timeline slide-reopen skip the streak catch-up tick
+`QTabWidget.currentChanged` only fires when the active tab index changes. If the Stats panel slides
+open with Timeline already the remembered active tab (the normal case — panel was last closed on
+Timeline/Streak), `_on_tab_changed` never runs that session; the only code path is
+`refresh_current_tab() -> _refresh_time() -> StreakGrid.set_data()`, which correctly never animates the
+grid (slide-reopen must never animate grid cells/labels — established rule, see the `animate_conceal`
+rule above). Without an explicit exception, that same flow also silently swallowed the streak
+count-up: `set_data()` snapped the number straight to its new value with zero comparison against the
+persisted previous value, so a streak that grew while the panel was closed showed the new number with
+no visual call-out at all. Fix: `StatsPanel._refresh_time(streak_mode=...)` takes `"full"` (tab click /
+view-switch seam — runs the normal two-leg `animate_streak_count()`), `"catch_up"` (wired only from
+`refresh_current_tab`'s Timeline branch — calls `StreakGrid.catch_up_streak_count(previous)`, which
+snaps to the old value and ticks to the new one WITHOUT touching the grid at all), or `"none"`
+(background refreshes like `refresh_all` — leaves `set_data()`'s plain snap untouched). This is the
+one deliberate place where the streak number's animation rule diverges from the grid's blanket
+"never animate on slide-reopen" rule — the grid stays fully static every time, the number gets a
+narrow exception so a real change is never silently dropped.
+
+### DO NOT animate a UI count-up toward a target derived from a coarser/truncated value than what live tracking will show
+`_animate_percentage_label`'s tween must compute its end value as `round((new_progress/dur)*100, 1)`
+— the SAME rounding the live 200ms tracker uses (`f"{percent:.1f}%"`) — not by re-deriving a percent
+from the progress slider's `new_val` (`int((new_progress/dur)*1000)`, which TRUNCATES to the
+slider's coarser 0-1000 scale). A true value like 739.97 truncates to slider tick 739 ("73.9%") but
+rounds to "74.0%" — every book whose saved progress rounds up in its last digit reproduced a
+guaranteed one-tick jump the instant the live tracker resumed after the tween. This is a
+truncate-vs-round MATH mismatch, not a timing race — a settle-delay guard was tried first and
+confirmed not to fix it (the jump was identical with or without the delay). Any future animated
+label that shares a "coarse slider scale" data source with a "precise live display" must independently
+verify both sides actually agree on rounding before assuming a delay/guard will paper over a gap.
+
+### DO NOT trust a callee's busy/no-op guard to protect a caller's OWN side effects
+`TasselOverlay.play()`'s `_busy` flag correctly no-ops repeat calls for the bookmark slide animation
+itself, but `StatsPanel._on_tassel_clicked` also independently calls `_switch_timeline_view()` on
+every click — and that call was NOT gated on anything, so rapid clicking queued up multiple
+overlapping `_switch_timeline_view()` cycles (each its own `animate_conceal`/`animate_labels_out`
+pair) racing over the same grid visibility state, which could hang the Timeline view indefinitely
+with both grids left hidden. Fixed via a public `TasselOverlay.is_busy` property that
+`_on_tassel_clicked` checks itself before doing anything. General rule: if a caller triggers a side
+effect ALONGSIDE calling a method that has its own internal busy/idempotency guard, the guard
+living inside that method does not protect the caller's side effect — the caller must check the
+same busy state itself (via an exposed property, not by assuming the callee's no-op will be enough).
+
+### DO NOT let `TasselOverlay`'s hand cursor and clickable region diverge
+`TasselOverlay.__init__` does NOT call `setCursor(PointingHandCursor)` on the whole widget — that
+was the original (2026-06-19) implementation and it was a real UX bug: the widget is wider/taller
+than its actual clickable area (the tab rect plus the tight tassel body box, via
+`_in_hit_region()`), so a blanket cursor showed a hand over dead space where clicking did nothing.
+The cursor is instead set dynamically in `mouseMoveEvent`, calling `setCursor`/`unsetCursor` based
+on the exact same `_in_hit_region()` test that `mousePressEvent` uses. Any future change to the
+clickable region (`_tab_rect`, `_tassel_rect`) must keep reading through `_in_hit_region()` from
+both methods — do not special-case the cursor logic or the click logic separately, or they will
+silently drift apart again.
+
+### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
+clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
+
+### DO NOT call `search_field.setText(...)` directly anywhere in `LibraryPanel` outside `set_search`/`clear_tag_filter_if_active`
+Every direct write to the library search field must go through `self._programmatic_search_update = True` / `setText(...)` / `= False`, or through `clear_tag_filter_if_active()` (which already does this). `_on_search_changed` reads any unguarded `setText` as genuine user typing and overwrites `self._explicit_filter_text` — the value click-filter toggle-off/revert (author/narrator/year re-click, library reopen, left-click into the field) restores to instead of clearing to `""`. This bit twice in one day (2026-07-05, `6847330` and `a7271a5`) via two DIFFERENT pre-existing direct-`setText` call sites (`clear_tag_filter_if_active`'s old body, `focusInEvent`'s handler) that predated the guard and were never routed through it. If a new call site ever needs to change the field's text programmatically, route it through the guard or through `clear_tag_filter_if_active()` — never call `setText` on `search_field` bare.
+
+### DO NOT use `active_cover_changed` on `BookDetailPanel` as a single-arg signal
+It emits `(book_path, cover_path)` — both args required at all call sites. `CoverPanel.active_cover_changed` remains `Signal(str)`; the intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` injects `self._book_path` and re-emits. Do not connect `CoverPanel.active_cover_changed` directly to `BookDetailPanel.active_cover_changed`.
+
+### DO NOT pass raw DB rows directly to `BookDayRow` or `FinishedBookThumb`
+Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows carry only `cover_path` (scanner thumbnail); `_inject_active_covers` adds `active_cover_path` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
+
+### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
+Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
+
+### DO NOT lay out a library row from the live viewport width — reserve the scrollbar's space
+Any per-row geometry with **right-aligned** content (author, time column, progress %) must NOT derive its width or right edge from `option.rect.width()` / `r.right()` (the live viewport), because that value drops by `SCROLLBAR_EXTENT` (14px) when the vertical scrollbar appears and regains it when the scrollbar disappears — so filtering, which shrinks the list and toggles the scrollbar, makes right-aligned content jump by 14px. Lay out against a **stable** width/right edge that reserves the scrollbar gutter unconditionally: `BookDelegate._row_content_width(...)` (= `view.width() - 2*frameWidth - SCROLLBAR_EXTENT`) and `_row_stable_right(r)` (the stable right-edge x, use in place of `r.right()`) — 2026-07-06. The view width is fixed (the scrollbar takes space *inside* it, shrinking the viewport but not the view), so this is constant regardless of scrollbar state. Left-aligned content (title, the progress bar itself) is unaffected. **Fixed in both List (`_list_author_layout`, commit `9c20f40`) and 1-per-row (`_paint_one_per_row`, commit `9f8b06f`).** When adding ANY new right-aligned row content in ANY mode, route it through `_row_stable_right`/`_row_content_width`, never `r.right()`/`option.rect.width()` directly.
+
+### DO NOT size a fixed-width IconMode grid cell against the nominal viewport width with zero slack
+`QListView`'s default `frameWidth()` is 1px, taken off BOTH sides of the viewport (2px total) — the
+real usable width for column math is `nominal_width - 2*frameWidth`, not the nominal width itself.
+Confirmed live (2026-07-10): sizing 2-per-row's cell at `w=146` so `2*146` landed exactly on the
+292px nominal viewport (zero slack) silently collapsed the grid to a single column — Qt had no
+room to fit two cells once the real frame-adjusted width (290) was accounted for. Fixed by using
+`cell_w=145` (`2*145=290`). Any future fixed-width grid-cell sizing in `library.py` must budget
+against the frame-adjusted width, or verify live that the exact intended column count actually
+renders — this failure mode is silent (no error, no log, just fewer columns) and is NOT caught by
+arithmetic that only checks against the nominal window width.
+
+### DO NOT use a uniform per-cell margin when a grid mode needs a middle gap smaller than its outer margins
+For two adjacent cells sharing a uniform left/right margin `L`/`R` (every grid mode before
+2-per-row), the visual gap between them is always `R + L` — with the normal symmetric case
+(`L == R`), that's `2L`, exactly double the outer margin, for any `L`. There is no way to make the
+middle gap SMALLER than the outer margins with a single per-mode margin; it requires per-COLUMN
+margins instead. `BookDelegate._TWO_PER_ROW_LEFT_MARGIN` (a 2-tuple, one entry per column, derived
+from `index.row() % 2`) is the pattern: column 0 gets a wide left / narrow right, column 1 gets the
+mirror image, so the shared middle gap (`right_of_col0 + left_of_col1`) can be tuned independently
+of the outer edges. `_cover_rect()` and `cover_cell_size()` must stay in lockstep with this (both
+already take/use the column) — any new per-cell geometry in a multi-column mode that needs
+independent outer/middle spacing should follow this same column-aware shape rather than trying to
+force it out of a single margin value.
+
+---
+
+#### `_sized_cover_cache`/`_get_sized_cover` — one shared fact, three consequences
+
+This cache is load-bearing, not a performance nicety layered on top of an already-correct render.
+Confirmed by direct measurement (2026-06-24): the scanner-side fixes alone (cover discovery,
+LANCZOS thumbnail resampling, 320×480 cap) produced **zero visible improvement** in the library
+grid, even after a full force rescan + app restart. The reason is `_draw_cover`'s own
+`painter.drawPixmap(rect, cover, src_rect)` — a single Qt bilinear downscale straight from the
+cached thumbnail (up to 320×480) down to the real cell size (as small as ~88×88) — which erases a
+better source's quality gain regardless of how good that source is. `_get_sized_cover` exists
+specifically to remove that downscale's *magnitude* (pre-shrink close to cell size via LANCZOS
+first, so the final `drawPixmap` is a near-1:1 blit).
+
+1. **DO NOT remove `_sized_cover_cache`/`_get_sized_cover` as "just an optimization."** If this cache is ever removed or bypassed, the library grid will silently regress to the exact "no visible difference" state this was built to fix — the scanner-side quality work is necessary but was proven, by measurement, insufficient on its own.
+2. **DO NOT change `_get_sized_cover`'s scale mode to `KeepAspectRatioByExpanding`.** `_get_sized_cover` (`BookDelegate`, `library.py`) pre-scales the cached cover to roughly the grid cell size before `_draw_cover` runs its square/crop/letterbox branching. It deliberately uses a plain aspect-preserving bounded fit (scale by `max(dev_w/w, dev_h/h)`, same shape as `KeepAspectRatio`), NOT `KeepAspectRatioByExpanding` cropped exactly to the cell. This looks like the "more correct" choice for a pre-sized thumbnail cache — it isn't: `_draw_cover`'s letterbox branch needs the pixmap's real, uncropped proportions to compute its own centered inset; feeding it an already-cell-cropped pixmap breaks letterbox specifically while leaving the square/stretch/crop branches looking fine, so the bug would only surface on covers whose aspect ratio lands in the letterbox bucket (>8% ratio mismatch from the cell). Also do not raise the `UnsharpMask` strength in `_lanczos_qimage` (currently `radius=0.8, percent=25`; this is where the scale logic lives as of 2026-07-04 — `_lanczos_scale` is now just its main-thread `QPixmap` tail) without re-checking against a *photographic* cover, not just a flat-color graphic one — a stronger pass (`percent=60` was tried and reverted) reads as fine on graphic art but produces visible edge haloing on photographic gradients (skies, faces), described by the user as "out of focus, then we slapped an HDR filter on it." Full root-cause writeup in NOTES.md, 2026-06-24.
+3. **DO NOT write `_sized_cover_cache` from a worker thread, read DPR off the main thread, or let the preloader's key drift from `_get_sized_cover`'s.** The idle preloader warms `_sized_cover_cache` off-thread (2026-07-04). Three invariants make that safe; all are load-bearing:
+   - **The scale is split for thread-safety.** `_lanczos_qimage(QImage→QImage)` (the PIL LANCZOS + UnsharpMask) is the ONLY part that may run on a `CoverLoaderWorker` thread — it touches only `QImage` (a pure raster container) and PIL. `QPixmap` is a GUI-thread-only paint device: creating or reading one off-thread is undefined behaviour (works sometimes, crashes others). So the worker emits a `QImage` (`sized_cover_loaded`), and the `QImage→QPixmap` conversion + the `_sized_cover_cache` write happen on the main thread in `_on_preload_sized_cover_loaded` (QueuedConnection). NEVER write either cover cache from a worker; NEVER move the QPixmap step off-thread.
+   - **DPR is read on the main thread at enqueue time and passed by value** into the worker (`_current_sized_key_dims()` reads `self.screen()`), because `screen()`/DPR access off the GUI thread is unsafe. Do not read it inside the worker.
+   - **The preloader's key MUST equal `_get_sized_cover`'s paint-time key**, `(book_id, round(target_w*dpr), round(target_h*dpr))`. `BookDelegate.cover_cell_size()` is the single source of the per-view-mode `target_w/target_h` and MUST stay in lockstep with the cover-rect math in `_paint_grid_cell` (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (118×180, column-aware X via `_TWO_PER_ROW_LEFT_MARGIN`, fixed size regardless of column). A mismatch is silent: the preloaded entry keys on the wrong size, is never hit at paint time, and the LANCZOS runs on the main thread during the slide anyway — the exact stall this warming exists to remove. Verified matching for all five modes when added; re-verify if any cover-rect formula changes. Warming is **current view mode only** (all-modes doesn't scale by library size — see NOTES.md cost table and the "FUTURE IDEA" first-page-per-mode note). Batching is also load-bearing: dumping all workers at once froze the main thread ~766ms (completion slots pile onto it), so keep `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the real two-slot completion path.
+
+---
+
+### DO NOT add an overlay-open path that skips `is_overlay_open_or_committed()`
+Only ONE overlay (the six sidebar panels — library/settings/speed/sleep/stats/tags — the chapter-list dropdown, or a mid-flight sidebar handoff) may open at a time. `PanelManager.is_overlay_open_or_committed()` (`panels.py`) is the single gate: `is_any_full_panel_visible() OR is_any_panel_animating() OR _pending_panel_open is not None`. Every overlay-OPEN entry point consults it FIRST and early-returns (drops the request) if True — the six `_open_*_flow` methods, `_show_chapter_dropdown` (AFTER its own already-visible→`fade_out` toggle), and `_open_library_shortcut`. The speed/sleep buttons delegate to `_open_speed_flow`/`_open_sleep_flow` (which gate) instead of the old unconditional `_hide_popups()`-then-open. **Policy is DROP the second request (ignore), NOT switch or queue** — two opens inside the animation window aren't legitimate intent. Do NOT "fix" a collision by making an opener call `hide_all_panels()` then open: that starts a close-slide that fights the other panel's open-slide (the exact overlap bug this replaced — see `review/Review_260706_2.md`). Load-bearing exclusions that must stay: a **bare expanded sidebar** is NOT blocked (the gate excludes it so the sidebar-queued open path works); the sidebar handoff dispatches via `_start_*_entry` (not `_open_*_flow`) so it's never blocked by its own committed state; `open_book_detail` is intentionally UNGATED (reachable only from within an already-open library/stats/tags panel — never races a fresh open). `_close_*_flow` and the own-panel-visible→close toggles are never gated. The FUTURE "press L in Stats → dismiss Stats, open Library" switch behavior is deliberately NOT built (shortcuts are main-window-exclusive today). `tests/test_panel_exclusion.py` pins the gate's truth table.
+
+### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
+`apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
+
+### DO NOT suppress the theme `bg_image` by overriding `visual_area` — regenerate the stylesheet without it
+The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { background-image: url(...) }` rule in `get_player_stylesheet`. It is stripped in the no-book and empty-library states (where it overlapped the prompts/carousel/quote). The ONLY working suppression is `get_player_stylesheet(theme_name, suppress_bg_image=True)`, which omits the image at generation time. Do NOT attempt to cancel it with a child override (`visual_area` instance stylesheet, a `background-image: none` rule, or a dynamic property like the removed `carouselActive`): Qt's QSS cascade treats `background-image: none` as "unspecified", so the ancestor `url()` wins on the child per-property and the image survives (verified — a child `background-color` override applied while the image layered on top). `MainWindow._set_bg_suppressed(suppressed)` is the sole authority: it sets `_bg_suppressed`, sets `setAutoFillBackground(not suppressed)`, and re-applies the regenerated stylesheet. `apply_library_state` drives it (`True` for empty + no-book, `False` for has_book) and `ThemeManager._apply_stylesheets` reads `_bg_suppressed` so a theme change in those states keeps the image stripped. `_show_carousel`/`_hide_carousel` must NOT touch background or `autoFillBackground` — suppression is owned by the state machine, not the carousel.
+
+### DO NOT revert `_update_cover_art_scaling` to reading `cover_art_label.height()` for `target_h`
+`_update_cover_art_scaling` uses `COVER_AREA_HEIGHT` (a module-level constant in `app.py`) as `target_h`, not `self.cover_art_label.height()`. The live allocated height is transient and state-dependent — it reflects whatever the layout engine allocated at the moment of the call, which can be wrong during any state transition (empty→book, no-cover→cover, panel open/close). The constant decouples scaling from layout state and prevents any cover aspect ratio or state transition from breaking the layout. `cover_art_label` is also pinned with `setFixedHeight(COVER_AREA_HEIGHT)` in `_build_cover_art`. If the window layout ever changes, re-calibrate `COVER_AREA_HEIGHT` empirically by testing covers of various aspect ratios and confirming no bottom clipping in fit mode.
+
+### DO NOT try to expand a widget's height inside the Library settings tab's `QVBoxLayout` — use a MainWindow-level popup instead
+`settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed 500px height** widget, and no settings tab has its own `QScrollArea` (this is intentional — no panel in this app has a scrollbar: Stats, Sleep, and Playback don't, and Library must not either). Any widget inside a settings tab that tries to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put the extra height: Qt either refuses to allocate it, or steals it from a sibling with a flexible size policy (visible as the whole tab drifting). Five inline approaches for the Excluded Books expandable list all failed this way — `QScrollArea.maximumHeight` animated alone (grew nothing — `QScrollArea.sizeHint()` is ~`(0,4)` regardless of content), `minimumHeight`+`maximumHeight` driven in lockstep (grew the list but stole space from the folder-list box, visible whole-tab drift), `QSizePolicy.Fixed` on the scroll area (drift became a flicker), and an absolute-overlay child of the section widget itself (every geometry/visibility check passed, nothing rendered live — independently reproduced by a different model attempting the same shape). Full blow-by-blow in NOTES.md "Excluded Books list wouldn't expand..." (2026-06-27). The fix: anything that needs to expand beyond a settings tab's available space must be a popup parented directly to `MainWindow` (see `ExcludedBooksPopup`, `ui/excluded_books.py`, which copies `ChapterList`'s — `ui/chapter_list.py` — architecture exactly: `QGraphicsOpacityEffect` fade only, no size `QPropertyAnimation`, `show()`/`raise_()`/`setGeometry()` from the click handler). It is never a descendant of the tab's layout, so nothing in that layout is ever asked to renegotiate space for it.
+
+### DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone
+For this exact class of bug (widgets inside a settings tab not sizing/showing correctly), every headless Python verification attempt — `processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic `QMouseEvent` delivery, even instantiating `MainWindow()` without actually opening the settings panel through its real animated entry path or switching to the real active tab — reported "looks correct" at some point, including for an attempt that rendered nothing at all in the live app. The gap between a script reporting correct geometry/`isVisible()`/stylesheet state and what the real, live, actually-opened app shows was real and repeated, not a one-off fluke. For any settings-panel/tab layout or paint bug: do not trust headless assertions as a substitute for the user checking the live app. Make the change, ask them to check, and treat their report as ground truth over any script's output. (Same underlying lesson as the "user sees the rendered pixels" rule at the top of this section — this is that lesson applied to a widget class where even careful headless verification kept giving false confidence.)
+
+### DO NOT trust `QComboBox` popup pseudo-state QSS (`::item:hover`/`::item:selected`) or `::down-arrow` on this app's target desktop — paint them manually instead
+Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style — `QApplication.style().objectName() == "fusion"`, no `QT_QPA_PLATFORMTHEME` set): `QComboBox QAbstractItemView::item:hover` / `::item:selected` QSS rules do **not** reach the popup's paint at all. Proven, not guessed — the rule was swapped to a glaring, unmissable `red` and there was **zero visual change** live, ruling out a color/subtlety problem. Reproduced in complete isolation (a bare `QComboBox` outside the rest of the app) via `combo.view().setCurrentIndex(...)`, so it isn't an app-specific event-filter or timing interaction either. The SAME desktop also ignores `QComboBox::down-arrow`'s `image: none` + border-triangle QSS trick — the native style paints its own arrow glyph there regardless, which rendered as a plain light square. Fix for both, in `library.py`: `_ComboItemDelegate` (installed via `combo.view().setItemDelegate(...)`) paints popup item hover/selection backgrounds directly instead of relying on native pseudo-state painting; `_ThemedComboBox` (a `QComboBox` subclass, used in place of a plain `QComboBox()` for `sort_combo`/`style_combo`) overrides `paintEvent` to call `super().paintEvent()` first (background/border/text via the style still work fine — only the popup-item and arrow pseudo-states are broken) then paints its own triangle over just the arrow sub-control's rect. **Do not fill the arrow rect edge-to-edge** — `subControlRect(SC_ComboBoxArrow)` spans the FULL control height including the rounded top/bottom-right corners; a flat fill there squares off those corners (a regression hit and fixed live in the same session — see the `corner_clearance` inset in `_ThemedComboBox.paintEvent`). Do not attempt a QSS-only re-fix for either of these without re-confirming on the affected desktop first — this is a known-failed approach as of 2026-07-09 (see NOTES.md), and per the user this specific area (Library dropdown popup styling) was already attempted and abandoned once before, roughly 3 months prior, undocumented at the time.
+
+### DO NOT let `open_book_detail` retarget or re-animate an already-visible Book Detail Panel
+`open_book_detail` (`panels.py`) now no-ops entirely — does not call `load_book`, does not restart the slide-in animation — whenever `book_detail_panel.isVisible()` is already `True`, regardless of which book is showing. `_start_book_detail_entry` is unconditional (always moves the panel off-screen right then slides it back to `x=0`), so calling `open_book_detail` while already open visibly yanks the panel out and back — this is what Library's new Alt+Enter shortcut surfaced (repeatedly pressing it on the already-open book re-triggered the slide every time). Worse without the guard: arrow-navigating to a DIFFERENT book while detail is already open (e.g. after a right-click) and then pressing Alt+Enter would hijack the visible panel onto the new book instead of being blocked — same call path, no protection. The fix is scoped to book-detail-vs-book-detail only; it does **not** touch or weaken `PanelManager.is_overlay_open_or_committed()` (the cross-panel — library/settings/speed/sleep/stats/tags — one-overlay-at-a-time gate), which deliberately still excludes `open_book_detail` for the unrelated reason documented above (it's reachable only from within an already-open library/stats/tags panel, so it never races a *different* panel's opening animation). The user must close the panel via an existing close path (`_close_book_detail_flow` / the panel's own close button) before opening another book's detail.
+
+---
 
 ### Keyboard focus ownership: exactly one widget owns focus, and the global dispatcher only acts when that owner is MainWindow itself or nothing panel-local (added 2026-07-11)
 This is now load-bearing architecture, not a one-off fix — added after the main-window transport
@@ -295,6 +546,14 @@ they're a separate top-level window, not descendants of the panel. **Any `QAppli
 modal dialog anywhere in the app must win. `BookDetailPanel.eventFilter` does this at its very
 top, before any other branch.
 
+Consequence: **DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`,
+and DO NOT clear focus before `hide()`.** Every panel/overlay must call `PanelManager._claim_panel_focus`
+in its open flow (after `.raise_()`) and `_release_panel_focus` in its close handler (after
+`.hide()`). Skipping either call on a future panel reintroduces the exact bug this fixed: a
+stale-focused widget from underneath bleeds keys through (arrows/Space acting on a different,
+obscured panel), or a key a focused field doesn't consume leaks out to global shortcuts (e.g.
+`Up`/`Down` dismissing an in-progress edit).
+
 ### DO NOT give always-on MainWindow chrome any focus policy other than `Qt.NoFocus`
 Every widget that is part of the permanent transport/chrome (not inside a slide-out panel) must
 be `Qt.NoFocus`: the five transport buttons, the two title-bar buttons, `speed_button`,
@@ -342,7 +601,6 @@ Fixed size: 300×564px (`setFixedSize(300, 564)` in app.py:379). Cover label has
 so it fills the fixed window. Do not fight this with per-widget minimum sizes.
 
 ---
-
 ## What's Built
 
 A factual reference of what the app does, by subsystem. Reflects the code as audited 2026-06-13.
@@ -537,307 +795,6 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 Pure plumbing, no call sites yet. `setup_logging()` (called first thing in `main.py`'s `__main__` block, before `QApplication`) configures the `fabulor` root logger **once** (idempotent): a `RotatingFileHandler` (2 MB × 3 backups) at `platformdirs.user_log_dir("fabulor")`, level from `FABULOR_LOG_LEVEL` (DEBUG/INFO/WARNING/ERROR, case-insensitive, invalid → WARNING default), format `"%(asctime)s %(levelname)-8s %(name)s — %(message)s"`, `propagate=False` — **file sink only, no stdout/console handler**. Emits one `logger.warning("Fabulor started")` at the end (WARNING, not INFO, so it lands in the file at the default level). Module-level `logger = logging.getLogger(__name__)` instances exist in `player.py`, `app.py`, `ui/theme_manager.py` but are **silent** — call sites land incrementally in later sessions. **Windows-port note:** the log dir uses the one-arg `user_log_dir("fabulor")` form (no appauthor), unlike the two-arg `user_data_dir("fabulor", "fabulor")` used everywhere else — see NOTES.md (2026-07-01) for why that matters on Windows.
 
 ---
-
-## Critical Architecture Rules
-
-### DO NOT use `self.player.chapter` for chapter display
-Always derive chapter by walking `self.player.chapter_list`, finding last entry where `time <= pos + _CHAPTER_WALK_TOLERANCE` (0.5 as of Session 3, 2026-06-13 — was 0.35). mpv updates chapter property asynchronously.
-
-### DO NOT use `self.chapter = idx` for chapter navigation
-Always use `seek_async(nominal + _chapter_seek_offset())` with a position-based walk. No native-nav exception: embedded-M4B chapter-list clicks now route through `Player.activate_chapter_index(idx)` → `seek_async` (changed 2026-06-13 — native `self.chapter = idx` left the chapter UI frozen because it never set `_seek_target`). See the fuller rule above.
-
-### DO NOT restore any emit in `_on_chapter_change` — it is fully suppressed
-`_on_chapter_change` always returns immediately. `_on_time_pos_change` is the sole driver of `chapter_changed` for all book types. The old `_is_seeking` guard was insufficient — it cleared before `_on_chapter_change` fired, causing paused-state snap-back.
-
-### Seek/position tracking — VT+Undo is the known-fragile zone
-Any change to `time_pos`/`_seek_target`/`_cached_time_pos`/a seek-settle boundary must be live-verified against VT (multi-file) books and Undo FIRST, before verifying the symptom the change was meant to fix — this exact combination has broken three independent times (2026-06-06 ×2, 2026-06-15's `b6a4023`), including once after a heuristic scored 32/32 clean against real instrumentation and still broke live. Clean instrumentation is not sufficient evidence of safety here. See the fuller rule above.
-
-### DO NOT set `_virtual_timeline` for CUE books
-CUE mode = `_chapter_list is not None` and `_virtual_timeline is None`. Setting `_virtual_timeline` activates VT file-switching on a single-file book.
-
-### DO NOT simplify `Player.terminate()`
-Must store instance, clear `self.instance`, call `terminate()`, then `wait_for_shutdown()`. Without `wait_for_shutdown()`, libmpv threads crash in `avformat_close_input`.
-
-### DO NOT connect `_on_file_ready` to `file_loaded`
-Must only connect to `book_ready`. `file_loaded` fires on every mpv file load including VT mid-book switches; causes quadruple-advance feedback loop.
-
-### DO NOT read `progress_slider.value()` in `_on_file_ready` for animation
-Slider value is stale. Always compute from `int((new_progress / self.player.duration) * 1000)`.
-
-### DO NOT seek to a position within 2 seconds of a file's duration
-mpv hangs silently when seeked within ~2s of EOF — no error, no event, no recovery. Every `command_async('seek', ...)` or `loadfile start=X` call must be preceded by a guard that returns early if `duration - pos < 2.0`. Guards currently live in `seek_async` (player.py): VT same-file branch checks `target_file['duration'] - local_pos < 2.0`; non-VT branch checks `self._cached_duration - pos < 2.0`. The stop-and-load path has its own 5s buffer. If any new seek path is added, the buffer must be present.
-
-### DO NOT join `book_events` directly into a query that aggregates `listening_sessions`
-The join produces a cartesian product (sessions × finished events per book) before GROUP BY, inflating `SUM(listened_seconds)` by the finished event count. Always use a correlated scalar subquery: `(SELECT MAX(CASE WHEN be.event_type = 'finished' THEN 1 ELSE 0 END) FROM book_events be WHERE be.book_id = b.id) as is_finished`. Applies to `get_daily_book_breakdown`, `get_books_listened_in_period`, and any future query with the same shape.
-
-### DO NOT query `books.finished_at` for finished state — it is never written
-`books.finished_at` exists in the schema but is only ever reset to NULL (`reset_stats`/`delete_book_stats`); nothing populates it. The authoritative source is `book_events` with `event_type = 'finished'`. All finished-book queries use it (`get_finished_book_data`, `get_recently_finished`, `get_streak_grid_finished_dates`). Querying `books.finished_at` returns silently empty.
-
-### DO NOT keep `StreakGrid` from cross-checking its longest run against `get_streaks()['longest']`
-`get_streaks(day_start_hour)` returns only counts (`current`/`longest`), not which days. `StreakGrid._compute_longest_run(cache)` derives the longest-run **date set** independently (ISO sort + consecutive scan; most-recent wins on tie via `>=`). The invariant `len(self._longest_dates) == streak_info['longest']` must hold — two independent paths over the same **listened-day set** (SQL `get_streaks` union vs. Python scan over `streak_grid_cache`). As of 2026-06-12 a "listened day" is `session OR 'finished' book_event` (finished ⟹ listened), so **both** paths must include finished adjusted-dates: `get_streaks` unions them into its day set; the cache write sites add them to `streak_grid_cache`. A divergence means the two drifted — an attribution change applied to some of the six finished⟹listened sites but not all (`build_streak_grid_cache`, `_update_streak_grid_cache_for_date`, `write_book_event`, `unfinish_book`, `delete_book_stats`, `get_streaks` — see NOTES.md "StreakGrid invariant: a 'finished' day is ALWAYS a listened day"). That mismatch is the diagnostic; do NOT clamp one to the other to hide it.
-
-### DO NOT make `get_streaks` use start-date-only attribution — it must union session_end, matching the grid
-The streak grid (`build_streak_grid_cache`/`_update_streak_grid_cache_for_date`) has always
-correctly lit a cell if a session's start OR end adjusted-date matches it — a session spanning the
-day_start_hour boundary (e.g. 23:55→00:05, or 04:53→06:02 with `day_start_hour=5`) genuinely was
-listened to on both of those adjusted-days, and the grid cells were right to reflect that. The bug
-(found 2026-06-19, see NOTES.md "Streak count / grid cell mismatch") was that `get_streaks` — which
-drives the streak NUMBER, not the cells — built its day-set from `get_active_periods` (start-date
-only, by design: it also drives Day/Week/Month nav and must stay start-only there) plus finished
-events, but never unioned session end-dates. So a spanning session lit two grid cells while the
-streak count/label only credited one of those days. Fixed by adding a session_end-date query
-directly inside `get_streaks` (NOT by changing `get_active_periods`, which must remain start-only
-for the period navigator) and unioning it into `active_set` alongside the existing finished-event
-union — mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly. Do
-NOT "fix" this again by making the grid start-only to match `get_active_periods` — that direction
-was tried and reverted; the grid was correct, the streak count was the thing missing data. The
-Day/Week/Month tabs are explicitly start-date-only and intentionally do NOT show a spanning
-session twice — see NOTES.md for why full session-splitting there was scoped out as too large a
-change for too small a benefit.
-
-### DO NOT add a key to "The Color Purple" without checking `_NO_BASE_INHERIT_KEYS` (themes.py)
-Every theme is resolved by `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with
-the requested theme's own dict — "The Color Purple" is the base template every other theme
-inherits from for any key it doesn't set itself. This is correct for plain literal-value keys
-(a theme that doesn't set `bg_deep` should get Purple's), but WRONG for any key whose intended
-"unset" behavior is a *derived* per-theme fallback rather than Purple's literal value — e.g.
-`streak_grid_outline`/`streak_grid_dot` (meant to fall back to a value derived from that theme's
-own `accent`, via `StreakGrid._derive_longest_fill`/`_derive_finished_dot`) and `slider_progress`
-(meant to fall back to `text_on_light_bg` → `text`). Without exclusion, Purple's literal value
-would silently inherit into every theme that doesn't define its own, masking the derived fallback
-entirely. `_NO_BASE_INHERIT_KEYS` (a tuple near `_resolve_theme`) lists every such key; `_resolve_theme`
-pops them from the copied base before overlaying. **Any new optional/fallback-driven theme key
-that "The Color Purple" itself ever defines a value for MUST be added to `_NO_BASE_INHERIT_KEYS` in
-the same change** — added 2026-06-19 (Session 4): the five tassel/bookmark keys
-(`bookmark_body`/`bookmark_icon`/`tassel_cord`/`tassel_head`/`tassel_fringe`) do NOT need to be in
-the tuple today because "The Color Purple" doesn't set any of them yet — but if it ever does (e.g.
-giving the reference theme an explicit tassel color), that addition must land together with adding
-those keys to `_NO_BASE_INHERIT_KEYS`, or every other theme that relies on the
-`tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light` fallback chain will silently start
-showing Purple's literal tassel color instead.
-
-### DO NOT fold `animate_conceal` duration logic into `HourlyHeatmap.animate_reveal`
-`animate_conceal` (on both `HourlyHeatmap` and `StreakGrid`) is **additive-only**: it reuses the `reveal_progress` property in reverse (1.0→0.0, 600ms) and is the streak↔heatmap transition's drain phase. `HourlyHeatmap.animate_reveal` and `paintEvent` stay byte-for-byte unchanged. `animate_conceal` restores the 1000ms reveal duration in its `finished` callback so the following construct wave runs full-length, and tracks its pending slot in `self._conceal_slot` (disconnect only when present — avoids `Failed to disconnect (None)`). The asymmetric duration restore is the whole point; do NOT share a `setDuration(600)` between the two methods. Relatedly: `StreakGrid.set_data` must NOT call `animate_reveal()` — the caller (`_switch_timeline_view` / `_on_tab_changed`) fires exactly one reveal on the visible grid, else the tab-change reveal double-fires and hitches.
-
-### DO NOT give the label-cascade enter/exit `_label_local` the same opacity-window formula
-`HourlyHeatmap`/`StreakGrid`'s per-label cascade (top date labels, left-gutter date/hour labels) must
-use a DIFFERENT window-placement formula for entering vs. exiting, not the same formula run with
-`_label_progress` going the other direction. Enter anchors each label's fade-in window from the START
-of the timeline (`start` to `start + span`); exit must anchor from the END (`end - span` to `end`,
-where `end = 1.0 - start`). Reusing the enter formula for exit (just feeding it a falling
-`_label_progress`) silently breaks because clamping (`max(0, min(1, ...))`) masks the asymmetry: the
-"leading" label ends up holding at full opacity until late in the exit animation instead of fading
-first, which reads as the wrong cascade direction even though the per-label rank assignment
-(`cascade_pos`) is correct. This was found and fixed 2026-06-18 — see NOTES.md "Timeline tab visual
-rework" for the verification approach (hand-computed opacity at several progress values per rank
-before trusting it visually). Also: `_label_sweep_in` must be initialized in `__init__` (both
-classes) — it was previously only ever set inside `animate_labels_in`/`animate_labels_out`, so the
-very first paint before either had run raised `AttributeError`.
-
-### DO NOT keep the streak count-up's "previous shown" value in-memory only
-`StreakGrid.animate_streak_count(previous=...)` needs to know the streak value as of the last time it
-actually animated, to decide whether to run the pause-then-tick second leg. That value MUST be
-persisted via `Config.get_last_shown_streak()`/`set_last_shown_streak()` (QSettings-backed), not kept
-only in `StreakGrid._last_animated_streak` (in-memory instance state). An in-memory-only value resets
-to `None` on every app launch, so the session's first reveal always falls into the "no prior value,
-skip the pause" branch — even when the streak genuinely grew while the app was closed. `None` (not
-`0`) is the correct "never tracked" sentinel: defaulting to `0` would make a pre-feature upgrade with
-a real non-zero streak misread "never tracked" as "previous was 0" and spuriously play a 0→N
-pause-then-tick that implies growth from nothing.
-
-### DO NOT let the Stats panel's Timeline slide-reopen skip the streak catch-up tick
-`QTabWidget.currentChanged` only fires when the active tab index changes. If the Stats panel slides
-open with Timeline already the remembered active tab (the normal case — panel was last closed on
-Timeline/Streak), `_on_tab_changed` never runs that session; the only code path is
-`refresh_current_tab() -> _refresh_time() -> StreakGrid.set_data()`, which correctly never animates the
-grid (slide-reopen must never animate grid cells/labels — established rule, see the `animate_conceal`
-rule above). Without an explicit exception, that same flow also silently swallowed the streak
-count-up: `set_data()` snapped the number straight to its new value with zero comparison against the
-persisted previous value, so a streak that grew while the panel was closed showed the new number with
-no visual call-out at all. Fix: `StatsPanel._refresh_time(streak_mode=...)` takes `"full"` (tab click /
-view-switch seam — runs the normal two-leg `animate_streak_count()`), `"catch_up"` (wired only from
-`refresh_current_tab`'s Timeline branch — calls `StreakGrid.catch_up_streak_count(previous)`, which
-snaps to the old value and ticks to the new one WITHOUT touching the grid at all), or `"none"`
-(background refreshes like `refresh_all` — leaves `set_data()`'s plain snap untouched). This is the
-one deliberate place where the streak number's animation rule diverges from the grid's blanket
-"never animate on slide-reopen" rule — the grid stays fully static every time, the number gets a
-narrow exception so a real change is never silently dropped.
-
-### DO NOT animate a UI count-up toward a target derived from a coarser/truncated value than what live tracking will show
-`_animate_percentage_label`'s tween must compute its end value as `round((new_progress/dur)*100, 1)`
-— the SAME rounding the live 200ms tracker uses (`f"{percent:.1f}%"`) — not by re-deriving a percent
-from the progress slider's `new_val` (`int((new_progress/dur)*1000)`, which TRUNCATES to the
-slider's coarser 0-1000 scale). A true value like 739.97 truncates to slider tick 739 ("73.9%") but
-rounds to "74.0%" — every book whose saved progress rounds up in its last digit reproduced a
-guaranteed one-tick jump the instant the live tracker resumed after the tween. This is a
-truncate-vs-round MATH mismatch, not a timing race — a settle-delay guard was tried first and
-confirmed not to fix it (the jump was identical with or without the delay). Any future animated
-label that shares a "coarse slider scale" data source with a "precise live display" must independently
-verify both sides actually agree on rounding before assuming a delay/guard will paper over a gap.
-
-### DO NOT trust a callee's busy/no-op guard to protect a caller's OWN side effects
-`TasselOverlay.play()`'s `_busy` flag correctly no-ops repeat calls for the bookmark slide animation
-itself, but `StatsPanel._on_tassel_clicked` also independently calls `_switch_timeline_view()` on
-every click — and that call was NOT gated on anything, so rapid clicking queued up multiple
-overlapping `_switch_timeline_view()` cycles (each its own `animate_conceal`/`animate_labels_out`
-pair) racing over the same grid visibility state, which could hang the Timeline view indefinitely
-with both grids left hidden. Fixed via a public `TasselOverlay.is_busy` property that
-`_on_tassel_clicked` checks itself before doing anything. General rule: if a caller triggers a side
-effect ALONGSIDE calling a method that has its own internal busy/idempotency guard, the guard
-living inside that method does not protect the caller's side effect — the caller must check the
-same busy state itself (via an exposed property, not by assuming the callee's no-op will be enough).
-
-### DO NOT let `TasselOverlay`'s hand cursor and clickable region diverge
-`TasselOverlay.__init__` does NOT call `setCursor(PointingHandCursor)` on the whole widget — that
-was the original (2026-06-19) implementation and it was a real UX bug: the widget is wider/taller
-than its actual clickable area (the tab rect plus the tight tassel body box, via
-`_in_hit_region()`), so a blanket cursor showed a hand over dead space where clicking did nothing.
-The cursor is instead set dynamically in `mouseMoveEvent`, calling `setCursor`/`unsetCursor` based
-on the exact same `_in_hit_region()` test that `mousePressEvent` uses. Any future change to the
-clickable region (`_tab_rect`, `_tassel_rect`) must keep reading through `_in_hit_region()` from
-both methods — do not special-case the cursor logic or the click logic separately, or they will
-silently drift apart again.
-
-### DO NOT use `load_themed_icon` for `currentColor` SVGs — use `load_currentcolor_icon`
-clock.svg / calendar.svg use `fill="currentColor"`. `load_themed_icon` only swaps `fill="#000000"`; it happens to tint these anyway via its `<style>`-injection fallback, but that is incidental, not contractual. `load_currentcolor_icon` recolors `currentColor` explicitly via regex (mirrors `render_logo_placeholder`). Use it for these icons; do not "simplify" back to `load_themed_icon` on the theory they're equivalent.
-
-### DO NOT remove animation-state guards in `_sync_progress_sliders` / `_sync_chapter_ui`
-Both check whether animation is running before setValue. Removing causes jitter from 200ms timer fighting animation.
-
-### DO NOT touch MPV init block
-`_ensure_mpv()`, `load_book()` MPV block, `locale.setlocale(LC_NUMERIC, "C")`, all MPV constructor args. Hard-won Wayland/libcaca/libtinfo/Qt locale bug fix. Changing anything breaks the app.
-
-### DO NOT restore `show_metadata=False` to `library_controller.apply_library_state`
-Removed in 2026-05-11 — it was silently overriding cover display on every book switch. `_load_cover_art` owns `metadata_label` visibility.
-
-### DO NOT call `search_field.setText(...)` directly anywhere in `LibraryPanel` outside `set_search`/`clear_tag_filter_if_active`
-Every direct write to the library search field must go through `self._programmatic_search_update = True` / `setText(...)` / `= False`, or through `clear_tag_filter_if_active()` (which already does this). `_on_search_changed` reads any unguarded `setText` as genuine user typing and overwrites `self._explicit_filter_text` — the value click-filter toggle-off/revert (author/narrator/year re-click, library reopen, left-click into the field) restores to instead of clearing to `""`. This bit twice in one day (2026-07-05, `6847330` and `a7271a5`) via two DIFFERENT pre-existing direct-`setText` call sites (`clear_tag_filter_if_active`'s old body, `focusInEvent`'s handler) that predated the guard and were never routed through it. If a new call site ever needs to change the field's text programmatically, route it through the guard or through `clear_tag_filter_if_active()` — never call `setText` on `search_field` bare.
-
-### DO NOT use `active_cover_changed` on `BookDetailPanel` as a single-arg signal
-It emits `(book_path, cover_path)` — both args required at all call sites. `CoverPanel.active_cover_changed` remains `Signal(str)`; the intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` injects `self._book_path` and re-emits. Do not connect `CoverPanel.active_cover_changed` directly to `BookDetailPanel.active_cover_changed`.
-
-### DO NOT pass raw DB rows directly to `BookDayRow` or `FinishedBookThumb`
-Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows carry only `cover_path` (scanner thumbnail); `_inject_active_covers` adds `active_cover_path` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
-
-### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
-Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
-
-### DO NOT lay out a library row from the live viewport width — reserve the scrollbar's space
-Any per-row geometry with **right-aligned** content (author, time column, progress %) must NOT derive its width or right edge from `option.rect.width()` / `r.right()` (the live viewport), because that value drops by `SCROLLBAR_EXTENT` (14px) when the vertical scrollbar appears and regains it when the scrollbar disappears — so filtering, which shrinks the list and toggles the scrollbar, makes right-aligned content jump by 14px. Lay out against a **stable** width/right edge that reserves the scrollbar gutter unconditionally: `BookDelegate._row_content_width(...)` (= `view.width() - 2*frameWidth - SCROLLBAR_EXTENT`) and `_row_stable_right(r)` (the stable right-edge x, use in place of `r.right()`) — 2026-07-06. The view width is fixed (the scrollbar takes space *inside* it, shrinking the viewport but not the view), so this is constant regardless of scrollbar state. Left-aligned content (title, the progress bar itself) is unaffected. **Fixed in both List (`_list_author_layout`, commit `9c20f40`) and 1-per-row (`_paint_one_per_row`, commit `9f8b06f`).** When adding ANY new right-aligned row content in ANY mode, route it through `_row_stable_right`/`_row_content_width`, never `r.right()`/`option.rect.width()` directly.
-
-### DO NOT size a fixed-width IconMode grid cell against the nominal viewport width with zero slack
-`QListView`'s default `frameWidth()` is 1px, taken off BOTH sides of the viewport (2px total) — the
-real usable width for column math is `nominal_width - 2*frameWidth`, not the nominal width itself.
-Confirmed live (2026-07-10): sizing 2-per-row's cell at `w=146` so `2*146` landed exactly on the
-292px nominal viewport (zero slack) silently collapsed the grid to a single column — Qt had no
-room to fit two cells once the real frame-adjusted width (290) was accounted for. Fixed by using
-`cell_w=145` (`2*145=290`). Any future fixed-width grid-cell sizing in `library.py` must budget
-against the frame-adjusted width, or verify live that the exact intended column count actually
-renders — this failure mode is silent (no error, no log, just fewer columns) and is NOT caught by
-arithmetic that only checks against the nominal window width.
-
-### DO NOT use a uniform per-cell margin when a grid mode needs a middle gap smaller than its outer margins
-For two adjacent cells sharing a uniform left/right margin `L`/`R` (every grid mode before
-2-per-row), the visual gap between them is always `R + L` — with the normal symmetric case
-(`L == R`), that's `2L`, exactly double the outer margin, for any `L`. There is no way to make the
-middle gap SMALLER than the outer margins with a single per-mode margin; it requires per-COLUMN
-margins instead. `BookDelegate._TWO_PER_ROW_LEFT_MARGIN` (a 2-tuple, one entry per column, derived
-from `index.row() % 2`) is the pattern: column 0 gets a wide left / narrow right, column 1 gets the
-mirror image, so the shared middle gap (`right_of_col0 + left_of_col1`) can be tuned independently
-of the outer edges. `_cover_rect()` and `cover_cell_size()` must stay in lockstep with this (both
-already take/use the column) — any new per-cell geometry in a multi-column mode that needs
-independent outer/middle spacing should follow this same column-aware shape rather than trying to
-force it out of a single margin value.
-
-### DO NOT remove `_sized_cover_cache`/`_get_sized_cover` as "just an optimization"
-This cache is load-bearing, not a performance nicety layered on top of an already-correct render.
-Confirmed by direct measurement (2026-06-24): the scanner-side fixes alone (cover discovery,
-LANCZOS thumbnail resampling, 320×480 cap) produced **zero visible improvement** in the library
-grid, even after a full force rescan + app restart. The reason is `_draw_cover`'s own
-`painter.drawPixmap(rect, cover, src_rect)` — a single Qt bilinear downscale straight from the
-cached thumbnail (up to 320×480) down to the real cell size (as small as ~88×88) — which erases a
-better source's quality gain regardless of how good that source is. `_get_sized_cover` exists
-specifically to remove that downscale's *magnitude* (pre-shrink close to cell size via LANCZOS
-first, so the final `drawPixmap` is a near-1:1 blit). If this cache is ever removed or bypassed,
-the library grid will silently regress to the exact "no visible difference" state this was built
-to fix — the scanner-side quality work is necessary but was proven, by measurement, insufficient
-on its own.
-
-### DO NOT change `_get_sized_cover`'s scale mode to `KeepAspectRatioByExpanding`
-`_get_sized_cover` (`BookDelegate`, `library.py`) pre-scales the cached cover to roughly the grid
-cell size before `_draw_cover` runs its square/crop/letterbox branching. It deliberately uses a
-plain aspect-preserving bounded fit (scale by `max(dev_w/w, dev_h/h)`, same shape as
-`KeepAspectRatio`), NOT `KeepAspectRatioByExpanding` cropped exactly to the cell. This looks like
-the "more correct" choice for a pre-sized thumbnail cache — it isn't: `_draw_cover`'s letterbox
-branch needs the pixmap's real, uncropped proportions to compute its own centered inset; feeding it
-an already-cell-cropped pixmap breaks letterbox specifically while leaving the square/stretch/crop
-branches looking fine, so the bug would only surface on covers whose aspect ratio lands in the
-letterbox bucket (>8% ratio mismatch from the cell). Also do not raise the `UnsharpMask` strength
-in `_lanczos_qimage` (currently `radius=0.8, percent=25`; this is where the scale logic lives as of
-2026-07-04 — `_lanczos_scale` is now just its main-thread `QPixmap` tail) without re-checking against
-a *photographic* cover, not just a flat-color graphic one — a stronger pass (`percent=60` was tried
-and reverted) reads as fine on graphic art but produces visible edge haloing on photographic
-gradients (skies, faces), described by the user as "out of focus, then we slapped an HDR filter on
-it." Full root-cause writeup in NOTES.md, 2026-06-24.
-
-### DO NOT write `_sized_cover_cache` from a worker thread, read DPR off the main thread, or let the preloader's key drift from `_get_sized_cover`'s
-The idle preloader warms `_sized_cover_cache` off-thread (2026-07-04). Three invariants make that
-safe; all are load-bearing:
-- **The scale is split for thread-safety.** `_lanczos_qimage(QImage→QImage)` (the PIL LANCZOS +
-  UnsharpMask) is the ONLY part that may run on a `CoverLoaderWorker` thread — it touches only
-  `QImage` (a pure raster container) and PIL. `QPixmap` is a GUI-thread-only paint device: creating
-  or reading one off-thread is undefined behaviour (works sometimes, crashes others). So the worker
-  emits a `QImage` (`sized_cover_loaded`), and the `QImage→QPixmap` conversion + the `_sized_cover_cache`
-  write happen on the main thread in `_on_preload_sized_cover_loaded` (QueuedConnection). NEVER write
-  either cover cache from a worker; NEVER move the QPixmap step off-thread.
-- **DPR is read on the main thread at enqueue time and passed by value** into the worker
-  (`_current_sized_key_dims()` reads `self.screen()`), because `screen()`/DPR access off the GUI
-  thread is unsafe. Do not read it inside the worker.
-- **The preloader's key MUST equal `_get_sized_cover`'s paint-time key**, `(book_id, round(target_w*dpr),
-  round(target_h*dpr))`. `BookDelegate.cover_cell_size()` is the single source of the per-view-mode
-  `target_w/target_h` and MUST stay in lockstep with the cover-rect math in `_paint_grid_cell`
-  (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (118×180,
-  column-aware X via `_TWO_PER_ROW_LEFT_MARGIN`, fixed size regardless of column).
-  A mismatch is silent: the preloaded entry keys on the wrong size, is never hit at paint time, and
-  the LANCZOS runs on the main thread during the slide anyway — the exact stall this warming exists
-  to remove. Verified matching for all five modes when added; re-verify if any cover-rect formula
-  changes. Warming is **current view mode only** (all-modes doesn't scale by library size — see
-  NOTES.md cost table and the "FUTURE IDEA" first-page-per-mode note). Batching is also load-bearing:
-  dumping all workers at once froze the main thread ~766ms (completion slots pile onto it), so keep
-  `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the
-  real two-slot completion path.
-
-### DO NOT add an overlay-open path that skips `is_overlay_open_or_committed()`
-Only ONE overlay (the six sidebar panels — library/settings/speed/sleep/stats/tags — the chapter-list dropdown, or a mid-flight sidebar handoff) may open at a time. `PanelManager.is_overlay_open_or_committed()` (`panels.py`) is the single gate: `is_any_full_panel_visible() OR is_any_panel_animating() OR _pending_panel_open is not None`. Every overlay-OPEN entry point consults it FIRST and early-returns (drops the request) if True — the six `_open_*_flow` methods, `_show_chapter_dropdown` (AFTER its own already-visible→`fade_out` toggle), and `_open_library_shortcut`. The speed/sleep buttons delegate to `_open_speed_flow`/`_open_sleep_flow` (which gate) instead of the old unconditional `_hide_popups()`-then-open. **Policy is DROP the second request (ignore), NOT switch or queue** — two opens inside the animation window aren't legitimate intent. Do NOT "fix" a collision by making an opener call `hide_all_panels()` then open: that starts a close-slide that fights the other panel's open-slide (the exact overlap bug this replaced — see `review/Review_260706_2.md`). Load-bearing exclusions that must stay: a **bare expanded sidebar** is NOT blocked (the gate excludes it so the sidebar-queued open path works); the sidebar handoff dispatches via `_start_*_entry` (not `_open_*_flow`) so it's never blocked by its own committed state; `open_book_detail` is intentionally UNGATED (reachable only from within an already-open library/stats/tags panel — never races a fresh open). `_close_*_flow` and the own-panel-visible→close toggles are never gated. The FUTURE "press L in Stats → dismiss Stats, open Library" switch behavior is deliberately NOT built (shortcuts are main-window-exclusive today). `tests/test_panel_exclusion.py` pins the gate's truth table.
-
-### DO NOT replicate `apply_library_state(compute_library_state())` at a call site
-`apply_current_state()` on `LibraryController` is the sole entry point for reconciling library UI state without scan side effects. Any call site that needs compute-and-apply (but not a scan trigger) must call `self.library_controller.apply_current_state()` — never inline the two-liner. Inlining the compute+apply pair creates sync-drift risk identical to the `upsert_book` / `upsert_books_batch` invariant: the pairing can drift independently from `apply_current_state`'s implementation. `_check_library_status` delegates to `apply_current_state` internally and additionally calls `handle_background_tasks`; use it only when a scan trigger is appropriate.
-
-### DO NOT suppress the theme `bg_image` by overriding `visual_area` — regenerate the stylesheet without it
-The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { background-image: url(...) }` rule in `get_player_stylesheet`. It is stripped in the no-book and empty-library states (where it overlapped the prompts/carousel/quote). The ONLY working suppression is `get_player_stylesheet(theme_name, suppress_bg_image=True)`, which omits the image at generation time. Do NOT attempt to cancel it with a child override (`visual_area` instance stylesheet, a `background-image: none` rule, or a dynamic property like the removed `carouselActive`): Qt's QSS cascade treats `background-image: none` as "unspecified", so the ancestor `url()` wins on the child per-property and the image survives (verified — a child `background-color` override applied while the image layered on top). `MainWindow._set_bg_suppressed(suppressed)` is the sole authority: it sets `_bg_suppressed`, sets `setAutoFillBackground(not suppressed)`, and re-applies the regenerated stylesheet. `apply_library_state` drives it (`True` for empty + no-book, `False` for has_book) and `ThemeManager._apply_stylesheets` reads `_bg_suppressed` so a theme change in those states keeps the image stripped. `_show_carousel`/`_hide_carousel` must NOT touch background or `autoFillBackground` — suppression is owned by the state machine, not the carousel.
-
-### DO NOT revert `_update_cover_art_scaling` to reading `cover_art_label.height()` for `target_h`
-`_update_cover_art_scaling` uses `COVER_AREA_HEIGHT` (a module-level constant in `app.py`) as `target_h`, not `self.cover_art_label.height()`. The live allocated height is transient and state-dependent — it reflects whatever the layout engine allocated at the moment of the call, which can be wrong during any state transition (empty→book, no-cover→cover, panel open/close). The constant decouples scaling from layout state and prevents any cover aspect ratio or state transition from breaking the layout. `cover_art_label` is also pinned with `setFixedHeight(COVER_AREA_HEIGHT)` in `_build_cover_art`. If the window layout ever changes, re-calibrate `COVER_AREA_HEIGHT` empirically by testing covers of various aspect ratios and confirming no bottom clipping in fit mode.
-
-### DO NOT try to expand a widget's height inside the Library settings tab's `QVBoxLayout` — use a MainWindow-level popup instead
-`settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed 500px height** widget, and no settings tab has its own `QScrollArea` (this is intentional — no panel in this app has a scrollbar: Stats, Sleep, and Playback don't, and Library must not either). Any widget inside a settings tab that tries to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put the extra height: Qt either refuses to allocate it, or steals it from a sibling with a flexible size policy (visible as the whole tab drifting). Five inline approaches for the Excluded Books expandable list all failed this way — `QScrollArea.maximumHeight` animated alone (grew nothing — `QScrollArea.sizeHint()` is ~`(0,4)` regardless of content), `minimumHeight`+`maximumHeight` driven in lockstep (grew the list but stole space from the folder-list box, visible whole-tab drift), `QSizePolicy.Fixed` on the scroll area (drift became a flicker), and an absolute-overlay child of the section widget itself (every geometry/visibility check passed, nothing rendered live — independently reproduced by a different model attempting the same shape). Full blow-by-blow in NOTES.md "Excluded Books list wouldn't expand..." (2026-06-27). The fix: anything that needs to expand beyond a settings tab's available space must be a popup parented directly to `MainWindow` (see `ExcludedBooksPopup`, `ui/excluded_books.py`, which copies `ChapterList`'s — `ui/chapter_list.py` — architecture exactly: `QGraphicsOpacityEffect` fade only, no size `QPropertyAnimation`, `show()`/`raise_()`/`setGeometry()` from the click handler). It is never a descendant of the tab's layout, so nothing in that layout is ever asked to renegotiate space for it.
-
-### DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone
-For this exact class of bug (widgets inside a settings tab not sizing/showing correctly), every headless Python verification attempt — `processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic `QMouseEvent` delivery, even instantiating `MainWindow()` without actually opening the settings panel through its real animated entry path or switching to the real active tab — reported "looks correct" at some point, including for an attempt that rendered nothing at all in the live app. The gap between a script reporting correct geometry/`isVisible()`/stylesheet state and what the real, live, actually-opened app shows was real and repeated, not a one-off fluke. For any settings-panel/tab layout or paint bug: do not trust headless assertions as a substitute for the user checking the live app. Make the change, ask them to check, and treat their report as ground truth over any script's output.
-
-### DO NOT trust `QComboBox` popup pseudo-state QSS (`::item:hover`/`::item:selected`) or `::down-arrow` on this app's target desktop — paint them manually instead
-Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style — `QApplication.style().objectName() == "fusion"`, no `QT_QPA_PLATFORMTHEME` set): `QComboBox QAbstractItemView::item:hover` / `::item:selected` QSS rules do **not** reach the popup's paint at all. Proven, not guessed — the rule was swapped to a glaring, unmissable `red` and there was **zero visual change** live, ruling out a color/subtlety problem. Reproduced in complete isolation (a bare `QComboBox` outside the rest of the app) via `combo.view().setCurrentIndex(...)`, so it isn't an app-specific event-filter or timing interaction either. The SAME desktop also ignores `QComboBox::down-arrow`'s `image: none` + border-triangle QSS trick — the native style paints its own arrow glyph there regardless, which rendered as a plain light square. Fix for both, in `library.py`: `_ComboItemDelegate` (installed via `combo.view().setItemDelegate(...)`) paints popup item hover/selection backgrounds directly instead of relying on native pseudo-state painting; `_ThemedComboBox` (a `QComboBox` subclass, used in place of a plain `QComboBox()` for `sort_combo`/`style_combo`) overrides `paintEvent` to call `super().paintEvent()` first (background/border/text via the style still work fine — only the popup-item and arrow pseudo-states are broken) then paints its own triangle over just the arrow sub-control's rect. **Do not fill the arrow rect edge-to-edge** — `subControlRect(SC_ComboBoxArrow)` spans the FULL control height including the rounded top/bottom-right corners; a flat fill there squares off those corners (a regression hit and fixed live in the same session — see the `corner_clearance` inset in `_ThemedComboBox.paintEvent`). Do not attempt a QSS-only re-fix for either of these without re-confirming on the affected desktop first — this is a known-failed approach as of 2026-07-09 (see NOTES.md), and per the user this specific area (Library dropdown popup styling) was already attempted and abandoned once before, roughly 3 months prior, undocumented at the time.
-
-### DO NOT let `open_book_detail` retarget or re-animate an already-visible Book Detail Panel
-`open_book_detail` (`panels.py`) now no-ops entirely — does not call `load_book`, does not restart the slide-in animation — whenever `book_detail_panel.isVisible()` is already `True`, regardless of which book is showing. `_start_book_detail_entry` is unconditional (always moves the panel off-screen right then slides it back to `x=0`), so calling `open_book_detail` while already open visibly yanks the panel out and back — this is what Library's new Alt+Enter shortcut surfaced (repeatedly pressing it on the already-open book re-triggered the slide every time). Worse without the guard: arrow-navigating to a DIFFERENT book while detail is already open (e.g. after a right-click) and then pressing Alt+Enter would hijack the visible panel onto the new book instead of being blocked — same call path, no protection. The fix is scoped to book-detail-vs-book-detail only; it does **not** touch or weaken `PanelManager.is_overlay_open_or_committed()` (the cross-panel — library/settings/speed/sleep/stats/tags — one-overlay-at-a-time gate), which deliberately still excludes `open_book_detail` for the unrelated reason documented above (it's reachable only from within an already-open library/stats/tags panel, so it never races a *different* panel's opening animation). The user must close the panel via an existing close path (`_close_book_detail_flow` / the panel's own close button) before opening another book's detail.
-
-### DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`, and DO NOT clear focus before `hide()`
-Exactly one widget owns real Qt keyboard focus at a time; `MainWindow._focus_allows_global_shortcuts()` only lets the shortcut dispatcher act when the focus owner is `MainWindow` itself or `None` — never when a panel-local widget holds it. Every panel/overlay must call `PanelManager._claim_panel_focus` in its open flow (after `.raise_()`) and `_release_panel_focus` in its close handler (after `.hide()` — ordering is load-bearing: Qt re-grants focus to a widget during `hide()` if it's the only `StrongFocus` candidate around, silently undoing a `clearFocus()` placed before it). Skipping either call on a future panel reintroduces the exact bug this fixed: a stale-focused widget from underneath bleeds keys through (arrows/Space acting on a different, obscured panel), or a key a focused field doesn't consume leaks out to global shortcuts (e.g. `Up`/`Down` dismissing an in-progress edit). See the fuller "Keyboard focus ownership" rule above, including why every always-on chrome widget outside a panel must stay `Qt.NoFocus` for this to keep working.
-
-This applies WITHIN a panel too, not just at its open/close boundary: any mouse-clickable button/field that a panel later hides, disables, or deletes (a confirm banner covering it, a rebuild after add/remove, a bulk-action button disabling itself on click) is the same focus-strand risk — a panel with several such sites should have (or be covered by) a general per-keypress reclaim, like `BookDetailPanel._ensure_panel_owns_focus()`, rather than relying on remembering a fix at every site. And any `QApplication`-wide `eventFilter` doing this reclaim (or owning Tab/Escape) MUST check `QApplication.activeModalWidget() is not None` first and step aside — otherwise it steals input from an unrelated modal dialog (e.g. a file picker) the panel opened, confirmed live as a reversed-Escape-order bug.
-
----
-
 ## Pending / Known Debt
 
 - `_cover_cache` has no eviction policy (unbounded LRU). Deferred.
@@ -925,6 +882,8 @@ When a `QHBoxLayout` is added directly to a parent layout via `addLayout`, it fi
 Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color QSS rule **must** call `setAttribute(Qt.WA_StyledBackground, True)`. Without it Qt silently ignores the background rule — the widget appears either fully transparent or painted by the system palette. This applies to every panel root widget and any intermediate container that needs its own background. Child containers that should be transparent must NOT set `WA_StyledBackground` — set it only on the root. Verified on `TagManagerWidget` (2026-05-24).
 
 ---
+
+*Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
 *Last updated: 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts, extending the
 focus-ownership invariant from Session 3 into a panel with far more clickable-then-hideable
