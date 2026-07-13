@@ -1,5 +1,10 @@
 # Debt Inventory — Consolidated
 
+> **STALE — frozen snapshot, not the current debt index.** This file is part of the 2026-06-12
+> `review/Review_260612_1–8.md` audit batch and was deliberately left untouched after that date
+> (see SESSION.md, 2026-07-01 Session 3). The live, actively-maintained debt index is
+> `/DEBT_INVENTORY.md` at the repo root — add new items there, not here.
+
 > _Compiled 2026-06-12 against commit `a91f029` (HEAD at compile time). A single deduplicated view of every actionable debt item scattered across CLAUDE.md, NOTES.md, and review/Review_260612_1–8.md. Source-of-truth detail still lives in those files; this is the index. Severities are as already assigned by prior passes/notes, or my judgment where none was given (flagged "(judgment)"). Discrepancies with prior severities are called out, not silently changed._
 
 **Status legend:** `not started` · `partially addressed` · `blocked-on-X` · `resolved` (kept briefly when resolved *this session* so the dedup is auditable).
