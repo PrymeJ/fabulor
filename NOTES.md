@@ -1223,10 +1223,14 @@ cleanup zeroing sub-threshold `pos_`/`progress` entries is a candidate when the 
 entry anticipated.** The root cause named here (persisting/reading mpv's raw `time_pos` instead of
 the logical position) is exactly what `_logical_pos` fixes — the getter now returns the logical
 position, so `_save_current_progress` persists it, and the open-without-play creep no longer
-accumulates. See the top-of-NOTES entry "Compounding seek drift fixed via `_logical_pos`". The
-one-time cleanup zeroing already-poisoned sub-threshold `pos_`/`progress` values is still
-outstanding — logged as a follow-up (do it after the fix has been on `main` long enough to be
-confident, so a bad cleanup can't compound a not-yet-trusted fix).
+accumulates. See the top-of-NOTES entry "Compounding seek drift fixed via `_logical_pos`".
+
+**Cleanup done 2026-07-13** (same day, once the fix was merged and soak-tested) —
+`tools/cleanup_poisoned_progress.py` (dry-run by default, `--apply` to write): zeroed 223 poisoned
+`books.progress` DB rows and 224 poisoned `pos_{path}` QSettings keys (values in `(0, MIN_PROGRESS]`
+— matches `ui/library.py`'s own gate exactly). DB backed up to
+`library.db.pre-cleanup-<timestamp>.bak` before applying; re-ran the dry-run after to confirm 0
+remaining in both stores. This closes the entry fully — no more outstanding follow-up.
 
 ---
 

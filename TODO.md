@@ -226,19 +226,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
     Screenshot exists on Pryme's end; not yet shared/described in enough detail to reproduce or
     diagnose — ask for the screenshot/repro steps at the start of next session.
 
-- **[2026-07-06 → source fix landed 2026-07-13] CLEANUP remaining: one-time zeroing of
-  already-poisoned sub-threshold `pos_`/`books.progress` values.** The SOURCE bug (books
-  opened-without-playing saving a spurious non-zero position → spurious library progress, because
-  `_save_current_progress` persisted mpv's raw `time_pos` carrying the `_PAUSED_SEEK_UNDERSHOOT_COMP`
-  residual instead of the logical position) is **FIXED** by `_logical_pos` (`8c51ca9`, 2026-07-13 —
-  the getter now returns the logical position, so saves persist it, and the creep no longer
-  accumulates). What REMAINS: already-poisoned values written before the fix won't self-heal. Write
-  a one-time migration that zeroes existing sub-threshold `pos_` (QSettings) and `books.progress`
-  (DB) values (below `MIN_PROGRESS = 1.0`, `library.py`). User cleared this to proceed 2026-07-13.
-  Do NOT bump `MIN_PROGRESS` (that only hides the display symptom). Full writeup: NOTES.md "Near-zero
-  saved positions show spurious library progress" (marked resolved) + "Compounding seek drift fixed
-  via `_logical_pos`". See also review/DEBT_INVENTORY.md (Stats / library UI) — update/close that
-  entry when this cleanup lands.
 
 - **[2026-07-03] DECIDE: excluding the currently-playing book behaves differently for M4B vs VT.**
   Not a bug to fix — a design decision to make later. When the loaded/playing book is excluded
