@@ -71,6 +71,17 @@ _PAUSED_SEEK_UNDERSHOOT_COMP = 0.37
 _MP3_SEEK_THRESHOLD: float = 60.0  # long seeks on single VBR MP3 use stop-and-load
 _VT_MP3_SIZE_THRESHOLD: int = 40 * 1024 * 1024  # 40 MB — VT files above this use stop-and-load
 
+# _logical_pos delta-accumulation: sample-to-sample GLOBAL-position delta above which a
+# raw time-pos sample is treated as a discontinuity (VT file-switch, or a rapid-seek jump
+# that landed outside the is_seeking window) rather than continuous playback — on such a
+# delta _logical_pos resyncs directly to the raw global value instead of accumulating.
+# Measured 2026-07-12 (SEEK_DRIFT_MEASUREMENTS.md, 5879 samples / 593 settles): normal
+# playback deltas cluster ~0.043s (1x) to ~0.13-0.26s (3x); the largest genuine non-seek
+# motion was a 0.556s VT natural file-advance at 3x; the smallest genuine seek jump was
+# ~9.4s. 2.5 sits in that clean gap — it never misclassifies high-speed playback and
+# catches every file-boundary / rapid-seek discontinuity. See _on_time_pos_change.
+_LOGICAL_POS_RESYNC_THRESHOLD = 2.5
+
 class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
@@ -95,6 +106,15 @@ class Player(QObject):
         self._cached_pause: bool = True
         self._cached_speed: float = 1.0
         self._seek_target: float | None = None
+        # Logical position tracking (drift fix). _logical_pos is the position the app
+        # BELIEVES it's at — always GLOBAL (like _seek_target), decoupled from mpv's raw
+        # per-seek landing imprecision. The time_pos getter returns it when set. Adopted
+        # from _seek_target at settle (discarding the landing residual), advanced by raw-
+        # sample DELTA during normal playback, resynced to raw on a discontinuity. See
+        # _on_time_pos_change and SEEK_DRIFT_MEASUREMENTS.md.
+        self._logical_pos: float | None = None       # GLOBAL space, matches _seek_target
+        self._last_raw_global: float | None = None    # previous raw GLOBAL sample, for delta accumulation
+        self._just_settled: bool = False               # skip the first post-settle sample's accumulation
         # Virtual timeline state (multi-file MP3 books)
         self._virtual_timeline: list | None = None
         self._file_offset: float = 0.0
@@ -141,11 +161,23 @@ class Player(QObject):
 
     def _on_time_pos_change(self, name, value):
         logger.debug(f"_on_time_pos_change: raw time_pos={value}")
-        self._cached_time_pos = value
+        self._cached_time_pos = value            # raw mirror — unconditional, every sample, never frozen
+        settled_this_call = False
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
             if abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
+                settled_this_call = True
+                # Adopt the LOGICAL target exactly, discarding mpv's landing residual
+                # (the ~0.09/0.37s over/undershoot). This is what stops the residual from
+                # leaking into time_pos and compounding across alternating seeks. Set the
+                # skip-one flag so the FIRST post-settle sample (the NEXT call) does not
+                # re-add the residual via delta accumulation (a "reprime the baseline"
+                # formulation was traced and found case-incompatible between same-file-paused
+                # and VT cross-file — skip-one is the only case-agnostic fix; see
+                # SEEK_DRIFT_MEASUREMENTS.md).
+                self._logical_pos = self._seek_target
+                self._just_settled = True
                 self._seek_target = None
                 # Reset chapter tracking counters so the subsequent position walk
                 # always emits chapter_changed with the settled chapter. Without this,
@@ -155,6 +187,42 @@ class Player(QObject):
                 # leaving the chapter label showing the wrong book's chapter.
                 self._last_nonvt_chapter = -1
                 self._last_vt_chapter = -1
+        # Logical-position maintenance. Runs AFTER the settle branch and BEFORE the chapter
+        # walk (which must keep reading RAW value/global_pos). Only maintained while NOT
+        # mid-seek — during a seek's intermediate samples _logical_pos holds the value set
+        # at the seek write site until the settle re-adopts _seek_target. On the SETTLE call
+        # itself (settled_this_call) the settle branch already set _logical_pos, so we only
+        # re-baseline _last_raw_global here — the _just_settled skip is consumed on the NEXT
+        # call, which is the first post-settle sample. _last_raw_global is re-baselined in
+        # every branch to THIS sample's raw global (no separate trailing update to sequence).
+        #
+        # KNOWN OUT-OF-SCOPE GAP (VT restore-on-load, deferred — see TODO.md 2026-07-13):
+        # _on_vt_file_switched (app.py) clears _is_seeking while a restore seek is still
+        # pending during a VT book's INITIAL load, so this block can adopt the stale pre-seek
+        # ~0 into _logical_pos. That is NOT worsened vs. main (which also resumes VT books
+        # near 0, because the restore seek never executes in mpv — the real underlying bug).
+        # This branch deliberately does NOT guard against it here: doing so requires touching
+        # _on_vt_file_switched (undo-fragile zone) and only trades the clobber for a UI freeze,
+        # because the seek never settles regardless. VT restore-on-load is out of scope; the
+        # clobber-guard need and the seek-execution bug are logged together as one entangled
+        # deferred item. VT MID-PLAYBACK seeks (the validated Finding 2/8 path) DO settle and
+        # are unaffected by this gap.
+        if value is not None and not self._is_seeking:
+            global_value = value + (self._file_offset or 0)
+            if settled_this_call:
+                pass                                       # settle branch owns _logical_pos this call
+            elif self._logical_pos is None or self._last_raw_global is None:
+                self._logical_pos = global_value          # first sample / post-reset — resync
+            elif self._just_settled:
+                self._just_settled = False                # skip exactly the first post-settle sample:
+                pass                                       # _logical_pos holds the adopted target
+            else:
+                delta = global_value - self._last_raw_global
+                if abs(delta) > _LOGICAL_POS_RESYNC_THRESHOLD:
+                    self._logical_pos = global_value      # discontinuity (VT switch / rapid seek) — resync
+                else:
+                    self._logical_pos += delta            # normal playback — accumulate
+            self._last_raw_global = global_value
         # VT: use self._chapter_list directly — it holds the virtual timeline chapter
         # data (exact DB times, global positions). self._file_offset translates the
         # local mpv time_pos into the global VT position.
@@ -402,6 +470,9 @@ class Player(QObject):
         self._cached_time_pos = None
         self._cached_duration = None
         self._seek_target = None
+        self._logical_pos = None          # new book — getter falls back to raw until first seek/sample
+        self._last_raw_global = None
+        self._just_settled = False
 
         QThreadPool.globalInstance().start(_ResolveWorker())
 
@@ -459,7 +530,15 @@ class Player(QObject):
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
+            # Adopt the logical target: this reload path returns early and NEVER reaches the
+            # _on_time_pos_change settle, so _logical_pos must be adopted here or it stays
+            # stale at the pre-seek value. Read _seek_target into a local FIRST so this does
+            # not depend on line ordering vs. the clear below (watch item, see plan).
+            _reload_target = self._seek_target
             self._seek_target = None
+            if _reload_target is not None:
+                self._logical_pos = _reload_target
+                self._just_settled = True   # skip the first post-reload sample's accumulation
             self.instance.pause = not self._mp3_seek_was_playing
             self._mp3_seek_visual_lock = False
             return
@@ -478,6 +557,14 @@ class Player(QObject):
             if target_file is not None and target_file['duration'] - pending < 2.0:
                 self._is_seeking = False
                 self._seek_target = None
+                # Cross-file seek abandoned (target within 2s of the file's EOF): no seek
+                # issues. Reset _logical_pos so the getter falls back to the raw path for the
+                # freshly-loaded file rather than reporting a stale pre-switch logical value.
+                # This is a DIFFERENT lifecycle moment from load_book's reset (that's book
+                # selection; this is mid-VT-playback abandon) — see watch item in the plan.
+                self._logical_pos = None
+                self._last_raw_global = None
+                self._just_settled = False
             else:
                 # _seek_target must be GLOBAL: the settle in _on_time_pos_change compares
                 # abs((value + _file_offset) - _seek_target) < 1.0. Storing the LOCAL
@@ -500,6 +587,7 @@ class Player(QObject):
                           f"target_idx={self._current_vt_index} "
                           f"path={os.path.basename(target_file['file_path'])} — VT load no longer serialized!", flush=True)
                 self._seek_target = pending + target_offset
+                self._logical_pos = pending + target_offset  # GLOBAL, same as _seek_target
                 self.instance.command_async('seek', pending, 'absolute+exact')
         if self._virtual_timeline is not None:
             self._is_vt_file_switch = False
@@ -561,6 +649,12 @@ class Player(QObject):
 
     @property
     def time_pos(self):
+        # _logical_pos (drift fix) is the app's believed position, decoupled from mpv's raw
+        # per-seek landing residual — it is ALWAYS GLOBAL (no _file_offset add). When set, it
+        # is authoritative; the raw fallback below only runs before the first sample/seek of a
+        # book (when _logical_pos is None). See _on_time_pos_change / SEEK_DRIFT_MEASUREMENTS.md.
+        if self._logical_pos is not None:
+            return self._logical_pos
         if self._cached_time_pos is None:
             return None
         if self._virtual_timeline is not None:
@@ -592,6 +686,7 @@ class Player(QObject):
         self._eof = False
         self._is_seeking = True
         self._seek_target = target_pos
+        self._logical_pos = target_pos    # GLOBAL, same as _seek_target (independent of _cached_time_pos)
         self._cached_time_pos = local_pos if local_pos is not None else target_pos
         self._mp3_seek_visual_lock = True
         load_path = file_path if file_path is not None else self._play_target
@@ -626,6 +721,7 @@ class Player(QObject):
                 self._eof = False
                 self.is_seeking = True
                 self._seek_target = pos
+                self._logical_pos = pos    # GLOBAL, same as _seek_target
                 if (target_file['file_path'].lower().endswith('.mp3')
                         and abs(local_pos - ((self._cached_time_pos or 0.0) - self._file_offset)) > _MP3_SEEK_THRESHOLD
                         and os.path.getsize(target_file['file_path']) > _VT_MP3_SIZE_THRESHOLD
@@ -644,6 +740,7 @@ class Player(QObject):
                 self._eof = False
                 self.is_seeking = True
                 self._seek_target = pos
+                self._logical_pos = pos    # GLOBAL, same as _seek_target
                 self._pending_local_pos = local_pos
                 self._current_vt_index = target_idx
                 self._file_offset = target_file['cumulative_start']
@@ -683,6 +780,7 @@ class Player(QObject):
             self._eof = False
             self.is_seeking = True
             self._seek_target = pos
+            self._logical_pos = pos    # GLOBAL (== local for non-VT); independent of _cached_time_pos below
             self._cached_time_pos = pos
             if self._chapter_list:
                 curr = 0

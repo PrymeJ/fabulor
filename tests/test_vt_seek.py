@@ -88,6 +88,31 @@ def test_cross_file_seek_target_is_global_high_offset():
     assert p._seek_target is None
 
 
+def test_cross_file_settle_adopts_logical_and_skip_one_prevents_residual_readd():
+    """The Finding-2 trap (drift fix): a VT cross-file settle adopts the GLOBAL target
+    into _logical_pos; the FIRST post-settle sample (mpv catching up to the target) must
+    NOT re-add the landing residual via delta accumulation. Pins that the skip-one
+    mechanism is what prevents 694.86 + 0.35 -> 695.21 (the compounding re-add)."""
+    p = _vt_player(TIMELINE_HI)
+    idx = 27
+    cum = TIMELINE_HI[idx]["cumulative_start"]           # 108000.0
+    _simulate_cross_file_seek(p, target_idx=idx, pending_local=0.35)
+    target = 0.35 + cum
+    assert p._seek_target == target
+    assert p._logical_pos == target                       # adopted at the write site, GLOBAL
+    # settle sample lands OFF target by a residual (global 0.30 short — mpv landed short):
+    p._on_time_pos_change("time-pos", 0.05)               # global = 0.05 + foff(cum) = cum + 0.05
+    assert p._is_seeking is False
+    assert p._logical_pos == target                       # adopted exact target, discarded residual
+    assert p._just_settled is True
+    # first post-settle sample: mpv catches UP to the true target (global == target) — MUST be
+    # skipped, else delta (target - settle_raw = 0.30) re-adds and logical -> target + 0.30.
+    p._on_time_pos_change("time-pos", 0.35)               # global = cum + 0.35 = target
+    assert p._logical_pos == target                       # NOT target + 0.30 — skip-one held
+    assert p._just_settled is False
+    assert p.time_pos == target
+
+
 def test_local_target_would_NOT_settle_proving_the_bug():
     """Guard against regression: if _seek_target were LOCAL (the old bug), a global
     position far from it never settles. This encodes WHY the fix is needed."""

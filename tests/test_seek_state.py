@@ -231,3 +231,123 @@ def test_vt_file_switch_resolves_new_chapter_no_freeze():
     p._on_time_pos_change("time-pos", 0.5)           # global 1000.5, ch1
     assert got == [0, 1]
     assert p._cached_time_pos == 0.5                 # cache tracked the reset, no freeze
+
+
+# --------------------------------------------------------------------------- #
+# invariant 4 — _logical_pos: the drift fix. time_pos returns the app's BELIEVED
+# position (adopted from _seek_target at settle, delta-accumulated during playback,
+# resynced on discontinuity), decoupled from mpv's raw per-seek landing residual.
+# See SEEK_DRIFT_MEASUREMENTS.md and the plan for the mechanism these pin.
+# --------------------------------------------------------------------------- #
+def test_settle_adopts_seek_target_exactly_not_raw_landing():
+    """The core discard-residual invariant: on settle, _logical_pos becomes the exact
+    nominal _seek_target, NOT the raw sample that triggered the settle (which lands off
+    by mpv's ~0.09/0.37s residual). time_pos then returns the exact target."""
+    p = make_player()
+    setup_non_vt(p, [0.0, 100.0, 200.0])
+    p._is_seeking = True
+    p._seek_target = 150.0
+    p._logical_pos = 150.0            # written at the seek site
+    p._on_time_pos_change("time-pos", 120.0)      # far — still seeking
+    assert p._is_seeking is True
+    # settle sample OFF target by the paused-undershoot residual (0.37)
+    p._on_time_pos_change("time-pos", 150.37)
+    assert p._is_seeking is False
+    assert p._logical_pos == 150.0                # exact target, NOT 150.37
+    assert p.time_pos == 150.0                    # getter returns logical
+    assert p._just_settled is True                # skip-one armed for the next sample
+
+
+def test_skip_one_then_clean_accumulation():
+    """The first post-settle sample is SKIPPED (does not accumulate), so the residual
+    it still carries is not re-added; the second sample resumes clean lockstep."""
+    p = make_player()
+    setup_non_vt(p, [0.0, 100.0, 200.0])
+    p._is_seeking = True
+    p._seek_target = 150.0
+    p._logical_pos = 150.0
+    p._on_time_pos_change("time-pos", 150.37)     # settle -> logical=150.0, just_settled=True
+    assert p._just_settled is True
+    # first post-settle sample: raw 150.37 again (mpv sitting at its landing) -> SKIPPED
+    p._on_time_pos_change("time-pos", 150.37)
+    assert p._logical_pos == 150.0                # unchanged — residual not re-added
+    assert p._just_settled is False               # skip consumed
+    # second sample: genuine playback advance of ~0.043s from the (now-clean) baseline
+    p._on_time_pos_change("time-pos", 150.413)
+    assert abs(p._logical_pos - (150.0 + 0.043)) < 1e-9   # accumulated the real motion
+
+
+def test_alternating_cycle_returns_to_origin():
+    """The direct drift regression: N alternating forward/back seeks, each landing off
+    target by the residual, must cancel — time_pos returns to the exact origin, not
+    creep. (Pre-fix this compounded ~0.37s per settle toward EOF.)"""
+    p = make_player()
+    setup_non_vt(p, [0.0, 100000.0])          # single huge chapter, no boundary interplay
+    origin = 500.0
+    p._logical_pos = origin
+    p._last_raw_global = origin
+    p._just_settled = False
+    RESIDUAL = 0.37
+    for _ in range(6):
+        for target in (origin + 250.0, origin):     # forward then back to origin
+            p._is_seeking = True
+            p._seek_target = target
+            p._logical_pos = target                  # seek-site write
+            # settle sample lands off by the residual (paused-style undershoot)
+            p._on_time_pos_change("time-pos", target + RESIDUAL)
+            # first post-settle sample (mpv still at its landing) — skipped
+            p._on_time_pos_change("time-pos", target + RESIDUAL)
+    assert abs(p.time_pos - origin) < 1e-9           # exact, no compounding
+
+
+def test_delta_accumulation_tracks_playback():
+    """Between seeks, _logical_pos advances by the summed raw deltas (not by adopting
+    each raw value), and _cached_time_pos independently mirrors the raw sample."""
+    p = make_player()
+    setup_non_vt(p, [0.0, 100000.0])
+    p._logical_pos = 10.0
+    p._last_raw_global = 10.0
+    p._just_settled = False
+    p._is_seeking = False
+    seq = [10.043, 10.086, 10.213, 10.299]
+    for v in seq:
+        p._on_time_pos_change("time-pos", v)
+    assert abs(p._logical_pos - seq[-1]) < 1e-9      # tracked continuous playback
+    assert p._cached_time_pos == seq[-1]             # co-invariant: raw mirror unchanged
+
+
+def test_resync_on_implausible_delta():
+    """A delta above _LOGICAL_POS_RESYNC_THRESHOLD (VT file-switch / rapid seek landing
+    outside is_seeking) resyncs _logical_pos to the raw global, rather than accumulating
+    a spurious jump. Fallback is NOT gated on is_seeking."""
+    from fabulor.player import _LOGICAL_POS_RESYNC_THRESHOLD
+    p = make_player()
+    setup_non_vt(p, [0.0, 100000.0])
+    p._logical_pos = 100.0
+    p._last_raw_global = 90.0            # note: != _logical_pos, so accumulate would give 510
+    p._just_settled = False
+    p._is_seeking = False
+    big = 90.0 + _LOGICAL_POS_RESYNC_THRESHOLD + 400.0   # far above threshold
+    p._on_time_pos_change("time-pos", big)
+    assert p._logical_pos == big         # resynced to raw, NOT 100 + (big-90)
+    # negative discontinuity (rapid backward VT-style jump) while not seeking — also resyncs
+    p._logical_pos = 1000.0
+    p._last_raw_global = 1000.0
+    p._on_time_pos_change("time-pos", 640.0)   # delta -360, not seeking, seek_target None
+    assert p._logical_pos == 640.0
+
+
+def test_logical_pos_survives_none_sample():
+    """A transient raw time-pos of None (file boundary / pre-first-frame) must NOT
+    collapse _logical_pos to None — the getter's belief persists across it (deliberate
+    asymmetry vs _cached_time_pos, which DOES mirror the None)."""
+    p = make_player()
+    setup_non_vt(p, [0.0, 100000.0])
+    p._logical_pos = 200.0
+    p._last_raw_global = 200.0
+    p._just_settled = False
+    p._is_seeking = False
+    p._on_time_pos_change("time-pos", None)
+    assert p._logical_pos == 200.0       # unchanged
+    assert p.time_pos == 200.0
+    assert p._cached_time_pos is None    # raw mirror DID take the None
