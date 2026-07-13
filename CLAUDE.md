@@ -442,13 +442,13 @@ The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { 
 `_update_cover_art_scaling` uses `COVER_AREA_HEIGHT` (a module-level constant in `app.py`) as `target_h`, not `self.cover_art_label.height()`. The live allocated height is transient and state-dependent — it reflects whatever the layout engine allocated at the moment of the call, which can be wrong during any state transition (empty→book, no-cover→cover, panel open/close). The constant decouples scaling from layout state and prevents any cover aspect ratio or state transition from breaking the layout. `cover_art_label` is also pinned with `setFixedHeight(COVER_AREA_HEIGHT)` in `_build_cover_art`. If the window layout ever changes, re-calibrate `COVER_AREA_HEIGHT` empirically by testing covers of various aspect ratios and confirming no bottom clipping in fit mode.
 
 ### DO NOT try to expand a widget's height inside the Library settings tab's `QVBoxLayout` — use a MainWindow-level popup instead
-`settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed 500px height** widget, and no settings tab has its own `QScrollArea` (this is intentional — no panel in this app has a scrollbar: Stats, Sleep, and Playback don't, and Library must not either). Any widget inside a settings tab that tries to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put the extra height: Qt either refuses to allocate it, or steals it from a sibling with a flexible size policy (visible as the whole tab drifting). Five inline approaches for the Excluded Books expandable list all failed this way — `QScrollArea.maximumHeight` animated alone (grew nothing — `QScrollArea.sizeHint()` is ~`(0,4)` regardless of content), `minimumHeight`+`maximumHeight` driven in lockstep (grew the list but stole space from the folder-list box, visible whole-tab drift), `QSizePolicy.Fixed` on the scroll area (drift became a flicker), and an absolute-overlay child of the section widget itself (every geometry/visibility check passed, nothing rendered live — independently reproduced by a different model attempting the same shape). Full blow-by-blow in NOTES.md "Excluded Books list wouldn't expand..." (2026-06-27). The fix: anything that needs to expand beyond a settings tab's available space must be a popup parented directly to `MainWindow` (see `ExcludedBooksPopup`, `ui/excluded_books.py`, which copies `ChapterList`'s — `ui/chapter_list.py` — architecture exactly: `QGraphicsOpacityEffect` fade only, no size `QPropertyAnimation`, `show()`/`raise_()`/`setGeometry()` from the click handler). It is never a descendant of the tab's layout, so nothing in that layout is ever asked to renegotiate space for it.
+`settings_panel` (`main_window_builders.py` `build_settings_panel`) is a **fixed 500px height** widget, and no settings tab has its own `QScrollArea` (this is intentional — no panel in this app has a scrollbar: Stats, Sleep, and Playback don't, and Library must not either). Any widget inside a settings tab that tries to grow taller than the tab's already-fully-claimed vertical budget has nowhere to put the extra height: Qt either refuses to allocate it, or steals it from a sibling with a flexible size policy (visible as the whole tab drifting). Multiple inline approaches for the Excluded Books expandable list were tried and all failed this way, including a `QScrollArea` with animated `maximumHeight` and an absolute-overlay child of the section widget itself — see SESSION.md, 2026-06-27 Session 2, and NOTES.md "Excluded Books list wouldn't expand..." for the full attempt-by-attempt trail if this shape of bug resurfaces. The fix: anything that needs to expand beyond a settings tab's available space must be a popup parented directly to `MainWindow` (see `ExcludedBooksPopup`, `ui/excluded_books.py`, which copies `ChapterList`'s — `ui/chapter_list.py` — architecture exactly: `QGraphicsOpacityEffect` fade only, no size `QPropertyAnimation`, `show()`/`raise_()`/`setGeometry()` from the click handler). It is never a descendant of the tab's layout, so nothing in that layout is ever asked to renegotiate space for it.
 
 ### DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone
 For this exact class of bug (widgets inside a settings tab not sizing/showing correctly), every headless Python verification attempt — `processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic `QMouseEvent` delivery, even instantiating `MainWindow()` without actually opening the settings panel through its real animated entry path or switching to the real active tab — reported "looks correct" at some point, including for an attempt that rendered nothing at all in the live app. The gap between a script reporting correct geometry/`isVisible()`/stylesheet state and what the real, live, actually-opened app shows was real and repeated, not a one-off fluke. For any settings-panel/tab layout or paint bug: do not trust headless assertions as a substitute for the user checking the live app. Make the change, ask them to check, and treat their report as ground truth over any script's output. (Same underlying lesson as the "user sees the rendered pixels" rule at the top of this section — this is that lesson applied to a widget class where even careful headless verification kept giving false confidence.)
 
 ### DO NOT trust `QComboBox` popup pseudo-state QSS (`::item:hover`/`::item:selected`) or `::down-arrow` on this app's target desktop — paint them manually instead
-Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style — `QApplication.style().objectName() == "fusion"`, no `QT_QPA_PLATFORMTHEME` set): `QComboBox QAbstractItemView::item:hover` / `::item:selected` QSS rules do **not** reach the popup's paint at all. Proven, not guessed — the rule was swapped to a glaring, unmissable `red` and there was **zero visual change** live, ruling out a color/subtlety problem. Reproduced in complete isolation (a bare `QComboBox` outside the rest of the app) via `combo.view().setCurrentIndex(...)`, so it isn't an app-specific event-filter or timing interaction either. The SAME desktop also ignores `QComboBox::down-arrow`'s `image: none` + border-triangle QSS trick — the native style paints its own arrow glyph there regardless, which rendered as a plain light square. Fix for both, in `library.py`: `_ComboItemDelegate` (installed via `combo.view().setItemDelegate(...)`) paints popup item hover/selection backgrounds directly instead of relying on native pseudo-state painting; `_ThemedComboBox` (a `QComboBox` subclass, used in place of a plain `QComboBox()` for `sort_combo`/`style_combo`) overrides `paintEvent` to call `super().paintEvent()` first (background/border/text via the style still work fine — only the popup-item and arrow pseudo-states are broken) then paints its own triangle over just the arrow sub-control's rect. **Do not fill the arrow rect edge-to-edge** — `subControlRect(SC_ComboBoxArrow)` spans the FULL control height including the rounded top/bottom-right corners; a flat fill there squares off those corners (a regression hit and fixed live in the same session — see the `corner_clearance` inset in `_ThemedComboBox.paintEvent`). Do not attempt a QSS-only re-fix for either of these without re-confirming on the affected desktop first — this is a known-failed approach as of 2026-07-09 (see NOTES.md), and per the user this specific area (Library dropdown popup styling) was already attempted and abandoned once before, roughly 3 months prior, undocumented at the time.
+Confirmed on the primary dev desktop (KDE Plasma, Wayland, Fusion style — `QApplication.style().objectName() == "fusion"`, no `QT_QPA_PLATFORMTHEME` set), and reproduced in complete isolation outside the app: `QComboBox QAbstractItemView::item:hover` / `::item:selected` QSS rules do **not** reach the popup's paint at all (a rule swapped to glaring red produced zero visual change, ruling out a color/subtlety problem). The SAME desktop also ignores `QComboBox::down-arrow`'s `image: none` + border-triangle QSS trick — the native style paints its own arrow glyph there regardless. Fix for both, in `library.py`: `_ComboItemDelegate` (installed via `combo.view().setItemDelegate(...)`) paints popup item hover/selection backgrounds directly instead of relying on native pseudo-state painting; `_ThemedComboBox` (a `QComboBox` subclass, used in place of a plain `QComboBox()` for `sort_combo`/`style_combo`) overrides `paintEvent` to call `super().paintEvent()` first (background/border/text via the style still work fine — only the popup-item and arrow pseudo-states are broken) then paints its own triangle over just the arrow sub-control's rect. **Do not fill the arrow rect edge-to-edge** — `subControlRect(SC_ComboBoxArrow)` spans the FULL control height including the rounded top/bottom-right corners; a flat fill there squares off those corners — see the `corner_clearance` inset in `_ThemedComboBox.paintEvent`. Do not attempt a QSS-only re-fix for either of these without re-confirming on the affected desktop first — this is a known-failed approach (this exact area was attempted and abandoned once before, undocumented at the time). See SESSION.md, 2026-07-09 Session 1, for the diagnostic trail (including the isolation/screenshot tests) and NOTES.md for the writeup.
 
 ### DO NOT let `open_book_detail` retarget or re-animate an already-visible Book Detail Panel
 `open_book_detail` (`panels.py`) now no-ops entirely — does not call `load_book`, does not restart the slide-in animation — whenever `book_detail_panel.isVisible()` is already `True`, regardless of which book is showing. `_start_book_detail_entry` is unconditional (always moves the panel off-screen right then slides it back to `x=0`), so calling `open_book_detail` while already open visibly yanks the panel out and back — this is what Library's new Alt+Enter shortcut surfaced (repeatedly pressing it on the already-open book re-triggered the slide every time). Worse without the guard: arrow-navigating to a DIFFERENT book while detail is already open (e.g. after a right-click) and then pressing Alt+Enter would hijack the visible panel onto the new book instead of being blocked — same call path, no protection. The fix is scoped to book-detail-vs-book-detail only; it does **not** touch or weaken `PanelManager.is_overlay_open_or_committed()` (the cross-panel — library/settings/speed/sleep/stats/tags — one-overlay-at-a-time gate), which deliberately still excludes `open_book_detail` for the unrelated reason documented above (it's reachable only from within an already-open library/stats/tags panel, so it never races a *different* panel's opening animation). The user must close the panel via an existing close path (`_close_book_detail_flow` / the panel's own close button) before opening another book's detail.
@@ -456,53 +456,48 @@ Confirmed live on the primary dev desktop (KDE Plasma, Wayland, Fusion style —
 ---
 
 ### Keyboard focus ownership: exactly one widget owns focus, and the global dispatcher only acts when that owner is MainWindow itself or nothing panel-local (added 2026-07-11)
-This is now load-bearing architecture, not a one-off fix — added after the main-window transport
-shortcuts (Space/volume/speed/skip/chapter/mute/undo) surfaced three related bugs in one session.
-The invariant: **exactly one widget owns real Qt keyboard focus at a time, and
-`MainWindow.keyPressEvent` only hands a key to the shortcut dispatcher
-(`MainWindow._focus_allows_global_shortcuts()`) when `QApplication.focusWidget()` is `None` or
-`MainWindow` itself** — never when a panel/overlay is open and one of its own widgets holds real
-focus. A panel-local focused widget gets first AND FINAL say over a key, even if it declines it
-(leaves it unaccepted and lets Qt propagate the event upward) — the key must NOT fall through to
-global shortcuts just because the local widget didn't want it.
+Load-bearing architecture, not a one-off fix. The invariant: **exactly one widget owns real Qt
+keyboard focus at a time, and `MainWindow.keyPressEvent` only hands a key to the shortcut
+dispatcher (`MainWindow._focus_allows_global_shortcuts()`) when `QApplication.focusWidget()` is
+`None` or `MainWindow` itself** — never when a panel/overlay is open and one of its own widgets
+holds real focus. A panel-local focused widget gets first AND FINAL say over a key, even if it
+declines it (leaves it unaccepted and lets Qt propagate the event upward) — the key must NOT fall
+through to global shortcuts just because the local widget didn't want it.
 
 Two enforcement points, both required (fixing only one leaves the other's failure mode open):
 - **Ownership** (`PanelManager._claim_panel_focus`, called from every panel's `_start_*_entry`
   after `.raise_()`): every panel/overlay must claim focus for one of its own widgets on open.
   `raise_()`/`.show()` only change Z-order/paint stacking — they have ZERO effect on keyboard
   focus. Without this, a panel opened over an already-focused panel (e.g. Book Detail opened from
-  Library) leaves the PREVIOUS panel's widget (e.g. Library's `_list_view`) holding real focus,
-  so arrow keys/Space silently navigate and activate the panel underneath the visible one — this
-  is reachable in practice because `open_book_detail` is the one intentionally-ungated overlay
-  path (see the `open_book_detail` rule above). Settings/Speed/Sleep reuse
-  `panel_tab_widgets(panel_key)` (the same "first focusable widget" list Tab-cycling already
-  uses) as the claim target; Stats/Tags/BookDetail (not in that list) claim the panel root
-  itself. Library and ChapterList self-manage this already (their own `showEvent`/`show_above`)
-  and are NOT routed through the shared helper — leave them as-is.
-- **Dispatch** (`MainWindow._focus_allows_global_shortcuts`): without this, a key a focused
-  input widget doesn't itself consume (e.g. `Up`/`Down` inside a `QLineEdit`, which only handles
+  Library) leaves the PREVIOUS panel's widget (e.g. Library's `_list_view`) holding real focus, so
+  arrow keys/Space silently navigate and activate the panel underneath the visible one — this is
+  reachable in practice because `open_book_detail` is the one intentionally-ungated overlay path
+  (see the `open_book_detail` rule above). Settings/Speed/Sleep reuse `panel_tab_widgets(panel_key)`
+  (the same "first focusable widget" list Tab-cycling already uses) as the claim target;
+  Stats/Tags/BookDetail (not in that list) claim the panel root itself. Library and ChapterList
+  self-manage this already (their own `showEvent`/`show_above`) and are NOT routed through the
+  shared helper — leave them as-is.
+- **Dispatch** (`MainWindow._focus_allows_global_shortcuts`): without this, a key a focused input
+  widget doesn't itself consume (e.g. `Up`/`Down` inside a `QLineEdit`, which only handles
   cursor-relevant keys) propagates up to `MainWindow.keyPressEvent`, which — with no
-  focus-awareness — hands it to the dispatcher regardless of what has focus. This is how pressing
-  `Up`/`Down` while editing a Book Detail metadata/tag field used to dismiss the whole panel
-  (`VOLUME_UP/DOWN` → `_on_volume_changed` → `hide_all_panels()`). The fix does NOT special-case
-  volume or any individual handler — that would only close the hole for that one key and leave
-  every other bound key (`m`, `u`, future bindings) free to leak the same way. It must live at
-  the dispatch decision point, once, for every key.
+  focus-awareness — hands it to the dispatcher regardless of what has focus (this is how
+  `Up`/`Down` while editing a field used to fire `VOLUME_UP/DOWN` → `_on_volume_changed` →
+  `hide_all_panels()`, dismissing the whole panel). The fix does NOT special-case volume or any
+  individual handler — that would only close the hole for that one key and leave every other bound
+  key free to leak the same way. It must live at the dispatch decision point, once, for every key.
 
-**Any future panel/overlay MUST call `_claim_panel_focus`/`_release_panel_focus` (or self-manage
-focus like Library/ChapterList) in its open/close flow, or it will silently reintroduce the
-bleed-through bug** — nothing else in the codebase enforces this per-panel; it is opt-in by
-construction, not automatic.
+**DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`** (or
+self-manage focus like Library/ChapterList) in its open/close flow — nothing else in the codebase
+enforces this per-panel; skipping it silently reintroduces the bleed-through bug.
 
-**Qt gotcha, generalized beyond this specific bug:** clearing focus must happen AFTER `.hide()`,
-never before. Confirmed live, repeatedly, during this fix: `hide()` on a widget that still holds
-real Qt focus makes Qt fall back and silently RE-GRANT focus to that same now-hidden widget if
-it's the only (or best) `StrongFocus` candidate around — so a `clearFocus()` call placed before
-`hide()` gets invisibly undone by `hide()` itself, and the symptom looks identical to the bug
-never being fixed at all. `_release_panel_focus` is deliberately called AFTER `panel.hide()` in
-every close handler for this reason. Also: `clearFocus()` only acts on `self` — call it on the
-actual focused descendant (`QApplication.focusWidget()`, checked via `panel.isAncestorOf(...)`),
-never on the panel container, which typically never holds focus directly itself.
+**Qt gotcha:** clearing focus must happen AFTER `.hide()`, never before. `hide()` on a widget that
+still holds real Qt focus makes Qt fall back and silently RE-GRANT focus to that same now-hidden
+widget if it's the only (or best) `StrongFocus` candidate around — so a `clearFocus()` call placed
+before `hide()` gets invisibly undone by `hide()` itself. `_release_panel_focus` is deliberately
+called AFTER `panel.hide()` in every close handler for this reason. Also: `clearFocus()` only acts
+on `self` — call it on the actual focused descendant (`QApplication.focusWidget()`, checked via
+`panel.isAncestorOf(...)`), never on the panel container, which typically never holds focus
+directly itself.
 
 **This entire mechanism depends on the NoFocus sweep (below) being complete.**
 `_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
@@ -510,49 +505,34 @@ true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **An
 widget added outside a panel (a new transport button, a new status indicator, anything parented
 directly to `MainWindow`'s always-visible chrome) MUST be `setFocusPolicy(Qt.NoFocus)`, full
 stop** — otherwise it becomes a focus candidate indistinguishable from a real panel-local widget,
-and the whole dispatch guard silently breaks for exactly the same reason the speed button used to
-steal `Space` at startup before this sweep.
+and the whole dispatch guard silently breaks.
 
-**Generalization, found 2026-07-12 while extending this invariant to Book Detail: ANY mouse-
-clickable `QPushButton`/`QToolButton`/`QLineEdit` inside a panel is a focus-strand risk, not
-just the panel's own open/close transition.** A user's click grants that widget real Qt focus;
-if a later code path then hides, disables (`setEnabled(False)`), or deletes (`deleteLater()`)
-that same widget — a confirm banner appearing over it, a list/grid rebuild after add/remove,
-a bulk-action button disabling itself on click — Qt does NOT reliably hand focus back to the
-panel. Found three more live instances of this beyond the panel-open/close case the invariant
-was first written for: a tag-chip's remove button (`_rebuild_tag_chips`), a History row's
-trash button (deleted after a confirmed delete), and a bulk-delete button disabling itself on
-arm. Fixing each site individually is necessary but not sufficient — a general safety net
-(`BookDetailPanel._ensure_panel_owns_focus()`, called at the top of `eventFilter` on every
-`KeyPress`: reclaim focus for the panel whenever `QApplication.focusWidget()` is `None` or not
-a descendant of the panel) makes any future site with this same shape self-heal on the very
-next keypress instead of silently reintroducing the bug. **Any panel with a clickable button/
-field that can be hidden, disabled, or deleted by its own click handler should have — or be
-covered by — an equivalent safety net, not rely on remembering to add a reclaim at every site.**
+**Generalization: ANY mouse-clickable `QPushButton`/`QToolButton`/`QLineEdit` inside a panel is a
+focus-strand risk, not just the panel's own open/close transition.** A user's click grants that
+widget real Qt focus; if a later code path then hides, disables (`setEnabled(False)`), or deletes
+(`deleteLater()`) that same widget — a confirm banner appearing over it, a list/grid rebuild after
+add/remove, a bulk-action button disabling itself on click — Qt does NOT reliably hand focus back
+to the panel. **Any panel with a clickable button/field that can be hidden, disabled, or deleted by
+its own click handler should have — or be covered by — a general safety net, not rely on
+remembering to add a reclaim at every site.** `BookDetailPanel._ensure_panel_owns_focus()` is the
+reference implementation: called at the top of `eventFilter` on every `KeyPress`, it reclaims focus
+for the panel whenever `QApplication.focusWidget()` is `None` or not a descendant of the panel, so
+any future site with this shape self-heals on the very next keypress instead of reintroducing the
+bug.
 
-**Modal-dialog exception, found 2026-07-12: a `QApplication`-installed `eventFilter` (the
-mechanism every panel's Tab/Escape handling and the focus-reclaim safety net above are built
-on) intercepts EVERY key event app-wide, including ones meant for an unrelated modal dialog
-(e.g. `QFileDialog.getOpenFileName`) that a panel opened.** Confirmed live: pressing `Escape`
-while Book Detail's Cover-tab file picker was open closed the PANEL first (the panel's own
-Escape-priority chain ran before the dialog's native Escape-to-cancel ever got a turn), leaving
-the dialog open — a second `Escape` was then needed to actually cancel it, backwards from the
-expected order. The focus-reclaim safety net had the identical shape of bug layered on top: it
-would fight to steal focus back from the dialog's own internal widgets every keystroke, since
-they're a separate top-level window, not descendants of the panel. **Any `QApplication`-wide
-`eventFilter` that owns Escape/Tab/focus-reclaim logic MUST check
-`QApplication.activeModalWidget() is not None` first and decline to handle the event
-(`return False`) whenever true** — this is not scoped to dialogs the panel itself opened; any
-modal dialog anywhere in the app must win. `BookDetailPanel.eventFilter` does this at its very
-top, before any other branch.
+**Modal-dialog exception:** a `QApplication`-installed `eventFilter` (the mechanism every panel's
+Tab/Escape handling and the focus-reclaim safety net above are built on) intercepts EVERY key event
+app-wide, including ones meant for an unrelated modal dialog (e.g. `QFileDialog.getOpenFileName`)
+that a panel opened — unless guarded, it steals Escape/keys from the dialog before the dialog's own
+handling ever runs. **Any `QApplication`-wide `eventFilter` that owns Escape/Tab/focus-reclaim
+logic MUST check `QApplication.activeModalWidget() is not None` first and decline to handle the
+event (`return False`) whenever true** — this is not scoped to dialogs the panel itself opened; any
+modal dialog anywhere in the app must win. `BookDetailPanel.eventFilter` does this at its very top,
+before any other branch.
 
-Consequence: **DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`,
-and DO NOT clear focus before `hide()`.** Every panel/overlay must call `PanelManager._claim_panel_focus`
-in its open flow (after `.raise_()`) and `_release_panel_focus` in its close handler (after
-`.hide()`). Skipping either call on a future panel reintroduces the exact bug this fixed: a
-stale-focused widget from underneath bleeds keys through (arrows/Space acting on a different,
-obscured panel), or a key a focused field doesn't consume leaks out to global shortcuts (e.g.
-`Up`/`Down` dismissing an in-progress edit).
+See SESSION.md, 2026-07-11 Session 3 and Session 4, for the full trace-by-trace investigation that
+produced this invariant (three live-reported focus bugs in Session 3; three more focus-strand sites
+plus the modal-dialog bug in Session 4).
 
 ### DO NOT give always-on MainWindow chrome any focus policy other than `Qt.NoFocus`
 Every widget that is part of the permanent transport/chrome (not inside a slide-out panel) must
