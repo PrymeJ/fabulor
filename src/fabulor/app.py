@@ -1375,6 +1375,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_book_selected_from_library(self, path):
         """Loads a book and closes the library panel."""
+        logger.debug(f"[BOOKSWITCH-TRACE] _on_book_selected_from_library: entry path={path!r} "
+                     f"current_file={self.current_file!r}")
         if path == self.current_file:
             self.panel_manager.hide_all_panels()
             return
@@ -1446,7 +1448,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
+        logger.debug(f"[BOOKSWITCH-TRACE] _on_file_ready: entry current_file={self.current_file!r} "
+                     f"library_is_animating={getattr(self.library_panel, '_is_animating', False)}")
         if getattr(self.library_panel, '_is_animating', False):
+            logger.debug("[BOOKSWITCH-TRACE] _on_file_ready: DEFERRED (library still animating)")
             self._switch.mark_file_ready_deferred()
             return
         self._switch.clear_file_ready_deferred()
@@ -1664,11 +1669,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.progress_slider.set_markers([])
 
     def _restore_position(self):
+        logger.debug(f"[BOOKSWITCH-TRACE] _restore_position: entry current_file={self.current_file!r} "
+                     f"_virtual_timeline_set={self.player._virtual_timeline is not None}")
         QTimer.singleShot(0, lambda: self.player.set_volume_from_slider(self.volume_slider.value()))
         config_pos = self.config.get_last_position(self.current_file)
         if config_pos > 0:
             self.db.update_progress(self.current_file, config_pos)
         book_data = self.db.get_book(self.current_file)
+        logger.debug(f"[BOOKSWITCH-TRACE] _restore_position: book_data.progress="
+                     f"{book_data.progress if book_data else None!r}")
         if book_data and book_data.progress > 0:
             # Restore to the exact saved position for all book types. This is NOT
             # chapter navigation — there is no boundary to clear — so no epsilon is

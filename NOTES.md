@@ -1,3 +1,109 @@
+## VT progress restore silently resets on BOOK-SWITCH (not cold app-launch) — DIAGNOSED, root cause is theme application starving the Qt-side restore consumer, NOT the deferred-restore mechanism itself (2026-07-14)
+
+**Status: root cause fully traced and confirmed via targeted live instrumentation
+(`[BOOKSWITCH-TRACE]` debug logging, added this session and DELIBERATELY LEFT IN PLACE — not
+reverted, since the mechanism below is still only understood, not yet fixed). NOT FIXED.** Found
+live after the day's earlier VT restore-on-load fix (`faeaa83`/`685e433`, verified via 200
+cold-app-launch cycles) — the user reported that restore worked in all 200 of those cold-launch
+cycles but had never once been tested on a **book-switch** (selecting a different book from the
+library panel while the app is already running), and that book-switch to a VT book reliably resets
+progress to 0 instead of restoring it.
+
+**This is category (c) from the three explanations considered up front (a genuinely separate
+pre-existing bug / a real interaction with tonight's guard changes / something in between sharing
+machinery but reached via a different trigger) — confirmed precisely, not just "closest fit."**
+Tonight's `_vt_restore_pending`/`defer_vt_restore` mechanism is not wrong and is not the bug; it
+correctly handles the case it was designed for. What's missing is a guarantee that mechanism relies
+on implicitly: that `_restore_position` (which sets `_vt_restore_pending`) always runs, on the Qt
+main thread, before `_on_file_loaded` (which consumes it, firing on mpv's own independent event
+thread) checks it for the newly-loading file. That guarantee holds at cold app start, where nothing
+else is competing for the Qt event loop. It does NOT hold on book-switch, where a slow synchronous
+operation on the Qt thread can starve `_restore_position` long enough for `_on_file_loaded` to run
+first, on mpv's separate thread, completely unaffected by whatever is blocking Qt.
+
+**The exact mechanism, confirmed by live log trace, not inferred:**
+
+Failing case (`_on_file_loaded` wins the race):
+```
+15:41:21,965  ungate_play: emitting book_ready (held-play branch)
+15:41:21,984  _on_file_loaded: VT branch, _vt_restore_pending is None — NOTHING TO CONSUME
+15:41:21,984  [_on_theme_changed GUARD] any_panel_animating=False        <- theme change starts HERE
+  ... 325-400ms of synchronous _apply_stylesheets work on the Qt main thread ...
+15:41:22,384  [_on_theme_changed hover=False] pipeline=399.3ms
+15:41:22,385  _on_file_ready: entry                                       <- book_ready's QUEUED slot,
+15:41:22,387  _restore_position: entry                                       stuck behind the theme work
+15:41:22,388  defer_vt_restore: setting _vt_restore_pending=28109.6       <- set ~400ms too late; nothing
+                                                                              will ever re-check it
+```
+Succeeding case (`_restore_position` wins the race, same code, no theme change in the window):
+```
+15:42:15,694  ungate_play: emitting book_ready (held-play branch)
+15:42:15,696  _on_file_ready: entry                                      <- runs almost immediately
+15:42:15,697  _restore_position: entry
+15:42:15,700  defer_vt_restore: setting _vt_restore_pending=13538.18
+15:42:15,706  [VT-RESTORE-CONSUME] consuming deferred restore target=13538.18   <- consumed within ~6ms
+15:42:15,706  seek_async: CLOBBERING pending restore target=... (last-write-wins, expected/harmless)
+15:42:15,741  _on_file_loaded (2nd time, for the cross-file seek's target file): nothing pending — correct, already consumed
+```
+
+The user's own live report named the trigger exactly: both failures coincided with **"Cover art
+based theme"** switching a book whose new cover drives a fresh dominant-color extraction + theme
+application; both successes were plain, non-cover-driven theme switches with no such synchronous
+cost in the window. `book_ready` is a `Qt.ConnectionType.QueuedConnection` (`app.py:389`) — its
+consumer (`_on_file_ready` → `_restore_position` → `defer_vt_restore`) cannot run until the Qt event
+loop is free, and a ~325-400ms synchronous `_apply_stylesheets` pass (title bar, library panel,
+settings/speed/sleep panels, stats/book-detail panels, sidebar, all regenerated and reapplied on the
+same call) is easily enough to lose that race against `_on_file_loaded`, which runs on mpv's own
+event thread and is not blocked by anything happening on Qt's.
+
+**Why this is NOT the deferred-restore mechanism's bug to fix, and should very likely NOT be
+"fixed" with another patch to `_vt_restore_pending`/`_on_file_loaded`:** the mechanism does exactly
+what it was built to do — hold the restore target until the file is confirmed loaded — but it was
+built assuming a single-producer-single-consumer ordering (`_restore_position` sets, `_on_file_loaded`
+reads, in that order) that is only true when nothing else is competing for the Qt main thread at that
+moment. **This is the third independent data point that synchronous, main-thread theme
+application/extraction work in this codebase is expensive enough to cause real, user-visible
+problems reaching well beyond the Themes tab it was written for:**
+1. **2026-07-04** ("Theme-name hover preview," NOTES.md above) — a ~450-580ms synchronous
+   `_apply_stylesheets` pass during Themes-tab hover preview caused fade-animation timing bugs
+   (the animation's clock started before the restyle finished, degrading into a late snap).
+2. **Tonight, independently, via this exact instrumentation** — a 325-400ms synchronous
+   `_apply_stylesheets` pass measured directly (`[_on_theme_changed hover=False] pipeline=399.3ms`),
+   this time triggered by cover-art-driven theme application on a plain book-switch, nowhere near
+   the Themes tab.
+3. **Tonight's actual bug** — the same class of synchronous cost, this time large enough and
+   timed unluckily enough to make a Qt `QueuedConnection` consumer lose a race against an
+   independent mpv-thread event, corrupting application STATE (a silent progress reset), not just a
+   visual animation glitch. This is a step up in severity from the previous two instances, which
+   were both purely cosmetic/timing bugs — this one loses the user's actual saved position.
+
+**Suggested direction for whoever picks this up — not decided, not designed, explicitly deferred:**
+given this is the third occurrence of the same underlying cost causing a real problem in a third
+different subsystem, the more durable fix likely belongs at the **theme-application layer** — making
+`_apply_stylesheets`/cover-art theme extraction asynchronous, or at minimum deferring it away from
+moments where something else (like a book-switch's own event sequencing) is racing against the Qt
+main thread — rather than adding a fourth patch on top of `_vt_restore_pending`/`_on_file_loaded` to
+paper over one more way a slow main-thread operation can starve it. A patch narrowly targeting VT
+restore (e.g., some kind of retry/re-check after the fact) would treat the symptom in one call site
+while leaving the actual cost free to cause a similarly-shaped problem somewhere else next time
+something else happens to race against a slow theme apply. That said, this needs its own
+investigate-then-plan cycle (what would "async theme apply" actually require — thread-safety of
+`_apply_stylesheets`'s Qt widget mutations is a real constraint, not a given) — not designed further
+here.
+
+**Live instrumentation added and deliberately left in place** (not reverted — this is diagnostic,
+not a fix, and the mechanism is still only understood, not yet resolved): `[BOOKSWITCH-TRACE]` debug
+logging across `Player.load_book`/`_on_playlist_resolved`/`ungate_play`/`defer_vt_restore`/
+`_on_file_loaded`'s VT branch/`seek_async`'s `_vt_restore_pending` clobber (`player.py`), and
+`MainWindow._on_book_selected_from_library`/`_on_file_ready`/`_restore_position`
+(`app.py`), and `PanelManager._close_library_flow`/`_on_library_hidden` (`ui/panels.py`). All
+`logger.debug`, silent below `FABULOR_LOG_LEVEL=DEBUG`, zero behavior change (195 tests unaffected).
+Whoever picks this up next should use this instrumentation to confirm a fix actually closes the
+race, not just that it happens to work on a few manual tries — the same discipline this whole
+session has held to elsewhere.
+
+---
+
 ## `_PAUSED_SEEK_UNDERSHOOT_COMP` boundary-crossing gate — IMPLEMENTED, TESTED, FOUND STRUCTURALLY WRONG, REVERTED (2026-07-14)
 
 **Status: attempted and abandoned this session, on branch `fix/vt-restore-and-chapter-epsilons`

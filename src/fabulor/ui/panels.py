@@ -369,7 +369,9 @@ class PanelManager:
 
     def _close_library_flow(self):
         if self.library_panel_animation.state() == QAbstractAnimation.State.Running:
+            logger.debug("[BOOKSWITCH-TRACE] _close_library_flow: already running, no-op return")
             return
+        logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _close_library_flow: entry")
         panel_w = self.library_panel.width()
         sidebar_y = 32
 
@@ -388,6 +390,7 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_hidden(self):
+        logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _on_library_hidden: entry")
         try:
             self.library_panel_animation.finished.disconnect(self._on_library_hidden)
         except RuntimeError:
@@ -411,6 +414,9 @@ class PanelManager:
         # LOADING → RESTORING: the library slide-out is done, so the deadzone ends.
         mw._switch.library_revealed()
         player = getattr(mw, 'player', None)
+        logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _on_library_hidden: "
+                     f"about to call ungate_play, current_file={getattr(mw, 'current_file', None)!r} "
+                     f"file_ready_deferred={mw._switch.file_ready_deferred} chaps_deferred={mw._switch.chaps_deferred}")
         if player:
             player.ungate_play()
         self._notify_panel_closed()

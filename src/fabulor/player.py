@@ -429,6 +429,9 @@ class Player(QObject):
         return chapters
 
     def load_book(self, path, start_paused=True):
+        logger.debug(f"[BOOKSWITCH-TRACE] load_book: entry path={path!r} start_paused={start_paused} "
+                     f"pre_reset _vt_restore_pending={self._vt_restore_pending} "
+                     f"_play_gated(before)={getattr(self, '_play_gated', None)}")
         self._ensure_mpv()
         self._is_seeking = True
         self._eof = False
@@ -501,20 +504,25 @@ class Player(QObject):
         if os.path.isdir(play_target):
             self.load_failed.emit("no audio files in folder")
             return
+        logger.debug(f"[BOOKSWITCH-TRACE] _on_playlist_resolved: play_target={play_target!r} "
+                     f"_play_gated={self._play_gated} _virtual_timeline_set={self._virtual_timeline is not None}")
         if not self._play_gated:
             # Gate already lifted before resolve finished — play immediately.
             self.instance.chapters_file = chapters_file or None
             if self._virtual_timeline is not None:
                 # VT book: fire book_ready now (Qt thread, VT data ready)
+                logger.debug("[BOOKSWITCH-TRACE] _on_playlist_resolved: emitting book_ready (ungated branch)")
                 self.book_ready.emit()
             self.instance.play(play_target)
             if self._start_paused:
                 self.instance.pause = True
         else:
+            logger.debug("[BOOKSWITCH-TRACE] _on_playlist_resolved: gated, stashing _held_play")
             self._held_play = (play_target, chapters_file)
 
     def ungate_play(self):
         """Call after panel animation finishes (or immediately for non-library loads)."""
+        logger.debug(f"[BOOKSWITCH-TRACE] ungate_play: entry _held_play_is_none={self._held_play is None}")
         self._play_gated = False
         if self._held_play is None:
             return
@@ -523,11 +531,12 @@ class Player(QObject):
         self.instance.chapters_file = chapters_file or None
         if self._virtual_timeline is not None:
             # VT book: fire book_ready now (Qt thread, VT data ready)
+            logger.debug("[BOOKSWITCH-TRACE] ungate_play: emitting book_ready (held-play branch)")
             self.book_ready.emit()
         self.instance.play(play_target)
         if self._start_paused:
             self.instance.pause = True
-        
+
 
     def _on_chapter_change(self, name, value):
         # For non-VT non-CUE (embedded M4B), _on_time_pos_change handles chapter
@@ -613,6 +622,9 @@ class Player(QObject):
                 pending_target = self._vt_restore_pending
                 logger.debug(f"[VT-RESTORE-CONSUME] consuming deferred restore target={pending_target}")
                 self.seek_async(pending_target)
+            else:
+                logger.debug("[BOOKSWITCH-TRACE] _on_file_loaded: VT branch, "
+                             "_vt_restore_pending is None — NOTHING TO CONSUME, no seek issued")
             self.file_switched.emit()
         else:
             self.book_ready.emit()
@@ -746,6 +758,7 @@ class Player(QObject):
         seek, so no new state combination is introduced. See CLAUDE.md's VT+Undo fragile-zone
         rule and NOTES.md for the full reasoning.
         """
+        logger.debug(f"[BOOKSWITCH-TRACE] defer_vt_restore: setting _vt_restore_pending={pos}")
         self._vt_restore_pending = pos
 
     def _abandon_seek_missing_file(self) -> None:
@@ -775,6 +788,9 @@ class Player(QObject):
         # would otherwise have issued the deferred restore. Placed after the instance guard
         # above: if there's no mpv instance, this call is a complete no-op, so there's nothing
         # to supersede and _vt_restore_pending should be left untouched.
+        if self._vt_restore_pending is not None:
+            logger.debug(f"[BOOKSWITCH-TRACE] seek_async: CLOBBERING pending restore target="
+                         f"{self._vt_restore_pending} with new seek pos={pos} (last-write-wins)")
         self._vt_restore_pending = None
         current_pos = self._cached_time_pos or 0.0
         direction = 'forward' if pos >= current_pos else 'back'

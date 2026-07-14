@@ -6,6 +6,31 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-14] VT progress restore silently resets on book-switch (not cold app-launch) — root
+  cause confirmed, NOT fixed.** Distinct from anything shipped tonight (`faeaa83`/`685e433` were
+  verified via 200 cold-launch cycles only; book-switch was never tested until now). Root cause:
+  `_restore_position` (sets `_vt_restore_pending`) runs from a `Qt.QueuedConnection` slot on the Qt
+  main thread; `_on_file_loaded` (consumes it) fires on mpv's own independent event thread. Nothing
+  guarantees the former runs before the latter — it does at cold launch (nothing else competes for
+  the Qt event loop) but not on book-switch, where a slow synchronous operation on the Qt thread can
+  let `_on_file_loaded` win the race, find nothing pending, and never re-check. Confirmed live
+  trigger: cover-art-driven theme application (~325-400ms synchronous `_apply_stylesheets` pass) —
+  every failing switch coincided with it, every clean switch (plain theme, no cover-art extraction)
+  succeeded. **This is the THIRD independent instance of synchronous main-thread theme
+  application/extraction cost causing a real bug** (first: 2026-07-04 hover-preview fade-timing bug;
+  second: tonight's own measurement of the same cost outside the Themes tab entirely; third: this
+  bug, the first of the three to corrupt actual state rather than just visual timing). **Suggested
+  direction, not designed:** the durable fix likely belongs at the theme-application layer (make
+  `_apply_stylesheets`/cover-art extraction async, or defer it away from book-switch's event
+  sequencing) rather than a fourth patch onto `_vt_restore_pending`/`_on_file_loaded` — the deferred-
+  restore mechanism itself is sound and isn't this bug's actual fault. Full mechanism, the two
+  contrasting live log traces, and the async-theme-application direction are in NOTES.md, "VT
+  progress restore silently resets on BOOK-SWITCH..." (2026-07-14). **Diagnostic instrumentation
+  (`[BOOKSWITCH-TRACE]` debug logging across `player.py`/`app.py`/`ui/panels.py`) was deliberately
+  left in place, uncommitted-but-present, for whoever picks this up** — use it to confirm a fix
+  actually closes the race rather than trusting a few clean manual tries, same discipline as every
+  other fix tonight.
+
 - **[2026-07-13] First-app-launch-only VT flow-animation stutter on load.** User-reported,
   independent of the VT-restore-on-load / general `file_switched`-race investigation that surfaced
   it. Confirmed present on `main` (pre-existing, not introduced by that session's fixes — the user
