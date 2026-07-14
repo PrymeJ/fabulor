@@ -1,3 +1,92 @@
+## App-start flow-animation stutter is TWO mechanisms, not one — and it corrects the parent report's "isolated glitch" answer (2026-07-14)
+
+**Status: INVESTIGATION ONLY — no code changed, working tree clean (`git diff` empty). No fixes.**
+Live-verified follow-up to the parent report (`review/Report_260714_synchronous_main_thread_work.md`,
+entry directly below), closing the gap it explicitly left open: it declined to treat the 2026-07-13
+"first-app-launch-only VT flow-animation stutter" TODO item as settled, because that item's
+"isolated, unrelated animation glitch" conclusion was trace-only against since-changed code, and
+because new information from the user — the stutter occurs on **all book types**, not just VT (M4B
+rarely/subtly, MP3 frequently/visibly) — structurally could not be P1/P2/P3 (all three are VT-only
+by construction). This investigation reproduced it live and measured it. **Full raw numbers,
+per-config tables, and the traced smoking-gun launches: `review/Data_260714_flow_animation_stutter.md`.**
+
+**Method (measured, not traced):** temporary DEBUG-gated `[STUTTER-PROBE]` per-frame gap
+instrumentation (since reverted, tree clean) on `ClickSlider.animate_to`/`_set_animated_value`
+(the flow-anim glide) and on `library_panel_animation` (the slide). 60 cold launches (10 × 3 book
+types × 2 cover modes) via a cold-relaunch harness, plus 12 deliberate live book-switches the user
+drove manually — the user's visual observations were recorded alongside and **agreed with the
+instrumentation at every point**. A smooth `QPropertyAnimation` ticks ~16ms; a large inter-frame
+gap = the main thread was blocked between frames.
+
+**The answer, corrected: the stutter is TWO distinct mechanisms wearing one name — confirmed by
+magnitude, trigger, and visual character all differing, not assumed to be one bug.**
+
+- **Regime A — baseline animation roughness (~70ms worst gap). Independent of P1/P2/P3 AND of theme
+  apply.** Present on EVERY cold launch of EVERY book type, cover on or off, with zero
+  `_apply_stylesheets` anywhere near the window (worst_gap median 70–76ms, never observed >108.7ms;
+  0/10 apply-in-window on all OFF configs and both MP3 configs). Lands at animation start,
+  coinciding with synchronous chapter-list `populate` + repeated
+  `_update_chapter_label_from_index setCurrentRow` calls + the first mpv `time_pos` samples. This
+  IS the "isolated glitch" the original trace found — real, book-type-agnostic, unrelated to any
+  race pair. It's what the user sees on MP3 (10/10) and M4B-OFF (~half): a rough *start*, not a
+  freeze. **This is a genuinely new, separate low-rank finding, not part of the theme hazard.**
+- **Regime B — severe mid-animation freeze (~400–600ms). This IS the parent report's RANK-1
+  theme-apply hazard, a THIRD victim of it.** Only on cover-theme-ON configs where a full
+  `_apply_stylesheets` pass lands INSIDE the flow-animation window (M4B POOL 10/10, VT POOL 8/9;
+  worst_gap median 566–595ms, max 791ms; overrun +287…+531ms). Traced smoking gun (M4B POOL): the
+  ~400ms `_apply_stylesheets` begins ~200ms into the animation, blocks the main thread for its full
+  duration, and the next flow-anim frame arrives 599.5ms later having snapped straight to the end —
+  a freeze-then-snap, exactly the user's "mid pause, then flows." Same operation that starves the
+  P1↔P2 restore consumer in the parent report; here it starves the `QPropertyAnimation` frame
+  driver instead.
+
+**"Why is MP3 different" — answered, and it's a timing offset, not a work difference.** The
+cover-theme apply fires at different delays relative to the animation per book type: M4B-POOL median
+188ms after animate-start (mid-anim → freeze), VT-POOL median 368ms (late but still catches it),
+**MP3-POOL fires the apply entirely AFTER the animation ends** (0/10 in-window). So MP3 shows only
+Regime A, which is why the user saw MP3 stutter identically cover-on and cover-off. The offset is set
+by when the post-file-ready cover-theme re-apply fires; MP3's lands past the window. (Loose thread,
+non-load-bearing: a POOL cold launch fires `_apply_stylesheets` three times and the exact trigger of
+the third/post-file-ready one wasn't chased down — Regime B is proven regardless of which re-apply
+fires it. Noted in the data file.)
+
+**Book-switch is different from cold-launch, and it agrees with the user's eyes: all 12 deliberate
+switches were CLEAN (Regime A only, worst_gap 18–64ms), both cover modes. Panel slides: 54 slides,
+worst frame gap 17–19ms, ZERO freezes** — the user's "no panel slowness" confirmed exactly. Why
+book-switch and slides mostly escape Regime B: the **`_any_panel_animating` guard in
+`_on_theme_changed` defers the theme apply until the library slide finishes** (captured live:
+`any_panel_animating=True -> queuing deferred retry`), which structurally prevents the ~400ms apply
+from running *during* a slide and usually pushes it past the flow animation too. But it CAN still
+rarely catch the flow anim: one incidental switch (not among the 12) hit a 356ms flow-anim freeze
+when file-ready landed just after the panel guard cleared — same Regime B mechanism, far rarer on
+book-switch because the guard deflects it. The cover-on VT progress resets the user saw on
+book-switch are the separate, known Race 3, NOT an animation stutter.
+
+**Corrected answer to the parent report's "is the flow-animation-stutter TODO independent of
+P1/P2/P3":**
+- **Independent of P1/P2/P3: YES, now confirmed by measurement** (not trace) — none of the three
+  race pairs are involved in either regime on any book type; the cross-book-type occurrence alone
+  rules them out (they're VT-only).
+- **But "isolated, unrelated animation glitch" was INCOMPLETE** — that describes only Regime A. The
+  parent report missed Regime B: the RANK-1 theme-apply hazard is ALSO a flow-animation stutter
+  cause. The TODO item is really two bugs.
+
+**RANK impact on the parent report:**
+- **RANK-1 (theme apply) gains a third confirmed victim.** Parent report had it starving (a) the
+  Themes-tab fade and (b) the P1↔P2 restore consumer. Now add (c) the flow-animation frame driver
+  on cold launch (M4B-cover 10/10). Same ~400ms operation, same fix target (`setStyleSheet`/
+  `_apply_stylesheets`) — this strengthens the case that the durable fix belongs at the
+  theme-application layer.
+- **The `_any_panel_animating` guard is a partial, accidental mitigation** — it's why book-switch
+  and panel slides mostly escape Regime B, and why COLD LAUNCH (no panel animating to trigger the
+  guard) is exactly the gap it doesn't cover. Any fix that makes theme-apply async should preserve
+  or generalize that deflection.
+- **New separate LOW-rank item: Regime A** — a ~70ms synchronous chapter-populate/label-update
+  burst at animation start, book-type-agnostic, independent of everything else, never >108ms. Real
+  but sub-perceptible-to-mild; should be its own rank, not folded into the theme hazard.
+
+---
+
 ## Synchronous main-thread work during app start / book load / theme change / panel slide — full inventory + cross-thread pair map (2026-07-14)
 
 **Status: INVESTIGATION ONLY — no code changed, working tree was clean throughout (`git diff` empty). No fixes proposed.** This exists because three separate races have now been found in this territory (the two 2026-07-13 VT fixes, and today's theme/VT-restore-starvation finding directly below this entry), each discovered by accident and root-caused only after the fact. This entry is the shared map every one of those fixes was designed *without*: what can compete for the Qt main thread during these four moments, so the next fix here (Rank 1/Rank 2 below will directly inform it) is designed against the full picture instead of discovering the next collision by surprise. **Full report with all measured distributions, the per-sub-step `_apply_stylesheets` breakdown, and the complete inventory tables: `review/Report_260714_synchronous_main_thread_work.md`.**

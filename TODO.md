@@ -31,21 +31,48 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   actually closes the race rather than trusting a few clean manual tries, same discipline as every
   other fix tonight.
 
-- **[2026-07-13] First-app-launch-only VT flow-animation stutter on load.** User-reported,
-  independent of the VT-restore-on-load / general `file_switched`-race investigation that surfaced
-  it. Confirmed present on `main` (pre-existing, not introduced by that session's fixes — the user
-  checked `main` directly). Traced (code-reading only, NOT a forced live A/B against the actual
-  stutter's timing) to the progress slider's own `QPropertyAnimation` glide — a self-contained
-  animation that doesn't read from or write to the deferred-restore seek or `_on_file_loaded`, so
-  the trace found no interaction mechanism with that session's fixes. That is "the trace found
-  nothing," not "a live-forced test showed nothing" — full caveat and the specific
-  `_on_time_pos_change` VT-chapter-walk timing-shift contract to check first are in NOTES.md
-  ("`_on_file_loaded`'s general... race" entry, the "Also checked... first-app-launch-only VT
-  flow-animation stutter" paragraph). **Before considering this fixed, re-run
+- **[RANK-1, MEASURED 2026-07-14] Cover-theme `_apply_stylesheets` freezes the app-start flow
+  animation (Regime B) — a third confirmed victim of the theme-apply hazard, NOT a standalone
+  animation bug.** On cover-theme-ON cold launches, the ~400ms synchronous `_apply_stylesheets`
+  pass lands inside the flow-animation window and freezes the `QPropertyAnimation` frame driver for
+  its full duration — the slider sits, then snaps to the end (~400–600ms worst frame gap, up to
+  791ms; M4B-cover 10/10 launches, VT-cover 8/9). Same root and same fix target (`setStyleSheet`/
+  async theme apply) as Race 3 (the P1↔P2 restore-consumer starvation) and the 2026-07-04 Themes-tab
+  fade bug — this is the RANK-1 theme-apply hazard's THIRD confirmed victim. **Do NOT design a fix
+  for this in isolation or as an animation patch — fold it into the RANK-1 theme-apply work
+  (investigate-then-plan for async/deferred `_apply_stylesheets`).** The `_any_panel_animating`
+  guard in `_on_theme_changed` already deflects this on book-switch and panel-slides (which measured
+  clean), but NOT on cold launch — there is no panel animating at cold start to trigger the guard,
+  which is exactly the gap. A fix should preserve/generalize that deflection. Measured live: 60 cold
+  launches + 12 manual book-switches, `[STUTTER-PROBE]` frame-gap instrumentation (since reverted),
+  user's eyes agreeing with the numbers. Full mechanism in NOTES.md ("App-start flow-animation
+  stutter is TWO mechanisms...", 2026-07-14) and the parent report's RANK list; raw numbers in
+  `review/Data_260714_flow_animation_stutter.md`.
+
+- **[RANK-LOW, MEASURED 2026-07-14] App-start flow-animation baseline roughness (Regime A) — a
+  standalone ~70ms hitch at animation start, independent of everything else.** Present on EVERY cold
+  launch of EVERY book type, cover on or off, with no theme apply anywhere near the window (worst
+  frame gap ~70–76ms median, never observed >108ms). A synchronous burst at animation start:
+  chapter-list `populate` + repeated `_update_chapter_label_from_index setCurrentRow` calls + the
+  first mpv `time_pos` samples, all landing in the animation's first ~50–90ms. Real but
+  sub-perceptible-to-mild — a rough *start*, not a freeze. **Independent of P1/P2/P3 (confirmed by
+  measurement — occurs on M4B and MP3, which have no `_vt_restore_pending`/`file_switched` at all)
+  and independent of the RANK-1 theme-apply hazard.** This is the ONLY part of the old combined
+  "flow-animation stutter" item that is a genuine standalone animation-timing bug — it is what the
+  original 2026-07-13 trace-only investigation correctly found (it was right about this, blind to
+  Regime B). **Verification bar for any fix touching this or near-app-start VT load timing:** re-run
   `tools/fs_race_harness.py`, `tools/vt_restore_race_harness.py`, and the VT+Undo checklist, since
   any timing change near app-start VT loading risks interacting with the `_vt_restore_pending`/
-  `file_switched`-guard fixes shipped this session** — so a future same-day fix attempt inherits
-  that verification bar automatically instead of being evaluated as a standalone animation bug.
+  `file_switched`-guard fixes. Full detail in NOTES.md (2026-07-14) and
+  `review/Data_260714_flow_animation_stutter.md`.
+
+  *Historical note: these two entries replace a single 2026-07-13 "first-app-launch-only VT
+  flow-animation stutter" item that was traced (code-reading only) to the progress slider's own
+  `QPropertyAnimation` glide and believed to be one isolated bug. The 2026-07-14 live measurement
+  found it was two genuinely different bugs with different ranks — keeping them as one entry would
+  recreate the "one bug wearing two names" confusion the investigation resolved. The original trace
+  was right about Regime A and blind to Regime B; its "the trace found nothing, not a live-forced
+  test showed nothing" caveat is what prompted the measurement that split them.*
 
 - **[2026-07-14] VT missing-file handling — consolidated design (supersedes three earlier,
   narrower entries from the same night: the cross-file chapter-cycling bug, the
