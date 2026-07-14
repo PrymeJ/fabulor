@@ -6,6 +6,33 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[RANK-2, 2026-07-14] Close the P1↔P2 race precondition structurally (insurance, not a live-bug
+  fix) — deferred, deliberately separate from the RANK-1 theme-apply fix.** The structural hazard:
+  a Qt-queued writer (`_vt_restore_pending`, written via the `book_ready`→`_on_file_ready`
+  QueuedConnection at `app.py:389`) racing an mpv-thread reader (`_on_file_loaded`'s read of it),
+  exposed whenever ANY ~100ms+ synchronous main-thread op starves the Qt queue in that window. Today
+  the only such op is theme-apply (fixed narrowly by RANK-1), but the pattern re-opens for the next
+  heavy sync op anyone adds later (a heavier chapter populate, a sync DB migration, etc.). Feasibility
+  already investigated (see `review/Report_260714_theme_apply_safety_feasibility.md`, RANK-2 section):
+  - **VT path:** both `book_ready` emit sites (`ungate_play`, `_on_playlist_resolved`) run on the Qt
+    main thread, so a Direct (non-queued) connection COULD run `_restore_position`/`defer_vt_restore`
+    synchronously before the subsequent `_apply_pending_cover_theme`, removing the race precondition
+    entirely for VT. **But** `book_ready`/`_on_file_ready` is a single shared connection (can't be
+    Direct-for-VT / Queued-for-non-VT without a second signal or per-emit juggling), the VT emit is
+    deliberately placed BEFORE `instance.play()` (CLAUDE.md book_ready invariant), and making restore
+    synchronous there changes the timing the shipped VT fixes (`_on_vt_file_switched` gated clear,
+    `_on_end_file` ERROR reset, `_logical_pos`) were verified against — so it TOUCHES the blast radius
+    of the VT-fragile zone even without editing those functions.
+  - **Non-VT path:** `book_ready` is emitted from the mpv thread, so the QueuedConnection is
+    MANDATORY thread-marshaling — the precondition cannot be removed at all; non-VT's only protection
+    is "don't run a long sync op in the window" (i.e. the RANK-1 fix).
+  - **Why deferred, not done now:** it's insurance against a hypothetical future sync op, not a live
+    bug (RANK-1 closes all three currently-observed victims); its cheapest shape still re-architects a
+    connection in the highest-risk zone in the codebase. If ever attempted, it needs its own
+    investigate-then-plan cycle and the full VT+Undo verification bar (`tools/fs_race_harness.py`,
+    `tools/vt_restore_race_harness.py`, live checklist) re-run — NOT bundled with RANK-1. Captured
+    here so this structural risk is dated and tracked, not left buried in a review report.
+
 - **[2026-07-14] VT progress restore silently resets on book-switch (not cold app-launch) — root
   cause confirmed, NOT fixed.** Distinct from anything shipped tonight (`faeaa83`/`685e433` were
   verified via 200 cold-launch cycles only; book-switch was never tested until now). Root cause:

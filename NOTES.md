@@ -1,3 +1,65 @@
+## Making theme-apply safe to run without starving anything — feasibility findings, RANK-1/RANK-2 split into two separate fixes (2026-07-14)
+
+**Status: INVESTIGATION + design-feasibility ONLY — no code changed, tree clean (`git diff` empty).
+No fix plan yet (that's the next, separate step).** Follow-up to the two reports directly below
+(the synchronous-main-thread timing map and the flow-animation-stutter split), answering: can the
+~400ms synchronous `_apply_stylesheets`/theme-apply cost be made safe, and can the underlying
+P1↔P2 race pattern be closed at the source? **Full report:
+`review/Report_260714_theme_apply_safety_feasibility.md`.** Temporary DEBUG probes used
+(`[APPLY-ORIGIN]` stack-origin logging on `apply_cover_theme`, plus the earlier reverted
+`[STUTTER-PROBE]`) and fully removed.
+
+**Phase 0 — `_any_panel_animating` is DELIBERATE and panel-scoped, NOT the thing protecting the
+flow animation.** Origin commit `a5cf753` (2026-04-18, "guard against theme changes during panel
+animation to prevent hitches") built it to protect a moving PANEL SLIDE from theme-apply. The
+deeper history the user recalled is real: the theme transition is a heavyweight full-window overlay
+fade, and a moving slider fill under that overlay *ghosts* (NOTES 2026-06-05) — a real visual
+artifact, not just jank; the lightweight per-element `@Property` alternative was started and
+abandoned as ~40–80h (NOTES 2026-06-19), and the "snap chrome instantly" middle path was explicitly
+user-rejected as jarring. So the guard is deliberate-for-reason-X, panel-scoped; its Regime-B
+protection on book-switch is a same-KIND effect reached incidentally, and cold-launch was never in
+its scope.
+
+**Correction to the parent report, with a more surgical root cause for cold-launch Regime B.**
+Book-switch's Regime-B immunity is NOT primarily `_any_panel_animating` — it's a separate,
+also-deliberate mechanism: `_apply_pending_cover_theme` waits for BOTH sliders'
+`when_animations_done()` before applying. Cold launch takes a DIFFERENT branch of `_apply_main_cover`
+(no panel visible → apply immediately, no slider wait), and the actual trigger is a redundant
+post-scan cover reload (`_on_scan_finished` → `load_cover_art`, `library_controller.py:158-161`)
+firing a full `_apply_stylesheets` during the flow animation (traced via `[APPLY-ORIGIN]`: two cover
+applies per cold launch, the second ~2.4s in when the startup scan finishes). So cold-launch
+Regime B is a *missing `when_animations_done()` chain + a redundant re-apply*, closeable narrowly
+without touching the theme-apply cost or any race machinery.
+
+**RANK-1 (the ~400ms cost) — key feasibility facts:** (1) Caller audit: almost every trigger
+genuinely needs the full restyle (a theme/cover change re-colors the whole QSS-driven tree); only
+hover-preview already runs reduced. This is NOT "narrow ops routed through an expensive path." (2)
+Qt architecture: `setStyleSheet` is GUI-thread-only — **"async" cannot mean threaded**; the
+achievable shapes are DEFERRAL (don't run it in the racing window — mirrors the existing
+`when_animations_done()` pattern, lowest risk) or CHUNKING (split ~8 sub-applies across ticks —
+partial, since the base `setStyleSheet` is one indivisible ~180ms call). (3) `theme_applied.emit`'s
+DirectConnection fan-out is never awaited and only restyles hidden panels — separately deferrable.
+
+**RANK-2 (the structural race) — feasibility is thread-dependent and asymmetric:** non-VT
+`book_ready` is emitted from the mpv thread, so its QueuedConnection is MANDATORY and the
+precondition cannot be removed at all. VT `book_ready` is emitted on the Qt thread, so a Direct
+connection COULD run restore synchronously before the theme apply and remove the precondition — but
+it's a single shared connection, the emit is deliberately before `instance.play()`, and it alters
+the timing the shipped VT fixes were verified against (touches the VT-fragile blast radius even
+without editing those functions). **Deferred, dated, and tracked in TODO.md** ("RANK-2, 2026-07-14")
+so it doesn't become the exact undocumented structural risk this investigation exists to prevent.
+
+**Recommendation: RANK-1 and RANK-2 are TWO separate fixes, not one** — different blast radius
+(RANK-1 confined to `theme_manager.py` + two cover-apply call sites, mirroring a proven pattern;
+RANK-2 re-architects a connection in the VT-fragile zone); RANK-1 alone closes all three
+currently-observed victims (Race 3, Regime B, Themes-tab fade) while RANK-2 is insurance against a
+hypothetical future sync op; RANK-1 has a cheap low-risk shape (the missing slider-wait) and RANK-2
+doesn't. **Do NOT generalize `_any_panel_animating` to cold-launch** — Phase 0 showed that's the
+wrong lever; the real cold-launch mechanism is the missing `when_animations_done()` on a different
+code path. This is ready for the actual RANK-1 fix plan as its own next step.
+
+---
+
 ## App-start flow-animation stutter is TWO mechanisms, not one — and it corrects the parent report's "isolated glitch" answer (2026-07-14)
 
 **Status: INVESTIGATION ONLY — no code changed, working tree clean (`git diff` empty). No fixes.**
