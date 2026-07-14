@@ -122,6 +122,15 @@ class Player(QObject):
         self._chapter_list: list | None = None
         self._current_vt_index: int = 0
         self._pending_local_pos: float | None = None
+        # VT restore-on-load race fix: holds a restore target between _restore_position's
+        # request (which fires from book_ready, emitted BEFORE instance.play() for VT books —
+        # see CLAUDE.md's book_ready invariant) and _on_file_loaded's VT branch actually
+        # consuming it via seek_async, once mpv has confirmed the file is loaded. Deliberately
+        # SEPARATE from _pending_local_pos, which is a different lifecycle (a cross-file seek
+        # already in flight). Set only by defer_vt_restore — never is_seeking/_seek_target/
+        # _logical_pos — at defer time; those are set only when seek_async eventually runs, same
+        # as any other seek, so no new state combination is introduced.
+        self._vt_restore_pending: float | None = None
         self._is_vt_file_switch: bool = False
         self._last_vt_chapter: int = -1
         self._last_nonvt_chapter: int = 0
@@ -196,17 +205,17 @@ class Player(QObject):
         # call, which is the first post-settle sample. _last_raw_global is re-baselined in
         # every branch to THIS sample's raw global (no separate trailing update to sequence).
         #
-        # KNOWN OUT-OF-SCOPE GAP (VT restore-on-load, deferred — see TODO.md 2026-07-13):
-        # _on_vt_file_switched (app.py) clears _is_seeking while a restore seek is still
-        # pending during a VT book's INITIAL load, so this block can adopt the stale pre-seek
-        # ~0 into _logical_pos. That is NOT worsened vs. main (which also resumes VT books
-        # near 0, because the restore seek never executes in mpv — the real underlying bug).
-        # This branch deliberately does NOT guard against it here: doing so requires touching
-        # _on_vt_file_switched (undo-fragile zone) and only trades the clobber for a UI freeze,
-        # because the seek never settles regardless. VT restore-on-load is out of scope; the
-        # clobber-guard need and the seek-execution bug are logged together as one entangled
-        # deferred item. VT MID-PLAYBACK seeks (the validated Finding 2/8 path) DO settle and
-        # are unaffected by this gap.
+        # VT restore-on-load (formerly a KNOWN OUT-OF-SCOPE GAP, fixed via _vt_restore_pending
+        # / defer_vt_restore — see TODO.md history and CLAUDE.md's VT+Undo fragile-zone rule):
+        # _restore_position no longer calls seek_async directly for a VT book's initial
+        # restore. It defers via Player.defer_vt_restore, and _on_file_loaded's VT branch
+        # issues the real seek only once mpv has actually loaded the first file — so by the
+        # time _on_vt_file_switched (app.py) fires and clears is_seeking, either no restore
+        # was ever pending (already consumed) or seek_async has already set is_seeking/
+        # _seek_target together in the same call that issued the seek. There is no longer a
+        # window where a restore seek is "still pending" (requested but not yet issued) for
+        # this block to race against. VT MID-PLAYBACK seeks (the validated Finding 2/8 path)
+        # settle exactly as before and are unaffected by this fix.
         if value is not None and not self._is_seeking:
             global_value = value + (self._file_offset or 0)
             if settled_this_call:
@@ -459,6 +468,7 @@ class Player(QObject):
         self._is_embedded_m4b = False
         self._current_vt_index = 0
         self._pending_local_pos = None
+        self._vt_restore_pending = None
         self._is_vt_file_switch = False
         self._last_vt_chapter = -1
         self._last_nonvt_chapter = -1
@@ -591,6 +601,18 @@ class Player(QObject):
                 self.instance.command_async('seek', pending, 'absolute+exact')
         if self._virtual_timeline is not None:
             self._is_vt_file_switch = False
+            # VT restore-on-load race fix: mpv has now actually loaded this file (this method
+            # only runs off mpv's own file-loaded event), so it's safe to issue a deferred
+            # restore-seek here — unlike when _restore_position originally requested it, back
+            # when book_ready fired (pre-play(), see the book_ready invariant in CLAUDE.md).
+            # Only ever non-None on the very first file-load after a fresh load_book/
+            # defer_vt_restore call; cleared immediately by seek_async, so later natural
+            # file-advances see None and this is a no-op for them — no extra "is this the
+            # first file" guard needed.
+            if self._vt_restore_pending is not None:
+                pending_target = self._vt_restore_pending
+                logger.debug(f"[VT-RESTORE-CONSUME] consuming deferred restore target={pending_target}")
+                self.seek_async(pending_target)
             self.file_switched.emit()
         else:
             self.book_ready.emit()
@@ -603,6 +625,26 @@ class Player(QObject):
             error_str = event.as_dict().get('file_error', b'').decode('utf-8', errors='replace')
             detail = error_str if error_str else 'unknown error'
             self.load_failed.emit(detail)
+            # A seek issued against this file (VT cross-file `instance.play(...)`, or
+            # `_advance_or_finish`'s next-file play) never gets a file-loaded event on
+            # ERROR, so _on_time_pos_change's settle branch never runs and any pending
+            # seek state would otherwise strand `is_seeking=True` forever — a permanent
+            # freeze with no recovery, now that _on_vt_file_switched's clear is gated on
+            # _seek_target is None (see NOTES.md "_on_file_loaded's general... race",
+            # 2026-07-13). Same fields/shape as the near-EOF seek-abandon reset in
+            # _on_file_loaded (~568-577), guarded here explicitly by `_is_seeking`: that
+            # original reset has no such guard because it lives inside
+            # `if self._pending_local_pos is not None:`, which only a genuinely-in-flight
+            # cross-file seek ever sets — the guard is implicit in the caller there. This
+            # method has no equivalent surrounding guarantee (it's reached from ANY
+            # file-load failure, including a natural EOF-advance's play() failing with
+            # nothing pending), so the check is made explicit here instead of assumed.
+            if self._is_seeking:
+                self._is_seeking = False
+                self._seek_target = None
+                self._logical_pos = None
+                self._last_raw_global = None
+                self._just_settled = False
         if reason_int == 0:
             self._advance_or_finish()
 
@@ -694,10 +736,46 @@ class Player(QObject):
         self.instance.pause = True
         self.instance.command('loadfile', load_path, 'replace', '0', f'start={start_pos}')
 
+    def defer_vt_restore(self, pos: float) -> None:
+        """Stash a VT restore-on-load target to be issued later by _on_file_loaded's VT
+        branch, once mpv has actually loaded the book's first file. Fixes the race where
+        _restore_position's seek_async call (triggered by book_ready, which fires BEFORE
+        instance.play() for VT books) could reach mpv before the file was loaded, and be
+        silently dropped. Deliberately does nothing else: no is_seeking, no _seek_target, no
+        _logical_pos — those are set only when seek_async eventually runs, same as any other
+        seek, so no new state combination is introduced. See CLAUDE.md's VT+Undo fragile-zone
+        rule and NOTES.md for the full reasoning.
+        """
+        self._vt_restore_pending = pos
+
+    def _abandon_seek_missing_file(self) -> None:
+        """A VT cross-file seek targeted a file that no longer exists on disk. The
+        caller has already set is_seeking/_seek_target/_logical_pos for a seek that
+        will now never be issued and can never settle — reset the same fields
+        _on_end_file's ERROR-path reset uses for the same underlying reason (a seek
+        that will never settle), then report it via load_failed so the app layer can
+        mark the book missing, matching _on_end_file's ERROR-path precedent
+        (player.py ~625-627). See NOTES.md "VT missing-file exception strands seek
+        state" (2026-07-14).
+        """
+        self._is_seeking = False
+        self._seek_target = None
+        self._logical_pos = None
+        self._last_raw_global = None
+        self._just_settled = False
+        self.load_failed.emit("File missing.")
+
     def seek_async(self, pos: float) -> None:
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
         if not self.instance:
             return
+        # Any real seek supersedes a still-pending VT restore-on-load target — last write
+        # wins, with no extra coordination flag. Covers a manual seek (chapter click, undo,
+        # slider drag) arriving during the brief window before _on_file_loaded's VT branch
+        # would otherwise have issued the deferred restore. Placed after the instance guard
+        # above: if there's no mpv instance, this call is a complete no-op, so there's nothing
+        # to supersede and _vt_restore_pending should be left untouched.
+        self._vt_restore_pending = None
         current_pos = self._cached_time_pos or 0.0
         direction = 'forward' if pos >= current_pos else 'back'
         logger.debug(
@@ -722,6 +800,9 @@ class Player(QObject):
                 self.is_seeking = True
                 self._seek_target = pos
                 self._logical_pos = pos    # GLOBAL, same as _seek_target
+                if not os.path.exists(target_file['file_path']):
+                    self._abandon_seek_missing_file()
+                    return
                 if (target_file['file_path'].lower().endswith('.mp3')
                         and abs(local_pos - ((self._cached_time_pos or 0.0) - self._file_offset)) > _MP3_SEEK_THRESHOLD
                         and os.path.getsize(target_file['file_path']) > _VT_MP3_SIZE_THRESHOLD

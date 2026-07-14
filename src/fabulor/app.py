@@ -1428,8 +1428,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.ui_timer.start(200)
 
     def _on_vt_file_switched(self):
-        """Lightweight handler for VT file switches. Does not restore position."""
-        self.player.is_seeking = False
+        """Lightweight handler for VT file switches. Does not restore position.
+
+        Only clears is_seeking when no seek is genuinely pending (_seek_target is
+        None). A seek issued in the same _on_file_loaded call that emitted
+        file_switched is settled by _on_time_pos_change's settle branch, which is
+        the sole correct owner of that transition — this handler unconditionally
+        clearing is_seeking raced that settle and could clobber a landed (or
+        still-landing) seek. See NOTES.md "_on_file_loaded's general... race"
+        (2026-07-13) for the full mechanism and why this guard is safe now (both
+        prior attempts at this exact guard were tested only against seeks that
+        could never land at all — a separate, since-fixed bug — not against a
+        seek proven capable of settling, which is the case this guard now covers).
+        """
+        if self.player._seek_target is None:
+            self.player.is_seeking = False
 
     def _on_file_ready(self):
         """Called when mpv confirms the file is loaded and ready."""
@@ -1618,9 +1631,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_load_failed(self, reason):
         """Called when mpv fires end-file with a non-normal reason (error/unknown),
-        or when _resolve_playlist determined the folder has no audio files."""
+        or when _resolve_playlist determined the folder has no audio files, or when
+        a VT cross-file seek targeted a file missing from disk
+        (Player._abandon_seek_missing_file, reason == "File missing.")."""
         self._update_status_banner_ui(text=f"Failed to load: {reason}.", show_banner=True, auto_hide=True)
-        if reason == "no audio files in folder" and self.current_file:
+        if reason in ("no audio files in folder", "File missing.") and self.current_file:
             self._mark_book_missing(self.current_file)
 
     def _update_chapter_label_clickability(self):
@@ -1655,14 +1670,28 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.db.update_progress(self.current_file, config_pos)
         book_data = self.db.get_book(self.current_file)
         if book_data and book_data.progress > 0:
-            self.player.is_seeking = True
             # Restore to the exact saved position for all book types. This is NOT
             # chapter navigation — there is no boundary to clear — so no epsilon is
             # added. The old non-VT `+ _CHAPTER_BOUNDARY_EPSILON` caused position
             # creep: the 200ms persistence sync saved the epsilon-inflated landing,
             # which became the next restore's input, nudging ~0.35s forward every
             # restart until EOF. The VT branch never added it and never crept.
-            self.player.seek_async(book_data.progress)
+            if self.player._virtual_timeline is not None:
+                # VT restore-on-load race fix: book_ready (which triggers this call) fires
+                # BEFORE instance.play() for VT books, so calling seek_async here directly
+                # can reach mpv before it has loaded the file, and the seek is silently
+                # dropped. Defer the actual seek to _on_file_loaded's VT branch, which only
+                # runs once mpv has confirmed the file is loaded. is_seeking is explicitly
+                # set False (not left at load_book's True) because load_book's assignment
+                # was never designed with this window in mind (see CLAUDE.md/the fix plan) —
+                # seek_async, called later inside _on_file_loaded, is the sole place that
+                # sets is_seeking True, together with _seek_target, exactly as for every
+                # other seek.
+                self.player.is_seeking = False
+                self.player.defer_vt_restore(book_data.progress)
+            else:
+                self.player.is_seeking = True
+                self.player.seek_async(book_data.progress)
         else:
             # No position to restore — clear the _is_seeking flag set by load_book.
             # Without this, _on_time_pos_change won't auto-clear it (since _seek_target
