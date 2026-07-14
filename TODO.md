@@ -6,6 +6,101 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-13] First-app-launch-only VT flow-animation stutter on load.** User-reported,
+  independent of the VT-restore-on-load / general `file_switched`-race investigation that surfaced
+  it. Confirmed present on `main` (pre-existing, not introduced by that session's fixes — the user
+  checked `main` directly). Traced (code-reading only, NOT a forced live A/B against the actual
+  stutter's timing) to the progress slider's own `QPropertyAnimation` glide — a self-contained
+  animation that doesn't read from or write to the deferred-restore seek or `_on_file_loaded`, so
+  the trace found no interaction mechanism with that session's fixes. That is "the trace found
+  nothing," not "a live-forced test showed nothing" — full caveat and the specific
+  `_on_time_pos_change` VT-chapter-walk timing-shift contract to check first are in NOTES.md
+  ("`_on_file_loaded`'s general... race" entry, the "Also checked... first-app-launch-only VT
+  flow-animation stutter" paragraph). **Before considering this fixed, re-run
+  `tools/fs_race_harness.py`, `tools/vt_restore_race_harness.py`, and the VT+Undo checklist, since
+  any timing change near app-start VT loading risks interacting with the `_vt_restore_pending`/
+  `file_switched`-guard fixes shipped this session** — so a future same-day fix attempt inherits
+  that verification bar automatically instead of being evaluated as a standalone animation bug.
+
+- **[2026-07-14] VT missing-file handling — consolidated design (supersedes three earlier,
+  narrower entries from the same night: the cross-file chapter-cycling bug, the
+  discovery-timing/banner-permanence gaps, and the original "richer design deferred" sketch — all
+  folded into one plan since they turned out to be facets of the same design, not separate
+  problems).** Current shipped behavior (same-file missing-file case only): unload + `is_missing`,
+  reusing the existing M4B runtime path. Below is the actual intended design, decided in
+  conversation but NOT implemented — needs its own session, deliberately kept off this branch to
+  avoid sidetracking from the drift-adjacent fixes it exists for.
+
+  **1. Load-time check (closes the M4B/VT discovery-timing asymmetry — mostly decided, one open
+  question).** M4B is a single file: if it's missing, the book can't even load, so the failure is
+  exposed immediately and unconditionally. VT is a folder of files: today, the book loads fine
+  even if a file is already gone, because nothing checks at load time — a missing file is only
+  discovered *reactively*, contingent on some later action (Play, Next, a seek/skip) happening to
+  target it. This means a VT book can sit in the library for an arbitrary stretch — across
+  sessions, across restarts — reporting as a normal, fully playable book while a file is silently
+  gone. Decided direction: at load time, compare the file count the book was built/scanned with
+  (`book_files` row count in the DB) against the count of matching audio files actually present in
+  the folder (not a full per-file `os.path.exists` sweep — a single directory listing/glob + count
+  comparison, cheap regardless of file count, unlike hundreds of individual stat calls). **Open
+  question, not yet resolved:** is a listdir+count comparison actually fast enough to add zero
+  perceptible load-time latency, including on slow/network-mounted storage or very large VT books?
+  Needs to be measured against a real large book (Zhivago, 260 files, is the natural test case)
+  before trusting it — this is the one piece of the design that's still genuinely open; everything
+  else below is decided pending implementation.
+
+  **2. Post-load discovery (file goes missing after the book already loaded/played once) — the
+  bug this actually started from.** `seek_async`'s cross-file `else` branch (`player.py`
+  ~820-833, `self.instance.play(target_file['file_path'])`) has no existence check and commits
+  `_current_vt_index`/`_file_offset` to the target BEFORE confirming it loaded. When the file is
+  missing, mpv's ERROR end-file fires, and `_on_end_file`'s ERROR-path reset (already shipped)
+  clears seek state but never touches `_current_vt_index`/`_file_offset` — leaving them pointing
+  at a file that was never actually loaded. Live-reproduced result: banner shows mpv's own generic
+  error text (not "File missing."); Play does nothing; Next/Prev cycle a fixed subset of the
+  book's chapters forever, permanently unable to reach the missing file or anything past it; no
+  freeze, no crash. Full mechanism, traced step-by-step, in NOTES.md "VT cross-file missing-file
+  jump corrupts `_current_vt_index`/`_file_offset` — DIAGNOSED, NOT FIXED" (2026-07-14) — that
+  writeup also settles that no rollback/snapshot mechanism is needed: a pre-check
+  (`os.path.exists`, same shape as the already-shipped same-file fix) before committing any state
+  resolves the "file doesn't exist" case cleanly, since nothing is ever committed to roll back. A
+  file that exists but is corrupt/unreadable (passes `os.path.exists`, still fails at
+  `instance.play()`) is the one remaining case needing `_on_end_file`'s ERROR path to recognize a
+  VT cross-file jump was in flight and route it into the same handling as (3) below, rather than
+  leaving `_current_vt_index`/`_file_offset` stranded. Loose thread, not yet reconciled: a second,
+  earlier live test (moved a different file, skipped over it, played the first file successfully,
+  then some later navigation triggered an unload the user couldn't precisely reconstruct) is very
+  likely this exact bug — but was never deliberately re-reproduced against this now-understood
+  mechanism, so treat it as likely-explained, not confirmed, until someone runs that exact sequence
+  again on purpose.
+
+  **3. What happens on discovery — decided, and deliberately the SMALL version of this design.**
+  Explicitly rejected: blocking playback/UI until the user chooses an action. That was floated and
+  immediately ruled out — it would mean disabling the overall progress slider, the chapter slider,
+  every transport button, and the chapter list, which is a large, risky surface for what looks
+  like a small edge case, and isn't worth the blast radius. **Decided instead: unload the book
+  immediately** (reusing the exact same `_mark_book_missing` → `_on_book_removed` path already
+  shipped tonight — nothing new needed here), **and show a sticky banner with two actions: Dismiss
+  (= exclude — closing the banner without choosing Rescan is equivalent to accepting the
+  exclusion) and Rescan.** Banner must not auto-hide, needs a real close button, and — restart
+  behavior carried over from the earlier draft of this entry — should never reappear at app start
+  just because the book is already excluded; the book should simply already be excluded (via the
+  self-healing `is_missing` flag) and the app comes up in its normal state, silently. **Rescan
+  means: re-scan just that book's folder** (not a full naming-pattern-style rebuild, not
+  timeline-renumbering) — missing files stay missing, but the rest of the book plays normally
+  around the gap; this reuses the scanner's existing per-folder rescan machinery rather than
+  building something new. **Cover-art flash concern, already raised and already answered:** the
+  user doesn't want the excluded/reloaded book's cover art visibly popping in the main UI while
+  this resolves — same reasoning as why the existing library-panel slide already hides book-switch
+  transitions from view. The intended fix (matching an existing app pattern, not a new one) is to
+  route the Rescan-and-reload through the library panel slide, the same way a normal book switch
+  already avoids showing intermediate cover-art states in the open.
+
+  **Net effect of this design vs. today's shipped behavior:** (1) closes the "sits broken
+  indefinitely" discovery gap for the common case (missing before the book is ever loaded); (2)
+  fixes the specific cycling/stuck-book corruption for the case a file goes missing after load;
+  (3) gives the user a real choice (exclude vs. rescan-and-keep-playing-around-the-gap) instead of
+  today's unconditional silent exclusion, without taking on the blocked-UI design that was
+  considered and rejected as disproportionate risk for the size of the problem.
+
 - **[2026-07-13] Chapter-elapsed label reads ~1s short for up to `_CHAPTER_WALK_TOLERANCE` after
   crossing a chapter boundary (chapter-relative display only; absolute position is exact).**
   Surfaced (NOT caused) by the `_logical_pos` seek-drift fix — with absolute position now exact,
@@ -27,51 +122,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   reintroducing that; a display-only fix (e.g. resolve the chapter-elapsed label's chapter without
   the tolerance, or clamp `c_elapsed` differently at the seam) is the likely direction but needs
   its own repro + verification against the stuck-Next/Prev symptom. Not blocking the drift fix.
-
-- **[2026-07-13] VT restore-on-load is broken: the restore-seek never executes in mpv, and the
-  `_logical_pos` drift fix surfaces it (one entangled item — clobber-guard + seek-execution).**
-  Found while fixing the compounding seek-drift bug (branch `fix/seek-drift-logical-position`).
-  Two entangled layers, deferred together as ONE investigation because neither is fixable without
-  the other:
-
-  **Layer 1 — the underlying bug (pre-existing, the real root cause):** on opening a VT (multi-file
-  MP3) book with saved progress, `_restore_position` (`app.py`) issues
-  `seek_async(book_data.progress)` → VT same-file branch → `command_async('seek', <local>,
-  'absolute+exact')`, but mpv **never moves off ~0** — the seek command is issued yet never takes
-  effect (races the VT file being loaded). Captured raw evidence (2026-07-13, DEBUG log, two books
-  — Sometimes a Great Notion, Colorless Tsukuru Tazaki): after `seek_async: entry target=63.457598`,
-  every subsequent `raw time_pos=` sample is `0.0` / `5.16e-07`; the ~63 target is never reported.
-  So VT books genuinely resume from 0, not the saved position. Pre-`_logical_pos` this was silent
-  (the getter read raw `_cached_time_pos` ≈ 0, so it "resumed at 0" and nobody noticed).
-
-  **Layer 2 — what the drift fix surfaced, and why guarding it in the drift branch was rejected:**
-  with `_logical_pos`, the restore target (~63) is written at the seek site and held while
-  `is_seeking` is True. But `_on_vt_file_switched` (`app.py`, **undo-fragile zone** per CLAUDE.md)
-  unconditionally clears `is_seeking` on the VT book's first file-load, stranding `_seek_target`
-  (the settle needs `is_seeking=True` and never fires because mpv is at 0, not 63). The stale ~0
-  sample then clobbers `_logical_pos`, persisting 0 as progress (data loss). Two guards were tried
-  on the branch and **reverted**: (a) narrow `_on_vt_file_switched` to not clear `is_seeking` while
-  `_seek_target` is set, and (b) guard the `_on_time_pos_change` maintenance block on
-  `_seek_target is None`. Together they stopped the data-loss clobber — but only **traded it for a
-  UI freeze**: slider correct at ~63, but time labels stuck on the PREVIOUS book's values, no
-  chapter name, frozen until manual nav (because `is_seeking` stays True to prevent the strand, and
-  the seek never settles to clear it, since mpv is at 0). A frozen UI with stale labels is arguably
-  worse UX than the old silent resume-at-0, and fixing it properly requires making the seek actually
-  execute (Layer 1). So the guards were reverted; VT restore-on-load behaves exactly as on `main`
-  (resumes near 0), neither improved nor worsened by the drift branch. The branch keeps only an
-  explanatory comment at the maintenance block marking this as a known out-of-scope gap;
-  `_on_vt_file_switched` is left completely untouched.
-
-  **Deliberately deferred, NOT chased inline** — a new, undiagnosed root cause in the VT
-  file-load/seek-race machinery, in the documented-fragile VT+undo zone. Needs its own
-  investigate-first cycle. Likely fix directions for Layer 1: re-issue the restore-seek AFTER the
-  file is confirmed loaded, or serialize the restore against the first `file_switched`, rather than
-  issuing it while the file is still loading. Once Layer 1 is fixed (seek actually reaches 63 and
-  settles), the clobber and freeze both disappear on their own and no `_on_vt_file_switched` /
-  maintenance-block guard is needed — confirming Layer 2's guards were treating the symptom, not the
-  cause. Full trace context (the `raw time_pos` staying ~0, the guard freeze-finding) in
-  `SEEK_DRIFT_MEASUREMENTS.md` on that branch — re-derive from a VT restore `seek_async` whose
-  subsequent `raw time_pos` never reaches the target if the branch is discarded before merge.
 
 - **[2026-07-12] Chapter-slider load-time retrace: the flow-animation target and the actual
   restore seek disagree by `_CHAPTER_BOUNDARY_EPSILON` (0.35s).** Found while investigating the

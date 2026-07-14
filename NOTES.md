@@ -1,3 +1,395 @@
+## VT cross-file missing-file jump corrupts `_current_vt_index`/`_file_offset` — DIAGNOSED, NOT FIXED (2026-07-14)
+
+**Status: root cause traced and confirmed via live repro; fix deliberately deferred as part of the
+consolidated design in TODO.md, "VT missing-file handling — consolidated design" (this bug is its
+section 2, "Post-load discovery"). Not implemented tonight — logged here in full so the mechanism
+doesn't need to be re-derived when picked up.** Found immediately after the same-file missing-file
+fix (previous entry, above) shipped — the same-file fix (`seek_async`'s
+`if target_idx == self._current_vt_index:` branch) does not cover the sibling `else` branch (the
+cross-file jump, `self.instance.play(target_file['file_path'])`), which has no existence check at
+all.
+
+**Live repro (user-reported, reproduced exactly as described):** VT book, file 5 moved out from
+under it. Click chapter 5 in the chapter list (a cross-file jump, since the book was on an earlier
+file) → banner "Failed to load: loading failed." (mpv's own generic error string, not "File
+missing." — confirms this hits `_on_end_file`'s ERROR path with mpv's own `file_error`, not the
+same-file fix's `_abandon_seek_missing_file` path at all). Click Play → nothing happens. Click Next
+→ plays file 2. Click Next from file 4 → doesn't play, banner again. Click Prev → goes to file 1,
+plays. Click Next repeatedly → cycles 2, 3, 4, 2, 3, 4, 2, 3, 4... forever. No freeze, no crash, no
+terminal error. The book is permanently stuck cycling a subset of its own chapters and can no
+longer reach file 5 or anything past it — and, per the user, this state was reachable ("I was able
+to get it unloaded before") under a similar-but-not-identical earlier sequence they couldn't fully
+pin down: a *different* file moved, skipped over (banner shown as expected), then the first file
+played successfully, then — at some later point the user couldn't precisely reconstruct — further
+navigation triggered the unload. That ambiguity is very likely *this* bug, or a close sibling of
+it, now that the mechanism below is understood — but it was never re-reproduced deliberately, so
+treat it as likely-explained, not confirmed-explained, until someone deliberately re-runs that
+exact sequence against this writeup's mechanism.
+
+**Root cause, traced by reading the exact code path, not assumed:**
+
+1. `seek_async`'s cross-file `else` branch (`player.py`, currently ~820-833) commits
+   `_current_vt_index = target_idx` and `_file_offset = target_file['cumulative_start']`
+   **optimistically — before `self.instance.play(target_file['file_path'])` is called, and with no
+   existence check at all** (unlike the same-file branch, which now checks `os.path.exists` first).
+   `is_seeking`/`_seek_target`/`_logical_pos` are set the same way, but those three are true "seek in
+   flight" state; `_current_vt_index`/`_file_offset` are "which file are we logically on" state — a
+   different kind of fact, committed at the same optimistic moment but not cleaned up by the same
+   mechanism.
+2. `instance.play()` fails silently (file doesn't exist) → mpv fires `end-file` with `reason=ERROR`.
+3. `_on_end_file`'s ERROR path (Part 2, already shipped — see the entry below) resets
+   `is_seeking`/`_seek_target`/`_logical_pos`/`_last_raw_global`/`_just_settled`. **It does NOT touch
+   `_current_vt_index`, `_file_offset`, `_is_vt_file_switch`, or `_pending_local_pos`** — those were
+   never in scope for Part 2, which was written for the seek-state strand, not the file-index
+   commit. So after the reset, `_current_vt_index`/`_file_offset` are left pointing at file 5 (the
+   file that never actually loaded), while `self.instance`'s real loaded file is whatever it fell
+   back to (observed: still file 4, or possibly nothing meaningfully loaded — not independently
+   confirmed which).
+4. `_cached_time_pos` (mpv's raw, unconditional-every-sample property — see the `_logical_pos`
+   entry below for why it's never touched by any reset) still holds file 4's last raw position,
+   since mpv never produced a sample for file 5.
+5. `time_pos`'s getter (`player.py:693-704`): with `_logical_pos` back to `None` (reset by step 3),
+   it falls through to the raw path — for VT, `self._file_offset + self._cached_time_pos`. This is
+   now `file 5's cumulative_start + file 4's raw local position` — a value that was never a real
+   playback position, but happens to numerically resolve back into the middle of the timeline
+   (explaining why it doesn't resolve to file 5 itself, or crash, or go out of bounds).
+6. `next_chapter`/`previous_chapter` (`player.py:1114+`) resolve the current chapter by walking
+   `_chapter_list` against `self.time_pos` — this corrupted value — every single time they're
+   called. The walk deterministically lands in whatever range the corrupted arithmetic resolves to,
+   which is why Next cycles a fixed subset of chapters (2, 3, 4, 2, 3, 4...) instead of either
+   reaching file 5 or erroring: nothing ever re-derives `_current_vt_index`/`_file_offset` from
+   where mpv is actually and genuinely positioned, so the corruption is permanent and self-
+   reinforcing rather than self-correcting on the next `_on_time_pos_change` sample (contrast with
+   the same-file fix and Parts 1+2, where a genuine mpv sample is always able to correct the state —
+   here there's no genuine sample to correct it with, because mpv's real position was never file 5's
+   in the first place).
+
+**Why "Play does nothing" specifically:** `_current_vt_index`/`_file_offset` claim file 5, but
+`self.instance` was never actually holding file 5 — whatever play/pause toggling does, it's acting
+on a player whose real loaded-file state doesn't match what the app believes, so the visible
+behavior is inert.
+
+**This is structurally the same bug CLASS Parts 1+2 fixed (optimistic state committed before
+confirmation, with nothing to correct it on failure) — applied to two different fields
+(`_current_vt_index`/`_file_offset`) that were out of scope for that fix.** It is not covered by
+tonight's same-file missing-file fix (previous entry) and is NOT the same code path.
+
+**No rollback is actually needed for the missing-file case — checked, not assumed.** An earlier
+draft of this writeup framed the fix as needing to decide what `_current_vt_index`/`_file_offset`
+should roll back TO on failure, treating "the player should end up in some valid, resumable state"
+as a requirement. It isn't: tonight's decided product behavior for the same-file missing-file case
+is unconditional unload + exclude the whole book — there is no "resume playback from wherever it
+was" requirement anywhere in that design. A rollback only makes sense if the goal is recovering to
+a playable state; the actual goal is reaching the same unload-and-exclude outcome without
+corrupting state on the way there. If the cross-file branch pre-checks `os.path.exists` BEFORE
+committing `_current_vt_index`/`_file_offset`/`is_seeking`/`_seek_target`/`_logical_pos`/
+`_is_vt_file_switch`/`_pending_local_pos` (same shape as the same-file fix) and routes straight to
+the same `_abandon_seek_missing_file`-style handling on failure, none of those fields are ever
+written to the bad target in the first place — there is nothing to roll back, because nothing was
+ever committed. This fully resolves the "file doesn't exist" case with the same simple pre-check
+shape the same-file fix already uses; no snapshot/rollback mechanism needs to be built for it.
+
+**Where a rollback-shaped concern DOES remain — a separate, narrower case:** a file that *exists*
+on disk but is corrupt or otherwise unreadable would pass `os.path.exists` and still fail at
+`instance.play()`, hitting this same corruption via a different trigger (mpv's ERROR event instead
+of a pre-check). That case still needs to reach the same unload-and-exclude outcome — via
+`_on_end_file`'s ERROR path recognizing a VT cross-file jump was in flight and routing it to
+`_mark_book_missing` (mirroring how the same-file fix routes through `load_failed`), not by trying
+to recover playback or by rolling `_current_vt_index`/`_file_offset` back to "the file we were
+already on." Whether this narrower case is worth handling in the same pass, or is rare enough to
+defer further, is part of what the TODO.md entry's "needs a proper design" is pointing at — but the
+design question is now just "how does the corrupt-but-present case reach unload-and-exclude,"
+not "what do we roll back to."
+
+**Explicitly not done tonight:** no code changed for this.
+
+---
+
+## VT missing-file exception strands seek state — FIXED and live-verified (2026-07-14)
+
+**Status: FIXED.** Found live immediately after the general `file_switched` race fix (Parts 1+2,
+below) landed — a pre-existing bug whose consequences the guard fix changed (see "Why this wasn't
+caught before," below). Fixed via a pre-check, unit-tested against the real, actually-missing file
+on disk, and live-confirmed by the user against the exact reported repro (deleted VT file,
+Doctor Zhivago).
+
+**The bug:** `seek_async`'s VT same-file branch (`player.py`, `os.path.getsize` call, formerly
+line 788) calls `os.path.getsize(target_file['file_path'])` unconditionally as part of the
+MP3-stop-and-load size-threshold test — with no existence check. If that VT file is missing from
+disk (deleted/moved/renamed), this raises `FileNotFoundError` — **after** `is_seeking`/
+`_seek_target`/`_logical_pos` are already set (a few lines earlier in the same branch) but
+**before** any seek command is ever issued. Reported live: user deleted `002 - Doctor Zhivago
+(Unabridged).mp3` from a VT book folder already playing chapter 002, then pressed Next
+(`handle_next` → `Player.next_chapter` → `seek_async`), producing the traceback via a real
+screenshot. Observed symptom, exactly as reported and exactly consistent with stranded seek
+state: app doesn't crash; a banner briefly shows prior UI text; skipping to a different, existing
+file plays fine; but progress/chapter display becomes erratic afterward (stale chapter label vs.
+actual playback); switching to a different book and back restores correctly to the last-played
+file (the book-switch path re-derives state fresh, masking the strand rather than fixing it).
+
+**Why this wasn't caught before, and why the general-race fix (Parts 1+2, below) changed its
+consequences without causing it:** before Part 1's guard, the next VT `file_switched` event would
+unconditionally clear `is_seeking` — accidentally self-healing this exact stranded state, for the
+wrong reason (an accident of the very bug Part 1 fixed). After the guard (clears only when
+`_seek_target is None`), that accidental recovery path is gone, and nothing else clears it. The
+missing existence check itself predates all of this session's other work — confirmed via git
+blame-equivalent reasoning (the `os.path.getsize` call and its surrounding MP3-threshold logic
+were untouched by either the VT-restore-on-load fix or Parts 1+2).
+
+**Where the exception was actually being caught:** confirmed via investigation, not assumed — no
+try/except exists anywhere in the call chain (`handle_next` → `Player.next_chapter` →
+`seek_async`, or the equivalent chapter-list/other-seek entry points) in Fabulor's own source.
+`main.py` installs no `sys.excepthook`, no `qInstallMessageHandler`. Since `handle_next` is
+invoked via a Qt signal-slot connection, the exception was being caught by PySide6/Qt's own
+default behavior for uncaught exceptions raised inside a Python slot (log/print the traceback,
+keep running) — a Qt runtime characteristic, not application-level error handling. The "Failed to
+load: loading failed." banner text visible in the user's screenshot was unrelated leftover UI
+state, not this bug's actual error surface (confirmed: `_on_load_failed` fires from a different
+signal entirely, mpv's own `end-file` ERROR event or the "no audio files in folder" case).
+
+**Correction made during planning, before implementation:** the original instruction said "matching
+M4B behavior... `is_excluded=1`." This is not what the actual runtime M4B missing-file path does —
+confirmed via direct investigation. The real runtime handler, `_mark_book_missing` (`app.py`),
+uses `db.set_book_missing(path, True)` — the **`is_missing`** flag, not `is_excluded`. Using
+`is_excluded` here would have reintroduced the exact "ping-pong bug" documented in CLAUDE.md's
+soft-delete-flags section (2026-06-27): `is_excluded` is sticky and reserved for user-trash
+actions; a book auto-flagged via `is_excluded` shows up in the Excluded Books popup's restore
+list, gets "restored" with no file behind it, and gets re-flagged on the next load attempt,
+forever. `is_missing` is the dedicated, self-healing flag built specifically to prevent this. The
+fix reuses the existing `_mark_book_missing` helper as-is — "matching M4B behavior" is satisfied
+more precisely by reusing the exact mechanism than by the letter of the original instruction.
+
+**The fix, decided as a pre-check (not a try/except) — the two are not equivalent:** a try/except
+around `os.path.getsize` would still let `FileNotFoundError` actually get raised and unwind (just
+caught one frame closer, instead of relying on Qt to catch it further up) — strictly weaker than
+preventing the exception from ever occurring. `seek_async`'s VT same-file branch now checks
+`os.path.exists(target_file['file_path'])` immediately after `is_seeking`/`_seek_target`/
+`_logical_pos` are set, before `os.path.getsize` is ever reached. On a missing file:
+`Player._abandon_seek_missing_file()` resets `_is_seeking`/`_seek_target`/`_logical_pos`/
+`_last_raw_global`/`_just_settled` — the exact same field set `_on_end_file`'s ERROR-path reset
+uses (Part 2, below), mirrored rather than reinvented, since this is the third place in as many
+days resetting this exact shape for the same underlying reason (a seek that will never settle) —
+then emits `self.load_failed.emit("File missing.")` and `seek_async` returns early (no seek
+command issued). `_on_load_failed` (`app.py`) already shows its own unconditional banner
+(`f"Failed to load: {reason}."`) before branching on `reason`; its branch now also matches
+`"File missing."` (alongside the existing `"no audio files in folder"`) and calls
+`self._mark_book_missing(self.current_file)` — the book's folder path, not the individual missing
+VT file's path, since `set_book_missing` matches against `books.path` (the folder-level row) and
+the product decision is to mark/unload the whole book. `_mark_book_missing` → `_on_book_removed`
+was reused entirely as-is (both are CLAUDE.md-protected / already correct); nothing in that chain
+was touched.
+
+**`_vt_restore_pending` needed no attention — confirmed, not assumed.** `seek_async`'s very first
+statement (after the `if not self.instance: return` guard) is the unconditional
+`self._vt_restore_pending = None` clear. `os.path.exists`/`os.path.getsize` are reached well after
+that clear, inside the VT branch — execution always passes through the clear first regardless of
+what happens afterward.
+
+**Verification:**
+- New unit tests in `tests/test_vt_seek.py`
+  (`test_seek_async_missing_vt_file_does_not_raise_and_clears_seek_state`,
+  `test_seek_async_existing_vt_file_unaffected_by_missing_file_guard`) — the missing-file test
+  uses a real `tmp_path` file that is never created (genuinely absent on disk, not a mocked
+  `os.path.exists`), confirming `seek_async` doesn't raise, resets all five fields, emits
+  `load_failed("File missing.")` exactly once, and issues no seek command. The sanity-control test
+  confirms a present file's seek is completely unaffected by the new check. Both required a fixture
+  fix: `TIMELINE[0]` (the shared module-level fixture used by several pre-existing tests) used a
+  synthetic non-existent path (`"f00.mp3"`) — harmless before this fix since nothing checked
+  existence, but two pre-existing tests (`test_on_file_loaded_consumes_pending_restore_via_real_seek`,
+  `test_manual_seek_during_deferral_clears_pending_restore_last_write_wins`) legitimately drive
+  `seek_async`'s same-file branch against it and started failing once the real guard was added.
+  Fixed by pointing `TIMELINE[0]` at a real, persistent `tempfile.NamedTemporaryFile` (same pattern
+  `tools/fs_race_harness.py` already used) rather than touching the many unrelated tests that only
+  need `TIMELINE[0]`'s path as an opaque string. `pytest tests/ -q` — 195 tests, all green.
+- Direct live-object smoke test (not the GUI, but the real unmodified `Player` class) driven
+  against the actual on-disk missing file (`002 - Doctor Zhivago (Unabridged).mp3`, confirmed
+  absent from the real folder) — `seek_async` raised no exception, all five fields reset,
+  `load_failed` emitted `["File missing."]`, zero commands issued to the fake mpv instance.
+- Re-ran both existing forced-condition harnesses to confirm no regression, since this fix touches
+  the same function (`seek_async`) and field set as Parts 1+2: `tools/fs_race_harness.py` — all 5
+  scenarios PASS (unchanged from before this fix); `tools/vt_restore_race_harness.py` — all 3
+  checks PASS (unchanged).
+- **User live-tested the exact reported scenario directly** (their own dev `entr` session, which
+  auto-reloaded with the fix applied) and confirmed: banner shows on hitting the missing file;
+  pressing Play afterward is a no-op (expected — `_on_book_removed` already tore down
+  `current_file`/the player by that point); pressing Next after the banner removes/unloads the
+  book; a manual rescan correctly revives the book with the still-missing files excluded. The user
+  also tested a second missing-file scenario (moved a different file, skipped over it, banner
+  shown, played the first file successfully, then some further navigation eventually triggered the
+  unload) but was not fully certain of the exact sequence and asked not to change behavior yet,
+  wanting to test and report more precisely first — **this is open, not a confirmed bug**; no
+  further changes have been made pending clearer reproduction from the user.
+
+**What was deliberately NOT built:** a richer design (sticky banner offering "remove from library"
+vs. "rebuild/resync the virtual timeline around the gap and keep playing") was explicitly scoped
+out as a genuinely larger feature — logged in TODO.md instead of attempted here. Current behavior
+is unconditional unload + mark-missing the whole book on any single missing VT file, matching
+M4B's existing behavior exactly.
+
+---
+
+## `_on_file_loaded`'s general "issue a seek, then unconditionally emit `file_switched`" race — FIXED and live-verified (2026-07-13)
+
+**Status: FIXED.** Root cause confirmed via live instrumented timing (see below), fix designed and
+implemented as two required parts, both verified under forced/adversarial conditions AND via
+extensive real live testing (45 real cross-file crossings across all 6 input methods + Undo, 0
+real misses). This was a standalone finding, independent of (but discovered by) the VT
+restore-on-load fix (`_vt_restore_pending`/`defer_vt_restore`, same session) — both now ship
+together, per the dependency decision made when this was still open (see the fix plan, still
+retained at `.claude/plans/come-to-think-of-silly-sun.md` at commit time, for the full design
+rationale, the "what solved means" contract, and the full verification bar).
+
+**The fix, two required parts:**
+1. **`_on_vt_file_switched`** (`app.py:1430-1442`) now gates its `is_seeking` clear on
+   `self.player._seek_target is None`, instead of clearing unconditionally. Data-model finding
+   that justified this (not just "try the guard again"): every reader of `is_seeking` in the
+   codebase needs "has the seek settled" semantics, which `_on_time_pos_change`'s settle branch
+   already owns correctly — `_on_vt_file_switched`'s unconditional clear was a second, competing
+   writer, git-confirmed (`1c8d1b6`, 2026-05-15) to have been added on top of an already-working
+   settle mechanism (`7f891f1`, the prior commit). Its only genuinely necessary case is when no
+   seek was issued at all (`_seek_target` already `None`) — exactly what the guard preserves.
+2. **`_on_end_file`'s ERROR branch** (`player.py:620-645`) now also resets
+   `is_seeking`/`_seek_target`/`_logical_pos`/`_last_raw_global`/`_just_settled` when a seek was
+   genuinely pending (`if self._is_seeking:`) — required as a companion fix, not optional: without
+   it, a VT cross-file seek whose target file fails to load (missing/corrupt/permission error)
+   would strand `is_seeking=True` forever with Part 1's guard now declining to ever clear it (no
+   settle will ever arrive for a load that failed). This was a real, confirmed, pre-existing gap on
+   `main`, unrelated to either bug fixed this session — found by explicitly enumerating every way a
+   VT seek could still genuinely never settle before trusting the Part 1 guard as safe.
+
+**Why the guard (Part 1) is legitimately different this time, not a third blind repeat of a closed
+idea — checked with real evidence, not assumed:** both prior attempts at exactly this guard (one
+undocumented/untracked from 2026-06-15 per CLAUDE.md's summary, one from this session's own
+drift-fix branch) were tested EXCLUSIVELY against seeks that were structurally incapable of ever
+landing at all (the VT-restore-on-load `book_ready`-before-`play()` bug, Layer 1, separately fixed
+this session). Against a seek that can never land, any guard that keeps `is_seeking=True` alive
+produces a permanent freeze — that is not evidence against the guard's own logic, it's the
+inevitable consequence of testing it against an unrelated, unfixed bug. Confirmed via git history
+(no commit ever added/reverted this exact guard — the 2026-06-15 attempt was never committed) and
+this session's own TODO.md entry, which states directly: "the seek never settles to clear it, since
+mpv is at 0." Neither historical freeze constitutes evidence against the guard when applied to a
+seek proven capable of settling — which is exactly the general race's actual failure shape
+(confirmed via live `[FS-RACE]` instrumentation: the seek DOES land in every captured miss, it's a
+timing loss against the clear, not a structural non-landing).
+
+**Verification — forced-condition harnesses (both required, both pass 100%):**
+- `tools/vt_restore_race_harness.py` (existing, from the VT-restore-on-load fix work) re-run with
+  Parts 1+2 applied — still 100% pass (sub-steps 1a/1b/1c all PASS).
+- `tools/fs_race_harness.py` (new, built for this fix specifically) — a deterministic,
+  non-sleep-based mock that controls the ORDERING of two independent events (the seek's settle
+  sample vs. `_on_vt_file_switched`'s clear) rather than one delayed operation, since the general
+  race's actual shape is two-events-racing, not one-thing-arriving-late. All 5 scenarios PASS: OLD
+  code fails under clear-first ordering (proves the harness genuinely forces the bug — and this
+  harness caught its own fixture bug during construction: an initial landing-sample value
+  coincidentally equaled the target exactly, which masked the real corruption by making the
+  post-reset resync branch recompute the same value by coincidence; fixed by using a sample with a
+  deliberate 0.3s residual, matching how real mpv landings actually carry a small residual — this
+  is exactly why the fix's own residual-discarding mechanism, `_logical_pos` adopting `_seek_target`
+  exactly at settle, exists in the first place); OLD code survives settle-first (sanity control);
+  NEW code survives BOTH orderings; NEW code leaves exactly the `_on_end_file`-ERROR-recoverable
+  state (not a new freeze shape) when the settle never arrives at all.
+- New unit tests: `tests/test_vt_file_switched_guard.py` (3 tests, pure state-machine style, binds
+  the real unbound `MainWindow._on_vt_file_switched` to a tiny fake) and three new tests in
+  `tests/test_vt_seek.py` for the `_on_end_file` ERROR-path reset (including a guard-vs-no-guard
+  distinction check: the original abandon-reset pattern this mirrors has no explicit `is_seeking`
+  guard because it's nested inside a caller condition that already guarantees a seek is pending;
+  `_on_end_file` has no equivalent guarantee, since it's reachable from ANY load failure including
+  a natural-advance play() failing with nothing pending — confirmed by re-reading the mirrored
+  pattern's actual call site, not assumed). `pytest tests/ -q` — 193 passed.
+
+**Verification — real live testing (not a substitute for the above, the confirmation on top of
+it):** ~45 real VT cross-file crossings captured across one live session, deliberately covering
+every one of the six input methods the original investigation found misses on (wheel-scroll,
+arrow-key, seek/skip-button, progress-slider click, chapter-list click) plus natural EOF-advance,
+in both paused and playing states, plus three explicit Undo tests (slider-seek+undo, wheel+undo
+twice, chapter-list+undo) — satisfying CLAUDE.md's VT+Undo standing-rule checklist. Result, via a
+fully automated sweep of the session's `fabulor.log` (not manual sampling): **0 real misses**. One
+false-positive flagged by an early version of the sweep script turned out to be a rapid,
+correctly-superseded seek (a fast wheel-tick issuing a newer target before the prior one could
+settle — confirmed via the `seek_async: entry` line showing a third, different target firing
+before the flagged crossing's settle window closed) — not a bug, and the sweep script was corrected
+to account for legitimate supersession before being trusted. This live result is the confirmation
+layer on top of the two forced-condition harnesses, not a replacement for them — a clean live pass
+alone was proven insufficient evidence multiple times earlier this same session.
+
+**Verification — 200-cycle automated OS-level restart stress test (added after the fix was
+believed complete, to reconcile a real methodology gap):** the user separately ran ~50 manual
+app relaunches pre-fix while trying to reproduce the deferred-restore bug and got 50/50 clean
+restores — apparently contradicting the earlier-confirmed real failures. Reconciled, not
+dismissed: manual clicking can't reliably force the deferred-restore race's actual window (the gap
+between `book_ready` firing and mpv's own `file-loaded` event arriving, which is mostly determined
+by mpv init/disk-cache timing, not human click cadence) — the same reasoning already applied to why
+manual testing alone was insufficient for the general race earlier in this session. To get a real,
+high-volume, machine-paced repro independent of human timing: 200 automated restarts were run by
+touching an unrelated, unmodified file (`book_quotes.py`) every 3 seconds to trigger the user's own
+`entr -r python main.py` dev-loop, which kills the running instance with a bare `SIGTERM` (confirmed
+earlier this session: this does NOT run `closeEvent`, so this is a genuine hard-kill-and-reload
+cycle, not a graceful close/reopen — arguably a MORE adversarial test than a clean close, since nothing
+about the restart is app-controlled) and restarts against the same fixed saved position (progress
+was not touched during the run, so all 200 cycles targeted the identical saved position). Result,
+via the same automated `fabulor.log` sweep methodology: **200/200, zero real misses.** One
+false-positive was caught and corrected during analysis — an early sweep incorrectly concatenated
+the four rotated log files out of chronological order (`.log.1/.2/.3` do not rotate in the naive
+numeric order; verified via each file's actual first/last timestamps), which briefly appeared to
+show a "miss" that was really the scan window running into an unrelated, chronologically-earlier
+log chunk. Corrected by checking real timestamps before trusting file order, then re-run clean.
+This 200-cycle result is now the strongest single piece of evidence for the VT-restore-on-load
+fix specifically (as opposed to the general race, which the ~45-crossing manual test and the
+`fs_race_harness.py` forced-condition harness already covered) — it directly answers "why did 50
+manual launches not reproduce a confirmed-real bug" (wrong instrument for the job, not evidence the
+bug wasn't real) without needing to just trust that answer.
+
+**Documentation cleanup done as part of landing this fix:** the `[VT-RESTORE-RACE]` DEBUG tag
+(`player.py`, inside `_on_file_loaded`'s deferred-restore consumption) was kept as a permanent,
+low-noise diagnostic breadcrumb (not investigation scaffolding — it fires rarely, only when a
+deferred restore is actually consumed) but renamed to `[VT-RESTORE-CONSUME]`, since its old name
+tied it to a specific investigation rather than describing what it reports — the same accuracy
+standard applied to the stale `_on_time_pos_change` comment earlier this session. All `[FS-RACE]`
+temporary instrumentation from the investigation phase was fully removed (confirmed via grep)
+before this fix was designed.
+
+---
+
+### Original investigation record (preserved below, now historical — the mechanism it describes is fixed)
+
+**Status at time of writing: confirmed mechanism, live-reproduced, NOT FIXED.** This was a
+standalone finding, independent of (but discovered by, and at the time blocking) the VT
+restore-on-load fix (`_vt_restore_pending`/`defer_vt_restore`, same session, see below).
+
+**The mechanism, confirmed via live testing + code trace (not inferred).** `Player._on_file_loaded` (`player.py`, VT branch ~592-618) has this shape, for BOTH of the two cases that can issue a seek within it:
+
+1. The `_pending_local_pos` branch (~555-601) — used by `seek_async`'s VT cross-file branch (user-initiated seek across a file boundary) — sets `_seek_target`/`_logical_pos` directly, issues `instance.command_async('seek', pending, 'absolute+exact')` (~601), and falls through.
+2. The deferred-restore branch (added this session, ~612-615) — consumes `_vt_restore_pending` and calls `seek_async(pending_target)`, which sets `is_seeking=True`/`_seek_target=pending_target` together.
+
+**Both cases fall through to the same line**, unconditionally: `self.file_switched.emit()` (~616). `file_switched` connects to `_on_vt_file_switched` (`app.py:1430-1432`) via `Qt.ConnectionType.QueuedConnection`; that handler unconditionally does `self.player.is_seeking = False`. Because it's queued, it runs on the next Qt event-loop iteration — almost immediately, and with no guarantee the just-issued seek has settled (settling requires an actual mpv `time-pos` sample landing within 1.0 of target, in `_on_time_pos_change`'s settle branch, `player.py` ~166-198). If the clear lands first: `_seek_target` is orphaned (the settle branch requires `is_seeking=True` to ever fire, so it can never re-adopt the target), and the `_logical_pos` maintenance block's gate (`not self._is_seeking`, ~199-234) opens prematurely, resyncing/accumulating `_logical_pos` from raw, mid-flight mpv samples — corrupting a seek that may have already landed correctly a moment earlier. This is what produces the reported symptom precisely: **the UI restores to the correct position, holds briefly, then resets** — not "never restores," which is the tell that distinguishes this from a simpler "seek never issued" bug.
+
+**Why this wasn't caught by the existing, older cross-file-seek path (case 1 above), even though it has the identical hazard shape:** traced and confirmed (2026-07-13 investigation) — `_advance_or_finish` (the natural VT EOF-advance path, the overwhelmingly common case during normal listening) explicitly sets `_pending_local_pos = None` before advancing, so on that path `_on_file_loaded`'s seek block is skipped entirely (no seek issued, nothing to race). Only an explicit **user cross-file seek** (skip/chapter-nav across a file boundary) populates `_pending_local_pos` and actually exercises the race — a much rarer trigger than "every VT book's every launch," which is why it hadn't surfaced before. **This is not a new bug introduced by the VT-restore-on-load fix — it's a pre-existing, latent race that fix made far more frequently visible** (by adding a second, very-common-case caller — every VT restore-on-load — into the same hazardous shape). Verified: no re-arm of `is_seeking=True` happens between `file_switched.emit()` and `_on_vt_file_switched`'s clear for either case (grepped every `is_seeking = True` site in both files) — the two cases are mechanically identical, differing only in how often they execute the seek-then-emit sequence.
+
+**Two prior approaches are CLOSED — already tried and reverted, do not re-propose either as "the fix":**
+1. **Defer `file_switched`'s emission** (until after the seek settles, or until it's otherwise safe) — tried 2026-06-06, reverted. Broke Undo (VT slider stuck after undo). See CLAUDE.md's "Seek/position tracking — VT+Undo is the known-fragile zone" rule, which records this exact prior attempt.
+2. **Narrow `_on_vt_file_switched`'s clear** (e.g. gate it on `_seek_target is None`, or otherwise make it conditional) — tried twice this session's drift-fix branch (`fix/seek-drift-logical-position`) and reverted both times. Trades the clobber for a UI freeze instead (labels/slider stuck on the previous book, because the seek genuinely never settles once `is_seeking` gets stuck `True` with no path to clear it). See CLAUDE.md's VT+Undo rule and TODO.md history for the same finding.
+
+Any future fix attempt needs to find a THIRD approach that isn't a variant of either of these — e.g., something that changes when/whether a seek is issued relative to `file_switched`'s emission without touching the emission's timing itself or the consumer's clear logic. Not designed here; this entry documents the confirmed mechanism only, per explicit instruction to stop before designing a fix.
+
+**Live reproduction evidence (VT restore-on-load, deferred-restore case):** user-reported and log-confirmed on real app launches with a VT book with a genuine saved position — approximately 4 failures out of ~50-90 real launches in one test session, all matching the "restores correctly, then resets, no error" shape. Confirmed via `fabulor.log` DEBUG capture (temporary `[VT-RESTORE-RACE]` tag, since removed) showing the deferred seek landing correctly, followed shortly by a queued `_on_vt_file_switched` clear, followed by `_logical_pos` reverting to a stale near-zero value.
+
+**Live reproduction evidence (general race, manual cross-file seeks — this is the part that was explicitly re-verified against real instrumented timing rather than left as "theoretically exposed"):** a second, dedicated instrumentation pass (temporary `[FS-RACE]` DEBUG tags at `file_switched.emit()`, `_on_vt_file_switched`'s clear, the settle branch, and the `_pending_local_pos` cross-file `command_async` call — all since removed) was run against a real VT book, one input method at a time, explicitly to confirm or refute whether the *manual* cross-file-seek path (as opposed to the deferred-restore path) is really exposed to this race in practice, not just structurally in the code. Result: **confirmed exposed, across every manual input method tested that crosses a VT file boundary.** Six clean, unambiguous misses were captured (no `[FS-RACE] settle:` line ever appeared for the seek's target before a later action's seek overwrote `_seek_target`), spanning four distinct input types in one session:
+- **Wheel-scroll crossing a boundary** (~21:05:59): target `2483.1234`s (`target_idx=0`) — `_on_vt_file_switched`'s clear landed ~2ms before the settle-worthy raw sample arrived; miss confirmed.
+- **Arrow-key nav crossing a boundary** (~21:07:18): target `10731.566013481253`s (`target_idx=5`) — clear fired, no settle line ever appeared for this target.
+- **Seek/skip-button crossing a boundary** (~21:08:32): target `10727.773719472038`s (`target_idx=5`) — same shape, confirmed miss.
+- **Progress-slider left-click** (~21:09:42): target `26015.261058`s (`target_idx=14`) — confirmed miss.
+- **Chapter-list left-click** (~21:11:02): target `14590.668627574567`s (`target_idx=9`) — confirmed miss, with an additional nested-load wrinkle: `_on_file_loaded` fired a SECOND time in the same sequence (a second `file_switched.emit()` at an already-`is_seeking=False` state), consistent with the deferred/cross-file target resolving into a file that itself triggers a further load event. Worth deeper investigation if this exact path is targeted by a future fix.
+
+Several **clean settles were also captured in the same session**, on the SAME input methods (seek-button in the opposite direction, progress-slider right-click, chapter-list right-click) — confirming the race is genuinely intermittent/timing-dependent, not deterministic per input method: whether a given manual cross-file seek wins or loses the race depends on real scheduling, not on which button/control triggered it. **Natural EOF-advance during regular playback crossing a file boundary was confirmed as a non-issue**, exactly as the static trace predicted: at that moment `is_seeking`/`_seek_target` are already `False`/`None` (no seek was ever issued for a natural advance — `_advance_or_finish` sets `_pending_local_pos = None`), so `_on_vt_file_switched`'s clear is observed firing as a genuine no-op.
+
+**Conclusion of this second instrumentation pass: the manual cross-file-seek path is not "theoretically" exposed — it reproducibly misses its settle in real usage, across every tested input method, at a rate consistent with genuine timing-sensitivity (not every attempt misses, but enough do, on ordinary interaction, to be a real user-facing bug independent of the VT-restore-on-load fix).** This raises the practical severity of this finding beyond "a fix I'm about to ship might depend on it" — it means VT cross-file navigation itself (skip, chapter click, slider click, wheel, arrows) can already intermittently corrupt `_logical_pos`/orphan `_seek_target` on `main`, independent of any code from this session. This should be weighed accordingly when this finding is next picked up for a fix design.
+
+**Investigated, and NOT independently live-verified — a cross-thread race on `_vt_restore_pending` itself. Treat as "not fully ruled out," not "confirmed separate," per the same discipline this session already learned once tonight (the `is_seeking` reprime trap: a mechanism that explains every observed case is not automatically the only mechanism).** `_on_file_loaded` (and every other mpv event/property callback) runs on mpv's own internal `MPVEventHandlerThread` (confirmed via python-mpv's actual installed source, `fabulorenv/lib/python3.13/site-packages/mpv.py` — both `event_callback` and `observe_property` handlers are dispatched from the same `_loop` method on that one background thread), NOT the Qt main thread — **this part IS solid, confirmed by reading the actual installed library source, not inferred.** `_vt_restore_pending` is written from the Qt main thread (`defer_vt_restore`, called from `_restore_position`) and read/cleared inside `_on_file_loaded` on that separate thread, with no lock or Qt-signal marshaling between them — also confirmed by direct code reading. **What is NOT independently live-verified: the claim that this race cannot produce the "restores then resets" symptom.** That conclusion rests entirely on static reasoning (traced: `_vt_restore_pending` is read once, then cleared unconditionally as `seek_async`'s first action, before `is_seeking`/`_seek_target` are ever touched — so the two mechanisms are sequential stages in the same call, not concurrent) — it was never forced with an instrumented, timestamped reproduction the way the FS-RACE finding above was. The reasoning is sound and CPython's GIL genuinely does make a torn/corrupted read of a plain `float | None` impossible (only ordering/visibility is at stake, and a lost-write read would simply see `None` and skip the seek — a different, more plausible symptom: "VT book silently fails to restore at all, no `[VT-RESTORE-RACE]`-style log line despite genuine saved progress > 0"). But "the reasoning is sound" is not the same standard this session otherwise held itself to for every other claim tonight. **Action for a future session: if either the reproduced "restores then resets" symptom persists after the FS-RACE mechanism is fixed, or a NEW "silently never restores, no log line" symptom is ever seen, revisit this specific mechanism with real cross-thread timing instrumentation before assuming either possibility is closed.**
+
+**Also checked, and likewise NOT independently live-verified against the actual visual stutter — ruled separable by code trace only: a first-app-launch-only VT flow-animation stutter**, independently reported by the user during this investigation. Confirmed present on `main` (pre-existing, not introduced by anything this session) — that part is solid (the user checked `main` directly). Confirmed via code trace only (not a forced live A/B against the actual stutter's timing) to occur in the progress-slider's own `QPropertyAnimation` glide (a self-contained animation, unread by/unwritten-to by the deferred seek or `_on_file_loaded`), not in the restore/settling window this fix's mechanism touches. Same caveat as above applies: this is "the trace found no interaction mechanism," not "a live-forced test showed no interaction." One caveat carried forward as an explicit contract for any future stutter investigation regardless: the VT chapter-walk in `_on_time_pos_change` is unguarded by `is_seeking` (unlike the non-VT branch) and now emits `chapter_changed` at a shifted, later time than before this session's fix (since the seek it's walking toward now fires later, from inside `_on_file_loaded`, rather than immediately from `_restore_position`) — this affects the chapter title/list label only, not the progress slider, but any future change to VT chapter-walk gating should be checked against this shifted timing, and any future stutter investigation should re-verify the separability claim live before relying on it.
+
+---
+
 ## Compounding seek drift fixed via `_logical_pos` — measure-first, VT-first, and the same-shape-as-`b6a4023` risk that did NOT recur (2026-07-13)
 
 **Branch:** `fix/seek-drift-logical-position` (`9521ee4` fix + follow-up docs). Core claim

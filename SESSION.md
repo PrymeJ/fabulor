@@ -1,3 +1,106 @@
+## Session Summary — 2026-07-14 — VT restore-on-load fix, general `file_switched` race fix, and same-file missing-file fix (branch `fix/vt-restore-and-chapter-epsilons`, NOT yet merged)
+
+**Branch:** `fix/vt-restore-and-chapter-epsilons`, off `main` at `b296847`. **Status: three fixes
+landed and live-verified on this branch; NOT merged to `main` yet** — staying on this branch to
+continue with the remaining drift-adjacent items before merging everything together. This entry
+covers the branch's work to date; write-ups for each fix are in NOTES.md (pointed to below, not
+duplicated here) per this project's usual split.
+
+**Fix 1 — VT restore-on-load never executes (`_vt_restore_pending`/`defer_vt_restore`).** A VT
+book's saved-position restore seek was racing `book_ready`, which fires BEFORE `instance.play()`
+for VT books — the restore seek could reach mpv before the file was loaded and be silently
+dropped. Fixed by deferring the restore via `Player.defer_vt_restore`/`_vt_restore_pending`;
+`_on_file_loaded`'s VT branch now issues the real seek only once mpv has actually confirmed the
+file is loaded. Full mechanism and verification in NOTES.md, "`_on_file_loaded`'s general...
+race — FIXED and live-verified" (2026-07-13).
+
+**Fix 2 — general `_on_file_loaded` seek/`file_switched` race, surfaced while verifying Fix 1.**
+A broader, pre-existing hazard: `_on_file_loaded` issues a seek then unconditionally emits
+`file_switched`, which raced `_on_vt_file_switched`'s unconditional `is_seeking` clear — not
+specific to VT restore-on-load, also intermittently corrupting state on ordinary manual VT
+cross-file seeks (wheel, arrow, seek/skip-button, slider-click, chapter-list-click). Fixed via two
+required parts: (1) `_on_vt_file_switched` gates its clear on `self.player._seek_target is None`
+instead of clearing unconditionally; (2) `_on_end_file`'s ERROR branch also resets seek state when
+a seek was genuinely pending, closing a real gap Part (1) alone would have turned into a new
+permanent freeze (a VT cross-file seek whose target file fails to load previously stranded
+`is_seeking=True` forever once Part (1)'s guard stopped clearing it for free). This guard shape
+had been tried and reverted twice before, on other branches, for what turned out to be an
+unrelated reason (tested against seeks structurally incapable of ever landing) — see CLAUDE.md's
+"Seek/position tracking — VT+Undo is the known-fragile zone" for why this attempt was legitimately
+different, not a third blind repeat. Verified via two new forced-condition harnesses
+(`tools/fs_race_harness.py`, `tools/vt_restore_race_harness.py`, both 100% pass), new unit tests
+(`tests/test_vt_file_switched_guard.py`, plus additions to `tests/test_vt_seek.py`), ~45 real live
+VT cross-file crossings across all six input methods + Undo (0 real misses), and a 200-cycle
+automated `entr`-triggered restart stress test (after fixing a log-ordering bug in the verification
+script itself that had produced one false-positive miss). Full detail in the same NOTES.md entry
+as Fix 1.
+
+**Fix 3 — VT same-file missing-file exception strands seek state, found live immediately after
+Fix 2 landed.** `seek_async`'s VT same-file branch called `os.path.getsize` on the target file
+with no existence check, as part of the MP3-stop-and-load size-threshold test — if that file was
+missing from disk, this raised `FileNotFoundError` mid-seek, after `is_seeking`/`_seek_target`/
+`_logical_pos` were already committed but before any seek command fired. Worse after Fix 2 than
+before it: pre-Fix-2, the next `file_switched` event used to accidentally self-heal this exact
+strand (for the wrong reason); Fix 2's guard removed that accident. Fixed via a pre-check
+(`os.path.exists`, decided explicitly over a try/except — the two are not equivalent, a try/except
+still lets the exception get raised and unwind) before `os.path.getsize` is ever reached; on a
+missing file, `Player._abandon_seek_missing_file()` resets the same five fields Fix 2's ERROR-path
+reset uses (mirrored, not reinvented), emits `load_failed.emit("File missing.")`, and `app.py`'s
+`_on_load_failed` routes that reason to the existing `_mark_book_missing` → `_on_book_removed`
+chain — reusing the exact M4B missing-file mechanism unchanged, using `is_missing` (NOT
+`is_excluded`, which the original fix instruction named but which would have reintroduced the
+documented "ping-pong bug"). Verified via new unit tests against a real, never-created `tmp_path`
+file (not a mock), a direct live-object smoke test against the actual on-disk missing file from the
+original repro, both harnesses re-run clean, and live confirmation by direct user testing (banner
+shows, book unloads on Next, rescan correctly revives it). Full detail in NOTES.md, "VT missing-file
+exception strands seek state — FIXED and live-verified" (2026-07-14).
+
+**Found but explicitly NOT fixed this session — logged for a future pass, not chased inline:**
+- **VT cross-file (not same-file) missing-file jump corrupts `_current_vt_index`/`_file_offset`,
+  causing a stuck-book chapter-cycling bug** (`seek_async`'s `else` branch has no existence check
+  at all, and commits file-index state before the target is confirmed loaded). Root cause fully
+  traced via live repro (Next/Prev cycling a fixed subset of chapters forever after a cross-file
+  jump to a missing file) — NOTES.md, "VT cross-file missing-file jump corrupts
+  `_current_vt_index`/`_file_offset` — DIAGNOSED, NOT FIXED" (2026-07-14). Folded into a larger
+  consolidated design (see below), not fixed standalone.
+- **VT missing-file handling — consolidated design**, TODO.md (2026-07-14): after discussion, the
+  design converged on (1) a load-time file-count check (book's known file count vs. files present
+  in the folder — a cheap directory-listing comparison, not a per-file stat sweep; one open
+  question, whether it's fast enough on slow/networked storage, not yet measured), (2) fixing the
+  cross-file corruption bug above via the same pre-check shape as Fix 3 (no rollback mechanism
+  needed — confirmed by reasoning, not assumed, since there's nothing to roll back to once nothing
+  is committed until the check passes), and (3) on post-load discovery: unload immediately (reusing
+  the exact same mechanism as Fix 3) plus a sticky banner (no auto-hide, real close button, Dismiss
+  = exclude, Rescan = re-scan just that folder and reload). **Blocking playback/UI until the user
+  chooses was explicitly considered and rejected** — too large a blast radius (disabling both
+  sliders, every transport button, and the chapter list) for what's a comparatively small-looking
+  edge case. This consolidated entry supersedes three earlier, narrower TODO.md drafts written
+  earlier the same night before the design fully came together.
+- **First-app-launch-only VT flow-animation stutter**, TODO.md (dated 2026-07-13, from the Fix 1/2
+  investigation) — confirmed present on `main` pre-existing, ruled separable from Fixes 1/2 by code
+  trace only (not a live-forced A/B). Carries an explicit requirement for any future fix attempt:
+  re-run both harnesses and the VT+Undo checklist before considering it done, since any timing
+  change near app-start VT loading risks interacting with Fixes 1/2.
+
+**Process note carried forward from the prior (`_logical_pos`) session, and upheld again here:**
+every fix in this arc was live-verified against VT+Undo before being considered done, per the
+CLAUDE.md standing rule — this is the sixth touch on that fragile zone, the first (Fix 2) being the
+"fifth touch" incident CLAUDE.md already documents, this session adding a sixth, additive touch
+(Fix 3) on top rather than revising Fix 2's mechanism. Two design corrections were caught and
+applied during planning, both from direct user pushback rather than self-review: (1) the original
+Fix 3 instruction said to reuse `is_excluded` — corrected to `is_missing` after investigation
+showed the literal instruction conflicted with CLAUDE.md's own documented ping-pong-bug history;
+(2) the plan initially treated a pre-check and a try/except as interchangeable ways to guard
+`os.path.getsize` — corrected to mandate the pre-check specifically, since a try/except would still
+let the exception raise and unwind, just closer to the source.
+
+**Not yet done, deliberately:** `main` has NOT been updated — CLAUDE.md/NOTES.md changes exist only
+on this branch and will be reconciled when it merges (matching how the prior `_logical_pos` session
+handled the same situation). TODO.md content is intended for `main` eventually but is being kept on
+this branch for now since nothing else has merged yet.
+
+---
+
 ## Session Summary — 2026-07-13 — Compounding seek-drift fix implemented, live-verified, soak-tested, and MERGED (`_logical_pos`)
 
 **Merged to `main`.** Code + tests came in as `8c51ca9` (the branch's `9521ee4` fix + `f16fa6c`
