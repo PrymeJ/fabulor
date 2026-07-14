@@ -1,3 +1,119 @@
+## `_PAUSED_SEEK_UNDERSHOOT_COMP` boundary-crossing gate — IMPLEMENTED, TESTED, FOUND STRUCTURALLY WRONG, REVERTED (2026-07-14)
+
+**Status: attempted and abandoned this session, on branch `fix/vt-restore-and-chapter-epsilons`
+(never merged to `main` — the gate code, and the tests written for it, were reverted out of the
+working tree before anything else on that branch was committed). Logged in full, not glossed over,
+so a future session starts from the corrected understanding below rather than either re-deriving
+tonight's dead end or finding an approved-looking plan sitting around and trusting it.** This is
+the first of three drift-adjacent items deferred from the `_logical_pos` fix (TODO.md, 2026-07-12),
+picked specifically to go first because it sits upstream of the other two (see that TODO.md entry).
+
+**What was measured, and stands as real, correct findings independent of the failed fix:** live
+instrumentation (`[UNDERSHOOT-MEASURE]` debug logging, temporary, since removed) plus a real user
+test session against an embedded M4B with 4s/11s/17s chapters established, by direct trace, three
+things that remain true and useful for whoever picks this up next:
+1. A user-reported "smoking gun" — a paused chapter-slider click near a chapter end where the
+   main-window chapter label showed the NEXT chapter's name while the chapter-list dropdown and
+   the 200ms `_sync_chapter_ui` timer both kept showing the CURRENT chapter, for 20+ seconds, until
+   real playback resumed and caught up — is real and reproducible, and its proximate mechanism is
+   fully traced: the compensated mpv command can numerically fall on the far side of a chapter
+   boundary in `_chapter_list`, and the raw sample mpv reports back immediately after the seek
+   command (before settle) can therefore resolve to a different chapter than the LOGICAL
+   (uncompensated) target does — `_update_chapter_label_from_index` reacts to that raw resolution
+   within ~10ms, while `_sync_chapter_ui`/the chapter-list dropdown read the logical position and
+   disagree with it for as long as the discrepancy persists.
+2. Restore-on-load (`_restore_position`) never reaches this compensation at all, in any case,
+   structurally — `book_ready` is connected to `_on_file_ready` (calls `_restore_position`) BEFORE
+   `_on_file_loaded_populate_chapters` (the only place `_is_embedded_m4b` is ever set `True`), both
+   `QueuedConnection`, so the gate's own flag is always still `False` when the restore seek runs.
+   Confirmed empirically across 12+ captured restore-on-load seeks, zero exceptions. The user's
+   separately-reported restore-on-load retrace is real but is a DIFFERENT bug — the already-tracked
+   "Chapter-slider load-time retrace" TODO.md item — not this constant.
+3. Very short chapters (~4s) show a distinct, separate "VU-meter" jitter on repeated paused slider
+   clicks with ZERO chapter-boundary crossing involved — root cause confirmed as simply "0.37s is
+   ~9% of a 4s chapter's total width," no residual-accumulation-across-clicks mechanism (that
+   theory was checked and found wrong). Logged as its own TODO.md entry, explicitly out of scope
+   for this constant's fix.
+
+**What was designed, implemented, and then found to be built on a wrong premise — the actual
+failure, stated plainly, not softened:** the fix attempt added a check to `seek_async`'s paused
+embedded-M4B branch: walk `_chapter_list` (unpadded, deliberately not `_CHAPTER_WALK_TOLERANCE`) to
+see whether `pos` and `pos + _PAUSED_SEEK_UNDERSHOOT_COMP` (the compensated mpv command) resolve to
+different chapter indices; if so, suppress the compensation. This was implemented, unit-tested
+against every real non-VT caller of `seek_async` that relies on the compensation while paused
+(`activate_chapter_index`, `previous_chapter`, `next_chapter`, `apply_smart_rewind`, `undo_seek`,
+`seek_within_chapter`), and one of those tests immediately failed in a way that exposed the real
+problem: `activate_chapter_index`'s own paused target (`nominal + _EMBEDDED_CHAPTER_SEEK_OFFSET` =
+`nominal - 0.09`) sits, by construction, on the near side of the very boundary it's trying to
+reach — the `+0.37` compensation is not incidental to that seek, it is THE mechanism that is
+supposed to carry the seek across the boundary it's deliberately targeting. The gate, applied
+uniformly, would have suppressed compensation for ordinary chapter nav — breaking exactly the case
+this constant exists to serve.
+
+**The deeper error, once traced past that first failing test — not a tuning problem, a category
+error:** the gate's premise was "does the compensated *command* numerically cross a `_chapter_list`
+boundary." That's the wrong quantity. The compensation exists because mpv, while paused,
+*undershoots* whatever position it's given by ~0.37s — the inflated command carries `pos + 0.37`
+specifically so that mpv's own shortfall lands the REAL playback position back down near `pos`.
+Checking whether the artificially-inflated command crosses a boundary says nothing reliable about
+where mpv is actually going to land — the whole design of this constant is that the command and the
+landing are different numbers by construction, and a walk against the command value was never
+going to correctly predict real playback behavior. This explains both directions of the gate's
+failure, not just the chapter-nav one: it also explains why the two 11s-chapter cases (a click the
+user confirmed correctly crossed into the next chapter) and the one 17s-chapter case (a click the
+user confirmed incorrectly crossed) could not be told apart by the gate's own arithmetic — both
+"crossed" the inflated command's numeric boundary in the same mechanical sense, but whether real
+playback should land before or after that boundary is a question of INTENT (what the caller was
+trying to do), not of where a derived number happens to fall.
+
+**Why intent can't be recovered from a bare position number after the fact, and what direction that
+implies instead:** every seek method in this codebase falls into one of two categories, and the
+category is knowable at the CALL SITE but not from `pos` alone once it reaches `seek_async`:
+- **"Must land exactly"** — Next/Prev, chapter-list click, wheel-driven chapter-crossing,
+  right-click-to-chapter-start, every labeled skip amount (5/10/15/30s, 1/2/5min). These callers
+  know, unambiguously, that they are aiming at a specific boundary or a specific stated distance —
+  the intent is explicit in the calling code, it is simply not passed down to `seek_async` today.
+- **"Approximate is acceptable"** — freeform chapter-slider drag/click is the ONLY member of this
+  category, because it is the only seek with no stated numeric contract; wherever it lands is
+  "correct" by definition, so a compensation nudging it by 0.37s is never fixing an error, only
+  potentially introducing a visible one.
+  A downstream implication of this, not yet investigated: undo_seek reseeks to whatever position
+  save_seek_position captured, which itself could have come from either category depending on what
+  produced the original seek — undo's own category membership may need to be inherited from its
+  source seek rather than treated as always-approximate or always-exact; NOT resolved here, flagged
+  for whoever designs the next attempt.
+  A gate that infers which category a seek belongs to from `pos` and `_chapter_list` alone is
+  trying to reconstruct information that was thrown away before it ever reached `seek_async` — this
+  is exactly why the 11s/17s cases were indistinguishable and why chapter nav produced a false
+  positive. **The fix direction that follows: a destination-seek should carry an explicit signal
+  from its caller stating which category it belongs to, not have its nature guessed downstream from
+  arithmetic on a bare float.** This was not designed further tonight — it's the corrected premise
+  for the next attempt, not a plan.
+
+**What remains unsolved, explicitly, so it isn't conflated with what was attempted tonight:**
+- The actual landing-precision problem `_PAUSED_SEEK_UNDERSHOOT_COMP` exists to solve is untouched
+  — still applied unconditionally, exactly as before this session (the revert restored `player.py`
+  to its pre-attempt state, byte for byte).
+- **The visual drift on short chapters is a SEPARATE problem from landing precision, even in the
+  best case.** Even a perfect fix to where mpv actually lands does not by itself address the
+  "shows a sliver, retraces" ANIMATION/DISPLAY behavior on short chapters — that's a rendering/UI-
+  timing question (how the slider animates and re-renders against a changing position), not a
+  question of where the seek itself lands. The two are related (a landing-precision fix would
+  likely reduce how OFTEN the display artifact is visible) but are not the same fix, and solving one
+  does not by construction solve the other.
+- The two originally-deferred display bugs — "Chapter-slider load-time retrace" (07-12) and
+  "Chapter-elapsed ~1s boundary offset" (07-13) — are still sitting downstream of whatever this
+  constant's eventual fix becomes, entirely unresolved, exactly as before tonight's attempt.
+
+**Nothing from this attempt was merged.** `player.py` and `tests/test_seek_state.py` were reverted
+to their pre-attempt committed state (`git checkout --`) before this branch's other work (the VT
+missing-file fixes) was fast-forwarded to `main`. The investigation plan file used for this attempt
+(`.claude/plans/come-to-think-of-silly-sun.md`) reflects the now-known-wrong gate design and should
+NOT be treated as a starting point for the next attempt — it documents a dead end, not a blueprint.
+This NOTES.md entry, not that plan file, is the correct starting point next time.
+
+---
+
 ## VT cross-file missing-file jump corrupts `_current_vt_index`/`_file_offset` — DIAGNOSED, NOT FIXED (2026-07-14)
 
 **Status: root cause traced and confirmed via live repro; fix deliberately deferred as part of the

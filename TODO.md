@@ -152,28 +152,42 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   re-derive from `app.py:1574` vs `app.py:1665` if that branch is ever discarded before merge.
 
 - **[2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37s) is applied unconditionally to every paused
-  embedded-M4B seek, not gated on chapter-boundary proximity.** Found while investigating the
-  compounding seek-drift bug (branch `fix/seek-drift-logical-position`, not yet merged). The
-  constant's ORIGINAL purpose (CLAUDE.md, Session 3, 2026-06-13) was chapter-boundary landing
-  precision — Prev/Next skipping a chapter's first word, or paused Prev/Next re-resolving the
-  chapter just left. But the actual gate in `seek_async` (`player.py:704`,
-  `if self._is_embedded_m4b and self._cached_pause:`) checks only file format and pause state — no
+  embedded-M4B seek, not gated on chapter-boundary proximity. Still UNFIXED — a fix attempt was
+  made and reverted 2026-07-14; read that writeup FIRST, it is not this entry's original framing.**
+  Found while investigating the compounding seek-drift bug (branch `fix/seek-drift-logical-position`,
+  not yet merged). The constant's ORIGINAL purpose (CLAUDE.md, Session 3, 2026-06-13) was
+  chapter-boundary landing precision — Prev/Next skipping a chapter's first word, or paused
+  Prev/Next re-resolving the chapter just left. But the actual gate in `seek_async`
+  (`if self._is_embedded_m4b and self._cached_pause:`) checks only file format and pause state — no
   boundary-proximity check at all. It fires on every paused seek, including genuinely mid-chapter
   ones (`seek_within_chapter` via a chapter-slider click, `_restore_position` on book-load) that
-  have nothing to do with chapter navigation. Visible live on short chapters (~5-25s), where the
-  0.37s residual is a large fraction of the total width: a chapter-slider click "moves to the click
-  point, then jumps forward ~0.37s further"; book-load on a short chapter shows a brief
-  land-then-retrace. Real but NOT compounding/urgent — a single bounded per-seek error, not a
-  progressive drift (confirmed: the sample immediately after a plain paused settle has near-zero
-  delta, so nothing stacks across repeated loads/clicks). **Deliberately deferred, not folded into
-  the drift-fix branch**: `seek_async` is exactly the heavily-scarred, repeatedly-reverted function
-  the "Seek/position tracking — VT+Undo is the known-fragile zone" CLAUDE.md rule is about;
-  narrowing the compensation's scope is a second, independent change that deserves its own
-  investigate-then-plan cycle (what boundary tolerance is safe, live-verify it doesn't reintroduce
-  the exact stuck-Next/Prev bug the constant was built to fix), not a rushed addition to an
-  already-large fix. Full trace in `SEEK_DRIFT_MEASUREMENTS.md` (Finding 7) on the drift-fix branch
-  — that file's branch-local, so re-derive from `player.py:704` if the branch is ever discarded
-  before merge.
+  have nothing to do with chapter navigation. Real but NOT compounding/urgent — a single bounded
+  per-seek error, not a progressive drift.
+
+  **2026-07-14 attempt — implemented, unit-tested, found structurally wrong, fully reverted (no
+  code merged to `main`).** A "gate on whether the compensated command crosses a `_chapter_list`
+  boundary" design was built, then failed its own test for ordinary chapter navigation, then was
+  traced to a category error, not a tuning problem: the gate checked whether the artificially
+  inflated mpv COMMAND crosses a boundary, when the whole point of the compensation is that the
+  command and mpv's real landing are different numbers by design (the command is inflated
+  specifically because mpv undershoots it back down). A bare position number can't recover whether
+  a given seek's crossing was INTENDED (chapter nav, labeled skips — every "must land exactly"
+  caller) or accidental (only freeform slider drag/click has no stated numeric contract, and is
+  the one "approximate is acceptable" case) — that information exists at the call site and is
+  discarded before it reaches `seek_async` today. **Full mechanism, the two-category model, and the
+  corrected direction for a next attempt (destination seeks should pass an explicit intent signal
+  to `seek_async`, not have it inferred from arithmetic) are written up in NOTES.md,
+  "`_PAUSED_SEEK_UNDERSHOOT_COMP` boundary-crossing gate — IMPLEMENTED, TESTED, FOUND STRUCTURALLY
+  WRONG, REVERTED" (2026-07-14) — read that before attempting this again; do not restart from this
+  entry's original 07-12 framing or from the abandoned plan file
+  (`.claude/plans/come-to-think-of-silly-sun.md`, which reflects the now-known-wrong design and is
+  NOT a blueprint).** Also separately confirmed and worth carrying forward: the visual "sliver,
+  retraces" drift on short chapters is a DISPLAY/ANIMATION-timing problem distinct from landing
+  precision — even a perfect seek-precision fix would not by itself resolve it. `seek_async` remains
+  exactly the heavily-scarred, repeatedly-reverted function the "Seek/position tracking — VT+Undo
+  is the known-fragile zone" CLAUDE.md rule is about; any future attempt needs its own
+  investigate-then-plan cycle, live-verified against the exact stuck-Next/Prev bug this constant
+  was built to fix, same as before.
 
 - **[2026-07-12] DEFERRED (not planned for the current shipping push): Stats Day/Week/Month
   sub-navigation and Tags panel keyboard nav.** Explicitly scoped OUT while implementing Book
