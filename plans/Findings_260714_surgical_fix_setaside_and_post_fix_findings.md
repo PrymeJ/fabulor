@@ -153,40 +153,54 @@ fade interrupt (sidebar mid-fade) FIXED; full color-animation rework DEFERRED."*
   `open_book_detail` (`panels.py` — 9 call sites). The 2026-06-19 entry even predicted the hotkeys
   would need it; they got it.
 
-**PREMISE CORRECTION — this is NOT "a previously-fixed bug reopened," and the distinction matters:**
-- The **fixed** bug (2026-06-19, above) is `T` **+ opening a panel/sidebar** mid-fade. Its fix is
-  intact and its invariant is still honored by all 9 call sites.
-- There is a **separate, still-OPEN, never-fixed** TODO item (2026-07-09) explicitly named
-  *"hodge-podge"*: *"pressing `T` (rotate theme) and a panel-open shortcut (`L`/`G`/`P`/`A`/`S`/`Z`)
-  in quick succession produces some kind of visible glitch. Screenshot exists on Pryme's end; not yet
-  shared/described in enough detail to reproduce or diagnose."* It was **never scoped, never
-  investigated, never fixed.**
-- A **third** "hodge-podge" reference (NOTES.md, Theme System — Known Bugs) is a *different* bug
-  again — spurious sidebar bleed-through during hover-preview — whose **root cause is still unknown
-  and whose original theory was disproven** (2026-07-01 correction).
+**PREMISE CONFIRMED — this IS "a previously-fixed bug reopened." (This paragraph replaces an earlier
+"PREMISE CORRECTION" that was WRONG — see the correction note below; it is left described, not
+silently deleted, because how it went wrong matters more than that it did.)**
+
+**The `T` + panel-open-SHORTCUT bug was fixed on 2026-07-10 by `8e65ddb`**, *"fix: complete in-flight
+theme fade on keyboard-shortcut panel opens"*, whose commit message describes the exact symptom:
+*"T followed immediately by a panel-opening shortcut (L/G/P/A/S/Z) left the transport sliders
+stranded at the outgoing theme's colors while the rest of the UI had already moved to the new
+theme."* Mechanism of that fix: the six keyboard shortcuts bypass `_toggle_sidebar` (which already
+called `complete_main_fade()`) and instead called the weaker `abort_theme_fade()` (stops animations
+but never re-polishes) — so `PanelManager._abort_theme_fade()` was renamed to `_complete_main_fade()`
+and rewired to call `ThemeManager.complete_main_fade()`, shared by all five open-flow callers plus
+`open_book_detail`.
+
+**Why this record was briefly gotten wrong, and what it cost:** TODO.md's 2026-07-09 entry still
+says this bug is *"not yet scoped or investigated... ask for the screenshot/repro steps at the start
+of next session."* **That entry is STALE — the fix landed the next day (2026-07-10) and the entry was
+never removed.** Reading TODO.md as authoritative produced a confident, wrong "correction" of the
+finding's premise. The lesson is exactly the one this session applied everywhere else and skipped
+here: **verify a claim against git history, don't trust a tracking document's status field.** TODO.md
+records *intent at a point in time*; only git records *what was actually done*. (Two other
+"hodge-podge"-named records DO exist and are genuinely different bugs — the 2026-06-19 sidebar-
+mid-fade fix, and a root-cause-unknown sidebar bleed-through during hover-preview. The informal name
+is shared across three records; that part of the earlier analysis was right and is why the stale
+entry was believable.)
 
 **So the correct statement of Finding 3 is:** pressing `T` during the deferral window reproduces
-stranded/mixed slider colors. Whether that is (a) the 2026-06-19 bug genuinely reopened via a new
-path that bypasses `complete_main_fade()`, (b) the still-open 2026-07-09 TODO "hodge-podge" bug
-finally getting a reproducible trigger, or (c) a new interaction the longer deferral window creates,
-**is not yet determined and must not be assumed.** The three have been conflated by the shared
-informal name "hodge-podge"; they are three different records.
+the stranded/mixed slider colors that `8e65ddb` fixed — **a fixed bug, reopened by a new trigger the
+original fix's invariant does not cover.**
 
-**What decides it (for the next investigation, not now):** the 2026-06-19 fix's invariant is "any
-fade-interrupting path calls `complete_main_fade()`." The deferral window introduces a *new* kind of
-interrupt the original fix never anticipated: **a deferred cover-theme apply firing while a
-`T`-initiated fade is in flight** — that is not a panel open, so no `_complete_main_fade()` call site
-covers it, and `apply_cover_theme` → `_on_theme_changed` starting a *second* fade over a running one
-is a shape the original fix's invariant does not address. That is the leading hypothesis and it is
-**consistent with** the observed symptom — but it is a hypothesis derived from reading, not from a
-trace of the actual reproduction, and it must be confirmed with real instrumentation before any fix.
+**The mechanism, now well-supported (still to be confirmed by trace before any fix):** `8e65ddb`'s
+invariant is *"every path that can interrupt an in-flight main-window fade must call
+`complete_main_fade()` first"* — and it enumerated those paths as **panel opens** (sidebar,
+shortcuts, book detail). The set-aside fix introduces a **new kind of interrupt that is not a panel
+open**: a *deferred cover-theme apply* firing while a `T`-initiated fade is in flight.
+`apply_cover_theme` → `_on_theme_changed` starting a second fade over a running one is a shape the
+invariant never anticipated, and no `_complete_main_fade()` call site covers it. Sliders strand for
+the reason the 2026-06-19 entry documents: `ClickSlider` paints from `@Property` colors, not QSS, so
+an interrupted color animation leaves them stranded until something re-polishes.
 
-**Shared root with Findings 1/2? — Undetermined, deliberately.** If Finding 1's direction (persist
-the last theme) removes the deferral window for the common case, Finding 3's new trigger may vanish
-with it. But if Finding 3 is really (b) — the still-open 2026-07-09 bug, which predates all of
-tonight's work by five days — then it is **fully independent** and survives any theme-timing fix.
-**These two possibilities have opposite implications and must not be collapsed.** Determining which
-requires the trace that has not been done.
+**Shared root with Findings 1/2? — Now clearer: Finding 3 is a REGRESSION INTRODUCED BY THE SET-ASIDE
+FIX, not a pre-existing bug that merely surfaced.** It exists because the fix created a new
+fade-interrupting path. That means: (a) with the fix set aside, Finding 3 should **not** reproduce on
+current `main` — worth confirming, since it would independently validate this mechanism; and (b) **any
+future fix that defers the theme apply will reintroduce it** unless the deferred apply also honors
+`8e65ddb`'s invariant (i.e. completes an in-flight fade before starting its own). That makes Finding 3
+a **design constraint on Findings 1/2's eventual fix**, not a separate bug to schedule — the opposite
+of the earlier (wrong) conclusion that it might be fully independent.
 
 ## 4. The decision this document exists to inform (not made here)
 

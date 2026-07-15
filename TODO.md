@@ -390,14 +390,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   the new Tab cycling). Floated a glow-style indicator as one option, undecided. Explicitly
   deferred to a future session ("we'll try and decide tomorrow") — do not implement a specific
   fix without discussing the visual approach first.
-- **[2026-07-09] Parked, to pick up next session:** three items named by Pryme at session end, not
-  yet scoped or investigated:
-  - A "hodge-podge" bug from a screenshot Pryme has: pressing `T` (rotate theme) and a panel-open
-    shortcut (`L`/`G`/`P`/`A`/`S`/`Z`) in quick succession produces some kind of visible glitch.
-    Screenshot exists on Pryme's end; not yet shared/described in enough detail to reproduce or
-    diagnose — ask for the screenshot/repro steps at the start of next session.
-
-
 - **[2026-07-03] DECIDE: excluding the currently-playing book behaves differently for M4B vs VT.**
   Not a bug to fix — a design decision to make later. When the loaded/playing book is excluded
   (user-trash) or flagged missing while playing, single-file **M4B** books keep playing (only the
