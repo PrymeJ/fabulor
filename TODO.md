@@ -6,6 +6,34 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
+  stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
+  RANK-1 fix; not investigated, not designed, out of scope for now.** Raised by Pryme while the
+  cold-launch theme work was in flight. The reasoning worth preserving: the current architecture can
+  only change colors by regenerating and re-applying whole stylesheets — a full-widget-tree
+  `_apply_stylesheets` pass — which is precisely the ~400ms synchronous main-thread cost that is the
+  measured root of Race 3, Regime B, and RANK-1 in the first place (median 318ms, pipeline median
+  442ms, max 759ms; `mw.setStyleSheet(base)` alone is ~180ms because Qt re-polishes every
+  descendant — see `review/Report_260714_synchronous_main_thread_work.md`). An incremental approach
+  — animating individual colors via `@Property` on the widgets that need them, rather than swapping
+  the whole stylesheet and masking the transition with a full-window overlay — might not need that
+  pass at all, which would dissolve the cost rather than sequence around it.
+  **Known prior art / why this is big, not a quick win:** NOTES.md 2026-06-19 ("Main-window theme
+  fade interrupt ... full color-animation rework DEFERRED") records that this exact rework was
+  **started in a prior session and abandoned as ~40–80h with high regression risk** — every
+  QSS-styled widget (buttons + their `:hover`/`:pressed`/`:disabled` states, panel chrome, Themes-tab
+  pool items, gradients, cover-derived colors) would need converting from QSS-driven coloring to
+  custom-paint `@Property` coloring, because QSS pseudo-states have no custom-paint equivalent and
+  would each be reimplemented by hand. The cheaper middle path (snap panel chrome instantly, keep
+  slider tweens) was **explicitly rejected by Pryme** — instant theme snaps read as jarring/violent,
+  which is the whole reason the overlay fade exists. Also relevant: `ClickSlider` ALREADY paints from
+  `@Property` colors rather than QSS at paint time — it is the one widget class where this model is
+  already proven in-tree (and, not coincidentally, the one whose colors can get stranded — see the
+  2026-06-19 entry).
+  **Status:** a real, recorded idea with a real prior estimate against it. Do NOT fold into
+  Findings 1/2/3 or the RANK-1 fix — if it is ever picked up it needs its own investigate-then-plan
+  cycle sized against that 40–80h prior estimate, not a mid-fix scope expansion.
+
 - **[RANK-2, 2026-07-14] Close the P1↔P2 race precondition structurally (insurance, not a live-bug
   fix) — deferred, deliberately separate from the RANK-1 theme-apply fix.** The structural hazard:
   a Qt-queued writer (`_vt_restore_pending`, written via the `book_ready`→`_on_file_ready`
