@@ -365,24 +365,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   something tied to `ITEM_DIMENSIONS`/`cols` like the existing wheel-scroll fix's
   `rows_per_screen * cell_h` computation) or leave native behavior alone. Not yet tested live
   across all five modes to see whether native feels right or wrong anywhere.
-- **[2026-07-09] FIX: Library Tab toggle isn't actually clamping — falls through to Qt's default
-  focus chain.** The app-wide Tab/Escape policy (`624fc22`) was supposed to leave Library's
-  existing list↔search Tab toggle as the ONLY thing Tab reaches while Library is open (the
-  `MainWindow._handle_tab_escape` branch returns `False` for `panel == "library"` specifically to
-  defer to that toggle). Live-tested by Pryme: it does not clamp. From the book list, Tab takes
-  ~7 presses to reach the first combo box (sort/filter dropdown) — walking through it, the
-  asc/desc arrow button, the second (view-mode) combo, the search field, and the back button
-  before finally reaching the books again. Pryme doesn't want Tab to reach the combos/back button
-  at all, but says the bigger problem is not knowing where focus currently is at any point — "I
-  have no idea where it is until going there." Two live theories, unconfirmed:
-  (1) nothing calls `_list_view.setFocus()` when Library first opens, so the very first Tab press
-  starts from whatever widget had focus before Library opened — never from the list at all; (2)
-  the list's own Tab-catching keyPressEvent patch may not actually be consuming plain `Key_Tab`
-  the way it consumes arrows, letting it fall through to Qt's native chain. **Do not guess-fix
-  either theory** — Pryme's own instinct (endorsed) is to instrument first: log the actual focused
-  widget on every Tab press, per view mode (the different view modes reportedly take different
-  press-counts to cycle back around, which is itself a clue). Get a verified per-press focus trace
-  before touching code.
 - **[2026-07-09] FIX: keyboard-selection focus indicator is nearly invisible.** Across the Tab/
   Escape live-testing, Pryme reported it's "almost impossible to see where the focus is" for
   keyboard-focused controls in general (not just the Library keyboard-selection highlight from the
@@ -418,20 +400,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   `_on_sidebar_closed_for_panel` (no sidebar trigger button opens it; it's reached only from
   library rows, stats rows, and tag chips), so that fix does not touch this path at all.
 
-- **[2026-07-01] Theme hover-preview performance pass needed — regressed from a prior fix.**
-  User reports theme pool hover-preview (Settings → Themes tab, hovering a theme button to preview
-  it) has been sluggish for a while and was previously fixed (\"more than a month ago\") via
-  dedicated stylesheets, but has since degraded again for an unknown reason. Could not locate the
-  original fix in NOTES.md/SESSION.md by searching for hover-preview performance, dedicated
-  stylesheets, or QSS-caching terms — either it predates the retained history or was described
-  differently there; **ask the user for the specifics/date before assuming anything about what the
-  original fix actually changed.** Needs a full profiling/performance pass on the hover path
-  (`_on_theme_hovered` → `_on_theme_changed`, `theme_manager.py`), not a guess-and-patch — likely
-  candidates worth checking first: whether per-hover work that should be cached/precomputed is being
-  redone on every hover tick, and whether anything added since the original fix (e.g. the
-  `tags_panel` mask-exclusion addition, `65b5688`, or other `_apply_stylesheets` dispatch growth) is
-  back on the hot path.
-
 - **[2026-07-01] ScrollingLabel first-glyph clipping.** When a chapter name is long enough to scroll,
   the first character ('c', 't', etc.) clips against the widget's left edge at the start position
   (`_scroll_pos = 0`). Qt renders glyphs at x=0 with no left margin and the widget boundary shears
@@ -456,23 +424,19 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   Run `python -m pyflakes src/fabulor/app.py src/fabulor/ui/panels.py` to reproduce. Low priority,
   cosmetic/lint-only except the undefined-name one, which should be checked for being a latent bug
   rather than assumed harmless.
-- **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) theming gaps — four issues, found via
-  live screenshot comparison on a flamboyant/cyberpunk-style theme:**
-  - On at least one such theme, row text and the eye icon are barely visible against the popup's
-    `bg_deep` background — needs a per-theme override (or a contrast-aware fallback) for this
-    specific theme, not just the popup's general color keys.
-  - The popup's `::item:selected` highlight (`dropdown_curr_chap`) and `settings_folder_list`'s own
-    selection highlight read as visually inconsistent side-by-side in the same screenshot — different
-    colors entirely (not just hue, looks like two different theme keys or fallback paths winning).
-  - Corner radius mismatch: the popup's selection highlight is flat/square; `settings_folder_list`'s
-    is rounded. Should match (one or the other) since they're both "selected row in a themed list"
-    in the same panel.
-  - Background color mismatch between the two same-panel list surfaces (popup vs. folder list) —
-    they don't read as part of the same design system in a single screenshot even though each looks
-    fine in isolation.
-  Not urgent — deferred by explicit instruction ("not going to deal with these now"). Revisit
-  together as one pass over `excluded_books.py`'s `set_theme` + `themes.py`'s `dropdown_curr_chap`/
-  `bg_deep` keys, probably alongside the cyberpunk-style theme(s) that surfaced it.
+- **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) corner-radius mismatch.**
+  The popup's selection highlight is flat/square; `settings_folder_list`'s is rounded (`4px`).
+  Should match (one or the other) since they're both "selected row in a themed list" in the same
+  panel. Narrowed 2026-07-15 from a four-issue entry after audit: the `::item:selected` color
+  inconsistency is moot (the popup now disables selection entirely — `NoSelection`, see
+  `excluded_books.py`'s `set_theme` comment); the bg_deep/bg_dropdown background mismatch was
+  closed as not worth chasing.
+  **Reminder for the eventual full per-theme color pass** (see the "Remove theme inheritance from
+  The Color Purple" entry below, and SESSION.md's alphabetical library-color pass): re-check the
+  Excluded Books popup generally as part of that pass — both this corner-radius mismatch and
+  general contrast/legibility across themes — since the popup is hidden whenever no book is
+  excluded and is easy to forget about otherwise. Not theme-specific; no single theme needs
+  singling out.
 
 - **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
   `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
@@ -488,23 +452,36 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
   size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
   wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
-- **[2026-06-25] Pre-release cleanup pass (bundle into one commit, not piecemeal):**
+- **[2026-06-25] Pre-release cleanup pass (bundle into one commit, not piecemeal).** Narrowed
+  2026-07-15 after audit — the third original sub-item (switch VT playlist-resolution temp files
+  from `delete=False` to `delete=True`) is stale: that `ffmetadata`/`concat` tempfile mechanism in
+  `_resolve_playlist` no longer exists, removed in `95ab53e` before this entry was even written.
+  Remaining:
   - Remove the `Q`-key quote-rotation shortcut (`app.py`, testing-only — already flagged inline as
-    `# TODO: remove before release — testing only` at app.py:1947).
-  - Remove debug `print()`/timing instrumentation left over from VT debugging in `_close_session`,
-    `_on_file_ready`, `_on_book_selected_from_library`.
-  - Switch the VT playlist-resolution temp files (`ffmetadata`/`concat` in `_resolve_playlist`) from
-    `delete=False` to `delete=True` (or add explicit cleanup) once VT is considered stable — they
-    currently accumulate in `/tmp` across sessions.
-  See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for all three.
-- **[2026-06-25] Re-verify: chapter nav undo/restore near boundaries.** A 2026-05-16 NOTES.md entry
-  ("Deferred — chapter nav undo/restore near boundaries", ~line 2087) lists three bugs: Undo doesn't
-  appear after Next, Undo after Prev drifts the chapter slider to the far right, and
-  `apply_smart_rewind`/Undo restore used raw `time_pos =` assignment in some paths. This predates the
-  Session 3 (2026-06-13) chapter-seek precision rework, which unified chapter nav (including
-  embedded-M4B clicks) onto `seek_async` with calibrated offsets — these bugs may already be fixed as
-  a side effect. Confirm whether they still reproduce before doing any work; if fixed, delete this
-  entry instead of carrying it forward.
+    `# TODO: remove before release — testing only`).
+  - Remove stray debug `print()`/timing instrumentation left in `player.py` (`[load_book]`,
+    `[VT-DESYNC]`, metadata-extraction-error, af-command-error) — the original sub-item named
+    `_close_session`/`_on_file_ready`/`_on_book_selected_from_library` specifically, but session-close
+    logic has since moved into `SessionRecorder.close()`, so those exact function names are gone;
+    the underlying ask (strip leftover debug prints before release) still applies to what's there now.
+  See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for original context.
+- **[2026-07-15] Undo doesn't return to the true origin after rapid repeat Next/Prev within
+  `undo_duration` — narrowed live to Next/Prev specifically, not general undo/restore.**
+  `save_seek_position(old_pos, duration_limit)` (`player.py`) only writes `_undo_pos` when it's
+  unset or when more than `duration_limit`s (default 3s, `config.get_undo_duration()`) have passed
+  since the last capture — a rapid second capture within that window is skipped, which by reading
+  the code should leave `_undo_pos` pointing at the FIRST departure point (chapter 3), not the most
+  recent one (chapter 4). Concrete repro, live-tested by the user: in chapter 3 with ~30s left,
+  click Next twice in quick succession (chapter 3 → 4 → 5), then click Undo — **actually lands at
+  the chapter 3/4 boundary ("beginning of chapter 4"), not back in chapter 3.** Further live
+  testing (2026-07-15) narrowed this to Next/Prev specifically — every other undo/restore path
+  (seeking, smart-rewind, chapter-slider clicks) correctly returns to the true origin position;
+  only rapid repeated Next/Prev clicks fail to chain back past the most recent hop. Root cause NOT
+  yet diagnosed — the shared `_last_undo_click_time`/skip logic described above doesn't obviously
+  explain why Next/Prev's call path would behave differently from every other `save_seek_position`
+  caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
+  diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
+  attempting a fix.
 
 - **[2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible.** Only
   `visual_area` (the cover art) currently handles volume wheel events (`wheelEvent` in `app.py`).
@@ -526,11 +503,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   for volume — probably at the first wheel/drag/key event of a manipulation "session," not on every
   change. Design this alongside the `M` key shortcut, not before — see git history around
   `ed563a4` for the muted-icon work this builds on.
-- **[2026-06-23] Arrow-key volume control (if/when added) must integrate with the auto-hide timer
-  the same way wheel/click/drag do.** Whatever wires up arrow keys for volume needs to call through
-  the same path as `_on_volume_changed`/`_show_volume_overlay` (see `64e75cc`), not a separate one —
-  otherwise the overlay could disappear mid-keypress the same way dragging used to before that fix.
-
 - **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
   via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
   own dict — any key a theme doesn't define falls back to Purple's literal value, not to that
