@@ -66,6 +66,13 @@ background scan after the animation (a design not taken, but considered) would h
 beyond new-folder detection — confirming the accepted trade above didn't quietly give up any
 DB-freshness behavior for already-known books; there was none to give up.
 
+**On scan-on-launch's likely original intent, for anyone revisiting this later:** scan-on-launch's
+likely original purpose was a cheap non-force "soft scan" to auto-discover new folders without a
+full rescan cost — this worked at the scan level but never fully connected to auto-refreshing the
+visible library, and was removed 2026-07-17/18 as part of the animation-stutter fix. If
+auto-discovery of new folders is wanted later, revisit as a deliberate feature (cheap scan +
+population trigger, both working), not by reverting today's fix.
+
 **Bug 2 — the naive Bug-1 fix's own regression: library panel opened EMPTY on the very first open
 after a fresh launch, filling in ~1-2s later. Live-observed by the user, not caught by any test or
 narrow check this session ran.** Traced precisely: `LibraryPanel.refresh()` (the only method that
