@@ -1,3 +1,81 @@
+## FIXED and live-verified: the no-cover book-switch path had no stand-down at all, and the theme fade it starts could race the next book's own flow animation (2026-07-18)
+
+Found via a directional live repro during the rapid-switch verification pass: switching from a
+covered book to a placeholder (no-cover) book, cover-art-based theme mode ON, made the theme fade
+visibly "jump" partway through instead of completing smoothly — described by the user as feeling
+like the earlier "Regime B" shape (a synchronous cost landing inside an in-flight animation).
+Switching the other direction (placeholder → covered) never showed this. Two coupled bugs, both
+fixed, commit `1025b0a`.
+
+**First correction made mid-investigation, worth recording because it was a real dead end, not
+just a footnote:** the first hypothesis was "the clear_cover_theme deferral waits for the sliders
+before firing, and apply_cover_theme's path doesn't" — directly challenged by the user ("why does
+placeholder→cover not wait, if both paths use the same `when_animations_done` chain?"), and that
+challenge was correct. Checked via log timestamps: in every captured instance of BOTH directions,
+`_apply_pending_cover_theme`'s `ENTRY` → `progress_slider settled` → `_apply() firing` all land at
+the identical microsecond — the deferral resolves instantly every time because the sliders are
+already idle by the time it runs. Neither path was ever actually waiting. That framing was wrong
+and had to be abandoned before the real mechanism (below) was found.
+
+**Bug A — `_show_no_cover_state` (app.py) had no stand-down at all.** `_apply_main_cover` (the
+has-cover path, reached when switching TO a covered book) already had a real deferral: `if
+self.panel_manager and self.panel_manager.is_any_panel_visible(): self._pending_cover_pixmap =
+pixmap` — stash instead of applying immediately. `_show_no_cover_state` (reached when switching TO
+a placeholder book) called `self.theme_manager.clear_cover_theme()` directly and unconditionally,
+every time, with no equivalent check. Both paths reach the identical `_on_theme_changed` body and
+defeat its same-theme-name no-op guard equally (a cover-derived `theme_dict` is jittered per call
+so it's never `==` the previous one; a differently-named pool theme is trivially not equal either)
+— so that guard was never the differentiator either. The gap was purely upstream: only the
+has-cover path had ever been given a stand-down mechanism to enter in the first place. Fixed by
+giving `_show_no_cover_state` the identical `is_any_panel_visible()` stand-down, via a new
+`_PENDING_CLEAR_COVER_THEME` sentinel (a plain `object()`, distinct from `None`/a real `QPixmap`)
+so `_apply_pending_cover_theme`'s existing `when_animations_done` drain can tell "revert to pool
+theme is pending" apart from "apply this cover's theme is pending" and call the right one
+(`clear_cover_theme()` vs `apply_cover_theme(pixmap)`).
+
+**Bug B — exposed by Bug A's fix, not caused by it: `_run_deferred_restyle` only guarded against
+the book-load flow animation, never against the theme FADE it itself starts.** Once Bug A gave the
+no-cover path a real stand-down, `clear_cover_theme()` started running through the same
+`_do_fade_with_slider_animation` fade path the has-cover case already used — a real 750ms fade.
+Traced precisely via two live captures (one clean, one showing the jump), comparing exact
+timestamps:
+- **Placeholder→cover (clean):** `_flush_deferred_restyle_now: EXIT` completes at `t≈75034.253`;
+  the newly-selected book's own flow animation doesn't start until `t≈75034.45` — ~200ms LATER, no
+  overlap. A covered M4B's load involves more upstream work (playlist resolution, cover lookup)
+  that pushes its flow animation's start out far enough to clear the flush entirely.
+- **Cover→placeholder (jump):** the newly-selected book's flow animation starts almost immediately
+  — `_on_file_ready` fires only ~26ms after `clear_cover_theme()` — because a plain MP3 with no
+  cover reaches it far faster. Still running when `_run_deferred_restyle` checks, so it correctly
+  defers (`DEFERRED (flow_anim still Running)`) — but once that ~300ms flow animation ends, the
+  flush proceeds with **zero check for whether the fade (750ms, started well before the flow
+  animation even began) is still running.** It usually still has hundreds of ms left. The flush's
+  own ~150-220ms cost then lands inside it — the visible jump.
+- This is the same book-load-speed-determines-collision-timing shape as the scan-on-launch bug
+  fixed earlier the same night, recurring here with cover-extraction cost as the variable instead
+  of scan duration — not a difference between the two theme-call code paths themselves.
+
+Fixed by adding a second guard condition to `_run_deferred_restyle`: defer if EITHER the flow
+animation OR `self._fade_in_flight` (the fade's own in-progress flag, set in
+`_do_fade_with_slider_animation`) is true. Also wired `_on_fade_finished` to re-invoke
+`_run_deferred_restyle` when the fade ends — mirroring the flow animation's existing
+`finished`-signal wiring in `app.py` — required for correctness beyond just this repro: without it,
+a restyle held back ONLY by the fade (no flow animation involved at all, e.g. a plain theme
+rotation from an idle screen) would never get re-checked and could stay pending indefinitely.
+
+Both changes are purely additive — no existing guard, scheduling, or coalescing logic was removed
+or weakened; `flush_deferred_restyle`'s deliberate bypass-both-waits behavior for the panel-open
+compensation case is untouched (that path's whole point is guaranteeing no panel ever opens onto
+stale colors, correctness intentionally prioritized over the rare mid-animation freeze there).
+
+Live-verified: cover→placeholder switch, cover-art-based theme ON, fade now completes smoothly, no
+jump. `pytest tests/ -q`: 208 pass; `tests/test_cover_theme_pending.py`'s 4 failures are confirmed
+pre-existing (identical failures with this fix reverted via `git stash`) — that file pins a
+since-removed `_cover_theme_apply_pending`/`_resolve_cover_source`/`source_key` design that no
+longer matches the real `_apply_pending_cover_theme` shape; not a regression from this change, and
+not a green invariant to rely on until someone rewrites it against current code.
+
+---
+
 ## FIXED and live-verified: unconditional scan-on-launch was the real root cause of the flow-animation stutter; fixing it naively caused a second real bug (empty library panel on first open); both fixed (2026-07-17/18)
 
 **This entry supersedes the VT/cover-ON second-`apply_cover_theme`-call root-cause writeup further

@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-17/18 — Two theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), and _sized_cover_cache wiped on every cover-theme apply (branch `feat/narrow-apply-stylesheets`)
+## Session Summary — 2026-07-17/18 — Four theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), _sized_cover_cache wiped on every cover-theme apply, and a no-cover book-switch race that could interrupt its own theme fade (branch `feat/narrow-apply-stylesheets`)
 
 **Both fixes are committed and live-verified. Full technical writeup: NOTES.md's 2026-07-17/18
 entries. This is the short version.**
@@ -44,18 +44,37 @@ not resetting `_sized_cover_cache` in `_apply_theme` at all (only initializing i
 `hasattr`, so `BookDelegate.__init__`'s first call still works). Live-verified: cover-theme ON,
 book switch, 15+ second wait, first open now smooth.
 
-**Rapid-switch progress-integrity check requested but not yet run against this final state.** The
-user asked for at minimum the Bug-1/Bug-2-era rapid-switch repro (Colorless Tsukuru Tazaki /
-Sometimes a Great Notion) to be re-run before calling tonight's work fully closed, given how many
-narrow checks looked clean and then weren't earlier this session. Not done as of this writeup —
-flagged in TODO.md.
+**Rapid-switch progress-integrity check: PASSED.** Ran the Bug-1/Bug-2-era repro (Colorless Tsukuru
+Tazaki / Sometimes a Great Notion, rapid switching) against the committed state — progress
+integrity held across many switches, no near-zero transient, no dropped restore. This surfaced Bug
+4 below as an incidental finding, not a failure of the check itself.
 
-**One real mid-session miss worth recording, not just the eventual fix:** the very first attempt at
-fixing Bug 1 (gating the scan) was implemented, tested narrowly (worst_gap numbers only), and
-declared clean — and immediately turned out to have caused Bug 2, a real, live-observed regression
-(empty library panel) that the narrow check never would have caught. The user caught it by direct
-observation, not by any test this session ran. Both bugs are now understood as one entangled
-mechanism (see NOTES.md) rather than two coincidentally-adjacent ones.
+**Bug 4 — cover→placeholder book switch could interrupt its own theme fade partway through
+(`1025b0a`).** Found live during the rapid-switch check, initially mis-logged as "theme rotation
+landing mid-animation" before the user corrected the framing (the book had no cover — this was
+`clear_cover_theme()`'s revert-to-pool-theme path, not the independent rotation timer). Two coupled
+bugs: (a) `_show_no_cover_state` had no stand-down at all, unlike the has-cover path's existing
+`is_any_panel_visible()` defer — fixed via a new `_PENDING_CLEAR_COVER_THEME` sentinel so the
+existing `when_animations_done` drain can tell "revert to pool theme" apart from "apply this
+cover's theme"; (b) that fix exposed `_run_deferred_restyle` never checking whether the theme FADE
+it starts (`_fade_in_flight`) was still running — only the book-load flow animation — so a
+fast-loading no-cover book's flow animation could finish first, letting the deferred restyle flush
+land mid-fade and visibly interrupt it. Fixed by adding the `_fade_in_flight` guard and wiring
+`_on_fade_finished` to re-check, mirroring the flow animation's existing finished-signal wiring.
+Live-verified smooth. Full trace: NOTES.md's 2026-07-18 entry — includes a real mid-investigation
+correction (an initial "the deferral waits, that's the differentiator" hypothesis was directly
+challenged by the user and disproven by the log timestamps before the actual race was found).
+
+**Two real mid-session misses worth recording, not just the eventual fixes:**
+1. The very first attempt at fixing Bug 1 (gating the scan) was implemented, tested narrowly
+   (worst_gap numbers only), and declared clean — and immediately turned out to have caused Bug 2,
+   a real, live-observed regression (empty library panel) that the narrow check never would have
+   caught. The user caught it by direct observation, not by any test this session ran.
+2. Bug 4's first diagnosis ("the deferral fix waits for sliders, that's why one direction is
+   smooth") was asserted without checking the actual log timestamps first, and was wrong — the
+   user's direct challenge ("why doesn't the other direction wait, if both paths use the same
+   code?") forced a re-check that disproved it. The real mechanism (a race between two independent
+   animations) was only found after that correction.
 
 ---
 
