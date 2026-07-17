@@ -1185,6 +1185,9 @@ class LibraryPanel(QFrame):
     # ── Data / refresh ───────────────────────────────────────────────────────
 
     def refresh(self, force=False):
+        import time
+        _t0 = time.perf_counter()
+        logger.debug(f"[STUTTER-TRACE] t={_t0:.6f} LibraryPanel.refresh: ENTRY")
         self._resolve_theme_colors()
         self._rebuild_sort_combo()
         # Sync model's filter/sort state from UI without triggering a reset, then
@@ -1198,21 +1201,35 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_ascending(ascending)
 
         # Fetch books once and pass them to the model
+        _t_fetch0 = time.perf_counter()
         books = self.db.get_all_books()
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
+                     f"get_all_books() returned {len(books)} books in "
+                     f"{(time.perf_counter()-_t_fetch0)*1000:.1f}ms")
         for book in books:
             book.speed = self.config.get_book_speed(book.path) or 1.0
 
         self._book_model.set_finished_dates(self.db.get_finished_book_data())
+        _t_setbooks0 = time.perf_counter()
         self._book_model.set_books(books)
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
+                     f"set_books() took {(time.perf_counter()-_t_setbooks0)*1000:.1f}ms "
+                     f"rowCount={self._book_model.rowCount()}")
 
         def _after_covers(_attempt=0):
             first_idx = self._book_model.index(0, 0)
             if first_idx.isValid() and self._list_view.visualRect(first_idx).isEmpty() and _attempt < 5:
+                logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
+                             f"_after_covers attempt={_attempt} visualRect empty, retrying")
                 QTimer.singleShot(50, lambda: _after_covers(_attempt + 1))
                 return
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
+                         f"_after_covers attempt={_attempt} calling _load_visible_covers")
             self._load_visible_covers()
 
         QTimer.singleShot(0, _after_covers)
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
+                     f"EXIT (sync part) total={(time.perf_counter()-_t0)*1000:.1f}ms")
 
 
     def _apply_current_sort_filter(self):
@@ -1289,6 +1306,10 @@ class LibraryPanel(QFrame):
                 continue
             self._trigger_cover_load(book)
             dispatched += 1
+        import time as _time
+        logger.debug(f"[STUTTER-TRACE] t={_time.perf_counter():.6f} _load_visible_covers: "
+                     f"rows={first_row}-{last_row} dispatched={dispatched} "
+                     f"skipped_cached={skipped_cached} skipped_flight={skipped_flight}")
 
     def _trigger_cover_load(self, book):
         from .cover_loader import CoverLoaderWorker
@@ -1301,6 +1322,9 @@ class LibraryPanel(QFrame):
         QThreadPool.globalInstance().start(worker)
 
     def _on_cover_loaded(self, book_id, image):
+        import time as _time
+        logger.debug(f"[STUTTER-TRACE] t={_time.perf_counter():.6f} _on_cover_loaded: "
+                     f"book_id={book_id} is_animating={getattr(self, '_is_animating', False)}")
         if image.isNull():
             return
         if image.width() > 320 or image.height() > 480:
@@ -1853,6 +1877,9 @@ class BookModel(QAbstractListModel):
         # Narrow to the relevant subset for the current sort key first,
         # then apply text/tag/year filtering on that subset.
         from datetime import datetime as dt
+        logger.debug(f"[STUTTER-TRACE] _apply_filter_and_sort: ENTRY "
+                     f"len(self._books)={len(self._books)} filter_text={self._filter_text!r} "
+                     f"sort_field={self._sort_field!r}")
 
         if self._sort_field == "last_played":
             source = [b for b in self._books if (b.progress or 0.0) > MIN_PROGRESS]

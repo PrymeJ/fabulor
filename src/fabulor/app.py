@@ -479,6 +479,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.detail_requested.connect(self._on_library_detail_requested)
         
         self.library_controller._check_library_status()
+        # Populate the library model from already-known DB state on startup, decoupled
+        # from both the (now scan-gated) launch scan and from the panel's own open event.
+        # Previously, library_panel.refresh() only ever fired as a side effect of a panel
+        # open (panels.py:_on_library_shown) or a scan completing (_on_scan_finished) — so
+        # once scan-on-launch was correctly removed (see handle_background_tasks), the
+        # FIRST library open after a fresh launch showed a real empty-then-populate flash
+        # (confirmed live, 2026-07-17): the model was still empty because nothing had ever
+        # populated it. Calling refresh() synchronously ON panel-open was tried and
+        # rejected — it stutters the panel's own slide-in animation. The fix is neither
+        # "scan on launch" nor "refresh on open": refresh() already reads directly from the
+        # DB (self.db.get_all_books()) — it does not need a scan to have run. Queuing it
+        # here, one event-loop turn after startup via singleShot(0), keeps it off the
+        # book-load flow-animation's critical path (the STUTTER-PROBE-monitored window)
+        # while ensuring _book_model/_filtered are populated well before the user can
+        # possibly open the library panel. _load_visible_covers (called at the end of
+        # refresh()) no-ops while the panel is hidden (isVisible() guard), so no cover
+        # I/O is wasted — covers still dispatch for real on the panel's actual first open.
+        QTimer.singleShot(0, self.library_panel.refresh)
         self.ui_timer.start(200)
 
         # Wire SettingsController with explicit, minimal interfaces (defined at module level).
@@ -2582,6 +2600,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._pending_cover_pixmap = None
 
     def _load_cover_art(self, file_path):
+        import traceback
+        _caller_frame = traceback.extract_stack()[-2]
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _load_cover_art: ENTRY "
+                     f"file_path={file_path!r} "
+                     f"caller={_caller_frame.filename.split('/')[-1]}:{_caller_frame.lineno} "
+                     f"in {_caller_frame.name}")
         if not file_path:
             self.current_cover_pixmap = QPixmap()
             self._cover_placeholder.clear()

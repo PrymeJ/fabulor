@@ -162,7 +162,11 @@ class PanelManager:
             pass
         self.library_panel._is_animating = False
         self.library_panel._list_view.setUpdatesEnabled(True)
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
+                     f"calling refresh()")
         self.library_panel.refresh()
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
+                     f"refresh() returned")
         # Small delay lets the event loop settle before first paint
         QTimer.singleShot(16, self.library_panel._list_view.viewport().update)
 

@@ -1,7 +1,11 @@
 import os
 import random
+import logging
+import time
 from PySide6.QtCore import QObject, QTimer
 from .book_quotes import BOOK_QUOTES
+
+logger = logging.getLogger(__name__)
 
 class LibraryController(QObject):
     """Handles library scanning, folder management, and idle UI states."""
@@ -119,6 +123,8 @@ class LibraryController(QObject):
 
     def _on_scan_finished(self, total):
         """Finalizes scan and hides banner."""
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_scan_finished: "
+                     f"ENTRY total={total}")
         self.ui.set_scan_buttons_enabled(True)
         self.ui.update_status(f"Library updated: {total} books.",
                              show_banner=None, show_cancel=False, auto_hide=True)
@@ -232,17 +238,33 @@ class LibraryController(QObject):
                 self.ui.set_bg_suppressed(False)  # restore theme bg image for the loaded book
 
     def handle_background_tasks(self, state, manual=False, force_refresh=False, locations=None):
-        """Triggers scans based on current mode and location status."""
+        """Triggers scans based on current mode and location status.
+
+        A scan runs ONLY when explicitly requested (manual/force) or when the library
+        has no indexed books yet — matching CLAUDE.md's documented contract for
+        _check_library_status. It must NOT run on a normal launch of an
+        already-indexed library: that path used to start a full scan every launch
+        (scanner.start() was outside this predicate — it only gated the banner
+        message), whose completion fired _on_scan_finished -> a second
+        load_cover_art -> apply_cover_theme that, when it landed inside the book-load
+        flow-animation window, froze it (~200-300ms setStyleSheet on the main thread).
+        Gating the scan itself removes that entire chain on normal launches (fixed
+        2026-07-17). Externally-added book folders now surface on the next manual
+        Rescan rather than automatically on the following launch — an accepted trade.
+        """
         if state["mode"] != "scanning" and state["has_locations"]:
             if manual or force_refresh or not state["has_indexed_books"]:
+                logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} handle_background_tasks: "
+                             f"STARTING SCAN manual={manual} force_refresh={force_refresh} "
+                             f"has_indexed_books={state.get('has_indexed_books')}")
                 if locations is not None:
                     n = len(locations)
                     msg = f"Rescanning {n} folder{'s' if n != 1 else ''}..."
                 else:
                     msg = "Rescanning all folders..." if force_refresh else "Library scanning..."
                 self.ui.update_status(msg, show_banner=True, show_cancel=True)
-            self.ui.set_scan_buttons_enabled(False)
-            self.scanner.start(force_refresh=force_refresh, locations=locations)
+                self.ui.set_scan_buttons_enabled(False)
+                self.scanner.start(force_refresh=force_refresh, locations=locations)
 
     def apply_current_state(self):
         """Compute and apply library UI state. No background-task/scan side effects.
