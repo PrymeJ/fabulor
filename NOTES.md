@@ -218,6 +218,21 @@ kept in place, disabled by default, for whenever this is picked up again. Do not
 direction until the actual correlate is found — profiling wall-clock CPU time in this bracket has
 not, so far, been shown to track what the user is seeing.
 
+**Reusable lesson, worth remembering independent of this specific stutter:** a `cProfile` bracket
+measuring wall-clock Python time can come back completely clean while the compositor still visibly
+drops frames — GC pauses, animation-driver/event-loop contention, or paint scheduling that happens
+outside the profiled bracket (or outside Python entirely, e.g. inside Qt's own C++ paint/composite
+path) are invisible to it. A clean `cProfile` capture is evidence the Python code in that bracket
+wasn't the cost; it is NOT evidence nothing was slow. If a visual stutter/jank symptom doesn't
+correlate with a `cProfile` capture's numbers (as happened here, twice), that is itself informative
+— it points toward frame-timing/compositor-level causes, not "the profiler must be wrong" or "it
+must be gone now." The next tool to reach for in that situation is Qt's own frame-timing or
+paint-event instrumentation (e.g. hooking `paintEvent`/`QPropertyAnimation` frame delivery directly,
+or an external compositor-level frame timer), not another `cProfile` pass with a different bracket —
+that would just repeat the same blind spot. This is a general profiling-methodology fact, not
+specific to the library panel; keep it in mind for any future UI-smoothness investigation in this
+codebase.
+
 **Files touched:** `app.py` — `_sync_persistence` (monotonic guard + trace logging),
 `_on_book_selected_from_library` (`_last_saved_pos` seeding fix, incoming-book DB-progress seed),
 `_save_current_progress` (trace logging only, no behavior change), `_on_vt_file_switched` (reverted

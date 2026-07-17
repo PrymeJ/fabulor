@@ -33,7 +33,10 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   `[STUTTER-TRACE]` instrumentation and the `FABULOR_STUTTER_PROFILE`-gated profiler in `panels.py`
   stay in place until all four criteria hold at once. Blocked on: finding what actually correlates
   with the library stutter (profiler wall-clock CPU time in the open-animation bracket has not, so
-  far, been shown to track it) before any fix can even be proposed.
+  far, been shown to track it) before any fix can even be proposed. See NOTES.md's "Reusable
+  lesson" note on why a clean `cProfile` capture doesn't rule out compositor/frame-level jank —
+  the next attempt likely needs Qt frame-timing/paint-event instrumentation instead, a different
+  tool than what's been tried so far.
 
 - **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
   stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
