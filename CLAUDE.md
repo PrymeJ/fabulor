@@ -24,6 +24,12 @@ let Pryme decide what to do with that information; do not decide for them.
 
 ---
 
+## Design and test against library sizes an order of magnitude beyond what's on hand
+
+The real library used for day-to-day testing has been ~400 books. That is not representative of what the app needs to handle. Any design assumption, performance claim, or "this is fine" conclusion about scan cost, startup cost, library-panel rendering, cover caching, or anything else that scales with book count must be checked against a library an order of magnitude larger than whatever is actually on hand at the time (e.g. if real data tops out around 400-3000, test synthetic data at 3000-5000+), not just validated against whatever happens to be installed. A cost that's invisible at hundreds of books can be a real, user-facing problem at thousands — don't assume linear scaling without checking, and don't let "it's fine on my machine" stand in for "it's fine at scale."
+
+---
+
 ## Running the app (Claude Code / Bash tool)
 
 **Always activate the venv before running** — do not invoke `fabulorenv/bin/python` directly:

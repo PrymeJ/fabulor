@@ -1,3 +1,64 @@
+## Session Summary — 2026-07-17/18 — Two theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), and _sized_cover_cache wiped on every cover-theme apply (branch `feat/narrow-apply-stylesheets`)
+
+**Both fixes are committed and live-verified. Full technical writeup: NOTES.md's 2026-07-17/18
+entries. This is the short version.**
+
+**Bug 1 — flow-animation stutter on every launch (`cd5ec5b`).** `handle_background_tasks`
+(`library_controller.py`) started a full library scan on EVERY app launch, unconditionally — the
+`manual/force_refresh/has_indexed_books` predicate only gated the status-banner message, not
+`scanner.start()` itself, contradicting CLAUDE.md's own documented contract. The scan finishing
+fired `_on_scan_finished` → a second `load_cover_art` for the already-loaded book →
+`apply_cover_theme` → `_apply_stylesheets`'s ~200-300ms synchronous `setStyleSheet(base)`. When
+that landed inside the ~450ms book-load flow animation, it froze it (worst_gap 400-570ms,
+intermittent — pure timing between scan duration and animation duration, which is why it looked
+book/format/cover-mode dependent for most of this investigation and wasn't). Fixed by moving
+`scanner.start()` inside the same predicate that already gated the banner message. Manual/forced
+scans (Rescan button, add/remove folder) are unaffected and confirmed still work.
+
+**Bug 2 — library panel opened empty on the very first open after launch, filling in ~1-2s later
+(`cd5ec5b`, same commit — a real regression from fixing Bug 1 naively, caught before it shipped
+alone).** Root cause: `library_panel.refresh()` (the only thing that populates the book model from
+the DB) had exactly two triggers in the whole codebase — panel-open and scan-completion. Once Bug
+1's fix removed the scan trigger on a normal launch, nothing populated the model until the panel's
+own first open, so the open-animation had to do that work live, in front of the user. Fixed by
+queuing `library_panel.refresh()` one event-loop turn after startup
+(`QTimer.singleShot(0, ...)`, right after `_check_library_status()`) — fully decoupled from both
+the scan and the panel-open event, since `refresh()` already reads straight from the DB and never
+needed a scan to have run. Live-verified: no timing collision with the flow animation (the two
+land ~65ms apart), first open now shows books immediately.
+
+**Bug 3 — first library-panel open after a cover-art-based-theme book switch stuttered, even after
+waiting 15+ seconds; second open in the same session was smooth (`0990e00`).** Found via a
+follow-up user report after Bug 1/2 shipped. Root cause: `BookDelegate._apply_theme` unconditionally
+reassigned `_sized_cover_cache = {}` on every call — a defensive copy-paste from the adjacent (and
+legitimate) `_placeholder_cache` reset, never actually needed for cover art (nothing about a theme
+changes how a cover image should be scaled, and the cache's own key already re-derives DPR live).
+This wipe was reachable on every cover-theme book switch because `apply_cover_theme` builds a
+freshly color-jittered `theme_dict` each time (`cover_theme.py`'s deliberate per-call jitter), so
+`_on_theme_changed`'s same-theme no-op guard never short-circuits for cover-theme switches — unlike
+fixed/pool themes, where switching to an already-active theme name DOES hit that guard, which is
+why fixed themes never reproduced this. The wipe landed right before the library panel's next open
+(the deferred restyle batch flushes synchronously at the top of every panel-open flow), forcing a
+synchronous main-thread LANCZOS re-scale for every visible cell on that first open. Fixed by simply
+not resetting `_sized_cover_cache` in `_apply_theme` at all (only initializing it once, guarded by
+`hasattr`, so `BookDelegate.__init__`'s first call still works). Live-verified: cover-theme ON,
+book switch, 15+ second wait, first open now smooth.
+
+**Rapid-switch progress-integrity check requested but not yet run against this final state.** The
+user asked for at minimum the Bug-1/Bug-2-era rapid-switch repro (Colorless Tsukuru Tazaki /
+Sometimes a Great Notion) to be re-run before calling tonight's work fully closed, given how many
+narrow checks looked clean and then weren't earlier this session. Not done as of this writeup —
+flagged in TODO.md.
+
+**One real mid-session miss worth recording, not just the eventual fix:** the very first attempt at
+fixing Bug 1 (gating the scan) was implemented, tested narrowly (worst_gap numbers only), and
+declared clean — and immediately turned out to have caused Bug 2, a real, live-observed regression
+(empty library panel) that the narrow check never would have caught. The user caught it by direct
+observation, not by any test this session ran. Both bugs are now understood as one entangled
+mechanism (see NOTES.md) rather than two coincidentally-adjacent ones.
+
+---
+
 ## Session Summary — 2026-07-16/17 — Two book-progress-loss bugs fixed and live-verified; library-panel stutter investigated at length and left INCONCLUSIVE (branch `feat/narrow-apply-stylesheets`)
 
 **Status: partial closure only. Do not read this as "the flow-animation/theme-apply work is

@@ -1,3 +1,171 @@
+## FIXED and live-verified: unconditional scan-on-launch was the real root cause of the flow-animation stutter; fixing it naively caused a second real bug (empty library panel on first open); both fixed (2026-07-17/18)
+
+**This entry supersedes the VT/cover-ON second-`apply_cover_theme`-call root-cause writeup further
+below as the actual FIX for that mechanism — the mechanism trace further down (post-scan cover
+refresh, `_apply_stylesheets`'s unguarded `mw.setStyleSheet(base)`) was correct and led directly
+here; this entry is where it was closed.**
+
+**Bug 1 — mechanism, precisely.** `handle_background_tasks` (`library_controller.py:240-263`, pre-fix)
+called `self.scanner.start(...)` **unconditionally** whenever `state["mode"] != "scanning" and
+state["has_locations"]` — the `if manual or force_refresh or not state["has_indexed_books"]:` check
+right next to it only gated the status-banner message, never the scan itself. This has been the
+code's actual behavior since at least 2026-04-16 (`9ce9ef7`, the commit that extracted
+`handle_background_tasks` — confirmed via `git show`, the unconditional `scanner.start()` call
+predates that refactor too, so it was never a regression introduced by any single commit, just a
+long-standing bug against the code's own documented contract at CLAUDE.md:759 ("starts a scan when
+manual, force, or no indexed books, and not already scanning")). So every app launch with any scan
+location configured ran a full library scan, regardless of library state.
+
+That launch scan finishing fires `_on_scan_finished` (`library_controller.py`), whose last act (for
+a book that's still valid) is `self.app.load_cover_art(current)` — a SECOND cover-load for the book
+already loaded at startup. This chains into `_apply_main_cover` → `theme_manager.apply_cover_theme`
+→ `_on_theme_changed` → `_apply_stylesheets`, whose `mw.setStyleSheet(base)` costs ~200-300ms
+synchronously on the main thread (measured, both cover-ON and cover-OFF conditions, this session).
+When this second call's timing happened to land inside the ~450ms book-load flow animation window,
+it froze the animation — `worst_gap` observed 400-570ms on both sliders in repeated live captures.
+
+**Why this looked book/format/cover-mode dependent and wasn't, corrected from earlier in this same
+investigation:** whether the stutter appeared was governed entirely by whether the (variable-
+duration) scan finished before or during the (fixed ~450-500ms) flow animation — nothing about VT
+vs M4B, or cover-theme mode, changes this mechanism. At small-to-medium library sizes a non-force
+scan (mostly skipping already-known books, see the "what a non-force scan writes" note below) often
+finishes in well under a second, landing inside the animation window unpredictably run to run — this
+is why 30-sample A/B benchmarks earlier this session sometimes showed VT/cover-ON as severely
+stuttering and other times as clean: pure scan-duration variance, confirmed live via direct log
+correlation (`STARTING SCAN` → `_on_scan_finished` timestamps vs. `animate_to START`/`END`
+timestamps), not a re-run artifact or a flaky benchmark.
+
+**Fix:** moved `self.ui.set_scan_buttons_enabled(False)` and
+`self.scanner.start(force_refresh=force_refresh, locations=locations)` INSIDE the
+`manual or force_refresh or not state["has_indexed_books"]` predicate. A normal launch
+(`manual=False, force_refresh=False`, the only affected caller — `app.py:481`) no longer scans at
+all. Every manual/forced caller (`_on_removed`, `_on_scan_now_clicked`, `_on_rescan_clicked`) is
+unaffected — live-verified via the Rescan button, which still starts a real scan and completes
+normally (`STARTING SCAN manual=True force_refresh=True` → `_on_scan_finished total=379`, ~39s for
+the full library at the time).
+
+**Accepted trade, stated explicitly to the user before implementing:** a book folder added to an
+existing scan location from OUTSIDE the app (between sessions) now surfaces only on the next manual
+Rescan, not automatically on the following launch. This matches CLAUDE.md's documented contract and
+was a deliberate choice, not an oversight.
+
+**Un-exclude/restore confirmed independent of this change, live-traced not inferred:**
+`_on_excluded_book_restored` (`app.py:805-829`) does the DB flip (`set_book_excluded(path, False)`)
+then directly refreshes every view itself (library/detail/stats/tags) — its own docstring says it
+refreshes "the same way a rescan completion would." `set_book_excluded` (`db.py:1596`) is a plain
+`UPDATE` on an existing soft-deleted row. Neither depends on a scan running.
+
+**What a non-force scan actually writes to the DB for already-known, unchanged books, traced in a
+follow-up investigation before finalizing the "no automatic re-scan" trade above: NOTHING.**
+`ScannerWorker.run_scan`'s Phase 1 (discovery) is pure filesystem reads, zero `db.*` calls. Phase 2's
+`if not self.force_refresh and book_path in known_paths: continue` skips `_extract_metadata`
+entirely for an already-known book — no `upsert_book_files`, no `upsert_cover`, no inclusion in the
+batched `upsert_books_batch`. The force-only missing-book-detection write (`mark_books_missing`) is
+gated behind `if self.force_refresh:` and does not run at all on a non-force scan. So a routine
+background scan after the animation (a design not taken, but considered) would have bought nothing
+beyond new-folder detection — confirming the accepted trade above didn't quietly give up any
+DB-freshness behavior for already-known books; there was none to give up.
+
+**Bug 2 — the naive Bug-1 fix's own regression: library panel opened EMPTY on the very first open
+after a fresh launch, filling in ~1-2s later. Live-observed by the user, not caught by any test or
+narrow check this session ran.** Traced precisely: `LibraryPanel.refresh()` (the only method that
+does `self.db.get_all_books()` → `self._book_model.set_books(...)`) had exactly TWO triggers in the
+entire codebase — `panels.py:_on_library_shown` (fires only when the user opens the panel) and
+`library_controller.py:_on_scan_finished` (fires only when a scan completes). Grep-confirmed: no
+other call site exists, and nothing in `app.py`'s `__init__`/startup sequence ever populated the
+model. With Bug 1's fix removing the scan trigger on a normal launch, trigger (b) vanished and
+trigger (a) doesn't fire until the panel is actually opened — so the panel's own open/slide-in
+animation had to do the first-ever population live, in front of the user. The scan was never
+*supposed* to be what populates the library on screen; it had been doing that as an accidental,
+undocumented side effect the whole time, and removing it correctly exposed a real, pre-existing gap
+that had simply never been observable before (because the scan always ran first and masked it).
+
+The user explicitly named the constraint set that shaped the fix, having already independently
+tried and rejected the two obvious-looking alternatives: (1) refresh-on-panel-open synchronously —
+tried, live-confirmed to stutter the panel's own slide-in animation, rejected; (2) revert Bug 1
+(scan on every launch again) — rejected, since that's the exact regression Bug 1 fixed. The fix
+had to populate from the DB, early, asynchronously, decoupled from both.
+
+**Fix:** added `QTimer.singleShot(0, self.library_panel.refresh)` immediately after
+`self.library_controller._check_library_status()` in `app.py`'s `__init__` (~line 481). This queues
+the EXISTING `refresh()` method — no new query logic — to run on the next Qt event-loop turn after
+startup, fully decoupled from the scan and from panel-open. Live-verified via trace: `LibraryPanel.
+refresh: ENTRY` now fires ~1.3s after `Fabulor started`, populating in ~10ms; the flow animation's
+`animate_to START` lands ~65ms after that populate call finishes, not overlapping — `worst_gap`
+stayed in the healthy 35-120ms range on the same launch, confirming this fix doesn't reintroduce
+Bug 1. `_load_visible_covers()` (called at the end of `refresh()`) no-ops while the panel is hidden
+(its own `isVisible()` guard), so no cover I/O is wasted at startup — covers dispatch for real on
+the panel's actual first open, same cost as before.
+
+**Known, accepted limitation, user-confirmed live:** opening the library extremely early — before
+the idle cover-cache warmup has had time to run — can still show a brief first-visit cover-load
+hitch. This is a pre-existing, much smaller, separate cost (cover dispatch/paint jank, not
+population/empty-panel) and was explicitly not treated as a new bug.
+
+Both fixes: commit `cd5ec5b`.
+
+---
+
+## FIXED and live-verified: `_sized_cover_cache` was wiped on every theme apply — cover-theme-mode book switches stuttered the library panel's first open, even after a long wait (2026-07-18)
+
+Found via a follow-up user report immediately after the two fixes above shipped: with cover-art-
+based theme mode ON, the FIRST library-panel open after a book switch stuttered — reproducible even
+after waiting 15+ seconds (ruling out a simple timing race), smooth on the second open in the same
+session, and did NOT reproduce with fixed/pool themes unless the theme itself was actually changed.
+User's own hypothesis, stated up front and confirmed exactly correct: theme apply was invalidating
+or bypassing the cover-size cache for the switched book.
+
+**Mechanism, traced precisely, live-confirmed:** `BookDelegate._apply_theme` (`library.py:2053`)
+unconditionally reassigned `self._sized_cover_cache: dict = {}` on every call — not a `.clear()`,
+a full reassignment, wiping every book's warmed sized-cover cache, not just the switched book's.
+`_apply_theme` is called from `update_theme()`, whose only caller is
+`LibraryPanel.update_progress_bar_theme()`, called from `theme_manager.py`'s
+`_apply_stylesheets_deferred` alongside `library_panel.setStyleSheet(...)` — confirmed the
+`setStyleSheet` call itself never touches either cover cache; `update_progress_bar_theme()` is what
+does, via `_apply_theme`'s reassignment. This deferred batch flushes synchronously right before
+every panel open (`flush_deferred_restyle()`, called from `complete_main_fade()` and
+`PanelManager._flush_pending_restyle()`, both at the top of every panel-open flow before `show()`)
+— so the wipe lands immediately before the exact paint that opens the library panel, forcing every
+visible cell into `_get_sized_cover`'s cache-miss branch, which runs a synchronous main-thread
+LANCZOS scale during that paint.
+
+**Why cover-theme-specific, and why waiting didn't help — the piece that made this reproducible and
+distinguishable from a timing race:** `_on_theme_changed` has a no-op guard that short-circuits when
+the incoming `theme_name` already equals `_active_display_theme`. For fixed/pool themes, `theme_name`
+is a stable string — switching to a book whose theme happens to already be active hits the guard,
+`_apply_stylesheets_deferred` never runs, cache survives. For cover-derived themes,
+`apply_cover_theme` builds a theme dict via `build_cover_theme`, which **deliberately jitters every
+color by a small amount per call** ("Small per-call jitter ensures the same cover produces slightly
+varied palettes" — `cover_theme.py`) — so the dict is essentially never `==` the previous one, the
+no-op guard never fires for a cover-theme switch, and the wipe runs on EVERY such switch,
+unconditionally. Waiting doesn't help because the wipe already happened at flush-time, well before
+any subsequent wait — nothing re-warms the cache until a real repaint (the first open itself)
+happens. Second open is smooth because no new cover-theme apply occurs (same book still loaded), so
+the no-op guard fires and the wipe never re-runs; the cache — warmed by the first open's own
+synchronous fills — survives.
+
+**Why the wipe was unnecessary in the first place, per direct question before proposing the fix:**
+`_apply_theme`'s `_sized_cover_cache` reset sat directly beneath `_placeholder_cache`'s reset, whose
+comment correctly explains ITS OWN necessity ("stale-color pixmaps don't survive a theme switch") —
+`_placeholder_cache` genuinely caches theme-COLORED renders keyed by `(color, w, h)`, so a real
+theme color change needs fresh entries (or at minimum, a stale color simply isn't looked up again
+under the new key — but the wholesale reset there is at minimum harmless and arguably intentional
+given the small cache size). `_sized_cover_cache` caches real cover ART pre-scaled to a cell size —
+nothing about a theme (colors, fonts, etc.) has any bearing on how a cover image should be scaled,
+and the cache's own lookup key (`(book_id, dev_w, dev_h)`) already re-derives `dev_w`/`dev_h` from
+the live device pixel ratio at lookup time, so even a screen/DPR change can't return a stale entry
+through this key. The wipe was a defensive copy-paste from the adjacent, legitimate reset, never
+actually checked against whether the same reasoning applied — it didn't.
+
+**Fix:** removed the reassignment; `_sized_cover_cache` is now only initialized once (guarded by
+`hasattr`, so `BookDelegate.__init__`'s first call still creates it before any lookup) and never
+reset on subsequent theme applies. Live-verified: cover-theme ON, book switch, 15+ second wait,
+first library-panel open now smooth.
+
+Commit `0990e00`.
+
+---
+
 ## CORRECTION (2026-07-17, later same night): the diagnosis below is WRONG about WHICH condition triggers the bug — kept for the record, do not act on the "book HAS a cover" framing
 
 The entry immediately below diagnoses the bare-Qt-chrome bug as gated on "book HAS a cover, AND
@@ -75,6 +243,20 @@ That mechanism and its findings stand.
 
 **Not yet fixed as of this write-up — fix is the very next step, then a live visual re-confirmation
 (not just a log check that `_on_theme_changed` fired) before any benchmark re-run is planned.**
+
+---
+
+## FIXED (2026-07-17/18) — see the "unconditional scan-on-launch" entry near the top of this file for the actual fix
+
+The mechanism traced below (post-scan cover-refresh racing the flow animation) was correct and is
+exactly what got fixed — see the entry titled "FIXED and live-verified: unconditional
+scan-on-launch was the real root cause..." near the top of this file for the fix itself
+(`cd5ec5b`) and its live verification. The "post-scan cover-refresh" this entry describes IS
+`_on_scan_finished`'s second `load_cover_art` call; "an unrelated post-scan cover-refresh" in this
+entry's own title turned out to be the whole story, not just a contributing factor — the scan
+itself was running on every launch unconditionally, which this entry did not yet know at the time
+it was written. Kept below for the trace detail (still accurate), superseded only on "not fixed
+yet" / "fix not proposed yet."
 
 ---
 

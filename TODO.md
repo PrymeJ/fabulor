@@ -6,6 +6,25 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[VERIFICATION NOT YET RUN, 2026-07-18] Rapid-switch progress-integrity check against tonight's
+  final startup-sequencing state.** Two fixes landed tonight that both touch `app.py`'s startup
+  sequencing (`cd5ec5b` — scan-on-launch gating + `QTimer.singleShot(0, library_panel.refresh)`;
+  `0990e00` — `_sized_cover_cache` no longer wiped on theme apply). Neither directly touches the
+  seek/settle/restore-position machinery, but given how many narrow checks earlier this session
+  looked clean and then weren't (see NOTES.md — the first Bug-1-only fix passed its own worst_gap
+  check and still caused a live-observed regression), the user asked for at minimum the
+  Bug-1/Bug-2-era rapid-switch repro to be re-run before treating tonight's work as fully closed:
+  rapidly switch between two VT books (Colorless Tsukuru Tazaki, Sometimes a Great Notion — the
+  same books used for the original Bug 1/Bug 2 fix and verification) several times in quick
+  succession, and confirm progress is preserved correctly across the switches (not reset to
+  near-zero, not silently dropped). This is a correctness check, not a performance one — distinct
+  from the worst_gap benchmark matrix. Not yet run as of this writeup.
+- **[BENCHMARK NOT YET RE-RUN, 2026-07-17] Full 4-condition × 30-sample worst_gap matrix (VT/ON,
+  VT/OFF, M4B/ON, M4B/OFF) against the FINAL fix state.** The 30-sample runs captured earlier this
+  session were against the Bug-1-only (incomplete, since-superseded) fix. If a fresh formal
+  before/after dataset is wanted for the record, it should be re-run against the current committed
+  state (`cd5ec5b` + `0990e00`), not assumed from the earlier numbers.
+
 - **[FIXED, committed `5cfe3a3`, 2026-07-17] Bare-Qt-chrome-at-startup bug — CORRECTED root cause
   (not "book has a cover + mode Off" as first diagnosed; see NOTES.md correction entry at the
   top).** Real cause: `_setup_ui` applied only the visible-surface pass at startup
