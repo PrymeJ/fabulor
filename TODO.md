@@ -6,19 +6,32 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[VERIFICATION NOT YET RUN, 2026-07-18] Rapid-switch progress-integrity check against tonight's
-  final startup-sequencing state.** Two fixes landed tonight that both touch `app.py`'s startup
-  sequencing (`cd5ec5b` — scan-on-launch gating + `QTimer.singleShot(0, library_panel.refresh)`;
-  `0990e00` — `_sized_cover_cache` no longer wiped on theme apply). Neither directly touches the
-  seek/settle/restore-position machinery, but given how many narrow checks earlier this session
-  looked clean and then weren't (see NOTES.md — the first Bug-1-only fix passed its own worst_gap
-  check and still caused a live-observed regression), the user asked for at minimum the
-  Bug-1/Bug-2-era rapid-switch repro to be re-run before treating tonight's work as fully closed:
-  rapidly switch between two VT books (Colorless Tsukuru Tazaki, Sometimes a Great Notion — the
-  same books used for the original Bug 1/Bug 2 fix and verification) several times in quick
-  succession, and confirm progress is preserved correctly across the switches (not reset to
-  near-zero, not silently dropped). This is a correctness check, not a performance one — distinct
-  from the worst_gap benchmark matrix. Not yet run as of this writeup.
+- **[VERIFIED, 2026-07-18] Rapid-switch progress-integrity check against tonight's final
+  startup-sequencing state — PASSED, no data-integrity issue found.** Ran the Bug-1/Bug-2-era
+  repro (rapid switching between Colorless Tsukuru Tazaki and Sometimes a Great Notion, 00:44-00:46)
+  against the committed state (`cd5ec5b` + `0990e00`). Log-confirmed across many rapid switches:
+  `_restore_position`'s `book_data.progress` always matched the correct prior value for each book
+  (Tazaki → `23307.624886`, Sometimes a Great Notion → `56004.037344...`) on every switch, no
+  near-zero transient, no dropped restore. Progress integrity holds.
+- **[NEW FINDING, NOT PURSUED YET, 2026-07-18] Theme-ROTATION landing mid-flow-animation still
+  stutters — a different trigger from either bug fixed tonight, same class of collision.** Found
+  incidentally during the rapid-switch verification above (00:45:30, log-confirmed precisely, not
+  inferred): switching to "Against the Day" (Thomas Pynchon, VT, cross-file mid-book switch, no
+  cover — shows the placeholder) landed a **theme rotation** (`_run_deferred_restyle` firing via
+  its normal timer path, theme → `'City of Stairs'`) exactly inside that book-load's flow
+  animation. `_apply_stylesheets`'s `mw.setStyleSheet(base)` cost 178.4ms +
+  `_flush_deferred_restyle_now`'s batch cost 166.1ms, landing back-to-back inside the animation
+  window → `worst_gap=338.2ms`/`504.7ms` on both sliders. This is NOT the scan-triggered second-
+  `apply_cover_theme`-call mechanism fixed in `cd5ec5b` (no scan involved here at all — this is
+  the theme ROTATION timer, an entirely separate trigger into the same `_apply_stylesheets`/
+  `_flush_deferred_restyle_now` cost centers) and is NOT touched by either of tonight's two fixes.
+  User explicitly does not want this pursued right away — recorded here so it isn't lost, not
+  actioned. If revisited: the mechanism (a synchronous, ~150-300ms stylesheet/restyle cost landing
+  inside a ~450-560ms flow animation) is now a familiar shape from tonight's other two fixes; the
+  new piece to trace would be why the rotation timer's own animation-in-flight guards (see
+  `_run_deferred_restyle`'s doc comment about deferring until `flow_anim.finished`) didn't catch
+  this particular VT cross-file case — worth checking whether it's the same
+  `not-hasattr(self,'_fade_anim')`-style early-startup gap, or a genuinely new guard miss.
 - **[BENCHMARK NOT YET RE-RUN, 2026-07-17] Full 4-condition × 30-sample worst_gap matrix (VT/ON,
   VT/OFF, M4B/ON, M4B/OFF) against the FINAL fix state.** The 30-sample runs captured earlier this
   session were against the Bug-1-only (incomplete, since-superseded) fix. If a fresh formal
