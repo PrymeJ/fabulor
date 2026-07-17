@@ -1,4 +1,8 @@
+import cProfile
+import io
 import logging
+import os
+import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QApplication
@@ -6,6 +10,13 @@ from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTime
 from .title_bar import ThemeItem
 
 logger = logging.getLogger(__name__)
+
+# TEMPORARY (library-panel stutter investigation, 2026-07-17): profile the exact
+# library-open window (_start_library_entry through _on_library_shown) to find what's
+# actually consuming wall-clock time, rather than guessing which function to instrument.
+# Enabled via env var so it never runs unless explicitly requested. Remove once the
+# stutter's root cause is found. See NOTES.md / TODO.md 2026-07-16/17 entry.
+_STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 
 class PanelManager:
     def __init__(self, main_window):
@@ -107,6 +118,11 @@ class PanelManager:
             self._start_library_entry()
 
     def _start_library_entry(self):
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _start_library_entry: ENTRY")
+        if _STUTTER_PROFILE_ENABLED:
+            self._stutter_profiler = cProfile.Profile()
+            self._stutter_profiler.enable()
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         # Sync folder-button state to the live scan status — a scan may already be
         # running when the panel opens, in which case the buttons open disabled.
         self.main_window._set_scan_buttons_enabled(
@@ -123,9 +139,11 @@ class PanelManager:
         # Set animation guard to prevent layout updates during slide
         self.library_panel._is_animating = True
         self.library_panel_animation.finished.connect(self._on_library_shown)
-        
+
         self.library_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.library_panel_animation.setEndValue(QPoint(0, sidebar_y))
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} library_panel_animation.start() "
+                     f"duration={self.library_panel_animation.duration()}ms")
         self.library_panel_animation.start()
         
         if self.config.get_blur_enabled():
@@ -134,6 +152,10 @@ class PanelManager:
             self.blur_animation.start()
 
     def _on_library_shown(self):
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
+                     f"library_panel_animation FINISHED")
+        if _STUTTER_PROFILE_ENABLED:
+            self._stop_stutter_profile()
         try:
             self.library_panel_animation.finished.disconnect(self._on_library_shown)
         except RuntimeError:
@@ -143,6 +165,22 @@ class PanelManager:
         self.library_panel.refresh()
         # Small delay lets the event loop settle before first paint
         QTimer.singleShot(16, self.library_panel._list_view.viewport().update)
+
+    def _stop_stutter_profile(self):
+        """TEMPORARY (library-panel stutter investigation, 2026-07-17): stop the profiler
+        started in _start_library_entry and dump the top time-consumers to the log. Brackets
+        exactly the slide-in animation window (_start_library_entry through
+        library_panel_animation.finished), where the user reports the stutter/pause actually
+        happens — not after the panel is open."""
+        prof = getattr(self, '_stutter_profiler', None)
+        if prof is None:
+            return
+        prof.disable()
+        self._stutter_profiler = None
+        stream = io.StringIO()
+        stats = pstats.Stats(prof, stream=stream).sort_stats('cumulative')
+        stats.print_stats(40)
+        logger.debug(f"[STUTTER-PROFILE] library-open window profile:\n{stream.getvalue()}")
 
     def _reveal_list_rows(self):
         view = self.library_panel._list_view
@@ -204,6 +242,7 @@ class PanelManager:
 
     def _start_settings_entry(self):
         """Starts the settings panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         logger.debug(
             f"t={time.perf_counter():.6f} [_start_settings_entry ENTRY] "
             f"sidebar_expanded={self.sidebar_expanded} "
@@ -289,6 +328,7 @@ class PanelManager:
 
     def _start_speed_entry(self):
         """Starts the speed panel slide-in animation. This is called directly or via _on_sidebar_closed_for_panel."""
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         self.main_window.speed_panel.sync_smart_rewind_visuals()
         self.main_window.speed_panel._rebuild_def_speed_row()
         panel_w = int(self.main_window.width() * 0.9)
@@ -466,6 +506,7 @@ class PanelManager:
             self._start_stats_entry()
 
     def _start_stats_entry(self):
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.stats_panel.setFixedWidth(panel_w)
@@ -503,6 +544,7 @@ class PanelManager:
 
     def _start_sleep_entry(self):
         """Starts the sleep panel slide-in animation."""
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.sleep_panel.setFixedWidth(panel_w)
@@ -592,6 +634,7 @@ class PanelManager:
             self._start_tags_entry()
 
     def _start_tags_entry(self):
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         mw = self.main_window
         panel_w = self.tags_panel.width()
         sidebar_y = 56
@@ -655,6 +698,7 @@ class PanelManager:
         self._start_book_detail_entry()
 
     def _start_book_detail_entry(self):
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         panel_w = self.main_window.width()
         book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel.setFixedWidth(panel_w)
@@ -762,6 +806,22 @@ class PanelManager:
         tm = getattr(self.main_window, 'theme_manager', None)
         if tm:
             tm.complete_main_fade()
+
+    def _flush_pending_restyle(self):
+        """Run any pending deferred invisible-surface theme batch synchronously NOW,
+        before a panel paints. Called at the top of every _start_*_entry (before
+        show()) to cover the SIDEBAR-QUEUED open path: there _complete_main_fade runs
+        early (in _open_*_flow) but the actual show() is dispatched ~200ms later from
+        _on_sidebar_closed_for_panel, a window in which a book-load batch could arm and
+        not-yet-run. Direct opens are already covered by _complete_main_fade's flush;
+        this closes the queued gap at the true pre-show() instant. No-op if nothing
+        pending. See plans/going-forward-on-this-twinkly-corbato.md §3."""
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm:
+            _was_pending = getattr(tm, '_deferred_restyle_pending', False)
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _flush_pending_restyle: "
+                         f"CALLED was_pending={_was_pending}")
+            tm.flush_deferred_restyle()
 
     def _any_panel_animating(self):
         """Returns True if any sliding panel or blur animation is currently running."""

@@ -131,6 +131,14 @@ class Player(QObject):
         # _logical_pos — at defer time; those are set only when seek_async eventually runs, same
         # as any other seek, so no new state combination is introduced.
         self._vt_restore_pending: float | None = None
+        # Rendezvous flag for the same restore-on-load handoff, covering the OTHER arrival
+        # order: True means "_on_file_loaded's VT branch already ran for this book-load and
+        # found _vt_restore_pending still None (no restore requested yet)" — set by
+        # _on_file_loaded, consumed by defer_vt_restore if/when it arrives late. Order-
+        # independent by construction: whichever of the two write sites runs first leaves a
+        # mark the other one checks, rather than either assuming it always runs second.
+        # See NOTES.md 2026-07-16 ("Book progress silently resetting to ~0...", Bug 2 fix).
+        self._vt_file_loaded_awaiting_restore: bool = False
         self._is_vt_file_switch: bool = False
         self._last_vt_chapter: int = -1
         self._last_nonvt_chapter: int = 0
@@ -168,12 +176,37 @@ class Player(QObject):
             self.instance.event_callback('file-loaded')(self._on_file_loaded)
             self.instance.event_callback('end-file')(self._on_end_file)
 
+    def _seek_state_trace(self, site: str) -> None:
+        """TEMPORARY (Bug 2 investigation, 2026-07-16): log the current seek-state tuple with a
+        sub-ms timestamp and the call site that just wrote it. The VT cross-file restore handoff
+        spans two async mpv file-loaded events plus a queued-connection clear in app.py, so
+        ordering below asctime's 1ms resolution is what distinguishes the candidate mechanisms.
+        Remove once Bug 2 is closed (see NOTES.md 2026-07-16 / TODO.md)."""
+        logger.debug(
+            f"[VT-SEEK-TRACE] t={time.perf_counter():.6f} site={site} "
+            f"_is_seeking={self._is_seeking} _seek_target={self._seek_target!r} "
+            f"_vt_restore_pending={self._vt_restore_pending!r} "
+            f"_pending_local_pos={self._pending_local_pos!r} "
+            f"_current_vt_index={self._current_vt_index} _file_offset={self._file_offset!r} "
+            f"_logical_pos={self._logical_pos!r} _cached_time_pos={self._cached_time_pos!r} "
+            f"_is_vt_file_switch={self._is_vt_file_switch}"
+        )
+
     def _on_time_pos_change(self, name, value):
         logger.debug(f"_on_time_pos_change: raw time_pos={value}")
         self._cached_time_pos = value            # raw mirror — unconditional, every sample, never frozen
         settled_this_call = False
         if self._is_seeking and value is not None and self._seek_target is not None:
             global_value = value + (self._file_offset or 0)
+            # TEMPORARY (Bug 2, 2026-07-16): log every settle EVALUATION, not just the taken
+            # branch — a settle that keeps missing (distance never < 1.0) and one that fires
+            # early on the wrong file are different mechanisms with the same end symptom.
+            logger.debug(
+                f"[VT-SEEK-TRACE] t={time.perf_counter():.6f} site=settle_eval "
+                f"raw_value={value!r} _file_offset={self._file_offset!r} global_value={global_value!r} "
+                f"_seek_target={self._seek_target!r} distance={abs(global_value - self._seek_target)!r} "
+                f"will_settle={abs(global_value - self._seek_target) < 1.0}"
+            )
             if abs(global_value - self._seek_target) < 1.0:
                 self._is_seeking = False
                 settled_this_call = True
@@ -196,6 +229,7 @@ class Player(QObject):
                 # leaving the chapter label showing the wrong book's chapter.
                 self._last_nonvt_chapter = -1
                 self._last_vt_chapter = -1
+                self._seek_state_trace("settle_branch_CLEARED_is_seeking")
         # Logical-position maintenance. Runs AFTER the settle branch and BEFORE the chapter
         # walk (which must keep reading RAW value/global_pos). Only maintained while NOT
         # mid-seek — during a seek's intermediate samples _logical_pos holds the value set
@@ -472,6 +506,7 @@ class Player(QObject):
         self._current_vt_index = 0
         self._pending_local_pos = None
         self._vt_restore_pending = None
+        self._vt_file_loaded_awaiting_restore = False
         self._is_vt_file_switch = False
         self._last_vt_chapter = -1
         self._last_nonvt_chapter = -1
@@ -486,6 +521,8 @@ class Player(QObject):
         self._logical_pos = None          # new book — getter falls back to raw until first seek/sample
         self._last_raw_global = None
         self._just_settled = False
+
+        self._seek_state_trace("load_book_after_state_reset")
 
         QThreadPool.globalInstance().start(_ResolveWorker())
 
@@ -546,9 +583,15 @@ class Player(QObject):
         # Suppressing it entirely avoids the snap-back on chapter navigation.
         return
     def _on_file_loaded(self, event):
+        try:
+            _loaded_path = os.path.basename(self.instance.path or "")
+        except Exception:
+            _loaded_path = "<unreadable>"
+        self._seek_state_trace(f"_on_file_loaded_ENTRY(loaded={_loaded_path!r})")
         if self._mp3_seek_reload_pending:
             self._mp3_seek_reload_pending = False
             self._is_seeking = False
+            self._seek_state_trace("_on_file_loaded_mp3_reload_CLEARED_is_seeking")
             # Adopt the logical target: this reload path returns early and NEVER reaches the
             # _on_time_pos_change settle, so _logical_pos must be adopted here or it stays
             # stale at the pre-seek value. Read _seek_target into a local FIRST so this does
@@ -573,9 +616,15 @@ class Player(QObject):
             # slider isn't left waiting on a seek that never issues.
             target_file = (self._virtual_timeline[self._current_vt_index]
                            if self._virtual_timeline is not None else None)
+            self._seek_state_trace(
+                f"_on_file_loaded_pending_local_pos_STAGE(pending={pending!r} "
+                f"target_file_dur={target_file['duration'] if target_file else None!r} "
+                f"near_eof_abandon={bool(target_file is not None and target_file['duration'] - pending < 2.0)})"
+            )
             if target_file is not None and target_file['duration'] - pending < 2.0:
                 self._is_seeking = False
                 self._seek_target = None
+                self._seek_state_trace("_on_file_loaded_nearEOF_ABANDON_CLEARED_is_seeking")
                 # Cross-file seek abandoned (target within 2s of the file's EOF): no seek
                 # issues. Reset _logical_pos so the getter falls back to the raw path for the
                 # freshly-loaded file rather than reporting a stale pre-switch logical value.
@@ -607,6 +656,10 @@ class Player(QObject):
                           f"path={os.path.basename(target_file['file_path'])} — VT load no longer serialized!", flush=True)
                 self._seek_target = pending + target_offset
                 self._logical_pos = pending + target_offset  # GLOBAL, same as _seek_target
+                # NOTE (Bug 2 trace): this branch re-sets _seek_target but does NOT touch
+                # _is_seeking — it relies on seek_async having left it True. If the trace shows
+                # _is_seeking already False here, that's the gap.
+                self._seek_state_trace("_on_file_loaded_ISSUING_crossfile_seek(_is_seeking_NOT_reset_here)")
                 self.instance.command_async('seek', pending, 'absolute+exact')
         if self._virtual_timeline is not None:
             self._is_vt_file_switch = False
@@ -620,11 +673,25 @@ class Player(QObject):
             # first file" guard needed.
             if self._vt_restore_pending is not None:
                 pending_target = self._vt_restore_pending
+                self._vt_restore_pending = None
                 logger.debug(f"[VT-RESTORE-CONSUME] consuming deferred restore target={pending_target}")
+                self._seek_state_trace(f"_on_file_loaded_VT_restore_CONSUMING(target={pending_target!r})")
                 self.seek_async(pending_target)
+                self._seek_state_trace("_on_file_loaded_VT_restore_after_seek_async")
             else:
+                # Bug 2 fix (2026-07-16): the restore hasn't been requested yet for this
+                # file-load (under main-thread contention, _restore_position can run AFTER
+                # this method, not before it — see NOTES.md). Mark it owed instead of
+                # concluding "nothing to do": defer_vt_restore checks this flag and issues
+                # the seek itself if it arrives late, since this branch won't run again for
+                # this file-load to consume a _vt_restore_pending stashed after the fact.
+                self._vt_file_loaded_awaiting_restore = True
                 logger.debug("[BOOKSWITCH-TRACE] _on_file_loaded: VT branch, "
-                             "_vt_restore_pending is None — NOTHING TO CONSUME, no seek issued")
+                             "_vt_restore_pending is None — marking awaiting_restore, no seek issued yet")
+                self._seek_state_trace("_on_file_loaded_VT_MARKED_awaiting_restore")
+            # file_switched is a QueuedConnection to app._on_vt_file_switched — that slot runs
+            # on a LATER event-loop turn, reading whatever _seek_target is by then, not now.
+            self._seek_state_trace("_on_file_loaded_EMITTING_file_switched(queued->_on_vt_file_switched)")
             self.file_switched.emit()
         else:
             self.book_ready.emit()
@@ -657,6 +724,7 @@ class Player(QObject):
                 self._logical_pos = None
                 self._last_raw_global = None
                 self._just_settled = False
+                self._seek_state_trace("_on_end_file_ERROR_CLEARED_is_seeking")
         if reason_int == 0:
             self._advance_or_finish()
 
@@ -753,13 +821,31 @@ class Player(QObject):
         branch, once mpv has actually loaded the book's first file. Fixes the race where
         _restore_position's seek_async call (triggered by book_ready, which fires BEFORE
         instance.play() for VT books) could reach mpv before the file was loaded, and be
-        silently dropped. Deliberately does nothing else: no is_seeking, no _seek_target, no
-        _logical_pos — those are set only when seek_async eventually runs, same as any other
-        seek, so no new state combination is introduced. See CLAUDE.md's VT+Undo fragile-zone
-        rule and NOTES.md for the full reasoning.
+        silently dropped. Deliberately does nothing else in the stash branch: no is_seeking,
+        no _seek_target, no _logical_pos — those are set only when seek_async eventually
+        runs, same as any other seek, so no new state combination is introduced. See
+        CLAUDE.md's VT+Undo fragile-zone rule and NOTES.md for the full reasoning.
+
+        Order-independent handoff (2026-07-16, Bug 2 fix): the ORIGINAL assumption here was
+        that this method always runs BEFORE _on_file_loaded's VT branch for the same
+        file-load. Under main-thread contention that can be false — _on_file_loaded can fire
+        first, find _vt_restore_pending still None, and mark
+        _vt_file_loaded_awaiting_restore instead of issuing a seek (see that branch's
+        comment). If that flag is set when THIS call runs, it means the consumer already
+        ran and won't run again for this file-load — so issue the seek directly here instead
+        of stashing for a consumer that will never come. See NOTES.md 2026-07-16.
         """
+        if self._vt_file_loaded_awaiting_restore:
+            self._vt_file_loaded_awaiting_restore = False
+            logger.debug(f"[VT-RESTORE-CONSUME] defer_vt_restore: file already loaded and "
+                         f"awaiting restore, issuing seek directly target={pos}")
+            self._seek_state_trace(f"defer_vt_restore_LATE_issuing_seek(pos={pos!r})")
+            self.seek_async(pos)
+            self._seek_state_trace("defer_vt_restore_LATE_after_seek_async")
+            return
         logger.debug(f"[BOOKSWITCH-TRACE] defer_vt_restore: setting _vt_restore_pending={pos}")
         self._vt_restore_pending = pos
+        self._seek_state_trace(f"defer_vt_restore_SET_pending(pos={pos!r})")
 
     def _abandon_seek_missing_file(self) -> None:
         """A VT cross-file seek targeted a file that no longer exists on disk. The
@@ -776,6 +862,7 @@ class Player(QObject):
         self._logical_pos = None
         self._last_raw_global = None
         self._just_settled = False
+        self._seek_state_trace("_abandon_seek_missing_file_CLEARED_is_seeking")
         self.load_failed.emit("File missing.")
 
     def seek_async(self, pos: float) -> None:
@@ -809,6 +896,10 @@ class Player(QObject):
             target_idx = self._resolve_vt_index(pos)
             target_file = self._virtual_timeline[target_idx]
             local_pos = pos - target_file['cumulative_start']
+            self._seek_state_trace(
+                f"seek_async_VT_entry(target_idx={target_idx} current_idx={self._current_vt_index} "
+                f"same_file={target_idx == self._current_vt_index} local_pos={local_pos!r})"
+            )
             if target_idx == self._current_vt_index:
                 if local_pos >= target_file['duration']:
                     return  # past end — no state mutation, let natural EOF handle it
@@ -816,6 +907,7 @@ class Player(QObject):
                 self.is_seeking = True
                 self._seek_target = pos
                 self._logical_pos = pos    # GLOBAL, same as _seek_target
+                self._seek_state_trace("seek_async_VT_samefile_SET_is_seeking")
                 if not os.path.exists(target_file['file_path']):
                     self._abandon_seek_missing_file()
                     return
@@ -846,7 +938,9 @@ class Player(QObject):
                     f"seek_async: VT cross-file branch target_idx={target_idx} "
                     f"local_pos={local_pos} final_seek_target={pos}"
                 )
+                self._seek_state_trace("seek_async_VT_crossfile_SET_is_seeking_before_play")
                 self.instance.play(target_file['file_path'])
+                self._seek_state_trace("seek_async_VT_crossfile_after_play")
         else:
             dur = self._cached_duration
             if dur and dur - pos < 2.0:

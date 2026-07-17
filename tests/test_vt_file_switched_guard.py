@@ -15,6 +15,16 @@ prior (reverted) attempts at this same guard, which were tested exclusively agai
 that could structurally never land at all (a separate, since-fixed bug) — never against a
 seek proven capable of settling, which is the actual shape of this bug.
 
+2026-07-16: a separate bug (see NOTES.md "Book progress silently resetting to ~0...", Bug 2)
+briefly made this method also inspect `_vt_restore_pending` as a late-restore-consume
+fallback. That version was reverted — it assumed `_restore_position`/`defer_vt_restore` always
+runs before this QueuedConnection slot fires, which turned out not to be structural (the
+library-still-animating deferred-restore path can delay the restore past this handler's
+delivery). The actual fix lives in `Player` (`_vt_file_loaded_awaiting_restore`, an
+order-independent rendezvous flag between `_on_file_loaded` and `defer_vt_restore` — see
+`tests/test_vt_restore_race.py`), NOT here. This method is back to its original form and is
+deliberately orthogonal to that rendezvous state.
+
 MainWindow needs mpv + the DB + the full widget tree, so — following the pattern in
 test_transport_shortcuts.py / test_panel_exclusion.py — these tests bind the REAL unbound
 method to a tiny fake supplying exactly the collaborator (`player.is_seeking`/`_seek_target`)

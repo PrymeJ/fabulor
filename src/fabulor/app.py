@@ -343,6 +343,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._last_long_skip_nudge_ts = 0.0
         self._undo_timer = QTimer(self)
         self._last_saved_pct = -1
+        self._last_saved_pos = 0.0
         self._last_undo_click_time = 0
         self._undo_sliding_in: bool | None = None
         self.audio_tab = None
@@ -393,6 +394,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.session_recorder.session_written.connect(self._on_session_written)
         self.progress_slider._flow_anim.finished.connect(
             self._resume_ui_timer,
+            Qt.UniqueConnection
+        )
+        # Book-load deferred-restyle flush: when the flow animation completes, run any
+        # pending invisible-surface theme batch (ThemeManager._run_deferred_restyle
+        # defers itself while this animation is Running, so this is where a book-load
+        # batch actually lands — AFTER the animation, never freezing it). Separate
+        # connection from _resume_ui_timer above; no when_animations_done slot contention.
+        self.progress_slider._flow_anim.finished.connect(
+            self.theme_manager._run_deferred_restyle,
             Qt.UniqueConnection
         )
 
@@ -936,6 +946,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._prev_chap_title = ""
         self._next_chap_title = ""
         self._last_saved_pct = -1
+        self._last_saved_pos = 0.0
 
         self._set_chapter_ui_active(False)
         self._load_cover_art("")
@@ -1344,6 +1355,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Saves the current playback position to both DB and Config."""
         if self.current_file and self.player.is_initialized:
             pos = self.player.time_pos
+            logger.debug(f"[PERSIST-TRACE] _save_current_progress: current_file={self.current_file!r} "
+                         f"pos={pos!r} is_seeking={self.player.is_seeking} "
+                         f"_logical_pos={self.player._logical_pos!r} _cached_time_pos={self.player._cached_time_pos!r}")
             if pos is not None:
                 self.db.update_progress(self.current_file, pos)
                 self.config.set_last_position(self.current_file, pos)
@@ -1404,6 +1418,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider.set_markers([])
         self.chapter_list_widget.clear()
         self._last_saved_pct = -1
+        # Seed from the incoming book's own saved position, NOT 0.0. _restore_position
+        # (called later via load_book) will seek here, but mpv reports a near-zero
+        # transient (0.0, or a residual like 1e-08) for a few ticks before that seek
+        # lands. If this were reset to 0.0, the monotonic guard in _sync_persistence
+        # (pos < _last_saved_pos) would never trip during that window — 0.0 is never
+        # less than 0.0 — letting the transient overwrite a real saved position. Seeding
+        # from the real prior position gives the guard an actual floor to protect
+        # during exactly the window it exists for. See NOTES.md/CLAUDE.md for the fix
+        # this closes (M4B progress silently resetting to ~0 on repeated book-switch).
+        incoming_book_data = self.db.get_book(path)
+        self._last_saved_pos = incoming_book_data.progress if incoming_book_data and incoming_book_data.progress else 0.0
         self._eof_dur_fetched = False
         self._eof_book_id = None
         self.current_file = path
@@ -1442,6 +1467,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         prior attempts at this exact guard were tested only against seeks that
         could never land at all — a separate, since-fixed bug — not against a
         seek proven capable of settling, which is the case this guard now covers).
+
+        Deliberately does NOT touch _vt_restore_pending / _vt_file_loaded_awaiting_restore
+        (the VT restore-on-load rendezvous, see Player.defer_vt_restore / _on_file_loaded's
+        VT branch): this handler can fire before, during, or after that rendezvous resolves
+        (confirmed via live trace, 2026-07-16 — the library-still-animating deferred-restore
+        path can delay _restore_position/defer_vt_restore past this handler's QueuedConnection
+        delivery), so it must stay fully orthogonal to that state rather than trying to
+        infer anything about it from _seek_target/is_seeking. See NOTES.md 2026-07-16 ("Book
+        progress silently resetting to ~0...", Bug 2 fix) for why an earlier version of this
+        method that DID inspect _vt_restore_pending here was reverted — it assumed an
+        ordering relative to defer_vt_restore that turned out not to be structural.
         """
         if self.player._seek_target is None:
             self.player.is_seeking = False
@@ -1614,6 +1650,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _apply_pending_cover_theme(self):
         pixmap = getattr(self, '_pending_cover_pixmap', None)
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                     f"ENTRY has_pixmap={pixmap is not None}")
         if not pixmap:
             return
         self._pending_cover_pixmap = None
@@ -1623,12 +1661,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # the fade overlay is captured, the moving fill produces a ghost image.
         # Waiting for both sliders to settle eliminates the overlap.
         def _apply():
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                         f"_apply() firing (both sliders settled) — calling apply_cover_theme")
             self.theme_manager.apply_cover_theme(pixmap)
         def _after_progress():
             if hasattr(self, 'chapter_progress_slider') and hasattr(self.chapter_progress_slider, 'when_animations_done'):
+                logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                             f"progress_slider settled, chaining chapter_progress_slider.when_animations_done")
                 self.chapter_progress_slider.when_animations_done(_apply)
             else:
                 _apply()
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                     f"chaining progress_slider.when_animations_done")
         if hasattr(self.progress_slider, 'when_animations_done'):
             self.progress_slider.when_animations_done(_after_progress)
         else:
@@ -2058,11 +2102,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _sync_persistence(self, pos, dur):
         if dur is not None and dur > 0:
             if not self.is_slider_dragging and not self._switch.in_deadzone:
+                # Monotonic guard: while a seek is in flight, mpv can report a
+                # transient pos far below the last-saved position (e.g. 0.0 right
+                # after a restore-seek is issued but before it lands). Writing that
+                # transient to config, followed by _restore_position's config-to-DB
+                # copy on the next load, permanently launders the bad value — see
+                # CLAUDE.md/NOTES.md. Self-clearing: once the seek settles, pos
+                # advances past _last_saved_pos again and saving resumes normally.
+                # Deliberately NOT a plain `is_seeking` guard — if is_seeking ever
+                # strands True (a documented failure mode elsewhere in this file),
+                # a plain guard would stop saving entirely; this one only skips
+                # saves that would regress, so it can never fully strand.
+                if self.player.is_seeking and pos < self._last_saved_pos:
+                    logger.debug(f"[PERSIST-TRACE] _sync_persistence: SKIP (monotonic guard) "
+                                 f"current_file={self.current_file!r} pos={pos!r} last_saved_pos={self._last_saved_pos!r}")
+                    return
                 percent = (pos / dur) * 100
                 # Update config every 0.1% (live cache)
                 new_pct = int(percent * 10)
                 if new_pct != self._last_saved_pct:
+                    logger.debug(f"[PERSIST-TRACE] _sync_persistence: WRITE current_file={self.current_file!r} "
+                                 f"pos={pos!r} is_seeking={self.player.is_seeking} last_saved_pos(prev)={self._last_saved_pos!r}")
                     self._last_saved_pct = new_pct
+                    self._last_saved_pos = pos
                     self.config.set_last_position(self.current_file, pos)
                     if self.library_panel.isVisible():
                         self.library_panel.update_current_book_progress()

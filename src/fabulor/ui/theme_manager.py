@@ -140,6 +140,12 @@ class ThemeManager(QObject):
         self._save_on_fade = False
         self._fade_in_flight = False
 
+        # Deferred invisible-surface restyle batch (see _schedule_deferred_restyle /
+        # plans/going-forward-on-this-twinkly-corbato.md). _pending is the coalescing
+        # flag; _theme is the last-write-wins theme to apply when the batch runs.
+        self._deferred_restyle_pending = False
+        self._deferred_restyle_theme = None
+
     def get_current_theme(self) -> dict:
         from ..themes import _resolve_theme
         active = self._active_display_theme or self._current_theme_name
@@ -369,13 +375,20 @@ class ThemeManager(QObject):
         self._active_display_theme = theme_name
 
         if not hasattr(self, '_fade_anim'):
-            # Called before initialize_fade_overlay (e.g. on startup cover load) — apply silently
+            # Called before initialize_fade_overlay (e.g. on startup cover load) — apply
+            # silently and FULLY SYNCHRONOUSLY (both the fast visible half and the
+            # deferred invisible half + TAIL). At startup nothing is animating or
+            # interactive, so there is no stutter to avoid and no panel-open race — the
+            # deferred split's whole reason (keep invisible work off the animation path)
+            # doesn't apply here. Do NOT route this through _schedule_deferred_restyle.
             self._apply_stylesheets(theme_name, hover=hover)
-            if hasattr(self.main_window, '_refresh_panel_visuals'):
-                self.main_window._refresh_panel_visuals(theme_name)
-            from ..themes import _resolve_theme
-            self.theme_applied.emit(_resolve_theme(theme_name))
-            self.update_theme_list_visuals()
+            if not hover:
+                self._apply_stylesheets_deferred(theme_name)
+                if hasattr(self.main_window, '_refresh_panel_visuals'):
+                    self.main_window._refresh_panel_visuals(theme_name)
+                from ..themes import _resolve_theme
+                self.theme_applied.emit(_resolve_theme(theme_name))
+                self.update_theme_list_visuals()
             return
 
         # Clear any in-progress animation
@@ -456,12 +469,14 @@ class ThemeManager(QObject):
         # via theme_applied, theme-list dimming) is skipped on hover: none of it is
         # visible during a themes-tab preview, and the hover-exit full restyle
         # re-runs all of it before any of those surfaces can be shown again.
+        #
+        # NARROWED: this whole block (the "TAIL") plus the invisible-panel QSS work
+        # (_apply_stylesheets_deferred) now runs in ONE deferred batch off the
+        # synchronous visible-apply path — after the flow animation on book-load, or
+        # on the next event-loop turn for rotation/T. See _schedule_deferred_restyle.
+        # The fast visible surfaces were already applied synchronously above.
         if not hover:
-            if hasattr(self.main_window, '_refresh_panel_visuals'):
-                self.main_window._refresh_panel_visuals(theme_name)
-            from ..themes import _resolve_theme
-            self.theme_applied.emit(_resolve_theme(theme_name))
-            self.update_theme_list_visuals()
+            self._schedule_deferred_restyle(theme_name)
 
         if _dbg:
             now = time.perf_counter()
@@ -643,6 +658,12 @@ class ThemeManager(QObject):
         live in the applied QSS (as qproperty-bg_color/etc.), so re-applying the
         stylesheet for _active_display_theme re-polishes them to the correct
         values, overriding whatever the stopped animation left behind."""
+        # Panel-open compensation (deferred-restyle narrowing): flush any pending
+        # invisible-surface batch synchronously NOW, before the opening panel paints.
+        # MUST be before the _fade_in_flight early-return below — a deferred restyle can
+        # be pending with NO fade in flight (e.g. rotation with panels closed, then a
+        # panel opened), and every panel-open flow routes through here before show().
+        self.flush_deferred_restyle()
         if not getattr(self, '_fade_in_flight', False):
             return
         self._fade_in_flight = False
@@ -695,18 +716,60 @@ class ThemeManager(QObject):
         if hasattr(mw, '_reload_button_icons'):
             mw._reload_button_icons(theme_name)
         _mark("_reload_button_icons")
-        if not hover and hasattr(mw, 'library_panel'):
-            mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
-            mw.library_panel.update_progress_bar_theme()
-            _mark("library_panel")
-        else:
-            _mark("library_panel", skipped=True)
-        if not hover and hasattr(mw, 'chapter_list_widget'):
+        # chapter_list_widget stays on the FAST path unconditionally: update_theme() is
+        # ~0.1ms (delegate color set + update()) and it's a real overlay that CAN be open
+        # during a theme change, so keeping it fast removes the "chapter list opened before
+        # the deferred batch ran" staleness case for free. (Was previously not-hover-gated;
+        # now runs on hover too — harmless at 0.1ms, and it can be visible under the fade.)
+        if hasattr(mw, 'chapter_list_widget'):
             theme_dict = self.get_current_theme() or {}
             mw.chapter_list_widget.update_theme(theme_dict)
             _mark("chapter_list_widget")
         else:
             _mark("chapter_list_widget", skipped=True)
+        if hasattr(mw, 'sidebar'):
+            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar BEFORE]")
+            mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
+            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar AFTER]")
+        _mark("sidebar")
+        if hasattr(mw, '_set_chapter_ui_active'):
+            mw._set_chapter_ui_active(mw._chapter_ui_active)
+        _mark("_set_chapter_ui_active")
+
+        if _dbg:
+            total = sum(ms for _, ms, _ in _steps)
+            parts = "  ".join(
+                f"{lbl}={'SKIP' if sk else f'{ms:.1f}ms'}" for lbl, ms, sk in _steps
+            )
+            logger.debug(
+                f"[_apply_stylesheets hover={hover}] total={total:.1f}ms  {parts}"
+            )
+
+    def _apply_stylesheets_deferred(self, theme_name):
+        """The invisible-surface half of the theme apply, extracted from
+        _apply_stylesheets so it can run in a deferred batch AFTER the flow animation
+        (book-load) or on the next event-loop turn (rotation/T), instead of blocking
+        the synchronous visible apply. Styles only currently-hidden surfaces:
+        library, settings/speed/sleep panels, excluded-books, stats/book_detail.
+        Measured ~355ms combined with the TAIL — the bulk of the old ~640ms pipeline.
+        See plans/going-forward-on-this-twinkly-corbato.md. Runs only for non-hover
+        theme changes (hover keeps its own narrowing + _on_theme_unhovered restyle)."""
+        _dbg = logger.isEnabledFor(logging.DEBUG)
+        _steps = []
+        _t = time.perf_counter()
+
+        def _mark(label):
+            nonlocal _t
+            if _dbg:
+                now = time.perf_counter()
+                _steps.append((label, (now - _t) * 1000))
+                _t = now
+
+        mw = self.main_window
+        if hasattr(mw, 'library_panel'):
+            mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
+            mw.library_panel.update_progress_bar_theme()
+        _mark("library_panel")
         ss_panels = get_settings_stylesheet(theme_name)
         for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
             w = getattr(mw, attr, None)
@@ -726,46 +789,93 @@ class ThemeManager(QObject):
                 section.set_theme(theme)
             if popup:
                 popup.set_theme(theme)
-        # stats_panel + book_detail_panel are always hidden while the Themes tab
-        # previews a hover; skip their QSS repolish and on_theme_changed pass on
-        # hover — the hover-exit full restyle re-applies them before either can
-        # ever become visible.
-        if not hover:
-            ss_stats = get_stats_stylesheet(theme_name)
-            for attr in ('stats_panel', 'book_detail_panel'):
-                target = getattr(mw, attr, None)
-                if target:
-                    target.setStyleSheet(ss_stats)
-            # The "Recently finished" scroll rows' edge-scroll arrows use
-            # per-widget instance stylesheets that the plain QSS repolish above
-            # does NOT reach — they're refreshed by stats_panel.on_theme_changed,
-            # which is already driven on every live (non-hover) theme change by
-            # the theme_applied signal connection (main_window_builders.py, wired
-            # since the ThemeManager-QObject introduction). A direct call here was
-            # added later on the mistaken premise that on_theme_changed only ran
-            # once at startup; it was a true duplicate of the signal path and was
-            # removed (see NOTES.md). Do NOT re-add it — the signal path is the
-            # single owner, matching tags_panel / book_detail_panel.
-            _mark("stats + book_detail panels")
-        else:
-            _mark("stats + book_detail panels", skipped=True)
-        if hasattr(mw, 'sidebar'):
-            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar BEFORE]")
-            mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
-            logger.debug(f"t={time.perf_counter():.6f} [apply_stylesheets sidebar AFTER]")
-        _mark("sidebar")
-        if hasattr(mw, '_set_chapter_ui_active'):
-            mw._set_chapter_ui_active(mw._chapter_ui_active)
-        _mark("_set_chapter_ui_active")
+        ss_stats = get_stats_stylesheet(theme_name)
+        for attr in ('stats_panel', 'book_detail_panel'):
+            target = getattr(mw, attr, None)
+            if target:
+                target.setStyleSheet(ss_stats)
+        # The "Recently finished" scroll rows' edge-scroll arrows use per-widget
+        # instance stylesheets that the plain QSS repolish above does NOT reach —
+        # they're refreshed by stats_panel.on_theme_changed, driven on every live
+        # (non-hover) theme change by the theme_applied signal connection (see the
+        # TAIL in _run_deferred_restyle). Do NOT re-add a direct call here — the
+        # signal path is the single owner (see NOTES.md).
+        _mark("stats + book_detail panels")
 
         if _dbg:
-            total = sum(ms for _, ms, _ in _steps)
-            parts = "  ".join(
-                f"{lbl}={'SKIP' if sk else f'{ms:.1f}ms'}" for lbl, ms, sk in _steps
-            )
-            logger.debug(
-                f"[_apply_stylesheets hover={hover}] total={total:.1f}ms  {parts}"
-            )
+            total = sum(ms for _, ms in _steps)
+            parts = "  ".join(f"{lbl}={ms:.1f}ms" for lbl, ms in _steps)
+            logger.debug(f"[_apply_stylesheets_deferred] total={total:.1f}ms  {parts}")
+
+    def _schedule_deferred_restyle(self, theme_name):
+        """Arm the invisible-surface restyle batch to run once, off the synchronous
+        visible apply path. Coalescing: multiple rapid triggers collapse to one batch
+        with the last-requested theme (nothing invisible was shown in between). Uses a
+        uniform singleShot(0); _run_deferred_restyle itself defers if a flow animation
+        is still running (see there) so the ~355ms batch never lands mid-animation."""
+        self._deferred_restyle_theme = theme_name  # last-write-wins
+        if self._deferred_restyle_pending:
+            return                                  # already queued — coalesce
+        self._deferred_restyle_pending = True
+        QTimer.singleShot(0, self._run_deferred_restyle)
+
+    def _run_deferred_restyle(self):
+        """Run the pending invisible-surface batch + the TAIL, once. No-op if nothing
+        pending. CRITICAL: if a book-load flow animation is still running, do NOT run
+        now — leave the flag armed and return; the progress-slider _flow_anim.finished
+        connection (wired in MainWindow) re-invokes this after the animation completes,
+        so the ~355ms batch lands AFTER the animation, never freezing it. rotation/T
+        fire with no animation, so they run immediately on the singleShot(0) turn."""
+        if not self._deferred_restyle_pending:
+            return
+        mw = self.main_window
+        slider = getattr(mw, 'progress_slider', None)
+        flow = getattr(slider, '_flow_anim', None)
+        if flow is not None and flow.state() == QPropertyAnimation.Running:
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
+                         f"DEFERRED (flow_anim still Running)")
+            return  # animation still running — stay armed; _flow_anim.finished re-fires us
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
+                     f"proceeding via NATURAL path (flow_anim.finished or no-anim turn)")
+        self._flush_deferred_restyle_now()
+
+    def flush_deferred_restyle(self):
+        """Force the pending batch to run synchronously NOW, bypassing the animation
+        wait. This is the panel-open compensation: called before any panel's show()
+        (from complete_main_fade and each _start_*_entry) so a panel opened before the
+        deferred batch ran can never paint stale colors. Correctness wins over the rare
+        mid-animation freeze here — it only fires when a panel-open genuinely races a
+        still-pending batch, and only for that first open. No-op if nothing pending."""
+        if not self._deferred_restyle_pending:
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} flush_deferred_restyle: "
+                         f"NOOP (nothing pending)")
+            return
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} flush_deferred_restyle: "
+                     f"FORCING (was pending) — this is the panel-open compensation firing")
+        self._flush_deferred_restyle_now()
+
+    def _flush_deferred_restyle_now(self):
+        """Run the batch + TAIL exactly once and clear the flag. Shared by the deferred
+        path (_run_deferred_restyle) and the forced path (flush_deferred_restyle)."""
+        _t0 = time.perf_counter()
+        self._deferred_restyle_pending = False
+        theme_name = self._deferred_restyle_theme
+        self._deferred_restyle_theme = None
+        if theme_name is None:
+            logger.debug(f"[STUTTER-TRACE] t={_t0:.6f} _flush_deferred_restyle_now: NOOP (theme_name None)")
+            return
+        logger.debug(f"[STUTTER-TRACE] t={_t0:.6f} _flush_deferred_restyle_now: ENTRY theme={theme_name!r}")
+        self._apply_stylesheets_deferred(theme_name)
+        # TAIL (moved out of _on_theme_changed): hidden-panel visual sync.
+        if hasattr(self.main_window, '_refresh_panel_visuals'):
+            self.main_window._refresh_panel_visuals(theme_name)
+        from ..themes import _resolve_theme
+        self.theme_applied.emit(_resolve_theme(theme_name))
+        self.update_theme_list_visuals()
+        logger.debug(f"[_run_deferred_restyle] flushed batch for theme")
+        _t1 = time.perf_counter()
+        logger.debug(f"[STUTTER-TRACE] t={_t1:.6f} _flush_deferred_restyle_now: EXIT "
+                     f"total={(_t1 - _t0) * 1000:.1f}ms")
 
     def toggle_theme_selection(self, theme_name):
         """Toggle a theme's presence in the rotation pool."""
@@ -880,17 +990,24 @@ class ThemeManager(QObject):
 
     def apply_cover_theme(self, pixmap, user_initiated=False):
         """Build a theme dict from the cover pixmap and apply it if the mode calls for it."""
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: ENTRY "
+                     f"user_initiated={user_initiated}")
         from .cover_theme import build_cover_theme
         mode = self.config.get_cover_art_theme_mode()
         if mode == "off":
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (mode=off)")
             return
         theme_dict = build_cover_theme(pixmap)
         if not theme_dict:
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (no theme_dict)")
             return
         self._cover_theme = theme_dict
         self._cover_theme_active = True
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: "
+                     f"calling _on_theme_changed")
         self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated)
         self._update_cover_pool_btn()
+        logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (applied)")
 
     def clear_cover_theme(self):
         """Revert to the pool theme. _cover_theme stays None so cover_pool_btn greys out."""

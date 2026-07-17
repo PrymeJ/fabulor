@@ -1,6 +1,8 @@
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton
 from PySide6.QtCore import Qt, Signal, Property, QTimer, QPropertyAnimation, QEasingCurve, QPointF
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QPainterPath, QPolygonF, QPixmap
+import time, logging  # [STUTTER-PROBE] temporary — remove when the narrowing change is verified
+_stutter_log = logging.getLogger("fabulor.ui.controls")  # [STUTTER-PROBE]
 
 class ClickSlider(QWidget):
     valueChanged = Signal(int)
@@ -134,6 +136,15 @@ class ClickSlider(QWidget):
         return self._value
 
     def _set_animated_value(self, val):
+        # [STUTTER-PROBE] per-frame gap (large = main thread blocked mid-animation).
+        if _stutter_log.isEnabledFor(logging.DEBUG) and getattr(self, '_probe_active', False):
+            now = time.perf_counter()
+            last = getattr(self, '_probe_last_frame', None)
+            gap = (now - last) * 1000 if last is not None else 0.0
+            self._probe_last_frame = now
+            self._probe_frame_gaps.append(gap)
+            if gap > 40.0:
+                _stutter_log.debug(f"[STUTTER-PROBE] {self._probe_tag} FRAME GAP={gap:.1f}ms val={val}")
         self.setValue(val)
 
     animatedValue = Property(int, _get_animated_value, _set_animated_value)
@@ -186,6 +197,27 @@ class ClickSlider(QWidget):
         self._flow_anim.setStartValue(start)
         self._flow_anim.setEndValue(target)
         self._flow_anim.setDuration(duration)
+        # [STUTTER-PROBE] arm per-frame tracking + summary on finish.
+        if _stutter_log.isEnabledFor(logging.DEBUG):
+            self._probe_active = True
+            self._probe_tag = self.objectName() or f"slider@{id(self):x}"
+            self._probe_last_frame = None
+            self._probe_frame_gaps = []
+            self._probe_nominal_ms = duration
+            self._probe_wall_t0 = time.perf_counter()
+            _stutter_log.debug(f"[STUTTER-PROBE] {self._probe_tag} animate_to START {start}->{target} nominal={duration}ms")
+            def _probe_finish():
+                self._flow_anim.finished.disconnect(_probe_finish)
+                if not getattr(self, '_probe_active', False):
+                    return
+                self._probe_active = False
+                wall = (time.perf_counter() - self._probe_wall_t0) * 1000
+                gaps = self._probe_frame_gaps
+                worst = max(gaps) if gaps else 0.0
+                _stutter_log.debug(
+                    f"[STUTTER-PROBE] {self._probe_tag} animate_to END nominal={self._probe_nominal_ms}ms "
+                    f"wall={wall:.1f}ms overrun={wall-self._probe_nominal_ms:+.1f}ms frames={len(gaps)} worst_gap={worst:.1f}ms")
+            self._flow_anim.finished.connect(_probe_finish)
         self._flow_anim.start()
 
     def _val_from_x(self, x):
