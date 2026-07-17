@@ -183,6 +183,11 @@ class ThemeManager(QObject):
         self._unfreeze_fade_labels()
         if self._save_on_fade:
             self._cached_theme_pixmap = self.main_window.grab()
+        # Mirror the flow animation's own finished->_run_deferred_restyle wiring
+        # (app.py) for the fade: a deferred restyle held back ONLY by
+        # _fade_in_flight (no flow animation running at all) must be re-checked
+        # here, or it stays pending forever. See _run_deferred_restyle's docstring.
+        self._run_deferred_restyle()
 
     def snap_theme_forward(self):
         if not hasattr(self, '_fade_anim'):
@@ -874,7 +879,19 @@ class ThemeManager(QObject):
         now — leave the flag armed and return; the progress-slider _flow_anim.finished
         connection (wired in MainWindow) re-invokes this after the animation completes,
         so the ~355ms batch lands AFTER the animation, never freezing it. rotation/T
-        fire with no animation, so they run immediately on the singleShot(0) turn."""
+        fire with no animation, so they run immediately on the singleShot(0) turn.
+
+        ALSO defers while a theme FADE (_fade_in_flight, set by
+        _do_fade_with_slider_animation) is running — found 2026-07-18: this guard used
+        to check ONLY the flow animation, so a fade (750ms) that outlasted a book's own
+        flow animation (as short as ~300ms — a plain MP3 with no cover reaches
+        _on_file_ready fast enough to have already finished by the time this method's
+        flow-animation wait clears) still got its flush landed mid-fade, producing a
+        visible jump partway through the transition. _on_fade_finished re-invokes this
+        method when the fade ends, mirroring the flow animation's own finished-signal
+        wiring (app.py) — required so a restyle held back ONLY by the fade (no flow
+        animation involved, e.g. a plain rotation from an idle screen) isn't stranded
+        pending forever."""
         if not self._deferred_restyle_pending:
             return
         mw = self.main_window
@@ -884,6 +901,10 @@ class ThemeManager(QObject):
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
                          f"DEFERRED (flow_anim still Running)")
             return  # animation still running — stay armed; _flow_anim.finished re-fires us
+        if getattr(self, '_fade_in_flight', False):
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
+                         f"DEFERRED (fade still in flight)")
+            return  # fade still running — stay armed; _on_fade_finished re-fires us
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
                      f"proceeding via NATURAL path (flow_anim.finished or no-anim turn)")
         self._flush_deferred_restyle_now()

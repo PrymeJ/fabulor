@@ -294,6 +294,13 @@ class PlayerInterface:
     def load_cover_art(self, path): self._main._load_cover_art(path)
 
 
+# Sentinel for _pending_cover_pixmap, distinguishing "revert to pool theme is pending"
+# (_show_no_cover_state's book-switch case) from "apply this cover's theme is pending"
+# (a real QPixmap) and "nothing pending" (None). A plain object() so `is` comparisons
+# are unambiguous — never compares equal to None, a QPixmap, or anything else.
+_PENDING_CLEAR_COVER_THEME = object()
+
+
 class MainWindow(QWidget):  # QWidget, not QMainWindow
     naming_pattern_changed = Signal(str)
     scroll_mode_changed = Signal(str)
@@ -1668,20 +1675,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _apply_pending_cover_theme(self):
         pixmap = getattr(self, '_pending_cover_pixmap', None)
+        _kind = "clear" if pixmap is _PENDING_CLEAR_COVER_THEME else ("cover" if pixmap is not None else "none")
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
-                     f"ENTRY has_pixmap={pixmap is not None}")
-        if not pixmap:
+                     f"ENTRY pending={_kind}")
+        if pixmap is None:
             return
         self._pending_cover_pixmap = None
         # Chain through both sliders' when_animations_done before starting the
         # theme fade. The chapter progress slider is punch-through-exposed during
         # theme fades; if its value animation (animate_to) is still running when
         # the fade overlay is captured, the moving fill produces a ghost image.
-        # Waiting for both sliders to settle eliminates the overlap.
+        # Waiting for both sliders to settle eliminates the overlap. Covers BOTH the
+        # has-cover case (apply_cover_theme(pixmap)) and the no-cover case
+        # (clear_cover_theme(), reverting to the pool theme — see the
+        # _PENDING_CLEAR_COVER_THEME sentinel note at _show_no_cover_state).
         def _apply():
-            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
-                         f"_apply() firing (both sliders settled) — calling apply_cover_theme")
-            self.theme_manager.apply_cover_theme(pixmap)
+            if pixmap is _PENDING_CLEAR_COVER_THEME:
+                logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                             f"_apply() firing (both sliders settled) — calling clear_cover_theme")
+                self.theme_manager.clear_cover_theme()
+            else:
+                logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
+                             f"_apply() firing (both sliders settled) — calling apply_cover_theme")
+                self.theme_manager.apply_cover_theme(pixmap)
         def _after_progress():
             if hasattr(self, 'chapter_progress_slider') and hasattr(self.chapter_progress_slider, 'when_animations_done'):
                 logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _apply_pending_cover_theme: "
@@ -2652,8 +2668,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         source (no active/fallback path) and when extract_cover found nothing.
         The two former call sites were byte-for-byte identical."""
         self.current_cover_pixmap = QPixmap()
-        self._pending_cover_pixmap = None
-        self.theme_manager.clear_cover_theme()
+        # Same stand-down _apply_main_cover already has for the has-cover case: if a
+        # panel is still visible (including still mid-slide-closing, e.g. the book-switch
+        # flow's hide_all_panels() call, whose animation is often still finishing when
+        # _load_cover_art runs off the queued singleShot(0)), defer the theme revert
+        # instead of calling clear_cover_theme() immediately. Without this, switching TO
+        # a placeholder (no-cover) book had NO stand-down at all — clear_cover_theme()
+        # always fired synchronously, unlike apply_cover_theme()'s already-deferred path,
+        # so only that one direction of a book switch could land the ~150-300ms
+        # _apply_stylesheets/_flush_deferred_restyle_now cost mid-flow-animation (found
+        # 2026-07-18 via a live, direction-specific repro: cover->placeholder stuttered,
+        # placeholder->cover did not — see NOTES.md). _PENDING_CLEAR_COVER_THEME is a
+        # distinct sentinel (not a pixmap) so _apply_pending_cover_theme's drain knows to
+        # call clear_cover_theme() instead of apply_cover_theme() for this case.
+        if self.panel_manager and self.panel_manager.is_any_panel_visible():
+            self._pending_cover_pixmap = _PENDING_CLEAR_COVER_THEME
+        else:
+            self.theme_manager.clear_cover_theme()
+            self._pending_cover_pixmap = None
         self._show_cover_placeholder()
         self.metadata_label.show()
         self.metadata_label.setText(
