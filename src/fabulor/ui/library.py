@@ -2083,7 +2083,25 @@ class BookDelegate(QStyledItemDelegate):
         # Reset the rendered-placeholder cache so stale-color pixmaps don't survive a theme switch.
         # Assigned (not .clear()'d) so the first call from __init__ works before the attr exists.
         self._placeholder_cache: dict = {}  # (color, w, h) → QPixmap
-        self._sized_cover_cache: dict = {}  # (book_id, w, h) → QPixmap, pre-scaled to one cell size
+        # _sized_cover_cache is intentionally NOT reset here. Unlike _placeholder_cache (which
+        # caches theme-COLORED pixmaps, keyed by color), this caches real cover ART pre-scaled to
+        # a cell size — nothing about a theme change affects how a cover image should be scaled,
+        # and _get_sized_cover's key ((book_id, dev_w, dev_h)) already re-derives from the live
+        # DPR at lookup time, so even a screen/DPR change can't return a stale entry. Wiping it
+        # here was a defensive copy-paste from the (legitimate) _placeholder_cache reset above,
+        # never actually needed. Confirmed live (2026-07-18): with cover-art-based theme mode ON,
+        # every book switch calls apply_cover_theme -> a freshly-jittered theme_dict (see
+        # cover_theme.py's per-call color jitter) that never equals _active_display_theme, so
+        # _on_theme_changed's no-op guard never short-circuits and update_progress_bar_theme (via
+        # _apply_stylesheets_deferred) ran on every such switch — wiping every book's warmed
+        # sized-cover cache right before the library panel's next open (flush_deferred_restyle
+        # runs synchronously at the top of every panel-open flow), forcing a synchronous
+        # main-thread LANCZOS re-scale for every visible cell on that first open. Fixed themes
+        # didn't reproduce this because a same-name theme hits the no-op guard and this method
+        # never re-runs. Only initialized here (not reset) so BookDelegate.__init__'s first call
+        # still creates the dict before any lookup.
+        if not hasattr(self, '_sized_cover_cache'):
+            self._sized_cover_cache: dict = {}  # (book_id, w, h) → QPixmap, pre-scaled to one cell size
         self._color_elapsed  = qc(theme.get('library_elapsed',    '#cccccc'))
         self._color_total    = qc(theme.get('library_total',      '#cccccc'))
         self._color_pct      = qc(theme.get('library_percentage', '#aaaaaa'))
