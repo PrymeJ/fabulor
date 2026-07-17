@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-17/18 — Four theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), _sized_cover_cache wiped on every cover-theme apply, and a no-cover book-switch race that could interrupt its own theme fade (branch `feat/narrow-apply-stylesheets`)
+## Session Summary — 2026-07-17/18 — Five theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), _sized_cover_cache wiped on every cover-theme apply, a no-cover book-switch race that could interrupt its own theme fade, and excluding a book while a panel is open snapping the theme instead of deferring it (branch `feat/narrow-apply-stylesheets`)
 
 **Both fixes are committed and live-verified. Full technical writeup: NOTES.md's 2026-07-17/18
 entries. This is the short version.**
@@ -65,7 +65,28 @@ Live-verified smooth. Full trace: NOTES.md's 2026-07-18 entry — includes a rea
 correction (an initial "the deferral waits, that's the differentiator" hypothesis was directly
 challenged by the user and disproven by the log timestamps before the actual race was found).
 
-**Two real mid-session misses worth recording, not just the eventual fixes:**
+**Bug 5 — excluding the currently-playing book while a panel was open snapped the theme instead of
+deferring it, and exposed a second, more fundamental re-entrancy gap (`c281ee3`).** Repro: open
+Book Detail for the playing book (Library or Stats), cover-theme ON, exclude it — the cover-gone
+revert-to-pool-theme fired immediately into the still-open (or, for library context, still
+mid-slide-closing) panel, snapping instead of fading. Root cause: `_load_cover_art`'s
+empty-`file_path` teardown branch called `clear_cover_theme()` directly, with no panel-visibility
+check — unlike the book-switch call site already fixed in Bug 4. Fixed per direct instruction by
+mirroring the existing `_rotate_theme`/`_fire_pending_rotation` panel-open deferral pattern exactly
+(new `request_clear_cover_theme()` + `_pending_clear_cover_theme` flag, both can be armed alongside
+a pending rotation). That surfaced a second, deeper gap, found by directly checking rather than
+assuming: `_on_theme_changed` never protected against a re-entrant fade — only against panel slide
+animations — so two independently-queued theme actions releasing close together could interrupt
+each other. Fixed with a second `elif`-branched guard on `_fade_in_flight`, resumed via
+`_fade_anim.finished` (not the existing flat 700ms retry timer, which is shorter than the 750ms
+fade and would retry too early — checked before implementing, not assumed). Both resume paths
+re-enter through a full `_on_theme_changed` call rather than applying directly, so ownership of a
+deferred call transfers correctly if the other guard condition becomes true in the meantime — a
+race-safety property designed for explicitly after the user flagged the seam directly, not left as
+a residual risk. Live-verified smooth in both library and stats contexts. Full trace: NOTES.md's
+2026-07-18 entry.
+
+**Three real mid-session misses worth recording, not just the eventual fixes:**
 1. The very first attempt at fixing Bug 1 (gating the scan) was implemented, tested narrowly
    (worst_gap numbers only), and declared clean — and immediately turned out to have caused Bug 2,
    a real, live-observed regression (empty library panel) that the narrow check never would have
@@ -75,6 +96,13 @@ challenged by the user and disproven by the log timestamps before the actual rac
    user's direct challenge ("why doesn't the other direction wait, if both paths use the same
    code?") forced a re-check that disproved it. The real mechanism (a race between two independent
    animations) was only found after that correction.
+3. Bug 5's first fix draft ("fire both pending flags, clear first") would have shipped with the
+   `_on_theme_changed` re-entrancy gap still open, and the naive follow-up ("just reuse
+   `_panel_guard_timer` for the fade case too") would have shipped with a real cadence mismatch
+   (700ms retry vs. 750ms fade). Both were caught by the user asking a direct, specific question
+   before implementation rather than after — "does it already respect `_fade_in_flight`?", "is the
+   retry timer still appropriate now that it guards two different things?" — not by testing after
+   the fact.
 
 ---
 

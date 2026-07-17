@@ -1,3 +1,81 @@
+## FIXED and live-verified: excluding a book while a panel was open snapped the theme instead of deferring it; exposed a second, more fundamental _on_theme_changed re-entrancy gap (2026-07-18)
+
+Repro: open Book Detail for the currently-playing book (from Library or Stats), cover-art-based
+theme mode ON, exclude it. The cover disappears, so the theme must revert to the pool theme — but
+that revert fired immediately, unconditionally, while the panel was still visibly open (or, for the
+library context, still mid-slide-closing — see below), producing a visible snap instead of the
+normal fade. Commit `c281ee3`.
+
+**Root cause:** `_on_book_detail_removed` → (currently-playing book) → `_on_book_removed` →
+`_load_cover_art("")`. The empty-`file_path` teardown branch of `_load_cover_art` called
+`self.theme_manager.clear_cover_theme()` directly and unconditionally — no panel-visibility check
+at all. This is the same method whose book-SWITCH call site (`_show_no_cover_state`) already got a
+stand-down in the previous fix (`1025b0a`) — but this teardown call site was deliberately left
+untouched at the time, since it's not a book-switch (no flow animation to protect against). It
+needed its own guard for a different reason entirely: a panel can still be open when a book is
+excluded.
+
+**Confirmed via direct code read, not assumed from the description:** `_close_book_detail_flow`
+(`panels.py`) is NOT synchronous — it starts an animated slide-out and only calls
+`book_detail_panel.hide()` later, inside the animation's `finished` callback. So even for the
+library context, where `_on_book_detail_removed` calls `_close_book_detail_flow()` before
+`_load_cover_art("")` runs, the panel was still `isVisible() == True` (still mid-slide) at the
+moment `clear_cover_theme()` fired. Both the library-context and stats-context repros are real —
+confirmed by reading the code, not by testing only one and assuming the other behaved the same.
+
+**Fix, mirroring an existing pattern exactly (per direct instruction — do not invent new deferral
+logic):** `_rotate_theme` already defers when a panel is open (`_pending_rotation = True`, resumed
+by `PanelManager._notify_panel_closed()` → `_fire_pending_rotation()` → a 3s-after-close
+`QTimer.singleShot`). Added `ThemeManager.request_clear_cover_theme()` with the identical
+panel-visibility check and a parallel `_pending_clear_cover_theme` flag; extended
+`_fire_pending_rotation` with a second, independent check (not `elif` — a rotation and a pending
+clear can legitimately both be armed at once, e.g. a rotation was already queued when the book got
+excluded too). `app.py`'s `_load_cover_art` empty-path branch now calls
+`request_clear_cover_theme()` instead of `clear_cover_theme()` directly. The book-switch call site
+(`_show_no_cover_state`) is untouched — different mechanism, already correct.
+
+**Second, more fundamental gap, found by directly checking rather than assuming — asked explicitly:
+"does `_do_rotate`/`_on_theme_changed` already respect `_fade_in_flight`?"** Checked: **no.**
+`_on_theme_changed` only guards against panel SLIDE animations (`_any_panel_animating()`); it
+unconditionally stops and restarts `_fade_anim` regardless of whether one is already running
+(`if self._fade_anim.state() == QPropertyAnimation.Running: self._fade_anim.stop()`). This is a
+real, pre-existing gap, not introduced by this fix — but this fix is the first thing to reliably
+queue two independently-scheduled theme-apply actions (a pending rotation and a pending
+cover-theme clear, both released from the same panel-close event) capable of landing within 750ms
+of each other on purpose. Without addressing it, "fire the clear, then fire the rotation" would
+produce exactly the visible interruption this whole fix exists to prevent — between two of the
+app's own deferred actions this time, instead of between a theme call and a flow animation.
+
+**Fix for the re-entrancy gap:** gave `_on_theme_changed` a second, independent guard branch for
+`_fade_in_flight`, structured as `if _any_animating: ... elif _fade_in_flight: ...` — `elif`, not
+two independent `if`s, so a single call is claimed by exactly one defer-and-resume mechanism, never
+both (which could otherwise fire it twice). **Retry-cadence check, raised directly before
+implementing:** `_PANEL_ANIM_GUARD_MS` (700ms, the existing flat retry interval) is SHORTER than
+`_THEME_SWITCH_FADE_MS` (750ms) — reusing it verbatim for the fade case would almost always retry
+~50ms too early, forcing a second full 700ms wait (up to ~1400ms total instead of landing right at
+750ms). So the fade branch does NOT reuse `_panel_guard_timer` — it stashes the call
+(`_pending_fade_call`) and resumes via `_fade_anim`'s own `finished` signal
+(`_on_fade_finished`, already touched by the previous fix's `_run_deferred_restyle` re-trigger),
+zero-delay and event-driven instead of polled.
+
+**Race safety between the two mechanisms, designed for explicitly (raised directly: "make sure the
+stash-and-resume logic and the flat-retry logic can't both claim ownership of the same pending
+call, or fire it twice"):** both resume paths re-enter through a FULL re-call to
+`_on_theme_changed` — never a direct apply. This is the load-bearing property: it already held for
+the pre-existing panel-animation retry (`_panel_guard_timer.timeout.connect(lambda:
+self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated))`), and the new fade-branch
+resume follows the identical shape. Consequence: if a panel animation starts while a call is
+stashed waiting on the fade, `_on_fade_finished`'s resume re-enters `_on_theme_changed`, which
+re-checks `_any_animating` fresh and correctly falls into the panel-retry branch instead — neither
+mechanism needs to know about the other, because the re-check at resume time determines ownership
+fresh each time, not whichever branch originally deferred the call.
+
+Live-verified: excluding the playing book from Book Detail (both library and stats contexts),
+cover-theme ON, no longer snaps — theme now fades smoothly after the panel closes. `pytest tests/
+-q` (excluding the already-known-stale `test_cover_theme_pending.py`): 208 pass.
+
+---
+
 ## FIXED and live-verified: the no-cover book-switch path had no stand-down at all, and the theme fade it starts could race the next book's own flow animation (2026-07-18)
 
 Found via a directional live repro during the rapid-switch verification pass: switching from a
