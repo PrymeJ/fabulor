@@ -118,6 +118,13 @@ class ThemeManager(QObject):
 
         # Rotation Timer
         self._pending_rotation = False
+        self._pending_clear_cover_theme = False  # set by request_clear_cover_theme while a panel is open
+        # Stashed _on_theme_changed call, set only by the _fade_in_flight guard branch
+        # (never by the _any_animating branch, which uses _panel_guard_timer instead).
+        # Resumed by _on_fade_finished via a full re-call to _on_theme_changed — see
+        # that guard branch's comment for why a full re-call (not a direct apply) is
+        # required for race safety between the two defer-and-resume mechanisms.
+        self._pending_fade_call = None
         self.rotation_timer = QTimer()
         self.rotation_timer.timeout.connect(self._rotate_theme)
         self.set_rotation_interval(self.config.get_theme_rotation_interval())
@@ -188,6 +195,16 @@ class ThemeManager(QObject):
         # _fade_in_flight (no flow animation running at all) must be re-checked
         # here, or it stays pending forever. See _run_deferred_restyle's docstring.
         self._run_deferred_restyle()
+        # Resume a theme-change call that arrived while this fade was still running
+        # (_on_theme_changed's _fade_running guard branch). A FULL re-call, not a
+        # direct apply — _on_theme_changed re-checks _any_animating fresh, so if a
+        # panel animation started in the meantime, it correctly re-defers into the
+        # panel_guard_timer branch instead of applying here. See the race-safety
+        # note on that guard block for why this matters.
+        if self._pending_fade_call is not None:
+            pending = self._pending_fade_call
+            self._pending_fade_call = None
+            self._on_theme_changed(*pending)
 
     def snap_theme_forward(self):
         if not hasattr(self, '_fade_anim'):
@@ -337,9 +354,32 @@ class ThemeManager(QObject):
             self.rotation_timer.start(interval * 60 * 1000)
 
     def _fire_pending_rotation(self):
+        # Two independent checks, not elif: a rotation AND a cover-theme clear can both
+        # be pending at once (e.g. a rotation was already queued when the book got
+        # excluded too) — each fires its own 3s-after-close timer. _on_theme_changed's
+        # own _any_animating/_fade_in_flight guard (not this method) is what prevents
+        # the two resulting fades from ever overlapping if they land close together.
         if self._pending_rotation:
             self._pending_rotation = False
             QTimer.singleShot(3000, self._rotate_theme)
+        if self._pending_clear_cover_theme:
+            self._pending_clear_cover_theme = False
+            QTimer.singleShot(3000, self.clear_cover_theme)
+
+    def request_clear_cover_theme(self):
+        """Revert to the pool theme, deferring like _rotate_theme if a panel is open —
+        used when a book's cover disappears (excluded/removed) while a panel is still
+        showing, so the revert doesn't visibly snap into an open panel. Mirrors
+        _rotate_theme / _fire_pending_rotation exactly; do not invent a second
+        deferral mechanism. Call sites: app.py's _load_cover_art empty-file_path
+        (teardown) branch only — the book-SWITCH no-cover case
+        (_show_no_cover_state) already has its own, different, correct deferral
+        (_pending_cover_pixmap / _apply_pending_cover_theme) — do not route that
+        call site through this method too."""
+        if self.main_window.panel_manager and self.main_window.panel_manager.is_any_panel_visible():
+            self._pending_clear_cover_theme = True
+            return
+        self.clear_cover_theme()
 
     def apply_full_pass(self, theme_name, hover=False):
         """Apply BOTH the fast visible-surface pass and the deferred invisible-surface
@@ -401,11 +441,19 @@ class ThemeManager(QObject):
         _any_animating = bool(
             self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating()
         )
+        _fade_running = getattr(self, '_fade_in_flight', False)
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
-            f"any_panel_animating={_any_animating}"
-            + (" -> queuing deferred retry" if _any_animating else "")
+            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running}"
+            + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating
+               else " -> stashing for fade completion" if _fade_running else "")
         )
+        # if/elif, NOT two independent ifs: a single call must only ever be claimed by
+        # ONE of the two defer-and-resume mechanisms below, never both (which could fire
+        # it twice). Both mechanisms resume via a FULL re-call to _on_theme_changed
+        # (never a direct apply) — see each branch's comment — so ownership correctly
+        # transfers to whichever condition is still true at resume time; neither branch
+        # needs to know about the other.
         if _any_animating:
             self._panel_guard_timer.stop()
             try:
@@ -418,6 +466,19 @@ class ThemeManager(QObject):
                 lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated)
             )
             self._panel_guard_timer.start()
+            return
+        elif _fade_running:
+            # A theme fade is already in flight. A flat-timer retry (like the panel-
+            # animation branch above) would be a real mismatch here — _PANEL_ANIM_GUARD_MS
+            # (700ms) is SHORTER than _THEME_SWITCH_FADE_MS (750ms), so a blind retry would
+            # almost always fire ~50ms too early and need a second full wait, taking up to
+            # ~1400ms instead of landing right at 750ms. Resume via the fade's own
+            # `finished` signal instead (_on_fade_finished re-calls _on_theme_changed with
+            # these stashed args) — zero polling delay, fires exactly when it's safe.
+            # last-write-wins if something is already stashed (mirrors _schedule_deferred_
+            # restyle's own coalescing comment elsewhere in this file — nothing invisible
+            # was shown in between, so only the latest request matters).
+            self._pending_fade_call = (theme_name, save, fade_ms, hover, user_initiated)
             return
 
         self._active_display_theme = theme_name

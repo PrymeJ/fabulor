@@ -2627,7 +2627,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._cover_placeholder.clear()
             self.cover_art_label.hide()
             self.metadata_label.hide()
-            self.theme_manager.clear_cover_theme()
+            # request_clear_cover_theme (not clear_cover_theme directly): this teardown
+            # path can run while a panel is still visibly open/animating-closed (e.g.
+            # excluding the playing book from Book Detail opened via Stats, or from the
+            # Library — _close_book_detail_flow's slide-out is not synchronous, so the
+            # panel is still isVisible()==True when _on_book_removed reaches here).
+            # Mirrors _rotate_theme's existing panel-open deferral — see
+            # ThemeManager.request_clear_cover_theme.
+            self.theme_manager.request_clear_cover_theme()
             return
         book = self.db.get_book(file_path)
         active = self.db.get_active_cover(file_path)
