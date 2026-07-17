@@ -1,3 +1,70 @@
+## Session Summary — 2026-07-16/17 — Two book-progress-loss bugs fixed and live-verified; library-panel stutter investigated at length and left INCONCLUSIVE (branch `feat/narrow-apply-stylesheets`)
+
+**Status: partial closure only. Do not read this as "the flow-animation/theme-apply work is
+done."** Full status bar and rationale for keeping the umbrella issue open: TODO.md's
+`[UMBRELLA ISSUE, STAYS OPEN, 2026-07-16/17]` entry; full technical writeup for everything below:
+NOTES.md's 2026-07-16/17 entry. This summary is the short version; treat NOTES.md as authoritative
+if the two ever disagree.
+
+**What this session actually closed (2 of 4 standing criteria):** repeatedly switching away from
+and back to a book in rapid succession could silently reset its saved `progress` to a near-zero
+value. Two independent write-path bugs caused this, both fixed and both **live-verified against
+their specific trigger, repeatedly** (not just unit-tested):
+- **Non-VT/same-file restore transient** — `_sync_persistence` (`app.py`) had no seek-state guard
+  at all, so a post-switch mpv transient (near-zero position reported for a few ticks before a
+  restore-seek settles) got saved to config and then laundered permanently into the DB on the next
+  load (`_restore_position`'s `if config_pos > 0: db.update_progress(...)` pattern). Fixed with a
+  monotonic guard mirroring `SessionRecorder.update_furthest_position`'s "only advances" pattern.
+  The first implementation had a real bug (seeded its floor at `0.0` instead of the incoming book's
+  actual saved progress, defeating its own guard condition) — caught only by insisting on a live
+  re-test after the fix "looked done" from passing unit tests alone.
+- **VT cross-file restore rendezvous race** — `_on_file_loaded`'s VT branch only issued the
+  restore-seek if a restore was already stashed at the moment it ran; under main-thread contention
+  it could run first, find nothing, and silently drop the restore forever for that book-load. Fixed
+  with an order-independent rendezvous flag (`Player._vt_file_loaded_awaiting_restore`) that
+  whichever write site runs first sets, and whichever runs second consumes — no assumption about
+  ordering either way. A first attempt at this fix (making `_on_vt_file_switched` consume a
+  late-arriving restore as a fallback) was **rejected during design review**, before
+  implementation, for assuming the exact kind of ordering-fragility that caused the bug in the
+  first place; the design was corrected to be genuinely order-independent before any code was
+  written. Live-verified: a rapid-switching session hit the real failure-mode ordering dozens of
+  times naturally, every occurrence resolved cleanly via trace.
+- A DB sweep found 20 books already carrying this bug's fingerprint values from before this
+  session — pre-existing, not newly introduced. Reset to `0.0` (the schema default); an earlier
+  attempt to use `NULL` as an "unset" sentinel was wrong and caused two live crashes, corrected
+  immediately.
+
+**What this session did NOT close: the library-panel stutter on open (criterion 4).** Investigated
+across three rounds — a theme-apply-timing hypothesis disproven directly by trace; a cache-miss
+hypothesis (cold `_sized_cover_cache` forcing synchronous LANCZOS resize during paint) that an
+earlier pass in this same session **wrongly wrote up as "root cause found"** after one paired
+profiler comparison; then a direct correlation test (scripted repro, run twice, once against a
+reconstructed pre-narrowing baseline with none of this session's code) that **failed to reproduce
+the claimed correlation either time**. The user reproduced the real stutter live, twice, then could
+not reproduce it again on an identical repro shortly after. **This is genuinely inconclusive, not
+a soft "probably fine"** — NOTES.md contains an explicit retraction of the over-confident middle
+round; do not resume this by trusting that retracted claim. Confirmed independent of tonight's two
+fixes (neither touches `library.py`; the stutter reproduced on the pre-narrowing baseline too).
+
+**Process note worth carrying forward:** this session had two separate proposed fixes rejected or
+walked back before being trusted — the VT rendezvous design (caught in review, before
+implementation) and the stutter's cache-miss theory (caught by insisting on a direct correlation
+test instead of accepting one suggestive profiler comparison). Both corrections are preserved in
+NOTES.md rather than quietly overwritten, on purpose — the record of "this looked confirmed and
+wasn't" is itself the useful part for whoever picks the stutter back up.
+
+**All temporary instrumentation stays in the tree, disabled by default:** `[VT-SEEK-TRACE]`,
+`[PERSIST-TRACE]`, `[STUTTER-TRACE]` debug logging, and the `FABULOR_STUTTER_PROFILE=1`-gated
+`cProfile` bracket in `panels.py`. None of it should be stripped until all four umbrella criteria
+hold simultaneously in one verified session.
+
+**Files touched:** `app.py`, `player.py`, `ui/panels.py`, `ui/theme_manager.py`,
+`tests/test_vt_file_switched_guard.py` (reverted to original form), new
+`tests/test_vt_restore_race.py`. Design record for the rejected-then-corrected VT rendezvous fix:
+`plans/b-and-it-s-not-glittery-mccarthy.md`.
+
+---
+
 ## Session Summary — 2026-07-14 — VT restore-on-load fix, general `file_switched` race fix, and same-file missing-file fix (branch `fix/vt-restore-and-chapter-epsilons`, NOT yet merged)
 
 **Branch:** `fix/vt-restore-and-chapter-epsilons`, off `main` at `b296847`. **Status: three fixes

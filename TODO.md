@@ -6,6 +6,35 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[UMBRELLA ISSUE, STAYS OPEN, 2026-07-16/17] Flow-animation/theme-apply narrowing work is NOT
+  complete.** Full writeup: NOTES.md 2026-07-16/17 entry. This is ONE open item, not a checklist —
+  do not read the status below as separable sub-tasks that can be closed one at a time; closure
+  requires ALL FOUR of the following true simultaneously, live-verified in one session:
+  1. App launch smooth (flow animation, no stutter), cover-based theme ON and OFF, VT and non-VT.
+  2. Book-switch smooth (flow animation, no stutter), cover-based theme ON and OFF, VT and non-VT.
+  3. No book loses saved progress under rapid repeated switching, either book type.
+  4. Library panel does not stutter on open.
+  Current status: (1)/(2)/(3) — the two progress-loss bugs behind criterion 3 are fixed and
+  live-verified (non-VT restore transient in `_sync_persistence`; VT cross-file restore rendezvous
+  race, `Player._vt_file_loaded_awaiting_restore`) — see the commit and NOTES.md for both. (4) —
+  library-panel stutter on open — is **INCONCLUSIVE, not root-caused**. A cache-miss hypothesis
+  (cold `_sized_cover_cache` forcing synchronous LANCZOS resize during paint,
+  `BookDelegate._get_sized_cover`/`_lanczos_qimage` in `library.py`) looked confirmed on one paired
+  profiler comparison, then failed a direct correlation test twice — including once against a
+  reconstructed pre-narrowing baseline (clean `HEAD` before any of this session's work). The user
+  reproduced the real stutter twice, then could not reproduce it again on an identical repro. See
+  NOTES.md for the full three-round trail and the explicit retraction of the earlier "root cause
+  found" claim — do not resume this by re-trusting that claim.
+  Rationale for treating this as one open item rather than crediting the fixed sub-parts as partial
+  closure: touching the flow-animation/theme-apply timing already produced a previously-absent
+  failure mode this session (the progress-reset bugs' contention window widening enough to become
+  reproducible) — fixing (3) does not establish that (1)/(2)/(4) are now safe, and (4) in particular
+  remains an open, untraced risk of the same kind. All `[VT-SEEK-TRACE]`/`[PERSIST-TRACE]`/
+  `[STUTTER-TRACE]` instrumentation and the `FABULOR_STUTTER_PROFILE`-gated profiler in `panels.py`
+  stay in place until all four criteria hold at once. Blocked on: finding what actually correlates
+  with the library stutter (profiler wall-clock CPU time in the open-animation bracket has not, so
+  far, been shown to track it) before any fix can even be proposed.
+
 - **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
   stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
   RANK-1 fix; not investigated, not designed, out of scope for now.** Raised by Pryme while the

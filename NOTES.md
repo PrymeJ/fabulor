@@ -1,3 +1,240 @@
+## Book progress silently resetting to ~0 on rapid book-switch (FIXED, live-verified — two bugs), plus a library-panel stutter (INCONCLUSIVE, not root-caused) — UMBRELLA ISSUE STAYS OPEN (2026-07-16/17)
+
+**Status, stated plainly and not to be softened in a future pass: this is NOT closed.** Two
+specific write-path bugs (below, "Bug 1" and "Bug 2") each have a live-verified fix — meaning a
+fix was implemented, a live trace was pulled afterward, and the trace showed the fix's own
+mechanism actually engaging correctly against the real trigger, repeatedly, not just "tests pass."
+That is a real result and is recorded as such. But the standing bar for calling ANY of this
+"fixed" — set explicitly, not a default — is:
+
+1. App launch is smooth (flow animation, no stutter) with cover-based theme ON and OFF, for both
+   VT and non-VT books.
+2. Book-switch is smooth (flow animation, no stutter) with cover-based theme ON and OFF, for both
+   VT and non-VT books.
+3. No book loses saved progress, under rapid repeated switching, for either book type.
+4. The library panel does not stutter on open.
+
+**None of these four are true simultaneously right now.** A live-testing session the same night
+Bug 1 and Bug 2 were fixed also surfaced (4): the library panel stutters on open. This was
+investigated at length (see "Library-panel stutter" below) across three rounds — one theme-apply
+hypothesis disproven by trace, one cache-miss hypothesis that looked confirmed on a single paired
+comparison but failed a direct correlation test twice, including against a reconstructed
+pre-narrowing baseline. **Net result: INCONCLUSIVE, not root-caused.** The user reproduced the
+stutter directly twice, but a later identical repro produced none — it is real and intermittent,
+not yet tied to any specific mechanism the investigation tested. Read the full entry below before
+resuming this — it corrects an earlier over-confident claim within the same investigation, not
+just a stale one.
+
+**Why this matters beyond "there's one more thing to fix":** the whole reason this session's chain
+started (drift/epsilon → decided to fix flow animation first → that surfaced the progress-reset
+bugs → fixing the progress-reset bugs' investigation coincided with the library stutter
+reappearing) is that touching the flow-animation/theme-apply timing has now TWICE produced a new,
+previously-absent failure mode elsewhere (the progress-reset bugs' contention window widening, and
+now this stutter). There is no standing reason yet to believe the NEXT fix in this area won't do
+the same. Do not mark Bug 1/Bug 2/the stutter as independently "done" in a way that lets a future
+session (or a future summary) treat the overall issue as closed — it closes only when all four
+criteria above hold at once, verified live, in the same session that made the last change.
+
+**Trigger:** repeatedly switching away from and back to a book in rapid succession (no playback,
+no manual seeking required) can reset its saved `progress` to a near-zero value. First caught by
+the user mid-session on `Infinite Jest` (M4B/CUE); the investigation initially treated this as a
+narrow M4B correctness regression surfaced by the unrelated `_apply_stylesheets` narrowing work in
+progress this session (see the RANK-1/RANK-2 entry above) — that framing was too narrow. Confirmed
+live tonight to also strike VT (multi-file) books, via a different write path than initially
+assumed, and confirmed to be pre-existing (a DB sweep found 20 books already sitting at
+near-zero-progress fingerprint values, `0.05` or `~1e-8`, from before tonight's fix work began —
+see below).
+
+**Bug 1 (FIXED, live-verified): `_sync_persistence`'s 200ms-tick write had no seek-state guard at
+all.** `_sync_persistence` (`app.py`) writes `self.config.set_last_position(current_file, pos)`
+every 0.1% of duration change, gated only on `is_slider_dragging`/`_switch.in_deadzone` — nothing
+about whether a restore-seek was still in flight. On a book-switch, `_restore_position` issues a
+seek to the saved position, but mpv reports a transient near-zero `time_pos` for several 200ms
+ticks before that seek settles (`0.0`, then a residual like `1.03e-08`). `_sync_persistence` was
+writing that transient straight to config — and `_restore_position` (`app.py`) copies
+`config.get_last_position` into the DB on every load (`if config_pos > 0: db.update_progress(...)`),
+so a bad transient written once gets laundered into permanent DB state on the very next load. Fix:
+a monotonic guard, `if self.player.is_seeking and pos < self._last_saved_pos: return`, mirroring
+`SessionRecorder.update_furthest_position`'s existing "only advances" pattern. Deliberately NOT a
+plain `is_seeking` guard (rejected up front, before any fix attempt) — if `is_seeking` ever strands
+`True` (a documented failure mode elsewhere in this codebase), a plain guard would stop saving
+entirely; the monotonic form only skips writes that would regress, so it can never fully strand.
+
+**First implementation of the guard had a baseline bug, caught only by insisting on a live re-test
+after the guard already "looked done."** `_last_saved_pos` was reset to `0.0` on every book-switch
+(`_on_book_selected_from_library`), same as the pre-existing `_last_saved_pct = -1` reset it sits
+next to. That seemed like the obvious mirror of the existing pattern — it was wrong. Since `0.0` is
+never less than `0.0`, the guard's own precondition (`pos < _last_saved_pos`) could never be True
+during the exact window right after a switch — the window the guard exists to protect. Confirmed
+live: the guard fired zero times across an entire test session using this reset, and the very next
+manual test reproduced the reset again, with trace logging showing `WRITE ... pos=1.03e-08
+last_saved_pos(prev)=0.0`. Fix: seed `_last_saved_pos` from the INCOMING book's own DB-stored
+progress at switch time (`db.get_book(path).progress`) instead of `0.0` — the real floor
+`_restore_position` is about to seek to. Re-tested live afterward; trace showed the guard correctly
+firing (`SKIP (monotonic guard) ... pos=0.0 last_saved_pos=92679.23`) on the next attempted
+transient write for the same book. **This is the reason the fix was not reported as done after the
+first implementation + passing unit tests** — the unit tests exercised the guard's logic in
+isolation and could not have caught a wrong real-world seed value; only a live trace could, and did.
+
+**A related, unguarded write path was found but is NOT (yet) implicated.**
+`_save_current_progress` (`app.py`) does a synchronous, completely unguarded
+`db.update_progress(current_file, player.time_pos)` at the top of every book-switch handler, before
+`current_file` is reassigned to the new book. Every live trace across both test sessions showed
+this path reading healthy, correct values on every call (it runs before the new book's `load_book`
+touches any player state, so there's no transient window at this call site under the switch pattern
+tested). Left as-is — no fix without evidence it's needed; flagging so a future investigator doesn't
+assume this path is safe by design rather than "safe in every case observed so far."
+
+**Bug 2 (root cause pinned via targeted live trace; fix implemented and LIVE-VERIFIED against its
+specific trigger, repeatedly — but see the top-of-entry status note: this does not make the
+umbrella issue "fixed").** VT cross-file restore hit `_sync_persistence` with `is_seeking=False`
+and a near-zero transient `pos`, so Bug 1's guard never engaged. Confirmed via two independent live
+reproductions, both VT (multi-file) books, both with the identical signature:
+```
+_sync_persistence: WRITE current_file='...Colorless Tsukuru...' pos=0.0102... is_seeking=False last_saved_pos(prev)=13830.898284
+_sync_persistence: WRITE current_file='...Sometimes a Great Notion...' pos=7.28e-07 is_seeking=False last_saved_pos(prev)=42884.981352
+```
+**Root cause, pinned via targeted `[VT-SEEK-TRACE]` instrumentation (added specifically for this,
+covering every write to `is_seeking`/`_seek_target`/`_vt_restore_pending` in the VT restore path,
+with `time.perf_counter()` ordering):** `_on_file_loaded`'s VT branch (`player.py`) only issues the
+restore-seek if `_vt_restore_pending` is already set at the moment it runs. Under main-thread
+contention, `_on_file_loaded` (driven by mpv's own event) can fire BEFORE `_restore_position`
+(queued off `book_ready`/`_on_file_ready`) has called `defer_vt_restore` — the branch found `None`,
+logged "nothing to consume," and never issued the seek. Because no seek was issued, `is_seeking`
+was never set `True`, so nothing downstream (including `_on_vt_file_switched`'s
+`_seek_target is None` clear-gate) could tell a restore was still owed, and `_sync_persistence`
+went on to persist the near-zero file-0-start position over the real saved one.
+
+**A first fix attempt was rejected during design review, before implementation, for assuming an
+ordering that wasn't structural** (see the design-review exchange for the full reasoning — kept
+here only as the standing lesson): it made `_on_vt_file_switched` consume a late-arriving
+`_vt_restore_pending` as a fallback, which only worked because in the one trace captured,
+`_restore_position` happened to run before that handler's `QueuedConnection` slot fired. That's an
+emergent timing fact, not a guarantee — the same shape of assumption (which of two things runs
+first) that caused the bug in the first place, one level down. Traced further (per explicit demand
+before accepting the design) and found the ordering claim WAS in fact false under a real,
+independently-confirmed scenario (the library-still-animating deferred-restore path, which can
+delay `_restore_position` by 50ms past that handler's queued delivery) — the design was corrected,
+not silently patched over; see the corrected reasoning preserved in
+`plans/b-and-it-s-not-glittery-mccarthy.md` if the mechanism ever needs re-deriving.
+
+**Actual fix shipped: an order-independent rendezvous flag,
+`Player._vt_file_loaded_awaiting_restore`**, symmetric between the two write sites so neither has
+to assume which runs first:
+- `_on_file_loaded`'s VT branch: if `_vt_restore_pending` is set, consume it (unchanged). If not,
+  set `_vt_file_loaded_awaiting_restore = True` instead of concluding there's nothing to do.
+- `defer_vt_restore`: if `_vt_file_loaded_awaiting_restore` is already `True`, issue the seek
+  directly (the consumer already ran and won't run again this file-load). Otherwise, stash
+  `_vt_restore_pending` as before.
+`_on_vt_file_switched` was reverted to its original, pre-session form — it is now, and was always
+meant to be, fully orthogonal to this rendezvous state (it only ever touches
+`is_seeking`/`_seek_target`, which the two sites above set correctly regardless of firing order).
+
+**Live-verified, not just unit-tested:** after implementation, a live rapid-switching session on
+Colorless Tsukuru / Sometimes a Great Notion hit the exact "file-loaded-first" failure-mode
+ordering **dozens of times**, naturally, via `[VT-SEEK-TRACE]`. Every single occurrence showed the
+new mechanism engaging correctly — `_on_file_loaded_VT_MARKED_awaiting_restore` followed by
+`defer_vt_restore_LATE_issuing_seek` with the correct target, the cross-file seek settling exactly
+(`distance=0.0`), and the persisted value matching the restored position
+(`_sync_persistence: WRITE ... pos=15294.485404 last_saved_pos(prev)=15294.485404` — no near-zero
+transient). Zero resets across the whole session. The library-still-animating DEFERRED path also
+fired 3 times during the same session and was clean in every case (though those specific instances
+were M4B books protected by Bug 1's guard, not VT books hitting this specific rendezvous — the
+rendezvous fix itself was exercised via the non-deferred file-loaded-first path extensively, which
+is the same underlying race). Full trace-by-trace evidence is in the session transcript; not
+reproduced here in full, but the mechanism and one complete verified cycle are recorded above.
+
+**A pre-existing, separately-caused instance of the same symptom was found and cleaned up — not a
+new bug, don't re-investigate it.** A DB sweep (read-only, before any fix landed) found 20 books
+already sitting at near-zero-progress fingerprint values (`0.05`, the `seek_async` target floor, or
+raw values like `1.9e-8`/`2.0e-8`) predating tonight's session — i.e. this exact class of bug had
+already struck for an unknown period before tonight. These were reset to `0.0` (the schema's actual
+default — an earlier attempt to reset them to `NULL` as an "unset" sentinel was wrong and caused two
+live crashes, since several read sites assume `progress` is always a number; corrected immediately).
+No recovery of the real prior positions is possible — the data is gone, not miscategorized.
+
+**Reusable standing fact, worth its own note beyond this specific bug:** `_restore_position`'s
+`if config_pos > 0: db.update_progress(...)` pattern — reading a QSettings-backed config value and
+copying it into the DB on next load — means config here behaves as a write-once-per-load cache that
+LAUNDERS whatever was last written into it, good or bad, into permanent state. Any future code
+touching this pattern (or writing a similar "cache written by an unrelated tick, later trusted as
+ground truth by a different subsystem" shape) should treat a transiently-wrong write as capable of
+becoming permanent, not self-correcting. This is a general hazard class, not specific to this bug —
+worth remembering if a similar shape bites something else later.
+
+**Library-panel stutter — INCONCLUSIVE. NOT root-caused, despite an earlier pass in this same
+session wrongly declaring it "ROOT CAUSE FOUND." That claim is retracted below — read this
+correction, not the confident version, if this section is ever skimmed.**
+
+The investigation went through three rounds, each disproving the previous one's confidence rather
+than confirming it:
+
+1. **Round 1 (theme-apply timing):** initial user isolation (cover-theme ON, first open after
+   book-load) suggested `_flush_pending_restyle`/`_flush_deferred_restyle_now` forcing synchronous
+   theme-restyle work during the library's open animation. Targeted `[STUTTER-TRACE]` logging
+   disproved this directly — `_flush_pending_restyle` was ALWAYS a no-op (`was_pending=False`) and
+   the animation window was a clean ~300ms in every captured case, no overlap with restyle work at
+   all.
+2. **Round 2 (cache-miss theory, WRONGLY treated as confirmed):** a live `cProfile` capture
+   bracketing `_start_library_entry`→`_on_library_shown` (gated behind `FABULOR_STUTTER_PROFILE=1`,
+   `panels.py`) caught one stutter instance dominated by cold `BookDelegate._get_sized_cover`
+   (`library.py`) cache misses falling through to synchronous PIL LANCZOS resize/convert/
+   unsharp-mask — 0.164s total window, 0.118s (72%) in that path across 13 misses, versus a clean
+   0.057s/zero-LANCZOS capture moments earlier. This was written up as root cause. **That was
+   premature** — it was one paired comparison, not a controlled repro, and calling it "found"
+   before testing the actual correlation was the mistake.
+3. **Round 3 (the actual correlation test, which falsified round 2 as stated):** re-ran the same
+   profiler against a scripted repro (progress-bearing rows → no-progress rows → back to
+   progress-bearing rows) **twice**, including once against a reconstructed pre-narrowing baseline
+   (clean `HEAD`, commit `41da27a`, with only the profiler bracket added — no Bug 1/Bug 2, no
+   RANK-1 narrowing at all, to rule out this being caused by any of tonight's work). **Neither run's
+   raw numbers correlated with progress/no-progress rows the way the user's live perception did.**
+   First run: pre-narrowing "progress" window ranged 0.090–0.154s, "no-progress" window ranged
+   0.076–0.195s — no-progress was not cleaner, in fact its ceiling was higher. Second run: the
+   "progress" window (0.094–0.144s) was actually the *tightest* range of the three windows tested,
+   contradicting "top cleaner, bottom stuttery" outright. Call counts fluctuated 31k–85k with no
+   clean pattern either.
+
+**User's own final assessment, which stands as the honest summary:** the stutter is real —
+observed directly, twice — but **not reliably reproducible**, and a later attempt at the identical
+repro produced no stutter at all. This is NOT the same as "fixed" or "root-caused." It may be
+intermittent for reasons the profiling approach used so far can't isolate (frame-delivery/
+compositor-level jank rather than raw Python CPU time in the profiled bracket is one live
+possibility, not yet investigated), or it may correlate with something neither round's hypothesis
+tested. **Do not resume this investigation by re-asserting the LANCZOS cache-miss theory as
+established** — it produced one suggestive data point, then failed a direct correlation test
+twice. Treat it as one ruled-out-as-sufficient explanation, not a disproven-entirely one, and start
+any future pass from the fact that the user's live perception and the profiler's raw wall-clock
+numbers have not yet been shown to agree.
+
+**Confirmed NOT caused by tonight's Bug 1/Bug 2 fixes**, independent of the above — neither fix
+touches `library.py`, `_sized_cover_cache`, `_get_sized_cover`, or the idle preloader, and the
+stutter (whatever its real cause) was reproduced against the pre-narrowing baseline too, before
+either fix existed.
+
+**Not fixed. No code changed for this issue beyond the temporary `FABULOR_STUTTER_PROFILE`-gated
+profiler in `panels.py`** (`_start_library_entry`/`_on_library_shown`/`_stop_stutter_profile`) —
+kept in place, disabled by default, for whenever this is picked up again. Do not propose a fix
+direction until the actual correlate is found — profiling wall-clock CPU time in this bracket has
+not, so far, been shown to track what the user is seeing.
+
+**Files touched:** `app.py` — `_sync_persistence` (monotonic guard + trace logging),
+`_on_book_selected_from_library` (`_last_saved_pos` seeding fix, incoming-book DB-progress seed),
+`_save_current_progress` (trace logging only, no behavior change), `_on_vt_file_switched` (reverted
+to original form after the rejected fallback design). `player.py` — `_on_file_loaded`'s VT branch,
+`defer_vt_restore`, `load_book`'s reset block (all three: new `_vt_file_loaded_awaiting_restore`
+rendezvous flag), plus `_seek_state_trace` and its call sites throughout the VT restore path.
+Tests: `tests/test_vt_file_switched_guard.py` (reverted to its original 3-test form),
+`tests/test_vt_restore_race.py` (new — both rendezvous arrival orders + the `load_book` reset).
+Design record: `plans/b-and-it-s-not-glittery-mccarthy.md` (the rejected-then-corrected
+`_on_vt_file_switched` design, kept for the reasoning trail).
+
+**All `[VT-SEEK-TRACE]`/`[PERSIST-TRACE]` instrumentation deliberately left in place** — per this
+investigation's standing instruction, do not strip it until ALL FOUR criteria in the top-of-entry
+status note hold simultaneously, live-verified, not just Bug 1/Bug 2's own triggers.
+
+---
+
 ## Making theme-apply safe to run without starving anything — feasibility findings, RANK-1/RANK-2 split into two separate fixes (2026-07-14)
 
 **Status: INVESTIGATION + design-feasibility ONLY — no code changed, tree clean (`git diff` empty).
