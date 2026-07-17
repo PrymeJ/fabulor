@@ -679,7 +679,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
-        self.theme_manager._apply_stylesheets(self.theme_manager._current_theme_name)
+        self.theme_manager.apply_full_pass(self.theme_manager._current_theme_name)
         self._settle_vol_stack()
 
         # Idle cover preloader: do NOT run at app start (startup work interferes with the
@@ -2482,17 +2482,26 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         if 0 <= index < len(chaps):
             title = chaps[index].get('title') or f"Chapter {index + 1}"
             self._update_chapter_title_text(title)
-            # Also sync the list selection visually
-            logger.debug(
-                f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
-                f"setCurrentRow({index}) isVisible={self.chapter_list_widget.isVisible()} "
-                f"scroll_before={self.chapter_list_widget.verticalScrollBar().value()}"
-            )
-            self.chapter_list_widget.setCurrentRow(index)
-            logger.debug(
-                f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
-                f"scroll_after={self.chapter_list_widget.verticalScrollBar().value()}"
-            )
+            # Also sync the list selection visually — but only while the dropdown is actually
+            # visible. setCurrentRow() is a real QAbstractItemView selection-model update +
+            # repaint-scheduling cost, and this method fires from multiple triggers in quick
+            # succession during book-load (populate-driven call + chapter_changed re-fire after
+            # seek-settle) while the list is provably hidden — landing in the flow animation's
+            # opening frames (Regime A, see NOTES.md 2026-07-14/17). Skipping it while hidden is
+            # safe: _show_chapter_dropdown always re-derives and re-sets the row itself from a
+            # fresh position walk when it actually opens the list, so no stale selection can leak
+            # through here.
+            if self.chapter_list_widget.isVisible():
+                logger.debug(
+                    f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
+                    f"setCurrentRow({index}) isVisible=True "
+                    f"scroll_before={self.chapter_list_widget.verticalScrollBar().value()}"
+                )
+                self.chapter_list_widget.setCurrentRow(index)
+                logger.debug(
+                    f"t={time.perf_counter():.6f} [_update_chapter_label_from_index] "
+                    f"scroll_after={self.chapter_list_widget.verticalScrollBar().value()}"
+                )
 
             # Save state on chapter change (natural stopping point)
             self._save_current_progress()

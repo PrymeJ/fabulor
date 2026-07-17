@@ -42,9 +42,13 @@ def setup_logging() -> None:
     log_dir = Path(platformdirs.user_log_dir("fabulor"))
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    # FABULOR_LOG_MAX_BYTES: override for bulk DEBUG-level capture sessions (e.g. repeated
+    # cold-launch benchmarking) where the 2 MB production default rotates mid-run and silently
+    # drops earlier samples. Unset in normal use — production default is unchanged.
+    max_bytes = int(os.environ.get("FABULOR_LOG_MAX_BYTES", 2 * 1024 * 1024))
     handler = RotatingFileHandler(
         log_dir / "fabulor.log",
-        maxBytes=2 * 1024 * 1024,  # 2 MB
+        maxBytes=max_bytes,
         backupCount=3,
         encoding="utf-8",
     )

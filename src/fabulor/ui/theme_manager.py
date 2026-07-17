@@ -336,6 +336,44 @@ class ThemeManager(QObject):
             self._pending_rotation = False
             QTimer.singleShot(3000, self._rotate_theme)
 
+    def apply_full_pass(self, theme_name, hover=False):
+        """Apply BOTH the fast visible-surface pass and the deferred invisible-surface
+        batch, synchronously, in one call. This is the complete "first styling" a theme
+        must receive at least once — the visible pass alone (_apply_stylesheets) never
+        touches library_panel/stats_panel/book_detail_panel; only the deferred pass
+        does. (settings_panel/speed_panel/sleep_panel live on the fast/visible pass
+        itself as of the hover-regression fix below, so they're already covered
+        without this helper — this docstring's panel list reflects the CURRENT split,
+        not the one at the time this helper was written.) Two callers, both
+        startup-only contexts where nothing is animating/interactive and there's no
+        panel-open race to avoid: (1) _on_theme_changed's early branch, before
+        initialize_fade_overlay exists; (2) _setup_ui, directly after all panels are
+        constructed.
+
+        BUG (found 2026-07-17, live-traced): _setup_ui used to call _apply_stylesheets
+        alone at that point, setting _active_display_theme to the pool theme name. Any
+        LATER startup call into _on_theme_changed with that SAME theme name (e.g.
+        clear_cover_theme() when cover-theme mode is "off", or when a book has no
+        cover) hit the "already this theme" no-op guard and returned immediately,
+        NEVER reaching the deferred pass — so every invisible-surface panel stayed
+        completely unstyled (bare Qt chrome) for the whole session, until something
+        unrelated (manual theme rotation, hover, a genuinely different cover theme)
+        first called _on_theme_changed with a different theme name. Confirmed live via
+        a temporary trace on the no-op guard: it fired at startup with
+        theme_name==_active_display_theme=='<pool theme>', proving _apply_stylesheets_
+        deferred was never reached. Fix: _setup_ui now calls this shared helper too, so
+        the invisible pass runs once at true startup regardless of cover-theme mode —
+        the later same-name no-op guard is then correct to skip re-styling, because
+        nothing was actually skipped."""
+        self._apply_stylesheets(theme_name, hover=hover)
+        if not hover:
+            self._apply_stylesheets_deferred(theme_name)
+            if hasattr(self.main_window, '_refresh_panel_visuals'):
+                self.main_window._refresh_panel_visuals(theme_name)
+            from ..themes import _resolve_theme
+            self.theme_applied.emit(_resolve_theme(theme_name))
+            self.update_theme_list_visuals()
+
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True):
         """Update the appearance with a subtle fade transition."""
 
@@ -345,6 +383,11 @@ class ThemeManager(QObject):
         # Only guard if both the theme and hover state match
         if (getattr(self, "_active_display_theme", None) == theme_name
                 and self._is_hover_active == hover):
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_theme_changed: "
+                         f"EARLY-RETURN no-op guard theme_name={theme_name!r} "
+                         f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+                         f"hover={hover} _is_hover_active={self._is_hover_active} "
+                         f"— _apply_stylesheets NEVER CALLED this invocation")
             return
 
         self._is_hover_active = hover
@@ -381,14 +424,7 @@ class ThemeManager(QObject):
             # interactive, so there is no stutter to avoid and no panel-open race — the
             # deferred split's whole reason (keep invisible work off the animation path)
             # doesn't apply here. Do NOT route this through _schedule_deferred_restyle.
-            self._apply_stylesheets(theme_name, hover=hover)
-            if not hover:
-                self._apply_stylesheets_deferred(theme_name)
-                if hasattr(self.main_window, '_refresh_panel_visuals'):
-                    self.main_window._refresh_panel_visuals(theme_name)
-                from ..themes import _resolve_theme
-                self.theme_applied.emit(_resolve_theme(theme_name))
-                self.update_theme_list_visuals()
+            self.apply_full_pass(theme_name, hover=hover)
             return
 
         # Clear any in-progress animation
@@ -735,6 +771,38 @@ class ThemeManager(QObject):
         if hasattr(mw, '_set_chapter_ui_active'):
             mw._set_chapter_ui_active(mw._chapter_ui_active)
         _mark("_set_chapter_ui_active")
+        # settings_panel/speed_panel/sleep_panel (+ excluded-books, which lives on the
+        # settings panel) stay on the FAST path unconditionally, same reasoning as
+        # chapter_list_widget above: the Themes tab IS settings_panel, so a hover
+        # preview that skips it silently defeats the whole point of hovering (the
+        # preview never shows on the very panel the user is looking at). This must
+        # run on every hover, not just non-hover — do NOT move it into
+        # _apply_stylesheets_deferred (which is not-hover-gated) again.
+        #
+        # REGRESSION (found 2026-07-18, live-reported): the RANK-1 deferred-restyle
+        # narrowing moved this whole block into _apply_stylesheets_deferred alongside
+        # library_panel/stats_panel/book_detail_panel, which WERE already correctly
+        # hover-gated before the narrowing. settings_panel/speed_panel/sleep_panel had
+        # NO hover gate before the narrowing (confirmed via `git show <narrowing
+        # commit>^` — the old loop ran unconditionally) — moving it into the
+        # always-not-hover deferred method silently added a hover-skip that never
+        # existed, breaking the Themes tab's own hover preview. Moved back here to
+        # restore the original, intentional behavior.
+        ss_panels = get_settings_stylesheet(theme_name)
+        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+            w = getattr(mw, attr, None)
+            if w:
+                w.setStyleSheet(ss_panels)
+        _mark("settings/speed/sleep panels")
+        section = getattr(mw, 'excluded_books_section', None)
+        popup = getattr(mw, 'excluded_books_popup', None)
+        if section or popup:
+            from ..themes import _resolve_theme
+            theme = _resolve_theme(theme_name)
+            if section:
+                section.set_theme(theme)
+            if popup:
+                popup.set_theme(theme)
 
         if _dbg:
             total = sum(ms for _, ms, _ in _steps)
@@ -749,11 +817,11 @@ class ThemeManager(QObject):
         """The invisible-surface half of the theme apply, extracted from
         _apply_stylesheets so it can run in a deferred batch AFTER the flow animation
         (book-load) or on the next event-loop turn (rotation/T), instead of blocking
-        the synchronous visible apply. Styles only currently-hidden surfaces:
-        library, settings/speed/sleep panels, excluded-books, stats/book_detail.
-        Measured ~355ms combined with the TAIL — the bulk of the old ~640ms pipeline.
-        See plans/going-forward-on-this-twinkly-corbato.md. Runs only for non-hover
-        theme changes (hover keeps its own narrowing + _on_theme_unhovered restyle)."""
+        the synchronous visible apply. Styles only currently-hidden, hover-agnostic
+        surfaces: library, stats/book_detail. (settings/speed/sleep panels moved BACK
+        to the fast path — see the REGRESSION comment there — because unlike these
+        three, they must restyle on hover too.) Runs only for non-hover theme changes
+        (hover keeps its own narrowing + _on_theme_unhovered restyle)."""
         _dbg = logger.isEnabledFor(logging.DEBUG)
         _steps = []
         _t = time.perf_counter()
@@ -770,25 +838,6 @@ class ThemeManager(QObject):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
             mw.library_panel.update_progress_bar_theme()
         _mark("library_panel")
-        ss_panels = get_settings_stylesheet(theme_name)
-        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
-            w = getattr(mw, attr, None)
-            if w:
-                w.setStyleSheet(ss_panels)
-        _mark("settings/speed/sleep panels")
-        # Excluded-books toggle + popup use per-widget instance stylesheets, so
-        # retint them explicitly on theme change (the panel QSS repolish above
-        # doesn't reach them — the popup isn't even a descendant of
-        # settings_panel, it's parented to MainWindow directly).
-        section = getattr(mw, 'excluded_books_section', None)
-        popup = getattr(mw, 'excluded_books_popup', None)
-        if section or popup:
-            from ..themes import _resolve_theme
-            theme = _resolve_theme(theme_name)
-            if section:
-                section.set_theme(theme)
-            if popup:
-                popup.set_theme(theme)
         ss_stats = get_stats_stylesheet(theme_name)
         for attr in ('stats_panel', 'book_detail_panel'):
             target = getattr(mw, attr, None)
@@ -990,11 +1039,28 @@ class ThemeManager(QObject):
 
     def apply_cover_theme(self, pixmap, user_initiated=False):
         """Build a theme dict from the cover pixmap and apply it if the mode calls for it."""
+        import traceback
+        _caller_frame = traceback.extract_stack()[-2]
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: ENTRY "
-                     f"user_initiated={user_initiated}")
+                     f"user_initiated={user_initiated} "
+                     f"caller={_caller_frame.filename.split('/')[-1]}:{_caller_frame.lineno} "
+                     f"in {_caller_frame.name}")
         from .cover_theme import build_cover_theme
         mode = self.config.get_cover_art_theme_mode()
         if mode == "off":
+            # BUG FIX (2026-07-17): this used to bare-return here with no theme applied at all.
+            # This is the ONLY code path that ever calls _on_theme_changed for a book WITH a
+            # cover (ThemeManager.__init__ never applies a theme itself, and app.py's startup
+            # has no other trigger) — so "Off" silently meant "no theme, ever" for any such
+            # book: the whole app rendered as unstyled bare Qt chrome for the entire session,
+            # until something unrelated (manual theme rotation, etc.) happened to call
+            # _on_theme_changed for the first time. The no-cover case already gets this right
+            # via clear_cover_theme() (_load_cover_art -> _show_no_cover_state). "Off" is
+            # supposed to mean "plain pool theme, no cover-derived tinting" — not "no theme" —
+            # so route through the same call the no-cover case already uses correctly.
+            logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: "
+                         f"mode=off, applying plain pool theme via clear_cover_theme")
+            self.clear_cover_theme()
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (mode=off)")
             return
         theme_dict = build_cover_theme(pixmap)
