@@ -1,3 +1,207 @@
+## CORRECTION (2026-07-17, later same night): the diagnosis below is WRONG about WHICH condition triggers the bug — kept for the record, do not act on the "book HAS a cover" framing
+
+The entry immediately below diagnoses the bare-Qt-chrome bug as gated on "book HAS a cover, AND
+cover-theme mode is Off." That framing is incorrect and was directly corrected live: **whether the
+loaded book has cover art is irrelevant.** The real defect, found by adding a live trace directly on
+`_on_theme_changed`'s same-theme-name no-op guard (not by further code reading), is that
+`_setup_ui`'s startup call applied only the visible-surface pass and never the deferred
+invisible-surface pass — so ANY later startup call into `_on_theme_changed` with the SAME theme
+name (which `clear_cover_theme()` always uses, reached both by the no-cover case AND the
+cover-mode-Off case) hits the no-op guard and never reaches the deferred pass. Cover presence
+doesn't change this at all. Fixed via a shared `apply_full_pass()` helper called from `_setup_ui`.
+Full corrected picture, live-verified: `NOTES_THEMING_CURRENT_STATE.md`. A second, unrelated
+regression (hover preview no longer reaching settings/speed/sleep panels, introduced by the SAME
+night's earlier deferred-restyle narrowing, not by this fix) was also found and fixed — also
+documented there.
+
+---
+
+## REAL CORRECTNESS BUG, independent of Regime A/B: `apply_cover_theme()` silently skips ALL theming when cover-theme mode is "Off" and the book has a cover — app renders as unstyled bare Qt chrome, not the plain pool theme (2026-07-17)
+
+**This is a standalone regression, not a benchmark artifact, not related to tonight's Regime A/B
+investigation except that it silently invalidated a chunk of that investigation's data.** Found
+live, by direct visual report (a screenshot of the Speed panel showing completely unstyled default
+Qt widgets — no colors, no fonts, no theming of any kind), then confirmed by direct code reading
+after the log trail turned out to be a dead end (the log had rotated past the process's own
+startup, so log-only investigation could not settle this — this needed a live visual check, per
+this project's standing "the user's eyes are ground truth" rule, and got one).
+
+**Root cause, precisely:** `ThemeManager.apply_cover_theme()` (`theme_manager.py:991-1003`) is the
+ONLY code path that applies any real theme (via `_on_theme_changed` → `_apply_stylesheets`) for a
+book that has cover art. Neither `ThemeManager.__init__` nor anything in `app.py`'s startup
+sequence calls `_on_theme_changed`/`_apply_stylesheets` directly — startup theming for a book with
+a cover flows exclusively through this one function. Its early-return guard:
+```python
+mode = self.config.get_cover_art_theme_mode()
+if mode == "off":
+    return
+```
+exits immediately with NO fallback call to apply the plain pool theme. Compare against the
+`_load_cover_art` (`app.py`) no-cover case, which handles this correctly: when a book has no cover
+at all, `_show_no_cover_state`/`clear_cover_theme` runs, and `clear_cover_theme()`
+(`theme_manager.py:1016-1021`) DOES call `_on_theme_changed(self._current_theme_name, save=False)`
+— a real theme apply. **The gap is specifically: book HAS a cover, AND cover-theme mode is "Off."**
+That combination is the one state with no path to ever calling `_on_theme_changed` at app startup.
+The base chrome (`mw.setStyleSheet`, panel stylesheets, everything) simply never gets painted —
+the app runs the entire session in bare, default Qt widget styling until something UNRELATED
+happens to trigger a theme change for the first time (manually rotating the theme with `T`,
+confirmed live to immediately "fix" the appearance — proving the theme pipeline itself works fine
+once actually invoked; the bug is purely that nothing ever invokes it in this specific state).
+
+**This does not match the design intent of the "Off" cover-theme mode.** The settings panel offers
+Off/With-pool/Exclusive as cover-theme DISPLAY modes — the clear implication (and the correct
+behavior for the no-cover case, which already works) is that "Off" means "use the plain
+theme-pool colors, no cover-derived tinting," not "apply no theme at all, ever." The current
+behavior for a book with a cover is the latter, silently, with no error, no log warning, nothing —
+which is why it went unnoticed through this entire session's testing.
+
+**Every "cover-theme OFF" trace and benchmark number gathered earlier tonight is VOID and must not
+be cited as evidence of anything going forward** — the original 8-batch Regime A benchmark's OFF
+conditions (M4B/OFF, VT/OFF, both the first pass and the corrected V2 re-run) were unknowingly run
+against a completely unstyled, unthemed app for every book that had cover art, not against "a
+themed app with cover-tinting turned off" as the test design intended. This is NOT a case of
+"the numbers still mean something, just under different conditions than we thought" — an unstyled
+app has different widget paint costs, different stylesheet-application costs (none, since none
+ran), and does not represent any real user-facing configuration this bug fix should be validated
+against. Do not attempt to salvage or reinterpret those OFF-condition numbers.
+
+**What this does NOT invalidate:** the VT/cover-ON root-cause trace immediately above (the
+post-scan cover-refresh race, `_apply_stylesheets`'s unguarded `mw.setStyleSheet(base)` call inside
+`_on_theme_changed`'s `not hasattr(self, '_fade_anim')` branch) is unaffected — that investigation
+was entirely on cover-theme-ON conditions, where `apply_cover_theme` does NOT hit this early
+return and theme application proceeds normally (confirmed: those traces show real
+`_apply_stylesheets`/`apply_cover_theme` activity throughout, this bug was never in play there).
+That mechanism and its findings stand.
+
+**Not yet fixed as of this write-up — fix is the very next step, then a live visual re-confirmation
+(not just a log check that `_on_theme_changed` fired) before any benchmark re-run is planned.**
+
+---
+
+## Regime A fix — REAL, harmless, but small; the actual VT/cover-ON stutter is a DIFFERENT, pre-existing bug: an unrelated post-scan cover-refresh landing inside the flow animation (2026-07-17)
+
+**Status: mechanism now FULLY understood via direct trace (caller identified, not guessed). This
+is not "VT is fragile" — it's a specific, findable race between two unrelated subsystems. Not
+fixed yet; fix not proposed yet (this entry is trace + root cause only, per standing discipline).**
+
+**The `setCurrentRow` visibility gate (this session's actual Regime A fix) works exactly as
+designed and is safe to keep, but it was never responsible for the severe VT/cover-ON stutter the
+user kept correctly flagging as unresolved.** Full before/after data (8 conditions × both sliders,
+n=30 matched pre/post): M4B is flat on both sliders/cover-states (no real effect, the fix's target
+mechanism barely matters there). VT/cover-OFF improved modestly on both sliders (~90→76ms,
+~84→75ms median) — a real, minor win, though never independently confirmed by a live perception
+check the way VT/cover-ON was (do not over-claim this one either). None of this explains
+VT/cover-ON's severe stutter, which the user described directly as "flow, pause, flow or flow,
+pause, jump, pause, flow" and confirmed felt just as bad after the fix as before, DESPITE
+`overall_progress`'s summary metric showing a shift (369→329ms) — a shift later correctly
+identified by the user as still deep in dangerous territory, using a blood-pressure analogy (180/120
+→ 175/118 is not a result, if the patient is still at serious risk of a heart attack). That
+correction was right and is preserved as the standing benchmark for this whole investigation: a
+shrinking number is not evidence of a resolved user-visible problem.
+
+**Root cause of VT/cover-ON's stutter, confirmed via a direct per-frame trace with caller
+identification (`traceback.extract_stack()` added temporarily to `apply_cover_theme`,
+`theme_manager.py`) — NOT the mechanism previously guessed:**
+
+Every book-load — VT or M4B, no exception — calls `theme_manager.apply_cover_theme()` from
+`_apply_main_cover` (`app.py:2581`) **twice**, not once:
+1. **First call**: from `_load_cover_art` (`app.py:475`), during app `__init__`, immediately on
+   startup, BEFORE the flow animation starts.
+2. **Second call**: from the SAME `_apply_main_cover` call site, triggered by
+   `LibraryController`'s post-library-scan cover-refresh (`library_controller.py:161`) —
+   `self.app.load_cover_art(current)`, whose own comment states its purpose plainly: "Refresh
+   player cover after scan — ensures the active book_covers entry is used, not a stale cache entry
+   from before the scan." This fires whenever the background library scan (started from
+   `_check_library_status()` at app startup) finishes, which is a genuinely independent,
+   variable-duration background-thread event — NOT gated on, or aware of, the flow animation's
+   state at all.
+
+**`_run_deferred_restyle` (`theme_manager.py`) already has a guard for exactly this shape of
+collision** ("if flow_anim still Running, defer") — but it's a race, not a guarantee. In every M4B
+capture, the scan finished and this second call completed BEFORE `animate_to START`, so the guard
+never even needed to engage — clean by luck of timing, not by design correctness. In every VT
+capture (3/3, tight clustering, not noise: worst_gap 350.3/350.2/328.9ms on `overall_progress`,
+586.0/582.6/563.6ms on `chapter_progress`), the scan finished ~416ms into the animation — late
+enough that the second `apply_cover_theme` call lands mid-flight and freezes both sliders, which
+then snap to their end value in one frame the instant the block clears. This is the exact "flow,
+pause, jump" shape the user described, confirmed frame-by-frame, not inferred.
+
+**CORRECTION — the actual blocking call is `_apply_stylesheets`'s synchronous
+`mw.setStyleSheet(base)`, NOT `_flush_deferred_restyle_now` as first attributed.** Precise
+timing check: `_apply_stylesheets`'s own summary line (`[_apply_stylesheets hover=False]
+total=209.8ms mw.setStyleSheet(base)=192.8ms ...`) lands at `14:25:15,076`, squarely inside the
+second `apply_cover_theme`'s own ENTRY (`14:25:14,820`) → EXIT (`14:25:15,076`) window — meaning
+this ~193ms cost happens INSIDE `apply_cover_theme` → `_on_theme_changed`, before
+`_flush_deferred_restyle_now` is even scheduled. `_run_deferred_restyle`'s existing
+flow-anim-Running guard is real and does correctly defer the LATER, separate
+`_flush_deferred_restyle_now` call (confirmed: its own `[STUTTER-TRACE] proceeding via NATURAL
+path` log line appears AFTER the freeze, once the animation has already snapped to its end value
+— the guard is doing its job on the thing it guards, it just isn't the thing causing this freeze).
+**The real gap is in `_on_theme_changed` itself (`theme_manager.py:339-392`): its `if not
+hasattr(self, '_fade_anim')` branch — reached whenever this is the very first theme application
+before the fade-overlay machinery exists — calls `self._apply_stylesheets(theme_name,
+hover=hover)` synchronously and UNCONDITIONALLY, with NO flow-animation guard of any kind.** The
+docstring comment justifying this ("Called before initialize_fade_overlay ... at startup nothing
+is animating or interactive, so there is no stutter to avoid") is TRUE for the first
+`apply_cover_theme` call (genuine app startup, correct) but FALSE for the second call (post-scan
+refresh, which can fire well after the flow animation has already started) — the code has no way
+to distinguish these two cases and applies the "nothing is animating" assumption to both.
+
+**Why `chapter_progress` looks worse than `overall_progress` in this specific condition: a
+duration-ratio artifact, not a second bug.** The same absolute ~586ms stall (from `overall_progress`'s
+own last-frame timestamp to `chapter_progress`'s) eats a much larger fraction of `chapter_progress`'s
+shorter nominal duration (374ms vs `overall_progress`'s 452ms), so its catch-up frame has to cover
+more ground in the same blocked window. Both sliders are victims of the identical single stall;
+there are not two separate mechanisms to explain.
+
+**Why this reads as "VT is fragile" when it is not, mechanistically, about VT at all:** nothing
+in VT's own seek/settle machinery (`seek_async`, cross-file branch, settle-eval — all confirmed
+fast and clean in the same trace, ~10ms total, zero contribution to the stall) is implicated. The
+correlation with VT specifically is very likely incidental — whatever makes the background scan
+take longer in these captures (larger/slower-to-verify folder structure for a multi-file VT
+audiobook, plausible but not directly measured) is a property of THIS PARTICULAR BOOK's scan cost,
+not of VT-format playback. A different VT book with a fast-scanning folder might show the same
+clean timing M4B showed here; a different M4B book in a slow-scanning location might show the same
+freeze VT showed here. This needs to be kept in mind before generalizing "VT" as the causal
+category in any future write-up of this bug.
+
+**Confirmed via `caller=` trace line that the `setCurrentRow` gate is completely uninvolved in this
+specific stutter:** zero `[_update_chapter_label_from_index]` log lines appear in any of the three
+traced VT/cover-ON runs — the chapter list stays hidden throughout, so the gate this session shipped
+correctly suppresses that call every time, and there was never anything for it to fix here. Do not
+conflate "the Regime A fix didn't help VT/cover-ON" with "the Regime A fix is broken" — they're
+unrelated facts about two different mechanisms sharing the same symptom surface (a stutter during
+the same flow animation).
+
+**NOT FIXED. Explicitly stopped at trace + root cause — do not move to implementation yet, per
+direct instruction.** The precise gap is now identified: `_on_theme_changed`'s `not hasattr(self,
+'_fade_anim')` branch (`theme_manager.py:377-392`) calls `self._apply_stylesheets(...)`
+synchronously with NO flow-animation guard, on the documented assumption that this branch only
+ever runs once, at genuine app startup, before anything can be animating. That assumption is false
+for the SECOND `apply_cover_theme` call (post-scan refresh), which reaches this same branch
+because `_active_display_theme`/`hasattr(self, '_fade_anim')` state doesn't change between the two
+calls in a way that would route the second one differently — this needs independent confirmation
+(has `_fade_anim` genuinely still not been set by the second call, or is something else routing it
+into this branch a second time?) before any fix is designed, not assumed from this trace alone.
+Two DISTINCT, unrelated stutter mechanisms are now understood to land in the same book-load
+flow-animation window: (1) the previously-documented Regime B theme-apply hazard (already known,
+out of scope for tonight's original Regime A work) and (2) THIS newly-found post-scan
+cover-refresh race, which shares Regime B's general shape (a synchronous theme-restyle pass
+landing mid-animation) but is a DIFFERENT code path (`_apply_stylesheets` inside the
+no-`_fade_anim` branch, not `_flush_deferred_restyle_now`, which — confirmed — correctly deferred
+in every captured run and is not at fault here). Do not conflate the two paths in any future fix;
+they are protected by different guards (or, in path (2)'s case, no guard at all).
+
+**Files touched (temporary tracing only, not a fix):** `theme_manager.py` —
+`apply_cover_theme` gained a `traceback.extract_stack()`-based caller-identification log line
+(`caller=file:line in function`), which is what actually found `library_controller.py:161` as the
+second call's source — this should stay in place until the bug above is fixed and verified, per
+standing instrumentation-retention policy for this investigation.
+
+---
+
+
+
 ## Book progress silently resetting to ~0 on rapid book-switch (FIXED, live-verified — two bugs), plus a library-panel stutter (INCONCLUSIVE, not root-caused) — UMBRELLA ISSUE STAYS OPEN (2026-07-16/17)
 
 **Status, stated plainly and not to be softened in a future pass: this is NOT closed.** Two

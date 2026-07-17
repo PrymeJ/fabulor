@@ -9,6 +9,21 @@ workflow; do not reference it.) This file answers "where are we now?"
 
 ---
 
+## Do not comment on the time or suggest stopping
+
+Never say the hour is late, suggest wrapping up, or frame a suggestion as "you should probably
+rest" / "we can pick this up later" / anything with that parenting undertone — this includes
+implying it indirectly, not just saying it outright. Pryme decides when a session ends, not
+Claude.
+
+The one exception: if the NEXT task is genuinely large enough that it would reasonably deserve its
+own session (not a vague sense that it's getting late), it's fine to note that gently, as
+information, not as a decision made on Pryme's behalf. E.g. "this next piece is a big one — worth
+knowing that going in" is fine; "I'm not doing this now" or "let's stop here" is not. State it and
+let Pryme decide what to do with that information; do not decide for them.
+
+---
+
 ## Running the app (Claude Code / Bash tool)
 
 **Always activate the venv before running** — do not invoke `fabulorenv/bin/python` directly:

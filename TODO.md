@@ -6,6 +6,61 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[FIXED, committed `5cfe3a3`, 2026-07-17] Bare-Qt-chrome-at-startup bug — CORRECTED root cause
+  (not "book has a cover + mode Off" as first diagnosed; see NOTES.md correction entry at the
+  top).** Real cause: `_setup_ui` applied only the visible-surface pass at startup
+  (`_apply_stylesheets` alone), never the deferred invisible-surface pass. Any later startup call
+  into `_on_theme_changed` with the same theme name (always true for `clear_cover_theme()`, hit by
+  BOTH the no-cover case and the cover-mode-Off case — cover presence is irrelevant) hit the
+  same-name no-op guard and never reached the deferred pass, leaving
+  library/settings/speed/sleep/stats/book_detail panels unstyled for the session. Fixed via a
+  shared `apply_full_pass()` helper, called once at startup. Live-verified (log evidence in
+  `NOTES_THEMING_CURRENT_STATE.md`): panels show correctly styled on first open after a cold
+  launch with cover-theme Off. A SECOND, unrelated regression was found and fixed in the same
+  commit — theme hover preview no longer reaching settings/speed/sleep panels (introduced by the
+  same night's earlier deferred-restyle narrowing, which had moved that styling into a
+  not-hover-gated method alongside panels that were ALREADY correctly hover-gated before the
+  narrowing). Also live-verified via real hover events in the log.
+  Every cover-OFF trace/number from tonight's Regime A benchmarking (both the original 8-batch
+  pass and the corrected V2 re-run) is still VOID and must not be cited going forward — those runs
+  predate this fix. Re-running is a separate decision, not automatic.
+
+- **[CORRECTNESS BUG, ROOT CAUSE CONFIRMED, NOT FIXED, 2026-07-17] Post-library-scan cover-refresh
+  (`library_controller.py:161`) races the book-load flow animation — a SEPARATE, pre-existing bug
+  from the Regime A `setCurrentRow` fix, and the actual cause of the severe VT/cover-ON stutter.**
+  Full trace + mechanism: NOTES.md 2026-07-17 entry (top). Every book-load calls
+  `apply_cover_theme` TWICE — once from `_load_cover_art` at app startup, and again from
+  `library_controller.py:161`'s post-scan cover-refresh, whenever the background library scan
+  finishes (a genuinely independent, variable-duration event, NOT gated on flow-animation state).
+  Confirmed via a caller-identifying trace (`traceback.extract_stack()`, temporarily added to
+  `apply_cover_theme` in `theme_manager.py` — still in place, needed for verification). When the
+  scan finishes late (observed ~416ms into the animation, 3/3 VT/cover-ON captures, tight
+  clustering — not noise), the second call's synchronous `_apply_stylesheets` (specifically
+  `mw.setStyleSheet(base)`, ~193-210ms, confirmed by matching its own log timestamp inside the
+  second `apply_cover_theme`'s ENTRY/EXIT window) freezes both sliders mid-flight, producing
+  exactly the "flow, pause, jump" the user described and confirmed still felt broken after the
+  Regime A fix — because the Regime A fix was never involved in this stutter at all (zero
+  `setCurrentRow` calls appear in any of the three traces; the chapter list stays hidden
+  throughout). CORRECTED attribution (an earlier pass in this same investigation wrongly blamed
+  `_flush_deferred_restyle_now` — that call's own existing flow-anim-Running guard was checked and
+  DOES correctly defer it every time, confirmed via its own log line firing after the freeze, once
+  the animation had already snapped; it is not at fault). The real gap: `_on_theme_changed`'s `not
+  hasattr(self, '_fade_anim')` branch (`theme_manager.py:377-392`) calls `_apply_stylesheets`
+  unconditionally, on a documented assumption ("called before initialize_fade_overlay... at
+  startup nothing is animating") that holds for the FIRST `apply_cover_theme` call but not
+  necessarily the SECOND — not yet confirmed why the second call still reaches this same branch
+  (need to check whether `_fade_anim`/`_active_display_theme` state genuinely differs between the
+  two calls, before assuming this is the fix target). Likely NOT actually a "VT" bug — the
+  correlation with VT/cover-ON in this session's testing is probably incidental to that book's
+  scan cost, not VT-format playback; do not generalize "VT" as the causal category without more
+  data across different books/folders. Next, STRICTLY IN ORDER, no implementation yet: (1) confirm
+  why the second `apply_cover_theme` call still hits the no-`_fade_anim` branch instead of the
+  normal fade-transition path; (2) only after that, propose (not implement) a fix — candidates not
+  decided: add a flow-anim guard to this specific branch, or gate the post-scan cover-refresh call
+  itself on flow-animation state, mirroring `is_overlay_open_or_committed()`/`_any_panel_animating()`
+  patterns already used elsewhere in this codebase for similar collisions. Do not implement
+  anything until both (1) and (2) are done and reviewed.
+
 - **[UMBRELLA ISSUE, STAYS OPEN, 2026-07-16/17] Flow-animation/theme-apply narrowing work is NOT
   complete.** Full writeup: NOTES.md 2026-07-16/17 entry. This is ONE open item, not a checklist —
   do not read the status below as separable sub-tasks that can be closed one at a time; closure
