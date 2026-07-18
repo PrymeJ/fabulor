@@ -1370,6 +1370,7 @@ class LibraryPanel(QFrame):
         self.config.set_library_sort_key(sort_key)
         self.config.set_library_sort_ascending(self._sort_ascending)
         self._last_filter_mode = sort_key
+        self._refresh_search_match_state()
         QTimer.singleShot(0, self._load_visible_covers)
 
     def _apply_sort_shortcut(self, key) -> None:
