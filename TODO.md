@@ -26,11 +26,18 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   fast-loading (no-cover) book's own flow animation finished first — fixed by adding the
   `_fade_in_flight` guard condition and wiring `_on_fade_finished` to re-trigger the check. Live-
   verified: cover→placeholder switch, cover-art-based theme ON, fade now completes smoothly.
-- **[BENCHMARK NOT YET RE-RUN, 2026-07-17] Full 4-condition × 30-sample worst_gap matrix (VT/ON,
-  VT/OFF, M4B/ON, M4B/OFF) against the FINAL fix state.** The 30-sample runs captured earlier this
-  session were against the Bug-1-only (incomplete, since-superseded) fix. If a fresh formal
-  before/after dataset is wanted for the record, it should be re-run against the current committed
-  state (`cd5ec5b` + `0990e00`), not assumed from the earlier numbers.
+- **[VERIFIED, 2026-07-18] 4-condition × 10-sample worst_gap matrix (VT/ON, VT/OFF, M4B/ON,
+  M4B/OFF) re-run against the fully-fixed final state (all five bugs committed) — PASSED, all
+  four conditions clean.** 10 samples/condition judged sufficient rather than the original 30 —
+  the earlier 30-sample runs were specifically needed to detect an intermittent timing race (scan
+  duration vs. animation duration); with that race now removed at the source (no scan on normal
+  launch), a smaller sample is enough to confirm the healthy baseline holds, not to hunt for a
+  rare collision. Results: VT/OFF 51.8ms/34.2ms median (max 70.1/50.5), VT/ON 50.3ms/33.1ms median
+  (max 60.8/47.0), M4B/OFF 41.0ms/25.2ms median (max 61.2/44.4), M4B/ON 32.3ms/17.1ms median (max
+  48.8/40.2) — all four in the same healthy ~30-70ms range, cover-ON and cover-OFF statistically
+  indistinguishable in both formats, no trace of the original 400-570ms stutter. Corroborated by
+  the user's own incidental testing while chasing the other fixes this session: no progress lost,
+  flow smooth throughout. This closes out the last open verification item from tonight's work.
 
 - **[FIXED, committed `5cfe3a3`, 2026-07-17] Bare-Qt-chrome-at-startup bug — CORRECTED root cause
   (not "book has a cover + mode Off" as first diagnosed; see NOTES.md correction entry at the
