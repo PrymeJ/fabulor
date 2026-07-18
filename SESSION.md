@@ -1,3 +1,46 @@
+## Session Summary — 2026-07-18 Session 3 — `save_search_filter()` persisted the live search-field widget text instead of `_explicit_filter_text`, letting a clicked tag/author/narrator/year filter survive an app restart as if it were typed search text (only when the library panel was left open across the restart)
+
+Investigated (find-and-report only, per the user's request) then fixed and unit-tested. Reported
+bug: click a tag/author/narrator/year filter in the library, restart the whole app WITHOUT closing
+the library panel first, and the clicked (transient) filter text comes back on next launch as if it
+were genuinely typed, persisted search text. Close-library-then-reopen within the same running
+session was already correct and unaffected.
+
+**Root cause:** `LibraryPanel` already correctly separates two states — `search_field.text()` (the
+live widget, which legitimately shows a clicked filter's string while it's active) and
+`self._explicit_filter_text` (the user's last real typed value, insulated from click-originated
+writes via the `_programmatic_search_update` guard in `set_search()`). `save_search_filter()`
+(`library.py`), the sole persistence-write path, called unconditionally and only from
+`MainWindow.closeEvent`, read `self.search_field.text()` — the wrong one. This never surfaced on a
+plain library close/reopen because `_close_library_flow()` never calls `save_search_filter()` at
+all, and reopening runs `clear_tag_filter_if_active()` first, reverting the widget before anything
+could be saved. But `closeEvent` bypasses both of those and reads the widget directly at arbitrary
+timing — including while a clicked filter is still showing.
+
+**Fix:** one line — `save_search_filter()` now reads `self._explicit_filter_text` instead of
+`self.search_field.text()`. `_classify_filter`'s shape-based tag/year/text classification and the
+per-kind persist gating are unchanged; they just now operate on the correct source string.
+Confirmed `text` had no other use in the function that switching the source could break.
+
+**Tests:** four new cases in `tests/test_library_shortcuts.py`, following its existing pattern of
+binding the real unbound method to a lightweight fake host (no `LibraryPanel`/`QApplication`
+instantiation needed) — including the specific case requested: clicked-filter-showing +
+non-empty `_explicit_filter_text` asserts the persisted value is the explicit text, not the widget's
+displayed clicked-filter string. `pytest tests/ -q`: same pre-existing 4
+`test_cover_theme_pending.py` failures as before this change (confirmed via `git stash` to fail
+identically on `main`); everything else, including all new tests, passes.
+
+Full trace-by-trace investigation (every `setText` call site classified, every persistence
+read/write path, the synthesis of exactly which trigger fires on app-exit-with-panel-open vs.
+library-close) and the fix writeup are both in NOTES.md. A stale claim in this file's own `d8f193d`
+entry (2026-07-05) — which asserted `save_search_filter()`'s behavior was "unaffected" by that
+commit's change — has been annotated in place to point to the new NOTES.md entry, since that stale
+note was describing the exact mechanism of this bug without recognizing it as one yet.
+
+Live-verification of the actual app-restart repro is still pending as of this entry — this is pure
+non-UI logic with no widget touched during the fix, but a live check is still owed per this
+project's standing rule before considering this fully closed.
+
 ## Session Summary — 2026-07-17/18 Session 2 — Cover-pool "remove" click left `ThemeManager._cover_theme` stale instead of nulling it; a 400-cycle cold-launch stress test found the branch clean enough to merge
 
 Branch `feat/narrow-apply-stylesheets` (Session 1's five fixes) was stress-tested with a 400-cycle
@@ -1887,6 +1930,14 @@ Only one explicit value is ever remembered — clicking A, then B, then a year, 
 year all revert to the *same* typed text, clicks never chain. `save_search_filter()` (the
 "Persist search filter" app-restart mechanism) reads `search_field.text()` directly and never
 references `_explicit_filter_text`, so that setting's behavior is unaffected.
+
+**STALE as of 2026-07-18 — this was itself the bug, just not recognized yet at the time this note
+was written.** `save_search_filter()` reading the widget directly instead of `_explicit_filter_text`
+is exactly what let a clicked filter survive an app restart as if it were typed text, in the one
+sequence this note didn't consider: app-exit while the library panel is still open (bypasses the
+close/reopen revert this note is describing). See NOTES.md, "FIXED and live-verified-pending:
+`save_search_filter()` persisted the live widget text instead of `_explicit_filter_text`" (2026-07-18)
+for the fix.
 
 Scoped to the author/narrator/year field-click path (`library.py`) only at the time of this commit.
 The tag-click path (`app.py:_on_tag_filter_requested`) had no toggle-off at all — clicking the same

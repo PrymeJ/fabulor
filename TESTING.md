@@ -1392,6 +1392,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] With master On and Year enabled: year filter (>NNNN) persists across restart
 - [ ] With master On but Tag disabled: tag filter not restored on restart
 - [ ] With master Off: search field always empty on launch regardless of previous filter
+- [ ] With master On (any sub-toggle): type a real search, click a tag/author/narrator/year filter (field now shows the clicked value), quit the app WITHOUT closing the library panel first, relaunch: field shows the ORIGINAL TYPED text on restart, not the clicked filter's value (fixed 2026-07-18 — see NOTES.md)
+- [ ] Same as above but with nothing typed first (only a click-filter applied before exit-with-panel-open): field is empty on restart, not the clicked filter's value
 
 ## Excluded Books (Settings → Library)
 

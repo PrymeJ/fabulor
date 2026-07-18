@@ -1,3 +1,62 @@
+## FIXED and live-verified-pending: `save_search_filter()` persisted the live widget text instead of `_explicit_filter_text` — a clicked tag/author/narrator/year filter survived an app restart as if it were typed search text, but only when the library panel was left open across the restart (2026-07-18)
+
+**Supersedes a stale claim in `SESSION.md`'s `d8f193d` entry** (2026-07-05, the toggle-off-reverts
+commit): that entry states *"`save_search_filter()` ... reads `search_field.text()` directly and
+never references `_explicit_filter_text`, so that setting's behavior is unaffected."* That was true
+in the narrow sense that `d8f193d`'s own change didn't alter `save_search_filter`'s behavior — but
+it was also the exact latent bug this entry fixes, just not recognized as one at the time. See this
+entry instead of treating that line as still-accurate; SESSION.md itself has been annotated to point
+here.
+
+**The bug:** `LibraryPanel` correctly maintains two separate pieces of state — `search_field.text()`
+(the live widget, which legitimately shows a clicked filter's string while it's active, by design,
+so the filter actually applies) and `self._explicit_filter_text` (the user's last genuinely typed
+value, insulated from click-originated writes via the `_programmatic_search_update` guard set in
+`set_search()`). `save_search_filter()` (`library.py`, was line 1474) read `self.search_field.text()`
+— the wrong one — when persisting to `QSettings["persisted_filter"]`.
+
+This didn't surface on an ordinary close-library → reopen-library cycle within the same running
+session: `_close_library_flow()` (`panels.py`) never calls `save_search_filter()` at all (no
+persistence happens on a plain panel close), and reopening runs `clear_tag_filter_if_active()`
+first, which reverts the widget's displayed text back to `_explicit_filter_text` before anything
+could be saved. It surfaced specifically when the whole app was closed (`MainWindow.closeEvent`)
+*while the library panel was still open* — `closeEvent` calls `save_search_filter()` directly,
+bypassing `_close_library_flow`/`clear_tag_filter_if_active` entirely, so it read whatever a
+clicked filter had left sitting in the widget and persisted that as if it were real typed text. On
+the next launch, the restore path (`library.py:913-924`) has no separate marker to tell "this was
+typed" from "this was clicked" apart — only the final string ever gets persisted — so the clicked
+filter was promoted straight into the new session's `_explicit_filter_text` baseline,
+indistinguishable from a genuine typed search from then on.
+
+**Fix:** one line — `save_search_filter()` now reads `self._explicit_filter_text` instead of
+`self.search_field.text()`. Everything else in the method (`_classify_filter`'s shape-based
+tag/year/text classification, the per-kind `persist_filter_tag/year/text` gating, the final
+`setValue`) is unchanged; it just now operates on the correct source string. Confirmed before
+changing it that `text` had no other use in the 15-line function body (no logging, no UI feedback
+side effect) that switching the source could break.
+
+Both writers of `_explicit_filter_text` (`_on_search_changed`'s guarded branch, `set_search`'s
+guard) are synchronous, same-thread, in-order attribute assignments with no deferral — confirmed
+during investigation that there's no timing window where `_explicit_filter_text` could be stale
+relative to arbitrary `closeEvent` timing.
+
+**Tests:** four new cases added to `tests/test_library_shortcuts.py` (the existing home for
+`LibraryPanel` logic tests), following that file's established pattern of binding the real unbound
+method to a lightweight fake host rather than instantiating a full `LibraryPanel`/`QApplication` —
+`save_search_filter` needs no widget, only `self.config` and `self._explicit_filter_text`. Covers:
+clicked-filter-showing-with-typed-explicit-text persists the explicit text (the reported case),
+empty explicit text persists empty, a disallowed kind persists empty, an allowed year-kind filter
+persists correctly. `pytest tests/ -q`: same pre-existing 4 `test_cover_theme_pending.py` failures
+as documented in the entry above this one (confirmed via `git stash` to fail identically on `main`
+without this change); everything else, including all new tests, passes.
+
+Live-verification of the actual repro (click a filter, exit with panel open, relaunch, confirm the
+typed text — not the clicked filter — is restored) is still pending at the time of this entry; this
+is pure non-UI logic with no widget touched, but per this project's standing rule, a live check is
+still owed before this is fully closed out.
+
+---
+
 ## FIXED: cover-pool "remove from pool" click left `ThemeManager._cover_theme` stale instead of nulling it — latent, not currently reachable as a visible bug, fixed on contract grounds (2026-07-18)
 
 Found while investigating an unrelated, already-resolved question (whether `clear_cover_theme()`'s
