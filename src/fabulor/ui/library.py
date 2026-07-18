@@ -1471,7 +1471,7 @@ class LibraryPanel(QFrame):
         """Persist the current search field text to config on app close."""
         if not self.config.get_persist_filter_enabled():
             return
-        text = self.search_field.text()
+        text = self._explicit_filter_text
         if not text:
             self.config.settings.setValue("persisted_filter", "")
             return

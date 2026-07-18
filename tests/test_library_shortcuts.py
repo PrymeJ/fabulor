@@ -250,3 +250,79 @@ def test_long_title_long_author_sequence():
     assert f == "author"
     f = _next_list_expand_field(Qt.Key.Key_Right, f, te, ae)  # already at author: no-op
     assert f == "author"
+
+
+# ── save_search_filter persists _explicit_filter_text, not the live widget text ──────────────
+#
+# Regression coverage for the app-exit-with-a-clicked-filter-showing bug: a clicked tag/author/
+# narrator/year filter (set_search()) intentionally leaves the search_field widget showing the
+# clicked value while _explicit_filter_text stays at the user's last real typed text. closeEvent
+# calls save_search_filter() directly (bypassing _close_library_flow/clear_tag_filter_if_active),
+# so it must persist _explicit_filter_text, never the widget's current text.
+
+class _FakeSettings:
+    def __init__(self):
+        self.values = {}
+
+    def setValue(self, key, value):
+        self.values[key] = value
+
+
+class _FakeConfig:
+    def __init__(self, persist_enabled=True, tag=True, year=True, text=True):
+        self._persist_enabled = persist_enabled
+        self._tag, self._year, self._text = tag, year, text
+        self.settings = _FakeSettings()
+
+    def get_persist_filter_enabled(self):
+        return self._persist_enabled
+
+    def get_persist_filter_tag(self):
+        return self._tag
+
+    def get_persist_filter_year(self):
+        return self._year
+
+    def get_persist_filter_text(self):
+        return self._text
+
+
+class _FakeLibraryPanelForSave:
+    """Supplies exactly what save_search_filter reads off self — no widget, no QApplication."""
+    _classify_filter = staticmethod(LibraryPanel._classify_filter)
+    save_search_filter = LibraryPanel.save_search_filter
+
+    def __init__(self, explicit_text, config):
+        self._explicit_filter_text = explicit_text
+        self.config = config
+
+
+def test_save_search_filter_persists_explicit_text_not_widget_text():
+    # Simulates: a tag chip is clicked (widget would show "#SomeTag"), but the user's last typed/
+    # explicit search was "foo" — closeEvent must persist "foo", not the clicked-filter string.
+    config = _FakeConfig()
+    panel = _FakeLibraryPanelForSave(explicit_text="foo", config=config)
+    panel.save_search_filter()
+    assert config.settings.values["persisted_filter"] == "foo"
+
+
+def test_save_search_filter_empty_explicit_text_persists_empty():
+    config = _FakeConfig()
+    panel = _FakeLibraryPanelForSave(explicit_text="", config=config)
+    panel.save_search_filter()
+    assert config.settings.values["persisted_filter"] == ""
+
+
+def test_save_search_filter_disallowed_kind_persists_empty():
+    # "#tag"-shaped explicit text, but tag persistence is toggled off.
+    config = _FakeConfig(tag=False)
+    panel = _FakeLibraryPanelForSave(explicit_text="#tag", config=config)
+    panel.save_search_filter()
+    assert config.settings.values["persisted_filter"] == ""
+
+
+def test_save_search_filter_allowed_year_kind_persists_value():
+    config = _FakeConfig(year=True)
+    panel = _FakeLibraryPanelForSave(explicit_text=">1990", config=config)
+    panel.save_search_filter()
+    assert config.settings.values["persisted_filter"] == ">1990"
