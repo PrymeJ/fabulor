@@ -95,8 +95,10 @@ mutation type at once: tag add/remove, exclude/restore, missing-detection, scan-
 `BookModel._apply_filter_and_sort()` (`self.filter_empty = self._filter_no_match`) so every
 caller of that method — not just `filter_books()` — keeps `filter_empty` in sync.
 `_explicit_filter_text`/`_programmatic_search_update` bookkeeping stayed untouched in
-`_on_search_changed`, as required. Deliberately excluded: `sort_books()`-only call sites (sorting
-can't change match count), `showEvent`'s existing separate stale-filter-on-reopen handling, and
+`_on_search_changed`, as required. Deliberately excluded: `_toggle_sort_direction`/the dead-code
+`_apply_current_sort_filter` (direction-only reordering and zero-caller dead code respectively,
+can't change match count — see below for a correction to this exclusion list's third original
+member), `showEvent`'s existing separate stale-filter-on-reopen handling, and
 the Tag Manager's (`⚙`) own `tag_changed` signal — confirmed to have **zero** wiring to
 `library_panel` at all. Initially logged as a TODO.md follow-up, but closed same-session as
 **closed-not-open**, not deferred: `_open_tags_flow` (`panels.py:620-628`) gates on
@@ -111,6 +113,52 @@ and calling `set_books()` alone (no `filter_books()`) to pin the `filter_empty` 
 model layer, independent of the UI. `pytest tests/ -q`: same 4 pre-existing
 `test_cover_theme_pending.py` failures as the established baseline; everything else, including
 both new tests, passes.
+
+---
+
+**Continued, same session — a fourth mode-dropdown gap in the match-state styling fix, found
+live via screenshots, fixed, and the exclusion record above corrected.**
+
+Live-tested follow-on to the fix above: switching the library's sort-mode dropdown
+(Progress/Recent/Finished/Title/etc.) left the search field's red/neutral styling stuck at
+whatever it was before the switch, both directions confirmed via screenshots — "stuck-green"
+(should have turned red, didn't) and "stuck-red" (should have cleared, didn't).
+
+**Root cause, confirmed by static trace, no live instrumentation needed:** `_on_sort_changed`
+(`library.py:1364-1373`) — the single handler wired once to `sort_combo.currentTextChanged`
+(`library.py:823`) for every mode selection — calls `sort_books()` (line 1369), which sets
+`self._sort_field` and calls `_apply_filter_and_sort()`. That method re-derives the searched
+`source` subset from `self._sort_field` every call (`library.py:1888-1893`: "Recent" narrows to
+progress-only books, "Finished" to finished-dates only, "Progress"/others use the full list) and,
+per the fix above, unconditionally resyncs `filter_empty` as its last line. So `filter_empty` was
+already numerically correct the instant `sort_books()` returned — this was purely "the flag is
+right, the stylesheet is never reapplied," the identical shape as the two fixes above. Confirmed
+via grep that `_refresh_search_match_state()`'s only three call sites (`app.py:1188`,
+`library.py:1218`/tail of `refresh()`, `library.py:1459`/`_on_search_changed`) did not include
+`_on_sort_changed`.
+
+**Correction to this file's own record:** the "Deliberately excluded" note earlier in this same
+entry had grouped `_on_sort_changed` together with `_toggle_sort_direction` under "sorting can't
+change match count" — true of direction-only reordering, but not of a sort-*field* change, which
+genuinely narrows `source` before filtering. `_on_sort_changed` was incorrectly excluded, not
+deliberately deferred; the note above has been edited in place to reflect this, with
+`_toggle_sort_direction`/the dead `_apply_current_sort_filter` correctly remaining excluded (full
+reasoning and line citations in NOTES.md's correction to the same entry).
+
+**Fix (`4af50ca`):** one line, `self._refresh_search_match_state()` added to the end of
+`_on_sort_changed`, after `self._last_filter_mode = sort_key`. No Progress-mode special-casing —
+confirmed unneeded, since Progress uses the full book list and structurally cannot cause a false
+color on its own. `_toggle_sort_direction` and the dead `_apply_current_sort_filter` were left
+untouched, per the corrected reasoning above.
+
+`pytest tests/ -q`: same 4 pre-existing `test_cover_theme_pending.py` failures as the established
+baseline; everything else passes. No new unit test — this is purely an additional call to an
+already-tested method, with nothing new at the model layer to pin.
+
+**Live-verified** by the user against all 5 scenarios: a search matching only in Progress mode
+turns red on switching to Recent; a no-match search in Finished turns neutral on switching to
+Title; switching into Progress from a red state also clears to neutral; toggling sort direction
+alone causes no color change; normal live-typing red/neutral toggling is unaffected.
 
 **Live-verified** (all 7 scenarios from the plan, user-confirmed): tag-remove now reddens the
 field, tag-re-add now clears it; exclude/restore/missing-detection restyle correctly; an empty

@@ -76,9 +76,29 @@ themselves.
    doesn't go through `refresh()`).
 
 **Deliberately excluded, with reasoning:**
-- `sort_books()`-only call sites (`_toggle_sort_direction`, `_on_sort_changed`, and the dead-code
-  `_apply_current_sort_filter` with zero callers anywhere) — sorting changes ordering only, never
-  `self._books`/`self._filter_text`, so match count cannot change from sorting alone.
+- `_toggle_sort_direction` and the dead-code `_apply_current_sort_filter` (zero callers anywhere,
+  confirmed via grep) — `_toggle_sort_direction` never assigns `self._sort_field` (only
+  `self._sort_ascending`; the only two assignment sites are `refresh()`'s `_filter_text`-sync line
+  and inside `sort_books()` itself), and `_apply_filter_and_sort`'s `source` narrowing
+  (`library.py:1888-1893`) keys purely on `self._sort_field` — direction/reverse only affects final
+  ordering *after* filtering (`library.py:1944-1946`). Reordering an unchanged field cannot change
+  match count. This exclusion holds.
+- **CORRECTION (2026-07-18, later the same session): `_on_sort_changed` was *incorrectly* included
+  in this exclusion in the original version of this entry — it needed the call and was missing it.**
+  The original reasoning ("sorting changes ordering only... match count cannot change from sorting
+  alone") is true of reordering, but `_on_sort_changed` doesn't just reorder — it's the single
+  handler for the sort-mode DROPDOWN (`sort_combo.currentTextChanged`, `library.py:823`), and
+  selecting a new mode changes `self._sort_field` via `sort_books()` (`library.py:1369`), which DOES
+  change the narrowed `source` subset before filtering ever runs (`library.py:1888-1893`: "Recent"
+  narrows to progress-only books, "Finished" to finished-dates only, "Progress"/others use the full
+  list). Found live via screenshots (both "stuck-green" and "stuck-red": switching modes left the
+  search field's color frozen at whatever it was before the switch, even though the match state had
+  genuinely changed). Fixed (`4af50ca`) by adding one `self._refresh_search_match_state()` call at
+  the end of `_on_sort_changed`, after `self._last_filter_mode = sort_key`. Confirmed unnecessary to
+  special-case "Progress" mode — it uses the `else` branch (full book list), so it structurally
+  cannot cause a false color on its own, matching the design intent. Live-verified by the user
+  against both stuck-green and stuck-red repros, plus a regression check that `_toggle_sort_direction`
+  alone still causes no color change.
 - `showEvent`'s existing separate stale-filter-on-reopen handling (clears the field entirely if
   `filter_empty` is stale-`True` at panel reopen) — a different scenario (stale filter surviving a
   hide/show cycle) from this fix (stale styling while the panel stays open across a mutation); not
