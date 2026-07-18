@@ -1210,10 +1210,12 @@ class ThemeManager(QObject):
             # Add to pool: switch to With pool mode
             self.set_cover_art_mode("with_pool")
         else:
-            # Remove from pool: deactivate if active, switch back to Off
+            # Remove from pool: deactivate if active, switch back to Off. Route
+            # through clear_cover_theme() (not a manual _cover_theme_active +
+            # _on_theme_changed inline) so _cover_theme is actually reset to
+            # None, not left stale — see clear_cover_theme's own docstring.
             if self._cover_theme_active:
-                self._cover_theme_active = False
-                self._on_theme_changed(self._current_theme_name, save=False)
+                self.clear_cover_theme()
             self.set_cover_art_mode("off")
 
     def _on_cover_pool_btn_right_clicked(self):
