@@ -58,73 +58,44 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   pass and the corrected V2 re-run) is still VOID and must not be cited going forward — those runs
   predate this fix. Re-running is a separate decision, not automatic.
 
-- **[CORRECTNESS BUG, ROOT CAUSE CONFIRMED, NOT FIXED, 2026-07-17] Post-library-scan cover-refresh
-  (`library_controller.py:161`) races the book-load flow animation — a SEPARATE, pre-existing bug
-  from the Regime A `setCurrentRow` fix, and the actual cause of the severe VT/cover-ON stutter.**
-  Full trace + mechanism: NOTES.md 2026-07-17 entry (top). Every book-load calls
-  `apply_cover_theme` TWICE — once from `_load_cover_art` at app startup, and again from
-  `library_controller.py:161`'s post-scan cover-refresh, whenever the background library scan
-  finishes (a genuinely independent, variable-duration event, NOT gated on flow-animation state).
-  Confirmed via a caller-identifying trace (`traceback.extract_stack()`, temporarily added to
-  `apply_cover_theme` in `theme_manager.py` — still in place, needed for verification). When the
-  scan finishes late (observed ~416ms into the animation, 3/3 VT/cover-ON captures, tight
-  clustering — not noise), the second call's synchronous `_apply_stylesheets` (specifically
-  `mw.setStyleSheet(base)`, ~193-210ms, confirmed by matching its own log timestamp inside the
-  second `apply_cover_theme`'s ENTRY/EXIT window) freezes both sliders mid-flight, producing
-  exactly the "flow, pause, jump" the user described and confirmed still felt broken after the
-  Regime A fix — because the Regime A fix was never involved in this stutter at all (zero
-  `setCurrentRow` calls appear in any of the three traces; the chapter list stays hidden
-  throughout). CORRECTED attribution (an earlier pass in this same investigation wrongly blamed
-  `_flush_deferred_restyle_now` — that call's own existing flow-anim-Running guard was checked and
-  DOES correctly defer it every time, confirmed via its own log line firing after the freeze, once
-  the animation had already snapped; it is not at fault). The real gap: `_on_theme_changed`'s `not
-  hasattr(self, '_fade_anim')` branch (`theme_manager.py:377-392`) calls `_apply_stylesheets`
-  unconditionally, on a documented assumption ("called before initialize_fade_overlay... at
-  startup nothing is animating") that holds for the FIRST `apply_cover_theme` call but not
-  necessarily the SECOND — not yet confirmed why the second call still reaches this same branch
-  (need to check whether `_fade_anim`/`_active_display_theme` state genuinely differs between the
-  two calls, before assuming this is the fix target). Likely NOT actually a "VT" bug — the
-  correlation with VT/cover-ON in this session's testing is probably incidental to that book's
-  scan cost, not VT-format playback; do not generalize "VT" as the causal category without more
-  data across different books/folders. Next, STRICTLY IN ORDER, no implementation yet: (1) confirm
-  why the second `apply_cover_theme` call still hits the no-`_fade_anim` branch instead of the
-  normal fade-transition path; (2) only after that, propose (not implement) a fix — candidates not
-  decided: add a flow-anim guard to this specific branch, or gate the post-scan cover-refresh call
-  itself on flow-animation state, mirroring `is_overlay_open_or_committed()`/`_any_panel_animating()`
-  patterns already used elsewhere in this codebase for similar collisions. Do not implement
-  anything until both (1) and (2) are done and reviewed.
+- **[FIXED, committed `cd5ec5b`, 2026-07-18] Post-library-scan cover-refresh
+  (`library_controller.py:161`) racing the book-load flow animation — SUPERSEDES this entry's own
+  "not yet confirmed why" open question.** The mechanism traced here (every book-load calling
+  `apply_cover_theme` twice — once at startup, again from the post-scan cover-refresh whenever a
+  background scan finishes — with the second call's synchronous `_apply_stylesheets` freezing the
+  flow animation if the scan happened to finish mid-animation) was correct. The actual fix was
+  upstream of this call site entirely: `handle_background_tasks` was starting a library scan on
+  EVERY app launch, unconditionally, contradicting CLAUDE.md's own documented contract — gating
+  `scanner.start()` behind the same `manual/force_refresh/has_indexed_books` predicate that already
+  gated its status message means a normal launch no longer scans at all, so the second
+  `apply_cover_theme` call this entry describes never fires in that case. This also answers the
+  entry's own deferred question ("why does the second call still hit the no-`_fade_anim` branch") —
+  it doesn't anymore, because there's no second call to begin with on a normal launch. Manual/forced
+  scans (Rescan, add/remove folder) still trigger the post-scan refresh exactly as before — that
+  path was never the bug. See NOTES.md's 2026-07-17/18 entry for the full trace and the empty-
+  library-panel regression this fix's first (incomplete) attempt caused and then also fixed in the
+  same commit. Confirmed NOT a VT-specific bug either, exactly as this entry's own "likely NOT
+  actually a VT bug" note predicted — final 10-sample benchmark (2026-07-18) shows VT and M4B
+  behaving identically post-fix.
 
-- **[UMBRELLA ISSUE, STAYS OPEN, 2026-07-16/17] Flow-animation/theme-apply narrowing work is NOT
-  complete.** Full writeup: NOTES.md 2026-07-16/17 entry. This is ONE open item, not a checklist —
-  do not read the status below as separable sub-tasks that can be closed one at a time; closure
-  requires ALL FOUR of the following true simultaneously, live-verified in one session:
-  1. App launch smooth (flow animation, no stutter), cover-based theme ON and OFF, VT and non-VT.
-  2. Book-switch smooth (flow animation, no stutter), cover-based theme ON and OFF, VT and non-VT.
-  3. No book loses saved progress under rapid repeated switching, either book type.
-  4. Library panel does not stutter on open.
-  Current status: (1)/(2)/(3) — the two progress-loss bugs behind criterion 3 are fixed and
-  live-verified (non-VT restore transient in `_sync_persistence`; VT cross-file restore rendezvous
-  race, `Player._vt_file_loaded_awaiting_restore`) — see the commit and NOTES.md for both. (4) —
-  library-panel stutter on open — is **INCONCLUSIVE, not root-caused**. A cache-miss hypothesis
-  (cold `_sized_cover_cache` forcing synchronous LANCZOS resize during paint,
-  `BookDelegate._get_sized_cover`/`_lanczos_qimage` in `library.py`) looked confirmed on one paired
-  profiler comparison, then failed a direct correlation test twice — including once against a
-  reconstructed pre-narrowing baseline (clean `HEAD` before any of this session's work). The user
-  reproduced the real stutter twice, then could not reproduce it again on an identical repro. See
-  NOTES.md for the full three-round trail and the explicit retraction of the earlier "root cause
-  found" claim — do not resume this by re-trusting that claim.
-  Rationale for treating this as one open item rather than crediting the fixed sub-parts as partial
-  closure: touching the flow-animation/theme-apply timing already produced a previously-absent
-  failure mode this session (the progress-reset bugs' contention window widening enough to become
-  reproducible) — fixing (3) does not establish that (1)/(2)/(4) are now safe, and (4) in particular
-  remains an open, untraced risk of the same kind. All `[VT-SEEK-TRACE]`/`[PERSIST-TRACE]`/
-  `[STUTTER-TRACE]` instrumentation and the `FABULOR_STUTTER_PROFILE`-gated profiler in `panels.py`
-  stay in place until all four criteria hold at once. Blocked on: finding what actually correlates
-  with the library stutter (profiler wall-clock CPU time in the open-animation bracket has not, so
-  far, been shown to track it) before any fix can even be proposed. See NOTES.md's "Reusable
-  lesson" note on why a clean `cProfile` capture doesn't rule out compositor/frame-level jank —
-  the next attempt likely needs Qt frame-timing/paint-event instrumentation instead, a different
-  tool than what's been tried so far.
+- **[CLOSED, 2026-07-18, by explicit user decision] Flow-animation/theme-apply narrowing work —
+  umbrella issue from 2026-07-16/17, now closed.** Original closure bar was ALL FOUR criteria
+  simultaneously: (1) app launch smooth cover ON/OFF × VT/non-VT, (2) book-switch smooth same
+  matrix, (3) no progress loss under rapid switching, (4) library panel doesn't stutter on open.
+  Status at closure: (1)/(2) — confirmed via the final 10-sample worst_gap benchmark (2026-07-18,
+  see entry above), all four conditions in the healthy 30-70ms range. (3) — confirmed via the
+  rapid-switch progress-integrity re-check (2026-07-18, see entry above), no data loss across many
+  switches. (4) — library-panel-open stutter remains **not separately re-verified this session**;
+  it was INCONCLUSIVE at the time this umbrella was written and was not the direct target of any
+  of tonight's five fixes (though `cd5ec5b`'s startup-population fix does address a RELATED
+  first-open symptom — the empty-panel flash — which is a different bug from the stutter this
+  criterion originally meant). Explicitly asked and closed rather than left open on a technicality:
+  the user has not observed this stutter during tonight's extensive testing and elected to close
+  this umbrella now, on the basis that if it resurfaces it will be noticeable and can be
+  investigated fresh at that point — not on the basis that (4) was formally re-verified. If it
+  resurfaces, treat as a new investigation; the INCONCLUSIVE trail (cache-miss hypothesis that
+  failed correlation testing twice) in NOTES.md's 2026-07-16/17 entry is background, not a
+  confirmed dead end to avoid re-checking.
 
 - **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
   stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
@@ -181,48 +152,43 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
     `tools/vt_restore_race_harness.py`, live checklist) re-run — NOT bundled with RANK-1. Captured
     here so this structural risk is dated and tracked, not left buried in a review report.
 
-- **[2026-07-14] VT progress restore silently resets on book-switch (not cold app-launch) — root
-  cause confirmed, NOT fixed.** Distinct from anything shipped tonight (`faeaa83`/`685e433` were
-  verified via 200 cold-launch cycles only; book-switch was never tested until now). Root cause:
-  `_restore_position` (sets `_vt_restore_pending`) runs from a `Qt.QueuedConnection` slot on the Qt
-  main thread; `_on_file_loaded` (consumes it) fires on mpv's own independent event thread. Nothing
-  guarantees the former runs before the latter — it does at cold launch (nothing else competes for
-  the Qt event loop) but not on book-switch, where a slow synchronous operation on the Qt thread can
-  let `_on_file_loaded` win the race, find nothing pending, and never re-check. Confirmed live
-  trigger: cover-art-driven theme application (~325-400ms synchronous `_apply_stylesheets` pass) —
-  every failing switch coincided with it, every clean switch (plain theme, no cover-art extraction)
-  succeeded. **This is the THIRD independent instance of synchronous main-thread theme
-  application/extraction cost causing a real bug** (first: 2026-07-04 hover-preview fade-timing bug;
-  second: tonight's own measurement of the same cost outside the Themes tab entirely; third: this
-  bug, the first of the three to corrupt actual state rather than just visual timing). **Suggested
-  direction, not designed:** the durable fix likely belongs at the theme-application layer (make
-  `_apply_stylesheets`/cover-art extraction async, or defer it away from book-switch's event
-  sequencing) rather than a fourth patch onto `_vt_restore_pending`/`_on_file_loaded` — the deferred-
-  restore mechanism itself is sound and isn't this bug's actual fault. Full mechanism, the two
-  contrasting live log traces, and the async-theme-application direction are in NOTES.md, "VT
-  progress restore silently resets on BOOK-SWITCH..." (2026-07-14). **Diagnostic instrumentation
-  (`[BOOKSWITCH-TRACE]` debug logging across `player.py`/`app.py`/`ui/panels.py`) was deliberately
-  left in place, uncommitted-but-present, for whoever picks this up** — use it to confirm a fix
-  actually closes the race rather than trusting a few clean manual tries, same discipline as every
-  other fix tonight.
+- **[2026-07-14, STILL OPEN — trigger condition likely narrowed by tonight's work, NOT re-verified,
+  do not assume fixed] VT progress restore silently resets on book-switch (not cold app-launch) —
+  root cause confirmed, NOT fixed.** Root cause: `_restore_position` (sets `_vt_restore_pending`)
+  runs from a `Qt.QueuedConnection` slot on the Qt main thread; `_on_file_loaded` (consumes it)
+  fires on mpv's own independent event thread. Nothing guarantees the former runs before the
+  latter — it does at cold launch (nothing else competes for the Qt event loop) but not on
+  book-switch, where a slow synchronous operation on the Qt thread can let `_on_file_loaded` win
+  the race, find nothing pending, and never re-check. Confirmed live trigger at the time: cover-
+  art-driven theme application (~325-400ms synchronous `_apply_stylesheets` pass) — every failing
+  switch coincided with it.
+  **2026-07-18 update, not a fix:** tonight's `_apply_pending_cover_theme` deferral work
+  (`1025b0a`/`c281ee3`) means the expensive `apply_cover_theme`/`clear_cover_theme` synchronous
+  work this bug's trigger depends on now runs LATER on a book-switch than it used to — deferred
+  until both sliders finish `when_animations_done`, rather than immediately. This may narrow or
+  close the window this race needs, but that is a hypothesis, not a verified fix — the rapid-switch
+  progress-integrity re-check run tonight (see entry above) exercised book-switch repeatedly with
+  cover-theme ON and found no data loss, which is circumstantial support but was not designed as a
+  targeted re-test of THIS specific race (it didn't specifically try to catch `_on_file_loaded`
+  winning against a still-pending `_restore_position`). Root cause (the QueuedConnection vs.
+  mpv-thread race itself) is UNCHANGED and UNFIXED — do not close this entry on the strength of
+  tonight's incidental testing. If revisited: re-run the original repro from NOTES.md's 2026-07-14
+  entry specifically, with the `[BOOKSWITCH-TRACE]` instrumentation (still in place), before
+  concluding either way.
 
-- **[RANK-1, MEASURED 2026-07-14] Cover-theme `_apply_stylesheets` freezes the app-start flow
-  animation (Regime B) — a third confirmed victim of the theme-apply hazard, NOT a standalone
-  animation bug.** On cover-theme-ON cold launches, the ~400ms synchronous `_apply_stylesheets`
-  pass lands inside the flow-animation window and freezes the `QPropertyAnimation` frame driver for
-  its full duration — the slider sits, then snaps to the end (~400–600ms worst frame gap, up to
-  791ms; M4B-cover 10/10 launches, VT-cover 8/9). Same root and same fix target (`setStyleSheet`/
-  async theme apply) as Race 3 (the P1↔P2 restore-consumer starvation) and the 2026-07-04 Themes-tab
-  fade bug — this is the RANK-1 theme-apply hazard's THIRD confirmed victim. **Do NOT design a fix
-  for this in isolation or as an animation patch — fold it into the RANK-1 theme-apply work
-  (investigate-then-plan for async/deferred `_apply_stylesheets`).** The `_any_panel_animating`
-  guard in `_on_theme_changed` already deflects this on book-switch and panel-slides (which measured
-  clean), but NOT on cold launch — there is no panel animating at cold start to trigger the guard,
-  which is exactly the gap. A fix should preserve/generalize that deflection. Measured live: 60 cold
-  launches + 12 manual book-switches, `[STUTTER-PROBE]` frame-gap instrumentation (since reverted),
-  user's eyes agreeing with the numbers. Full mechanism in NOTES.md ("App-start flow-animation
-  stutter is TWO mechanisms...", 2026-07-14) and the parent report's RANK list; raw numbers in
-  `review/Data_260714_flow_animation_stutter.md`.
+- **[FIXED, committed `cd5ec5b`, 2026-07-18] Cover-theme `_apply_stylesheets` freezing the
+  app-start flow animation (Regime B) — same root mechanism as the post-library-scan cover-refresh
+  entry above, fixed by the same commit.** This 2026-07-14 measurement (400-600ms worst frame gap,
+  up to 791ms, cover-theme-ON cold launches) predates the later, more precise trace that identified
+  the actual second-call trigger (the unconditional launch scan). Gating `scanner.start()` behind
+  the manual/force/no-indexed-books predicate removes the second `apply_cover_theme` call on a
+  normal launch entirely, which is what this entry's "cold launch, no panel animating to trigger
+  the existing guard" gap was really describing — there's no longer a second call for that guard to
+  need to catch. Final 10-sample benchmark (2026-07-18) confirms cold-launch worst_gap now sits in
+  the healthy 30-70ms range across VT/M4B × cover ON/OFF, down from the 400-791ms measured here.
+  Superseded, not folded into any future async-`_apply_stylesheets` redesign — the root cause here
+  turned out to be a scan-trigger bug, not something requiring the deferred/async stylesheet
+  architecture change this entry originally pointed toward.
 
 - **[RANK-LOW, MEASURED 2026-07-14] App-start flow-animation baseline roughness (Regime A) — a
   standalone ~70ms hitch at animation start, independent of everything else.** Present on EVERY cold
