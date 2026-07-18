@@ -6,6 +6,25 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
+  `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
+  narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
+  each (`entr -r` restart via touching `book_quotes.py`, ~2s between touches), cover-theme ON,
+  checking DB `progress` for corruption after every launch. Result: 398/400 clean; 2 anomalies, both
+  isolated single-event drops that then held perfectly stable for the rest of that book's 40-launch
+  batch (no repeating/systematic corruption). One (Colorless Tsukuru Tazaki, launch 24) was traced
+  to a burst of `seek_async` calls ~10.75s apart milliseconds apart — stray wheel-scroll input
+  landing on the progress slider during this interactive session, not an app bug. The other
+  (Austerlitz, launch 2) is real: the first Austerlitz launch's `load_book` fired but
+  `_restore_position` had not yet run when `entr` sent SIGTERM (~1.4s later) for the next cycle;
+  `closeEvent` (`app.py:3370`) unconditionally calls `_save_current_progress()` whenever
+  `current_file` is set, with no check for whether the VT restore-seek actually landed, so it saved
+  the just-loaded (~0) position over the real 10420.78s. **Caveat from the user, load-bearing:**
+  this test's rapid restart cadence doesn't reproduce the original bug's shape — the original issue
+  was progress restoring correctly in the GUI and then *later* dropping to zero, not a load
+  interrupted before restore ever ran. Real usage doesn't SIGTERM the app mid-book-load, so it's
+  unclear this narrow race is worth pursuing on its own. Not triaged as a priority; revisit only if
+  a similar shape shows up from real usage, not from stress-test cadence alone.
 - **[VERIFIED, 2026-07-18] Rapid-switch progress-integrity check against tonight's final
   startup-sequencing state — PASSED, no data-integrity issue found.** Ran the Bug-1/Bug-2-era
   repro (rapid switching between Colorless Tsukuru Tazaki and Sometimes a Great Notion, 00:44-00:46)
