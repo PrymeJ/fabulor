@@ -59,6 +59,18 @@ python main.py > /tmp/fabulor_run.log 2>&1 &
 kill %1   # or: pkill -f "python main.py" — but check `ps aux` first if an `entr` dev-loop is also running
 ```
 
+**Before trusting any live repro, check for stray dev-loop processes:**
+`ps aux | grep -E 'entr|main.py'`. `fabulorentr` spawns `entr -r python main.py`; a leftover
+instance from an earlier session can silently keep serving stale code against whatever window the
+user is actually testing in, while the instrumented/patched instance you launched sits untouched.
+This produces misleading "the fix didn't work" or "nothing happened" symptoms that look exactly
+like real code defects — confirmed 2026-07-18 during the tag add/remove styling investigation,
+where a stray `entr` instance from a prior session caused a live debug-logging repro to show zero
+hits on every instrumented function, which looked like a serious data-layer bug until the stray
+process was found and killed; a clean retest against a single known instance immediately showed
+the real (much narrower) bug. Kill stray instances before trusting any live-debug result — do not
+spend time re-deriving a hypothesis to explain a symptom until process identity is confirmed.
+
 ---
 
 ## Critical Architecture Rules
