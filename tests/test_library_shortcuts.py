@@ -17,8 +17,9 @@ import pytest
 from PySide6.QtCore import Qt
 
 from fabulor.ui.library import (
-    LibraryPanel, VIEW_MODES, _initial_list_expand_field, _next_list_expand_field,
+    LibraryPanel, BookModel, VIEW_MODES, _initial_list_expand_field, _next_list_expand_field,
 )
+from fabulor.models.book import Book
 
 
 # ── Fakes ────────────────────────────────────────────────────────────────────
@@ -326,3 +327,27 @@ def test_save_search_filter_allowed_year_kind_persists_value():
     panel = _FakeLibraryPanelForSave(explicit_text=">1990", config=config)
     panel.save_search_filter()
     assert config.settings.values["persisted_filter"] == ">1990"
+
+
+# ── BookModel.filter_empty stays in sync via _apply_filter_and_sort, not just filter_books ────
+#
+# Regression coverage for the search-field match-state styling bug: filter_empty (the flag
+# LibraryPanel._refresh_search_match_state reads) used to be resynced only inside filter_books(),
+# so any book-set mutation routed through set_books() (i.e. every LibraryPanel.refresh() call —
+# tag add/remove, exclude/restore, missing-detection, scan-add) left filter_empty stale relative
+# to the freshly recomputed _filter_no_match. _apply_filter_and_sort() now resyncs filter_empty
+# unconditionally as its last statement, so set_books() alone (no filter_books() call) keeps it
+# correct. Pinned here at the model layer, independent of the UI/styling.
+
+def test_set_books_with_no_match_filter_sets_filter_empty_true():
+    model = BookModel(db=None)
+    model._filter_text = "nomatch"
+    model.set_books([Book(path="/a", title="Alpha"), Book(path="/b", title="Beta")])
+    assert model.filter_empty is True
+
+
+def test_set_books_with_matching_filter_sets_filter_empty_false():
+    model = BookModel(db=None)
+    model._filter_text = "alpha"
+    model.set_books([Book(path="/a", title="Alpha"), Book(path="/b", title="Beta")])
+    assert model.filter_empty is False

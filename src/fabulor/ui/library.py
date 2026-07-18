@@ -1215,6 +1215,7 @@ class LibraryPanel(QFrame):
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} LibraryPanel.refresh: "
                      f"set_books() took {(time.perf_counter()-_t_setbooks0)*1000:.1f}ms "
                      f"rowCount={self._book_model.rowCount()}")
+        self._refresh_search_match_state()
 
         def _after_covers(_attempt=0):
             first_idx = self._book_model.index(0, 0)
@@ -1435,14 +1436,9 @@ class LibraryPanel(QFrame):
         self._delegate._kbd_expand_field = next_field
         self._list_view.viewport().update()
 
-    def _on_search_changed(self, text):
-        if not self._programmatic_search_update:
-            # A real user edit (typing, or QLineEdit.clear() from right-click/Escape) — this IS
-            # the user's explicit filter text now, not a click-filter override.
-            self._explicit_filter_text = text
-        self._book_model.filter_books(text.lower().strip())
+    def _refresh_search_match_state(self):
         no_match = self._book_model.filter_empty
-        incomplete = _is_incomplete_year_filter(text.lower().strip())
+        incomplete = _is_incomplete_year_filter(self.search_field.text().lower().strip())
         if no_match and not incomplete:
             main_win = self.parent()
             tm = getattr(main_win, 'theme_manager', None)
@@ -1453,6 +1449,14 @@ class LibraryPanel(QFrame):
             )
         else:
             self.search_field.setStyleSheet("")
+
+    def _on_search_changed(self, text):
+        if not self._programmatic_search_update:
+            # A real user edit (typing, or QLineEdit.clear() from right-click/Escape) — this IS
+            # the user's explicit filter text now, not a click-filter override.
+            self._explicit_filter_text = text
+        self._book_model.filter_books(text.lower().strip())
+        self._refresh_search_match_state()
         QTimer.singleShot(0, self._load_visible_covers)
 
     @staticmethod
@@ -1974,6 +1978,7 @@ class BookModel(QAbstractListModel):
         missing.sort(key=lambda b: (b.title or "").lower())
         books = have + missing
         self._filtered = books
+        self.filter_empty = self._filter_no_match
 
     def _emit_for_id(self, book_id: int) -> None:
         for row, book in enumerate(self._filtered):

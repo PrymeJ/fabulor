@@ -1185,6 +1185,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_book_metadata_saved(self, book_id: int, title: str, author: str, narrator: str, year: object):
         self.library_panel._book_model.update_book_metadata(book_id, title, author, narrator, year)
+        self.library_panel._refresh_search_match_state()
         if self.stats_panel.isVisible():
             self.stats_panel.refresh_all()
 
