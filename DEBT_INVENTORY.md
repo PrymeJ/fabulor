@@ -1,4 +1,4 @@
-# Debt Inventory
+# Debt Inventory - PROBABLY NOT ALL ITEMS UP-TO-DATE AND SHOULD NOT BE TAKEN AS GROUND TRUTH; NEEDS REVISION 
 
 A flat index of known architectural/technical debt across the project. This file is an index,
 not the source of truth — each entry links to its full writeup in CLAUDE.md ("Pending / Known

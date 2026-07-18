@@ -1,4 +1,121 @@
-## FIXED and live-verified-pending: `save_search_filter()` persisted the live widget text instead of `_explicit_filter_text` — a clicked tag/author/narrator/year filter survived an app restart as if it were typed search text, but only when the library panel was left open across the restart (2026-07-18)
+## FIXED and live-verified: search-field match-state (red/no-match) styling went stale after any book-set mutation — tag add/remove, exclude/restore, missing-detection, scan-add, metadata edit — because only `filter_books()` (the `textChanged` path) ever resynced `filter_empty` or re-applied the stylesheet (2026-07-18)
+
+**Bug (second, unrelated report the same session as the persistence fix below):** the search
+field's red/no-match vs. normal styling didn't update when the set of visible books changed while
+the search text stayed the same. Two directions reported: (1) a search matching one book, then
+that book gets removed/excluded/marked-missing/un-tagged — zero matches now, field should turn
+red but doesn't; (2) a no-match search, then a book is added/restored/re-tagged so it would now
+match — field should clear but doesn't.
+
+**Root cause, traced via a find-and-report-only investigation first:** `BookModel.filter_empty` —
+the flag `LibraryPanel._on_search_changed` read to decide the field's stylesheet — was only ever
+resynced from the internal `_filter_no_match` inside `filter_books()` (`library.py:1872`, at the
+time of investigation). Every book-set-mutating path funnels through `LibraryPanel.refresh()`
+(`library.py:1187-1232`) → `BookModel.set_books()` (`library.py:1807-1816`), which calls
+`_apply_filter_and_sort()` **directly** — this recomputed `_filter_no_match` correctly but never
+resynced `filter_empty`, and `search_field.setStyleSheet(...)` was applied **only** inline inside
+`_on_search_changed` — no other code path in the entire codebase ever touched it. Same gap in
+`update_book_metadata()` (`library.py:1821-1830`, called from a title/author/narrator/year edit
+via `BookDetailPanel`), which also calls `_apply_filter_and_sort()` directly.
+
+**A live-debug detour that produced a process-management lesson, not a code lesson:** the first
+attempt to live-verify the reported tag-add/remove repro used temporary `print()` instrumentation
+in `db.add_book_tag`/`db.remove_book_tag`/`app.py`'s `_on_book_tags_changed`/the tag branch of
+`_apply_filter_and_sort`. The first live run showed **zero hits on any instrumented line** —
+looking like the tag-mutation UI wasn't reaching the DB layer at all, a much more serious bug than
+reported. Investigating that dead-end surfaced the real explanation: a stray
+`entr -r python main.py` dev-loop process, left running from an earlier session
+(`fabulorentr`'s pattern), was silently serving a separate, unpatched app instance — the user's
+repro clicks were landing on that window, not the freshly-launched instrumented one. `ps aux`
+confirmed two independent Fabulor processes running simultaneously. Killing the stray instance and
+retesting against a single known instance immediately produced the expected, much narrower
+result: both tag-add and tag-remove correctly reapply the filter (the visible book list is correct
+in both directions — confirmed live), and only the styling is stale, exactly matching the original
+diagnosis. **This produced a new standing process-management rule, added to CLAUDE.md's "Running
+the app" section:** before trusting any live repro, run `ps aux | grep -E 'entr|main.py'` and kill
+any stray instance first — a leftover dev-loop instance can silently serve stale code and produce
+misleading "the fix didn't work"/"nothing happened" symptoms indistinguishable from a real code
+defect.
+
+**Verified consequence (traced directly, not assumed):** `_on_book_tags_changed`
+(`app.py:1400-1405`) reads:
+```python
+def _on_book_tags_changed(self) -> None:
+    self.stats_panel._on_tag_changed()
+    search = self.library_panel.search_field.text().strip()
+    if search.startswith("#"):
+        self.library_panel.refresh()
+    self.tags_panel.refresh_books()
+```
+`self.library_panel.refresh()` is the *only* call in this method touching `library_panel` at all.
+This confirms that adding the restyle step to the tail of `refresh()` automatically fixes the tag
+add/remove styling bug too (for the already-existing `search.startswith("#")` condition this
+method already gates on), with zero additional wiring needed at the tag-mutation call sites
+themselves.
+
+**Fix (`ebf9e36`):**
+1. `BookModel._apply_filter_and_sort()` (`library.py`, previously ending at line 1976) gained one
+   new last line: `self.filter_empty = self._filter_no_match`. Every caller of this method —
+   `set_books()`, `update_book_metadata()`, `sort_books()`, and `filter_books()` itself — now
+   unconditionally keeps `filter_empty` in sync. `filter_books()`'s own pre-existing explicit
+   resync became redundant but harmless; left in place rather than removed for no benefit.
+2. Extracted the styling block previously inline in `_on_search_changed` (lines 1444-1455 at the
+   time) into a new standalone `LibraryPanel._refresh_search_match_state()`, changed to read
+   `self.search_field.text()` itself instead of taking `text` as a signal-argument parameter — so
+   it's callable from non-signal contexts. Deliberately does not touch
+   `_explicit_filter_text`/`_programmatic_search_update` (user-edit-only bookkeeping, stays in
+   `_on_search_changed`), does not call `filter_books()` (callers are responsible for having
+   already updated filter state via `_apply_filter_and_sort()`), and does not call
+   `_load_visible_covers` (each existing call site already handles that independently — no new
+   shared post-mutation hook was invented, matching the codebase's existing precedent for that
+   concern).
+3. Wired the new method into three places: `_on_search_changed` (replacing the inline block),
+   the tail of `refresh()` (immediately after `set_books()`, before the deferred cover-loading
+   block — this single call site is what fixes every `refresh()`-routed mutation type at once),
+   and `_on_book_metadata_saved` (`app.py`, after `update_book_metadata(...)`, since that path
+   doesn't go through `refresh()`).
+
+**Deliberately excluded, with reasoning:**
+- `sort_books()`-only call sites (`_toggle_sort_direction`, `_on_sort_changed`, and the dead-code
+  `_apply_current_sort_filter` with zero callers anywhere) — sorting changes ordering only, never
+  `self._books`/`self._filter_text`, so match count cannot change from sorting alone.
+- `showEvent`'s existing separate stale-filter-on-reopen handling (clears the field entirely if
+  `filter_empty` is stale-`True` at panel reopen) — a different scenario (stale filter surviving a
+  hide/show cycle) from this fix (stale styling while the panel stays open across a mutation); not
+  touched or duplicated.
+- The Tag Manager (`⚙`, `TagManagerWidget`)'s own `tag_changed` signal — confirmed via
+  `main_window_builders.py:606` to connect **only** to `stats_panel._on_tag_changed`, never
+  reaching `library_panel` at all. Initially logged as a real gap and a TODO.md follow-up, larger
+  in kind than the styling bug fixed here (the book list itself would never update, not just
+  styling) — but **closed same-session as closed-not-open, not deferred, once its actual
+  reachability was checked.** `_open_tags_flow` (`panels.py:620-628`) gates on
+  `PanelManager.is_overlay_open_or_committed()` — the exact same one-overlay-at-a-time check that
+  blocks the Tag Manager from opening while the library panel is already visible (confirmed by
+  reading the gate's definition, `panels.py:890-904`: "the single gate for 'ignore a second
+  overlay-open request'"). Since the Tag Manager and an open library panel can never be visible
+  at the same time, and `showEvent`'s existing stale-filter-on-reopen handling (see the exclusion
+  immediately above) already re-validates `filter_empty` on every library reopen — including a
+  reopen right after a Tag Manager session — there is no code path where a user could ever
+  actually observe the stale `#tag` search this gap would otherwise produce. Removed from
+  TODO.md's "Pending" list (which is for work still needing to happen); logged here instead so a
+  future investigation doesn't rediscover the same non-propagation wiring, treat it as live, and
+  burn another cycle re-deriving this same reachability conclusion.
+
+**Tests:** `tests/test_library_shortcuts.py` gained two model-layer cases constructing a bare
+`BookModel` and calling `set_books()` alone (never `filter_books()`), asserting `filter_empty`
+tracks the match state correctly — pinning the `_apply_filter_and_sort()` resync independent of
+any UI/signal path. `pytest tests/ -q`: same 4 pre-existing `test_cover_theme_pending.py` failures
+as the established baseline (unrelated); everything else, including both new tests, passes.
+
+**Live-verified** by the user against all 7 scenarios in the approved plan: tag-remove reddens the
+field, tag-re-add clears it; exclude/restore/missing-detection restyle correctly; an empty search
+field stays neutral across a refresh; live-typing red/neutral toggling is unchanged; a metadata
+edit while a related no-match search is active restyles correctly; sort-only actions leave styling
+untouched.
+
+---
+
+## FIXED and live-verified: `save_search_filter()` persisted the live widget text instead of `_explicit_filter_text` — a clicked tag/author/narrator/year filter survived an app restart as if it were typed search text, but only when the library panel was left open across the restart (2026-07-18)
 
 **Supersedes a stale claim in `SESSION.md`'s `d8f193d` entry** (2026-07-05, the toggle-off-reverts
 commit): that entry states *"`save_search_filter()` ... reads `search_field.text()` directly and
@@ -50,10 +167,10 @@ persists correctly. `pytest tests/ -q`: same pre-existing 4 `test_cover_theme_pe
 as documented in the entry above this one (confirmed via `git stash` to fail identically on `main`
 without this change); everything else, including all new tests, passes.
 
-Live-verification of the actual repro (click a filter, exit with panel open, relaunch, confirm the
-typed text — not the clicked filter — is restored) is still pending at the time of this entry; this
-is pure non-UI logic with no widget touched, but per this project's standing rule, a live check is
-still owed before this is fully closed out.
+**Live-verified, update:** the app-restart repro (click a filter, exit with panel open, relaunch,
+confirm the typed text — not the clicked filter — is restored) was confirmed working by the user
+later the same session, alongside the live verification of the match-state styling fix above. Both
+fixes from this 2026-07-18 session are now fully closed out.
 
 ---
 

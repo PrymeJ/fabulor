@@ -41,6 +41,88 @@ Live-verification of the actual app-restart repro is still pending as of this en
 non-UI logic with no widget touched during the fix, but a live check is still owed per this
 project's standing rule before considering this fully closed.
 
+---
+
+**Continued, same session — search-field match-state (red/no-match) styling investigated, then
+fixed and live-verified; a stray dev-loop process derailed the first live-debug attempt and is now
+a documented process convention.**
+
+Second reported bug, unrelated to the persistence fix above: the search field's red/no-match vs.
+normal/match styling doesn't update when the underlying set of visible books changes while the
+search text stays the same — e.g. the sole matching book gets removed/excluded/marked-missing (or
+un-tagged), or a book that would now match gets added/restored/re-tagged. Investigated
+find-and-report only first, per the user's request.
+
+**Root cause traced:** `BookModel.filter_empty` (the flag `_on_search_changed` read to color the
+field) was only ever resynced from the internal `_filter_no_match` inside `filter_books()`
+(`library.py:1872`). Every book-set-mutating path — `LibraryPanel.refresh()` → `set_books()`
+(used by tag add/remove, exclude/restore, missing-detection, scan-add) and
+`update_book_metadata()` — called `_apply_filter_and_sort()` **directly**, which recomputed
+`_filter_no_match` but never resynced `filter_empty`, and the stylesheet itself was applied only
+inline inside `_on_search_changed` — no other code path ever touched
+`search_field.setStyleSheet`.
+
+**A live-debug detour, and the process-convention lesson it produced:** live-testing the reported
+tag-add/remove repro first produced a much scarier symptom than expected — instrumented logging
+(temporary `print()` calls in `add_book_tag`/`remove_book_tag`/`_on_book_tags_changed`/the tag
+branch of `_apply_filter_and_sort`) showed **zero hits on any instrumented function** during the
+user's live repro, which looked like a serious "the UI isn't even calling the DB layer" bug.
+Root cause of *that*: a stray `entr -r python main.py` dev-loop process, left running from an
+earlier session, was silently serving a separate, unpatched app instance — the user's repro
+clicks were landing on that window, not the freshly-launched instrumented one. Killing the stray
+process and retesting against a single known instance immediately showed the real, much narrower
+bug: both tag-add and tag-remove correctly reapply the filter (the book list updates correctly in
+both directions, confirmed live), and only the styling is stale — exactly matching the original
+`refresh()`-bypasses-styling diagnosis, not a data-layer defect. This produced a new standing
+process-convention note in CLAUDE.md ("Running the app" section): always check
+`ps aux | grep -E 'entr|main.py'` for stray instances before trusting any live-debug result.
+
+**Verified consequence, not assumed:** re-traced `_on_book_tags_changed` (`app.py:1400-1405`)
+directly — it calls `stats_panel._on_tag_changed()`, conditionally `library_panel.refresh()` when
+the active search starts with `#`, and `tags_panel.refresh_books()`. `refresh()` is the *only*
+call touching `library_panel` in that method. This confirmed that adding the restyle step to the
+tail of `refresh()` alone would automatically fix the tag add/remove styling bug too, with no
+separate call site needed — a verified trace, not a guess.
+
+**Fix (`ebf9e36`):** extracted the styling logic from `_on_search_changed` into a new
+`LibraryPanel._refresh_search_match_state()` (reads `self._book_model.filter_empty` and
+`self.search_field.text()` directly, rather than taking `text` as a signal-handler parameter);
+called it from `_on_search_changed` (replacing the inline block), from the tail of `refresh()`
+(right after `set_books()` — this single call site is what fixes every `refresh()`-routed
+mutation type at once: tag add/remove, exclude/restore, missing-detection, scan-add), and from
+`_on_book_metadata_saved` (`app.py`, since `update_book_metadata()` calls
+`_apply_filter_and_sort()` directly, not via `refresh()`). Added one line to the end of
+`BookModel._apply_filter_and_sort()` (`self.filter_empty = self._filter_no_match`) so every
+caller of that method — not just `filter_books()` — keeps `filter_empty` in sync.
+`_explicit_filter_text`/`_programmatic_search_update` bookkeeping stayed untouched in
+`_on_search_changed`, as required. Deliberately excluded: `sort_books()`-only call sites (sorting
+can't change match count), `showEvent`'s existing separate stale-filter-on-reopen handling, and
+the Tag Manager's (`⚙`) own `tag_changed` signal — confirmed to have **zero** wiring to
+`library_panel` at all. Initially logged as a TODO.md follow-up, but closed same-session as
+**closed-not-open**, not deferred: `_open_tags_flow` (`panels.py:620-628`) gates on
+`is_overlay_open_or_committed()`, the same one-overlay-at-a-time check that blocks it while the
+library panel is visible — so the Tag Manager and an open library panel can never coexist. Since
+`showEvent` already re-validates `filter_empty`/re-filters on every library reopen, there is no
+reachable window where a user could ever see a stale `#tag` search after a Tag Manager mutation.
+No code path exists to trigger it; logged here so it isn't rediscovered and re-investigated later.
+
+**Tests:** two new cases in `tests/test_library_shortcuts.py`, constructing a bare `BookModel`
+and calling `set_books()` alone (no `filter_books()`) to pin the `filter_empty` resync at the
+model layer, independent of the UI. `pytest tests/ -q`: same 4 pre-existing
+`test_cover_theme_pending.py` failures as the established baseline; everything else, including
+both new tests, passes.
+
+**Live-verified** (all 7 scenarios from the plan, user-confirmed): tag-remove now reddens the
+field, tag-re-add now clears it; exclude/restore/missing-detection restyle correctly; an empty
+search field stays neutral across a refresh; live-typing red/neutral toggling is unchanged;
+editing a book's title/author while a related no-match search is active restyles correctly;
+sort-only actions leave styling untouched. This also completes the live-verification this file's
+earlier `save_search_filter()` entry (above) had flagged as still pending — both fixes from this
+session are now fully closed out.
+
+Full trace detail (the tag add/remove signal-chain investigation, the enumeration of every
+mutation type and its propagation status, the process-conventions lesson) is in NOTES.md.
+
 ## Session Summary — 2026-07-17/18 Session 2 — Cover-pool "remove" click left `ThemeManager._cover_theme` stale instead of nulling it; a 400-cycle cold-launch stress test found the branch clean enough to merge
 
 Branch `feat/narrow-apply-stylesheets` (Session 1's five fixes) was stress-tested with a 400-cycle

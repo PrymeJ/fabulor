@@ -879,6 +879,16 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Click a tag chip to filter, then open a book with a different tag: that different tag's chip remains clickable
 - [ ] Tag chip inert/clickable state is unaffected by (and does not affect) the Stats panel or Tags panel entry points to the detail panel — chips there are never clickable regardless of active filter, unchanged
 
+### Search match-state styling (red/no-match vs. normal) stays in sync with book-set changes
+- [ ] Search `#sometag` matching exactly one book (field shows normal styling) → remove that tag from the book (Book Detail Panel) → field turns red (fixed 2026-07-18 — see NOTES.md)
+- [ ] Re-add the same tag to the same book → field returns to normal styling automatically, without retyping anything
+- [ ] With a no-match search active (field red) → exclude a book that would now be excluded from a currently-matching set, or restore/un-exclude a book that now matches → field restyles correctly (normal↔red) without retyping
+- [ ] With a no-match search active → mark a book missing (or a missing book's file reappears via rescan) so match state flips → field restyles correctly
+- [ ] Leave the search field empty → trigger a library refresh (tag change, scan, exclude/restore) → field stays neutral (no false red)
+- [ ] Edit a book's title/author via Book Detail Panel while a related no-match search is active in the library behind it → field restyles correctly (normal↔red) once the edit is saved
+- [ ] Sort-only actions (toggle ascending/descending, change sort field) with a no-match search active → field's red/normal state is unchanged by sorting alone
+- [ ] Live-typing red/normal toggle (type a no-match search, edit it to match, edit back) still works exactly as before — regression check, unaffected by the above
+
 ### Click-to-filter (author/narrator/year, library grid — 1-per-row/2-per-row only)
 - [ ] Left-clicking author text sets the search field to the author's name and filters the library
 - [ ] Left-clicking narrator text (1-per-row only) sets the search field and filters
