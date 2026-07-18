@@ -1,4 +1,23 @@
-## Session Summary — 2026-07-17/18 — Five theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), _sized_cover_cache wiped on every cover-theme apply, a no-cover book-switch race that could interrupt its own theme fade, and excluding a book while a panel is open snapping the theme instead of deferring it (branch `feat/narrow-apply-stylesheets`)
+## Session Summary — 2026-07-17/18 Session 2 — Cover-pool "remove" click left `ThemeManager._cover_theme` stale instead of nulling it; a 400-cycle cold-launch stress test found the branch clean enough to merge
+
+Branch `feat/narrow-apply-stylesheets` (Session 1's five fixes) was stress-tested with a 400-cycle
+cold-launch progress-integrity test (5 VT + 5 M4B real books, 40 launches each, cover-theme ON) before
+merging: 398/400 clean, 2 isolated single-event anomalies (one traced to stray wheel-scroll input
+during the interactive session, one a real but narrow SIGTERM-during-VT-load race — recorded in
+TODO.md, not pursued per the user's own read that it doesn't reproduce the original bug's shape).
+Merged to `main` (`19d3a3d`) and pushed.
+
+Separately, while investigating an unrelated already-closed question (whether `clear_cover_theme()`'s
+removed no-op guard was worth reinstating — it wasn't), tracing its call sites surfaced a real, if
+latent, bug: `_on_cover_pool_btn_clicked`'s "remove from pool" branch manually inlined a subset of
+`clear_cover_theme()`'s effects instead of calling it, so `self._cover_theme` was never reset to
+`None` — violating the method's own documented contract. Not currently reachable as a visible
+wrong-colors bug (every other cover-invalidation path independently rebuilds/nulls `_cover_theme`
+first), but fragile: the next new mutation path could reintroduce a real bug without touching this
+method. Fixed by routing through `clear_cover_theme()` directly. Full root-cause writeup in NOTES.md.
+Tested and confirmed by the user.
+
+## Session Summary — 2026-07-17/18 Session 1 — Five theming/startup bugs fixed and live-verified: unconditional scan-on-launch (+ the empty-library-on-first-open regression it exposed), _sized_cover_cache wiped on every cover-theme apply, a no-cover book-switch race that could interrupt its own theme fade, and excluding a book while a panel is open snapping the theme instead of deferring it (branch `feat/narrow-apply-stylesheets`)
 
 **Both fixes are committed and live-verified. Full technical writeup: NOTES.md's 2026-07-17/18
 entries. This is the short version.**

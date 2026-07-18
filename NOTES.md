@@ -1,3 +1,45 @@
+## FIXED: cover-pool "remove from pool" click left `ThemeManager._cover_theme` stale instead of nulling it — latent, not currently reachable as a visible bug, fixed on contract grounds (2026-07-18)
+
+Found while investigating an unrelated, already-resolved question (whether `clear_cover_theme()`'s
+long-removed no-op guard was worth reinstating — conclusion: no, see NOTES.md history/commit log for
+that; it was not itself a bug). Tracing `clear_cover_theme()`'s call sites surfaced a real defect in
+a neighboring method.
+
+**The bug:** `_on_cover_pool_btn_clicked`'s "remove from pool" branch manually inlined a subset of
+`clear_cover_theme()`'s effects (`_cover_theme_active = False` + a direct `_on_theme_changed` call)
+instead of calling `clear_cover_theme()` itself. `clear_cover_theme()`'s own docstring states its
+whole contract: "`_cover_theme` stays None so `cover_pool_btn` greys out." The manual inline never
+touched `self._cover_theme`, so it stayed non-`None` — stale but, at that instant, still matching the
+current book's cover. The follow-on `set_cover_art_mode("off")` call couldn't fix this either: by the
+time it ran, `_cover_theme_active` was already `False` (set two lines earlier), so its own
+conditional `if self._cover_theme_active: self.clear_cover_theme()` took the `else` branch instead.
+
+**Consequence, traced but confirmed NOT currently reachable:** `set_cover_art_mode`'s non-off branch
+decides whether to rebuild the theme from the live cover pixmap or reuse the cached dict, keyed on
+`self._cover_theme is None`. With the stale non-`None` dict, a later "add to pool" click always
+reactivates the cached dict rather than rebuilding — which would show the wrong colors if the cached
+dict no longer matched the current book/cover. Verified by tracing every write site of both
+`current_cover_pixmap` and `_cover_theme`: every real invalidation path (`_apply_main_cover` on book
+switch, `_show_no_cover_state` for a no-cover book, `_on_active_cover_changed` when the user picks a
+different cover for the same book via the Cover Panel) independently routes through
+`apply_cover_theme`/`clear_cover_theme` and correctly rebuilds or nulls `_cover_theme` before the
+stale value could ever be read back mismatched. So there was no live, user-reproducible "wrong
+colors" repro today — the bug was real but latent, relying entirely on every *other* code path
+happening to clean up after it. Fixed anyway, on contract-violation grounds: the next new mutation
+path, or any reordering of these checks, could reintroduce a real wrong-colors bug without touching
+this method at all.
+
+**Fix:** replaced the manual inline with a direct call to `clear_cover_theme()`, which is a strict
+superset of what the inline did (also nulls `_cover_theme`, also calls `_update_cover_pool_btn()`).
+The historical reason for the manual inline — avoiding a double-apply when `set_cover_art_mode("off")`
+runs right after — no longer applies, since `_on_theme_changed`'s existing same-theme-name no-op
+guard (added this session) already absorbs the redundant second call for free. Scope: one method,
+`theme_manager.py`'s `_on_cover_pool_btn_clicked`, `else` branch. `pytest tests/ -q` unchanged (206
+passed, the same pre-existing 4 `test_cover_theme_pending.py` failures as before this change, confirmed
+via `git stash` earlier this session to fail identically on `main` too). Live-verified by the user.
+
+---
+
 ## FIXED and live-verified: excluding a book while a panel was open snapped the theme instead of deferring it; exposed a second, more fundamental _on_theme_changed re-entrancy gap (2026-07-18)
 
 Repro: open Book Detail for the currently-playing book (from Library or Stats), cover-art-based
