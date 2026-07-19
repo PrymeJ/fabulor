@@ -112,6 +112,30 @@ pseudo-state QSS ... on this app's target desktop" further below.
 
 ---
 
+### When the user says a specific claim is wrong, retract it explicitly before doing anything else — restate the new belief AND name what it invalidates.
+"You're right" is not itself a retraction. Saying it and then moving straight to the next diagnostic
+step, while quietly still treating the corrected claim as true in later reasoning, is worse than
+never having said it — it reads as agreement while nothing actually changed. The required pattern
+when the user flags a claim (a conclusion, a "this data is clean," a "the grab looks fine") as
+wrong: (1) state plainly what you now believe instead, (2) name the specific prior claim it
+replaces, (3) check every subsequent step or conclusion already taken that depended on the
+now-dead claim, and flag which of those are also now unsupported — don't let them silently survive
+into the next round of reasoning. If you can't tell whether a downstream step depended on the
+retracted claim, say so and check before reusing that step's output.
+
+This mirrors the rule above (the user's eyes are ground truth on rendered pixels) but is broader:
+this rule applies to any factual/diagnostic claim the user corrects — not just visual layout — and
+specifically targets the failure mode where "you're right" gets said but the retraction never
+actually propagates. (Added 2026-07-19 after exactly this failure during the transport-bar blur
+investigation: a raw-grab screenshot was called "completely fine, no corruption" — the user
+immediately said the grab was wrong, evidence right in front of both of us. "You're right" was
+said, but three more diagnostic rounds — an alpha-padding fix, a bounding-rect-size test, a
+dirty-tracking-disabled test — were then built on top of the same unretracted "grab is clean"
+premise, producing a conclusion of "clean in isolated testing, broken live — unexplained" that was
+actually just the original wrong claim never having been corrected.)
+
+---
+
 ### DO NOT modify, refactor, or touch any code related to MPV initialization under any circumstances.
 This includes the `_ensure_mpv()` method, the `load_book()` method's MPV init block, the
 `locale.setlocale(locale.LC_NUMERIC, "C")` call, and all MPV constructor arguments (`vo`, `ao`,
