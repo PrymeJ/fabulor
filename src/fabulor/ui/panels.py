@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLa
 from PySide6.QtWidgets import QLineEdit, QApplication
 from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
 from .title_bar import ThemeItem
+from .transport_bar_blur import TransportBarBlurOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,23 @@ class PanelManager:
         self.main_window.sleep_trigger_btn.clicked.connect(self._open_sleep_flow)
         self.main_window.stats_trigger_btn.clicked.connect(self._open_stats_flow)
         self.main_window.tags_trigger_btn.clicked.connect(self._open_tags_flow)
+
+        # Composited-overlay transport-bar blur (see ui/transport_bar_blur.py and the
+        # accepted plan). Comparison branch — see blur-direct-widget for the
+        # per-widget-effect alternative.
+        self._transport_bar_blur = TransportBarBlurOverlay(main_window)
+
+    def _apply_transport_bar_blur(self, panel):
+        # Clip to `panel`'s own geometry — nothing renders blurred outside what
+        # the panel actually covers (e.g. total_time_label sits at the far right
+        # of the content area by layout design, past settings_panel's narrower
+        # 90%-width edge; that sliver must stay crisp, not just "technically
+        # correct blur that peeks past the panel." Confirmed live, 2026-07-19.)
+        if self.config.get_blur_enabled():
+            self._transport_bar_blur.show_for_panel(panel)
+
+    def _clear_transport_bar_blur(self):
+        self._transport_bar_blur.hide_for_panel()
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -315,6 +333,7 @@ class PanelManager:
             self.blur_animation.start()
         else:
             self.blur_effect.setBlurRadius(0)
+        self._apply_transport_bar_blur(self.settings_panel)
 
     def _open_speed_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -346,11 +365,12 @@ class PanelManager:
         self.speed_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.speed_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.speed_panel_animation.start()
-        
+
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
             self.blur_animation.start()
+        self._apply_transport_bar_blur(self.speed_panel)
 
     def _on_sidebar_closed_for_panel(self):
         """Handler for sidebar animation finishing when a panel needs to open.
@@ -493,6 +513,7 @@ class PanelManager:
             pass
         self.speed_panel.hide()
         self._release_panel_focus(self.speed_panel)
+        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _open_stats_flow(self):
@@ -530,6 +551,7 @@ class PanelManager:
             self.blur_animation.start()
         else:
             self.blur_effect.setBlurRadius(0)
+        self._apply_transport_bar_blur(self.stats_panel)
 
     def _open_sleep_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -560,11 +582,12 @@ class PanelManager:
         self.sleep_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.setEndValue(QPoint(0, sidebar_y))
         self.sleep_panel_animation.start()
-        
+
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
             self.blur_animation.start()
+        self._apply_transport_bar_blur(self.sleep_panel)
 
     def _close_sleep_flow(self):
         """Slides the sleep panel back out."""
@@ -589,6 +612,7 @@ class PanelManager:
             pass
         self.sleep_panel.hide()
         self._release_panel_focus(self.sleep_panel)
+        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _close_stats_flow(self):
@@ -615,6 +639,7 @@ class PanelManager:
             pass
         self.stats_panel.hide()
         self._release_panel_focus(self.stats_panel)
+        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _open_tags_flow(self):
@@ -654,6 +679,7 @@ class PanelManager:
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(8)
             self.blur_animation.start()
+        self._apply_transport_bar_blur(self.tags_panel)
 
     def _close_tags_flow(self):
         if self.tags_panel_animation.state() == QAbstractAnimation.State.Running:
@@ -676,6 +702,7 @@ class PanelManager:
             pass
         self.tags_panel.hide()
         self._release_panel_focus(self.tags_panel)
+        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
@@ -772,6 +799,7 @@ class PanelManager:
             pass
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
+        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
