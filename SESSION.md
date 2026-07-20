@@ -1,6 +1,109 @@
-## Session Summary — 2026-07-20 Session 5 — The "heartbeat" bug's Session 4 root-cause claim was disproven; a second, real trigger was found and guarded against, but the bug is UNRESOLVED — it still reproduces in full via a third, unidentified trigger
+## Session Summary — 2026-07-20 Session 3 — Read-only audit mapped theme-bleed's reachability; two independent causes found and fixed; hover-pulsate confirmed gone live; a new responsiveness regression surfaced, unexplained
 
-Direct continuation of Session 4, same night. Session 4's closing claim — that
+Continuation of the theme-bleed/heartbeat investigation from Session 2, taking a deliberately
+different approach: instead of continuing to hunt individual spurious-trigger sources one at a
+time, a read-only audit was run first (`Explore` subagent, no code changes) to map the FULL set of
+code paths by which hover/preview theme state could reach `content_container`/`main_window`, so a
+structural fix could be scoped correctly before touching anything. Full audit deliverable:
+`Audit_ThemeReach_260720.md`.
+
+**Audit result:** confirmed the widget ownership tree (unambiguous), found one real bypass of
+CLAUDE.md's invariant #4 (`_apply_stylesheets` as sole dispatcher) — `MainWindow._set_bg_suppressed`
+reading `theme_manager._active_display_theme` directly with no hover check — and one structurally
+independent second mechanism that doesn't read any state at all: `_grab_and_blur()` grabbing
+`main_window`'s live composited pixels with no hover awareness. Two design shapes for a fix were
+discussed before implementing either: (A) a single source-of-truth containment (privatize the field,
+force all external reads through a resolving accessor) versus (B) per-call-site hardening. Decided
+on A for the state-read bypass specifically, since the audit's own grep had already confirmed there
+was exactly one external reader and no second legitimate consumer to accommodate — a clean
+privatization, not a flat replacement with caveats. The pixel-capture mechanism was explicitly
+scoped as needing its own, separate containment regardless (it isn't a state-read at all), left as
+Pass 2 rather than folded into the same design.
+
+**Pass 1 implemented:** renamed `ThemeManager._active_display_theme` →
+`_active_display_theme_internal`, added `get_active_theme()` as the sole sanctioned external read
+path (resolves against hover state, never returns a preview value), and routed
+`_set_bg_suppressed` through it. Verified via repo-wide grep that no other cross-file reader existed
+(the audit's claim held). 212/216 tests passed (4 pre-existing failures, confirmed unrelated via a
+`git stash` comparison against the unmodified branch). Explicitly NOT claimed as fixing theme-bleed
+in full — the report and TODO.md entry both stated plainly that `_grab_and_blur()`'s pixel-capture
+path was untouched and that `complete_main_fade()`'s stale-fallback-reapply path (from an earlier
+session) remained unverified.
+
+**Live test, same day: Pass 1 alone was insufficient.** The user tested with blur ON and reported —
+with a screenshot — that hovering a theme still pulsated the blurred transport-bar area between the
+active and hovered theme colors, plus a separately noticed "panels are slow" symptom the user
+attributed to grab frequency. This was valuable, fast disconfirmation: rather than treating Pass 1 as
+done, it was immediately clear the user's actual live bug was the other mechanism the audit had
+already named (Mechanism B), not the one just fixed.
+
+**Investigated live from the screenshot, not re-guessed.** Confirmed by reading the code rather
+than assuming: a hover-preview restyle rewrites `content_container`'s stylesheet, which forces Qt to
+repaint every one of the 12 transport-bar widgets `TransportBarBlurOverlay` tracks (verified none of
+them have their own separate stylesheet — the repaint is a direct, deterministic consequence of the
+`content_container` restyle, not incidental timing). The dirty-rect tracker correctly sees this as
+real content change and schedules a grab; `_grab_and_blur()` grabs `main_window`'s live composited
+frame at that instant — still showing the hover color — and bakes it into the overlay. Confirmed via
+grep that `transport_bar_blur.py` had zero references to `_is_hover_active` anywhere. This also
+explained the "panels are slow" report: every hover tick was firing up to 12 dirty-triggering
+repaints, not one.
+
+Before implementing a "skip while hovering" gate, explicitly checked the one thing that would make
+it unsafe: does hover-end reliably produce a fresh repaint to resume from, or would a naive gate
+trade "wrong color" for "never refreshes again after some hover cycles" — a real risk given the
+still-open, cause-undetermined frozen-overlay bug (bug 3) already on record. Traced
+`_on_theme_unhovered()`'s call chain directly: it sets `_is_hover_active = False` unconditionally,
+before any animation guards, ahead of its own snapback restyle — so by the time that restyle
+actually repaints the tracked widgets, the gate is already clear, and the resulting real paint
+self-corrects the overlay through the ordinary event-driven path. No separate forced-refresh call
+needed.
+
+**Pass 2 implemented:** a gate in `refresh_dirty()` (`transport_bar_blur.py`), placed before the
+existing cooldown gate, that declines the grab while `_is_hover_active` is `True` without consuming
+the dirty union (matching the existing gate's own non-destructive-decline pattern). 212/216 tests
+passed again (same 4 pre-existing failures, unaffected).
+
+**A related, unfixed gap was found and deliberately left alone, per explicit scope instruction:**
+while tracing the hover-end resume path, found that `refresh_dirty()`'s decline gates (both the new
+one and the pre-existing cooldown gate) do not re-arm themselves — a declined tick is only retried
+if some later real paint happens to occur. The hover case is safe because hover-end is guaranteed to
+produce one; this is not a general property of the gate mechanism. This is structurally the same
+shape as the still-open frozen-overlay bug and was flagged as a candidate mechanism for it, with
+full file/line/mechanism detail recorded in NOTES.md, but not investigated or touched further this
+session — the user was explicit that this session should stay scoped to the hover gate only, and
+that any candidate mechanism found along the way should be written down with enough detail for a
+future session to pick up cold, not chased down in the same pass.
+
+**Live re-test after Pass 2: the reported hover-pulsate bleed is confirmed gone. A new symptom
+surfaced — general UI responsiveness is now slow — not yet triaged, not assumed to be caused by
+today's changes just because of proximity in time.** This is explicitly recorded as unresolved, not
+downplayed: the user's own framing was "responsiveness slow, but the rest seems fixed," which is
+the accurate state — real progress on the reported symptom, with a new open question immediately
+behind it.
+
+**Process note on documentation split, corrected mid-session:** root-cause detail for both fix
+passes and the new candidate-mechanism finding was initially written into TODO.md, which is
+reserved for short, dated, status-tracked pointers, not root-cause writeups (per this file's own
+stated convention). Corrected per the user's explicit instruction: TODO.md entries were trimmed back
+to short pointers, and the full detail was moved to this file and to NOTES.md instead, so someone
+picking this up in six months would actually find it without knowing to check TODO.md specifically.
+
+**Commits:** source changes (`app.py`, `theme_manager.py`, `transport_bar_blur.py`) committed
+separately from documentation, per explicit instruction, before the docs describing them were
+written.
+
+**Final state, stated plainly:** two of at least three independent theme-bleed causes are fixed and
+one is live-confirmed to have resolved the user's reported visible symptom. Theme-bleed as a whole
+is NOT being marked closed — `complete_main_fade()`'s stale-fallback path remains unverified, no
+soak test has been run, and a new unexplained responsiveness regression is now open. The
+frozen-overlay bug (bug 3) remains open and unfixed, with one new candidate mechanism on record for
+whoever picks it up next.
+
+---
+
+## Session Summary — 2026-07-20 Session 2 — The "heartbeat" bug's Session 2 root-cause claim was disproven; a second, real trigger was found and guarded against, but the bug is UNRESOLVED — it still reproduces in full via a third, unidentified trigger
+
+Direct continuation of Session 2, same night. Session 4's closing claim — that
 `update_theme_list_visuals()`'s `unpolish()`/`polish()` calls were the confirmed cause of the spurious
 repeated `ThemeItem.enterEvent` — was tested by implementing the proposed fix and reproducing live. **The
 fix's own instrumentation showed zero repolish calls happening (`repolished 0/58 buttons`) on every
@@ -50,9 +153,9 @@ what's partial, and what remains open.
 
 ---
 
-## Session Summary — 2026-07-20 Session 4 — Found a third, distinct blur bug (overlay frozen indefinitely); reworked transport-bar blur from polling to event-driven refresh to address the punch-through-flash's unnecessary-grab volume; the rework itself introduced and then required fixing a real feedback loop; finally root-caused the long-deferred "heartbeat" (spurious `ThemeItem.enterEvent`) bug precisely, via direct log correlation
+## Session Summary — 2026-07-20 Session 2 — Found a third, distinct blur bug (overlay frozen indefinitely); reworked transport-bar blur from polling to event-driven refresh to address the punch-through-flash's unnecessary-grab volume; the rework itself introduced and then required fixing a real feedback loop; finally root-caused the long-deferred "heartbeat" (spurious `ThemeItem.enterEvent`) bug precisely, via direct log correlation
 
-Continuation of Session 3, later the same night. Four pieces of work, in the order they happened:
+Continuation of Session 1, later the same night. Four pieces of work, in the order they happened:
 
 **1. Third distinct blur bug found by accident.** While testing the Session 3 theme-bleed fix, the
 user caught (via a screenshot, not deliberately reproduced) the blur overlay frozen on stale content —
@@ -121,9 +224,9 @@ the frozen-overlay bug's root cause both remain unimplemented/unconfirmed, by de
 
 ---
 
-## Session Summary — 2026-07-20 Session 3 — Traced a second, distinct bug (theme bleeds into the whole live main window, not just a captured region); wrote a fix in `complete_main_fade()`; then repeatedly, wrongly claimed it was verified when every "no issues" test was actually run with blur OFF — a condition already known to hide both bugs regardless of any code change. Corrected only after the user pushed back four times.
+## Session Summary — 2026-07-20 Session 1 — Traced a second, distinct bug (theme bleeds into the whole live main window, not just a captured region); wrote a fix in `complete_main_fade()`; then repeatedly, wrongly claimed it was verified when every "no issues" test was actually run with blur OFF — a condition already known to hide both bugs regardless of any code change. Corrected only after the user pushed back four times.
 
-Continuation of Session 2's punch-through-flash investigation. The user reported a second, distinct
+Continuation of last session's punch-through-flash investigation. The user reported a second, distinct
 symptom: not a brief flash, but the **entire live main window** getting stuck showing a hovered
 theme — not a captured/grabbed region, not scoped to the transport bar — and stated this had never
 happened before, across weeks of prior hover/rotation usage. They ran the decisive test themselves:

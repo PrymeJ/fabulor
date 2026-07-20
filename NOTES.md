@@ -1,3 +1,129 @@
+## Theme-bleed: two independent causes found and closed via a read-only audit + two fix passes; hover-pulsate confirmed gone live, one of at least three causes still open, and a new responsiveness regression is unexplained (2026-07-20)
+
+**Context:** theme-bleed (hover-preview colors leaking into `content_container`/`main_window`) had
+been investigated across multiple sessions via direct trigger-hunting (see the `complete_main_fade`
+entries elsewhere in this file) with partial, unverified fixes. Rather than continue hunting
+triggers one at a time, a read-only audit (`Agent` tool, `Explore` subagent) was run first to map
+every code path by which preview/hover theme state could reach those two widgets, before any fix
+was attempted — full detail in `Audit_ThemeReach_260720.md` (not reproduced here; this entry covers
+what was actually implemented from it).
+
+**Audit findings (summary):** the audit inventoried every `setStyleSheet()` call site on
+`content_container`/`main_window` and their descendants, checked each against CLAUDE.md's
+invariant #4 (`_apply_stylesheets` is the sole dispatcher), and traced whether hover state could
+reach those two widgets. It found one confirmed invariant-#4 bypass and one separate,
+structurally-independent pixel-capture mechanism — see the two fix passes below, each named after
+the audit's own path label.
+
+### Pass 1 — state-read bypass (audit "Path A"), landed but confirmed insufficient alone
+
+`MainWindow._set_bg_suppressed` (`app.py`) read `theme_manager._active_display_theme` directly and
+called `content_container.setStyleSheet(...)` outside `_apply_stylesheets` entirely — a real
+bypass of invariant #4. It derived the theme name from `_active_display_theme` with **no check of
+`_is_hover_active`**, and is invoked from `library_controller.apply_library_state` on book-load and
+empty-state transitions — a call graph with zero coupling to `ThemeManager`'s fade/hover state
+machine, so it can fire at any moment, including mid-hover-preview. The audit confirmed via a
+whole-repo grep that `_active_display_theme` had no writes outside `theme_manager.py` and exactly
+one cross-file read (this one) — so this was a clean field-privatization, not a flat replacement
+needing to accommodate some other legitimate external consumer.
+
+**Fix:** renamed the field to `_active_display_theme_internal` (20 occurrences within
+`theme_manager.py`, pure rename, no behavior change) and added
+`ThemeManager.get_active_theme()` — a resolving accessor that returns the actual active theme
+(the live cover theme dict if one is active, else `_current_theme_name`) while a hover preview is
+live, and the raw internal value otherwise. Return type matches the field's own type (`str` or a
+cover-theme `dict`) since `_set_bg_suppressed`'s existing cover-theme-flash-avoidance logic depends
+on that. `_set_bg_suppressed` now calls the accessor instead of reading the field. Verified via a
+repo-wide grep after the rename that nothing else referenced the old bare name in code (two
+comment-only hits: the accessor's own historical docstring, and an unrelated English-language
+comment in `library.py` that happens to contain the string). 212/216 tests passed (4 pre-existing,
+confirmed-unrelated failures in `test_cover_theme_pending.py`, verified via `git stash` comparison
+against the unmodified branch tip).
+
+**Live test result (same day): insufficient alone.** The user tested with blur ON immediately after
+this fix landed and reported the hover-pulsate bleed was still visibly present (screenshot: the
+blurred transport-bar area still showing the hovered theme's colors). This was the first hard
+evidence that the live bug was actually Mechanism B (below), not this bypass — Pass 1 was a real,
+necessary fix (closes a genuine invariant-#4 violation) but was not the live cause of what the user
+was actually seeing.
+
+### Pass 2 — hover-unaware blur grab (audit "Path D" / "Mechanism B"), landed same day, fixed the visible symptom
+
+Traced directly from the user's screenshot rather than re-guessing. Mechanism, confirmed by reading
+the code (not assumed): a hover-preview restyle calls `_apply_stylesheets(hover=True)`, which
+rewrites `content_container`'s stylesheet (`theme_manager.py` call site). Rewriting a parent's
+stylesheet forces Qt to repolish/repaint every styled descendant — including all 12 widgets
+`TransportBarBlurOverlay` tracks (`transport_bar_blur.py`: chapter labels, sliders, buttons, speed
+button). Confirmed these widgets have no stylesheet of their own (grepped `theme_manager.py` for
+direct `setStyleSheet`/`update()`/`polish()` calls on any of them — none found), so their repaint is
+a deterministic consequence of the `content_container` restyle, not incidental timing overlap with
+something else (e.g. the marquee label or a slider animation).
+
+`_DirtyRectTracker.eventFilter` (`transport_bar_blur.py`) sees these repaints as real `QEvent.Paint`
+events — correctly, by its own design, since it has no way to distinguish "restyled because of a
+genuine theme change" from "restyled because of a hover preview" — and calls
+`TransportBarBlurOverlay._schedule_refresh()`, which arms a coalescing `QTimer.singleShot(0, ...)`.
+`refresh_dirty()` then calls `_grab_and_blur()`, which grabs `main_window`'s **live composited
+frame at that exact instant** — showing the hovered theme's colors — and bakes it into the overlay
+pixmap. Confirmed via grep: `transport_bar_blur.py` had **zero** references to `_is_hover_active`
+anywhere before this fix — no part of the blur pipeline had any hover awareness at all. This also
+explained a second symptom the user reported independently ("panels are slow... the grab has very
+high frequency"): every hover tick that restyles `content_container` fires a repaint on all 12
+tracked widgets, which is 12 potential dirty-triggering paints per hover step, not one.
+
+**Fix:** added a gate in `refresh_dirty()` (`transport_bar_blur.py`), placed immediately before the
+existing `_POST_RESTYLE_COOLDOWN_S` cooldown gate: early-return while
+`theme_manager._is_hover_active` is `True`, without calling `take_dirty_union()` — so the
+accumulated dirty rect is not consumed or lost, just left for a later real paint to pick up (same
+non-destructive-decline pattern the pre-existing cooldown gate already uses, per its own comment).
+
+**Hover-end safety, traced explicitly before shipping (not assumed by analogy):** the risk with a
+"skip while hovering" gate is that if nothing ever re-triggers a refresh after hover ends, the
+overlay could go stale indefinitely — a real concern given the separate, still-open frozen-overlay
+bug (below). Traced the actual resume path: `_on_theme_unhovered()` (`theme_manager.py`) calls
+`_on_theme_changed(..., hover=False, fade_ms=_SNAPBACK_FADE_MS)` — a normal restyle. Critically,
+`_on_theme_changed` sets `self._is_hover_active = hover` **unconditionally, before** any of its
+animation/panel guards run (line ~458, ahead of the fade/panel-animation branches) — so by the time
+this snapback restyle actually repaints `content_container` and its descendants, `_is_hover_active`
+is already `False`. That repaint fires a fresh, real `QEvent.Paint` on the tracked widgets, which
+re-arms `_schedule_refresh()` and lands in `refresh_dirty()` with the new gate now clear — hover-end
+self-corrects through the ordinary event-driven path. No separate `force_refresh_now`-style forced
+call was needed or added.
+
+**Known gap found in the same code path, deliberately NOT fixed this session — logged here in full
+so a future session doesn't have to re-derive it:** `refresh_dirty()`'s early-return gates (both the
+new hover gate and the pre-existing `_POST_RESTYLE_COOLDOWN_S` gate) do not re-arm themselves.
+`_schedule_refresh()`'s `QTimer.singleShot(0, self.refresh_dirty)` fires exactly once per arm; if
+`refresh_dirty()` declines via either gate, `_refresh_pending` was already reset to `False` at the
+top of the method (before either gate is checked), and nothing schedules another attempt. A
+declined tick is retried **only if some later real `QEvent.Paint` fires on a tracked widget** — the
+hover case verified above is safe specifically because hover-end reliably produces exactly such a
+paint, but this is a property of what triggered the decline, not a general guarantee the gate
+mechanism provides. If a tick is ever declined for a reason that is NOT followed by any further
+repaint, the accumulated dirty union sits in the tracker uncomposited indefinitely, with no error
+and no future retry — visually indistinguishable from the separately-tracked, still-unexplained
+frozen-overlay bug (see the "blur overlay's refresh timer stops firing permanently" entry
+elsewhere in this file / TODO.md). Not investigated further, not touched, per explicit scope
+instruction to stay narrowly on the hover gate this session.
+
+**Live test result:** user confirmed the hover-pulsate bleed is visually gone. **Also reported: general
+UI responsiveness is now slow.** Not yet triaged — candidate causes not yet checked: whether the new
+gate's decline path (or the resulting change in when/how often grabs actually happen) is adding
+overhead somewhere, or whether this is unrelated to today's changes entirely. Needs live
+profiling before attributing a cause; not assumed to be the hover gate just because of proximity in
+time.
+
+**Verification status, stated plainly:** the specific symptom the user reported (hover-pulsate into
+the blurred area) is confirmed gone live. This is NOT the same as "theme-bleed is fixed" — the
+audit identified at least three independent causes, and `complete_main_fade()`'s stale-fallback-
+reapply path (a separate, already-partially-mitigated, still-unverified mechanism from an earlier
+session — see that entry elsewhere in this file) was neither touched nor re-verified this session.
+No soak test (blur on, repeated hover+panel-open cycles, multi-minute stretches) has been run
+against either of today's two fixes. Test suite: 212/216 passed both times today (4 pre-existing,
+confirmed-unrelated failures, unchanged by either fix).
+
+---
+
 ## FIXED and live-verified with raw before/after tick data: transport-bar blur reworked from a 1200ms polling timer to event-driven refresh; the rework itself introduced a feedback loop, closed with a measured wall-clock suppression window (2026-07-20)
 
 **Motivation:** the punch-through-flash investigation (see the entry below) found the polling timer's

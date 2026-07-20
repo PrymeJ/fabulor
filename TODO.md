@@ -6,6 +6,17 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-20] Theme-bleed: two of (at least) three independent causes closed this session
+  (state-read bypass in `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`) — user
+  confirmed the visible bleed is gone, but reported general responsiveness is now slow. Not
+  soak-verified; responsiveness regression not yet triaged.** Full root-cause detail, the audit
+  trail, and the fix mechanism for both passes: NOTES.md, "Theme-bleed Pass 1 + Pass 2" entry,
+  2026-07-20. Session narrative: SESSION.md, Session 3, 2026-07-20. Candidate follow-up (not
+  started): the new responsiveness complaint may be the hover gate's decline path adding overhead
+  elsewhere, or may be unrelated — needs live profiling, not assumed.
+- **[2026-07-20] `refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick — candidate
+  mechanism for the still-open frozen-overlay bug below, NOT investigated or touched this
+  session.** Found while implementing the hover gate above. Detail: NOTES.md, same entry as above.
 - **[2026-07-20] NEW: blur overlay's refresh timer stops firing permanently after a normal
   `show_for_panel` call — confirmed via one accidental occurrence, root cause not yet found.**
   Overlay freezes on stale content indefinitely (confirmed via screenshot: grabbed transport-bar
