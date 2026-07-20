@@ -71,71 +71,103 @@ normal usage would produce because of the separate spurious-`enterEvent` bug (se
 
 ---
 
-## MECHANISM CONFIRMED, fix proposed, NOT YET IMPLEMENTED: the "heartbeat" — `ThemeItem.enterEvent` firing repeatedly on a stationary cursor — is caused by `unpolish()`/`polish()` calls re-triggering Qt's hit-test logic (2026-07-20)
+## STILL OPEN, NOT FIXED: the "heartbeat" (`ThemeItem.enterEvent` firing repeatedly on a stationary cursor) has TWO independent spurious triggers — a guard against one is in place, the bug still reproduces because the second trigger is unidentified (2026-07-20)
 
-**This closes the open question from the entry originally recorded 2026-07-19** ("Spurious repeated
-`enterEvent` on a stationary cursor — confirmed real, pre-existing, not yet investigated"). Investigated
-on direct request after tonight's blur-caching work showed it was amplifying the punch-through-flash
-collision far beyond what normal usage would produce.
+**Do not describe this as fixed, partially or otherwise. The reported symptom is unchanged: the cursor
+still triggers repeated spurious hover cycles while stationary.** A guard was added against one of the
+two confirmed triggers, and that guard measurably works for the case it targets (verified via log:
+alternating cycles show it correctly suppressing the trigger it covers) — but the bug as experienced is
+not resolved, because a second, independent trigger produces the same symptom on the cycles the guard
+doesn't cover. "One of two causes addressed" is not the same as "fixed" when the second cause alone is
+sufficient to keep reproducing the bug in full.
 
-**Investigation discipline, per the same standard as every other finding tonight:** before accepting
-any mechanism, the cursor-jitter possibility was ruled out first, directly, not assumed away —
-temporary logging captured `QCursor.pos()` (global screen coordinates) at every single `ThemeItem
-.enterEvent` firing. Across 8+ consecutive re-fires spanning over 10 seconds of a live reproduction,
-`global_cursor_pos` was **byte-identical** — `(140, 294)`, every time. This rules out real OS-level
-cursor movement/jitter as the cause with direct evidence, not inference.
+**This entry replaces two earlier, sequentially disproven theories in this same investigation — both
+retracted here explicitly, not silently superseded, per the session's own standard:**
 
-**Confirmed causal chain, log-timestamped end to end (not a plausible theory — a cited trace):**
-1. Cursor rests on a swatch → `enterEvent` fires → the existing 82.5ms hover-debounce timer fires
-   `_on_theme_changed(hover=True)` (this part is pre-existing, correct, working-as-designed behavior).
-2. That call finds a fade/deferred-restyle batch already in flight (from the PREVIOUS cycle) and gets
-   stashed (`fade_in_flight=True -> stashing`) — also pre-existing, correct behavior.
-3. The in-flight deferred-restyle batch resolves (`_run_deferred_restyle`/`_flush_deferred_restyle_now`),
-   and as part of its completion tail, `ThemeManager.update_theme_list_visuals()` runs.
-4. `update_theme_list_visuals()` calls `btn.style().unpolish(btn)` then `btn.style().polish(btn)` on
-   **every** `ThemeItem` button (`_update_cover_pool_btn()`, called at the end of the same method, does
-   the identical pattern on `cover_pool_btn`) — including whichever button the cursor is currently
-   resting over. This repolish cycle causes Qt to re-evaluate the widget's hit-test state, generating a
-   **new spurious `enterEvent`** on that same widget, at that same cursor position, with zero actual
-   mouse movement.
-5. That spurious `enterEvent` restarts the cycle at step 1 — and because there is almost always a
-   fade/restyle still settling from the previous iteration (each iteration's own restyle work takes
-   long enough to still be in flight when the next spurious enterEvent lands), it lands back in the
-   "stash" branch nearly every time, making the loop self-sustaining indefinitely at roughly the
-   deferred-restyle cycle's own duration (~1.3-1.4s) — matching the originally-reported "heartbeat"
-   interval exactly.
+1. **First theory (disproven):** `update_theme_list_visuals()`'s `btn.style().unpolish()`/`.polish()`
+   calls were the cause. A fix was implemented (only repolish a button whose `selected`/`active_display`
+   state actually changed) and tested live: the fix's own instrumentation showed **`repolished 0/58
+   buttons`** on every single cycle — zero repolish calls happening at all — while the spurious
+   `enterEvent` kept firing on the identical schedule. **This conclusively disproves the theory**, not
+   merely fails to confirm it. The guard itself was kept (it's a harmless, legitimate minor
+   optimization independent of this bug), but the comment attributing it to fixing the heartbeat was
+   corrected.
+2. **Second theory (real, but only half the picture):** checkpoint-level tracing across every
+   `_apply_stylesheets` call in the log, with zero exceptions across the sample, showed the spurious
+   `enterEvent` landing 8-15ms after `settings_panel.setStyleSheet(ss_panels)` completes (specifically
+   — NOT `mw.setStyleSheet(base)`, which was checked and ruled out: its completion-to-enterEvent gap was
+   86-98ms, ~6-10x longer and inconsistent with being the direct trigger). `settings_panel` is the real,
+   direct Qt ancestor of every `ThemeItem` — its `setStyleSheet()` call forces a style/geometry cascade
+   through that whole subtree, re-evaluating hit-testing for whatever the cursor rests on.
 
-**Representative log excerpt** (full trace in the session transcript; timestamps abbreviated to
-HH:MM:SS,mmm):
+**A guard was implemented against trigger #2 and is live-verified to suppress that specific trigger when
+it fires:** a two-signal guard in `ThemeItem.enterEvent` (`title_bar.py`) —
+`main_window._spurious_enter_guard_until` (a `perf_counter()` deadline set/cleared via `try/finally`
+around `settings_panel.setStyleSheet()` in `_apply_stylesheets`, `theme_manager.py`) combined with a
+cursor-position match against the position `ThemeItem`'s own `leaveEvent` reported moments earlier.
+**Before implementing, the investigation explicitly checked (per direct instruction) whether "no
+preceding leaveEvent" alone would have been a safe discriminator — it would NOT have been:** live
+logging showed the spurious cascade ALSO fires a fully realistic-looking `leaveEvent` immediately before
+every spurious `enterEvent`, at the identical cursor position, indistinguishable by event shape alone
+from a genuine quick leave-and-return. This is why the time-window signal (derived from code under our
+control) is the load-bearing one, with cursor-position as a secondary check — not the other way around.
+Both signals combined were required.
+
+**The reported bug is NOT fixed. Reproducing the stationary-hover scenario after this change shows the
+heartbeat still happening, unchanged from the user's perspective — the cursor still triggers repeated
+spurious hover cycles while stationary.** What the log shows is that the guard correctly suppresses one
+of the two triggers, alternating with a second, unguarded trigger passing through:
 ```
-34,770  ThemeItem.enterEvent theme_name='Hear Me Roar' global_cursor_pos=(140, 294)
-34,853  [hover debounce] firing preview for 'Hear Me Roar' 82.5ms after last enterEvent
-34,853  [_on_theme_changed GUARD] fade_in_flight=True -> stashing for fade completion
-35,157  update_theme_list_visuals CALLED
-36,173  ThemeItem.enterEvent theme_name='Hear Me Roar' global_cursor_pos=(140, 294)   <- SAME position
-36,514  update_theme_list_visuals CALLED
-37,563  ThemeItem.enterEvent theme_name='Hear Me Roar' global_cursor_pos=(140, 294)   <- SAME position
-...pattern repeats identically for 8+ cycles...
+leaveEvent  pos=(60, 208)
+enterEvent  SUPPRESSED (synthetic)  in_window=True   pos_matches=True   <- one trigger, suppressed
+...
+leaveEvent  pos=(60, 208)
+enterEvent  PASSED       (real)     in_window=False  pos_matches=True   <- second, unguarded trigger
+```
+The `PASSED` case is a **second, distinct spurious leave/enter pair** — confirmed NOT caused by either
+`_apply_stylesheets` call (`hover=False` snapback or `hover=True` preview): it fires ~500ms after the
+guarded `hover=False` restyle completes, and — critically — **before** the next `hover=True` restyle
+even begins (confirmed via timestamp ordering, not assumed). It correlates with two back-to-back
+`_on_theme_changed: EARLY-RETURN no-op guard` lines for the already-active theme, appearing immediately
+before the spurious leave/enter pair each time — but what triggers THOSE calls (candidates not yet
+checked: the 700ms `_panel_guard_timer` retry mechanism, or something else entirely) was not identified
+before the session ended. **Since either trigger alone reproduces the full user-visible symptom, this
+change does not resolve the bug — it only demonstrates that one of its (at least two) causes is now
+correctly handled.**
+
+**Representative log excerpt, the WORKING half of the fix** (timestamps abbreviated to HH:MM:SS,mmm):
+```
+40,274  leaveEvent  pos=(60, 208)
+40,517  enterEvent SUPPRESSED (synthetic)  guard_until=40280.523397  last_leave_pos=(60, 208)
 ```
 
-**Proposed fix, NOT implemented in this pass (per explicit instruction: report and confirm before
-implementing):** guard the `unpolish()`/`polish()` calls in `update_theme_list_visuals()` and
-`_update_cover_pool_btn()` so they only run on a button whose `selected`/`active_display` properties
-are actually changing, instead of unconditionally repolishing every button on every call. This
-preserves the existing selected/active-highlight visual behavior exactly (no button that needs a
-visual update is skipped) while eliminating the spurious hit-test re-evaluation for every button whose
-state didn't change — which, during a lone stationary-hover cycle, is every button in the pool.
+**Representative log excerpt, the UNFIXED second trigger:**
+```
+41,038  leaveEvent  pos=(60, 208)
+41,038  [_on_theme_changed EARLY-RETURN no-op guard] theme_name='Urras' (x2, back to back)
+41,047  enterEvent PASSED (real)  in_window=False  guard_until=40280.523397 (long expired)
+41,128  [hover debounce] firing preview for 'Sitting in the Wing Chair' 80.8ms after last enterEvent
+```
 
-**Flagged as a possible wider pattern, per the escalation instructions — NOT investigated further in
-this pass:** any other call site in the codebase that calls `style().unpolish()`/`.polish()` on a
-widget the cursor could plausibly be resting over at the time could have the same latent issue. Not
-searched for; noted here for whenever this class of bug is revisited.
+**Flagged as a possible wider pattern, per the escalation instructions — NOT investigated:** any other
+call site in the codebase that calls `style().unpolish()`/`.polish()`, or any other full-subtree
+`setStyleSheet()` call, on a widget the cursor could plausibly be resting over could have a similar
+latent issue. Not searched for beyond the two call sites checked here (`update_theme_list_visuals`,
+`_apply_stylesheets`'s `settings_panel`/`mw` calls). See `DEBT_INVENTORY.md`.
 
-**Diagnostic logging added, left in place (not temporary-only):** `ThemeItem.enterEvent`
-(`title_bar.py`) logs `[ENTEREVENT-TRACE]` with the theme name and global cursor position on every
-firing; `update_theme_list_visuals()` (`theme_manager.py`) logs the same tag on every call. Both were
-essential to confirming this mechanism precisely rather than accepting it as a plausible-sounding
-theory, per the standard applied to every other finding tonight.
+**Diagnostic logging status:** `ThemeItem.enterEvent`/`leaveEvent` (`title_bar.py`) log
+`[ENTEREVENT-TRACE]` on every firing, including whether the guard suppressed or passed the event and
+why (`in_window`, `pos_matches`, `guard_until`, `last_leave_pos`) — **left in place deliberately**, not
+temporary, since the bug is only partially fixed and this logging is what a future session will need
+to find the second trigger. Do not remove until the second trigger is found and fixed.
+
+**Process note, for the record:** this investigation went through three sequential theories before
+landing on a real (if partial) fix — each one tested live and either disproven outright (theory 1) or
+found to explain only part of the symptom (theory 2/the shipped fix). The session was explicit at each
+step about which claims were confirmed by log evidence versus still theoretical, and retracted the
+first theory outright rather than quietly moving past it. The user's own insistence on checking the
+leaveEvent-reliability assumption BEFORE implementing (rather than after) caught a real gap in the
+originally-proposed single-signal design before it shipped.
 
 ---
 

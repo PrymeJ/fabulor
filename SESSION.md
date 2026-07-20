@@ -1,3 +1,55 @@
+## Session Summary — 2026-07-20 Session 5 — The "heartbeat" bug's Session 4 root-cause claim was disproven; a second, real trigger was found and guarded against, but the bug is UNRESOLVED — it still reproduces in full via a third, unidentified trigger
+
+Direct continuation of Session 4, same night. Session 4's closing claim — that
+`update_theme_list_visuals()`'s `unpolish()`/`polish()` calls were the confirmed cause of the spurious
+repeated `ThemeItem.enterEvent` — was tested by implementing the proposed fix and reproducing live. **The
+fix's own instrumentation showed zero repolish calls happening (`repolished 0/58 buttons`) on every
+single cycle while the bug kept reproducing on the identical schedule.** This conclusively disproved the
+theory; it was retracted explicitly rather than quietly revised.
+
+Checkpoint-level log tracing (timestamps inserted at every step of `_apply_stylesheets`) found the real
+partial cause: `settings_panel.setStyleSheet()` — not `mw.setStyleSheet(base)`, which was checked and
+ruled out via a clearly longer completion-to-enterEvent gap — forces a style cascade through the whole
+settings_panel subtree (the actual Qt ancestor of every `ThemeItem`), re-evaluating hit-testing and
+firing a spurious `enterEvent`. Before implementing a fix, the user explicitly required checking whether
+"no preceding leaveEvent" would be a safe way to distinguish synthetic from real events — it would NOT
+have been: logging showed the cascade also fires a fully realistic `leaveEvent` immediately before every
+spurious `enterEvent`, indistinguishable by shape alone from a genuine quick leave-and-return. A
+two-signal guard was implemented instead: a `try/finally`-guaranteed time-window deadline
+(`_spurious_enter_guard_until`, set/cleared around the `setStyleSheet()` call, mirroring the reentrancy
+guard's own try/finally discipline from earlier in the night per the user's explicit request to confirm
+that pattern was actually applied here too) combined with a cursor-position match against `ThemeItem`'s
+own last-recorded `leaveEvent` position.
+
+Mid-implementation, the assistant prematurely stripped diagnostic logging before the fix had been
+verified live — a real process error, called out directly by the user ("I saw you doing this, I found it
+weird, but what could I do?") — logging was restored before further testing.
+
+**Live-tested result: the bug is NOT fixed.** Reproducing the stationary hover scenario showed the guard
+correctly suppressing the one trigger it targets (`SUPPRESSED (synthetic)`, both signals confirmed
+correct in the log) — but the alternating cycles still passed through (`PASSED`, `in_window=False`),
+confirmed via timestamp ordering to be a SECOND, distinct spurious leave/enter pair that fires ~500ms
+after the guarded restyle completes and BEFORE the next `hover=True` restyle even begins — ruling out
+both `_apply_stylesheets` call sites as its cause. It correlates with two back-to-back
+`_on_theme_changed` no-op-guard lines for the already-active theme immediately beforehand; what triggers
+those was not identified before the session ended (candidate not yet checked: the 700ms
+`_panel_guard_timer` retry). Since either trigger alone reproduces the full symptom, the heartbeat
+still occurs exactly as before, from the user's perspective — the guard closes one of at least two
+causes, not the bug.
+
+**Final state, reported plainly, not as a completed or improved fix:** the reported symptom is
+unchanged — the cursor still triggers repeated spurious hover cycles while stationary. The guard shipped
+is real and correctly targets the mechanism it covers, but that is not the same as resolving the bug.
+Diagnostic logging (`[ENTEREVENT-TRACE]` in `title_bar.py`, both branches) was deliberately left in
+place, not removed, since it's needed to find the remaining trigger in a future session. See NOTES.md's
+"STILL OPEN, NOT FIXED" entry for full trace excerpts of both the suppressed and passed-through cases,
+and the explicit retraction of the disproven `unpolish()`/`polish()` theory.
+
+Session ended here at the user's request, with an accurate (not optimistic) record of what's fixed,
+what's partial, and what remains open.
+
+---
+
 ## Session Summary — 2026-07-20 Session 4 — Found a third, distinct blur bug (overlay frozen indefinitely); reworked transport-bar blur from polling to event-driven refresh to address the punch-through-flash's unnecessary-grab volume; the rework itself introduced and then required fixing a real feedback loop; finally root-caused the long-deferred "heartbeat" (spurious `ThemeItem.enterEvent`) bug precisely, via direct log correlation
 
 Continuation of Session 3, later the same night. Four pieces of work, in the order they happened:

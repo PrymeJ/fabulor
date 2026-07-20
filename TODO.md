@@ -40,23 +40,29 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   mechanism is understood (see below) and is confirmed to be driving far more restyle cycles than
   normal use would, fixing THAT first may make this residual collision rare enough to be a non-issue in
   practice — worth re-measuring after that fix lands, before investing further here.
-- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — MECHANISM CONFIRMED, fix
-  proposed, NOT YET IMPLEMENTED.** `ThemeManager.update_theme_list_visuals()` (and
-  `_update_cover_pool_btn()`) call `btn.style().unpolish(btn)` / `.polish(btn)` unconditionally on
-  every `ThemeItem` button, including whichever one the cursor is resting over — this repolish causes
-  Qt to re-evaluate hit-testing and fire a spurious `enterEvent` with zero actual cursor movement.
-  Confirmed via direct log correlation (not guessed): 8+ consecutive re-fires with byte-identical
-  `global_cursor_pos`, each preceded by an `update_theme_list_visuals CALLED` line ~360-400ms earlier,
-  itself triggered by a deferred-restyle batch resolving that the spurious enterEvent's own debounced
-  hover call had been stashed behind — a fully self-sustaining loop at roughly the deferred-restyle
-  cadence (~1.3-1.4s), matching the originally-reported "heartbeat" interval exactly. Proposed fix (not
-  implemented): skip the `unpolish()`/`polish()` call for a button whose `selected`/`active_display`
-  properties are already correct, instead of unconditionally repolishing every button on every call.
-  Flagged as a possible pattern — other `unpolish()`/`polish()` call sites elsewhere in the codebase
-  were not searched for the same latent issue in this pass. See NOTES.md for the full log excerpt.
-  Confirmed to be actively amplifying the punch-through-flash collision above (more spurious hover
-  cycles = more restyles = more collision opportunities) — fixing this first is likely worthwhile
-  before further investigating that item.
+- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — STILL OPEN, NOT FIXED. Do not
+  report this as resolved or improved from the user's perspective — the heartbeat still reproduces in
+  full.** Two theories were tested and the first was disproven outright (NOT just unconfirmed):
+  `update_theme_list_visuals()`'s `unpolish()`/`polish()` calls were NOT the cause — a fix targeting
+  them was shipped and its own instrumentation showed `repolished 0/58 buttons` on every cycle while the
+  spurious `enterEvent` kept firing identically. A second, real cause was found via checkpoint-level log
+  tracing: `settings_panel.setStyleSheet()` inside `_apply_stylesheets` (`theme_manager.py`) forces a
+  style cascade through the whole settings_panel subtree — including every `ThemeItem` — re-evaluating
+  hit-testing and firing a spurious `leaveEvent`+`enterEvent` pair (confirmed genuinely indistinguishable
+  from a real quick leave-and-return by event shape alone — leave-presence is NOT a reliable signal on
+  its own). A guard against THIS trigger was added: `main_window._spurious_enter_guard_until` (a
+  `perf_counter()` deadline, set/cleared via `try/finally` around the `setStyleSheet()` call) combined
+  with a cursor-position match against `ThemeItem`'s own last `leaveEvent` position. **This does not fix
+  the bug.** Live-verified the guard correctly suppresses this one trigger when it fires, but a SECOND,
+  distinct spurious leave/enter pair still fires on the alternating cycles, confirmed NOT caused by
+  either `_apply_stylesheets(hover=True)` or `hover=False)` call (it fires before the next `hover=True`
+  restyle even begins) — since either trigger alone reproduces the full symptom, the bug is unresolved.
+  Correlates with two back-to-back `_on_theme_changed: EARLY-RETURN no-op guard` lines for the
+  already-active theme immediately beforehand — candidate causes not yet checked: the 700ms
+  `_panel_guard_timer` retry mechanism, or something else. Diagnostic logging (`[ENTEREVENT-TRACE]` in
+  `title_bar.py`, both suppressed and passed-through cases) is deliberately left in place — needed to
+  find the second trigger, do not remove. See NOTES.md for full trace excerpts. Still amplifying the
+  punch-through-flash collision.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
