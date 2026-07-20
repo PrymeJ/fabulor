@@ -1,6 +1,11 @@
+import logging
+import time
+
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QCursor
+
+logger = logging.getLogger(__name__)
 
 
 class TitleBar(QWidget):
@@ -61,5 +66,15 @@ class ThemeItem(RightClickButton):
         self.setFlat(True)
 
     def enterEvent(self, event):
+        # INVESTIGATION LOGGING (2026-07-20 — tracing the spurious repeated
+        # enterEvent-on-stationary-cursor bug). Logs the global cursor position
+        # at every enterEvent so a real reproduction can rule out (or confirm)
+        # actual OS-level cursor jitter as the cause, independent of any other
+        # theory. Read-only, no behavior change.
+        pos = QCursor.pos()
+        logger.warning(
+            f"[ENTEREVENT-TRACE] t={time.perf_counter():.6f} ThemeItem.enterEvent "
+            f"theme_name={self.theme_name!r} global_cursor_pos=({pos.x()}, {pos.y()})"
+        )
         self.hovered.emit(self.theme_name)
         super().enterEvent(event)

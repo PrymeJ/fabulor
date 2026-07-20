@@ -147,6 +147,20 @@ class ThemeManager(QObject):
         self._save_on_fade = False
         self._fade_in_flight = False
 
+        # perf_counter() timestamp bracketing the most recent _apply_stylesheets()
+        # call — stamped at BOTH entry and exit of that method (not just exit; a
+        # 2026-07-19 live bug showed exit-only stamping leaves a restyle
+        # IN PROGRESS invisible to any reader, since the previous call's stale
+        # exit stamp is all that's available until the current call finishes).
+        # Read (never written here) by ui/transport_bar_blur.py's refresh_dirty()
+        # to skip a tick while Qt's post-restyle repaint/repolish backlog is still
+        # likely mid-flight OR still settling — main_window.grab() forces that
+        # backlog to resolve synchronously if called too soon after, measured
+        # live at 250-350ms per occurrence (vs. a normal 5-10ms grab). This is a
+        # pure observation point: nothing here changes when/how often
+        # _apply_stylesheets itself runs.
+        self._last_apply_stylesheets_at = None
+
         # Deferred invisible-surface restyle batch (see _schedule_deferred_restyle /
         # plans/going-forward-on-this-twinkly-corbato.md). _pending is the coalescing
         # flag; _theme is the last-write-wins theme to apply when the batch runs.
@@ -447,6 +461,12 @@ class ThemeManager(QObject):
             f"any_panel_animating={_any_animating} fade_in_flight={_fade_running}"
             + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating
                else " -> stashing for fade completion" if _fade_running else "")
+        )
+        # INVESTIGATION LOGGING (2026-07-20, Option A bleed-trace) — same info as
+        # the DEBUG line above, at WARNING so it's visible without full DEBUG mode.
+        logger.warning(
+            f"[BLEED-TRACE] _on_theme_changed theme_name={theme_name!r} hover={hover} "
+            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running}"
         )
         # if/elif, NOT two independent ifs: a single call must only ever be claimed by
         # ONE of the two defer-and-resume mechanisms below, never both (which could fire
@@ -760,6 +780,16 @@ class ThemeManager(QObject):
         live in the applied QSS (as qproperty-bg_color/etc.), so re-applying the
         stylesheet for _active_display_theme re-polishes them to the correct
         values, overriding whatever the stopped animation left behind."""
+        # INVESTIGATION LOGGING (2026-07-20 — Option A confirmed NOT sufficient
+        # under blur-on live testing; tracing why). Read-only, no logic change.
+        logger.warning(
+            f"[BLEED-TRACE] complete_main_fade ENTRY "
+            f"_fade_in_flight={getattr(self, '_fade_in_flight', None)!r} "
+            f"_pending_fade_call={getattr(self, '_pending_fade_call', None)!r} "
+            f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+            f"_current_theme_name={getattr(self, '_current_theme_name', None)!r} "
+            f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
+        )
         # Panel-open compensation (deferred-restyle narrowing): flush any pending
         # invisible-surface batch synchronously NOW, before the opening panel paints.
         # MUST be before the _fade_in_flight early-return below — a deferred restyle can
@@ -767,6 +797,7 @@ class ThemeManager(QObject):
         # panel opened), and every panel-open flow routes through here before show().
         self.flush_deferred_restyle()
         if not getattr(self, '_fade_in_flight', False):
+            logger.warning("[BLEED-TRACE] complete_main_fade EARLY-RETURN (no fade in flight)")
             return
         self._fade_in_flight = False
         if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
@@ -781,11 +812,81 @@ class ThemeManager(QObject):
         if hasattr(self, '_fade_overlay'):
             self._fade_overlay.hide()
         self._unfreeze_fade_labels()
+
+        # Fix for a live-traced bug (2026-07-20 — "theme bleeds into the live
+        # main window," reproduced independent of blur; NOT YET COMMITTED as of
+        # this comment): QPropertyAnimation.stop()
+        # (above) does NOT emit `finished`, so _on_fade_finished — the ONLY code
+        # that resumes a theme-change call stashed in _pending_fade_call while a
+        # fade was in flight (see the _fade_running branch in _on_theme_changed)
+        # — never ran. Any hover-preview call queued right as a panel opened was
+        # silently orphaned forever: this method's own fallback reapplication
+        # below then re-applied self._active_display_theme/_is_hover_active,
+        # both STALE (still holding the last hover-preview theme name and
+        # hover=True, since the one call that would have corrected them is the
+        # one now stuck in _pending_fade_call). That stale reapplication runs
+        # through the fast synchronous path (main_window/content_container/
+        # sidebar/settings/speed/sleep) — never the deferred path
+        # (library/stats/book_detail) — which is why the symptom looked like
+        # "Stats/Tags/Library show the wrong theme, Speed/Sleep don't": every
+        # panel-open flow calls this method, so every one of them re-triggered
+        # the same stale reapplication, but it was only ever visibly wrong next
+        # to a deferred-path panel still showing the correct theme.
+        #
+        # Fix: if a call is pending, hand off to it via a full _on_theme_changed
+        # re-call — mirroring _on_fade_finished's own resume pattern exactly —
+        # INSTEAD OF this method's own stale fallback reapplication below. The
+        # pending call's args are always more authoritative than
+        # _active_display_theme/_is_hover_active at this point, for the same
+        # reason _on_fade_finished already treats it that way.
+        #
+        # Safety (verified against the actual guard conditions in
+        # _on_theme_changed, not assumed by analogy to _on_fade_finished): the
+        # resumed call re-checks _any_animating/_fade_running fresh, and both
+        # are guaranteed False here — _fade_in_flight was just cleared two lines
+        # above (mirroring _on_fade_finished's own clear-before-resume order),
+        # and _any_animating (a panel SLIDE animation) is guaranteed False
+        # because every caller of complete_main_fade() is gated by
+        # is_overlay_open_or_committed() (panels.py), which already blocks entry
+        # if any panel animation is running — complete_main_fade() cannot be
+        # reached mid-panel-slide. So the resumed call always falls through both
+        # guard branches and applies directly; it cannot loop or re-stash here.
+        if self._pending_fade_call is not None:
+            pending = self._pending_fade_call
+            self._pending_fade_call = None
+            logger.warning(
+                f"[BLEED-TRACE] complete_main_fade RESUMING pending call args={pending!r}"
+            )
+            self._on_theme_changed(*pending)
+            logger.warning(
+                f"[BLEED-TRACE] complete_main_fade RESUME RETURNED "
+                f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+                f"_is_hover_active={getattr(self, '_is_hover_active', None)!r} "
+                f"_pending_fade_call={getattr(self, '_pending_fade_call', None)!r}"
+            )
+            return
+
         # Re-polish the slider qproperty colors to the new theme (overrides any
         # stranded intermediate value left by a stopped animation).
+        logger.warning(
+            f"[BLEED-TRACE] complete_main_fade FALLBACK reapplying "
+            f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+            f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
+        )
         self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
 
     def _apply_stylesheets(self, theme_name, hover=False):
+        # Stamped at ENTRY, not just at exit (see the exit-side write below for
+        # the original rationale) — found live 2026-07-19 that transport_bar_blur.py's
+        # cooldown gate was missing every collision where refresh_dirty() landed
+        # WHILE a restyle was still running: the exit-side stamp doesn't exist yet
+        # at that point, so the gate was still comparing against the PREVIOUS
+        # (already-stale, >cooldown-old) restyle's timestamp and passing through.
+        # Stamping at entry closes that gap; the exit-side stamp still re-stamps a
+        # fresh "just completed" time so the post-completion settle window is
+        # still covered from the correct (later, more accurate) instant.
+        self._last_apply_stylesheets_at = time.perf_counter()
+
         # DEBUG perf instrumentation: per-step wall-clock, only computed when the
         # fabulor logger is at DEBUG. `hover` skips the hidden stats/book-detail
         # panels — those are covered by the full hover=False restyle that fires on
@@ -869,6 +970,14 @@ class ThemeManager(QObject):
                 section.set_theme(theme)
             if popup:
                 popup.set_theme(theme)
+
+        # Re-stamp at exit too (see the entry-side stamp above for why BOTH sites
+        # are needed, added 2026-07-19). This second write moves the timestamp
+        # forward to the actual completion instant, so the post-completion settle
+        # window transport_bar_blur.py's cooldown gate gives Qt's repaint/repolish
+        # backlog is measured from when the restyle really finished, not from when
+        # it started.
+        self._last_apply_stylesheets_at = time.perf_counter()
 
         if _dbg:
             total = sum(ms for _, ms, _ in _steps)
@@ -1107,6 +1216,15 @@ class ThemeManager(QObject):
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
+        # INVESTIGATION LOGGING (2026-07-20 — tracing the spurious repeated
+        # enterEvent bug). unpolish()/polish() here is the leading suspect: it
+        # can force Qt to re-evaluate widget hit-testing as a side effect of
+        # repolishing, which — if the cursor happens to be resting over a
+        # theme button at the moment this runs — could generate a spurious
+        # enter/leave pair with no real cursor movement. This log line lets a
+        # live reproduction directly correlate this call's timestamp against
+        # ThemeItem.enterEvent's own [ENTEREVENT-TRACE] timestamp.
+        logger.warning(f"[ENTEREVENT-TRACE] t={time.perf_counter():.6f} update_theme_list_visuals CALLED")
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
             is_active_display = (name == self._current_theme_name) and not self._cover_theme_active

@@ -65,6 +65,18 @@ class PanelManager:
         # accepted plan). Comparison branch — see blur-direct-widget for the
         # per-widget-effect alternative.
         self._transport_bar_blur = TransportBarBlurOverlay(main_window)
+        # CACHED-FRAME REWORK (2026-07-20): a settings-tab switch (Themes/Look/
+        # Library/Audio/Controls) changes what's visible inside settings_panel
+        # itself, not inside the transport bar's own tracked widgets — the
+        # overlay's _DirtyRectTracker would never see it as a Paint event on any
+        # tracked widget, so it needs its own explicit one-time forced refresh.
+        # force_refresh_now() itself no-ops if the overlay isn't currently active
+        # (e.g. Stats/Tags/Speed/Sleep panels are open instead — mw.tabs only
+        # exists inside settings_panel), so this connection is safe to leave
+        # permanently wired regardless of which panel is actually open.
+        main_window.tabs.currentChanged.connect(
+            lambda _index: self._transport_bar_blur.force_refresh_now()
+        )
 
     def _apply_transport_bar_blur(self, panel):
         # Clip to `panel`'s own geometry — nothing renders blurred outside what
