@@ -116,7 +116,7 @@ class ThemeManager(QObject):
         self.cover_pool_btn = None # ThemeItem for cover art entry in the pool first row
         self._packed_themes_cache = None
         self._packed_themes_limit = None
-        self._active_display_theme = self._current_theme_name
+        self._active_display_theme_internal = self._current_theme_name
 
         # Cover-art derived theme (dict or None)
         self._cover_theme: dict | None = None
@@ -175,8 +175,29 @@ class ThemeManager(QObject):
 
     def get_current_theme(self) -> dict:
         from ..themes import _resolve_theme
-        active = self._active_display_theme or self._current_theme_name
+        active = self._active_display_theme_internal or self._current_theme_name
         return _resolve_theme(active)
+
+    def get_active_theme(self):
+        """Sole sanctioned way for code outside theme_manager.py to read the
+        current theme. Resolved against hover state — NEVER returns a
+        hover-preview-only value to an external caller. While a hover preview
+        is live (_is_hover_active), returns the last non-preview active theme
+        (_current_theme_name, or the live cover theme if one is active)
+        instead of the hovered theme name. Return type matches
+        _active_display_theme_internal's own type: a str theme name, or a
+        dict (a cover-derived theme) when a cover theme is active.
+
+        Added 2026-07-20 (theme-bleed audit, Mechanism A / Pass 1) to close
+        the one confirmed cross-file read of the old (pre-rename) bare
+        _active_display_theme field (app.py's _set_bg_suppressed), which read
+        it directly with no hover check and could paint content_container with
+        a previewed theme. See Audit_ThemeReach_260720.md."""
+        if self._is_hover_active:
+            if self._cover_theme_active and self._cover_theme is not None:
+                return self._cover_theme
+            return self._current_theme_name
+        return self._active_display_theme_internal or self._current_theme_name
     
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
@@ -244,9 +265,9 @@ class ThemeManager(QObject):
                             )
         if hasattr(self, '_fade_overlay') and self._fade_overlay.isVisible():
             self._fade_overlay.hide()
-            self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
+            self._apply_stylesheets(self._active_display_theme_internal, hover=self._is_hover_active)
             if hasattr(self.main_window, '_refresh_panel_visuals'):
-                self.main_window._refresh_panel_visuals(self._active_display_theme)
+                self.main_window._refresh_panel_visuals(self._active_display_theme_internal)
 
     def get_packed_themes(self, limit=230, spacing=0, padding=0):
         if self._packed_themes_cache is not None and self._packed_themes_limit == limit:
@@ -416,16 +437,16 @@ class ThemeManager(QObject):
         constructed.
 
         BUG (found 2026-07-17, live-traced): _setup_ui used to call _apply_stylesheets
-        alone at that point, setting _active_display_theme to the pool theme name. Any
-        LATER startup call into _on_theme_changed with that SAME theme name (e.g.
-        clear_cover_theme() when cover-theme mode is "off", or when a book has no
+        alone at that point, setting _active_display_theme_internal to the pool theme
+        name. Any LATER startup call into _on_theme_changed with that SAME theme name
+        (e.g. clear_cover_theme() when cover-theme mode is "off", or when a book has no
         cover) hit the "already this theme" no-op guard and returned immediately,
         NEVER reaching the deferred pass — so every invisible-surface panel stayed
         completely unstyled (bare Qt chrome) for the whole session, until something
         unrelated (manual theme rotation, hover, a genuinely different cover theme)
         first called _on_theme_changed with a different theme name. Confirmed live via
         a temporary trace on the no-op guard: it fired at startup with
-        theme_name==_active_display_theme=='<pool theme>', proving _apply_stylesheets_
+        theme_name==_active_display_theme_internal=='<pool theme>', proving _apply_stylesheets_
         deferred was never reached. Fix: _setup_ui now calls this shared helper too, so
         the invisible pass runs once at true startup regardless of cover-theme mode —
         the later same-name no-op guard is then correct to skip re-styling, because
@@ -446,11 +467,11 @@ class ThemeManager(QObject):
             fade_ms = _THEME_SWITCH_FADE_MS if not hover else self.config.get_theme_fade_duration()
 
         # Only guard if both the theme and hover state match
-        if (getattr(self, "_active_display_theme", None) == theme_name
+        if (getattr(self, "_active_display_theme_internal", None) == theme_name
                 and self._is_hover_active == hover):
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_theme_changed: "
                          f"EARLY-RETURN no-op guard theme_name={theme_name!r} "
-                         f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+                         f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
                          f"hover={hover} _is_hover_active={self._is_hover_active} "
                          f"— _apply_stylesheets NEVER CALLED this invocation")
             return
@@ -507,7 +528,7 @@ class ThemeManager(QObject):
             self._pending_fade_call = (theme_name, save, fade_ms, hover, user_initiated)
             return
 
-        self._active_display_theme = theme_name
+        self._active_display_theme_internal = theme_name
 
         if not hasattr(self, '_fade_anim'):
             # Called before initialize_fade_overlay (e.g. on startup cover load) — apply
@@ -784,7 +805,7 @@ class ThemeManager(QObject):
         queued) otherwise strands the slider at an old/intermediate color while
         the rest of the UI is already the new theme. The new-theme slider colors
         live in the applied QSS (as qproperty-bg_color/etc.), so re-applying the
-        stylesheet for _active_display_theme re-polishes them to the correct
+        stylesheet for _active_display_theme_internal re-polishes them to the correct
         values, overriding whatever the stopped animation left behind."""
         # INVESTIGATION LOGGING (2026-07-20 — Option A confirmed NOT sufficient
         # under blur-on live testing; tracing why). Read-only, no logic change.
@@ -792,7 +813,7 @@ class ThemeManager(QObject):
             f"[BLEED-TRACE] complete_main_fade ENTRY "
             f"_fade_in_flight={getattr(self, '_fade_in_flight', None)!r} "
             f"_pending_fade_call={getattr(self, '_pending_fade_call', None)!r} "
-            f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+            f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
             f"_current_theme_name={getattr(self, '_current_theme_name', None)!r} "
             f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
         )
@@ -827,7 +848,7 @@ class ThemeManager(QObject):
         # fade was in flight (see the _fade_running branch in _on_theme_changed)
         # — never ran. Any hover-preview call queued right as a panel opened was
         # silently orphaned forever: this method's own fallback reapplication
-        # below then re-applied self._active_display_theme/_is_hover_active,
+        # below then re-applied self._active_display_theme_internal/_is_hover_active,
         # both STALE (still holding the last hover-preview theme name and
         # hover=True, since the one call that would have corrected them is the
         # one now stuck in _pending_fade_call). That stale reapplication runs
@@ -843,7 +864,7 @@ class ThemeManager(QObject):
         # re-call — mirroring _on_fade_finished's own resume pattern exactly —
         # INSTEAD OF this method's own stale fallback reapplication below. The
         # pending call's args are always more authoritative than
-        # _active_display_theme/_is_hover_active at this point, for the same
+        # _active_display_theme_internal/_is_hover_active at this point, for the same
         # reason _on_fade_finished already treats it that way.
         #
         # Safety (verified against the actual guard conditions in
@@ -866,7 +887,7 @@ class ThemeManager(QObject):
             self._on_theme_changed(*pending)
             logger.warning(
                 f"[BLEED-TRACE] complete_main_fade RESUME RETURNED "
-                f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+                f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
                 f"_is_hover_active={getattr(self, '_is_hover_active', None)!r} "
                 f"_pending_fade_call={getattr(self, '_pending_fade_call', None)!r}"
             )
@@ -876,10 +897,10 @@ class ThemeManager(QObject):
         # stranded intermediate value left by a stopped animation).
         logger.warning(
             f"[BLEED-TRACE] complete_main_fade FALLBACK reapplying "
-            f"_active_display_theme={getattr(self, '_active_display_theme', None)!r} "
+            f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
             f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
         )
-        self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)
+        self._apply_stylesheets(self._active_display_theme_internal, hover=self._is_hover_active)
 
     def _apply_stylesheets(self, theme_name, hover=False):
         # Stamped at ENTRY, not just at exit (see the exit-side write below for
@@ -1199,7 +1220,7 @@ class ThemeManager(QObject):
         # A hover preview may still be queued (debounce hasn't fired yet) or
         # in flight for this or another swatch the cursor swept over en route.
         # Cancel it so a stale delayed preview can't land after this commit and
-        # win the last-write race on _active_display_theme / the underline.
+        # win the last-write race on _active_display_theme_internal / the underline.
         self._hover_debounce_timer.stop()
         self._pending_hover_theme = None
         if theme_name not in self.selected_themes:

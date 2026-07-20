@@ -1277,8 +1277,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # while a cover theme is active regenerates the stylesheet with pool
         # colors, causing a visible flash to the non-cover theme on every book
         # switch (apply_library_state always calls _set_bg_suppressed(False)).
-        theme_name = (getattr(self.theme_manager, '_active_display_theme', None)
-                      or self.theme_manager._current_theme_name)
+        #
+        # Routed through ThemeManager.get_active_theme() (not the raw
+        # _active_display_theme_internal field) as of 2026-07-20 — this call
+        # site has no coupling to ThemeManager's fade/hover state machine and
+        # can fire at any moment, including mid-hover-preview; the raw field
+        # holds the PREVIEWED theme name for the duration of a hover, so a
+        # direct read could paint content_container with a theme the user was
+        # only hovering, not the actual active one. get_active_theme() resolves
+        # against hover state so this can never happen. See
+        # Audit_ThemeReach_260720.md (Mechanism A / Pass 1).
+        theme_name = self.theme_manager.get_active_theme()
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
         )

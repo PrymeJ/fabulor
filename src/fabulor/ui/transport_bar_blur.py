@@ -399,12 +399,37 @@ class TransportBarBlurOverlay:
             )
             return
 
+        # HOVER GATE (2026-07-20 — theme-bleed Mechanism B / audit Path D,
+        # Audit_ThemeReach_260720.md): a hover-preview restyle rewrites
+        # content_container's stylesheet, which forces Qt to repaint every
+        # tracked transport-bar widget (they inherit content_container's QSS),
+        # which fires a real Paint event, which this tracker correctly sees as
+        # "something changed" and schedules a refresh for. Without this gate,
+        # _grab_and_blur() below grabs main_window's LIVE composited frame at
+        # that instant — which is showing the hovered theme's colors — and
+        # bakes it into the overlay pixmap, confirmed live (screenshot,
+        # 2026-07-20) as the visible "hover pulsates into the blurred area"
+        # bug. Declining here (not consuming take_dirty_union()) is safe
+        # specifically for the hover case: _on_theme_unhovered's own snapback
+        # restyle (_apply_stylesheets(hover=False)) sets _is_hover_active=False
+        # BEFORE it runs (see _on_theme_changed's write order) and itself
+        # repaints the same tracked widgets, producing a fresh real Paint event
+        # that re-arms _schedule_refresh and lands here with the gate now
+        # clear — so hover-end self-corrects via the normal event-driven path,
+        # no separate force_refresh_now-style call needed. This gate does NOT
+        # cover the general "declined tick has no timer to retry itself"
+        # gap — see NOTES.md/TODO.md, flagged as a candidate mechanism for the
+        # still-open frozen-overlay bug, deliberately not touched here.
+        theme_manager = getattr(self.main_window, 'theme_manager', None)
+        if getattr(theme_manager, '_is_hover_active', False):
+            logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=hover_active_gate")
+            return
+
         # See _POST_RESTYLE_COOLDOWN_S's declaration above for the root cause
         # and measured numbers this gates against. Checked BEFORE
         # take_dirty_union() so a skipped tick leaves the accumulated dirty
         # union untouched in the tracker for the next tick to pick up — nothing
         # is consumed or dropped, this tick just declines to act on it yet.
-        theme_manager = getattr(self.main_window, 'theme_manager', None)
         last_restyle = getattr(theme_manager, '_last_apply_stylesheets_at', None)
         if last_restyle is not None and (time.perf_counter() - last_restyle) < _POST_RESTYLE_COOLDOWN_S:
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=cooldown_gate")
