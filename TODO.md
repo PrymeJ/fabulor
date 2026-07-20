@@ -6,6 +6,57 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-20] NEW: blur overlay's refresh timer stops firing permanently after a normal
+  `show_for_panel` call — confirmed via one accidental occurrence, root cause not yet found.**
+  Overlay freezes on stale content indefinitely (confirmed via screenshot: grabbed transport-bar
+  buttons showing an old theme's blue while the live, unblurred chrome around them had moved on to
+  pink/magenta) while the app keeps running and the real theme keeps changing. Log shows
+  `show_for_panel DONE` succeeding normally, then zero `transport_bar_blur` log lines of any kind for
+  over a minute. Distinct third bug from the punch-through flash and the theme-bleed item below — found
+  by accident, not reliably reproducible. See NOTES.md for full detail; investigation in progress
+  (static analysis + permanent timer-lifecycle logging, per the user's explicit direction not to rely
+  on live repro as the primary method).
+- **[2026-07-20] "Hovered theme bleeds into the whole live main window" — a code change EXISTS
+  (uncommitted, `theme_manager.py`, `complete_main_fade()`) but is UNVERIFIED, not fixed. See NOTES.md
+  — the entry previously here said "FIXED"/"live-verified," which was wrong: every test that reported
+  "no issues" was run with blur OFF, which was already independently known (before this code change
+  existed) to eliminate the bug regardless of any other change. There is no test of this change under
+  blur ON — the only condition under which the bug reproduces at all. The bug also does not reproduce
+  reliably (sometimes immediate, sometimes ~5 minutes per the user), so even a short blur-on test
+  session would not be strong evidence either way. Needs an actual soak test (blur on, repeated
+  hover+panel-open cycles, several 5+ minute stretches) before this can be called verified. This was a
+  real, separate bug from the punch-through-flash item below — the two got conflated in earlier drafts
+  of this TODO/NOTES.
+- **[2026-07-20] `blur-composited-overlay`'s punch-through flash is still OPEN — the polling timer
+  (`_REFRESH_INTERVAL_MS`) this entry originally referenced no longer exists (removed in the
+  event-driven rework, see below), but the underlying collision itself is unresolved.** A single
+  hover-and-hold over one theme swatch can still land a real, event-driven `main_window.grab()` call
+  right after a real restyle, colliding with Qt's post-restyle repaint/repolish backlog (measured live,
+  same session: outliers up to 357ms). The event-driven rework removed the *unnecessary* polling-driven
+  collisions, not this residual one — never claimed to. **Whether it's the live main window or the
+  overlay's own grabbed pixmap doing the visible flashing was never confirmed** — resolve that before
+  trusting any prior diagnosis as complete. Candidate next steps, not yet started: (1) confirm exactly
+  what's flashing (live window vs. grabbed pixmap); (2) now that the spurious-`enterEvent` bug's
+  mechanism is understood (see below) and is confirmed to be driving far more restyle cycles than
+  normal use would, fixing THAT first may make this residual collision rare enough to be a non-issue in
+  practice — worth re-measuring after that fix lands, before investing further here.
+- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — MECHANISM CONFIRMED, fix
+  proposed, NOT YET IMPLEMENTED.** `ThemeManager.update_theme_list_visuals()` (and
+  `_update_cover_pool_btn()`) call `btn.style().unpolish(btn)` / `.polish(btn)` unconditionally on
+  every `ThemeItem` button, including whichever one the cursor is resting over — this repolish causes
+  Qt to re-evaluate hit-testing and fire a spurious `enterEvent` with zero actual cursor movement.
+  Confirmed via direct log correlation (not guessed): 8+ consecutive re-fires with byte-identical
+  `global_cursor_pos`, each preceded by an `update_theme_list_visuals CALLED` line ~360-400ms earlier,
+  itself triggered by a deferred-restyle batch resolving that the spurious enterEvent's own debounced
+  hover call had been stashed behind — a fully self-sustaining loop at roughly the deferred-restyle
+  cadence (~1.3-1.4s), matching the originally-reported "heartbeat" interval exactly. Proposed fix (not
+  implemented): skip the `unpolish()`/`polish()` call for a button whose `selected`/`active_display`
+  properties are already correct, instead of unconditionally repolishing every button on every call.
+  Flagged as a possible pattern — other `unpolish()`/`polish()` call sites elsewhere in the codebase
+  were not searched for the same latent issue in this pass. See NOTES.md for the full log excerpt.
+  Confirmed to be actively amplifying the punch-through-flash collision above (more spurious hover
+  cycles = more restyles = more collision opportunities) — fixing this first is likely worthwhile
+  before further investigating that item.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
