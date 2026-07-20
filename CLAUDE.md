@@ -298,6 +298,19 @@ As of 2026-06-12 a "listened day" is `session (start OR end adjusted-date) OR 'f
 
 ---
 
+### Hover-preview theme application must never reach `_schedule_deferred_restyle` or any panel-level stylesheet
+Previews are confined to main window, settings panel, and title bar via `get_base_stylesheet` — this
+confinement is deliberate, not an oversight: walking the whole widget tree on every hover tick (the
+same work a genuine theme selection does) would be a real performance cost with the panel tree this
+app has, which is exactly why `get_base_stylesheet`/the fast-pass split exists in the first place. A
+preview must never be replayed through the same apply path as a genuine selection — any code that
+drains, resumes, or re-applies a stashed/pending theme-change call must preserve whether that call
+was a hover preview or a real selection, and a hover preview being replayed must stay confined to the
+preview-safe surfaces, never reach `_schedule_deferred_restyle` (library/stats/tags/book_detail,
+Sleep/Speed's per-button colors) or any other panel-level `setStyleSheet()`.
+
+---
+
 ### DO NOT add a key to "The Color Purple" without checking `_NO_BASE_INHERIT_KEYS` (themes.py)
 Every theme is resolved by `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with
 the requested theme's own dict — "The Color Purple" is the base template every other theme
