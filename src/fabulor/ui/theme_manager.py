@@ -13,6 +13,12 @@ from ..themes import (
 
 logger = logging.getLogger(__name__)
 
+# Spurious-enterEvent guard window (2026-07-20) — see the try/finally block
+# around settings_panel.setStyleSheet() in _apply_stylesheets for the full
+# mechanism. Sized with real margin over the measured ~8-15ms gap between that
+# call completing and the spurious enterEvent/leaveEvent pair firing.
+_SPURIOUS_ENTER_GUARD_S = 0.05
+
 def _theme_distance(name_a: str, name_b: str) -> float:
     """
     Perceptual distance between two themes based on bg_main hue, saturation,
@@ -956,10 +962,42 @@ class ThemeManager(QObject):
         # existed, breaking the Themes tab's own hover preview. Moved back here to
         # restore the original, intentional behavior.
         ss_panels = get_settings_stylesheet(theme_name)
-        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
-            w = getattr(mw, attr, None)
-            if w:
-                w.setStyleSheet(ss_panels)
+        # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; see
+        # NOTES.md for the full confirmed mechanism). settings_panel
+        # .setStyleSheet() below forces Qt to re-run its style/geometry cascade
+        # through the whole settings_panel subtree — including every ThemeItem
+        # theme-pool button — which re-evaluates hit-testing for whatever's
+        # under the cursor and can fire a SPURIOUS, fully realistic-looking
+        # leaveEvent+enterEvent pair on a widget the cursor never actually left.
+        # Confirmed live: the spurious pair is indistinguishable from a real
+        # quick leave-and-return by shape alone (both fire, same cursor
+        # position) — leave-presence is NOT a reliable discriminator on its
+        # own. _spurious_enter_guard_until (a perf_counter() deadline, mirroring
+        # the feedback-loop guard's _grab_suppress_until pattern from earlier
+        # tonight) is the load-bearing signal instead, since it's derived from
+        # code we control precisely rather than from event shape. ThemeItem
+        # checks this window AND compares cursor position against the position
+        # its own leaveEvent reported moments earlier, so a genuine same-widget
+        # re-hover that happens to land in this narrow (~15ms) window by pure
+        # coincidence is not swallowed — only an enter at the SAME position as
+        # the immediately-preceding leave, inside this window, is treated as
+        # synthetic.
+        #
+        # try/finally guarantees the flag is always cleared, even if something
+        # in this block raises — mirrors the feedback-loop guard fix earlier
+        # tonight exactly, for the same reason: a stuck-True guard here would
+        # silently and permanently swallow real enterEvents on every theme
+        # button, which given how routinely _apply_stylesheets(hover=False)
+        # fires in normal use would break hover-preview entirely, not just the
+        # spurious case.
+        try:
+            self.main_window._spurious_enter_guard_until = time.perf_counter() + _SPURIOUS_ENTER_GUARD_S
+            for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+                w = getattr(mw, attr, None)
+                if w:
+                    w.setStyleSheet(ss_panels)
+        finally:
+            self.main_window._spurious_enter_guard_until = time.perf_counter() + _SPURIOUS_ENTER_GUARD_S
         _mark("settings/speed/sleep panels")
         section = getattr(mw, 'excluded_books_section', None)
         popup = getattr(mw, 'excluded_books_popup', None)
@@ -1216,23 +1254,33 @@ class ThemeManager(QObject):
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
-        # INVESTIGATION LOGGING (2026-07-20 — tracing the spurious repeated
-        # enterEvent bug). unpolish()/polish() here is the leading suspect: it
-        # can force Qt to re-evaluate widget hit-testing as a side effect of
-        # repolishing, which — if the cursor happens to be resting over a
-        # theme button at the moment this runs — could generate a spurious
-        # enter/leave pair with no real cursor movement. This log line lets a
-        # live reproduction directly correlate this call's timestamp against
-        # ThemeItem.enterEvent's own [ENTEREVENT-TRACE] timestamp.
-        logger.warning(f"[ENTEREVENT-TRACE] t={time.perf_counter():.6f} update_theme_list_visuals CALLED")
+        # NOT the cause of the "heartbeat" bug (an earlier theory, disproven
+        # 2026-07-20 — see NOTES.md; the real cause was settings_panel
+        # .setStyleSheet() in _apply_stylesheets, fixed there via
+        # _spurious_enter_guard_until). This unpolish()/polish()-only-when-
+        # changed guard is kept anyway as a harmless, legitimate minor
+        # optimization (skips repolishing buttons whose visual state didn't
+        # actually change) — read each button's CURRENT live property values
+        # via btn.property(...) and compare against the freshly computed
+        # target, never a separately-tracked "previous" value, so it can't
+        # drift out of sync with whatever else might set these properties. A
+        # brand-new/never-polished button reads back None for a property never
+        # explicitly set, which never equals a real bool target, so first-time
+        # polish always happens.
         for name, btn in self.theme_widgets.items():
             is_selected = name in self.selected_themes
             is_active_display = (name == self._current_theme_name) and not self._cover_theme_active
 
+            changed = (
+                btn.property("selected") != is_selected
+                or btn.property("active_display") != is_active_display
+            )
+
             btn.setProperty("selected", is_selected)
             btn.setProperty("active_display", is_active_display)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+            if changed:
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
         self._update_cover_pool_btn()
 
     # ── Cover-art theme ─────────────────────────────────────────────────────
@@ -1310,17 +1358,30 @@ class ThemeManager(QObject):
         self._update_cover_pool_btn()
 
     def _update_cover_pool_btn(self):
+        # Same fix, same reasoning as update_theme_list_visuals() above (the
+        # "heartbeat" bug) — only repolish when the button's live state is
+        # actually changing, checked against btn's own current property/enabled
+        # values, never a cached copy.
         btn = self.cover_pool_btn
         if btn is None:
             return
         mode = self.config.get_cover_art_theme_mode()
         has_cover = self._cover_theme is not None
         in_pool = (mode == "with_pool")
-        btn.setEnabled(mode == "off" or has_cover)  # always clickable in Off; needs cover in With pool
+        should_be_enabled = mode == "off" or has_cover  # always clickable in Off; needs cover in With pool
+
+        changed = (
+            btn.isEnabled() != should_be_enabled
+            or btn.property("selected") != in_pool
+            or btn.property("active_display") != self._cover_theme_active
+        )
+
+        btn.setEnabled(should_be_enabled)
         btn.setProperty("selected", in_pool)
         btn.setProperty("active_display", self._cover_theme_active)
-        btn.style().unpolish(btn)
-        btn.style().polish(btn)
+        if changed:
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _on_cover_pool_btn_clicked(self):
         mode = self.config.get_cover_art_theme_mode()
