@@ -2233,8 +2233,14 @@ class TasselOverlay(QWidget):
         little slack for sway. Kept separate from the tab so the empty top-
         right corner (right of the tab, above the tassel) is NOT clickable."""
         slack = int(self.KICK_AMP) + 2
+        # Right-side slack is decoupled from (and much tighter than) the general
+        # slack — the hit zone was too wide to the right of the visible tassel body
+        # (tuned live 2026-07-21). The visible fringe ends at
+        # _HEAD_X + _HEAD_W + _FRINGE_SPREAD; right_slack offsets the right hit edge
+        # from there (negative = pull it 1px INSIDE the fringe edge).
+        right_slack = -1
         left = self._HEAD_X - slack
-        right = self._HEAD_X + self._HEAD_W + self._FRINGE_SPREAD + slack
+        right = self._HEAD_X + self._HEAD_W + self._FRINGE_SPREAD + right_slack
         top = self._HEAD_Y - 2
         bottom = self._HEAD_Y + self._HEAD_H + self._FRINGE_LEN + 2
         return QRect(left, top, right - left, bottom - top)
