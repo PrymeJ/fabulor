@@ -90,6 +90,40 @@ class PanelManager:
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
 
+    def apply_blur_live(self, enabled: bool):
+        """Apply or clear blur on the ALREADY-OPEN Settings panel the instant the
+        Settings > Blur toggle is clicked, without needing a close/reopen. The
+        toggle lives in the Settings panel, so settings_panel is the only panel
+        this is ever reachable from — scope to it, don't try to handle others.
+
+        Covers both blur mechanisms: the transport-bar composited overlay (the
+        primary one — _apply/_clear_transport_bar_blur) AND the cover-image
+        blur_effect (blur_animation 0<->10). The blur_effect ON side mirrors the
+        existing OFF side in MainWindow.set_blur_selection (which already zeroes
+        the radius when the toggle goes Off); this adds the missing ON direction so
+        Off->On also re-blurs the cover image live (previously only On->Off worked).
+
+        REQUIRED animation guard: bail if any panel/sidebar slide is running.
+        Applying/clearing blur mid-animation is not something the two-button toggle
+        UI should ever trigger, but 'this state is unreachable so no guard needed'
+        is exactly the assumption that caused three regressions this session — the
+        guard is one cheap line, so it's here, not assumed."""
+        if not self.settings_panel.isVisible():
+            return
+        if self.is_any_panel_animating():
+            return
+        if enabled:
+            self._apply_transport_bar_blur(self.settings_panel)
+            # Cover-image blur ON side (mirror of set_blur_selection's OFF side).
+            self.blur_animation.stop()
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setEndValue(10)
+            self.blur_animation.start()
+        else:
+            self._clear_transport_bar_blur()
+            self.blur_animation.stop()
+            self.blur_effect.setBlurRadius(0)
+
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
         if self.sidebar_animation.state() == QAbstractAnimation.State.Running:

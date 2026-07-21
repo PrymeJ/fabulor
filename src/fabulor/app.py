@@ -252,10 +252,13 @@ class VisualsInterface:
 
 
 class PanelInterface:
-    def __init__(self, speed_panel, sleep_panel, audio_tab):
+    def __init__(self, speed_panel, sleep_panel, audio_tab, main):
         self._speed = speed_panel
         self._sleep = sleep_panel
         self._audio = audio_tab
+        # panel_manager is created AFTER this interface (see _setup_ui ordering),
+        # so hold `main` and read main.panel_manager lazily at call time.
+        self._main = main
     def validate_speed_panel_settings(self):
         if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
     def update_speed_panel_visuals(self, theme_name=None):
@@ -264,6 +267,9 @@ class PanelInterface:
         if self._sleep: self._sleep.update_panel_styling()
     def update_audio_panel_visuals(self):
         if self._audio: self._audio.update_visuals()
+    def apply_blur_live(self, enabled):
+        pm = getattr(self._main, 'panel_manager', None)
+        if pm: pm.apply_blur_live(enabled)
 
 
 class UICallbackInterface:
@@ -508,7 +514,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Wire SettingsController with explicit, minimal interfaces (defined at module level).
         visuals = VisualsInterface(self)
-        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab)
+        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab, self)
         ui_callbacks = UICallbackInterface(self)
         library = LibraryInterface(self.db, self.library_panel)
         player = PlayerInterface(self)

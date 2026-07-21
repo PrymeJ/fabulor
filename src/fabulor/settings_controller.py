@@ -98,6 +98,10 @@ class SettingsController:
         """Changes the blur setting."""
         self.config.set_blur_enabled(enabled)
         self._update_blur_visuals()
+        # Apply the change immediately to the already-open Settings panel (the
+        # only panel this toggle is reachable from) instead of waiting for a
+        # close/reopen. Covers the transport-bar overlay AND the cover-image blur.
+        self.panels.apply_blur_live(enabled)
 
     def _update_blur_visuals(self):
         enabled = self.config.get_blur_enabled()
