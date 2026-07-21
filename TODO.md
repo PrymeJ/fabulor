@@ -16,20 +16,22 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
   Needs live instrumentation added first to catch an occurrence with real state, before any fix is
   attempted — do not fix blind. Not started.
-- **[2026-07-21] Settings → Blur toggle doesn't apply live to an already-open panel — should apply
-  on click, not just to the next open/close.** Confirmed by reading the code, not yet fixed.
-  `SettingsController._update_blur_mode` (`settings_controller.py:97`) only writes
-  `config.set_blur_enabled(enabled)` and refreshes the toggle's own visual state
-  (`_update_blur_visuals`) — it never touches `TransportBarBlurOverlay` or `blur_effect` directly.
-  Every call site that actually applies/clears blur (`_apply_transport_bar_blur`,
-  `_clear_transport_bar_blur`, the `blur_animation` start/stop pairs — all in `panels.py`) only
-  reads `config.get_blur_enabled()` at panel open/close time. So toggling Blur off while a panel is
-  already open (e.g. from within Settings itself, since the toggle lives in the Settings panel)
-  leaves that panel's transport bar blurred until it's closed and reopened; toggling on behaves the
-  same in reverse. Fix should make the toggle affect the CURRENTLY open panel's blur state
-  immediately, not just future open/close cycles. Not started — needs a decision on mechanism (e.g.
-  `_update_blur_mode` calling into `PanelManager` to apply/clear against whichever panel, if any, is
-  currently open) before implementing.
+- **[2026-07-21] Themes tab: narrow the hover-preview region to EXCLUDE the bottom buttons (Add
+  all / Remove all / Change now) and the interval-selection area — hovering there should revert to
+  the active theme, not keep previewing.** Currently the whole Themes tab (its `leaveEvent` /
+  `pool_container.leaveEvent`, `main_window_builders.py:714`/`:768`) drives hover preview via
+  `_on_theme_hovered`/`_on_theme_unhovered`, so moving the cursor down onto the bulk buttons or the
+  interval labels keeps whatever the last-hovered swatch previewed instead of snapping back to the
+  active theme. Desired: those bottom regions behave like "not hovering a theme" — i.e. trigger the
+  same revert `_on_theme_unhovered` does. Not started.
+- **[2026-07-21] "Cover art based theme" should trigger a live PREVIEW on hover even when its mode
+  is Off.** Right now `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns if
+  `self._cover_theme` is None, and with cover-art mode Off there's effectively no preview — hovering
+  the "Cover art based theme" entry does nothing. Desired: hovering it should preview the cover-
+  derived theme regardless of the Off/With pool/Exclusive selection, so the user can see what it
+  would look like before committing. Not started — needs to confirm a cover theme is buildable for
+  the current book (there may be no cover / no `_cover_theme` computed while mode is Off) before it
+  can preview anything.
 - **[2026-07-21] Transport-bar blur scope: cover art area needs the same clip/blur treatment as the
   bottom (transport) part — deferred, blocked on the placeholder-text rehaul.** Currently
   `TransportBarBlurOverlay` only tracks the mini transport bar (chapter label, chapter progress,

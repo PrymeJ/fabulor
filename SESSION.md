@@ -44,6 +44,23 @@ pulled the right hit edge to 1px inside the visible fringe (`right_slack = -1`),
 rounds; left edge, tab rect, and vertical tolerance unchanged (`8955a2d`). The TODO.md tassel
 follow-up item (opened Session 6) is now resolved and removed.
 
+**Also this session — the Blur toggle now applies live to the open Settings panel** (the deferred
+"Blur toggle doesn't apply live" TODO item). It previously only wrote config, taking effect on the
+next panel close/reopen. Added `PanelManager.apply_blur_live(enabled)` (routed via `PanelInterface`
+with a lazy `panel_manager` read, since the interface is constructed before the manager), called
+from `_update_blur_mode` after it writes config. It applies/clears both blur mechanisms against the
+already-open Settings panel (the only panel the toggle is reachable from): the transport-bar
+composited overlay (`_apply`/`_clear_transport_bar_blur`) — the part the user cares about, since the
+cover-image blur is slated to be replaced by the same grab code later — and the cover-image
+`blur_effect`. The cover-image ON direction was previously missing entirely: `set_blur_selection`
+(`app.py`) only handled the OFF case (`setBlurRadius(0)`), so Off→On never re-blurred the image live
+— now fixed. Guarded on `settings_panel.isVisible()` and, per explicit plan-review feedback,
+`is_any_panel_animating()` as a REQUIRED guard (not "should already be safe" insurance — that exact
+assumption caused this session's `_do_rotate`/"Change now" regression). `2dd1445`. Two new TODO
+items opened from user requests during this work: narrow the Themes-tab hover-preview region to
+exclude the bottom buttons/interval area, and make the "Cover art based theme" entry preview on
+hover even when its mode is Off.
+
 ---
 
 ## Session Summary — 2026-07-21 Session 6 — Cursor fluctuating hand↔arrow over panel widgets when blur is on, root-caused via live instrumentation and fixed

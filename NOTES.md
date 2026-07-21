@@ -1,3 +1,32 @@
+## Blur toggle now applies live to the open Settings panel; the Off→On cover-image asymmetry explained (2026-07-21)
+
+The Settings > Blur On/Off toggle only wrote config (`_update_blur_mode` → `config.set_blur_enabled`
++ visual refresh), so it took effect only on the next panel close/reopen. Fixed by adding
+`PanelManager.apply_blur_live(enabled)`, called from `_update_blur_mode` after the config write. It
+acts on the already-open Settings panel (the only panel the toggle is reachable from) for both blur
+mechanisms: the transport-bar composited overlay (`_apply`/`_clear_transport_bar_blur`, already
+live-callable — `show_for_panel` early-returns if `self._active`, `hide_for_panel` tears down
+unconditionally, and `show_for_panel` recomputes the bounding rect from the panel's current settled
+geometry) and the cover-image `blur_effect`.
+
+**The user-observed Off→On-doesn't-but-On→Off-does asymmetry (cover image), root cause:**
+`MainWindow.set_blur_selection(enabled)` (`app.py`) — called by the toggle's visual refresh — had
+`if not enabled: m.blur_effect.setBlurRadius(0)` but NO `enabled=True` counterpart. So turning blur
+Off live-zeroed the cover-image blur, while turning it On did nothing to the image. `apply_blur_live`
+adds the missing On direction (animate `blur_effect` 0→10), making the toggle symmetric. (This
+cover-image path is expected to be replaced by the transport-bar grab code later — see the TODO
+about giving the cover-art area the same treatment — so it's deliberately minimal.)
+
+Routing note: `SettingsController` reaches panels through the `PanelInterface` facade, which is
+constructed (`app.py` `_setup_ui`) BEFORE `panel_manager` exists, so `PanelInterface` holds a `main`
+reference and reads `main.panel_manager` lazily at call time rather than capturing the not-yet-created
+object. Guards on the method: `settings_panel.isVisible()` and — required per plan-review, not
+optional — `is_any_panel_animating()`, so the toggle can never apply/clear blur mid-slide (the "this
+state is unreachable so no guard needed" assumption is precisely what caused this session's
+`_do_rotate`/"Change now" regression). `2dd1445`.
+
+---
+
 ## Timeline tassel cursor went shaky under blur — synthetic leaveEvent from the blur grab's panel hide, cleared its dynamic hand cursor 5×/sec (2026-07-21)
 
 **Symptom:** the Timeline tassel's hand cursor was steady with blur OFF but "shaky" with blur ON —

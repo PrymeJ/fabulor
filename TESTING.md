@@ -578,7 +578,15 @@ Applies to every panel that blurs the mini transport bar: Settings, Speed, Sleep
 - [x] Resting the mouse over "Change now" with blur ON: steady arrow (it has no hand cursor property — this is correct, not a bug)
 - [ ] Real mouse movement between widgets/panels still updates the cursor correctly with blur ON (the override-cursor fix must not stick a stale shape past genuine movement)
 - [ ] Same checks with blur OFF: no flicker (this code path doesn't run without blur, so should be unaffected either way)
-- [ ] **Known NOT fixed, separate mechanism:** Timeline tassel's hover cursor is "shaky" specifically when blur is ON (steady with blur off) — see TODO.md, dynamic `mouseMoveEvent`-driven cursor, not the same bug as the above
+- [x] Timeline tassel's hover cursor is steady (not shaky) with blur ON (fixed 2026-07-21 — synthetic hide-driven leaveEvent no longer clears the dynamic hand cursor; `leaveEvent` guarded on `isVisible()`)
+- [ ] Moving the cursor genuinely OFF the tassel (blur ON) still reverts it to arrow correctly (the real-mouse-out path still works)
+
+### Live blur toggle (Settings > Blur On/Off, applies immediately — 2026-07-21)
+- [ ] With the Settings panel open and Blur OFF: clicking Blur **On** immediately blurs the transport bar (bottom part) — no close/reopen needed
+- [ ] Same click also re-blurs the cover image immediately (the previously-broken Off→On direction)
+- [ ] With Blur ON: clicking **Off** immediately clears both the transport-bar overlay and the cover-image blur
+- [ ] Several On/Off cycles: no stuck overlay, no double-apply artifacts, blur matches a fresh open-with-blur-On
+- [ ] Close and reopen Settings after toggling: the normal open/close blur flow is unaffected (live-apply didn't corrupt the overlay's active state)
 
 ## Settings panel
 
