@@ -262,7 +262,10 @@ class ThemeManager(QObject):
             # preview, not a genuine selection — by the time this drain runs the user
             # has moved on (cursor elsewhere, panel dismissed), so there is no correct
             # later moment to apply it. Discard rather than replay. pending[3] is hover
-            # (the 5-tuple is theme_name, save, fade_ms, hover, user_initiated).
+            # (the 6-tuple is theme_name, save, fade_ms, hover, user_initiated,
+            # bypass_panel_open_guard — widened 2026-07-22 so a stashed snapback's
+            # bypass_panel_open_guard=True survives to replay; see the CLAUDE.md rule on
+            # this stash for why omitting it stranded snapbacks behind the panel-guard timer).
             if pending[3]:
                 logger.warning(
                     f"[FADE-FINISHED-TRACE] _on_fade_finished DISCARDING hover-flagged "
@@ -351,7 +354,7 @@ class ThemeManager(QObject):
         if self._pending_fade_call is not None:
             pending = self._pending_fade_call
             self._pending_fade_call = None
-            pending_theme_name, _save, _fade_ms, pending_hover, _user_initiated = pending
+            pending_theme_name, _save, _fade_ms, pending_hover, _user_initiated, pending_bypass = pending
             # Hover-preview confinement (2026-07-21, see CLAUDE.md "Hover-preview theme
             # application must never reach _schedule_deferred_restyle or any panel-level
             # stylesheet"): a stashed call whose hover flag is True is an abandoned
@@ -374,11 +377,11 @@ class ThemeManager(QObject):
                 logger.warning(
                     f"[SNAP-DRAIN-TRACE] snap_theme_forward DRAINING pending_fade_call "
                     f"theme_name={pending_theme_name!r} hover={pending_hover!r} "
-                    f"via _on_theme_changed(fade_ms=0)"
+                    f"bypass_panel_open_guard={pending_bypass!r} via _on_theme_changed(fade_ms=0)"
                 )
                 self._on_theme_changed(pending_theme_name, save=False, fade_ms=0,
                                         hover=pending_hover, user_initiated=True,
-                                        bypass_panel_open_guard=True)
+                                        bypass_panel_open_guard=pending_bypass)
         self._unfreeze_fade_labels()
         if hasattr(self, '_slider_anims'):
             for anims in self._slider_anims.values():
@@ -795,7 +798,27 @@ class ThemeManager(QObject):
             # finished yet. If the in-flight fade is a GENUINE SELECTION's settle-fade
             # (_is_hover_active False), a new hover must NOT interrupt it — that case still
             # falls through to the stash below, unchanged, exactly as before this fix.
-            self._pending_fade_call = (theme_name, save, fade_ms, hover, user_initiated)
+            #
+            # 6-tuple as of 2026-07-22 (was a 5-tuple: theme_name, save, fade_ms, hover,
+            # user_initiated). bypass_panel_open_guard is now carried through too — see
+            # CLAUDE.md's rule on this stash. Without it, a stashed _on_theme_unhovered()
+            # snapback (always bypass_panel_open_guard=True) replayed with the default
+            # False at every drain site (_on_fade_finished / snap_theme_forward /
+            # complete_main_fade), so the replay incorrectly hit the _panel_open guard
+            # while the Settings/Themes panel was still open and got queued into the
+            # single-slot _panel_guard_timer instead of applying — which then kept getting
+            # clobbered/re-armed by ongoing hover activity, so the snapback could hang
+            # indefinitely instead of firing once the fade ended. Confirmed via live DEBUG
+            # trace, 2026-07-22 (see the [BLEED-TRACE]/[FADE-FINISHED-TRACE] logs from that
+            # session). Exclusivity checked before this fix, both statically (every direct
+            # _on_theme_changed call site enumerated) and empirically (every observed
+            # hover=True call in the trace carried bypass_panel_open_guard=False, no
+            # exceptions): no call site ever passes hover=True and
+            # bypass_panel_open_guard=True together, so widening this tuple cannot let an
+            # abandoned hover preview bypass the panel-open guard on replay — the
+            # hover-preview confinement discard rule (pending[3], unchanged) still catches
+            # every hover-flagged stash before it would ever reach the bypass path.
+            self._pending_fade_call = (theme_name, save, fade_ms, hover, user_initiated, bypass_panel_open_guard)
             return
 
         if not hasattr(self, '_fade_anim'):
@@ -1155,8 +1178,9 @@ class ThemeManager(QObject):
             # Hover-preview confinement (2026-07-21, see CLAUDE.md "Hover-preview theme
             # application must never reach _schedule_deferred_restyle or any panel-level
             # stylesheet"): a stashed call whose hover flag is True is an abandoned
-            # preview — discard rather than replay it. pending[3] is hover (the 5-tuple
-            # is theme_name, save, fade_ms, hover, user_initiated).
+            # preview — discard rather than replay it. pending[3] is hover (the 6-tuple
+            # is theme_name, save, fade_ms, hover, user_initiated, bypass_panel_open_guard
+            # — widened 2026-07-22, see the matching comment in _on_fade_finished).
             if pending[3]:
                 logger.warning(
                     f"[BLEED-TRACE] complete_main_fade DISCARDING hover-flagged "
