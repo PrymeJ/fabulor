@@ -664,6 +664,27 @@ class TransportBarBlurOverlay:
         # repaints on later event-loop turns, after a bare try/finally boolean
         # had already cleared). try/finally still guarantees the deadline is set
         # (never left un-set) even if something in this block raises.
+        # CURSOR-FLICKER FIX (2026-07-21): hiding the active panel for the grab
+        # exposes whatever transport-bar widget is behind it at the cursor
+        # position — an arrow-cursor QLabel/QWidget — so Qt re-resolves the LIVE
+        # cursor to arrow on hide() and back to the panel widget's cursor on
+        # show(). Because this grab runs on every dirty-refresh tick (~5×/sec
+        # while a book plays), a widget the pointer is resting on with a
+        # PointingHand cursor (Stats book rows, cover-pool swatches) flickers
+        # hand↔arrow continuously with no mouse movement. Confirmed live via a
+        # [CURSOR-TRACE] probe (2026-07-21): BEFORE-HIDE=13(hand) ->
+        # AFTER-HIDE=0(arrow, a transport QLabel) -> AFTER-SHOW=13(hand), every
+        # tick. Fix: pin the visible cursor across the hide→grab→show window with
+        # an application override set to the shape actually under the pointer
+        # right now, then remove it after show(). The whole cycle is synchronous
+        # (~2-15ms, no event-loop turn), so the override brackets it cleanly and
+        # is gone before any real user input is processed. Only pushed when a
+        # panel is actually being hidden and a widget is under the cursor; always
+        # popped in the finally, so it can never strand a stuck override.
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+
+        _cursor_override_pushed = False
         try:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
             overlay_was_visible = self._overlay.isVisible()
@@ -671,6 +692,10 @@ class TransportBarBlurOverlay:
                 self._overlay.hide()
             panel_was_visible = self._active_panel is not None and self._active_panel.isVisible()
             if panel_was_visible:
+                w_under = QApplication.widgetAt(QCursor.pos())
+                if w_under is not None:
+                    QApplication.setOverrideCursor(w_under.cursor())
+                    _cursor_override_pushed = True
                 self._active_panel.hide()
             grabbed = self.main_window.grab(padded_rect)
             if panel_was_visible:
@@ -678,6 +703,8 @@ class TransportBarBlurOverlay:
             if overlay_was_visible:
                 self._overlay.show()
         finally:
+            if _cursor_override_pushed:
+                QApplication.restoreOverrideCursor()
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
         t1 = time.perf_counter()
 
