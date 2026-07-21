@@ -1,3 +1,71 @@
+## Cursor fluctuating hand↔arrow over panel widgets when blur is on — root-caused and fixed via live [CURSOR-TRACE] instrumentation (2026-07-21)
+
+**Symptom:** with blur ON, resting the mouse motionless over an interactive panel widget with a
+PointingHand cursor (Stats book rows, cover-pool swatches — anywhere with `setCursor(PointingHandCursor)`)
+made the cursor flicker between hand and arrow with no mouse movement at all. Reported alongside the
+Timeline tassel and the "Change now" button, but those two turned out to be different cases (see
+below) — the general fluctuation is what got fixed here.
+
+**Investigation approach (per explicit instruction):** live-instrument first, confirm the mechanism,
+THEN fix — not guess-and-check. A temporary `[CURSOR-TRACE]` probe was added to
+`TransportBarBlurOverlay._grab_and_blur` (`transport_bar_blur.py`), logging the widget under the
+global cursor position and its resolved `cursor().shape()` at three points: before the panel is
+hidden, immediately after hiding it, and immediately after showing it again. First probe attempt
+raised `TypeError` (`int(CursorShape)` doesn't work on this PySide6 version — fixed to `.shape().value`).
+
+**Root cause, confirmed with 100% reproducibility across every tick:** `_grab_and_blur` hides the
+entire active panel (`self._active_panel.hide()`) so its pixels don't appear in
+`main_window.grab(padded_rect)` (needed because the panel is a sibling child of `main_window`,
+raised above `content_container`, and `main_window.grab()` rasterizes everything visible — see the
+`content_container` background-color note in the same file for why grabbing `main_window` instead of
+`content_container` is required and non-negotiable). This grab runs on every dirty-refresh tick —
+~5×/sec while a book plays, since the mini transport bar's time/chapter labels repaint continuously.
+Live trace, Stats book row, every single tick identical:
+```
+BEFORE-HIDE  widget_under_cursor='stats_book_day_row' cursor_shape=13 (hand)
+AFTER-HIDE   widget_under_cursor='QLabel'             cursor_shape=0  (arrow)
+AFTER-SHOW   widget_under_cursor='stats_book_day_row' cursor_shape=13 (hand)
+```
+Hiding the panel exposes whatever transport-bar widget is positionally behind it at the cursor
+location (an arrow-cursor `QLabel`) — Qt re-runs hit-testing and resolves the live cursor to that
+widget's arrow. Showing the panel again resolves it back to hand. No `QApplication.overrideCursor()`
+was ever involved (checked and logged `None` throughout) — this is pure widget-under-cursor
+hit-testing following visibility, not an override fighting anything.
+
+**Two related-but-different findings from the same trace, NOT fixed here:**
+- **"Change now" button** (`theme_change_now`) reported `cursor_shape=0` (arrow) even at BEFORE-HIDE
+  — it has no `PointingHandCursor` set on it as a widget property at all. Whatever the user
+  originally saw "turning into a hand" over that button was very likely the same hit-test churn
+  momentarily resolving to a *different*, nearby hand-cursor widget, not the button itself gaining a
+  hand cursor. Confirmed live post-fix: the button now stays a steady arrow, which is correct.
+- **Timeline tassel** reported `cursor_shape=0` (arrow) even at BEFORE-HIDE, resting motionless
+  directly on it — because `TasselOverlay` sets its cursor dynamically inside `mouseMoveEvent` via
+  `_in_hit_region()` (not a static `setCursor()` on the whole widget), so it only reads as hand while
+  the mouse is actively moving within the hit region. This is a structurally different mechanism from
+  the fix below and was confirmed, post-fix, to still be "shaky" specifically when blur is on (steady
+  with blur off) — logged as a separate TODO item, not resolved by this fix. The override-cursor pin
+  below preserves whatever shape was ALREADY resolved at grab time; it can't retroactively make the
+  tassel's own hit-test logic decide "hand" if it hadn't already.
+
+**Fix:** bracket the synchronous `hide() → main_window.grab() → show()` sequence in `_grab_and_blur`
+with an application override cursor. Right before hiding the panel, read the widget currently under
+the global cursor (`QApplication.widgetAt(QCursor.pos())`) and push its resolved cursor as an
+override (`QApplication.setOverrideCursor(w_under.cursor())`); pop it in the `finally` immediately
+after the panel is shown again. Since the whole hide→grab→show cycle is synchronous with no
+intervening event-loop turn (confirmed by the trace itself — all three probes land within the same
+few milliseconds), the override cleanly brackets exactly the churn window and is gone before any
+real user input could observe it. Guarded so it's only pushed when a panel is actually being hidden
+AND a widget is under the cursor, and always popped in `finally` regardless of how the block exits —
+cannot strand a stuck override.
+
+**Verified live, all cases:** Stats book row now shows a steady hand cursor (no flicker); "Change
+now" shows a steady arrow (correct, matches its actual cursor property); real mouse movement between
+widgets still updates the cursor normally (the override doesn't fight genuine cursor changes, since
+it's popped before the next tick and any real movement happens between ticks); blur-off path
+untouched (this whole mechanism only runs when blur is on). Committed `906fa4a`.
+
+---
+
 ## Panel-open theme guard: the `bypass_panel_open_guard` mechanism, its forward audit, and the stranded-`_fade_in_flight` "T does nothing" bug it exposed (2026-07-21)
 
 **The guard.** To stop themes visibly changing while the user has an unrelated panel open (reported

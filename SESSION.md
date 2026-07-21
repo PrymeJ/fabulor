@@ -1,3 +1,35 @@
+## Session Summary — 2026-07-21 Session 6 — Cursor fluctuating hand↔arrow over panel widgets when blur is on, root-caused via live instrumentation and fixed
+
+Direct continuation of Session 5, same night — the cursor fluctuation was reported alongside the
+theme-guard regressions but deliberately deferred to its own pass (per explicit instruction) so it
+wouldn't get confused with a leftover T-shortcut symptom during the same test session.
+
+Per the agreed approach ("investigate live first," not guess-and-check): added a temporary
+`[CURSOR-TRACE]` probe to `TransportBarBlurOverlay._grab_and_blur` logging the widget under the
+cursor and its resolved cursor shape at three points around the panel hide/show — before hide, after
+hide, after show. First attempt hit a `TypeError` (`int(CursorShape)` incompatible with this
+PySide6's enum), fixed to `.shape().value`. Two live repro rounds pinned the mechanism exactly:
+hiding the active panel (to keep its pixels out of `main_window.grab()`, required since the panel is
+a sibling raised above `content_container`) briefly exposes an arrow-cursor transport-bar widget at
+the cursor's position — Qt re-resolves the live cursor to arrow on hide, back to hand on show. Runs
+on every dirty-refresh tick (~5×/sec while playing), so a hand-cursor widget under a motionless
+pointer flickered continuously.
+
+The same trace surfaced two related-but-different, NOT-fixed findings: "Change now" has no hand
+cursor set on it at all (confirms the user's own read of it — whatever "turning into a hand" looked
+like was the churn resolving to a neighboring widget, not the button itself); the Timeline tassel
+uses a dynamic `mouseMoveEvent`-driven cursor (`_in_hit_region`), reported arrow even at rest before
+any churn, and was confirmed post-fix to still be "shaky" specifically with blur on — a structurally
+different mechanism, logged as a new TODO item rather than claimed fixed.
+
+Fix: bracket the synchronous hide→grab→show sequence with an application override cursor pinned to
+whatever shape was resolved at the moment of the grab, popped immediately after — guarded to only
+push when a panel is actually hidden and a widget is under the cursor, always popped in `finally`.
+Verified live: Stats book rows steady hand, Change-now steady arrow, real mouse movement unaffected,
+blur-off path untouched. Committed `906fa4a`. Full root cause and trace excerpts: NOTES.md.
+
+---
+
 ## Session Summary — 2026-07-21 Session 5 — Panel-open theme guard (block theme changes while an unrelated panel is open), forward-audited after three regressions; the stranded-`_fade_in_flight` "T does nothing" bug it exposed, fixed and verified
 
 Started from a live bug: theme changes (incl. the automatic rotation timer's deferred replay)

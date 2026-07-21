@@ -6,27 +6,22 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-21] Cursor fluctuates hand↔arrow over panel widgets when blur is ON — root-caused, NOT
-  yet fixed (own live-investigation pass).** With blur on, the mouse pointer flickers between hand
-  and arrow over interactive panel widgets (Stats book rows, Timeline tassel, cover-pool swatches —
-  all legitimately hand-cursor) WITHOUT moving the mouse. **Root cause (confirmed by code reading):**
-  `TransportBarBlurOverlay._grab_and_blur` (`transport_bar_blur.py:667-681`) hides the entire active
-  panel (`self._active_panel.hide()`) + the overlay, does `main_window.grab()`, then re-shows both —
-  on EVERY dirty-refresh tick while blur is on (the mini transport bar repaints continuously). Hiding
-  then immediately re-showing the panel makes Qt re-run hit-testing and re-resolve the cursor shape
-  for whatever's under the pointer, flipping a PointingHandCursor widget momentarily to the default
-  arrow and back. Happens only with blur on (that's the only time the hide/show cycle runs). The
-  overlay itself is `WA_TransparentForMouseEvents`, so it is NOT the culprit — the panel-hide inside
-  the grab is. The hide is load-bearing (grab must exclude the panel's own pixels — see
-  `hide_for_panel`'s history), so it can't just be removed. **Approach when picked up: investigate
-  LIVE first** (instrument, reproduce, confirm which mechanism actually stops the flicker) before
-  committing to a fix — candidates: grab the transport widget subtree directly so the panel never
-  needs hiding; `setUpdatesEnabled(False)` around the hide/show; or move the panel offscreen instead
-  of `hide()`. Kept as its own pass (per user) so a fluctuation symptom can't be confused with a
-  leftover T-shortcut symptom during the same test session. Secondary/minor to fold in: the "Change
-  now" button shows a hand cursor at all when it shouldn't (separate ThemeItem/QPushButton
-  cursor-policy question; the fluctuation is the real bug). Full root cause: NOTES.md, "Panel-open
-  theme guard ..." entry, 2026-07-21.
+- **[2026-07-21] Timeline tassel's hit-zone cursor is "shaky" specifically when blur is on — same
+  hide/show churn as the just-fixed cursor-fluctuation bug, but a different mechanism, not yet
+  fixed.** Follow-up from the cursor-fluctuation fix (`906fa4a`, see NOTES.md): with blur OFF, the
+  tassel's hover cursor is steady; with blur ON, it becomes shaky. The general fluctuation (Stats
+  book rows, etc.) is fixed by pinning an override cursor across `_grab_and_blur`'s panel
+  hide/show, but the tassel is architecturally different — `TasselOverlay` sets/unsets its cursor
+  dynamically inside `mouseMoveEvent` via `_in_hit_region()` (not a static `setCursor()` on the
+  whole widget), so it only reads as hand while the mouse is actively moving within the hit
+  region; confirmed live (`[CURSOR-TRACE]` probe) that even motionless-and-resting-on-tassel reports
+  `cursor_shape=0` (arrow) before any hide/show churn. The override-cursor fix pins whatever shape
+  was resolved AT THE MOMENT of the grab, so if the tassel's own dynamic logic hasn't (yet) set hand
+  at that instant, the pin correctly preserves arrow — the override isn't wrong, but it can't fix a
+  cursor that the tassel's own hit-test hadn't set to hand in the first place. Needs investigation
+  into whether the hide/show cycle itself is interfering with `_in_hit_region()`'s own mouseMoveEvent
+  delivery (a synthetic leave/enter from the panel hide could be reaching `TasselOverlay` even though
+  it's not the panel being hidden) before deciding a fix. Not started.
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
   investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under

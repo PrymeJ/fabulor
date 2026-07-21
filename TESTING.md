@@ -572,6 +572,14 @@ Applies to every panel that blurs the mini transport bar: Settings, Speed, Sleep
 - [ ] Toggling "Blur" off in Settings still fully disables both the appear-fade and the composited overlay (no blur, no fade, transport bar always live)
 - [ ] Blur/fade behavior unaffected by which panel triggered it — spot-check at least two of the five (e.g. Speed and Tags) live, not just Settings
 
+### Cursor stability while blur is on (fixed 2026-07-21)
+- [x] Resting the mouse motionless over a Stats book row (hand-cursor widget) with blur ON: cursor stays a steady hand, no hand↔arrow flicker
+- [x] Resting the mouse motionless over a cover-pool swatch (Settings → Themes tab) with blur ON: steady cursor, no flicker (note: this swatch has no hand cursor set at all — expected arrow, not a regression)
+- [x] Resting the mouse over "Change now" with blur ON: steady arrow (it has no hand cursor property — this is correct, not a bug)
+- [ ] Real mouse movement between widgets/panels still updates the cursor correctly with blur ON (the override-cursor fix must not stick a stale shape past genuine movement)
+- [ ] Same checks with blur OFF: no flicker (this code path doesn't run without blur, so should be unaffected either way)
+- [ ] **Known NOT fixed, separate mechanism:** Timeline tassel's hover cursor is "shaky" specifically when blur is ON (steady with blur off) — see TODO.md, dynamic `mouseMoveEvent`-driven cursor, not the same bug as the above
+
 ## Settings panel
 
 - [x] All clicks on buttons dismisses and performs
