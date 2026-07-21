@@ -283,6 +283,23 @@ class ThemeManager(QObject):
             return
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
+        # Clear _fade_in_flight UNCONDITIONALLY, right after the stop above —
+        # NOT only inside the `_pending_fade_call is not None` drain branch below.
+        # QPropertyAnimation.stop() does NOT emit `finished`, so _on_fade_finished
+        # (the only other clearer) never runs for a fade stopped here; if we left
+        # the flag set whenever there was nothing to drain, it would strand True
+        # with no live fade — and the NEXT non-bypass _on_theme_changed (e.g. a T-key
+        # rotation) would hit the _fade_running guard, stash itself into
+        # _pending_fade_call, and orphan there forever with no fade to drain it.
+        # That is exactly the "T does nothing" bug found live 2026-07-21: the
+        # settings-close snap-back (_on_theme_unhovered) starts a real 750ms fade
+        # via the themes-tab-visible path, this method immediately stops it, and
+        # with no pending call the old in-branch-only clear left _fade_in_flight
+        # stranded. The stop guarantees no fade is running past this point, so the
+        # flag MUST be False regardless of whether a drain happened. Mirrors
+        # complete_main_fade, which also clears the flag before/independently of its
+        # own stop. See NOTES.md, 2026-07-21.
+        self._fade_in_flight = False
         # Drain any stash left by _on_theme_changed's _fade_running guard branch
         # (e.g. an unhover snapback that arrived while THIS fade was still
         # running) via a FULL re-call to _on_theme_changed(*pending) — mirroring
@@ -316,18 +333,12 @@ class ThemeManager(QObject):
         # default; this drain doesn't need the auto-rotation/themes-tab special
         # case, which only ever narrows fade_ms, already 0 here).
         #
-        # _fade_in_flight MUST be cleared here, before the call — _on_theme_changed's
-        # own _fade_running guard checks it fresh on every call, and
-        # snap_theme_forward NEVER touches _fade_in_flight anywhere else in its
-        # body. Since this method runs immediately after _on_theme_unhovered() (the
-        # very call that set _fade_in_flight=True to create the stash being
-        # drained), in the same call stack with no intervening event-loop turn,
-        # _fade_in_flight is still True at this point — skipping this clear would
-        # make _on_theme_changed(*pending) immediately re-hit the same guard and
-        # re-stash the call, silently doing nothing (reproducing the exact original
-        # bug in a new disguise). Mirrors complete_main_fade's own drain, which
-        # clears _fade_in_flight before its equivalent _on_theme_changed(*pending)
-        # call for the same reason.
+        # (_fade_in_flight is already cleared unconditionally above — the
+        # _on_theme_changed(*pending) re-call below therefore won't re-hit the
+        # _fade_running guard and re-stash itself. This is required for the drain
+        # to work: this method runs immediately after _on_theme_unhovered(), in the
+        # same call stack with no intervening event-loop turn, so without the clear
+        # above _fade_in_flight would still be True here.)
         #
         # This closes the settings-panel-dismiss theme-bleed race: _close_settings_flow
         # (panels.py) calls _on_theme_unhovered() then this method, synchronously,
@@ -340,7 +351,6 @@ class ThemeManager(QObject):
         if self._pending_fade_call is not None:
             pending = self._pending_fade_call
             self._pending_fade_call = None
-            self._fade_in_flight = False
             pending_theme_name, _save, _fade_ms, pending_hover, _user_initiated = pending
             # Hover-preview confinement (2026-07-21, see CLAUDE.md "Hover-preview theme
             # application must never reach _schedule_deferred_restyle or any panel-level
@@ -367,7 +377,8 @@ class ThemeManager(QObject):
                     f"via _on_theme_changed(fade_ms=0)"
                 )
                 self._on_theme_changed(pending_theme_name, save=False, fade_ms=0,
-                                        hover=pending_hover, user_initiated=True)
+                                        hover=pending_hover, user_initiated=True,
+                                        bypass_panel_open_guard=True)
         self._unfreeze_fade_labels()
         if hasattr(self, '_slider_anims'):
             for anims in self._slider_anims.values():
@@ -428,11 +439,20 @@ class ThemeManager(QObject):
         return rows
 
     def _rotate_theme(self):
+        # TEMP INSTRUMENTATION (2026-07-21, [T-KEY-TRACE]): see app.py's keyPressEvent
+        # instrumentation — investigating T sometimes swallowed/firing late while a panel
+        # is open. Remove once the mechanism is confirmed/fixed.
+        logger.warning(f"[T-KEY-TRACE] _rotate_theme ENTRY t={time.perf_counter():.6f}")
         mode = self.config.get_cover_art_theme_mode()
         if mode == "exclusive" and self._cover_theme:
+            logger.warning("[T-KEY-TRACE] _rotate_theme EARLY-RETURN reason=exclusive_cover_theme")
             return
         if self.main_window.panel_manager and self.main_window.panel_manager.is_any_panel_visible():
             self._pending_rotation = True
+            logger.warning(
+                f"[T-KEY-TRACE] _rotate_theme DEFERRED (panel open) t={time.perf_counter():.6f} "
+                f"_pending_rotation=True"
+            )
             return
         self._do_rotate()
 
@@ -493,13 +513,29 @@ class ThemeManager(QObject):
                 weights.append(cover_weight)
 
             chosen = random.choices(named, weights=weights, k=1)[0]
+            # user_initiated already correctly distinguishes the automatic rotation
+            # timer (_rotate_theme -> _do_rotate(), default False — a GENERAL
+            # trigger, must stay blocked while a panel is open) from the "Change
+            # now" button (main_window_builders.py:730,
+            # _do_rotate(user_initiated=True) — a Themes-tab-local click, must
+            # apply live while its own panel is open). Found live 2026-07-21:
+            # without this, "Change now" set _current_theme_name synchronously
+            # then got its own _on_theme_changed call deferred by the panel-open
+            # guard — an unrelated hover-unhover side effect (leaving whatever
+            # swatch the cursor happened to be over) then read the
+            # already-mutated _current_theme_name and applied IT instead, with
+            # its own (correct, but coincidental) bypass — producing exactly the
+            # haphazard "sometimes works, underline doesn't move, panel flickers"
+            # symptom reported. See NOTES.md.
             if chosen is None:
                 self._cover_theme_active = True
-                self._on_theme_changed(self._cover_theme, save=False, user_initiated=user_initiated)
+                self._on_theme_changed(self._cover_theme, save=False, user_initiated=user_initiated,
+                                        bypass_panel_open_guard=user_initiated)
             else:
                 self._current_theme_name = chosen
                 self._cover_theme_active = False
-                self._on_theme_changed(chosen, save=False, user_initiated=user_initiated)
+                self._on_theme_changed(chosen, save=False, user_initiated=user_initiated,
+                                        bypass_panel_open_guard=user_initiated)
             # Record chosen theme in recent history (named themes only)
             if chosen is not None:
                 self._recent_themes.append(chosen)
@@ -516,7 +552,13 @@ class ThemeManager(QObject):
         # excluded too) — each fires its own 3s-after-close timer. _on_theme_changed's
         # own _any_animating/_fade_in_flight guard (not this method) is what prevents
         # the two resulting fades from ever overlapping if they land close together.
+        # TEMP INSTRUMENTATION (2026-07-21, [T-KEY-TRACE]): see app.py's keyPressEvent /
+        # _rotate_theme instrumentation. Remove once the mechanism is confirmed/fixed.
         if self._pending_rotation:
+            logger.warning(
+                f"[T-KEY-TRACE] _fire_pending_rotation: panel closed, ARMING 3s delayed "
+                f"_rotate_theme t={time.perf_counter():.6f}"
+            )
             self._pending_rotation = False
             QTimer.singleShot(3000, self._rotate_theme)
         if self._pending_clear_cover_theme:
@@ -610,8 +652,27 @@ class ThemeManager(QObject):
             self.theme_applied.emit(_resolve_theme(theme_name))
             self.update_theme_list_visuals()
 
-    def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True):
-        """Update the appearance with a subtle fade transition."""
+    def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True,
+                           bypass_panel_open_guard=False):
+        """Update the appearance with a subtle fade transition.
+
+        bypass_panel_open_guard: True ONLY for calls that are themselves a direct,
+        Themes-tab-local user action or settle-step (hover excepted — already exempt
+        via `hover`) — i.e. a call that must reach the currently-open Settings panel
+        immediately, because that panel IS the thing the call is about. Set from
+        exactly 7 call sites (see the per-site audit in NOTES.md /
+        Investigation_PanelOpenThemeGuard_260721.md): toggle_theme_selection,
+        _on_theme_right_clicked, _on_theme_unhovered (x2), set_cover_art_mode (x2,
+        incl. its internal clear_cover_theme() call), _on_cover_pool_btn_right_clicked,
+        _on_cover_pool_btn_clicked's clear_cover_theme() call, and
+        snap_theme_forward's drain. Every other caller (rotation, deferred-rotation
+        replay, _on_fade_finished's drain, complete_main_fade's drain, cover-theme
+        changes driven by book-load) is a GENERAL trigger with no relationship to
+        whatever panel happens to be open — those must NOT bypass. Do not set this
+        True from a new call site without confirming, by name, which category it
+        is — this parameter exists specifically because conflating `hover=False`
+        with 'safe while a panel is open' caused a real regression once already
+        (2026-07-21)."""
 
         if fade_ms is None:
             fade_ms = _THEME_SWITCH_FADE_MS if not hover else self.config.get_theme_fade_duration()
@@ -643,9 +704,21 @@ class ThemeManager(QObject):
                          f"— _apply_stylesheets NEVER CALLED this invocation")
             return
 
-        # Guard against theme changes during panel animation to prevent hitches
+        # Guard against theme changes during panel animation (hitches) AND, for
+        # calls that are NOT hover and NOT a Themes-tab-local action/settle-step
+        # (bypass_panel_open_guard), while a full panel is simply open and settled —
+        # themes must never visibly change while the user has an unrelated panel
+        # open. See bypass_panel_open_guard's docstring above for the full
+        # category breakdown and why `hover` alone was NOT a sufficient
+        # discriminator (found live 2026-07-21 — see NOTES.md).
         _any_animating = bool(
             self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating()
+        )
+        _panel_open = bool(
+            not hover
+            and not bypass_panel_open_guard
+            and self.main_window.panel_manager
+            and self.main_window.panel_manager.is_any_full_panel_visible()
         )
         _fade_running = getattr(self, '_fade_in_flight', False)
         # hover-interrupts-hover exception (2026-07-21) — see the elif branch below for
@@ -655,9 +728,11 @@ class ThemeManager(QObject):
         _hover_interrupts_hover = bool(hover and self._is_hover_active)
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
-            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running} "
+            f"any_panel_animating={_any_animating} panel_open={_panel_open} "
+            f"bypass_panel_open_guard={bypass_panel_open_guard} "
+            f"fade_in_flight={_fade_running} "
             f"hover_interrupts_hover={_hover_interrupts_hover}"
-            + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating
+            + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating or _panel_open
                else " -> interrupting in-flight hover fade" if _fade_running and _hover_interrupts_hover
                else " -> stashing for fade completion" if _fade_running else "")
         )
@@ -665,7 +740,9 @@ class ThemeManager(QObject):
         # the DEBUG line above, at WARNING so it's visible without full DEBUG mode.
         logger.warning(
             f"[BLEED-TRACE] _on_theme_changed theme_name={theme_name!r} hover={hover} "
-            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running} "
+            f"any_panel_animating={_any_animating} panel_open={_panel_open} "
+            f"bypass_panel_open_guard={bypass_panel_open_guard} "
+            f"fade_in_flight={_fade_running} "
             f"hover_interrupts_hover={_hover_interrupts_hover}"
         )
         # if/elif, NOT two independent ifs: a single call must only ever be claimed by
@@ -674,7 +751,7 @@ class ThemeManager(QObject):
         # (never a direct apply) — see each branch's comment — so ownership correctly
         # transfers to whichever condition is still true at resume time; neither branch
         # needs to know about the other.
-        if _any_animating:
+        if _any_animating or _panel_open:
             self._panel_guard_timer.stop()
             try:
                 with warnings.catch_warnings():
@@ -683,7 +760,8 @@ class ThemeManager(QObject):
             except (TypeError, RuntimeError):
                 pass
             self._panel_guard_timer.timeout.connect(
-                lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated)
+                lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated,
+                                                bypass_panel_open_guard)
             )
             self._panel_guard_timer.start()
             return
@@ -1407,7 +1485,8 @@ class ThemeManager(QObject):
                 # If we removed the session theme, pick a new one from the remaining pool
                 if self._current_theme_name == theme_name:
                     self._current_theme_name = random.choice(self.selected_themes)
-                    self._on_theme_changed(self._current_theme_name, save=False)
+                    self._on_theme_changed(self._current_theme_name, save=False,
+                                            bypass_panel_open_guard=True)
             # If it's the last selected theme, we don't remove it (pool cannot be empty)
         else:
             # Add to pool, but do NOT change the session active theme on left-click
@@ -1452,7 +1531,7 @@ class ThemeManager(QObject):
         self._current_theme_name = theme_name
         self._recent_themes.append(theme_name)
         self._cover_theme_active = False
-        self._on_theme_changed(theme_name, save=False)
+        self._on_theme_changed(theme_name, save=False, bypass_panel_open_guard=True)
         self._restart_rotation_timer()
         self.update_theme_list_visuals()
         self.update_interval_visuals()
@@ -1492,9 +1571,11 @@ class ThemeManager(QObject):
         self._hover_debounce_timer.stop()
         self._pending_hover_theme = None
         if self._cover_theme_active and self._cover_theme:
-            self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS, hover=False)
+            self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                    hover=False, bypass_panel_open_guard=True)
         else:
-            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS, hover=False)
+            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                    hover=False, bypass_panel_open_guard=True)
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
@@ -1552,7 +1633,7 @@ class ThemeManager(QObject):
             # so route through the same call the no-cover case already uses correctly.
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: "
                          f"mode=off, applying plain pool theme via clear_cover_theme")
-            self.clear_cover_theme()
+            self.clear_cover_theme(bypass_panel_open_guard=user_initiated)
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (mode=off)")
             return
         theme_dict = build_cover_theme(pixmap)
@@ -1563,15 +1644,29 @@ class ThemeManager(QObject):
         self._cover_theme_active = True
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: "
                      f"calling _on_theme_changed")
-        self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated)
+        # user_initiated already correctly distinguishes a deliberate Themes-tab
+        # action (set_cover_art_mode passes True) from a book-load-driven call
+        # (app.py's default False) — reuse it directly rather than adding a
+        # separate parameter with the same meaning.
+        self._on_theme_changed(theme_dict, save=False, user_initiated=user_initiated,
+                                bypass_panel_open_guard=user_initiated)
         self._update_cover_pool_btn()
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} apply_cover_theme: EXIT (applied)")
 
-    def clear_cover_theme(self):
-        """Revert to the pool theme. _cover_theme stays None so cover_pool_btn greys out."""
+    def clear_cover_theme(self, bypass_panel_open_guard=False):
+        """Revert to the pool theme. _cover_theme stays None so cover_pool_btn greys out.
+
+        bypass_panel_open_guard: forwarded to _on_theme_changed. Default False is
+        correct for this method's GENERAL-trigger callers (_fire_pending_rotation's
+        deferred timer, request_clear_cover_theme — both book-cover-removed paths
+        with no relationship to any open panel). Pass True only from a
+        Themes-tab-local caller (currently: _on_cover_pool_btn_clicked, and
+        set_cover_art_mode's own internal call) — see _on_theme_changed's
+        bypass_panel_open_guard docstring for the full category rule."""
         self._cover_theme = None
         self._cover_theme_active = False
-        self._on_theme_changed(self._current_theme_name, save=False)
+        self._on_theme_changed(self._current_theme_name, save=False,
+                                bypass_panel_open_guard=bypass_panel_open_guard)
         self._update_cover_pool_btn()
 
     def set_cover_art_mode(self, mode: str):
@@ -1580,16 +1675,17 @@ class ThemeManager(QObject):
         self.update_cover_art_mode_visuals()
         if mode == "off":
             if self._cover_theme_active:
-                self.clear_cover_theme()
+                self.clear_cover_theme(bypass_panel_open_guard=True)
             else:
-                self._on_theme_changed(self._current_theme_name, save=False)
+                self._on_theme_changed(self._current_theme_name, save=False,
+                                        bypass_panel_open_guard=True)
         else:
             pixmap = getattr(self.main_window, 'current_cover_pixmap', None)
             if self._cover_theme is None and pixmap and not pixmap.isNull():
                 self.apply_cover_theme(pixmap, user_initiated=True)
             elif self._cover_theme:
                 self._cover_theme_active = True
-                self._on_theme_changed(self._cover_theme, save=False)
+                self._on_theme_changed(self._cover_theme, save=False, bypass_panel_open_guard=True)
 
     def update_cover_art_mode_visuals(self):
         current = self.config.get_cover_art_theme_mode()
@@ -1638,7 +1734,7 @@ class ThemeManager(QObject):
             # _on_theme_changed inline) so _cover_theme is actually reset to
             # None, not left stale — see clear_cover_theme's own docstring.
             if self._cover_theme_active:
-                self.clear_cover_theme()
+                self.clear_cover_theme(bypass_panel_open_guard=True)
             self.set_cover_art_mode("off")
 
     def _on_cover_pool_btn_right_clicked(self):
@@ -1655,7 +1751,7 @@ class ThemeManager(QObject):
             self.update_cover_art_mode_visuals()
         # Activate the cover theme
         self._cover_theme_active = True
-        self._on_theme_changed(self._cover_theme, save=False)
+        self._on_theme_changed(self._cover_theme, save=False, bypass_panel_open_guard=True)
         self._update_cover_pool_btn()
 
     def _on_cover_pool_btn_hovered(self):

@@ -908,6 +908,7 @@ class PanelManager:
             self.speed_panel_animation,
             self.sleep_panel_animation,
             self.stats_panel_animation,
+            self.tags_panel_animation,
             self.blur_animation,
         ]
         if self.book_detail_panel_animation:

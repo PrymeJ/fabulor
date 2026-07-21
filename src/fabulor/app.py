@@ -2429,6 +2429,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Gated on _focus_allows_global_shortcuts: a panel-local focused widget (a text
         # field, the library list) owns the key even when it doesn't accept it — see that
         # method's docstring.
+        # TEMP INSTRUMENTATION (2026-07-21, [T-KEY-TRACE]): investigating a user-reported
+        # regression where T (theme rotate) is sometimes swallowed or fires late while a
+        # panel is open. Scoped to Key_T only, not every key, to stay quiet. Remove once
+        # the mechanism is confirmed/fixed.
+        if event.key() == Qt.Key.Key_T:
+            allows = self._focus_allows_global_shortcuts()
+            focus = QApplication.focusWidget()
+            logger.warning(
+                f"[T-KEY-TRACE] keyPressEvent t={time.perf_counter():.6f} "
+                f"focus_allows_global_shortcuts={allows} "
+                f"focusWidget={focus!r} "
+                f"panel_visible={self.panel_manager.is_any_panel_visible() if getattr(self, 'panel_manager', None) else None} "
+                f"isAutoRepeat={event.isAutoRepeat()}"
+            )
         if self._focus_allows_global_shortcuts() and self.shortcuts.handle_key_event(event):
             return
         super().keyPressEvent(event)
