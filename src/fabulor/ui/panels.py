@@ -512,6 +512,7 @@ class PanelManager:
         self.speed_panel_animation.finished.connect(self._on_speed_hidden)
         self.main_window._validate_smart_rewind_settings()
         self.speed_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -525,7 +526,6 @@ class PanelManager:
             pass
         self.speed_panel.hide()
         self._release_panel_focus(self.speed_panel)
-        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _open_stats_flow(self):
@@ -611,6 +611,7 @@ class PanelManager:
         self.sleep_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.finished.connect(self._on_sleep_hidden)
         self.sleep_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -624,7 +625,6 @@ class PanelManager:
             pass
         self.sleep_panel.hide()
         self._release_panel_focus(self.sleep_panel)
-        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _close_stats_flow(self):
@@ -636,6 +636,7 @@ class PanelManager:
         self.stats_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.finished.connect(self._on_stats_hidden)
         self.stats_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -651,7 +652,6 @@ class PanelManager:
             pass
         self.stats_panel.hide()
         self._release_panel_focus(self.stats_panel)
-        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _open_tags_flow(self):
@@ -702,6 +702,7 @@ class PanelManager:
         self.tags_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.finished.connect(self._on_tags_hidden)
         self.tags_panel_animation.start()
+        self._clear_transport_bar_blur()
         if self.main_window.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_animation.currentValue() or 8)
             self.blur_animation.setEndValue(0)
@@ -714,7 +715,6 @@ class PanelManager:
             pass
         self.tags_panel.hide()
         self._release_panel_focus(self.tags_panel)
-        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def open_book_detail(self, book_data: dict, tab: str = 'stats', context: str = ''):
@@ -796,6 +796,7 @@ class PanelManager:
         self.settings_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.finished.connect(self._on_settings_hidden)
         self.settings_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -811,7 +812,6 @@ class PanelManager:
             pass
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
-        self._clear_transport_bar_blur()
         self._notify_panel_closed()
 
     def _on_sidebar_hidden(self):
