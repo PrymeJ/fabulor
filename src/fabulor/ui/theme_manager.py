@@ -648,17 +648,25 @@ class ThemeManager(QObject):
             self.main_window.panel_manager and self.main_window.panel_manager._any_panel_animating()
         )
         _fade_running = getattr(self, '_fade_in_flight', False)
+        # hover-interrupts-hover exception (2026-07-21) — see the elif branch below for
+        # the full mechanism. Computed here too so the GUARD/BLEED-TRACE log lines
+        # correctly report "interrupting" instead of the misleading "stashing" when this
+        # call is about to skip the stash and fall through to a fresh apply instead.
+        _hover_interrupts_hover = bool(hover and self._is_hover_active)
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
-            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running}"
+            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running} "
+            f"hover_interrupts_hover={_hover_interrupts_hover}"
             + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating
+               else " -> interrupting in-flight hover fade" if _fade_running and _hover_interrupts_hover
                else " -> stashing for fade completion" if _fade_running else "")
         )
         # INVESTIGATION LOGGING (2026-07-20, Option A bleed-trace) — same info as
         # the DEBUG line above, at WARNING so it's visible without full DEBUG mode.
         logger.warning(
             f"[BLEED-TRACE] _on_theme_changed theme_name={theme_name!r} hover={hover} "
-            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running}"
+            f"any_panel_animating={_any_animating} fade_in_flight={_fade_running} "
+            f"hover_interrupts_hover={_hover_interrupts_hover}"
         )
         # if/elif, NOT two independent ifs: a single call must only ever be claimed by
         # ONE of the two defer-and-resume mechanisms below, never both (which could fire
@@ -679,7 +687,7 @@ class ThemeManager(QObject):
             )
             self._panel_guard_timer.start()
             return
-        elif _fade_running:
+        elif _fade_running and not _hover_interrupts_hover:
             # A theme fade is already in flight. A flat-timer retry (like the panel-
             # animation branch above) would be a real mismatch here — _PANEL_ANIM_GUARD_MS
             # (700ms) is SHORTER than _THEME_SWITCH_FADE_MS (750ms), so a blind retry would
@@ -690,6 +698,25 @@ class ThemeManager(QObject):
             # last-write-wins if something is already stashed (mirrors _schedule_deferred_
             # restyle's own coalescing comment elsewhere in this file — nothing invisible
             # was shown in between, so only the latest request matters).
+            #
+            # EXCEPTION carved out by the `not (hover and self._is_hover_active)` clause
+            # (2026-07-21, see Investigation_HoverInterruptsHover_260721.md): a genuine,
+            # debounce-cleared hover arriving while the CURRENTLY-RUNNING fade is ITSELF a
+            # hover preview must NOT be stashed here — it falls through instead to the
+            # normal stop-and-apply flow below (the `_fade_anim.stop()` at the "Clear any
+            # in-progress animation" block a few lines down, then a fresh fade for the new
+            # theme). Confirmed live: hovering theme A, then genuinely resting on theme B
+            # while A's preview fade was still running, silently stashed B's call — and,
+            # per the hover-confinement discard fix shipped earlier the same night, that
+            # stash then got discarded at drain time rather than ever previewing, leaving
+            # the user staring at A's stale colors while deliberately hovering B. This
+            # exception is scoped tightly: `self._is_hover_active` reflects whether the
+            # LAST GENUINELY APPLIED call (i.e. whatever started the fade now running) was
+            # itself a hover — set by _mark_theme_applied at the point that fade's own
+            # apply ran, so it's accurate even though the fade animation itself hasn't
+            # finished yet. If the in-flight fade is a GENUINE SELECTION's settle-fade
+            # (_is_hover_active False), a new hover must NOT interrupt it — that case still
+            # falls through to the stash below, unchanged, exactly as before this fix.
             self._pending_fade_call = (theme_name, save, fade_ms, hover, user_initiated)
             return
 
