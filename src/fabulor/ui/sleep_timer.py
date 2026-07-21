@@ -170,7 +170,19 @@ class SleepTimerPanel(QWidget):
             alpha = int(75 + (180 * (i / (len(self._sleep_presets_buttons) - 1))))
             c = QColor(accent)
             c.setAlpha(alpha)
-            btn.setStyleSheet(f"background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); color: {btn_text}; border: none;")
+            # Per-instance setStyleSheet (needed for the per-button alpha ramp) wins
+            # over the panel-level QPushButton:hover/:pressed QSS, so those states
+            # must be reproduced here explicitly or these buttons never visibly
+            # react to hover/press (found live 2026-07-21 — the ramp had silently
+            # had no hover state since it was introduced).
+            hover_c = c.lighter(130)
+            pressed_c = c.darker(130)
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); "
+                f"color: {btn_text}; border: none; }}"
+                f"QPushButton:hover {{ background-color: rgba({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}, {hover_c.alpha()}); }}"
+                f"QPushButton:pressed {{ background-color: rgba({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}, {pressed_c.alpha()}); }}"
+            )
 
         for i, (seconds, btn) in enumerate(self._sleep_fade_btns.items()):
             is_active = (seconds == self._current_sleep_fade)
