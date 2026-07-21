@@ -65,6 +65,11 @@ class ThemeItem(RightClickButton):
         self.setMouseTracking(True)
         self.setFlat(True)
         self._last_leave_pos = None
+        # True when the most recent leaveEvent fired while this widget was NOT
+        # visible — i.e. a synthetic leave caused by the transport-bar blur grab
+        # hiding the settings panel, NOT a real mouse-out. See enterEvent's
+        # blur-grab synthetic-drop branch (the "heartbeat" second-trigger fix).
+        self._last_leave_was_synthetic = False
 
     def enterEvent(self, event):
         # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; full
@@ -103,12 +108,39 @@ class ThemeItem(RightClickButton):
             logger.warning(
                 f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent SUPPRESSED (synthetic) "
                 f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
+                f"vis={self.isVisible()} "
                 f"guard_until={guard_until:.6f} last_leave_pos={self._last_leave_pos!r}"
             )
             return  # synthetic — drop without emitting hovered or calling super()
+        # SECOND SYNTHETIC TRIGGER — the transport-bar blur grab (2026-07-21, the
+        # "heartbeat" second cause, confirmed via [ENTEREVENT-TRACE]).
+        # _grab_and_blur (transport_bar_blur.py) hides then re-shows the whole
+        # settings panel every grab tick to snapshot the transport bar behind it;
+        # ThemeItem swatches are children of that panel, so the hide fires a
+        # synthetic leaveEvent (while this widget is momentarily NOT visible) and
+        # the re-show fires a synthetic enterEvent at the SAME cursor position, no
+        # real mouse movement. Unlike the setStyleSheet-cascade trigger above,
+        # this fires OUTSIDE the _spurious_enter_guard_until window, so that guard
+        # never catches it. The discriminator (confirmed live 22:38: 15/15
+        # synthetic enters were preceded by a not-visible leave): the immediately-
+        # preceding leaveEvent fired while `not isVisible()` AND the cursor hasn't
+        # moved. NOTE: isVisible() at ENTER time is useless here — the panel is
+        # already re-shown by then (all synthetic enters logged vis=True); the
+        # signal is the LEAVE's visibility, captured in _last_leave_was_synthetic.
+        if self._last_leave_was_synthetic and pos_matches:
+            logger.warning(
+                f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent SUPPRESSED (blur-grab synthetic) "
+                f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
+                f"vis={self.isVisible()} last_leave_pos={self._last_leave_pos!r}"
+            )
+            return  # synthetic — drop without emitting hovered or calling super()
+        # Genuine enter — consume the synthetic-leave flag so a later real enter
+        # can never be wrongly suppressed by a stale True.
+        self._last_leave_was_synthetic = False
         logger.warning(
             f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent PASSED "
             f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
+            f"vis={self.isVisible()} "
             f"in_window={in_window} pos_matches={pos_matches} guard_until={guard_until:.6f} "
             f"last_leave_pos={self._last_leave_pos!r}"
         )
@@ -118,8 +150,13 @@ class ThemeItem(RightClickButton):
     def leaveEvent(self, event):
         pos = QCursor.pos()
         self._last_leave_pos = (pos.x(), pos.y())
+        # Record whether this leave was synthetic (fired while the widget was
+        # hidden by the blur grab's panel hide) — read by enterEvent's blur-grab
+        # synthetic-drop branch. A genuine mouse-out fires while still visible.
+        self._last_leave_was_synthetic = not self.isVisible()
         logger.warning(
             f"[ENTEREVENT-TRACE] t={time.perf_counter():.6f} ThemeItem.leaveEvent "
-            f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()})"
+            f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
+            f"vis={self.isVisible()}"
         )
         super().leaveEvent(event)
