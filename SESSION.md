@@ -1,3 +1,35 @@
+## Session Summary — 2026-07-22 Session 1 — Fixed the hover-snapback-hangs-behind-panel-guard bug (`_pending_fade_call` dropped `bypass_panel_open_guard`); live verification surfaced a second, separate stuck-hover bug caused by blur
+
+Continuing the theme-hover/blur investigation thread. Root-caused via live DEBUG trace (repro'd by
+the user against the running app, watched via `[BLEED-TRACE]`/`[FADE-FINISHED-TRACE]` logging): a
+theme-hover snapback (`_on_theme_unhovered`) could get stuck showing the hovered theme indefinitely
+if the mouse left while its preview fade was still animating AND the Settings/Themes panel was still
+open. Cause: `_pending_fade_call`'s stash tuple silently dropped `bypass_panel_open_guard` (the flag
+`_on_theme_unhovered` always sets `True` so its snapback can apply even with a panel open), so every
+replay site (`_on_fade_finished`, `snap_theme_forward`, `complete_main_fade`) resumed with the
+default `False` — landing the replay in the panel-open guard branch and queuing it into the
+single-slot `_panel_guard_timer`, which then kept getting clobbered by ongoing hover activity.
+
+Before implementing, confirmed an explicit exclusivity requirement (no call site ever passes
+`hover=True` and `bypass_panel_open_guard=True` together — checked both statically across every
+`_on_theme_changed` call site and empirically against 65 live-observed `hover=True` calls, zero
+exceptions), so widening the stash to a 6-tuple can't reopen the hover-preview-confinement bleed the
+2026-07-21 discard rule exists to prevent. Fixed, pytest clean (only the 4 pre-existing
+`test_cover_theme_pending.py` failures), live-verified: Repro A/B (straight-out and
+via-neighboring-swatches leave-mid-fade) both now snap back correctly. `8243959`.
+
+**Live verification surfaced a second, unrelated stuck-hover bug** (not caused by this fix — confirmed
+via `git diff`, the fix touched only 3 scoped lines): with blur enabled, a genuinely still, deliberate
+hover can silently never convert to an applied preview. Root-caused precisely: `themes_tab.leaveEvent`
+(a bare lambda, no synthetic-leave suppression, unlike `ThemeItem`'s own careful handling from the
+2026-07-21 heartbeat fix) fires on every blur-grab hide/show cycle (~200ms while playing) and
+unconditionally stops the swatch's 80ms hover-debounce timer — so a grab tick landing inside that
+window (likely, given the cadence) kills the debounce before it can fire. Confirmed via a live trace
+with a 7ms gap between a genuine hover and the synthetic leave that killed it. Not fixed this
+session — deferred to its own investigation (see TODO.md, NOTES.md for the full trace).
+
+---
+
 ## Session Summary — 2026-07-21 Session 8 — The "heartbeat"'s second trigger finally identified (the blur grab's panel hide/show) and fixed; STEP-0 log forensics disproved the assumed discriminator before the fix was written
 
 The spurious-`enterEvent` "heartbeat" (repeated enter/leave on a stationary cursor over a theme

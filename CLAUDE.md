@@ -322,6 +322,51 @@ As of 2026-06-12 a "listened day" is `session (start OR end adjusted-date) OR 'f
 
 ---
 
+### DO NOT let `_pending_fade_call`'s stash tuple drop any `_on_theme_changed` parameter it needs to replay correctly
+`_on_theme_changed`'s `elif _fade_running and not _hover_interrupts_hover:` branch (`theme_manager.py`,
+~line 768) stashes a call that arrives while a fade is already in flight into `self._pending_fade_call`,
+to be replayed once the fade settles by one of three drain sites: `_on_fade_finished`,
+`snap_theme_forward`, `complete_main_fade`. As of 2026-07-22 this is a 6-tuple —
+`(theme_name, save, fade_ms, hover, user_initiated, bypass_panel_open_guard)`. It was previously a
+5-tuple that silently dropped `bypass_panel_open_guard`: `_on_theme_unhovered()` always calls with
+`bypass_panel_open_guard=True` so its snapback can apply even while a panel is open, but a stashed
+snapback replayed with the default `False` at every drain site, landing the replay in the
+`_any_animating or _panel_open` guard branch instead of applying — which then queued it into the
+single-slot `_panel_guard_timer`, a timer that gets disconnected/re-armed by every subsequent
+hover-driven call, so the snapback could hang indefinitely instead of firing once the fade ended.
+Fixed by widening the stash to carry the flag through (`8243959`; full trace in NOTES.md, 2026-07-22).
+**If `_on_theme_changed`'s signature ever gains a new parameter that affects how a replayed call
+should behave, it must be added to this stash tuple too, at all three drain sites, or the same class
+of bug reopens for that parameter.** `snap_theme_forward` previously hardcoded
+`bypass_panel_open_guard=True` on replay rather than reading it from the stash — this happened to
+mask the drop (its only real trigger, the settings-close snapback path, always passes `True` at the
+source anyway) but was still the wrong shape; it now reads the real stashed value. Before widening
+this tuple again, re-confirm the same exclusivity check performed for `bypass_panel_open_guard`: no
+call site may pass `hover=True` together with whatever new flag is being added set to a value that
+would let the hover-preview confinement discard rule (`pending[3]`, unaffected by this rule) be
+bypassed on replay — see the "Hover-preview theme application must never reach
+`_schedule_deferred_restyle`..." rule area (2026-07-21) for why that confinement exists.
+
+### Blur-on genuine hovers can silently fail to preview — `themes_tab.leaveEvent` has no synthetic-leave suppression (open, not yet fixed)
+With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch can
+sometimes never convert into an applied preview at all — confirmed live (2026-07-22) via a trace
+showing a genuine `enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
+`[hover debounce] firing preview` line ever appearing for that hover despite DEBUG logging being
+active. Root cause: `themes_tab.leaveEvent` (`main_window_builders.py:714`, a bare
+`lambda _: mw.theme_manager._on_theme_unhovered()`) has no equivalent of `ThemeItem`'s own
+`_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat fix above) — so the blur grab's
+`_active_panel.hide()`/`.show()` cycle (`transport_bar_blur._grab_and_blur`, firing roughly every
+~200ms while a book plays) fires a synthetic leave on the WHOLE TAB, not just the individual swatch,
+which calls `_on_theme_unhovered()` → `self._hover_debounce_timer.stop()` unconditionally. If a grab
+tick lands inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window — likely, given the ~200ms cadence —
+the debounce timer is killed before it can ever fire, silently dropping a genuine hover's preview.
+**Not yet fixed** — this is a distinct bug from the `_pending_fade_call` stash issue above (confirmed
+via `git diff` that the stash fix touched none of `main_window_builders.py`). See TODO.md for the
+open item; `pool_container.leaveEvent` (`main_window_builders.py:768`) is the same lambda shape and
+should be checked for the identical gap once this is scoped.
+
+---
+
 ### DO NOT add a key to "The Color Purple" without checking `_NO_BASE_INHERIT_KEYS` (themes.py)
 Every theme is resolved by `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with
 the requested theme's own dict — "The Color Purple" is the base template every other theme
