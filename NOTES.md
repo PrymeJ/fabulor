@@ -1,3 +1,61 @@
+## Hover-on-hover now interrupts the in-flight preview instead of being stashed and discarded — a direct side effect of the confinement fix just above, found via normal use and fixed same night (2026-07-21)
+
+**Context:** direct follow-on to the guard-masking/hover-confinement entry immediately below. That
+fix was correct for the bug it targeted (a transient cursor pass-over getting drained and applied
+through the full path on panel dismiss) but had a real side effect the user found through ordinary
+theme browsing, not edge-case testing: hovering theme A starts a preview fade; genuinely resting on
+theme B (a real, 80ms-debounce-cleared hover, not a fast pass-over) while A's fade is still running
+got B's call stashed by the existing `_fade_running` branch — and, per the confinement fix, silently
+discarded at drain time because it's hover-flagged. Nothing replaced it with a fresh preview
+attempt, so the user was left looking at A's stale colors while deliberately hovering B, sometimes
+for the whole 80-90ms+ debounce window and beyond, with no preview appearing until some unrelated
+event happened to drain the stash. Described directly as "annoying, confusing."
+
+**Investigation, before any fix (`Investigation_HoverInterruptsHover_260721.md`):** confirmed the
+80ms debounce (`_HOVER_DEBOUNCE_MS`, exactly 80, not 90) is a single global timer, fully upstream of
+`_on_theme_changed`, with zero further role once a hover call exists — untouched by this fix. Found
+TWO real entry points that produce a genuine `hover=True` call: the debounced swatch-sweep path
+(`_fire_pending_hover`) and the cover-pool button's own hover (`_on_cover_pool_btn_hovered`,
+undebounced by design — a single fixed target, no sweep to coalesce). Both reach the identical stash
+branch. Confirmed, by tracing rather than assuming, that hover-interrupts-hover and
+hover-interrupts-genuine-selection are THE SAME CODE PATH today — `_fade_in_flight` is a plain
+boolean with no memory of what started it; the only way to distinguish the two cases is
+`self._is_hover_active` (correctly maintained by the earlier `_mark_theme_applied` fix to reflect
+whatever was last genuinely applied — i.e. what started the currently-running fade). Confirmed the
+fade-stop mechanism needed for an interrupt already exists (`theme_manager.py`, the
+`if self._fade_anim.state() == Running: stop()` pattern used at four other sites) and is currently
+simply unreachable for any stashed call, since the stash branch returns before execution gets there.
+
+**Fix:** one condition added to the existing `elif _fade_running:` branch — if the incoming call is
+a hover AND the in-flight fade is itself a hover, skip the stash and fall through to the
+stop-and-apply flow that already exists a few lines down. No new stop mechanism, no new apply
+mechanism, no new state. Every other combination is explicitly unchanged: a hover arriving during a
+GENUINE SELECTION's settle-fade still stashes-then-discards exactly as before (a preview must never
+interrupt a real selection); a genuine selection arriving during any fade still stashes-then-replays
+via the existing drain sites, untouched.
+
+**Live verification, both go/no-go items the user required before considering this done — mechanism
+confirmed, not just symptom absence:**
+1. Hover-interrupts-hover via the swatch sweep: 67 clean interrupt events across a live session,
+   each showing `[hover debounce] firing preview for '<name>' ...ms after last enterEvent` →
+   `hover_interrupts_hover=True -> interrupting in-flight hover fade` → the new theme's mask-build
+   starting immediately, no stash, no discard.
+2. Hover-interrupts-hover via the cover-pool button (the "Cover art based theme" entry, a `ThemeItem`
+   like every swatch but wired to the book's cover-derived colors) — a second, real, undebounced
+   entry point into the identical branch, confirmed live to trigger the same
+   `hover_interrupts_hover=True` interrupt correctly.
+3. Genuine-selection-fade-interrupted-by-hover confirmed UNCHANGED via a full traced sequence: a
+   real click's settle-fade (`fade_ms=750`) in flight, a hover arriving mid-fade correctly took
+   `hover_interrupts_hover=False -> stashing for fade completion` (not the new interrupt path), the
+   genuine selection's fade completed undisturbed, and the stale hover stash was correctly
+   discarded at drain time by the earlier confinement fix — exactly the pre-existing, working
+   behavior, unaffected by this change.
+
+All diagnostic logging (`[BLEED-TRACE]`'s new `hover_interrupts_hover` field, the GUARD debug line's
+updated branch-decision text) is left in place, matching this session's standing practice.
+
+---
+
 ## Guard-masking bug (theme stuck unapplied for 75+ seconds) and hover-preview confinement — both root-caused, fixed, and live-verified together over a real 15-minute session (2026-07-21)
 
 **Context:** continuation of the same night's theme-bleed work (see the entry below). After the

@@ -1,4 +1,55 @@
-## Session Summary — 2026-07-21 Session 4 — Two more theme-state bugs found, root-caused via live tracing, fixed, and verified together over a real 15-minute session; a permanent architectural rule added to CLAUDE.md
+## Session Summary — 2026-07-21 Session 2 — A third theme-state fix, found through ordinary use of Session 1's own fix, plan-first with two explicit go/no-go verification items, both confirmed live via mechanism
+
+Direct continuation of Session 1, same night. Session 1's hover-confinement fix (discard
+hover-flagged stashes at drain time) was correct for the bug it targeted, but using the app normally
+afterward surfaced a real side effect: hovering theme A, then genuinely resting on theme B while A's
+preview fade was still running, left B's preview never appearing — B's call got stashed, then
+silently discarded (per Session 1's own fix) instead of ever showing. The user's own framing: "I am
+moving the mouse fast, but I am inadvertently slower when I hover on a theme without even noticing...
+annoying, confusing."
+
+Plan-first, per the night's established pattern: the user's own investigation prompt explicitly
+scoped what to trace (the debounce's independence from the stash logic, whether the two theme-A/B
+combinations were already handled differently) and what NOT to do (touch the debounce, touch the
+drain-time discard logic, implement anything yet). The investigation
+(`Investigation_HoverInterruptsHover_260721.md`) confirmed the 80ms debounce (not 90, as the user
+had estimated) is fully upstream and irrelevant to the fix; found a second real hover-entry path
+(the cover-pool button, undebounced by design) that needed covering in verification; and confirmed,
+by tracing rather than assuming, that hover-interrupts-hover and hover-interrupts-genuine-selection
+are literally the same code path today, distinguishable only via a field (`_is_hover_active`) that
+Session 1's own `_mark_theme_applied` fix had already made reliable.
+
+Before implementing, the user's plan review flagged two things as explicit go/no-go items, not
+color commentary: (1) the claim that this fix "composes cleanly" with Session 1's fix needed to be
+run live together, not just reasoned about — directly citing the night's track record of
+correct-sounding compositions turning out incomplete; (2) the cover-pool-button hover path, since it
+reaches the same branch being changed via a different, undebounced route, needed its own explicit
+live exercise in verification, not just the swatch-sweep case. Both were treated as hard
+requirements in the final plan, not suggestions.
+
+The fix itself: one condition added to the existing stash branch (`elif _fade_running:`) — if the
+incoming call is a hover and the currently-running fade is itself a hover, skip the stash and fall
+through to a stop-and-apply flow that already existed a few lines down. No new mechanism invented;
+the fix is entirely about which calls are allowed to reach code that was already there. Every other
+combination (hover vs. genuine-selection fade; genuine selection vs. anything) is explicitly
+unchanged.
+
+**Live verification, all three items confirmed via log mechanism, not visual inspection:** (1) 67
+clean interrupt events from the swatch-sweep path across a live session; (2) the cover-pool button's
+hover confirmed via a direct trace showing `hover_interrupts_hover=True` firing correctly for the
+cover-theme dict, interrupting a swatch's in-flight preview; (3) a genuine click's settle-fade
+interrupted by a hover was traced end-to-end and confirmed to take the OLD, unchanged path — correct
+stash, correct discard at drain time, no regression. When the user asked what "the cover-pool
+button" even was, the answer was confirmed directly from the construction code
+(`main_window_builders.py:683`, `ThemeItem("Cover art based theme")`) rather than assumed from
+memory of the UI.
+
+Source committed separately from documentation, matching every other fix tonight. Pushed to remote
+this time, per explicit instruction — the first push of the night's work.
+
+---
+
+## Session Summary — 2026-07-21 Session 1 — Two more theme-state bugs found, root-caused via live tracing, fixed, and verified together over a real 15-minute session; a permanent architectural rule added to CLAUDE.md
 
 Direct continuation of Session 3, same night, past midnight. After Session 3's two blur/hover-bleed
 fixes, the user kept finding theme-state bugs that didn't match either mechanism — a theme sitting
