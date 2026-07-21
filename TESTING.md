@@ -551,6 +551,27 @@ undone by `hide()` itself).
 - [ ] **Lock guard:** a book whose title and/or author was edited and LOCKED (book detail panel) keeps its locked field(s) after a naming-pattern click; only unlocked fields re-parse
 - [ ] Manage folders list box is shorter than before (~4 paths visible), with the naming pattern section below it
 
+## Transport bar blur (composited overlay, blur enabled in Settings — 2026-07-21)
+
+Applies to every panel that blurs the mini transport bar: Settings, Speed, Sleep, Stats, Tags.
+(Library and Book Detail never apply transport-bar blur — not in scope here.)
+
+### Appear timing + fade-in
+- [ ] Opening any of the five panels: the transport bar stays LIVE (unblurred) while the panel is still sliding in — no blur visible until the slide-in animation has fully finished
+- [ ] Once the panel finishes sliding in, the blur fades in smoothly (not an instant snap) over the panel's mini transport bar
+- [ ] The fade-in plays every time a panel opens, not just the first time this session
+- [ ] Rapidly reopening a panel (close, then immediately reopen) doesn't leave the blur stuck at partial opacity or double-fade
+
+### Dismiss timing (no lingering blur)
+- [ ] Closing any of the five panels: the transport bar snaps back to LIVE view immediately when the close/slide-out animation STARTS — it does not stay blurred for the whole slide-out duration
+- [ ] No fade-out animation on dismiss (this is intentional — dismiss is instant, only appear fades)
+- [ ] Switching directly between two of the five panels (e.g. Settings → Stats via sidebar) doesn't leave a stale blurred frame visible during the transition
+
+### Cross-panel non-regression
+- [ ] Blur still clips to each panel's own width (e.g. Settings' narrower panel doesn't blur the total_time_label sliver past its right edge)
+- [ ] Toggling "Blur" off in Settings still fully disables both the appear-fade and the composited overlay (no blur, no fade, transport bar always live)
+- [ ] Blur/fade behavior unaffected by which panel triggered it — spot-check at least two of the five (e.g. Speed and Tags) live, not just Settings
+
 ## Settings panel
 
 - [x] All clicks on buttons dismisses and performs

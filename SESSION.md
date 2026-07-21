@@ -1,3 +1,41 @@
+## Session Summary — 2026-07-21 Session 3 — Transport-bar blur timing: dismiss no longer lingers through the slide-out, and appear now waits for the panel to finish opening with a fade-in
+
+Unrelated to Sessions 1-2's theme-hover work — a separate subsystem (`ui/transport_bar_blur.py`,
+`ui/panels.py`), found via ordinary use rather than an investigation. Two live-requested timing
+changes to the composited transport-bar blur overlay used by Settings/Speed/Sleep/Stats/Tags.
+
+**Dismiss timing.** The overlay was torn down in each panel's `_on_*_hidden` handler, which only
+fires once the panel's full slide-out animation completes — so the blurred transport bar visibly
+lingered through the whole close animation instead of returning to live view as the panel started
+leaving. `_clear_transport_bar_blur()` was moved from all five `_on_*_hidden` handlers into their
+corresponding `_close_*_flow` methods, called right where each slide-out animation starts. Confirmed
+live and committed (`82d2c6f`) before touching the appear side.
+
+**Appear timing + fade-in.** Two follow-up asks, addressed together: the blur should apply only once
+each panel is already fully open (not concurrently with the slide-in), and it should fade in rather
+than snap on. `_apply_transport_bar_blur()` calls were moved out of their synchronous position (right
+after `panel_animation.start()`) and into a `finished` callback on each panel's own open animation —
+settings already had a local slide-finished closure to hook into; speed/stats/sleep/tags each gained
+one. This is also more correct than the old timing, not just prettier: `_apply_transport_bar_blur`
+clips its grab to the panel's own geometry, which isn't final until the slide-in actually finishes.
+A `QGraphicsOpacityEffect` + `QPropertyAnimation` (OutCubic) was added to the overlay `QLabel` in
+`TransportBarBlurOverlay.__init__`, started at opacity 0 right before `_overlay.show()` in
+`show_for_panel`. Fade is appear-only, by design — `hide_for_panel` stops any in-flight fade and
+resets opacity to 1.0 instantly, keeping dismiss snap-back-to-live-view exactly as fixed above,
+unchanged. Duration was tuned live to 1500ms (the user's own change to `_FADE_IN_MS`, made directly
+in the file mid-session — kept as-is, not reverted). Both stale docstrings on the module (the
+mechanism-overview comment and `hide_for_panel`'s own docstring, both still describing the pre-fix
+"torn down after slide-out finishes" behavior) were corrected in the same pass. Committed as
+`10b9650` after live confirmation.
+
+No new CLAUDE.md rule — this doesn't resolve a hard-won bug, it's a live-tuned UX timing change to
+an already-documented subsystem (`transport_bar_blur.py`'s own module docstring already covered the
+mechanism; only the panel-open/close timing within it changed). `TESTING.md` gained a new "Transport
+bar blur" section (after Sidebar, before Settings panel) covering appear-timing, fade-in, dismiss
+snap-back, and cross-panel non-regression across all five panels that use this overlay.
+
+---
+
 ## Session Summary — 2026-07-21 Session 2 — A third theme-state fix, found through ordinary use of Session 1's own fix, plan-first with two explicit go/no-go verification items, both confirmed live via mechanism
 
 Direct continuation of Session 1, same night. Session 1's hover-confinement fix (discard

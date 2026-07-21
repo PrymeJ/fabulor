@@ -1,3 +1,62 @@
+## Transport-bar blur timing: dismiss no longer lingers through the slide-out; appear now waits for the panel to finish opening and fades in (2026-07-21)
+
+**Unrelated subsystem to the theme-hover entries below** — this is `ui/transport_bar_blur.py` /
+`ui/panels.py`'s composited transport-bar blur overlay (used by Settings/Speed/Sleep/Stats/Tags),
+not `theme_manager.py`. Found and fixed via ordinary use across two separate live-requested changes
+in the same session, not an investigation-first pass — both were simple, mechanically obvious once
+the call sites were read.
+
+**Dismiss lingered too long.** `TransportBarBlurOverlay.hide_for_panel()` itself was always
+instant/unconditional — the lingering wasn't inside that method. It was in WHEN it got called:
+`_clear_transport_bar_blur()` was wired to each panel's `_on_*_hidden` handler
+(`_on_speed_hidden`, `_on_sleep_hidden`, `_on_stats_hidden`, `_on_tags_hidden`,
+`_on_settings_hidden`), which Qt only fires once the panel's `QPropertyAnimation` slide-out
+`finished` signal lands — i.e. after the full close animation plays out. So the blurred transport
+bar sat there, visibly blurred, for the entire dismiss animation, then snapped to live only at the
+very end. Fix: moved `_clear_transport_bar_blur()` out of all five `_on_*_hidden` handlers and into
+their corresponding `_close_*_flow` methods, called immediately after each slide-out animation's
+`.start()` — i.e. at the moment the user actually asked to close, not the moment the animation
+finishes playing. `hide_for_panel()` itself needed no changes; only its call-site timing did.
+Committed `82d2c6f`.
+
+**Appear should wait for the panel to finish opening, and fade in.** Symmetric follow-up. Before this
+fix, `_apply_transport_bar_blur(panel)` was called synchronously right after
+`panel_animation.start()` in each `_start_*_entry`/`_open_*_flow` — i.e. blur appeared concurrently
+with the panel still sliding into position, not once it had arrived. Fixed by moving each call into
+a `finished` callback on the panel's own OPEN animation instead of its close animation (a different
+signal than the dismiss fix above touches): `_start_settings_entry` already had a local
+`_on_settings_slide_finished` closure to hook into; `_start_speed_entry`, `_start_stats_entry`,
+`_start_sleep_entry`, and `_start_tags_entry` each needed a small local `_on_*_slide_finished`
+closure added (self-disconnecting, matching the existing pattern). This isn't just smoother — it's
+more correct: `_apply_transport_bar_blur` clips its grab to `panel`'s own geometry via
+`_panel_rect_in_common_space`, and that geometry isn't at its final resting value until the slide-in
+animation actually completes; grabbing mid-slide (the old behavior) was technically racing the
+panel's own position.
+
+On top of the retimed appear, a fade-in was added so the blur doesn't snap on instantly even once
+correctly timed. `TransportBarBlurOverlay.__init__` now builds a `QGraphicsOpacityEffect` on the
+overlay `QLabel` and a `QPropertyAnimation` on its `opacity` property (`OutCubic`, duration
+`_FADE_IN_MS`). `show_for_panel` sets opacity to 0.0 immediately before `_overlay.show()`, then
+starts the fade (stopping any still-running previous fade first, same `if state == Running: stop()`
+pattern used everywhere else in this codebase). This is deliberately appear-ONLY: `hide_for_panel`
+stops any in-flight fade-in and resets opacity to 1.0 synchronously, with no fade-out animation of
+its own — dismiss stays exactly as instant as the fix above made it; the opacity reset just ensures
+the NEXT `show_for_panel` starts from a clean, fully-opaque baseline rather than wherever the
+previous fade happened to leave off. `_FADE_IN_MS` was initially set to 180 and then live-tuned by
+the user directly in the file to 1500 mid-session — kept as their live-tested value, not reverted or
+second-guessed. Two now-stale docstrings (the module's own mechanism-overview comment, and
+`hide_for_panel`'s docstring — both still described the pre-fix "torn down after slide-out
+finishes" timing) were corrected in the same pass to describe both the new open-side fade-in and the
+already-fixed close-side instant teardown. Committed `10b9650`.
+
+Both changes verified live by the user before commit, per the standing practice this session of not
+committing until the actual running app confirms the change (not just re-reading the diff). No new
+CLAUDE.md rule — neither change resolves a hard-won bug from before; they're live-tuned UX timing
+adjustments to a subsystem whose mechanism was already fully documented in
+`transport_bar_blur.py`'s own module docstring.
+
+---
+
 ## Hover-on-hover now interrupts the in-flight preview instead of being stashed and discarded — a direct side effect of the confinement fix just above, found via normal use and fixed same night (2026-07-21)
 
 **Context:** direct follow-on to the guard-masking/hover-confinement entry immediately below. That
