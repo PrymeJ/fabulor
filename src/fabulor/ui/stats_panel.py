@@ -2505,7 +2505,18 @@ class TasselOverlay(QWidget):
             self.unsetCursor()
 
     def leaveEvent(self, event):
-        self.unsetCursor()
+        # Only clear the hand cursor on a GENUINE mouse-out (widget still visible).
+        # When blur is on, transport_bar_blur._grab_and_blur hides then re-shows the
+        # whole Stats panel ~5×/sec to grab the transport bar behind it, and each
+        # hide delivers a SYNTHETIC leaveEvent to this descendant tassel while it is
+        # mid-hide (isVisible() False) — with no mouseMoveEvent on re-show to restore
+        # the cursor. Unsetting on those cleared the hand 5×/sec, making the cursor
+        # visibly "shaky" under blur (confirmed live 2026-07-21: 85 synthetic
+        # vis=False leaves vs. 1 real vis=True leave in one hover). Guarding on
+        # isVisible() lets the hand survive the hide/show churn while a real
+        # mouse-out (fired while still visible) still clears it correctly.
+        if self.isVisible():
+            self.unsetCursor()
 
     @property
     def is_busy(self) -> bool:
