@@ -6,6 +6,20 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] Settings → Blur toggle doesn't apply live to an already-open panel — should apply
+  on click, not just to the next open/close.** Confirmed by reading the code, not yet fixed.
+  `SettingsController._update_blur_mode` (`settings_controller.py:97`) only writes
+  `config.set_blur_enabled(enabled)` and refreshes the toggle's own visual state
+  (`_update_blur_visuals`) — it never touches `TransportBarBlurOverlay` or `blur_effect` directly.
+  Every call site that actually applies/clears blur (`_apply_transport_bar_blur`,
+  `_clear_transport_bar_blur`, the `blur_animation` start/stop pairs — all in `panels.py`) only
+  reads `config.get_blur_enabled()` at panel open/close time. So toggling Blur off while a panel is
+  already open (e.g. from within Settings itself, since the toggle lives in the Settings panel)
+  leaves that panel's transport bar blurred until it's closed and reopened; toggling on behaves the
+  same in reverse. Fix should make the toggle affect the CURRENTLY open panel's blur state
+  immediately, not just future open/close cycles. Not started — needs a decision on mechanism (e.g.
+  `_update_blur_mode` calling into `PanelManager` to apply/clear against whichever panel, if any, is
+  currently open) before implementing.
 - **[2026-07-21] Transport-bar blur scope: cover art area needs the same clip/blur treatment as the
   bottom (transport) part — deferred, blocked on the placeholder-text rehaul.** Currently
   `TransportBarBlurOverlay` only tracks the mini transport bar (chapter label, chapter progress,
