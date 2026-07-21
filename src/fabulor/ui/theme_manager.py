@@ -1167,7 +1167,15 @@ class ThemeManager(QObject):
         # the deferred batch ran" staleness case for free. (Was previously not-hover-gated;
         # now runs on hover too — harmless at 0.1ms, and it can be visible under the fade.)
         if hasattr(mw, 'chapter_list_widget'):
-            theme_dict = self.get_current_theme() or {}
+            # theme_name (this call's own argument), NOT self.get_current_theme() —
+            # get_current_theme() resolves _active_display_theme_internal, which
+            # _mark_theme_applied only writes AFTER this method returns (see the
+            # call sites), so it still holds the PREVIOUS apply's theme at this
+            # point. Reading it here made dropdown_text/dropdown_time_text/
+            # dropdown_curr_chap always lag one theme change behind. Fixed
+            # 2026-07-21 — see NOTES.md.
+            from ..themes import _resolve_theme
+            theme_dict = _resolve_theme(theme_name)
             mw.chapter_list_widget.update_theme(theme_dict)
             _mark("chapter_list_widget")
         else:
