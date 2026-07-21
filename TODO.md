@@ -6,6 +6,27 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] Cursor fluctuates hand↔arrow over panel widgets when blur is ON — root-caused, NOT
+  yet fixed (own live-investigation pass).** With blur on, the mouse pointer flickers between hand
+  and arrow over interactive panel widgets (Stats book rows, Timeline tassel, cover-pool swatches —
+  all legitimately hand-cursor) WITHOUT moving the mouse. **Root cause (confirmed by code reading):**
+  `TransportBarBlurOverlay._grab_and_blur` (`transport_bar_blur.py:667-681`) hides the entire active
+  panel (`self._active_panel.hide()`) + the overlay, does `main_window.grab()`, then re-shows both —
+  on EVERY dirty-refresh tick while blur is on (the mini transport bar repaints continuously). Hiding
+  then immediately re-showing the panel makes Qt re-run hit-testing and re-resolve the cursor shape
+  for whatever's under the pointer, flipping a PointingHandCursor widget momentarily to the default
+  arrow and back. Happens only with blur on (that's the only time the hide/show cycle runs). The
+  overlay itself is `WA_TransparentForMouseEvents`, so it is NOT the culprit — the panel-hide inside
+  the grab is. The hide is load-bearing (grab must exclude the panel's own pixels — see
+  `hide_for_panel`'s history), so it can't just be removed. **Approach when picked up: investigate
+  LIVE first** (instrument, reproduce, confirm which mechanism actually stops the flicker) before
+  committing to a fix — candidates: grab the transport widget subtree directly so the panel never
+  needs hiding; `setUpdatesEnabled(False)` around the hide/show; or move the panel offscreen instead
+  of `hide()`. Kept as its own pass (per user) so a fluctuation symptom can't be confused with a
+  leftover T-shortcut symptom during the same test session. Secondary/minor to fold in: the "Change
+  now" button shows a hand cursor at all when it shouldn't (separate ThemeItem/QPushButton
+  cursor-policy question; the fluctuation is the real bug). Full root cause: NOTES.md, "Panel-open
+  theme guard ..." entry, 2026-07-21.
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
   investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under

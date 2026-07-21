@@ -1,3 +1,83 @@
+## Panel-open theme guard: the `bypass_panel_open_guard` mechanism, its forward audit, and the stranded-`_fade_in_flight` "T does nothing" bug it exposed (2026-07-21)
+
+**The guard.** To stop themes visibly changing while the user has an unrelated panel open (reported
+live: the automatic rotation timer's deferred replay landing on an open Sleep panel), `_on_theme_changed`
+gained a `_panel_open` guard: a call defers (via the existing `_panel_guard_timer` retry) when a full
+panel is visible — UNLESS the call is a hover preview OR carries `bypass_panel_open_guard=True`. The
+guard reuses `PanelManager.is_any_full_panel_visible()` (excludes the bare sidebar) and the existing
+retry mechanism; the new trigger condition is `if _any_animating or _panel_open:`.
+
+**Why `hover` alone was not the right discriminator (regressed 3×).** The naïve first cut gated on
+`not hover`. That broke the Settings panel itself, because MANY non-hover theme changes are
+themselves *Themes-tab-local actions* that must apply live while that panel is open: the
+close-snap-back (`_on_theme_unhovered`), right-click-select, left-click-toggle-active, the
+cover-art-mode buttons, the cover-pool button, AND — the third regression — the "Change now" button
+(`_do_rotate(user_initiated=True)`). The real distinction is **general trigger** (rotation timer,
+deferred replay, book-load cover-theme change — no relationship to any open panel) vs.
+**Themes-tab-local action/settle-step** (only exists because that panel is open). Only general
+triggers may be blocked.
+
+**The exhaustive FORWARD audit (canonical — do not re-derive backward).** After three regressions
+from tracing backward from `_on_theme_changed`'s callers, the correct audit traces FORWARD from
+every interactive widget built in `build_themes_tab` (`main_window_builders.py:645-774`):
+
+| Widget (construction line) | Signal → handler | Reaches `_on_theme_changed`? | Bypass |
+|---|---|---|---|
+| Cover-mode buttons `:662` | `clicked` → `set_cover_art_mode` | Yes (via its own calls + `clear_cover_theme`/`apply_cover_theme`) | ✅ `=True` |
+| Cover-pool item `:685` | `clicked` → `_on_cover_pool_btn_clicked` | Via `set_cover_art_mode` + `clear_cover_theme(=True)` | ✅ |
+| Cover-pool item `:686` | `rightClicked` → `_on_cover_pool_btn_right_clicked` | Yes | ✅ `=True` |
+| Cover-pool item `:687` | `hovered` → `_on_cover_pool_btn_hovered` | Yes (`hover=True`) | ✅ via `hover` |
+| Swatch `:703` | `clicked` → `toggle_theme_selection` | Only when removing the active theme | ✅ `=True` |
+| Swatch `:704` | `rightClicked` → `_on_theme_right_clicked` | Yes | ✅ `=True` |
+| Swatch `:705` | `hovered` → `_on_theme_hovered` → `_fire_pending_hover` | Yes (`hover=True`) | ✅ via `hover` |
+| tab/pool `leaveEvent` `:714`/`:768` | → `_on_theme_unhovered` | Yes | ✅ `=True` |
+| Add all `:728` | `clicked` → `select_all_themes` | **No** (pool + visuals only) | N/A |
+| Remove all `:729` | `clicked` → `deselect_all_themes` | **No** | N/A |
+| Change now `:730` | `clicked` → `_do_rotate(user_initiated=True)` | Yes | ✅ `=user_initiated` |
+| Interval labels `:762` | `mousePressEvent` → `set_rotation_interval` | **No** (timer + visuals only) | N/A |
+
+`_do_rotate` and `apply_cover_theme` both already had a `user_initiated` parameter that exactly
+distinguishes the general-trigger caller (automatic rotation timer / book-load, `False`) from the
+Themes-tab caller (Change now / cover-mode button, `True`) — so both forward `bypass_panel_open_guard=
+user_initiated` rather than needing a separate flag. General triggers that must stay blocked and do
+NOT bypass: `_do_rotate()` from the rotation timer, `_on_fade_finished`'s drain, `complete_main_fade`'s
+drain, `apply_cover_theme`/`clear_cover_theme` from book-load. The retry lambda forwards
+`bypass_panel_open_guard` so a deferred bypass call keeps its exemption on retry.
+
+**The "Change now" regression, precisely (why the forward audit was necessary).** "Change now" calls
+`_do_rotate(user_initiated=True)` DIRECTLY, skipping `_rotate_theme`'s entry-time visibility check.
+Before the fix, `_do_rotate` set `self._current_theme_name` synchronously then called
+`_on_theme_changed(..., bypass=False)`, which deferred (panel open). An unrelated side effect — the
+cursor leaving whatever swatch it happened to be over as the click landed — fired `_on_theme_unhovered`,
+which read the already-mutated `_current_theme_name` and applied IT with its own (correct) bypass.
+Net effect: haphazard "sometimes works, underline doesn't move, panel flickers" — two competing
+calls for the same theme racing. Fixed by `_do_rotate` forwarding `bypass_panel_open_guard=user_initiated`.
+
+**The stranded-`_fade_in_flight` bug this exposed — "T does nothing" (confirmed live 19:33 → fixed,
+verified 19:56).** A *pre-existing latent* bug that the snap-back changes made reproducible.
+`snap_theme_forward` (called by `_close_settings_flow`) stops any running `_fade_anim`
+(`QPropertyAnimation.stop()` — which does NOT emit `finished`, so `_on_fade_finished`, the only other
+clearer, never runs) but cleared `_fade_in_flight` ONLY inside its `if self._pending_fade_call is not
+None:` drain branch. The close-snap-back now genuinely starts a real 750ms fade via the
+themes-tab-visible path (panel still visible during close → `_fade_in_flight=True`), which
+`snap_theme_forward` immediately stops — and with nothing stashed, the in-branch-only clear was
+skipped, leaving `_fade_in_flight` **stranded True with no live fade**. The next non-bypass
+`_on_theme_changed` (a `T`-key rotation) then hit the `_fade_running` guard, stashed itself into
+`_pending_fade_call`, and orphaned there forever (no fade to drain it) — so `T` silently did nothing.
+**Fix:** clear `self._fade_in_flight = False` UNCONDITIONALLY right after the `_fade_anim.stop()` in
+`snap_theme_forward`, not only in the drain branch. Cross-checked the other two fade-resolution paths:
+`_on_fade_finished` clears unconditionally first thing; `complete_main_fade` clears before its own
+stop — neither has the gap, so the fix is `snap_theme_forward`-only. Verified live: after a
+settings-close snap-back, `T` now logs `fade_in_flight=False` → applies (`_apply_stylesheets` runs),
+not `-> stashing`.
+
+**Known deferred (see TODO.md):** cursor fluctuates hand↔arrow over panel widgets when blur is on —
+`_grab_and_blur` hides/shows the whole active panel each tick, re-triggering Qt cursor/hit-test
+resolution. Root-caused, not fixed this pass (its own live investigation, kept separate so a
+fluctuation symptom can't be confused with a leftover T-shortcut symptom).
+
+---
+
 ## Chapter-dropdown colors lagged one theme change behind — root cause and fix; second confirmed `_active_display_theme_internal` timing trap (2026-07-21)
 
 **Symptom:** after any theme change, the chapter dropdown's current-chapter highlight

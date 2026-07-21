@@ -1,3 +1,45 @@
+## Session Summary — 2026-07-21 Session 5 — Panel-open theme guard (block theme changes while an unrelated panel is open), forward-audited after three regressions; the stranded-`_fade_in_flight` "T does nothing" bug it exposed, fixed and verified
+
+Started from a live bug: theme changes (incl. the automatic rotation timer's deferred replay)
+applying while an unrelated panel was open. The fix — a `_panel_open` guard in `_on_theme_changed`
+that defers general-trigger theme changes while a full panel is visible, with a
+`bypass_panel_open_guard` exemption for Themes-tab-local actions — **regressed three times**, each
+from a call site the backward audit (from `_on_theme_changed`'s callers) misclassified: first the
+snap-back/`snap_theme_forward` settle path, then the cover-theme conflict, then "Change now"
+(`_do_rotate(user_initiated=True)`, which skips `_rotate_theme`'s visibility check and raced an
+incidental unhover side effect). At the user's direction, replaced the failing backward audit with
+an **exhaustive FORWARD audit** — every interactive widget in `build_themes_tab`
+(`main_window_builders.py`), traced signal → handler → whether the bypass is carried. Recorded as a
+canonical table in NOTES.md so a fourth regression can't come from a re-derived-wrong list. Key
+insight: the discriminator is NOT `hover` but "general trigger vs. Themes-tab-local action"; and
+`_do_rotate`/`apply_cover_theme` already had a `user_initiated` parameter that exactly encodes that
+split, so both forward `bypass_panel_open_guard=user_initiated`.
+
+The guard changes exposed a **pre-existing latent bug** that made the `T` shortcut silently do
+nothing: `snap_theme_forward` stops a running `_fade_anim` (`QPropertyAnimation.stop()` emits no
+`finished`, so `_on_fade_finished` never clears the flag) but cleared `_fade_in_flight` only inside
+its drain branch — so when the close-snap-back's real 750ms fade got stopped with nothing stashed,
+`_fade_in_flight` stranded True with no live fade, and the next `T` rotation stashed into
+`_pending_fade_call` and orphaned forever. Fixed by clearing `_fade_in_flight = False`
+unconditionally right after the stop. Cross-checked the other two fade-resolution paths
+(`_on_fade_finished`, `complete_main_fade`) — both already clear correctly, so the fix is
+`snap_theme_forward`-only. Verified live via log (19:56): every `T` press now reaches
+`_rotate_theme`, logs `fade_in_flight=False`, and actually applies (`_apply_stylesheets` runs) — no
+more `-> stashing` orphan.
+
+Also cherry-picked from the reverted first attempt: `[T-KEY-TRACE]` instrumentation
+(`app.py` keyPressEvent + `_rotate_theme`/`_fire_pending_rotation`, left in place) and a genuine
+one-line fix — adding the missing `tags_panel_animation` to `PanelManager._any_panel_animating()`'s
+list.
+
+Deferred to its own pass (per user, to avoid confusing symptoms): the cursor hand↔arrow fluctuation
+over panel widgets when blur is on — root-caused (`_grab_and_blur` hides/shows the whole active
+panel each tick, re-triggering Qt cursor/hit-test resolution), recorded in TODO.md,
+investigate-live-first when picked up. `pytest tests/ -q`: same 4 pre-existing
+`test_cover_theme_pending.py` failures, no new ones.
+
+---
+
 ## Session Summary — 2026-07-21 Session 4 — Chapter-dropdown colors fixed from lagging one theme change behind; second confirmed instance of a `_active_display_theme_internal` timing trap
 
 User-reported regression, investigated read-only first (per explicit instruction, plan mode) before
