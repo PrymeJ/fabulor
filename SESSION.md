@@ -1,3 +1,73 @@
+## Session Summary — 2026-07-21 Session 4 — Two more theme-state bugs found, root-caused via live tracing, fixed, and verified together over a real 15-minute session; a permanent architectural rule added to CLAUDE.md
+
+Direct continuation of Session 3, same night, past midnight. After Session 3's two blur/hover-bleed
+fixes, the user kept finding theme-state bugs that didn't match either mechanism — a theme sitting
+visibly unapplied to some panels for a full minute or more, and, separately, a panel briefly showing
+a theme the cursor had only passed over, never selected. Both were investigated by live log tracing
+first, plan-first before any code change (per the pattern established earlier in the night), and
+both are now fixed with full live verification. Full technical detail: NOTES.md, "Guard-masking bug
+... and hover-preview confinement" entry, 2026-07-21.
+
+**Bug 1 (guard-masking):** `_on_theme_changed`'s no-op guard could be fooled by its own write
+ordering — `_active_display_theme_internal`/`_is_hover_active` were set the instant a call was
+*decided on*, before the code knew whether that call would actually be applied or stashed for a
+still-running fade. A stashed call left the fields lying about what had actually been painted, so
+a later replay of that same call hit the guard and silently did nothing — confirmed live to strand
+a theme unapplied for 75+ seconds, verified via a temporary `_theme_ever_applied` marker and a full
+origin-to-symptom trace across two rotated log files. Two wrong hypotheses were formed and retracted
+live in the process (an independent-trigger theory for panel chrome, and a deferred-restyle
+coalescing-race theory) — both recorded in NOTES.md with the specific evidence that disproved each,
+not silently dropped. Fixed by consolidating both writes into one method, `_mark_theme_applied()`,
+called only after a real apply completes, at all four apply-path call sites. The guard's own
+comparison was deliberately left untouched — confirmed via an explicit design check that
+write-timing alone was sufficient.
+
+Before implementing, the user pushed back twice on the plan's precision — once to reject three
+separate inline write copies in favor of one shared method (explicitly citing the exact shape that
+had already caused a smaller version of this same bug earlier the same night), and once to demand
+the exact line-by-line placement of the new write relative to each branch's real paint call, not
+just "inside the branch." Both pushbacks caught real gaps: the three-branch framing initially missed
+a fourth call site (`apply_full_pass`, reached directly from `app.py` with no `_on_theme_changed`
+call in between at all) that would have been left permanently broken if the old write had simply
+been deleted without a replacement there.
+
+**Bug 2 (hover-preview confinement):** found while live-testing Bug 1's fix, via a screen-recorded
+repro. A transient cursor pass-over a theme swatch (not a deliberate hover-select, just movement on
+the way to dismissing a panel) fires a real hover call; if that call got stashed and was later
+drained on panel-dismiss, none of the three drain sites checked whether it was a hover preview
+before replaying it — so an abandoned preview could reach the full apply path, including every
+panel-level stylesheet a preview is supposed to be confined away from. The user named the
+architectural rule directly and had it recorded permanently in CLAUDE.md on `main` (a `main`↔branch
+stash/switch/restore round-trip, matching the pattern used earlier in the night for the same
+purpose): hover previews must stay confined to `get_base_stylesheet`'s scope (main window, settings
+panel, title bar) and must never be replayed through the same path as a genuine selection. Fixed by
+discarding — not deferring — a hover-flagged stash at all three drain sites; there is no correct
+later moment to apply an abandoned preview.
+
+Before implementing this second fix, the user flagged two more gaps in the plan: (1) the claim that
+discarding a hover stash "composes cleanly" with Bug 1's fix needed to be verified live, not just
+reasoned about, given the night's track record of correct-sounding compositions turning out
+incomplete; (2) `user_initiated` (a fifth tuple field, unrelated to `hover`) needed an explicit check
+that it never disagrees with `hover` in a way that could make a hover-only discard check wrong —
+confirmed via direct code read that every automatic-change call site (`_do_rotate`,
+`apply_cover_theme`) always passes `hover=False`, so the two flags never conflict.
+
+**Live verification, both fixes together:** a real 15-minute mixed-interaction session (03:00–03:15),
+not an isolated repro. Log analysis found 55 hover-flagged stashes correctly discarded across all
+three drain sites with zero reaching the apply path, and zero occurrences of Bug 1's actual signature
+(`hover=False` combined with the masked-stash marker). 15 occurrences of the marker did fire, but all
+15 were `hover=True` — traced and found to be a false-positive gap in the diagnostic instrumentation
+itself (it doesn't distinguish a real masked bug from an ordinary, correct hover no-op), not a
+recurrence of either bug. Logged as a follow-up in TODO.md rather than fixed this session, per the
+user's explicit "deal with it later" — all diagnostic logging from tonight is deliberately left in
+place.
+
+Both fixes committed separately from the CLAUDE.md rule (which landed on `main` first, then the
+branch work continued), and the source fix was committed separately from this documentation update
+— matching the "commit code, then docs" sequencing used consistently throughout the night.
+
+---
+
 ## Session Summary — 2026-07-20 Session 3 — Read-only audit mapped theme-bleed's reachability; two independent causes found and fixed; hover-pulsate confirmed gone live; a new responsiveness regression surfaced, unexplained
 
 Continuation of the theme-bleed/heartbeat investigation from Session 2, taking a deliberately

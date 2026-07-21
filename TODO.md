@@ -6,6 +6,15 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
+  later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
+  the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
+  one was `hover=True` (an ordinary, correct hover no-op, not the actual bug — which is `hover=False`
+  + the marker). The marker doesn't distinguish "guard blocked a real pending apply" from "guard
+  correctly no-op'd a redundant hover re-entry," because only non-hover applies update the
+  `_theme_ever_applied` comparison value it checks against. Diagnostic-precision issue only — does
+  not affect app behavior, both real fixes are confirmed working via the same session's log. Full
+  detail: NOTES.md, "Guard-masking bug ... and hover-preview confinement" entry, 2026-07-21.
 - **[2026-07-20] Theme-bleed: two of (at least) three independent causes closed this session
   (state-read bypass in `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`) — user
   confirmed the visible bleed is gone, but reported general responsiveness is now slow. Not

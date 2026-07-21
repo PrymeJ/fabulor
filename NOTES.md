@@ -1,3 +1,114 @@
+## Guard-masking bug (theme stuck unapplied for 75+ seconds) and hover-preview confinement — both root-caused, fixed, and live-verified together over a real 15-minute session (2026-07-21)
+
+**Context:** continuation of the same night's theme-bleed work (see the entry below). After the
+Pass 1/Pass 2 fixes there, the user kept finding theme-state bugs that didn't fit either mechanism
+— panels showing a theme that was never actually selected, sometimes for a full minute or more,
+and separately a panel briefly showing colors from a theme the cursor had only grazed in passing.
+Both were root-caused via direct live log tracing (not guessed at) across several rounds of
+screen-recorded repro, and both are now fixed and confirmed via a real 15-minute mixed-use test
+session (03:00–03:15), not just isolated single-shot repros.
+
+### Bug 1 — the no-op guard could mask a theme that was requested but never painted
+
+`ThemeManager._on_theme_changed`'s no-op guard compares the incoming `(theme_name, hover)` against
+`_active_display_theme_internal`/`_is_hover_active` and skips the whole apply if they already
+match — a legitimate optimization (this app was measurably slow re-applying themes on every hover
+tick before this guard existed). The bug: both fields were written **unconditionally**, the moment
+`_on_theme_changed` decided *what* was being requested, before it decided whether to actually apply
+that request or stash it for later (the `_any_animating`/`_fade_running` branches, used when a fade
+is already in flight). A call that got stashed still left the fields claiming the requested
+theme/hover was already live. When that stash was later drained and replayed with the identical
+`(theme_name, hover)` pair, the guard saw "already matches" and silently no-op'd — `_apply_stylesheets`
+never ran, and the theme stayed stuck at whatever was last *genuinely* applied.
+
+Confirmed live via a full origin-to-symptom trace (session restarted 00:45:16): `'Pyke'` applied
+successfully at `00:46:16,670`; a click to `'Shade of the Evening'` at `00:46:19,867` landed while
+a hover-preview fade was still finishing, got stashed; every subsequent attempt to apply it hit the
+no-op guard from `00:46:20,271` through `00:47:35,799` — over 75 seconds, verified via a temporary
+`_theme_ever_applied` marker (set only inside `_apply_stylesheets`) that stayed pinned at `'Pyke'`
+the entire window. A user screenshot taken inside that window showed exactly the split this predicts:
+Library/Stats/Tags/Sleep's per-button colors still on `'Pyke'`, main window/Speed/Sleep's own panel
+chrome already on `'Shade of the Evening'` (the fast pass and deferred pass diverged, both stuck on
+whatever they'd each last genuinely painted).
+
+Two wrong hypotheses were formed and retracted live before landing on this: (1) "chrome has an
+independent trigger, buttons don't" — traced and found false, `sleep_panel.setStyleSheet()` (chrome)
+is gated by the exact same guard as everything else; (2) "the deferred-restyle batch's last-write-wins
+coalescing raced the fast pass" — retracted immediately on checking the rotated log file, which showed
+the deferred pass *did* genuinely complete for the stuck theme minutes earlier; the actual defect was
+purely the guard-masking mechanism above, confirmed by a third trace showing `_on_fade_finished`
+draining a stash whose fields had already been "poisoned" by an earlier hover call to the same theme
+name.
+
+**Fix:** consolidated both writes into one method, `_mark_theme_applied(theme_name, hover)`, called
+only immediately after `_apply_stylesheets` has genuinely run — at all four real-apply call sites
+(`_on_theme_changed`'s three branches: themes-tab overlay fade, slider-animated fade, instant/no-fade;
+plus `apply_full_pass`, a separate startup-only path with its own direct `_apply_stylesheets` call,
+reached both from `_on_theme_changed`'s early branch and directly from `app.py`). The two old
+unconditional write sites (`_is_hover_active = hover` before the stash-decision branches;
+`_active_display_theme_internal = theme_name` right after them, still before the real apply) were
+deleted, not left as fallbacks. The guard's own comparison logic was deliberately left untouched —
+an explicit design check confirmed the fix needed to be entirely about *when* the fields are
+written, not *how* they're compared; if the guard itself had needed changing too, that would have
+meant the write-timing fix wasn't sufficient on its own. A full read-site audit (every consumer of
+either field in `theme_manager.py`) found no code path anywhere that depends on the old pre-apply
+timing, so no second/staging field was needed.
+
+### Bug 2 — hover previews could be replayed through the same path as a genuine selection
+
+Separate, unrelated mechanism, found while live-testing Bug 1's fix. `get_base_stylesheet`'s narrow
+scope (main window, `QToolTip`, `status_banner`, the overall progress slider, chapter dropdown,
+`undo_overlay`) exists specifically so a hover preview never has to walk the full panel tree — the
+same cost `_schedule_deferred_restyle`'s deferred-batch split exists to avoid for genuine changes.
+This confinement was never actually enforced at the one place it needed to be: none of the three
+`_pending_fade_call` drain sites (`_on_fade_finished`, `snap_theme_forward`, `complete_main_fade`)
+checked whether the stashed call was a hover preview before replaying it. A transient cursor
+pass-over a swatch (not a deliberate hover-select, just transit on the way to dismissing a panel)
+fires a real `hover=True` call; if that call got stashed (a previous selection's fade still
+settling) and was later drained on panel-dismiss, it got applied through the FULL path — reaching
+`_schedule_deferred_restyle` and every panel-level stylesheet, exactly like a real click would.
+
+Confirmed via a screen-recorded live repro (`02:06:46`–`02:07:11`): user selected `Melnibonéan`
+(genuine), then moved the cursor toward the dismiss direction, transiting over `Urras` for a
+fraction of a second; `Urras`'s hover call got stashed (the previous fade was still finishing);
+`snap_theme_forward`'s drain (fixed under Bug 1 to correctly reach the deferred pass) applied it
+with `hover=True` at `02:06:48,161` — confirmed via `[SNAP-DRAIN-TRACE] ... theme_name='Urras'
+hover=True`. Sleep/Stats panels visibly showed `Urras`-derived colors afterward, despite `Urras`
+never being a genuine selection.
+
+**Fix:** at all three drain sites, check the stashed call's `hover` flag before replaying it. If
+`True`, discard — clear `_pending_fade_call`, do not call `_on_theme_changed` at all. There is no
+correct later moment to apply an abandoned preview; by the time any of these drains run, the user
+has moved on (cursor elsewhere, or the panel that was showing the preview has already closed).
+Recorded as a permanent architectural rule in CLAUDE.md: *"Hover-preview theme application must
+never reach `_schedule_deferred_restyle` or any panel-level stylesheet... a preview must never be
+replayed through the same apply path as a genuine selection."* One adjacent check done before
+implementing: `user_initiated=False` (automatic rotation, automatic cover-theme changes) is a
+real, separate flag from `hover` and was confirmed to never conflict with it — every automatic-change
+call site always passes `hover=False`, so the hover-only discard check can't accidentally swallow
+a legitimate automatic theme change.
+
+### Live verification — both fixes together, not just reasoned to compose
+
+Per explicit instruction, the two fixes were verified running together over a real 15-minute mixed
+interaction session (03:00–03:15), not just argued to be compatible. Log analysis: 55 hover-flagged
+stashes correctly discarded across all three drain sites (54 via `_on_fade_finished`, 1 via
+`snap_theme_forward`) with zero reaching the apply path; zero occurrences of the actual Bug 1
+signature (`hover=False` + the diagnostic `SUSPECT_MASKED_STASH=True` marker). 15 occurrences of
+`SUSPECT_MASKED_STASH=True` did appear, but all 15 were `hover=True` — traced and found to be a
+false-positive gap in the diagnostic marker itself (it doesn't distinguish "guard blocked a real
+pending apply" from "guard correctly no-op'd a redundant hover re-entry," and only non-hover
+applies ever update the `_theme_ever_applied` comparison value, so any hover no-op will always look
+like a mismatch even when it's completely benign). This is a diagnostic-precision gap only — it
+does not affect app behavior — logged as a follow-up in TODO.md, not fixed this session.
+
+**Diagnostic logging from this investigation (`[GUARD-MASK-TRACE]`, `[FADE-FINISHED-TRACE]`,
+`[SNAP-DRAIN-TRACE]`, `_theme_ever_applied`) is deliberately left in place**, per explicit
+instruction — useful for confirming the fix holds under future real usage, and for diagnosing the
+`SUSPECT_MASKED_STASH` false-positive follow-up.
+
+---
+
 ## Theme-bleed: two independent causes found and closed via a read-only audit + two fix passes; hover-pulsate confirmed gone live, one of at least three causes still open, and a new responsiveness regression is unexplained (2026-07-20)
 
 **Context:** theme-bleed (hover-preview colors leaking into `content_container`/`main_window`) had
