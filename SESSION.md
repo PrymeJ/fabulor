@@ -1,3 +1,37 @@
+## Session Summary — 2026-07-21 Session 8 — The "heartbeat"'s second trigger finally identified (the blur grab's panel hide/show) and fixed; STEP-0 log forensics disproved the assumed discriminator before the fix was written
+
+The spurious-`enterEvent` "heartbeat" (repeated enter/leave on a stationary cursor over a theme
+swatch, driving spurious hover previews) had been open since 2026-07-20 with an unidentified "second
+trigger" — the existing `_spurious_enter_guard_until` guard only caught the `setStyleSheet`-cascade
+trigger. The user asked whether it needed investigation (they hadn't seen it manifest lately).
+
+Started with read-only log forensics on the live `[ENTEREVENT-TRACE]` logging (left in `title_bar.py`
+for exactly this). Findings, in order: (1) the guard's SUPPRESSED count was 0 across all logs — it
+never fires; every synthetic enter is PASSED. (2) The heartbeat correlates 1:1 with the transport-bar
+blur grab (`_grab_and_blur`) actually running (`COMPOSITED` ticks) while the cursor rests on a swatch
+— the same panel-hide/show mechanism as Session 7's tassel-cursor bug (`ThemeItem`s are children of
+the settings panel the grab hides). (3) The reason the user "hasn't seen it": the hover gate (added
+2026-07-20, gates the grab on `_is_hover_active`) suppresses most grabs during hover, dampening — not
+fixing — the trigger; grabs that slip through still fire it.
+
+**STEP 0 (the load-bearing precondition, per plan-review):** before writing any fix, added a
+temporary `vis={isVisible()}` field to the trace and reproduced the heartbeat. This DISPROVED the
+assumed fix: all 15 synthetic enters logged `vis=True` — the tassel's `isVisible()`-at-enter check
+does NOT transfer to `ThemeItem` (the panel is already re-shown by enter time). But the same trace
+revealed the CORRECT discriminator: the immediately-preceding `leaveEvent` fired while `not
+isVisible()` (the hide), 15/15 synthetic vs. `vis=True` for every genuine mouse-out. Fix: record
+`_last_leave_was_synthetic = not isVisible()` in `leaveEvent`, and drop the enter in `enterEvent`
+when that flag is set and the cursor hasn't moved. Composes with the kept `setStyleSheet`-cascade
+guard. Verified live: 10 synthetic enters suppressed, 0 surviving heartbeat, 33 genuine hovers
+unaffected. `1a00abd`. The `[ENTEREVENT-TRACE]`/`vis=` logging is left in for soak-verification.
+
+The load-bearing process lesson: STEP 0 was explicitly required (not treated as a formality) because
+`ThemeItem` and `TasselOverlay` are different widget types at different panel depths — and it
+directly caught a fix that would have been a silent no-op. This is the third time this session that
+"confirm the mechanism against THIS widget/call site before assuming the pattern transfers" paid off.
+
+---
+
 ## Session Summary — 2026-07-21 Session 7 — Sleep/Speed preset-button hover gap (pre-existing), plus the Timeline tassel's blur-shaky cursor and an over-wide hit zone
 
 User-reported: after "last night's changes to button types," the Sleep panel's time-preset buttons

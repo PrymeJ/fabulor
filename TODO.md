@@ -85,45 +85,25 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   several 5+ minute stretches) is still the bar for calling this fully closed. Keep as pending until
   that soak test happens. This was a real, separate bug from the punch-through-flash item below —
   the two got conflated in earlier drafts of this TODO/NOTES.
-- **[2026-07-21] `blur-composited-overlay`'s punch-through flash / spurious-`enterEvent` heartbeat —
-  NOT VISIBLE in latest live testing, but NOT confirmed fixed.** User's own framing, load-bearing:
-  "No visible heartbeats anymore. Not saying the bug is not there anymore, but it is not visible."
-  Treat as unresolved/unknown mechanism, not closed — nothing in this session touched the
-  `_apply_stylesheets`/`ThemeItem` cascade or the `_spurious_enter_guard_until` guard described
-  below, so there's no known code change that would explain the symptom disappearing; it may be
-  genuinely gone, may be timing/window-focus-state dependent, or may just not have been triggered by
-  this session's usage pattern. The polling timer (`_REFRESH_INTERVAL_MS`) this entry originally
-  referenced no longer exists (removed in the event-driven rework), and the underlying collision
-  mechanism (a real, event-driven `main_window.grab()` landing right after a restyle, colliding with
-  Qt's post-restyle repaint/repolish backlog — measured live, outliers up to 357ms) was never fixed,
-  only reduced in frequency. **Whether it was the live main window or the overlay's own grabbed
-  pixmap doing the visible flashing was never confirmed.** Deferred per explicit instruction — revisit
-  later, not now. If it resurfaces, resume from: (1) confirm exactly what's flashing (live window vs.
-  grabbed pixmap); (2) re-check whether the spurious-`enterEvent` mechanism below is still firing
-  even without a visible symptom (the diagnostic logging was left in place specifically for this).
-- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — mechanism-level status
-  unchanged this session (see the punch-through-flash entry above for the latest visibility report).**
-  Two theories were tested and the first was disproven outright (NOT just unconfirmed):
-  `update_theme_list_visuals()`'s `unpolish()`/`polish()` calls were NOT the cause — a fix targeting
-  them was shipped and its own instrumentation showed `repolished 0/58 buttons` on every cycle while the
-  spurious `enterEvent` kept firing identically. A second, real cause was found via checkpoint-level log
-  tracing: `settings_panel.setStyleSheet()` inside `_apply_stylesheets` (`theme_manager.py`) forces a
-  style cascade through the whole settings_panel subtree — including every `ThemeItem` — re-evaluating
-  hit-testing and firing a spurious `leaveEvent`+`enterEvent` pair (confirmed genuinely indistinguishable
-  from a real quick leave-and-return by event shape alone — leave-presence is NOT a reliable signal on
-  its own). A guard against THIS trigger was added: `main_window._spurious_enter_guard_until` (a
-  `perf_counter()` deadline, set/cleared via `try/finally` around the `setStyleSheet()` call) combined
-  with a cursor-position match against `ThemeItem`'s own last `leaveEvent` position. **This does not fix
-  the bug.** Live-verified the guard correctly suppresses this one trigger when it fires, but a SECOND,
-  distinct spurious leave/enter pair still fires on the alternating cycles, confirmed NOT caused by
-  either `_apply_stylesheets(hover=True)` or `hover=False)` call (it fires before the next `hover=True`
-  restyle even begins) — since either trigger alone reproduces the full symptom, the bug is unresolved.
-  Correlates with two back-to-back `_on_theme_changed: EARLY-RETURN no-op guard` lines for the
-  already-active theme immediately beforehand — candidate causes not yet checked: the 700ms
-  `_panel_guard_timer` retry mechanism, or something else. Diagnostic logging (`[ENTEREVENT-TRACE]` in
-  `title_bar.py`, both suppressed and passed-through cases) is deliberately left in place — needed to
-  find the second trigger, do not remove. See NOTES.md for full trace excerpts. Still amplifying the
-  punch-through-flash collision.
+- **[2026-07-21] Spurious-`enterEvent` heartbeat — BOTH triggers now identified and fixed; the
+  underlying punch-through-FLASH collision is a separate, still-open item (below).** The heartbeat
+  (spurious repeated enter/leave on a stationary cursor over a `ThemeItem`, each spurious enter
+  emitting `hovered()` → unwanted preview) had two triggers: (1) the `setStyleSheet`-cascade in
+  `_apply_stylesheets` (guarded by `_spurious_enter_guard_until` since 2026-07-20, kept); (2) the
+  transport-bar blur grab (`_grab_and_blur`) hiding/re-showing the settings panel every tick —
+  identified 2026-07-21 via `[ENTEREVENT-TRACE]` log forensics and fixed (`1a00abd`, see NOTES.md +
+  SESSION.md Session 8). The fix records `_last_leave_was_synthetic = not isVisible()` in
+  `ThemeItem.leaveEvent` and drops the enter when that flag + `pos_matches` hold. Verified live: 10
+  synthetic suppressed, 0 surviving heartbeat, 33 genuine hovers unaffected. `[ENTEREVENT-TRACE]`/
+  `vis=` logging left in for soak-verification (remove after a clean soak). **What remains OPEN,
+  separately:** the punch-through-FLASH itself — the underlying collision of a real, event-driven
+  `main_window.grab()` landing right after a restyle against Qt's post-restyle repaint/repolish
+  backlog (measured live, outliers up to 357ms). That was never fixed, only reduced in frequency
+  (event-driven rework) and de-amplified (the heartbeat that used to drive extra spurious restyles
+  is now cut). **Whether the visible flash is the live main window or the overlay's grabbed pixmap
+  was never confirmed** — resume there if it resurfaces: (1) confirm what's flashing (live vs.
+  grabbed pixmap); (2) the heartbeat is no longer a contributing amplifier, so any remaining flash
+  is the raw grab-vs-restyle timing collision alone.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches

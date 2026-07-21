@@ -1,3 +1,49 @@
+## Heartbeat second trigger = the blur grab's panel hide/show; the assumed isVisible() fix was disproven by STEP-0 forensics, corrected to leave-time visibility (2026-07-21)
+
+**The bug:** the "heartbeat" — spurious repeated `enterEvent`/`leaveEvent` on a `ThemeItem` theme
+swatch with the cursor stationary, each spurious enter emitting `hovered()` and starting an unwanted
+hover preview (and amplifying the punch-through flash). Open since 2026-07-20 with a known-but-
+unidentified "second trigger"; the existing `_spurious_enter_guard_until` guard only ever caught the
+`setStyleSheet`-cascade trigger (and, per the logs, never actually fired — SUPPRESSED count 0).
+
+**Second trigger identified via log forensics:** the transport-bar blur grab
+(`transport_bar_blur._grab_and_blur`) hides then re-shows the whole settings panel on every grab tick
+(to snapshot the transport bar behind it — the same load-bearing hide/show behind Session 7's tassel-
+cursor bug). `ThemeItem` swatches are children of that panel, so the hide fires a synthetic
+`leaveEvent` and the re-show a synthetic `enterEvent` at the same cursor position, no mouse movement.
+This fires OUTSIDE the `_spurious_enter_guard_until` window, so that guard can't catch it. Confirmed
+by 1:1 correlation in the logs between heartbeat `pos_matches=True` enters and `refresh_dirty ...
+COMPOSITED` (grabs that actually ran). The hover gate (gates the grab on `_is_hover_active`) dampens
+but doesn't fix it — grabs that slip through when hover is momentarily inactive still fire it, which
+is why it was intermittent and the user "hadn't seen it."
+
+**STEP 0 disproved the assumed fix (the load-bearing part):** the plan was to reuse Session 7's
+tassel fix — drop the synthetic enter when `not isVisible()`. Before writing it, a temporary
+`vis={isVisible()}` field was added to `[ENTEREVENT-TRACE]` and the heartbeat reproduced. Result: **all
+15 synthetic enters logged `vis=True`.** `ThemeItem` is a different widget type at a different panel
+depth than `TasselOverlay`; by the time its synthetic `enterEvent` fires, the panel is already
+re-shown, so `isVisible()` AT ENTER TIME reads True — the tassel pattern is a silent no-op here. This
+is exactly why STEP 0 was made a required precondition rather than an assumption.
+
+**The correct discriminator (from the same trace):** the immediately-preceding `leaveEvent`'s
+visibility. Pairing every leave→enter across the repro was clean: `leaveEvent vis=False` → next
+`enterEvent pos_matches=True` for EVERY synthetic case (the panel-hide fires the leave while the
+widget is momentarily hidden), and `leaveEvent vis=True` → `enterEvent pos_matches=False` for every
+genuine case. Fix: record `self._last_leave_was_synthetic = not self.isVisible()` in `leaveEvent`
+(NOT `isVisible()` at enter), and in `enterEvent` drop the enter (no `hovered.emit`, no `super()`)
+when `_last_leave_was_synthetic and pos_matches`; reset the flag to False on a genuine enter so a
+stale True can't suppress a later real hover. Composes with — does not replace — the kept
+`setStyleSheet`-cascade guard (two synthetic-drop conditions, two distinct triggers). Verified live:
+10 synthetic suppressed, 0 surviving heartbeat, 33 genuine hovers unaffected. `1a00abd`.
+`[ENTEREVENT-TRACE]`/`vis=` logging left in for soak-verification.
+
+**General lesson (reinforced):** when reusing a fix pattern (here, "drop synthetic events via
+`isVisible()`") on a different widget, confirm the mechanism holds for THAT widget before writing the
+fix — same-shaped mechanisms can differ in load-bearing timing details (enter-time vs. leave-time
+visibility). STEP 0 caught a no-op that would otherwise have shipped as a "fix."
+
+---
+
 ## Blur toggle now applies live to the open Settings panel; the Off→On cover-image asymmetry explained (2026-07-21)
 
 The Settings > Blur On/Off toggle only wrote config (`_update_blur_mode` → `config.set_blur_enabled`
