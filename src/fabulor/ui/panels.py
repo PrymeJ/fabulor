@@ -328,6 +328,7 @@ class PanelManager:
                 self.settings_panel_animation.finished.disconnect(_on_settings_slide_finished)
             except (TypeError, RuntimeError):
                 pass
+            self._apply_transport_bar_blur(self.settings_panel)
 
         self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
         self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
@@ -345,7 +346,6 @@ class PanelManager:
             self.blur_animation.start()
         else:
             self.blur_effect.setBlurRadius(0)
-        self._apply_transport_bar_blur(self.settings_panel)
 
     def _open_speed_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -376,13 +376,21 @@ class PanelManager:
 
         self.speed_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.speed_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_speed_slide_finished():
+            try:
+                self.speed_panel_animation.finished.disconnect(_on_speed_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.speed_panel)
+
+        self.speed_panel_animation.finished.connect(_on_speed_slide_finished)
         self.speed_panel_animation.start()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
             self.blur_animation.start()
-        self._apply_transport_bar_blur(self.speed_panel)
 
     def _on_sidebar_closed_for_panel(self):
         """Handler for sidebar animation finishing when a panel needs to open.
@@ -555,6 +563,15 @@ class PanelManager:
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_stats_slide_finished():
+            try:
+                self.stats_panel_animation.finished.disconnect(_on_stats_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.stats_panel)
+
+        self.stats_panel_animation.finished.connect(_on_stats_slide_finished)
         self.stats_panel_animation.start()
 
         if self.config.get_blur_enabled():
@@ -563,7 +580,6 @@ class PanelManager:
             self.blur_animation.start()
         else:
             self.blur_effect.setBlurRadius(0)
-        self._apply_transport_bar_blur(self.stats_panel)
 
     def _open_sleep_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -593,13 +609,21 @@ class PanelManager:
 
         self.sleep_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_sleep_slide_finished():
+            try:
+                self.sleep_panel_animation.finished.disconnect(_on_sleep_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.sleep_panel)
+
+        self.sleep_panel_animation.finished.connect(_on_sleep_slide_finished)
         self.sleep_panel_animation.start()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
             self.blur_animation.start()
-        self._apply_transport_bar_blur(self.sleep_panel)
 
     def _close_sleep_flow(self):
         """Slides the sleep panel back out."""
@@ -686,12 +710,20 @@ class PanelManager:
         self._claim_panel_focus(self.tags_panel)
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_tags_slide_finished():
+            try:
+                self.tags_panel_animation.finished.disconnect(_on_tags_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.tags_panel)
+
+        self.tags_panel_animation.finished.connect(_on_tags_slide_finished)
         self.tags_panel_animation.start()
         if mw.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(8)
             self.blur_animation.start()
-        self._apply_transport_bar_blur(self.tags_panel)
 
     def _close_tags_flow(self):
         if self.tags_panel_animation.state() == QAbstractAnimation.State.Running:

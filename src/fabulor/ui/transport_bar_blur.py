@@ -26,9 +26,12 @@ twinkly-kay.md, for the full design rationale):
      already trigger. Dirty sub-rects accumulate into one QRect.united() union;
      only that union is re-grabbed, re-blurred, and patched into the overlay
      (not the whole bounding rect every time).
-  3. On panel-close: the fallback behavior — the overlay stays static through
-     the slide-out, then is torn down entirely once the close animation
-     finishes. No live-tracking during the slide (deferred per the plan).
+  3. On panel-open, the overlay fades in (opacity 0->1) once it's shown, so
+     the transport bar doesn't blur-in instantly. On panel-close: torn down
+     immediately at the START of the close animation (not the end) so the
+     transport bar returns to live view right away instead of staying blurred
+     through the whole slide-out. No live-tracking during either transition
+     (deferred per the plan).
 
 vol_stack (sleep_timer_label / volume_slider / muted_icon_label) is a
 QStackedWidget where only one page is ever actually shown — an inactive page
@@ -41,13 +44,16 @@ page can change while a panel stays open.
 import logging
 import time
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
-from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsScene, QLabel
+from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel
 
 logger = logging.getLogger(__name__)
 
 _BLUR_RADIUS = 5.0
+# Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
+# transport bar snaps back to live view the moment the panel starts closing.
+_FADE_IN_MS = 1500
 
 # HISTORY: this used to be a fixed-interval QTimer poll (_REFRESH_INTERVAL_MS,
 # last value 1200ms, previously tuned through a two-tier attempt that was tried
@@ -208,6 +214,18 @@ class TransportBarBlurOverlay:
         self._overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._overlay.hide()
 
+        # Fade-in only (see _FADE_IN_MS). Dismiss (hide_for_panel) sets the
+        # opacity effect's own opacity back to 1.0 and tears it down instantly
+        # — no animation on the way out.
+        self._opacity_effect = QGraphicsOpacityEffect(self._overlay)
+        self._opacity_effect.setOpacity(1.0)
+        self._overlay.setGraphicsEffect(self._opacity_effect)
+        self._fade_in_anim = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._fade_in_anim.setDuration(_FADE_IN_MS)
+        self._fade_in_anim.setStartValue(0.0)
+        self._fade_in_anim.setEndValue(1.0)
+        self._fade_in_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         self._tracker: _DirtyRectTracker | None = None
         self._tracker_widgets: list = []  # widgets the tracker's filter is actually
                                            # installed on — NOT recomputed via
@@ -328,8 +346,12 @@ class TransportBarBlurOverlay:
         t_grab_blur_done = time.perf_counter()
         self._overlay.setPixmap(blurred)
         self._overlay.setGeometry(self._bounding_rect)
+        self._opacity_effect.setOpacity(0.0)
         self._overlay.show()
         self._overlay.raise_()
+        if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
+            self._fade_in_anim.stop()
+        self._fade_in_anim.start()
         t_blit_done = time.perf_counter()
 
         self._tracker = _DirtyRectTracker(
@@ -476,10 +498,13 @@ class TransportBarBlurOverlay:
             self._tracker.take_dirty_union()  # this pass already covers everything just grabbed
 
     def hide_for_panel(self):
-        """Fallback slide-out behavior: tear down unconditionally. Called from
-        the panel's *_hidden handler (after the close animation finishes), not
-        during the slide itself — see the accepted plan's §6 for why live-
-        dissolve-during-slide is deferred, not implemented here."""
+        """Tear down unconditionally, instantly — no fade on the way out. Called
+        from the panel's *_close_flow (at the START of the close animation, not
+        after it finishes), so the transport bar returns to live view right away
+        instead of staying blurred through the whole slide-out — see the accepted
+        plan's §6 for why live-dissolve-during-slide is deferred, not implemented
+        here. Any in-flight fade-IN (see show_for_panel) is stopped and opacity
+        reset to 1.0 so the next show_for_panel starts from a clean state."""
         logger.warning(
             f"[TIMER-TRACE] hide_for_panel ENTRY active={self._active} "
             f"active_panel={self._active_panel.objectName() if self._active_panel else None!r} "
@@ -487,6 +512,9 @@ class TransportBarBlurOverlay:
             f"tick_count_this_session={getattr(self, '_refresh_tick_count', 0)}"
         )
         self._refresh_tick_count = 0
+        if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
+            self._fade_in_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
         # No timer to .stop() anymore (event-driven, not polled — see
         # _DirtyRectTracker's docstring). Any already-armed singleShot(0) from a
         # paint that happened right before close will still fire once, but
