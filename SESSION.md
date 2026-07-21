@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-21 Session 7 — Sleep/Speed preset buttons had no hover/pressed feedback — a pre-existing gap in the per-button alpha-ramp stylesheet, not a regression
+## Session Summary — 2026-07-21 Session 7 — Sleep/Speed preset-button hover gap (pre-existing), plus the Timeline tassel's blur-shaky cursor and an over-wide hit zone
 
 User-reported: after "last night's changes to button types," the Sleep panel's time-preset buttons
 and the Speed panel's speed-preset buttons lost hover styling, while "End of chapter" and "Set" still
@@ -25,6 +25,24 @@ other button in these panels. Same fix, same shape, in both files. Committed `8f
 No new CLAUDE.md rule — this wasn't a hard-won regression to guard against going forward, just a
 long-standing display gap now closed; the `pytest tests/ -q` baseline (same 4 pre-existing
 `test_cover_theme_pending.py` failures) was unaffected, as expected for a pure QSS-string change.
+
+**Also this session — the deferred Timeline-tassel cursor follow-up (from Session 6's blur work),
+plus a hit-zone tuning.** The tassel's hand cursor went "shaky" under blur (steady with blur off).
+Investigated live-first with a temporary `[TASSEL-CURSOR]` log probe on the tassel's
+`mouseMoveEvent`/`leaveEvent`/`enterEvent`: the smoking gun was 85 `leaveEvent vis=False` vs. exactly
+1 `leaveEvent vis=True` across a single hover. Mechanism: `TasselOverlay` uses a DYNAMIC cursor (set
+in `mouseMoveEvent` inside `_in_hit_region`, cleared in `leaveEvent`), and the transport-bar blur's
+`_grab_and_blur` hides+re-shows the whole Stats panel ~5×/sec to grab behind it — each hide delivers
+a SYNTHETIC `leaveEvent` to the descendant tassel while it's mid-hide (`isVisible()` False), clearing
+the hand cursor, with no `mouseMoveEvent` on re-show to restore it. Fix: guard `leaveEvent`'s
+`unsetCursor()` on `self.isVisible()`, so only a genuine mouse-out (fired while still visible) clears
+the hand; the synthetic hide-driven leaves are ignored and the cursor survives the churn (`537f018`).
+This is a tassel-local fix — it composes with, and doesn't touch, Session 6's override-cursor fix in
+`_grab_and_blur`. Separately, the tassel's clickable/hand hit zone was too wide to the right (~8px of
+sway slack past the visible fringe): decoupled the right-side slack from the shared sway slack and
+pulled the right hit edge to 1px inside the visible fringe (`right_slack = -1`), tuned live over two
+rounds; left edge, tab rect, and vertical tolerance unchanged (`8955a2d`). The TODO.md tassel
+follow-up item (opened Session 6) is now resolved and removed.
 
 ---
 

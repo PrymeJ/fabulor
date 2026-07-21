@@ -1,3 +1,49 @@
+## Timeline tassel cursor went shaky under blur — synthetic leaveEvent from the blur grab's panel hide, cleared its dynamic hand cursor 5×/sec (2026-07-21)
+
+**Symptom:** the Timeline tassel's hand cursor was steady with blur OFF but "shaky" with blur ON —
+flipping hand↔arrow while the pointer rested motionless on it. This was the deferred follow-up from
+Session 6's general cursor-fluctuation fix (`906fa4a`), which did NOT resolve the tassel because the
+tassel is architecturally different from the Stats book rows that fix addressed.
+
+**Why the general fix didn't cover it:** `BookDayRow` etc. use a STATIC `setCursor(PointingHandCursor)`
+(a persistent widget property), so pinning an override cursor across `_grab_and_blur`'s hide/show was
+enough. `TasselOverlay` uses a DYNAMIC cursor — `setCursor(hand)` in `mouseMoveEvent` while inside
+`_in_hit_region`, `unsetCursor()` in `leaveEvent` — re-asserted only on mouse movement. So the
+override-pin preserved whatever shape was resolved at grab time, but couldn't fix a cursor the
+tassel's own logic had already cleared.
+
+**Investigation (live-first, temporary `[TASSEL-CURSOR]` log probe on `mouseMoveEvent`/`leaveEvent`/
+`enterEvent`):** the smoking gun was the leave-event counts across one hover — **85 `leaveEvent
+vis=False` vs. exactly 1 `leaveEvent vis=True`**. The `vis=False` is decisive: those leaves fire
+while the tassel is mid-hide, i.e. they're SYNTHETIC, delivered by Qt as a side effect of the panel
+being hidden — not real mouse-outs. Full mechanism: `transport_bar_blur._grab_and_blur` hides then
+re-shows the whole Stats panel ~5×/sec (to grab the transport bar behind it); the tassel is a
+descendant of that panel, so each hide delivers it a synthetic `leaveEvent` (`isVisible()` False) →
+`unsetCursor()` clears the hand → the re-show fires a synthetic `enterEvent` but NOT a
+`mouseMoveEvent` (the mouse didn't move), so nothing restores the hand. Net: the hand cursor is
+cleared and only briefly recovered, 5×/sec — the shakiness.
+
+**The clean discriminator:** a GENUINE mouse-leave fires while the widget is still visible
+(`isVisible()` True — the single `vis=True` leave in the trace, when the pointer actually left the
+tassel); the blur-induced synthetic leave fires mid-hide (`isVisible()` False). So `self.isVisible()`
+in `leaveEvent` cleanly tells the two apart.
+
+**Fix:** guard `TasselOverlay.leaveEvent`'s `unsetCursor()` on `self.isVisible()` — only clear the
+hand on a real mouse-out; ignore the synthetic hide-driven leaves so the cursor survives the
+hide/show churn. Tassel-local, doesn't touch the blur code, composes with Session 6's override-cursor
+fix. Verified live: steady hand on the tassel under blur, correct arrow on a genuine mouse-out, click
+and extended-tassel hover still correct (`537f018`). General lesson worth remembering: a widget with a
+DYNAMIC (mouseMove-driven) cursor is vulnerable to any code elsewhere that hides/shows an ancestor,
+because the resulting synthetic leave clears the cursor with no movement to restore it — guarding the
+`leaveEvent` on `isVisible()` is the fix pattern.
+
+Separately, same session: the tassel's clickable/hand hit zone was too wide to the right — ~8px of
+sway slack (`int(KICK_AMP)+2`) extended past the visible fringe edge. Decoupled the right-side slack
+from the shared sway slack (`right_slack`, tuned live to `-1`, i.e. 1px inside the visible fringe);
+left edge, `_tab_rect`, and vertical sway tolerance unchanged (`8955a2d`).
+
+---
+
 ## Sleep/Speed preset buttons had no hover/pressed feedback — pre-existing, not a regression (2026-07-21)
 
 **Symptom:** user reported the Sleep panel's time-preset buttons (2 min, 5 min, ... 90 min) and the

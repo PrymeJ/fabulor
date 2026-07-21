@@ -6,22 +6,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-21] Timeline tassel's hit-zone cursor is "shaky" specifically when blur is on — same
-  hide/show churn as the just-fixed cursor-fluctuation bug, but a different mechanism, not yet
-  fixed.** Follow-up from the cursor-fluctuation fix (`906fa4a`, see NOTES.md): with blur OFF, the
-  tassel's hover cursor is steady; with blur ON, it becomes shaky. The general fluctuation (Stats
-  book rows, etc.) is fixed by pinning an override cursor across `_grab_and_blur`'s panel
-  hide/show, but the tassel is architecturally different — `TasselOverlay` sets/unsets its cursor
-  dynamically inside `mouseMoveEvent` via `_in_hit_region()` (not a static `setCursor()` on the
-  whole widget), so it only reads as hand while the mouse is actively moving within the hit
-  region; confirmed live (`[CURSOR-TRACE]` probe) that even motionless-and-resting-on-tassel reports
-  `cursor_shape=0` (arrow) before any hide/show churn. The override-cursor fix pins whatever shape
-  was resolved AT THE MOMENT of the grab, so if the tassel's own dynamic logic hasn't (yet) set hand
-  at that instant, the pin correctly preserves arrow — the override isn't wrong, but it can't fix a
-  cursor that the tassel's own hit-test hadn't set to hand in the first place. Needs investigation
-  into whether the hide/show cycle itself is interfering with `_in_hit_region()`'s own mouseMoveEvent
-  delivery (a synthetic leave/enter from the panel hide could be reaching `TasselOverlay` even though
-  it's not the panel being hidden) before deciding a fix. Not started.
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
   investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
