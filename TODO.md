@@ -6,6 +6,15 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] Transport-bar blur scope: cover art area needs the same clip/blur treatment as the
+  bottom (transport) part — deferred, blocked on the placeholder-text rehaul.** Currently
+  `TransportBarBlurOverlay` only tracks the mini transport bar (chapter label, chapter progress,
+  time labels, transport buttons, speed button, vol_stack) — the cover art area is out of scope
+  entirely. Per the user, the cover art region should eventually get the same bounding-rect/clip
+  treatment `_apply_transport_bar_blur` already gives the bottom part, but this is intentionally
+  pending until the cover-art placeholder text is reworked first (no-cover-book state) — doing the
+  blur scoping before that rehaul would mean redoing the bounding-rect/geometry work once the
+  placeholder layout changes underneath it. Not started.
 - **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
   later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
   the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
@@ -15,14 +24,18 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   `_theme_ever_applied` comparison value it checks against. Diagnostic-precision issue only — does
   not affect app behavior, both real fixes are confirmed working via the same session's log. Full
   detail: NOTES.md, "Guard-masking bug ... and hover-preview confinement" entry, 2026-07-21.
-- **[2026-07-20] Theme-bleed: two of (at least) three independent causes closed this session
-  (state-read bypass in `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`) — user
-  confirmed the visible bleed is gone, but reported general responsiveness is now slow. Not
-  soak-verified; responsiveness regression not yet triaged.** Full root-cause detail, the audit
-  trail, and the fix mechanism for both passes: NOTES.md, "Theme-bleed Pass 1 + Pass 2" entry,
-  2026-07-20. Session narrative: SESSION.md, Session 3, 2026-07-20. Candidate follow-up (not
-  started): the new responsiveness complaint may be the hover gate's decline path adding overhead
-  elsewhere, or may be unrelated — needs live profiling, not assumed.
+- **[2026-07-21] Theme-bleed: VERIFIED FIXED with blur ON, not yet soak-tested.** Two of (at
+  least) three independent causes were closed 2026-07-20 (state-read bypass in
+  `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`). User has now explicitly tested
+  and confirmed this live with blur ON (not the earlier blur-OFF-only tests that couldn't have
+  caught it) — no bleed observed. Not a soak test yet (short/targeted session, not sustained
+  multi-minute+ repeated cycling), so keep as pending rather than closed until a longer soak
+  confirms it holds. Full root-cause detail, the audit trail, and the fix mechanism for both
+  passes: NOTES.md, "Theme-bleed Pass 1 + Pass 2" entry, 2026-07-20. Session narrative: SESSION.md,
+  Session 3, 2026-07-20. Separately, still open: general responsiveness was reported slow after
+  this fix landed — not soak-related, not yet triaged. Candidate follow-up (not started): the new
+  responsiveness complaint may be the hover gate's decline path adding overhead elsewhere, or may
+  be unrelated — needs live profiling, not assumed.
 - **[2026-07-20] `refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick — candidate
   mechanism for the still-open frozen-overlay bug below, NOT investigated or touched this
   session.** Found while implementing the hover gate above. Detail: NOTES.md, same entry as above.
@@ -36,33 +49,35 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   by accident, not reliably reproducible. See NOTES.md for full detail; investigation in progress
   (static analysis + permanent timer-lifecycle logging, per the user's explicit direction not to rely
   on live repro as the primary method).
-- **[2026-07-20] "Hovered theme bleeds into the whole live main window" — a code change EXISTS
-  (uncommitted, `theme_manager.py`, `complete_main_fade()`) but is UNVERIFIED, not fixed. See NOTES.md
-  — the entry previously here said "FIXED"/"live-verified," which was wrong: every test that reported
-  "no issues" was run with blur OFF, which was already independently known (before this code change
-  existed) to eliminate the bug regardless of any other change. There is no test of this change under
-  blur ON — the only condition under which the bug reproduces at all. The bug also does not reproduce
-  reliably (sometimes immediate, sometimes ~5 minutes per the user), so even a short blur-on test
-  session would not be strong evidence either way. Needs an actual soak test (blur on, repeated
-  hover+panel-open cycles, several 5+ minute stretches) before this can be called verified. This was a
-  real, separate bug from the punch-through-flash item below — the two got conflated in earlier drafts
-  of this TODO/NOTES.
-- **[2026-07-20] `blur-composited-overlay`'s punch-through flash is still OPEN — the polling timer
-  (`_REFRESH_INTERVAL_MS`) this entry originally referenced no longer exists (removed in the
-  event-driven rework, see below), but the underlying collision itself is unresolved.** A single
-  hover-and-hold over one theme swatch can still land a real, event-driven `main_window.grab()` call
-  right after a real restyle, colliding with Qt's post-restyle repaint/repolish backlog (measured live,
-  same session: outliers up to 357ms). The event-driven rework removed the *unnecessary* polling-driven
-  collisions, not this residual one — never claimed to. **Whether it's the live main window or the
-  overlay's own grabbed pixmap doing the visible flashing was never confirmed** — resolve that before
-  trusting any prior diagnosis as complete. Candidate next steps, not yet started: (1) confirm exactly
-  what's flashing (live window vs. grabbed pixmap); (2) now that the spurious-`enterEvent` bug's
-  mechanism is understood (see below) and is confirmed to be driving far more restyle cycles than
-  normal use would, fixing THAT first may make this residual collision rare enough to be a non-issue in
-  practice — worth re-measuring after that fix lands, before investing further here.
-- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — STILL OPEN, NOT FIXED. Do not
-  report this as resolved or improved from the user's perspective — the heartbeat still reproduces in
-  full.** Two theories were tested and the first was disproven outright (NOT just unconfirmed):
+- **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
+  ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously
+  uncommitted/unverified — every earlier "no issues" report had been run with blur OFF, which was
+  already independently known to mask this bug regardless of the fix) has now been explicitly
+  tested and confirmed live by the user WITH blur ON. Since the bug's own reproduction was
+  inconsistent (sometimes immediate, sometimes ~5 minutes), a single positive session is real
+  evidence but not conclusive — an actual soak test (blur on, repeated hover+panel-open cycles,
+  several 5+ minute stretches) is still the bar for calling this fully closed. Keep as pending until
+  that soak test happens. This was a real, separate bug from the punch-through-flash item below —
+  the two got conflated in earlier drafts of this TODO/NOTES.
+- **[2026-07-21] `blur-composited-overlay`'s punch-through flash / spurious-`enterEvent` heartbeat —
+  NOT VISIBLE in latest live testing, but NOT confirmed fixed.** User's own framing, load-bearing:
+  "No visible heartbeats anymore. Not saying the bug is not there anymore, but it is not visible."
+  Treat as unresolved/unknown mechanism, not closed — nothing in this session touched the
+  `_apply_stylesheets`/`ThemeItem` cascade or the `_spurious_enter_guard_until` guard described
+  below, so there's no known code change that would explain the symptom disappearing; it may be
+  genuinely gone, may be timing/window-focus-state dependent, or may just not have been triggered by
+  this session's usage pattern. The polling timer (`_REFRESH_INTERVAL_MS`) this entry originally
+  referenced no longer exists (removed in the event-driven rework), and the underlying collision
+  mechanism (a real, event-driven `main_window.grab()` landing right after a restyle, colliding with
+  Qt's post-restyle repaint/repolish backlog — measured live, outliers up to 357ms) was never fixed,
+  only reduced in frequency. **Whether it was the live main window or the overlay's own grabbed
+  pixmap doing the visible flashing was never confirmed.** Deferred per explicit instruction — revisit
+  later, not now. If it resurfaces, resume from: (1) confirm exactly what's flashing (live window vs.
+  grabbed pixmap); (2) re-check whether the spurious-`enterEvent` mechanism below is still firing
+  even without a visible symptom (the diagnostic logging was left in place specifically for this).
+- **[2026-07-20] Spurious repeated `enterEvent` on a stationary cursor — mechanism-level status
+  unchanged this session (see the punch-through-flash entry above for the latest visibility report).**
+  Two theories were tested and the first was disproven outright (NOT just unconfirmed):
   `update_theme_list_visuals()`'s `unpolish()`/`polish()` calls were NOT the cause — a fix targeting
   them was shipped and its own instrumentation showed `repolished 0/58 buttons` on every cycle while the
   spurious `enterEvent` kept firing identically. A second, real cause was found via checkpoint-level log
