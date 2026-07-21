@@ -1,3 +1,44 @@
+## Session Summary — 2026-07-21 Session 4 — Chapter-dropdown colors fixed from lagging one theme change behind; second confirmed instance of a `_active_display_theme_internal` timing trap
+
+User-reported regression, investigated read-only first (per explicit instruction, plan mode) before
+any code change: after any theme change, the chapter dropdown's current-chapter highlight color
+(`dropdown_curr_chap`) was stuck showing the *previous* theme's color, deterministically, every
+time. Asked to check for other lagging consumers before fixing anything — `dropdown_time_text` was
+confirmed lagging identically by the user; a full read of `_apply_stylesheets` found no other
+affected widget.
+
+**Root cause:** every other widget in `ThemeManager._apply_stylesheets` (`theme_manager.py:1109`)
+is styled directly from the `theme_name` parameter the method was just called with. The
+chapter-list block was the sole exception — it called `self.get_current_theme()`, which resolves
+`_active_display_theme_internal`. That field is written exclusively by `_mark_theme_applied`,
+which every real call site invokes strictly *after* `_apply_stylesheets` has already returned. So
+at the moment the chapter-list block ran, it was reading the *previous* apply's theme — this call's
+own `_mark_theme_applied` hadn't fired yet. All three dropdown colors
+(`dropdown_text`/`dropdown_time_text`/`dropdown_curr_chap`) come from this one stale
+`theme_dict`, so all three lagged from the same single cause, not three separate bugs.
+
+**Fix:** the chapter-list block now resolves `theme_name` directly via `_resolve_theme(theme_name)`
+— the exact same pattern the excluded-books block a few lines further down in the same method
+already uses — instead of routing through `get_current_theme()`. One-line-shaped fix, confirmed via
+full-file audit (`grep` for `get_current_theme()` returned exactly the one call site) that nothing
+else in `_apply_stylesheets` or `_apply_stylesheets_deferred` shares the same stale-read pattern.
+Committed `6617cd1`.
+
+**Pattern flagged, not just this one bug fixed:** this is the SECOND time this write-timing fix
+(`_mark_theme_applied`, from Session 1 — moved to fire only after a confirmed apply rather than
+eagerly, to fix the guard-masking bug) has exposed a hidden downstream dependency on the old,
+earlier timing. The first was Session 1/2's `snap_theme_forward` precondition on `_fade_in_flight`.
+Noted in NOTES.md as a standing caution: anything reading theme state via
+`get_current_theme()`/`_active_display_theme_internal` must tolerate "last confirmed apply," not
+"most recent request" — flagged now so a third instance doesn't need re-diagnosing from scratch.
+
+No live UI testing needed for this fix beyond what the user already reported — the mechanism was
+confirmed entirely by reading code (four call sites, one full-method line-by-line audit), not by
+live tracing, since the bug was deterministic and the fix directly addresses the confirmed
+mechanism.
+
+---
+
 ## Session Summary — 2026-07-21 Session 3 — Transport-bar blur timing: dismiss no longer lingers through the slide-out, and appear now waits for the panel to finish opening with a fade-in
 
 Unrelated to Sessions 1-2's theme-hover work — a separate subsystem (`ui/transport_bar_blur.py`,

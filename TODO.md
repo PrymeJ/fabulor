@@ -6,6 +6,16 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
+  fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
+  investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
+  instrumentation. Not root-caused — no hypothesis yet on mechanism (candidate areas to check when
+  picked up: `chapter_list.py`'s selection/scroll handling on click, and whether this interacts
+  with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits racing the click's own
+  selection, given how many other chapter-UI bugs in this codebase have come from exactly that kind
+  of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
+  Needs live instrumentation added first to catch an occurrence with real state, before any fix is
+  attempted — do not fix blind. Not started.
 - **[2026-07-21] Settings → Blur toggle doesn't apply live to an already-open panel — should apply
   on click, not just to the next open/close.** Confirmed by reading the code, not yet fixed.
   `SettingsController._update_blur_mode` (`settings_controller.py:97`) only writes
