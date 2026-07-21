@@ -1,3 +1,50 @@
+## Sleep/Speed preset buttons had no hover/pressed feedback — pre-existing, not a regression (2026-07-21)
+
+**Symptom:** user reported the Sleep panel's time-preset buttons (2 min, 5 min, ... 90 min) and the
+Speed panel's speed-preset buttons lost hover styling "after last night's changes to button types,"
+while "End of chapter" and "Set" (in the same Sleep panel) still showed hover/pressed color clearly.
+
+**Investigation, in order:** (1) checked commit history on this branch for the last 24h touching
+`sleep_timer.py`, `speed_controls.py`, `themes.py`, `title_bar.py`, `main_window_builders.py` —
+nothing. (2) Per explicit instruction, checked out `main` read-only and compared: both files'
+button-construction code and `get_settings_stylesheet`'s QSS (the generic `QPushButton {}` /
+`QPushButton:hover {}` / `QPushButton:pressed {}` rules) are byte-for-byte identical to this branch,
+same line numbers. (3) User confirmed via screenshot that `main` shows the exact same "no style"
+behavior. This ruled out a recent regression entirely — whatever "last night's changes to button
+types" referred to, it isn't what caused this; the gap has always existed, just unnoticed until now.
+
+**Root cause, found by diffing what's different between the working buttons ("End of chapter",
+"Set") and the broken preset grids:** `SleepTimerPanel.update_panel_styling`
+(`sleep_timer.py`) and `SpeedControlsPanel.update_visuals` (`speed_controls.py`) each give every
+preset button its own **per-instance** `btn.setStyleSheet(f"background-color: rgba(...); color:
+...; border: none;")` call, to create a deliberate visual alpha ramp across the row (later
+presets more opaque than earlier ones — `alpha = int(75 + (180 * (i / (n - 1))))`). In Qt, a
+widget-level stylesheet set via `setStyleSheet()` on the widget itself takes precedence over the
+panel's own cascading QSS for that widget — and this inline stylesheet only ever specified a flat
+`background-color`, never `:hover` or `:pressed`. So every preset button in both panels has had
+**zero** hover/press visual feedback since this ramp effect was first written — a plain omission in
+the original inline-stylesheet string, not a recent break. "End of chapter"/`set_custom_btn` are
+never included in the loop that calls `setStyleSheet()` this way, so they simply keep inheriting the
+panel-level `QPushButton:hover`/`:pressed` rules normally — which is exactly why they alone showed
+the expected hover color and looked like the "correct" reference point.
+
+Same-shape confirmation: the app's OTHER preset-style button groups in `speed_controls.py` (step,
+undo, skip, long-skip, smart-wait/dur — all via `setObjectName("pattern_button")` + a
+property-driven QSS rule, never a per-instance `setStyleSheet()`) all hover correctly, matching the
+theory precisely — it's specifically the alpha-ramp buttons' per-instance stylesheet that's missing
+the states, not something about fixed-size buttons or `QGridLayout` in general (both of those were
+considered and ruled out: the main transport buttons are also `setFixedSize` and hover fine).
+
+**Fix:** extended the inline stylesheet string in both methods to include `QPushButton:hover`/
+`QPushButton:pressed` rules, computed from each button's own already-ramped color via
+`QColor.lighter(130)` (hover) and `.darker(130)` (pressed) — so the per-button alpha ramp is
+preserved exactly as designed, while every preset button now visibly responds to hover/press like
+every other button in these panels. Identical fix, same shape, applied to both
+`SleepTimerPanel.update_panel_styling` and `SpeedControlsPanel.update_visuals`. Verified live.
+Committed `8f2d15e`.
+
+---
+
 ## Cursor fluctuating hand↔arrow over panel widgets when blur is on — root-caused and fixed via live [CURSOR-TRACE] instrumentation (2026-07-21)
 
 **Symptom:** with blur ON, resting the mouse motionless over an interactive panel widget with a

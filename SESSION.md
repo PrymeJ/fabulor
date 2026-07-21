@@ -1,3 +1,33 @@
+## Session Summary — 2026-07-21 Session 7 — Sleep/Speed preset buttons had no hover/pressed feedback — a pre-existing gap in the per-button alpha-ramp stylesheet, not a regression
+
+User-reported: after "last night's changes to button types," the Sleep panel's time-preset buttons
+and the Speed panel's speed-preset buttons lost hover styling, while "End of chapter" and "Set" still
+had it. Investigated by first checking git history on this branch (no commit in the last 24h touched
+`sleep_timer.py`/`speed_controls.py`/the relevant QSS), then, per explicit instruction, checking out
+`main` read-only to compare — found byte-for-byte identical widget construction and QSS there too.
+User confirmed `main` shows the same "no style" behavior via screenshot, ruling out a recent
+regression entirely: this has always been broken, just not previously noticed.
+
+Root cause, found by comparing what differs between the working buttons ("End of chapter", "Set")
+and the broken ones (the preset grids): both `SleepTimerPanel.update_panel_styling` and
+`SpeedControlsPanel.update_visuals` give each preset button its own per-instance
+`setStyleSheet()` call to create a visual alpha ramp across the row (later presets more opaque). A
+widget-level stylesheet in Qt wins over the panel's cascading `QPushButton:hover`/`:pressed` QSS —
+and the inline stylesheet only ever set a flat `background-color`, with no `:hover`/`:pressed` rules
+at all. So these buttons have had zero hover/press feedback since the ramp effect was introduced;
+"End of chapter"/"Set" were never touched by this method and kept inheriting the panel's normal QSS.
+
+Fix: added matching `QPushButton:hover`/`QPushButton:pressed` rules to the inline stylesheet in both
+methods, using `QColor.lighter(130)`/`.darker(130)` on each button's own already-ramped color — so
+the ramp effect is preserved per-button while every preset now responds to hover/press like every
+other button in these panels. Same fix, same shape, in both files. Committed `8f2d15e`.
+
+No new CLAUDE.md rule — this wasn't a hard-won regression to guard against going forward, just a
+long-standing display gap now closed; the `pytest tests/ -q` baseline (same 4 pre-existing
+`test_cover_theme_pending.py` failures) was unaffected, as expected for a pure QSS-string change.
+
+---
+
 ## Session Summary — 2026-07-21 Session 6 — Cursor fluctuating hand↔arrow over panel widgets when blur is on, root-caused via live instrumentation and fixed
 
 Direct continuation of Session 5, same night — the cursor fluctuation was reported alongside the
