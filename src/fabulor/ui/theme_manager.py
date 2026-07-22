@@ -1601,6 +1601,39 @@ class ThemeManager(QObject):
             self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
                                     hover=False, bypass_panel_open_guard=True)
 
+    def _on_themes_tab_left(self, tab_widget):
+        """`themes_tab`'s AND `pool_container`'s leaveEvent handler (both wired in
+        main_window_builders.py as bare lambdas). Skips the unhover snapback when the
+        leave fires while `tab_widget` itself is not visible — i.e. a synthetic leave
+        caused by the transport-bar blur grab's `_active_panel.hide()`
+        (transport_bar_blur.py's `_grab_and_blur`), NOT a real mouse-out. Mirrors
+        `ThemeItem`'s own `_last_leave_was_synthetic` check (title_bar.py, the 2026-07-21
+        "heartbeat" fix) but simplified: unlike a single swatch, this tab-level widget has
+        no `enterEvent` to pair against (hover is driven entirely by each `ThemeItem.hovered`
+        signal), so there's no "same position" check to make — a real mouse-out of the whole
+        tab always happens while the tab is visible, and a leave that fires while it is NOT
+        visible is never a genuine user action to react to.
+
+        `pool_container` (the innermost container directly holding the `ThemeItem` swatch
+        grid) needed this fix too — confirmed live 2026-07-22, NOT assumed from the shared
+        lambda shape: a caller-identifying trace on `_on_theme_unhovered` showed 133/134
+        calls in one hover session came from `pool_container.leaveEvent`
+        (main_window_builders.py:768), not `themes_tab.leaveEvent` — `pool_container` is
+        the INNER widget, so its own `leaveEvent` fires first on the blur grab's synthetic
+        hide, before the cursor's hit-test ever reaches `themes_tab` itself. Fixing only
+        `themes_tab` (the first pass of this bug) left the bug fully intact in practice.
+
+        Without this guard, the blur grab's hide/show cycle (~200ms while a book plays) calls
+        _on_theme_unhovered() -> _hover_debounce_timer.stop() every cycle; a cycle landing
+        inside a swatch's 80ms hover-debounce window kills the timer before it can fire,
+        silently dropping a genuinely-still-hovered theme's preview. Confirmed live
+        2026-07-22 (see NOTES.md) — a genuine ThemeItem.enterEvent PASSED followed 7ms later
+        by a synthetic-recorded leaveEvent, well inside the debounce window, with no
+        `[hover debounce]` fire ever appearing for that hover."""
+        if not tab_widget.isVisible():
+            return
+        self._on_theme_unhovered()
+
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
         # NOT the cause of the "heartbeat" bug (an earlier theory, disproven

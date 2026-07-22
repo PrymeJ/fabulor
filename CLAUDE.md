@@ -347,23 +347,36 @@ would let the hover-preview confinement discard rule (`pending[3]`, unaffected b
 bypassed on replay — see the "Hover-preview theme application must never reach
 `_schedule_deferred_restyle`..." rule area (2026-07-21) for why that confinement exists.
 
-### Blur-on genuine hovers can silently fail to preview — `themes_tab.leaveEvent` has no synthetic-leave suppression (open, not yet fixed)
-With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch can
-sometimes never convert into an applied preview at all — confirmed live (2026-07-22) via a trace
-showing a genuine `enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
+### `themes_tab.leaveEvent`/`pool_container.leaveEvent` MUST route through `_on_themes_tab_left`, never a bare `_on_theme_unhovered()` lambda
+With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch could
+silently never convert into an applied preview — confirmed live (2026-07-22) via a trace showing a
+genuine `enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
 `[hover debounce] firing preview` line ever appearing for that hover despite DEBUG logging being
-active. Root cause: `themes_tab.leaveEvent` (`main_window_builders.py:714`, a bare
-`lambda _: mw.theme_manager._on_theme_unhovered()`) has no equivalent of `ThemeItem`'s own
-`_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat fix above) — so the blur grab's
-`_active_panel.hide()`/`.show()` cycle (`transport_bar_blur._grab_and_blur`, firing roughly every
-~200ms while a book plays) fires a synthetic leave on the WHOLE TAB, not just the individual swatch,
-which calls `_on_theme_unhovered()` → `self._hover_debounce_timer.stop()` unconditionally. If a grab
-tick lands inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window — likely, given the ~200ms cadence —
-the debounce timer is killed before it can ever fire, silently dropping a genuine hover's preview.
-**Not yet fixed** — this is a distinct bug from the `_pending_fade_call` stash issue above (confirmed
-via `git diff` that the stash fix touched none of `main_window_builders.py`). See TODO.md for the
-open item; `pool_container.leaveEvent` (`main_window_builders.py:768`) is the same lambda shape and
-should be checked for the identical gap once this is scoped.
+active. Root cause: both `themes_tab.leaveEvent` (`main_window_builders.py:714`) and
+`pool_container.leaveEvent` (`main_window_builders.py:768`, the INNER container directly holding the
+`ThemeItem` swatch grid) were bare `lambda _: mw.theme_manager._on_theme_unhovered()` lambdas with no
+equivalent of `ThemeItem`'s own `_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat
+fix above) — so the blur grab's `_active_panel.hide()`/`.show()` cycle
+(`transport_bar_blur._grab_and_blur`, firing roughly every ~200ms while a book plays) fires a
+synthetic leave on both container widgets, not just the individual swatch, which calls
+`_on_theme_unhovered()` → `self._hover_debounce_timer.stop()` unconditionally. If a grab tick lands
+inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window — likely, given the ~200ms cadence — the
+debounce timer is killed before it can ever fire, silently dropping a genuine hover's preview.
+
+**FIXED (2026-07-22):** both lambdas now route through `ThemeManager._on_themes_tab_left(tab_widget)`
+(`theme_manager.py`, near `_on_theme_unhovered`), which checks `tab_widget.isVisible()` first and
+skips the snapback entirely when the leave fired while the widget was hidden by the blur grab — a
+real mouse-out of either container always happens while it's visible, so this check cannot
+false-negative a genuine leave. **`pool_container` needed the fix too, and this was confirmed live,
+not assumed from the shared lambda shape**: a temporary caller-identifying trace on
+`_on_theme_unhovered` showed 133 of 134 calls in one hover session came from
+`pool_container.leaveEvent`, not `themes_tab.leaveEvent` — `pool_container`, being the INNER widget,
+receives the blur grab's synthetic hide/show before the cursor's hit-test ever reaches `themes_tab`
+itself, so fixing only `themes_tab` (the first pass at this bug) left it fully intact in practice.
+**Do not add a new bare `lambda _: mw.theme_manager._on_theme_unhovered()` anywhere in the Themes tab
+hierarchy** — any future container inside `themes_tab` that needs unhover-on-leave behavior must
+route through `_on_themes_tab_left`, or this exact bug reopens for that container. Full trace and
+verification detail in NOTES.md, 2026-07-22.
 
 ---
 

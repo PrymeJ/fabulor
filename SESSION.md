@@ -25,8 +25,33 @@ hover can silently never convert to an applied preview. Root-caused precisely: `
 2026-07-21 heartbeat fix) fires on every blur-grab hide/show cycle (~200ms while playing) and
 unconditionally stops the swatch's 80ms hover-debounce timer — so a grab tick landing inside that
 window (likely, given the cadence) kills the debounce before it can fire. Confirmed via a live trace
-with a 7ms gap between a genuine hover and the synthetic leave that killed it. Not fixed this
-session — deferred to its own investigation (see TODO.md, NOTES.md for the full trace).
+with a 7ms gap between a genuine hover and the synthetic leave that killed it.
+
+**Fixed later the same session, in two passes.** Pass 1: added
+`ThemeManager._on_themes_tab_left(tab_widget)` (checks `tab_widget.isVisible()` before calling
+`_on_theme_unhovered()`, mirroring `ThemeItem`'s own synthetic-leave suppression but simplified since
+this tab-level widget has no `enterEvent` to pair against) and wired `themes_tab.leaveEvent` through
+it. Live-retested against the same repro — **still missed hovers**, unchanged. Rather than guess
+further, added a temporary caller-identifying trace to `_on_theme_unhovered()` itself and
+re-reproduced: 133 of 134 real calls in that session came from `pool_container.leaveEvent`
+(`main_window_builders.py:768`), not `themes_tab.leaveEvent` — `pool_container` is the INNER
+container directly holding the `ThemeItem` swatch grid, so its own leaveEvent fires first on the
+blur grab's synthetic hide, before `themes_tab`'s hit-test is ever reached. Pass 2: wired
+`pool_container.leaveEvent` through the same `_on_themes_tab_left` guard. Re-verified live — a full
+hover-and-hold session across many swatches came back clean, confirmed via log (zero calls from the
+old unguarded lambda, all routed through the new guard or the legitimate `_close_settings_flow`
+snapback path). Temporary trace logging removed once confirmed. pytest clean throughout (only the 4
+pre-existing `test_cover_theme_pending.py` failures). New CLAUDE.md rule: no future container inside
+the Themes tab hierarchy may wire a bare `_on_theme_unhovered()` lambda — must route through
+`_on_themes_tab_left`. Full trace-by-trace detail in NOTES.md.
+
+The process lesson worth keeping: the plan for this fix explicitly required live-confirming
+`pool_container`'s exposure before touching it speculatively, on the strength of "same lambda shape"
+as `themes_tab` — that gate caught something real. The first, narrower fix looked plausible, passed
+its own regression checks, and shipped clean — but did not actually resolve the reported symptom.
+Only a small, targeted instrumentation step (a caller-identifying trace), not a bigger guess,
+revealed which of the two lambdas was actually responsible for the overwhelming majority of
+real-world occurrences.
 
 ---
 

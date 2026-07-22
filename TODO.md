@@ -6,23 +6,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-22] Blur-on: `themes_tab.leaveEvent` has no synthetic-leave suppression, so the
-  transport-bar blur grab's hide/show cycle can kill a genuine hover's debounce timer before it
-  fires — a deliberately-still hover sometimes never previews at all.** Root-caused live (see
-  NOTES.md, same-dated entry): `main_window_builders.py:714`'s
-  `themes_tab.leaveEvent = lambda _: mw.theme_manager._on_theme_unhovered()` calls
-  `_hover_debounce_timer.stop()` unconditionally, including for the synthetic leave the blur grab's
-  `_active_panel.hide()`/`.show()` cycle fires on `themes_tab` every ~200ms while a book plays. If a
-  grab tick lands inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window, the timer is killed before it
-  can fire and the preview is silently dropped — confirmed via a live trace with a 7ms gap between a
-  genuine `enterEvent PASSED` and the synthetic-recorded `leaveEvent` that killed it. `ThemeItem`'s
-  own `enterEvent`/`leaveEvent` already solve this exact problem for itself via
-  `_last_leave_was_synthetic` (see the 2026-07-21 heartbeat fix, NOTES.md) — `themes_tab`'s bare
-  lambda needs the equivalent treatment, or some other mechanism that stops a blur-grab-driven
-  synthetic leave on the TAB from cancelling a swatch's still-pending debounce. Not yet
-  investigated for a fix approach; not started. `pool_container.leaveEvent`
-  (`main_window_builders.py:768`) is the same lambda shape and should be checked for the identical
-  gap once this is scoped.
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
   investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under

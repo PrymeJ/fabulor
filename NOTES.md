@@ -27,26 +27,57 @@ This means widening the tuple cannot let an abandoned hover preview bypass the p
 replay — the existing hover-preview confinement discard rule (`pending[3]`, unchanged) still catches
 every hover-flagged stash before it would reach the bypass path. `8243959`.
 
-**A second, unrelated stuck-hover bug found live during this fix's verification pass:** with blur
-enabled, a genuinely deliberate hover (cursor resting still, not sweeping) sometimes never converts
-to an applied preview at all — no `[hover debounce] firing preview` line ever appears for it,
-confirmed with DEBUG logging active throughout. Root cause, traced precisely: `themes_tab.leaveEvent`
-(`main_window_builders.py:714`) is a bare `lambda _: mw.theme_manager._on_theme_unhovered()` with
-**no synthetic-leave suppression** — unlike `ThemeItem`'s own `enterEvent`/`leaveEvent`, which
-carefully track `_last_leave_was_synthetic` to drop leaves/enters caused by the transport-bar blur
-grab's `_active_panel.hide()`/`.show()` cycle (see the entry above — same underlying mechanism,
-different widget). The blur grab's hide/show fires a synthetic `leaveEvent` on `themes_tab` itself
-(the whole panel, not just the individual swatch) roughly every ~200ms while a book plays.
-`_on_theme_unhovered()` unconditionally calls `self._hover_debounce_timer.stop()` — so if a blur-grab
-tick lands within the swatch's 80ms hover-debounce window (`_HOVER_DEBOUNCE_MS`), which is likely
-given the ~200ms grab cadence, the debounce timer gets killed before it can ever fire, and the
-genuinely-still-hovered theme's preview is silently dropped. Confirmed via a live trace
-(2026-07-22, ~02:35:51): `enterEvent PASSED` for "Turquoise Days" at `t=27698.686991`, followed 7ms
-later by a `leaveEvent vis=False` (recorded as synthetic) — well inside the 80ms debounce window —
-with no `[hover debounce]` fire ever appearing for that hover. **NOT YET FIXED** — this is a
-distinct defect from the `_pending_fade_call` stash issue above (confirmed via `git diff`: the stash
-fix touched only 3 scoped lines in `theme_manager.py`, nothing in `main_window_builders.py` or the
-`themes_tab.leaveEvent` wiring). Deferred to its own investigation/fix — see TODO.md.
+**A second, unrelated stuck-hover bug found live during this fix's verification pass — FIXED same
+session:** with blur enabled, a genuinely deliberate hover (cursor resting still, not sweeping)
+sometimes never converted to an applied preview at all — no `[hover debounce] firing preview` line
+ever appeared for it, confirmed with DEBUG logging active throughout. Root cause, traced precisely:
+`themes_tab.leaveEvent` (`main_window_builders.py:714`) was a bare
+`lambda _: mw.theme_manager._on_theme_unhovered()` with **no synthetic-leave suppression** — unlike
+`ThemeItem`'s own `enterEvent`/`leaveEvent`, which carefully track `_last_leave_was_synthetic` to
+drop leaves/enters caused by the transport-bar blur grab's `_active_panel.hide()`/`.show()` cycle
+(see the entry above — same underlying mechanism, different widget). The blur grab's hide/show fires
+a synthetic `leaveEvent` on `themes_tab` itself (the whole panel, not just the individual swatch)
+roughly every ~200ms while a book plays. `_on_theme_unhovered()` unconditionally calls
+`self._hover_debounce_timer.stop()` — so if a blur-grab tick lands within the swatch's 80ms
+hover-debounce window (`_HOVER_DEBOUNCE_MS`), which is likely given the ~200ms grab cadence, the
+debounce timer gets killed before it can ever fire, and the genuinely-still-hovered theme's preview
+is silently dropped. Confirmed via a live trace (2026-07-22, ~02:35:51): `enterEvent PASSED` for
+"Turquoise Days" at `t=27698.686991`, followed 7ms later by a `leaveEvent vis=False` (recorded as
+synthetic) — well inside the 80ms debounce window — with no `[hover debounce]` fire ever appearing
+for that hover. This is a distinct defect from the `_pending_fade_call` stash issue above (confirmed
+via `git diff`: the stash fix touched only 3 scoped lines in `theme_manager.py`, nothing in
+`main_window_builders.py` or the `themes_tab.leaveEvent` wiring).
+
+**Fix, phase 1 (incomplete on its own):** added `ThemeManager._on_themes_tab_left(tab_widget)`,
+which checks `tab_widget.isVisible()` before calling `_on_theme_unhovered()` — a leave while the
+widget is genuinely hidden by the blur grab is never a real mouse-out, and (unlike `ThemeItem`) this
+tab-level widget has no `enterEvent` to pair against, so no position-matching is needed. Wired
+`themes_tab.leaveEvent` through it. Live-tested against the same repro (hover-and-hold on multiple
+swatches) — **still missed hovers** ("Fifth Season" among them), just as before.
+
+**Fix, phase 2 (the actual fix):** rather than assume the fix needed widening to `pool_container`
+purely because TODO.md flagged it as "the same lambda shape," added a temporary caller-identifying
+trace (`traceback.extract_stack()`) to `_on_theme_unhovered()` itself and re-reproduced. Result: 133
+of 134 calls in that session came from `pool_container.leaveEvent` (`main_window_builders.py:768`),
+not `themes_tab.leaveEvent` — confirmed, not inferred. `pool_container` is the INNER container that
+directly holds the `ThemeItem` swatch grid (added to `themes_tab` via `themes_layout.addWidget`,
+itself still a bare `lambda _: mw.theme_manager._on_theme_unhovered()`), so its own `leaveEvent`
+fires FIRST on the blur grab's synthetic hide — before the cursor's hit-test cascade ever reaches
+`themes_tab` itself. Wiring only `themes_tab` through the new guard left the bug fully intact in
+practice, since almost every real unhover call was actually arriving via the still-unfixed inner
+lambda. Wired `pool_container.leaveEvent` through the identical `_on_themes_tab_left` guard.
+Re-verified live: a full hover-and-hold session across many swatches came back clean (user report,
+2026-07-22 ~03:02) — confirmed via log, zero calls from the old unguarded lambda, all unhover calls
+routed through the new guard or the legitimate `_close_settings_flow` path. Temporary
+caller-identifying trace logging removed once confirmed. `theme_manager.py`, `main_window_builders.py`.
+
+**Process lesson:** the plan for this fix explicitly required live-confirming `pool_container`'s
+exposure before touching it, rather than fixing it speculatively alongside `themes_tab` on the
+strength of "same lambda shape" — and that gate caught something real: the first, narrower fix
+(themes_tab only) looked plausible and shipped clean on its own regression checks, but did not
+actually resolve the user-reported symptom. Only the caller-identifying trace — a small, targeted
+instrumentation step, not a bigger guess — revealed which of the two lambdas was actually
+responsible for the overwhelming majority of real-world occurrences.
 
 ---
 

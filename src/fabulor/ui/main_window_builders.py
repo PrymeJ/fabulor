@@ -711,7 +711,7 @@ def build_themes_tab(mw):
 
         pool_layout.addLayout(row_layout)
 
-    themes_tab.leaveEvent = lambda _: mw.theme_manager._on_theme_unhovered()
+    themes_tab.leaveEvent = lambda _: mw.theme_manager._on_themes_tab_left(themes_tab)
 
     # Add/Remove All Buttons
     bulk_layout = QHBoxLayout()
@@ -765,7 +765,9 @@ def build_themes_tab(mw):
     interval_row.addStretch()
     pool_layout.addLayout(interval_row)
 
-    mw.theme_manager.pool_container.leaveEvent = lambda _: mw.theme_manager._on_theme_unhovered()
+    mw.theme_manager.pool_container.leaveEvent = (
+        lambda _: mw.theme_manager._on_themes_tab_left(mw.theme_manager.pool_container)
+    )
     themes_layout.addWidget(mw.theme_manager.pool_container)
     themes_layout.addStretch()
     mw.tabs.addTab(themes_tab, "Themes")
