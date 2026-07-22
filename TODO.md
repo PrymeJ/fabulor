@@ -16,14 +16,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
   Needs live instrumentation added first to catch an occurrence with real state, before any fix is
   attempted — do not fix blind. Not started.
-- **[2026-07-21] Themes tab: narrow the hover-preview region to EXCLUDE the bottom buttons (Add
-  all / Remove all / Change now) and the interval-selection area — hovering there should revert to
-  the active theme, not keep previewing.** Currently the whole Themes tab (its `leaveEvent` /
-  `pool_container.leaveEvent`, `main_window_builders.py:714`/`:768`) drives hover preview via
-  `_on_theme_hovered`/`_on_theme_unhovered`, so moving the cursor down onto the bulk buttons or the
-  interval labels keeps whatever the last-hovered swatch previewed instead of snapping back to the
-  active theme. Desired: those bottom regions behave like "not hovering a theme" — i.e. trigger the
-  same revert `_on_theme_unhovered` does. Not started.
 - **[2026-07-21] "Cover art based theme" should trigger a live PREVIEW on hover even when its mode
   is Off.** Right now `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns if
   `self._cover_theme` is None, and with cover-art mode Off there's effectively no preview — hovering
