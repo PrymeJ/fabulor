@@ -726,15 +726,16 @@ def build_themes_tab(mw):
 
     # Add/Remove All Buttons
     bulk_layout = QHBoxLayout()
-    bulk_layout.setSpacing(10)
+    bulk_layout.setSpacing(4)
     mw.add_all_btn = QPushButton("Add all")
     mw.add_all_btn.setObjectName("theme_add_all")
-    mw.add_all_btn.setFixedWidth(80)
+    mw.add_all_btn.setFixedWidth(77)
     mw.remove_all_btn = QPushButton("Remove all")
     mw.remove_all_btn.setObjectName("theme_remove_all")
-    mw.remove_all_btn.setFixedWidth(80)
+    mw.remove_all_btn.setFixedWidth(77)
     mw.change_now_btn = QPushButton("Change now")
     mw.change_now_btn.setObjectName("theme_change_now")
+    mw.change_now_btn.setFixedWidth(77)
 
     mw.add_all_btn.clicked.connect(mw.theme_manager.select_all_themes)
     mw.remove_all_btn.clicked.connect(mw.theme_manager.deselect_all_themes)
