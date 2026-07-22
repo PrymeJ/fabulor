@@ -722,6 +722,7 @@ def build_themes_tab(mw):
 
     swatch_box.leaveEvent = lambda _: mw.theme_manager._on_themes_tab_left(swatch_box)
     pool_layout.addWidget(swatch_box)
+    pool_layout.addSpacing(10)
 
     # Add/Remove All Buttons
     bulk_layout = QHBoxLayout()
