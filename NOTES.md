@@ -1,3 +1,52 @@
+## Open Investigation: Intermittent chapter-number flicker on backward seek to boundary (2026-07-22)
+
+**Status:** Open, low-frequency repro (weeks between occurrences). Instrumentation already in
+place (chapter walk logging in `_on_time_pos_change` + seek trace in `seek_async`) — no new
+logging needed, just capture the next occurrence.
+
+**Symptom:** Clicking Prev (or clicking a chapter directly in the chapter list) seeks correctly
+to the target chapter's start, but the UI briefly flashes the previous chapter number before
+settling on the correct one.
+
+**Repro entry points confirmed:** Both `previous_chapter()` (Prev key) and chapter-list click
+trigger it. Since both converge on `seek_async()` + the shared walk-and-emit block in
+`_on_time_pos_change`, the bug is downstream in the settle path, not in either target-calculation
+call site.
+
+**One captured instance (2026-07-22, non-VT/CUE, playing not paused):**
+- Prev pressed at chapter 4, target computed: `target_idx=3, target=577.122`
+- `seek_async` fires, optimistic walk immediately (correctly) reports chapter=3
+- First real post-seek mpv sample: raw pos `576.686972902495` — undershoots target by
+  **~0.435s**, which is just outside `_CHAPTER_BOUNDARY_EPSILON` (0.35) — walk genuinely resolves
+  to chapter=2 (`tolerance_affected_outcome=False`, i.e. not saved by epsilon)
+- Next sample: raw pos `576.772...`, back within tolerance, walk resolves to chapter=3
+  (`tolerance_affected_outcome=True` this time) — UI syncs to 3, matches log line
+  `_sync_chapter_ui: syncing to chapter=3 pos=577.2072221224489`
+
+**Working theory:** mpv briefly undershoots the seek target during settling on some backward
+seeks-to-boundary, similar in shape to the paused-embedded-M4B undershoot that
+`_PAUSED_SEEK_UNDERSHOOT_COMP` (0.37) was built for — but this instance was **while playing**,
+so that existing compensation doesn't cover it. Possibly a distinct undershoot behavior for
+playing-state seeks, or the same underlying mpv settle behavior showing up in a path not yet
+compensated for.
+
+**Not yet known:**
+- Whether this is CUE-specific or happens on VT/embedded-M4B chapter seeks too
+- Whether the undershoot magnitude is consistent (~0.435s) or variable
+- Whether it happens on ALL backward-to-boundary seeks and is just usually masked by epsilon
+  (i.e. is this rare, or is 0.435s undershoot rare and smaller undershoots are silently
+  swallowed by the 0.35 tolerance every time?)
+
+**Do not fix speculatively.** Needs another live capture (or several) before proposing an
+epsilon widening or a post-seek UI-suppression window — per usual methodology, the two prior
+undershoot constants (0.37, 0.35) were each calibrated against real captured data, not derived
+in the abstract.
+
+**Next step when resumed:** watch for recurrence with existing instrumentation; no code changes
+until 2-3 more instances are captured to establish whether magnitude/direction is consistent.
+
+---
+
 ## Confined the theme-hover-active region to `swatch_box`; a real row-clipping bug this surfaced was found and fixed via live geometry logging, not guessing (2026-07-22)
 
 **The ask:** narrow the theme-hover-active region (where leaving reverts the preview) from the whole

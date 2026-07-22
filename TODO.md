@@ -6,6 +6,12 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
+  both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
+  Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
+  for captured instance + working theory (mpv settle undershoot, ~0.435s, outside
+  `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.
+
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
   investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
