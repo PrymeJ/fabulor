@@ -1602,26 +1602,35 @@ class ThemeManager(QObject):
                                     hover=False, bypass_panel_open_guard=True)
 
     def _on_themes_tab_left(self, tab_widget):
-        """`themes_tab`'s AND `pool_container`'s leaveEvent handler (both wired in
-        main_window_builders.py as bare lambdas). Skips the unhover snapback when the
-        leave fires while `tab_widget` itself is not visible — i.e. a synthetic leave
-        caused by the transport-bar blur grab's `_active_panel.hide()`
-        (transport_bar_blur.py's `_grab_and_blur`), NOT a real mouse-out. Mirrors
-        `ThemeItem`'s own `_last_leave_was_synthetic` check (title_bar.py, the 2026-07-21
-        "heartbeat" fix) but simplified: unlike a single swatch, this tab-level widget has
-        no `enterEvent` to pair against (hover is driven entirely by each `ThemeItem.hovered`
-        signal), so there's no "same position" check to make — a real mouse-out of the whole
-        tab always happens while the tab is visible, and a leave that fires while it is NOT
-        visible is never a genuine user action to react to.
+        """`swatch_box`'s leaveEvent handler (wired in main_window_builders.py as a bare
+        lambda) — the SOLE hover-active-region boundary as of 2026-07-22. `swatch_box` is a
+        narrow container holding only the "Cover art based theme" entry and the theme swatch
+        rows; the "Theme pool" header, the Add all/Remove all/Change now row, and the
+        Interval Selection row all sit outside it (still inside the wider `pool_container`,
+        which remains only the Exclusive-mode show/hide unit — see
+        `update_cover_art_mode_visuals`). Moving onto any of those, or off the tab entirely,
+        reverts the preview exactly like leaving used to at the old, wider boundary.
 
-        `pool_container` (the innermost container directly holding the `ThemeItem` swatch
-        grid) needed this fix too — confirmed live 2026-07-22, NOT assumed from the shared
-        lambda shape: a caller-identifying trace on `_on_theme_unhovered` showed 133/134
-        calls in one hover session came from `pool_container.leaveEvent`
-        (main_window_builders.py:768), not `themes_tab.leaveEvent` — `pool_container` is
-        the INNER widget, so its own `leaveEvent` fires first on the blur grab's synthetic
-        hide, before the cursor's hit-test ever reaches `themes_tab` itself. Fixing only
-        `themes_tab` (the first pass of this bug) left the bug fully intact in practice.
+        Skips the unhover snapback when the leave fires while `tab_widget` itself is not
+        visible — i.e. a synthetic leave caused by the transport-bar blur grab's
+        `_active_panel.hide()` (transport_bar_blur.py's `_grab_and_blur`), NOT a real
+        mouse-out. Mirrors `ThemeItem`'s own `_last_leave_was_synthetic` check
+        (title_bar.py, the 2026-07-21 "heartbeat" fix) but simplified: unlike a single
+        swatch, this widget has no `enterEvent` to pair against (hover is driven entirely by
+        each `ThemeItem.hovered` signal), so there's no "same position" check to make — a
+        real mouse-out of the box always happens while it is visible, and a leave that fires
+        while it is NOT visible is never a genuine user action to react to.
+
+        History: originally wired to `themes_tab` (the whole tab page) and, after that alone
+        proved insufficient, ALSO to `pool_container` (the then-widest pool wrapper) —
+        confirmed live 2026-07-22 via a caller-identifying trace, not assumed, that
+        `pool_container`'s own `leaveEvent` (being the inner widget) fired first and was the
+        source of 133/134 real calls in one session; wiring only the outer `themes_tab` had
+        left the bug fully intact in practice. Both of those wirings were removed when
+        `swatch_box` was introduced to narrow the boundary further (see CLAUDE.md) — do not
+        re-add a second wired `leaveEvent` anywhere in this hierarchy; exactly one widget
+        should ever call this method, or a duplicate/racing trigger reopens the exact class
+        of bug this history describes.
 
         Without this guard, the blur grab's hide/show cycle (~200ms while a book plays) calls
         _on_theme_unhovered() -> _hover_debounce_timer.stop() every cycle; a cycle landing
