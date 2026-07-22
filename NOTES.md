@@ -1,3 +1,99 @@
+## Confined the theme-hover-active region to `swatch_box`; a real row-clipping bug this surfaced was found and fixed via live geometry logging, not guessing (2026-07-22)
+
+**The ask:** narrow the theme-hover-active region (where leaving reverts the preview) from the whole
+Themes tab down to just the swatch grid — moving onto the "Theme pool" header, the Add
+all/Remove all/Change now row, or the Interval Selection row should revert the preview, matching how
+leaving the tab entirely already did.
+
+**Investigation before touching anything (per the task's own requirement):** confirmed the
+screenshot's "bordered box" was the user's own annotation, not a real rendered border (no
+`QScrollArea` or matching QSS border exists). Confirmed `pool_container` (the then-current
+container) was actually LARGER than the target region — it held the "Theme pool" header, the
+cover-art-theme entry, all swatch rows, the bulk-button row, AND the interval row, all via one flat
+`pool_layout`. The user confirmed the header/buttons/interval row should all be OUTSIDE the
+hover-active region.
+
+**Fix:** introduced `swatch_box`, a new `QWidget` nested inside `pool_container`, holding only the
+cover-art-theme entry and the swatch rows. The header, bulk buttons, and interval row stay in
+`pool_container` via `pool_layout`, just outside `swatch_box`. `swatch_box.leaveEvent` became the
+SOLE hover-boundary trigger, replacing both `themes_tab.leaveEvent` and `pool_container.leaveEvent`
+(both removed entirely, not left as a second live wiring — this session had already chased one bug
+caused by exactly that shape of duplication, see the entry below). `pytest` clean throughout.
+`7e457d1`.
+
+**A real visual regression this surfaced, found and fixed via live geometry logging:** after the
+narrowing, the active-theme underline (`text-decoration: underline` on
+`QPushButton#theme_item[active_display="true"]`) stopped rendering, and glyph descenders (e.g. the
+'g' in "Slow Regard") were visibly clipped. User confirmed the underline loss was new (this
+session's regression); the glyph clipping was pre-existing but shared the same root cause, so worth
+fixing together.
+
+**Blind layout attempts that failed or made it worse** (each tried live, each reverted — do not
+re-attempt without re-reading this trail first):
+1. `swatch_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)` — zero visible effect.
+2. `swatch_box_layout.setSpacing(2)` (row-to-row spacing, was 0) — zero visible effect; crucially,
+   the button row and interval row didn't even shift position, which was the tell that the problem
+   wasn't inter-row spacing at all.
+3. `interval_row.setContentsMargins(0, 6, 0, 0)` (was `(0, 10, 0, 0)`) — the user predicted correctly
+   before testing that this would just push the interval labels up, not free room for swatch_box;
+   confirmed exactly that via geometry log (`add_all_btn` y went 332→336, `swatch_box.height()`
+   only gained 4px of an eventually-needed ~73px gap).
+4. `swatch_box.setMinimumHeight(310)` (forced, up from a natural-but-compressed 302) —
+   `swatch_box.height()` obediently grew to 310, but `add_all_btn`'s y-position never moved at all
+   across the whole test, proving `pool_container`'s total height (386px in every single trace,
+   regardless of what was tried inside it) was itself the hard, non-negotiable constraint — growing
+   one child forces something else inside the SAME container to compress, invisibly, rather than
+   the container itself growing.
+5. `themes_layout.addSpacing(10)` in place of `themes_layout.addStretch()` (trying to reclaim the
+   ~16px of dead space visible below the interval row, matching the Stats-panel/carousel 10px
+   bottom-padding convention) — made things WORSE: `pool_container.height()` dropped from 386→376.
+   `addStretch()` had been silently absorbing genuinely leftover space (space nothing else wanted);
+   swapping to a fixed `addSpacing()` created a hard demand that now competed directly against
+   `pool_container` for the same fixed `themes_tab` budget, and Qt shrank `pool_container` to
+   satisfy it. This is the opposite of what "removing dead stretch space" sounds like it should do,
+   and is the key lesson of this whole trail — reverted immediately once measured.
+
+**The actual root cause, found via live geometry logging (a temporary `themes_tab.showEvent`
+override logging `pool_container`/`swatch_box`/sample-swatch heights, `sizeHint()`s, and
+`geometry()`s — removed once confirmed):** `pool_container.sizeHint()` was `QSize(250, 459)` but its
+actual rendered `height()` was pinned at 386px — a genuine, structural 73px deficit inside the fixed
+500px `settings_panel` (no scroll area — see the existing CLAUDE.md rule on this). ALL of that
+deficit was landing on `swatch_box` specifically: its `sizeHint()` was 375px, rendered at only 302px.
+Per-row: each swatch button's `sizeHint()` was `QSize(_, 25)` but rendered at `height()=20` — a flat
+5px-per-row clip, and multi-row geometry logging (deduplicated by y-position, since the initial
+single-widget trace only ever caught the first packed row) confirmed there was genuinely **zero**
+gap between rows (each row started exactly `previous_row_height` pixels later) — the user's
+"10px between rows" observation was actually two adjacent rows' own clipped bottom-padding reading
+visually as a gap, not real reclaimable inter-row space.
+
+**The fix that actually worked:** `QPushButton#theme_item, QPushButton#theme_interval_btn`'s
+`padding: 4px 0px` → `padding: 1px 0px` (`themes.py`). This shrinks the button's own natural
+`sizeHint()` down toward what it was already being given, instead of asking `swatch_box` for space
+that structurally does not exist inside the fixed panel. Fixed BOTH the underline and the glyph
+clipping in one change, confirmed live. `theme_interval_btn` shares the selector but is unused in
+practice (`main_window_builders.py` never assigns that object name to any widget — the interval row
+uses `QLabel#theme_interval_label`), so this was a safe, single-purpose change. `c2614d4`.
+
+**Follow-up, AFTER the real slack was freed by the padding fix** (not before — the earlier
+`addSpacing()` attempt at step 5 above failed specifically because there was no real slack yet at
+that point): `pool_layout.addSpacing(10)` between `swatch_box` and the Add all/Remove all/Change now
+row, giving genuine breathing room now that it existed to give. `cad4622`.
+
+**Process lesson (the load-bearing one):** every layout-level guess about this exact widget class —
+even ones that felt obviously reasonable (spacing, size policy, stretch-vs-spacing swaps) — either
+did nothing or actively made things worse, and NONE of the failures were predictable from reading
+the code alone; each one required a live test to disprove. The user, with extensive prior Qt-fighting
+experience, correctly predicted two of these outcomes (`interval_row` margin push direction, and the
+"10px between rows" being a clipping illusion) before they were tested — worth treating "the person
+who's fought this widget class for months" as a stronger prior than a fresh theory. What actually
+broke the case open was temporary, targeted geometry LOGGING (real `sizeHint()`/`height()` numbers,
+captured at real show-time, multi-row-deduplicated) — not another guess. This mirrors the existing
+CLAUDE.md rule against trusting headless verification for settings-panel layout bugs, extended one
+step further: even LIVE guesses without real measured numbers were unreliable here; only measuring
+the actual Qt-computed geometry (not assuming it from the QSS/layout code) found the real mechanism.
+
+---
+
 ## `_pending_fade_call` stash dropped `bypass_panel_open_guard`, stranding hover snapback behind the panel-guard timer — FIXED; a second, separate stuck-hover bug found live during verification (2026-07-22)
 
 **The bug:** hovering a theme swatch then leaving while its preview fade was still animating could

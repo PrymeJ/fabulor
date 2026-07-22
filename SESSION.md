@@ -1,3 +1,48 @@
+## Session Summary — 2026-07-22 Session 2 — Narrowed the theme-hover-active region to `swatch_box`; found and fixed a real row-clipping regression via live geometry logging after several blind layout guesses failed
+
+Deferred follow-up from Session 1: confined the theme-hover-active region (where leaving reverts the
+preview) from the whole Themes tab down to just the swatch grid. Investigated the widget tree first
+(confirmed the screenshot's "bordered box" was the user's own annotation, not a real border;
+confirmed `pool_container` was actually larger than the target — it held the header, bulk buttons,
+and interval row too, all of which the user wanted OUTSIDE the hover region). Introduced `swatch_box`,
+a new narrow container holding only the cover-art-theme entry and swatch rows, with its
+`leaveEvent` as the sole trigger — both older wirings (`themes_tab.leaveEvent`,
+`pool_container.leaveEvent`) removed entirely rather than left as a second live trigger, per explicit
+instruction not to reintroduce the duplicate-trigger risk Session 1 had just chased down. `7e457d1`.
+
+**This surfaced a real regression**, caught immediately on retest: the active-theme underline
+disappeared and glyph descenders started clipping (pre-existing, but same root cause, fixed
+together). Several layout-level fixes were tried live and each failed or made it worse — size
+policy, row spacing, an `interval_row` margin change (the user correctly predicted, before testing,
+that it would push the wrong direction — confirmed exactly right), a forced `swatch_box` minimum
+height (grew the widget but never moved anything below it — the tell that `pool_container`'s own
+386px was a hard, non-negotiable ceiling regardless of what any child asked for), and swapping
+`themes_layout`'s trailing `addStretch()` for a fixed `addSpacing()` (intended to reclaim visible
+dead space at the bottom of the fixed-500px panel — instead made `pool_container` shrink further,
+since a fixed demand competes for the same constrained budget differently than a stretch that can
+collapse to zero).
+
+Root cause, found via temporary live geometry logging (not another guess): each swatch button's
+`sizeHint()` wanted 25px but rendered at only 20px — a flat, structural 5px-per-row clip, with
+genuinely zero gap between rows (multi-row logging, deduplicated by y-position, disproved the
+user's own "10px between rows" read — it was two rows' own clipped bottom-padding reading as a gap,
+not real space). Fix: reduced `QPushButton#theme_item`'s padding (`4px 0px` → `1px 0px`, `themes.py`)
+so the button's natural size stopped exceeding what the fixed panel could actually give it — fixed
+both the underline and the glyph clipping in one change, confirmed live. `c2614d4`. A follow-up
+`addSpacing(10)` between `swatch_box` and the button row then added real breathing room, now that
+the padding fix had genuinely freed slack to give (unlike the earlier failed `addSpacing()`
+attempt, which had nothing real to reclaim yet). `cad4622`.
+
+**Process lesson:** every blind layout guess for this widget class either did nothing or made things
+worse, and none of the failures were predictable from the code alone — each required a live test to
+disprove. The user correctly predicted two of the outcomes ahead of testing them, from extensive
+prior Qt experience; what actually broke the case open was targeted, temporary geometry logging
+(real `sizeHint()`/`height()` numbers at real show-time), not another theory. Full trace, exact
+before/after numbers, and the complete failed-attempt trail are in NOTES.md — read it before
+re-attempting a layout fix in this area.
+
+---
+
 ## Session Summary — 2026-07-22 Session 1 — Fixed the hover-snapback-hangs-behind-panel-guard bug (`_pending_fade_call` dropped `bypass_panel_open_guard`); live verification surfaced a second, separate stuck-hover bug caused by blur
 
 Continuing the theme-hover/blur investigation thread. Root-caused via live DEBUG trace (repro'd by

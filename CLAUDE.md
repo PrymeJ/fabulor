@@ -347,36 +347,82 @@ would let the hover-preview confinement discard rule (`pending[3]`, unaffected b
 bypassed on replay — see the "Hover-preview theme application must never reach
 `_schedule_deferred_restyle`..." rule area (2026-07-21) for why that confinement exists.
 
-### `themes_tab.leaveEvent`/`pool_container.leaveEvent` MUST route through `_on_themes_tab_left`, never a bare `_on_theme_unhovered()` lambda
+### Only `swatch_box.leaveEvent` may call `_on_themes_tab_left` — never add a second bare `_on_theme_unhovered()` lambda anywhere in the Themes tab hierarchy
 With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch could
 silently never convert into an applied preview — confirmed live (2026-07-22) via a trace showing a
 genuine `enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
 `[hover debounce] firing preview` line ever appearing for that hover despite DEBUG logging being
-active. Root cause: both `themes_tab.leaveEvent` (`main_window_builders.py:714`) and
-`pool_container.leaveEvent` (`main_window_builders.py:768`, the INNER container directly holding the
-`ThemeItem` swatch grid) were bare `lambda _: mw.theme_manager._on_theme_unhovered()` lambdas with no
-equivalent of `ThemeItem`'s own `_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat
-fix above) — so the blur grab's `_active_panel.hide()`/`.show()` cycle
-(`transport_bar_blur._grab_and_blur`, firing roughly every ~200ms while a book plays) fires a
-synthetic leave on both container widgets, not just the individual swatch, which calls
-`_on_theme_unhovered()` → `self._hover_debounce_timer.stop()` unconditionally. If a grab tick lands
-inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window — likely, given the ~200ms cadence — the
-debounce timer is killed before it can ever fire, silently dropping a genuine hover's preview.
+active. Root cause: both `themes_tab.leaveEvent` and, at the time, `pool_container.leaveEvent` (the
+container then directly holding the `ThemeItem` swatch grid) were bare
+`lambda _: mw.theme_manager._on_theme_unhovered()` lambdas with no equivalent of `ThemeItem`'s own
+`_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat fix above) — so the blur
+grab's `_active_panel.hide()`/`.show()` cycle (`transport_bar_blur._grab_and_blur`, firing roughly
+every ~200ms while a book plays) fired a synthetic leave on both container widgets, not just the
+individual swatch, which called `_on_theme_unhovered()` → `self._hover_debounce_timer.stop()`
+unconditionally. If a grab tick landed inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window —
+likely, given the ~200ms cadence — the debounce timer was killed before it could ever fire, silently
+dropping a genuine hover's preview.
 
-**FIXED (2026-07-22):** both lambdas now route through `ThemeManager._on_themes_tab_left(tab_widget)`
-(`theme_manager.py`, near `_on_theme_unhovered`), which checks `tab_widget.isVisible()` first and
-skips the snapback entirely when the leave fired while the widget was hidden by the blur grab — a
-real mouse-out of either container always happens while it's visible, so this check cannot
-false-negative a genuine leave. **`pool_container` needed the fix too, and this was confirmed live,
-not assumed from the shared lambda shape**: a temporary caller-identifying trace on
-`_on_theme_unhovered` showed 133 of 134 calls in one hover session came from
-`pool_container.leaveEvent`, not `themes_tab.leaveEvent` — `pool_container`, being the INNER widget,
-receives the blur grab's synthetic hide/show before the cursor's hit-test ever reaches `themes_tab`
-itself, so fixing only `themes_tab` (the first pass at this bug) left it fully intact in practice.
-**Do not add a new bare `lambda _: mw.theme_manager._on_theme_unhovered()` anywhere in the Themes tab
-hierarchy** — any future container inside `themes_tab` that needs unhover-on-leave behavior must
-route through `_on_themes_tab_left`, or this exact bug reopens for that container. Full trace and
-verification detail in NOTES.md, 2026-07-22.
+**FIXED (2026-07-22), two passes:** `ThemeManager._on_themes_tab_left(tab_widget)`
+(`theme_manager.py`, near `_on_theme_unhovered`) checks `tab_widget.isVisible()` first and skips the
+snapback entirely when the leave fired while the widget was hidden by the blur grab — a real
+mouse-out of any container always happens while it's visible, so this check cannot false-negative a
+genuine leave. Pass 1 wired only `themes_tab.leaveEvent` through it — insufficient in practice.
+**`pool_container` (the container at the time) needed the fix too, confirmed live, not assumed from
+the shared lambda shape**: a temporary caller-identifying trace on `_on_theme_unhovered` showed 133
+of 134 calls in one hover session came from `pool_container.leaveEvent`, not `themes_tab.leaveEvent`
+— the INNER widget received the blur grab's synthetic hide/show before the cursor's hit-test ever
+reached the outer one, so fixing only the outer container left the bug fully intact.
+
+**Superseded later the same session** by the hover-active-region narrowing below —
+`pool_container.leaveEvent` no longer exists; `swatch_box.leaveEvent` is now the sole wiring. The
+lesson stands regardless of which widget currently owns it: **do not add a new bare
+`lambda _: mw.theme_manager._on_theme_unhovered()` anywhere in the Themes tab hierarchy** — any
+future container that needs unhover-on-leave behavior must route through `_on_themes_tab_left`, or
+this exact bug reopens for that container. Full trace and verification detail in NOTES.md,
+2026-07-22.
+
+### The theme-hover-active region is `swatch_box` only — not the whole Themes tab, not `pool_container`
+As of 2026-07-22, hovering a theme swatch only keeps previewing while the cursor stays inside
+`swatch_box` (`main_window_builders.py`, `build_themes_tab`) — a narrow container holding ONLY the
+"Cover art based theme" entry and the theme swatch rows. The "Theme pool" header, the Add
+all/Remove all/Change now row, and the Interval Selection row all sit outside it (still inside the
+wider `pool_container`, which now exists ONLY as the Exclusive-mode show/hide unit — see
+`update_cover_art_mode_visuals`, `theme_manager.py`). Moving onto any of those, or off the tab
+entirely, reverts the preview to the active theme — previously the whole tab (then the whole
+`pool_container`) counted as "still hovering," so moving onto the header/buttons/interval row while
+a preview was showing silently left it stuck. `swatch_box.leaveEvent` is the SOLE trigger for
+`_on_themes_tab_left` (see the rule above) — do not re-add `themes_tab.leaveEvent` or
+`pool_container.leaveEvent` wiring; both were removed when `swatch_box` was introduced specifically
+to avoid a duplicate/racing revert trigger.
+
+### `QPushButton#theme_item`'s vertical padding must stay small enough that its `sizeHint()` doesn't exceed what `swatch_box` can actually give it
+`settings_panel` is a fixed 500px-height widget with no scroll area (see the "DO NOT try to expand a
+widget's height inside the Library settings tab's `QVBoxLayout`" rule below) — `pool_container`'s
+total budget inside it is a genuine, non-negotiable remainder after every sibling above/around it
+claims its own space, not a solvable margin puzzle. When `swatch_box` was introduced (narrowing the
+hover-active region, above), the theme swatch rows started rendering 5px shorter than their own
+`sizeHint()` (20px actual vs. 25px wanted, confirmed via live geometry logging, NOT guessed) —
+silently clipping the active-theme underline (`QPushButton#theme_item[active_display="true"]`,
+`text-decoration: underline`) and glyph descenders (e.g. the 'g' in "Slow Regard"). **Do not try to
+fix this by giving `swatch_box` more room** — `setMinimumHeight`, size-policy changes, and swapping
+`themes_layout`'s trailing `addStretch()` for a fixed `addSpacing()` were all tried live and each
+failed or actively made it worse (the `addSpacing()` swap shrank `pool_container` further, since a
+fixed trailing demand competes for the same constrained budget differently than a stretch that can
+shrink to zero when nothing needs the space — confirmed via before/after geometry logs, not
+theorized). **The fix that actually worked**: reduce the padding itself
+(`QPushButton#theme_item, QPushButton#theme_interval_btn`, `themes.py`, `padding: 4px 0px` →
+`padding: 1px 0px`) so the button's natural `sizeHint()` shrinks to roughly match the space it was
+already being given, instead of asking for space that structurally isn't there. `theme_interval_btn`
+shares this rule but is unused in practice (no widget is ever given that object name — the interval
+row uses `QLabel#theme_interval_label` instead), so this change only affects `theme_item` swatches.
+A follow-up `pool_layout.addSpacing(10)` between `swatch_box` and the Add all/Remove
+all/Change now button row added real breathing room, now that the padding fix had genuinely freed
+slack (as opposed to the earlier `addSpacing()` attempt, which had nothing real to reclaim). Full
+before/after geometry numbers and the failed-attempt trail in NOTES.md, 2026-07-22 — read it before
+re-attempting a layout-level fix for this widget class; this is the same underlying lesson as the
+"user sees the rendered pixels" and "do not verify a settings-panel layout bug with headless
+scripts" rules — live geometry logging, not guessed theory, is what actually found this one.
 
 ---
 
