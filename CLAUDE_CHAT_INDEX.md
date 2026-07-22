@@ -630,4 +630,145 @@ Use this file to locate which window discussed a given topic before pulling it u
 
 ---
 
-*Index last updated Jul 7 2026. To update: open a new entry at the bottom following the same format.*
+## 48. `fabulor: | Keyboard shortcuts without keyboard navigation` — Jul 10 2026
+**URL:** https://claude.ai/chat/0dbe49ae-4a29-4ea7-a4c4-b2638404e1f3
+
+- Library full keyboard nav: arrow keys, Enter/Space to play, Alt+Enter for book detail, Tab toggles list/search, underscore-prefix search syntax, sort-field letter keys, view-mode digit keys 1–5
+- QComboBox focus trap: hidePopup() override returns focus to list view
+- QComboBox popup paint: silently ignored on this desktop — custom _ComboItemDelegate + _ThemedComboBox with own arrow (DO-NOT rule in CLAUDE.md)
+- Tab clamp bug: QAbstractItemView.event() intercepts Tab before keyPressEvent — fix moved to event() level
+- setAutoScroll(False) kills Qt native scroll-to-follow-selection — requires scrollTo() in affected handlers
+- Escape: uniformly closes open panel; search field clear-and-defocus takes precedence when focused
+- Tab must never reach window chrome (minimize/close) anywhere — hard constraint
+- List-mode Left/Right: expand title/author text beyond truncation, evaluated fresh on landing, never sticky
+- Traveling border-marker focus indicator: dot patrols widget border, carries relative perimeter position across Tab, four-phase lifecycle (patrol → decelerate → wait → fade); scoped to Settings Look tab for validation
+- Theme fade mid-transition + panel-open shortcut: wired snap-forward mechanism into keyboard-shortcut panel-open paths
+
+---
+
+## 49. `fabulor: ||| Epsilon drift bug investigation and seek precision issues` — Jul 2026
+**URL:** https://claude.ai/chat/c82ad6ff-5e4c-4e6c-bdf6-5b7f0825c120
+
+- _logical_pos field on Player: decouples app's believed position from mpv's raw per-seek landing residual; time_pos getter is the sole seam (all 18 call sites unchanged)
+- _apply_stylesheets narrowing: ~55% avoidable work (invisible-surface panels restyled unconditionally); fast-path/deferred-batch split with when_animations_done() for book-load and singleShot(0) for rotation/T
+- M4B progress-reset regression: unguarded _sync_persistence write laundered near-zero transient time_pos into DB; fixed with monotonic guard seeded from DB progress
+- VT cross-file restore race: _vt_file_loaded_awaiting_restore flag makes handoff order-independent (whichever of _on_file_loaded / restore stash runs first sets it, second consumes it)
+- _apply_stylesheets visible-surface pass at __init__ line 682 was poisoning no-op guard — startup theming bug discovered during benchmarking
+- Restyle-on-panel-open rejected as compensating mechanism (library panel stutter history)
+- Regime A flow-animation hitching (~70–117ms at animation start) open at session end
+- NOTES.md / SESSION.md confirmed as ground truth over TODO.md
+
+---
+
+## 50. `fabulor: ||| Flow animation and progress reset bug investigation handoff` — Jul 2026
+**URL:** https://claude.ai/chat/8db18b08-697d-4e5b-a47d-1abe08db290a
+
+- _sync_persistence monotonic guard: seeded from DB progress, prevents near-zero transient overwrite
+- VT cross-file restore race: _vt_file_loaded_awaiting_restore flag (order-independent rendezvous)
+- Library population regression after scan-on-launch removal: population now wired via QTimer.singleShot(0, self.library_panel.refresh) directly from DB
+- _sized_cover_cache defensive wipe bug: unconditional assignment replaced with hasattr init-only guard
+- _show_no_cover_state → request_clear_cover_theme() with is_any_panel_visible() deferral (was calling clear_cover_theme() unconditionally)
+- Fade re-entrancy: _on_theme_changed guard extended to check _fade_in_flight; fade finished signal used for resume (flat 700ms poll was shorter than fade, causing early retry)
+- _on_cover_pool_btn_clicked remove branch routed through canonical clear_cover_theme() (was inlining a subset)
+- Claude Code "it's late, stop here" suggestions flagged as persistent violation — explicit CLAUDE.md rule confirmed
+
+---
+
+## 51. `fabulor: || Player keyboard shortcuts design` — Jul 2026
+**URL:** https://claude.ai/chat/101c2cf5-57a2-4e1d-b936-dd257975c34f
+
+- Player shortcuts: Space=play/pause, Up/Down=volume, Shift+Left/Right=long skip, Ctrl+Left/Right=chapter, Alt+Up/Down=speed, m=mute, u=undo
+- Bracket keys and punctuation rejected: not stable across non-US keyboard layouts
+- Configurable keybindings deferred: real cost (settings UI, conflict detection, persistence, test surface) not worth it for ~10 users
+- _nudge_volume / _nudge_speed extracted so keyboard and mouse wheel share one implementation
+- Speed autofire throttle: SPEED_NUDGE_THROTTLE_S; chapter/long-skip use separately named constants (CHAPTER_NUDGE_THROTTLE_S, LONG_SKIP_THROTTLE_S) — higher consequence per step
+- Destructive-action-with-confirmation: Del/F/x arm visual confirmation state; Space/Enter confirms; single taps never skip confirmation
+- Focus invariant established and made load-bearing: exactly one widget owns focus; global dispatcher only acts when focusWidget() is None or MainWindow
+- All six panel open paths call PanelManager._claim_panel_focus; all close paths call _release_panel_focus
+- clearFocus() must run after hide() — hide() on still-focused widget silently re-grants focus if last StrongFocus candidate in tab order (CLAUDE.md invariant)
+- Any new always-on chrome widget must be Qt.NoFocus or focus-ownership breaks
+- _ensure_panel_owns_focus() self-healing safety net on BookDetailPanel
+- Book detail panel-local shortcuts: Left/Right cycles tabs, F/Del-x/K arm finished-toggle/remove/lock
+
+---
+
+## 52. `fabulor: | Deletion animation positioning issue` — Jul 2026
+**URL:** https://claude.ai/chat/c139c005-47dc-46fb-b508-facb72f8db41
+
+- History session row deletion animation: row content slid partway then paused in mid-transition
+- Root cause: setFixedHeight() pinning minimumHeight while only maximumHeight was being animated — Qt constraint conflict
+- Fix: row.setMinimumHeight(0) before constructing the animation
+- Edge-case flagged: deleting last row + setFixedHeight(max(h, 1)) guard in _history_container may leave 1px dead zone
+- Settings "Excluded Books" restore animation shares same pattern but intentionally left alone
+
+---
+
+## 53. `fabulor: | Library search filter persistence bug on app restart` — Jul 2026
+**URL:** https://claude.ai/chat/1b27227d-8223-49ec-889a-72c420e9aed7
+
+- Search persistence bug: clicked filters promoted to permanent typed filters on restart — save_search_filter() was reading search_field.text() instead of _explicit_filter_text; one-line fix
+- Search field match-state styling not updating when book set changes under active search: _refresh_search_match_state() extracted, wired into refresh() and _on_search_changed
+- Sort/filter mode switch (Recent, Finished, etc.) not resetting match-state styling: one line added to _on_sort_changed
+- Tag Manager / Library mutual-exclusion: stale styling non-issue in practice; LibraryPanel.showEvent() re-validates before user can see it — documented in DEBT_INVENTORY.md as investigated-and-closed
+- Stray entr -r python main.py dev-loop process can silently serve stale code — ps aux | grep -E 'entr|main.py' check added to CLAUDE.md
+- Decision against creating UI panel-exclusivity reference doc: exceptions (Book Details over Library/Stats) make it a maintenance liability
+
+---
+
+## 54. `fabulor: ||| blur 1` — Jul 2026
+**URL:** https://claude.ai/chat/aaf8ad7e-24a0-466d-bcbb-882d831b5919
+
+- Architecture choice: blur-composited-overlay branch (grab pixmap, blur, composite) over blur-direct-widget (QGraphicsBlurEffect directly on widgets)
+- Perf spike: UNIFIED_DIRTY_RECT confirmed best performer; QGraphicsBlurEffect slightly better visually; both within budget
+- Mandatory full-rect blur pass on panel-open; dirty-sub-rect tracking via QEvent.Paint filter
+- content_container.grab() confirmed broken: only rasterizes widget's own paint, not ancestor background — returns Qt default grey, not theme bg_main; fix: main_window.grab()
+- main_window.grab() occasionally costs 290ms: Qt defers repaint/repolish work after setStyleSheet(); grab() forces synchronous resolution — whichever call is first pays the cost
+- Pre-existing enterEvent quirk: fires at ~1.2–1.6s intervals for stationary cursor on theme swatches; cooldown gate insufficient (grab runs 290ms; new restyle can start mid-grab)
+- CLAUDE.md entry added: Claude Code repeatedly called raw grab "clean" without verifying the specified test — social "you're right" without retracting the invalidated conclusion
+
+---
+
+## 55. `fabulor: ||| blur 2` — Jul 2026
+**URL:** https://claude.ai/chat/5ed756db-a1ac-4881-af8d-4d278a677bff
+
+- Punch-through flash: collision cost confirmed — setStyleSheet() defers work; first call to force synchronous resolution pays full accumulated cost
+- content_container.grab() ruled out (never forces resolution — permanently stale)
+- complete_main_fade() orphans _pending_fade_call: .stop() doesn't emit finished, so _pending_fade_call is never drained
+- Spurious ThemeItem.enterEvent heartbeat: two-signal guard suppressed ~half the cycles (~1.4s→2.8s); second undiagnosed trigger path fires ~500ms after guarded restyle — halving frequency has no practical effect (consequence is binary); assessed as likely unfixable via this approach
+- Feedback loop: _grab_and_blur() hide/show cycle generated paint events that dirty tracker interpreted as real content changes → machine-gun re-triggering at ~18ms; fixed with reentrancy guard + ~50ms window
+- Direction B accepted: cached-frame blur with opportunistic refresh; forced refresh only on tab-switch/panel-open
+- Decision to pursue structural fix: hover-preview state must be incapable of reaching content_container/main_window regardless of trigger source
+
+---
+
+## 56. `fabulor: ||| blur 3` — Jul 2026
+**URL:** https://claude.ai/chat/4bae2606-b8fb-4527-b4ed-e166899a0095
+
+- Nine bugs found, root-caused, and fixed in one session:
+- _active_display_theme/_is_hover_active state written at call-decision time, not after apply completes — _mark_theme_applied() consolidation point introduced
+- _grab_and_blur() grabbing while hover-active — _is_hover_active gate in refresh_dirty()
+- complete_main_fade() orphaning _pending_fade_call via .stop() not emitting finished
+- No-op guard poisoned by pre-apply state writes
+- Hover-preview confinement violation: hover-flagged stashes replayed through full apply path reaching panels — hover stashes now discarded (not deferred) at all three drain sites (_on_fade_finished, snap_theme_forward, complete_main_fade)
+- Hover-interrupts-hover: stop-and-apply (not stash) when incoming hover interrupts running hover fade
+- Chapter-dropdown colors lagging one theme behind
+- Non-hover theme changes applying while panels open: required forward-audit (enumerate Themes-tab widgets from construction, trace signals forward) after backward-audit failed three times
+- T-shortcut rotation silently dead after Settings panel close: _fade_in_flight stranded True — unconditional clear after stop
+- Three open threads at session end: heartbeat second trigger (root-caused, plan written, not implemented); blur-toggle-not-applying-live (planned, not implemented); cursor fluctuation under blur (root-caused, deferred)
+
+---
+
+## 57. `fabulor: | blur 4` — Jul 2026
+**URL:** https://claude.ai/chat/5aaecfe1-ce7b-44c0-8b27-d14d029fcee8
+
+- _pending_fade_call widened from 5-tuple to 6-tuple including bypass_panel_open_guard — snapback was silently dropping this flag, landing in panel-open guard and getting clobbered by ongoing hover activity
+- Confirmed empirically: bypass_panel_open_guard=True never co-occurs with hover=True across 65 log entries (required before widening, to avoid reopening theme-bleed regression)
+- apply_cover_theme/clear_cover_theme calls from app.py legitimately reach _on_theme_changed with hover=False, bypass_panel_open_guard=False — snap_theme_forward behavior change is real but correct
+- Synthetic-leave suppression: spurious unhover events during window blur/focus grabs guarded (modeled on existing ThemeItem-level mechanism)
+- Hover-active region narrowed from themes_tab to pool_container specifically — prompt drafted for next pass
+- main_window_builders.py confirmed as pure wiring file; behavior belongs in theme_manager.py
+- 4 pre-existing test_cover_theme_pending.py failures established as baseline for all pytest runs
+
+---
+
+Index last updated Jul 22 2026. To update: open a new entry at the bottom following the same format.
