@@ -3537,7 +3537,7 @@ def get_settings_stylesheet(theme_name="default"):
             border: none;
             text-align: center;
             font-size: 12px;
-            padding: 4px 0px;
+            padding: 1px 0px;
         }}
         QPushButton#theme_item {{ font-weight: normal; }}
         QPushButton#theme_item:disabled {{

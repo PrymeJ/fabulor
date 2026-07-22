@@ -1,3 +1,1609 @@
+## Confined the theme-hover-active region to `swatch_box`; a real row-clipping bug this surfaced was found and fixed via live geometry logging, not guessing (2026-07-22)
+
+**The ask:** narrow the theme-hover-active region (where leaving reverts the preview) from the whole
+Themes tab down to just the swatch grid — moving onto the "Theme pool" header, the Add
+all/Remove all/Change now row, or the Interval Selection row should revert the preview, matching how
+leaving the tab entirely already did.
+
+**Investigation before touching anything (per the task's own requirement):** confirmed the
+screenshot's "bordered box" was the user's own annotation, not a real rendered border (no
+`QScrollArea` or matching QSS border exists). Confirmed `pool_container` (the then-current
+container) was actually LARGER than the target region — it held the "Theme pool" header, the
+cover-art-theme entry, all swatch rows, the bulk-button row, AND the interval row, all via one flat
+`pool_layout`. The user confirmed the header/buttons/interval row should all be OUTSIDE the
+hover-active region.
+
+**Fix:** introduced `swatch_box`, a new `QWidget` nested inside `pool_container`, holding only the
+cover-art-theme entry and the swatch rows. The header, bulk buttons, and interval row stay in
+`pool_container` via `pool_layout`, just outside `swatch_box`. `swatch_box.leaveEvent` became the
+SOLE hover-boundary trigger, replacing both `themes_tab.leaveEvent` and `pool_container.leaveEvent`
+(both removed entirely, not left as a second live wiring — this session had already chased one bug
+caused by exactly that shape of duplication, see the entry below). `pytest` clean throughout.
+`7e457d1`.
+
+**A real visual regression this surfaced, found and fixed via live geometry logging:** after the
+narrowing, the active-theme underline (`text-decoration: underline` on
+`QPushButton#theme_item[active_display="true"]`) stopped rendering, and glyph descenders (e.g. the
+'g' in "Slow Regard") were visibly clipped. User confirmed the underline loss was new (this
+session's regression); the glyph clipping was pre-existing but shared the same root cause, so worth
+fixing together.
+
+**Blind layout attempts that failed or made it worse** (each tried live, each reverted — do not
+re-attempt without re-reading this trail first):
+1. `swatch_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)` — zero visible effect.
+2. `swatch_box_layout.setSpacing(2)` (row-to-row spacing, was 0) — zero visible effect; crucially,
+   the button row and interval row didn't even shift position, which was the tell that the problem
+   wasn't inter-row spacing at all.
+3. `interval_row.setContentsMargins(0, 6, 0, 0)` (was `(0, 10, 0, 0)`) — the user predicted correctly
+   before testing that this would just push the interval labels up, not free room for swatch_box;
+   confirmed exactly that via geometry log (`add_all_btn` y went 332→336, `swatch_box.height()`
+   only gained 4px of an eventually-needed ~73px gap).
+4. `swatch_box.setMinimumHeight(310)` (forced, up from a natural-but-compressed 302) —
+   `swatch_box.height()` obediently grew to 310, but `add_all_btn`'s y-position never moved at all
+   across the whole test, proving `pool_container`'s total height (386px in every single trace,
+   regardless of what was tried inside it) was itself the hard, non-negotiable constraint — growing
+   one child forces something else inside the SAME container to compress, invisibly, rather than
+   the container itself growing.
+5. `themes_layout.addSpacing(10)` in place of `themes_layout.addStretch()` (trying to reclaim the
+   ~16px of dead space visible below the interval row, matching the Stats-panel/carousel 10px
+   bottom-padding convention) — made things WORSE: `pool_container.height()` dropped from 386→376.
+   `addStretch()` had been silently absorbing genuinely leftover space (space nothing else wanted);
+   swapping to a fixed `addSpacing()` created a hard demand that now competed directly against
+   `pool_container` for the same fixed `themes_tab` budget, and Qt shrank `pool_container` to
+   satisfy it. This is the opposite of what "removing dead stretch space" sounds like it should do,
+   and is the key lesson of this whole trail — reverted immediately once measured.
+
+**The actual root cause, found via live geometry logging (a temporary `themes_tab.showEvent`
+override logging `pool_container`/`swatch_box`/sample-swatch heights, `sizeHint()`s, and
+`geometry()`s — removed once confirmed):** `pool_container.sizeHint()` was `QSize(250, 459)` but its
+actual rendered `height()` was pinned at 386px — a genuine, structural 73px deficit inside the fixed
+500px `settings_panel` (no scroll area — see the existing CLAUDE.md rule on this). ALL of that
+deficit was landing on `swatch_box` specifically: its `sizeHint()` was 375px, rendered at only 302px.
+Per-row: each swatch button's `sizeHint()` was `QSize(_, 25)` but rendered at `height()=20` — a flat
+5px-per-row clip, and multi-row geometry logging (deduplicated by y-position, since the initial
+single-widget trace only ever caught the first packed row) confirmed there was genuinely **zero**
+gap between rows (each row started exactly `previous_row_height` pixels later) — the user's
+"10px between rows" observation was actually two adjacent rows' own clipped bottom-padding reading
+visually as a gap, not real reclaimable inter-row space.
+
+**The fix that actually worked:** `QPushButton#theme_item, QPushButton#theme_interval_btn`'s
+`padding: 4px 0px` → `padding: 1px 0px` (`themes.py`). This shrinks the button's own natural
+`sizeHint()` down toward what it was already being given, instead of asking `swatch_box` for space
+that structurally does not exist inside the fixed panel. Fixed BOTH the underline and the glyph
+clipping in one change, confirmed live. `theme_interval_btn` shares the selector but is unused in
+practice (`main_window_builders.py` never assigns that object name to any widget — the interval row
+uses `QLabel#theme_interval_label`), so this was a safe, single-purpose change. `c2614d4`.
+
+**Follow-up, AFTER the real slack was freed by the padding fix** (not before — the earlier
+`addSpacing()` attempt at step 5 above failed specifically because there was no real slack yet at
+that point): `pool_layout.addSpacing(10)` between `swatch_box` and the Add all/Remove all/Change now
+row, giving genuine breathing room now that it existed to give. `cad4622`.
+
+**Process lesson (the load-bearing one):** every layout-level guess about this exact widget class —
+even ones that felt obviously reasonable (spacing, size policy, stretch-vs-spacing swaps) — either
+did nothing or actively made things worse, and NONE of the failures were predictable from reading
+the code alone; each one required a live test to disprove. The user, with extensive prior Qt-fighting
+experience, correctly predicted two of these outcomes (`interval_row` margin push direction, and the
+"10px between rows" being a clipping illusion) before they were tested — worth treating "the person
+who's fought this widget class for months" as a stronger prior than a fresh theory. What actually
+broke the case open was temporary, targeted geometry LOGGING (real `sizeHint()`/`height()` numbers,
+captured at real show-time, multi-row-deduplicated) — not another guess. This mirrors the existing
+CLAUDE.md rule against trusting headless verification for settings-panel layout bugs, extended one
+step further: even LIVE guesses without real measured numbers were unreliable here; only measuring
+the actual Qt-computed geometry (not assuming it from the QSS/layout code) found the real mechanism.
+
+---
+
+## `_pending_fade_call` stash dropped `bypass_panel_open_guard`, stranding hover snapback behind the panel-guard timer — FIXED; a second, separate stuck-hover bug found live during verification (2026-07-22)
+
+**The bug:** hovering a theme swatch then leaving while its preview fade was still animating could
+leave the panel showing the hovered theme indefinitely instead of snapping back to the active theme
+— specifically while the Settings/Themes panel was still open. `_on_theme_unhovered()` always calls
+`_on_theme_changed(..., hover=False, bypass_panel_open_guard=True)` so the snapback can apply even
+though a panel is open. If a fade was already in flight, this call got stashed into
+`_pending_fade_call` as a 5-tuple — `(theme_name, save, fade_ms, hover, user_initiated)` — which
+silently dropped the `bypass_panel_open_guard=True` flag. When the fade finished, all three drain
+sites (`_on_fade_finished`, `snap_theme_forward`, `complete_main_fade`) replayed the call via
+`_on_theme_changed(*pending)`/reconstructed kwargs, defaulting the dropped flag back to `False`. With
+the panel still open, the replayed snapback now incorrectly hit the `_any_animating or _panel_open`
+guard and queued into `_panel_guard_timer` — a single-slot, single-shot 700ms timer that gets
+disconnected and re-armed by every subsequent hover-driven call. While the mouse kept sweeping
+across neighboring swatches (each producing its own unhover-retry that re-armed the same timer), the
+queued snapback never got a clear 700ms window to fire, so it read as stuck indefinitely.
+
+**Fix:** widened the stash to a 6-tuple, carrying `bypass_panel_open_guard` through all three
+stash/replay sites. `snap_theme_forward` previously hardcoded `bypass_panel_open_guard=True` on
+replay (accidentally masking the same drop, since its only real trigger — `_close_settings_flow` →
+`_on_theme_unhovered()` → `snap_theme_forward()` — always passes `True` anyway); it now replays the
+actual stashed value. **Exclusivity confirmed before implementing** (required by the task): audited
+every direct `_on_theme_changed` call site — no site ever passes `hover=True` and
+`bypass_panel_open_guard=True` together — and cross-checked empirically against live `[BLEED-TRACE]`
+logs (all 65 observed `hover=True` calls carried `bypass_panel_open_guard=False`, zero exceptions).
+This means widening the tuple cannot let an abandoned hover preview bypass the panel-open guard on
+replay — the existing hover-preview confinement discard rule (`pending[3]`, unchanged) still catches
+every hover-flagged stash before it would reach the bypass path. `8243959`.
+
+**A second, unrelated stuck-hover bug found live during this fix's verification pass — FIXED same
+session:** with blur enabled, a genuinely deliberate hover (cursor resting still, not sweeping)
+sometimes never converted to an applied preview at all — no `[hover debounce] firing preview` line
+ever appeared for it, confirmed with DEBUG logging active throughout. Root cause, traced precisely:
+`themes_tab.leaveEvent` (`main_window_builders.py:714`) was a bare
+`lambda _: mw.theme_manager._on_theme_unhovered()` with **no synthetic-leave suppression** — unlike
+`ThemeItem`'s own `enterEvent`/`leaveEvent`, which carefully track `_last_leave_was_synthetic` to
+drop leaves/enters caused by the transport-bar blur grab's `_active_panel.hide()`/`.show()` cycle
+(see the entry above — same underlying mechanism, different widget). The blur grab's hide/show fires
+a synthetic `leaveEvent` on `themes_tab` itself (the whole panel, not just the individual swatch)
+roughly every ~200ms while a book plays. `_on_theme_unhovered()` unconditionally calls
+`self._hover_debounce_timer.stop()` — so if a blur-grab tick lands within the swatch's 80ms
+hover-debounce window (`_HOVER_DEBOUNCE_MS`), which is likely given the ~200ms grab cadence, the
+debounce timer gets killed before it can ever fire, and the genuinely-still-hovered theme's preview
+is silently dropped. Confirmed via a live trace (2026-07-22, ~02:35:51): `enterEvent PASSED` for
+"Turquoise Days" at `t=27698.686991`, followed 7ms later by a `leaveEvent vis=False` (recorded as
+synthetic) — well inside the 80ms debounce window — with no `[hover debounce]` fire ever appearing
+for that hover. This is a distinct defect from the `_pending_fade_call` stash issue above (confirmed
+via `git diff`: the stash fix touched only 3 scoped lines in `theme_manager.py`, nothing in
+`main_window_builders.py` or the `themes_tab.leaveEvent` wiring).
+
+**Fix, phase 1 (incomplete on its own):** added `ThemeManager._on_themes_tab_left(tab_widget)`,
+which checks `tab_widget.isVisible()` before calling `_on_theme_unhovered()` — a leave while the
+widget is genuinely hidden by the blur grab is never a real mouse-out, and (unlike `ThemeItem`) this
+tab-level widget has no `enterEvent` to pair against, so no position-matching is needed. Wired
+`themes_tab.leaveEvent` through it. Live-tested against the same repro (hover-and-hold on multiple
+swatches) — **still missed hovers** ("Fifth Season" among them), just as before.
+
+**Fix, phase 2 (the actual fix):** rather than assume the fix needed widening to `pool_container`
+purely because TODO.md flagged it as "the same lambda shape," added a temporary caller-identifying
+trace (`traceback.extract_stack()`) to `_on_theme_unhovered()` itself and re-reproduced. Result: 133
+of 134 calls in that session came from `pool_container.leaveEvent` (`main_window_builders.py:768`),
+not `themes_tab.leaveEvent` — confirmed, not inferred. `pool_container` is the INNER container that
+directly holds the `ThemeItem` swatch grid (added to `themes_tab` via `themes_layout.addWidget`,
+itself still a bare `lambda _: mw.theme_manager._on_theme_unhovered()`), so its own `leaveEvent`
+fires FIRST on the blur grab's synthetic hide — before the cursor's hit-test cascade ever reaches
+`themes_tab` itself. Wiring only `themes_tab` through the new guard left the bug fully intact in
+practice, since almost every real unhover call was actually arriving via the still-unfixed inner
+lambda. Wired `pool_container.leaveEvent` through the identical `_on_themes_tab_left` guard.
+Re-verified live: a full hover-and-hold session across many swatches came back clean (user report,
+2026-07-22 ~03:02) — confirmed via log, zero calls from the old unguarded lambda, all unhover calls
+routed through the new guard or the legitimate `_close_settings_flow` path. Temporary
+caller-identifying trace logging removed once confirmed. `theme_manager.py`, `main_window_builders.py`.
+
+**Process lesson:** the plan for this fix explicitly required live-confirming `pool_container`'s
+exposure before touching it, rather than fixing it speculatively alongside `themes_tab` on the
+strength of "same lambda shape" — and that gate caught something real: the first, narrower fix
+(themes_tab only) looked plausible and shipped clean on its own regression checks, but did not
+actually resolve the user-reported symptom. Only the caller-identifying trace — a small, targeted
+instrumentation step, not a bigger guess — revealed which of the two lambdas was actually
+responsible for the overwhelming majority of real-world occurrences.
+
+---
+
+## Heartbeat second trigger = the blur grab's panel hide/show; the assumed isVisible() fix was disproven by STEP-0 forensics, corrected to leave-time visibility (2026-07-21)
+
+**The bug:** the "heartbeat" — spurious repeated `enterEvent`/`leaveEvent` on a `ThemeItem` theme
+swatch with the cursor stationary, each spurious enter emitting `hovered()` and starting an unwanted
+hover preview (and amplifying the punch-through flash). Open since 2026-07-20 with a known-but-
+unidentified "second trigger"; the existing `_spurious_enter_guard_until` guard only ever caught the
+`setStyleSheet`-cascade trigger (and, per the logs, never actually fired — SUPPRESSED count 0).
+
+**Second trigger identified via log forensics:** the transport-bar blur grab
+(`transport_bar_blur._grab_and_blur`) hides then re-shows the whole settings panel on every grab tick
+(to snapshot the transport bar behind it — the same load-bearing hide/show behind Session 7's tassel-
+cursor bug). `ThemeItem` swatches are children of that panel, so the hide fires a synthetic
+`leaveEvent` and the re-show a synthetic `enterEvent` at the same cursor position, no mouse movement.
+This fires OUTSIDE the `_spurious_enter_guard_until` window, so that guard can't catch it. Confirmed
+by 1:1 correlation in the logs between heartbeat `pos_matches=True` enters and `refresh_dirty ...
+COMPOSITED` (grabs that actually ran). The hover gate (gates the grab on `_is_hover_active`) dampens
+but doesn't fix it — grabs that slip through when hover is momentarily inactive still fire it, which
+is why it was intermittent and the user "hadn't seen it."
+
+**STEP 0 disproved the assumed fix (the load-bearing part):** the plan was to reuse Session 7's
+tassel fix — drop the synthetic enter when `not isVisible()`. Before writing it, a temporary
+`vis={isVisible()}` field was added to `[ENTEREVENT-TRACE]` and the heartbeat reproduced. Result: **all
+15 synthetic enters logged `vis=True`.** `ThemeItem` is a different widget type at a different panel
+depth than `TasselOverlay`; by the time its synthetic `enterEvent` fires, the panel is already
+re-shown, so `isVisible()` AT ENTER TIME reads True — the tassel pattern is a silent no-op here. This
+is exactly why STEP 0 was made a required precondition rather than an assumption.
+
+**The correct discriminator (from the same trace):** the immediately-preceding `leaveEvent`'s
+visibility. Pairing every leave→enter across the repro was clean: `leaveEvent vis=False` → next
+`enterEvent pos_matches=True` for EVERY synthetic case (the panel-hide fires the leave while the
+widget is momentarily hidden), and `leaveEvent vis=True` → `enterEvent pos_matches=False` for every
+genuine case. Fix: record `self._last_leave_was_synthetic = not self.isVisible()` in `leaveEvent`
+(NOT `isVisible()` at enter), and in `enterEvent` drop the enter (no `hovered.emit`, no `super()`)
+when `_last_leave_was_synthetic and pos_matches`; reset the flag to False on a genuine enter so a
+stale True can't suppress a later real hover. Composes with — does not replace — the kept
+`setStyleSheet`-cascade guard (two synthetic-drop conditions, two distinct triggers). Verified live:
+10 synthetic suppressed, 0 surviving heartbeat, 33 genuine hovers unaffected. `1a00abd`.
+`[ENTEREVENT-TRACE]`/`vis=` logging left in for soak-verification.
+
+**General lesson (reinforced):** when reusing a fix pattern (here, "drop synthetic events via
+`isVisible()`") on a different widget, confirm the mechanism holds for THAT widget before writing the
+fix — same-shaped mechanisms can differ in load-bearing timing details (enter-time vs. leave-time
+visibility). STEP 0 caught a no-op that would otherwise have shipped as a "fix."
+
+---
+
+## Blur toggle now applies live to the open Settings panel; the Off→On cover-image asymmetry explained (2026-07-21)
+
+The Settings > Blur On/Off toggle only wrote config (`_update_blur_mode` → `config.set_blur_enabled`
++ visual refresh), so it took effect only on the next panel close/reopen. Fixed by adding
+`PanelManager.apply_blur_live(enabled)`, called from `_update_blur_mode` after the config write. It
+acts on the already-open Settings panel (the only panel the toggle is reachable from) for both blur
+mechanisms: the transport-bar composited overlay (`_apply`/`_clear_transport_bar_blur`, already
+live-callable — `show_for_panel` early-returns if `self._active`, `hide_for_panel` tears down
+unconditionally, and `show_for_panel` recomputes the bounding rect from the panel's current settled
+geometry) and the cover-image `blur_effect`.
+
+**The user-observed Off→On-doesn't-but-On→Off-does asymmetry (cover image), root cause:**
+`MainWindow.set_blur_selection(enabled)` (`app.py`) — called by the toggle's visual refresh — had
+`if not enabled: m.blur_effect.setBlurRadius(0)` but NO `enabled=True` counterpart. So turning blur
+Off live-zeroed the cover-image blur, while turning it On did nothing to the image. `apply_blur_live`
+adds the missing On direction (animate `blur_effect` 0→10), making the toggle symmetric. (This
+cover-image path is expected to be replaced by the transport-bar grab code later — see the TODO
+about giving the cover-art area the same treatment — so it's deliberately minimal.)
+
+Routing note: `SettingsController` reaches panels through the `PanelInterface` facade, which is
+constructed (`app.py` `_setup_ui`) BEFORE `panel_manager` exists, so `PanelInterface` holds a `main`
+reference and reads `main.panel_manager` lazily at call time rather than capturing the not-yet-created
+object. Guards on the method: `settings_panel.isVisible()` and — required per plan-review, not
+optional — `is_any_panel_animating()`, so the toggle can never apply/clear blur mid-slide (the "this
+state is unreachable so no guard needed" assumption is precisely what caused this session's
+`_do_rotate`/"Change now" regression). `2dd1445`.
+
+---
+
+## Timeline tassel cursor went shaky under blur — synthetic leaveEvent from the blur grab's panel hide, cleared its dynamic hand cursor 5×/sec (2026-07-21)
+
+**Symptom:** the Timeline tassel's hand cursor was steady with blur OFF but "shaky" with blur ON —
+flipping hand↔arrow while the pointer rested motionless on it. This was the deferred follow-up from
+Session 6's general cursor-fluctuation fix (`906fa4a`), which did NOT resolve the tassel because the
+tassel is architecturally different from the Stats book rows that fix addressed.
+
+**Why the general fix didn't cover it:** `BookDayRow` etc. use a STATIC `setCursor(PointingHandCursor)`
+(a persistent widget property), so pinning an override cursor across `_grab_and_blur`'s hide/show was
+enough. `TasselOverlay` uses a DYNAMIC cursor — `setCursor(hand)` in `mouseMoveEvent` while inside
+`_in_hit_region`, `unsetCursor()` in `leaveEvent` — re-asserted only on mouse movement. So the
+override-pin preserved whatever shape was resolved at grab time, but couldn't fix a cursor the
+tassel's own logic had already cleared.
+
+**Investigation (live-first, temporary `[TASSEL-CURSOR]` log probe on `mouseMoveEvent`/`leaveEvent`/
+`enterEvent`):** the smoking gun was the leave-event counts across one hover — **85 `leaveEvent
+vis=False` vs. exactly 1 `leaveEvent vis=True`**. The `vis=False` is decisive: those leaves fire
+while the tassel is mid-hide, i.e. they're SYNTHETIC, delivered by Qt as a side effect of the panel
+being hidden — not real mouse-outs. Full mechanism: `transport_bar_blur._grab_and_blur` hides then
+re-shows the whole Stats panel ~5×/sec (to grab the transport bar behind it); the tassel is a
+descendant of that panel, so each hide delivers it a synthetic `leaveEvent` (`isVisible()` False) →
+`unsetCursor()` clears the hand → the re-show fires a synthetic `enterEvent` but NOT a
+`mouseMoveEvent` (the mouse didn't move), so nothing restores the hand. Net: the hand cursor is
+cleared and only briefly recovered, 5×/sec — the shakiness.
+
+**The clean discriminator:** a GENUINE mouse-leave fires while the widget is still visible
+(`isVisible()` True — the single `vis=True` leave in the trace, when the pointer actually left the
+tassel); the blur-induced synthetic leave fires mid-hide (`isVisible()` False). So `self.isVisible()`
+in `leaveEvent` cleanly tells the two apart.
+
+**Fix:** guard `TasselOverlay.leaveEvent`'s `unsetCursor()` on `self.isVisible()` — only clear the
+hand on a real mouse-out; ignore the synthetic hide-driven leaves so the cursor survives the
+hide/show churn. Tassel-local, doesn't touch the blur code, composes with Session 6's override-cursor
+fix. Verified live: steady hand on the tassel under blur, correct arrow on a genuine mouse-out, click
+and extended-tassel hover still correct (`537f018`). General lesson worth remembering: a widget with a
+DYNAMIC (mouseMove-driven) cursor is vulnerable to any code elsewhere that hides/shows an ancestor,
+because the resulting synthetic leave clears the cursor with no movement to restore it — guarding the
+`leaveEvent` on `isVisible()` is the fix pattern.
+
+Separately, same session: the tassel's clickable/hand hit zone was too wide to the right — ~8px of
+sway slack (`int(KICK_AMP)+2`) extended past the visible fringe edge. Decoupled the right-side slack
+from the shared sway slack (`right_slack`, tuned live to `-1`, i.e. 1px inside the visible fringe);
+left edge, `_tab_rect`, and vertical sway tolerance unchanged (`8955a2d`).
+
+---
+
+## Sleep/Speed preset buttons had no hover/pressed feedback — pre-existing, not a regression (2026-07-21)
+
+**Symptom:** user reported the Sleep panel's time-preset buttons (2 min, 5 min, ... 90 min) and the
+Speed panel's speed-preset buttons lost hover styling "after last night's changes to button types,"
+while "End of chapter" and "Set" (in the same Sleep panel) still showed hover/pressed color clearly.
+
+**Investigation, in order:** (1) checked commit history on this branch for the last 24h touching
+`sleep_timer.py`, `speed_controls.py`, `themes.py`, `title_bar.py`, `main_window_builders.py` —
+nothing. (2) Per explicit instruction, checked out `main` read-only and compared: both files'
+button-construction code and `get_settings_stylesheet`'s QSS (the generic `QPushButton {}` /
+`QPushButton:hover {}` / `QPushButton:pressed {}` rules) are byte-for-byte identical to this branch,
+same line numbers. (3) User confirmed via screenshot that `main` shows the exact same "no style"
+behavior. This ruled out a recent regression entirely — whatever "last night's changes to button
+types" referred to, it isn't what caused this; the gap has always existed, just unnoticed until now.
+
+**Root cause, found by diffing what's different between the working buttons ("End of chapter",
+"Set") and the broken preset grids:** `SleepTimerPanel.update_panel_styling`
+(`sleep_timer.py`) and `SpeedControlsPanel.update_visuals` (`speed_controls.py`) each give every
+preset button its own **per-instance** `btn.setStyleSheet(f"background-color: rgba(...); color:
+...; border: none;")` call, to create a deliberate visual alpha ramp across the row (later
+presets more opaque than earlier ones — `alpha = int(75 + (180 * (i / (n - 1))))`). In Qt, a
+widget-level stylesheet set via `setStyleSheet()` on the widget itself takes precedence over the
+panel's own cascading QSS for that widget — and this inline stylesheet only ever specified a flat
+`background-color`, never `:hover` or `:pressed`. So every preset button in both panels has had
+**zero** hover/press visual feedback since this ramp effect was first written — a plain omission in
+the original inline-stylesheet string, not a recent break. "End of chapter"/`set_custom_btn` are
+never included in the loop that calls `setStyleSheet()` this way, so they simply keep inheriting the
+panel-level `QPushButton:hover`/`:pressed` rules normally — which is exactly why they alone showed
+the expected hover color and looked like the "correct" reference point.
+
+Same-shape confirmation: the app's OTHER preset-style button groups in `speed_controls.py` (step,
+undo, skip, long-skip, smart-wait/dur — all via `setObjectName("pattern_button")` + a
+property-driven QSS rule, never a per-instance `setStyleSheet()`) all hover correctly, matching the
+theory precisely — it's specifically the alpha-ramp buttons' per-instance stylesheet that's missing
+the states, not something about fixed-size buttons or `QGridLayout` in general (both of those were
+considered and ruled out: the main transport buttons are also `setFixedSize` and hover fine).
+
+**Fix:** extended the inline stylesheet string in both methods to include `QPushButton:hover`/
+`QPushButton:pressed` rules, computed from each button's own already-ramped color via
+`QColor.lighter(130)` (hover) and `.darker(130)` (pressed) — so the per-button alpha ramp is
+preserved exactly as designed, while every preset button now visibly responds to hover/press like
+every other button in these panels. Identical fix, same shape, applied to both
+`SleepTimerPanel.update_panel_styling` and `SpeedControlsPanel.update_visuals`. Verified live.
+Committed `8f2d15e`.
+
+---
+
+## Cursor fluctuating hand↔arrow over panel widgets when blur is on — root-caused and fixed via live [CURSOR-TRACE] instrumentation (2026-07-21)
+
+**Symptom:** with blur ON, resting the mouse motionless over an interactive panel widget with a
+PointingHand cursor (Stats book rows, cover-pool swatches — anywhere with `setCursor(PointingHandCursor)`)
+made the cursor flicker between hand and arrow with no mouse movement at all. Reported alongside the
+Timeline tassel and the "Change now" button, but those two turned out to be different cases (see
+below) — the general fluctuation is what got fixed here.
+
+**Investigation approach (per explicit instruction):** live-instrument first, confirm the mechanism,
+THEN fix — not guess-and-check. A temporary `[CURSOR-TRACE]` probe was added to
+`TransportBarBlurOverlay._grab_and_blur` (`transport_bar_blur.py`), logging the widget under the
+global cursor position and its resolved `cursor().shape()` at three points: before the panel is
+hidden, immediately after hiding it, and immediately after showing it again. First probe attempt
+raised `TypeError` (`int(CursorShape)` doesn't work on this PySide6 version — fixed to `.shape().value`).
+
+**Root cause, confirmed with 100% reproducibility across every tick:** `_grab_and_blur` hides the
+entire active panel (`self._active_panel.hide()`) so its pixels don't appear in
+`main_window.grab(padded_rect)` (needed because the panel is a sibling child of `main_window`,
+raised above `content_container`, and `main_window.grab()` rasterizes everything visible — see the
+`content_container` background-color note in the same file for why grabbing `main_window` instead of
+`content_container` is required and non-negotiable). This grab runs on every dirty-refresh tick —
+~5×/sec while a book plays, since the mini transport bar's time/chapter labels repaint continuously.
+Live trace, Stats book row, every single tick identical:
+```
+BEFORE-HIDE  widget_under_cursor='stats_book_day_row' cursor_shape=13 (hand)
+AFTER-HIDE   widget_under_cursor='QLabel'             cursor_shape=0  (arrow)
+AFTER-SHOW   widget_under_cursor='stats_book_day_row' cursor_shape=13 (hand)
+```
+Hiding the panel exposes whatever transport-bar widget is positionally behind it at the cursor
+location (an arrow-cursor `QLabel`) — Qt re-runs hit-testing and resolves the live cursor to that
+widget's arrow. Showing the panel again resolves it back to hand. No `QApplication.overrideCursor()`
+was ever involved (checked and logged `None` throughout) — this is pure widget-under-cursor
+hit-testing following visibility, not an override fighting anything.
+
+**Two related-but-different findings from the same trace, NOT fixed here:**
+- **"Change now" button** (`theme_change_now`) reported `cursor_shape=0` (arrow) even at BEFORE-HIDE
+  — it has no `PointingHandCursor` set on it as a widget property at all. Whatever the user
+  originally saw "turning into a hand" over that button was very likely the same hit-test churn
+  momentarily resolving to a *different*, nearby hand-cursor widget, not the button itself gaining a
+  hand cursor. Confirmed live post-fix: the button now stays a steady arrow, which is correct.
+- **Timeline tassel** reported `cursor_shape=0` (arrow) even at BEFORE-HIDE, resting motionless
+  directly on it — because `TasselOverlay` sets its cursor dynamically inside `mouseMoveEvent` via
+  `_in_hit_region()` (not a static `setCursor()` on the whole widget), so it only reads as hand while
+  the mouse is actively moving within the hit region. This is a structurally different mechanism from
+  the fix below and was confirmed, post-fix, to still be "shaky" specifically when blur is on (steady
+  with blur off) — logged as a separate TODO item, not resolved by this fix. The override-cursor pin
+  below preserves whatever shape was ALREADY resolved at grab time; it can't retroactively make the
+  tassel's own hit-test logic decide "hand" if it hadn't already.
+
+**Fix:** bracket the synchronous `hide() → main_window.grab() → show()` sequence in `_grab_and_blur`
+with an application override cursor. Right before hiding the panel, read the widget currently under
+the global cursor (`QApplication.widgetAt(QCursor.pos())`) and push its resolved cursor as an
+override (`QApplication.setOverrideCursor(w_under.cursor())`); pop it in the `finally` immediately
+after the panel is shown again. Since the whole hide→grab→show cycle is synchronous with no
+intervening event-loop turn (confirmed by the trace itself — all three probes land within the same
+few milliseconds), the override cleanly brackets exactly the churn window and is gone before any
+real user input could observe it. Guarded so it's only pushed when a panel is actually being hidden
+AND a widget is under the cursor, and always popped in `finally` regardless of how the block exits —
+cannot strand a stuck override.
+
+**Verified live, all cases:** Stats book row now shows a steady hand cursor (no flicker); "Change
+now" shows a steady arrow (correct, matches its actual cursor property); real mouse movement between
+widgets still updates the cursor normally (the override doesn't fight genuine cursor changes, since
+it's popped before the next tick and any real movement happens between ticks); blur-off path
+untouched (this whole mechanism only runs when blur is on). Committed `906fa4a`.
+
+---
+
+## Panel-open theme guard: the `bypass_panel_open_guard` mechanism, its forward audit, and the stranded-`_fade_in_flight` "T does nothing" bug it exposed (2026-07-21)
+
+**The guard.** To stop themes visibly changing while the user has an unrelated panel open (reported
+live: the automatic rotation timer's deferred replay landing on an open Sleep panel), `_on_theme_changed`
+gained a `_panel_open` guard: a call defers (via the existing `_panel_guard_timer` retry) when a full
+panel is visible — UNLESS the call is a hover preview OR carries `bypass_panel_open_guard=True`. The
+guard reuses `PanelManager.is_any_full_panel_visible()` (excludes the bare sidebar) and the existing
+retry mechanism; the new trigger condition is `if _any_animating or _panel_open:`.
+
+**Why `hover` alone was not the right discriminator (regressed 3×).** The naïve first cut gated on
+`not hover`. That broke the Settings panel itself, because MANY non-hover theme changes are
+themselves *Themes-tab-local actions* that must apply live while that panel is open: the
+close-snap-back (`_on_theme_unhovered`), right-click-select, left-click-toggle-active, the
+cover-art-mode buttons, the cover-pool button, AND — the third regression — the "Change now" button
+(`_do_rotate(user_initiated=True)`). The real distinction is **general trigger** (rotation timer,
+deferred replay, book-load cover-theme change — no relationship to any open panel) vs.
+**Themes-tab-local action/settle-step** (only exists because that panel is open). Only general
+triggers may be blocked.
+
+**The exhaustive FORWARD audit (canonical — do not re-derive backward).** After three regressions
+from tracing backward from `_on_theme_changed`'s callers, the correct audit traces FORWARD from
+every interactive widget built in `build_themes_tab` (`main_window_builders.py:645-774`):
+
+| Widget (construction line) | Signal → handler | Reaches `_on_theme_changed`? | Bypass |
+|---|---|---|---|
+| Cover-mode buttons `:662` | `clicked` → `set_cover_art_mode` | Yes (via its own calls + `clear_cover_theme`/`apply_cover_theme`) | ✅ `=True` |
+| Cover-pool item `:685` | `clicked` → `_on_cover_pool_btn_clicked` | Via `set_cover_art_mode` + `clear_cover_theme(=True)` | ✅ |
+| Cover-pool item `:686` | `rightClicked` → `_on_cover_pool_btn_right_clicked` | Yes | ✅ `=True` |
+| Cover-pool item `:687` | `hovered` → `_on_cover_pool_btn_hovered` | Yes (`hover=True`) | ✅ via `hover` |
+| Swatch `:703` | `clicked` → `toggle_theme_selection` | Only when removing the active theme | ✅ `=True` |
+| Swatch `:704` | `rightClicked` → `_on_theme_right_clicked` | Yes | ✅ `=True` |
+| Swatch `:705` | `hovered` → `_on_theme_hovered` → `_fire_pending_hover` | Yes (`hover=True`) | ✅ via `hover` |
+| tab/pool `leaveEvent` `:714`/`:768` | → `_on_theme_unhovered` | Yes | ✅ `=True` |
+| Add all `:728` | `clicked` → `select_all_themes` | **No** (pool + visuals only) | N/A |
+| Remove all `:729` | `clicked` → `deselect_all_themes` | **No** | N/A |
+| Change now `:730` | `clicked` → `_do_rotate(user_initiated=True)` | Yes | ✅ `=user_initiated` |
+| Interval labels `:762` | `mousePressEvent` → `set_rotation_interval` | **No** (timer + visuals only) | N/A |
+
+`_do_rotate` and `apply_cover_theme` both already had a `user_initiated` parameter that exactly
+distinguishes the general-trigger caller (automatic rotation timer / book-load, `False`) from the
+Themes-tab caller (Change now / cover-mode button, `True`) — so both forward `bypass_panel_open_guard=
+user_initiated` rather than needing a separate flag. General triggers that must stay blocked and do
+NOT bypass: `_do_rotate()` from the rotation timer, `_on_fade_finished`'s drain, `complete_main_fade`'s
+drain, `apply_cover_theme`/`clear_cover_theme` from book-load. The retry lambda forwards
+`bypass_panel_open_guard` so a deferred bypass call keeps its exemption on retry.
+
+**The "Change now" regression, precisely (why the forward audit was necessary).** "Change now" calls
+`_do_rotate(user_initiated=True)` DIRECTLY, skipping `_rotate_theme`'s entry-time visibility check.
+Before the fix, `_do_rotate` set `self._current_theme_name` synchronously then called
+`_on_theme_changed(..., bypass=False)`, which deferred (panel open). An unrelated side effect — the
+cursor leaving whatever swatch it happened to be over as the click landed — fired `_on_theme_unhovered`,
+which read the already-mutated `_current_theme_name` and applied IT with its own (correct) bypass.
+Net effect: haphazard "sometimes works, underline doesn't move, panel flickers" — two competing
+calls for the same theme racing. Fixed by `_do_rotate` forwarding `bypass_panel_open_guard=user_initiated`.
+
+**The stranded-`_fade_in_flight` bug this exposed — "T does nothing" (confirmed live 19:33 → fixed,
+verified 19:56).** A *pre-existing latent* bug that the snap-back changes made reproducible.
+`snap_theme_forward` (called by `_close_settings_flow`) stops any running `_fade_anim`
+(`QPropertyAnimation.stop()` — which does NOT emit `finished`, so `_on_fade_finished`, the only other
+clearer, never runs) but cleared `_fade_in_flight` ONLY inside its `if self._pending_fade_call is not
+None:` drain branch. The close-snap-back now genuinely starts a real 750ms fade via the
+themes-tab-visible path (panel still visible during close → `_fade_in_flight=True`), which
+`snap_theme_forward` immediately stops — and with nothing stashed, the in-branch-only clear was
+skipped, leaving `_fade_in_flight` **stranded True with no live fade**. The next non-bypass
+`_on_theme_changed` (a `T`-key rotation) then hit the `_fade_running` guard, stashed itself into
+`_pending_fade_call`, and orphaned there forever (no fade to drain it) — so `T` silently did nothing.
+**Fix:** clear `self._fade_in_flight = False` UNCONDITIONALLY right after the `_fade_anim.stop()` in
+`snap_theme_forward`, not only in the drain branch. Cross-checked the other two fade-resolution paths:
+`_on_fade_finished` clears unconditionally first thing; `complete_main_fade` clears before its own
+stop — neither has the gap, so the fix is `snap_theme_forward`-only. Verified live: after a
+settings-close snap-back, `T` now logs `fade_in_flight=False` → applies (`_apply_stylesheets` runs),
+not `-> stashing`.
+
+**Known deferred (see TODO.md):** cursor fluctuates hand↔arrow over panel widgets when blur is on —
+`_grab_and_blur` hides/shows the whole active panel each tick, re-triggering Qt cursor/hit-test
+resolution. Root-caused, not fixed this pass (its own live investigation, kept separate so a
+fluctuation symptom can't be confused with a leftover T-shortcut symptom).
+
+---
+
+## Chapter-dropdown colors lagged one theme change behind — root cause and fix; second confirmed `_active_display_theme_internal` timing trap (2026-07-21)
+
+**Symptom:** after any theme change, the chapter dropdown's current-chapter highlight
+(`dropdown_curr_chap`) showed the *previous* theme's color, every time, deterministically.
+User later confirmed `dropdown_time_text` lags identically. Requested: investigate read-only first
+(plan mode), audit for any other lagging consumer, plan a fix — no code changes until the plan was
+reviewed and approved.
+
+**Mechanism, confirmed by reading code, not live tracing (the bug was deterministic, so static
+analysis was sufficient):** `ThemeManager._apply_stylesheets(self, theme_name, hover=False)`
+(`theme_manager.py:1109`) is the single method that paints a new theme onto every widget. Every
+line in it styles directly from the `theme_name` parameter it was called with —
+`get_base_stylesheet(theme_name)`, `get_title_bar_stylesheet(theme_name)`,
+`get_player_stylesheet(theme_name, ...)`, `get_sidebar_stylesheet(theme_name)`,
+`get_settings_stylesheet(theme_name)`, and the excluded-books section/popup via
+`_resolve_theme(theme_name)` directly — except one: the chapter-list block
+(`theme_manager.py:1169-1172`, before this fix):
+
+```python
+if hasattr(mw, 'chapter_list_widget'):
+    theme_dict = self.get_current_theme() or {}
+    mw.chapter_list_widget.update_theme(theme_dict)
+```
+
+`get_current_theme()` (`theme_manager.py:176-179`) resolves `self._active_display_theme_internal`
+(falling back to `_current_theme_name`) — NOT the `theme_name` argument this call actually received.
+`_active_display_theme_internal` is written exclusively by `_mark_theme_applied(theme_name, hover)`
+(`theme_manager.py:541`, added in Session 1 tonight to fix the guard-masking bug), and every real
+call site invokes it strictly *after* `_apply_stylesheets` has already returned (`theme_manager.py`
+lines 603-604, 794-795, 806-807, 947-948). So at the exact moment the chapter-list block runs
+*inside* `_apply_stylesheets`, `_active_display_theme_internal` still holds the *previous* apply's
+theme name — this call's own `_mark_theme_applied` hasn't fired yet. Every theme change therefore
+painted the dropdown with the theme from one apply ago, unconditionally.
+
+`ChapterItemDelegate.update_theme` (`chapter_list.py:34-40`) reads three keys off that one stale
+`theme_dict` — `dropdown_text`, `dropdown_time_text`, `dropdown_curr_chap` — so all three lag from
+the identical single cause, not three independent bugs. The user visually confirmed lag on two of
+the three; `dropdown_text` almost certainly lags too but is less visually obvious (ordinary row
+text vs. a highlight/duration accent).
+
+**Audit confirming scope (nothing else affected):** `grep -n "get_current_theme()"
+theme_manager.py` returns exactly one call site — the one fixed here. Every other line in both
+`_apply_stylesheets` and `_apply_stylesheets_deferred` (the library/stats/book_detail
+invisible-surface batch) threads `theme_name` through directly with no stale-state reads.
+
+**Fix:** replaced the stale read with the same `_resolve_theme(theme_name)` pattern the
+excluded-books block already uses a few lines further down in the same method:
+
+```python
+from ..themes import _resolve_theme
+theme_dict = _resolve_theme(theme_name)
+mw.chapter_list_widget.update_theme(theme_dict)
+```
+
+Fixes all three colors in one change, since they share the one `theme_dict`. Committed `6617cd1`.
+
+**Standing caution — this is the SECOND confirmed instance of the same class of bug.** Session 1
+tonight's `_mark_theme_applied` fix correctly delayed `_active_display_theme_internal`'s write to
+fire only after a confirmed apply (closing the guard-masking bug), but that timing shift has now
+twice exposed a hidden downstream dependency nobody knew existed until the write moved: first
+`snap_theme_forward`'s precondition on `_fade_in_flight` (Session 1/2), now this chapter-dropdown
+block. **Any code that reads theme state via `get_current_theme()`/`_active_display_theme_internal`
+must tolerate "last confirmed apply," not "most recent request."** Recorded here so a third
+instance, if one surfaces, can be recognized immediately rather than re-diagnosed from scratch —
+check this pattern first if a similar "one behind" or "reads a theme value that hasn't updated yet"
+symptom shows up anywhere else touching theme state.
+
+---
+
+## Transport-bar blur timing: dismiss no longer lingers through the slide-out; appear now waits for the panel to finish opening and fades in (2026-07-21)
+
+**Unrelated subsystem to the theme-hover entries below** — this is `ui/transport_bar_blur.py` /
+`ui/panels.py`'s composited transport-bar blur overlay (used by Settings/Speed/Sleep/Stats/Tags),
+not `theme_manager.py`. Found and fixed via ordinary use across two separate live-requested changes
+in the same session, not an investigation-first pass — both were simple, mechanically obvious once
+the call sites were read.
+
+**Dismiss lingered too long.** `TransportBarBlurOverlay.hide_for_panel()` itself was always
+instant/unconditional — the lingering wasn't inside that method. It was in WHEN it got called:
+`_clear_transport_bar_blur()` was wired to each panel's `_on_*_hidden` handler
+(`_on_speed_hidden`, `_on_sleep_hidden`, `_on_stats_hidden`, `_on_tags_hidden`,
+`_on_settings_hidden`), which Qt only fires once the panel's `QPropertyAnimation` slide-out
+`finished` signal lands — i.e. after the full close animation plays out. So the blurred transport
+bar sat there, visibly blurred, for the entire dismiss animation, then snapped to live only at the
+very end. Fix: moved `_clear_transport_bar_blur()` out of all five `_on_*_hidden` handlers and into
+their corresponding `_close_*_flow` methods, called immediately after each slide-out animation's
+`.start()` — i.e. at the moment the user actually asked to close, not the moment the animation
+finishes playing. `hide_for_panel()` itself needed no changes; only its call-site timing did.
+Committed `82d2c6f`.
+
+**Appear should wait for the panel to finish opening, and fade in.** Symmetric follow-up. Before this
+fix, `_apply_transport_bar_blur(panel)` was called synchronously right after
+`panel_animation.start()` in each `_start_*_entry`/`_open_*_flow` — i.e. blur appeared concurrently
+with the panel still sliding into position, not once it had arrived. Fixed by moving each call into
+a `finished` callback on the panel's own OPEN animation instead of its close animation (a different
+signal than the dismiss fix above touches): `_start_settings_entry` already had a local
+`_on_settings_slide_finished` closure to hook into; `_start_speed_entry`, `_start_stats_entry`,
+`_start_sleep_entry`, and `_start_tags_entry` each needed a small local `_on_*_slide_finished`
+closure added (self-disconnecting, matching the existing pattern). This isn't just smoother — it's
+more correct: `_apply_transport_bar_blur` clips its grab to `panel`'s own geometry via
+`_panel_rect_in_common_space`, and that geometry isn't at its final resting value until the slide-in
+animation actually completes; grabbing mid-slide (the old behavior) was technically racing the
+panel's own position.
+
+On top of the retimed appear, a fade-in was added so the blur doesn't snap on instantly even once
+correctly timed. `TransportBarBlurOverlay.__init__` now builds a `QGraphicsOpacityEffect` on the
+overlay `QLabel` and a `QPropertyAnimation` on its `opacity` property (`OutCubic`, duration
+`_FADE_IN_MS`). `show_for_panel` sets opacity to 0.0 immediately before `_overlay.show()`, then
+starts the fade (stopping any still-running previous fade first, same `if state == Running: stop()`
+pattern used everywhere else in this codebase). This is deliberately appear-ONLY: `hide_for_panel`
+stops any in-flight fade-in and resets opacity to 1.0 synchronously, with no fade-out animation of
+its own — dismiss stays exactly as instant as the fix above made it; the opacity reset just ensures
+the NEXT `show_for_panel` starts from a clean, fully-opaque baseline rather than wherever the
+previous fade happened to leave off. `_FADE_IN_MS` was initially set to 180 and then live-tuned by
+the user directly in the file to 1500 mid-session — kept as their live-tested value, not reverted or
+second-guessed. Two now-stale docstrings (the module's own mechanism-overview comment, and
+`hide_for_panel`'s docstring — both still described the pre-fix "torn down after slide-out
+finishes" timing) were corrected in the same pass to describe both the new open-side fade-in and the
+already-fixed close-side instant teardown. Committed `10b9650`.
+
+Both changes verified live by the user before commit, per the standing practice this session of not
+committing until the actual running app confirms the change (not just re-reading the diff). No new
+CLAUDE.md rule — neither change resolves a hard-won bug from before; they're live-tuned UX timing
+adjustments to a subsystem whose mechanism was already fully documented in
+`transport_bar_blur.py`'s own module docstring.
+
+---
+
+## Hover-on-hover now interrupts the in-flight preview instead of being stashed and discarded — a direct side effect of the confinement fix just above, found via normal use and fixed same night (2026-07-21)
+
+**Context:** direct follow-on to the guard-masking/hover-confinement entry immediately below. That
+fix was correct for the bug it targeted (a transient cursor pass-over getting drained and applied
+through the full path on panel dismiss) but had a real side effect the user found through ordinary
+theme browsing, not edge-case testing: hovering theme A starts a preview fade; genuinely resting on
+theme B (a real, 80ms-debounce-cleared hover, not a fast pass-over) while A's fade is still running
+got B's call stashed by the existing `_fade_running` branch — and, per the confinement fix, silently
+discarded at drain time because it's hover-flagged. Nothing replaced it with a fresh preview
+attempt, so the user was left looking at A's stale colors while deliberately hovering B, sometimes
+for the whole 80-90ms+ debounce window and beyond, with no preview appearing until some unrelated
+event happened to drain the stash. Described directly as "annoying, confusing."
+
+**Investigation, before any fix (`Investigation_HoverInterruptsHover_260721.md`):** confirmed the
+80ms debounce (`_HOVER_DEBOUNCE_MS`, exactly 80, not 90) is a single global timer, fully upstream of
+`_on_theme_changed`, with zero further role once a hover call exists — untouched by this fix. Found
+TWO real entry points that produce a genuine `hover=True` call: the debounced swatch-sweep path
+(`_fire_pending_hover`) and the cover-pool button's own hover (`_on_cover_pool_btn_hovered`,
+undebounced by design — a single fixed target, no sweep to coalesce). Both reach the identical stash
+branch. Confirmed, by tracing rather than assuming, that hover-interrupts-hover and
+hover-interrupts-genuine-selection are THE SAME CODE PATH today — `_fade_in_flight` is a plain
+boolean with no memory of what started it; the only way to distinguish the two cases is
+`self._is_hover_active` (correctly maintained by the earlier `_mark_theme_applied` fix to reflect
+whatever was last genuinely applied — i.e. what started the currently-running fade). Confirmed the
+fade-stop mechanism needed for an interrupt already exists (`theme_manager.py`, the
+`if self._fade_anim.state() == Running: stop()` pattern used at four other sites) and is currently
+simply unreachable for any stashed call, since the stash branch returns before execution gets there.
+
+**Fix:** one condition added to the existing `elif _fade_running:` branch — if the incoming call is
+a hover AND the in-flight fade is itself a hover, skip the stash and fall through to the
+stop-and-apply flow that already exists a few lines down. No new stop mechanism, no new apply
+mechanism, no new state. Every other combination is explicitly unchanged: a hover arriving during a
+GENUINE SELECTION's settle-fade still stashes-then-discards exactly as before (a preview must never
+interrupt a real selection); a genuine selection arriving during any fade still stashes-then-replays
+via the existing drain sites, untouched.
+
+**Live verification, both go/no-go items the user required before considering this done — mechanism
+confirmed, not just symptom absence:**
+1. Hover-interrupts-hover via the swatch sweep: 67 clean interrupt events across a live session,
+   each showing `[hover debounce] firing preview for '<name>' ...ms after last enterEvent` →
+   `hover_interrupts_hover=True -> interrupting in-flight hover fade` → the new theme's mask-build
+   starting immediately, no stash, no discard.
+2. Hover-interrupts-hover via the cover-pool button (the "Cover art based theme" entry, a `ThemeItem`
+   like every swatch but wired to the book's cover-derived colors) — a second, real, undebounced
+   entry point into the identical branch, confirmed live to trigger the same
+   `hover_interrupts_hover=True` interrupt correctly.
+3. Genuine-selection-fade-interrupted-by-hover confirmed UNCHANGED via a full traced sequence: a
+   real click's settle-fade (`fade_ms=750`) in flight, a hover arriving mid-fade correctly took
+   `hover_interrupts_hover=False -> stashing for fade completion` (not the new interrupt path), the
+   genuine selection's fade completed undisturbed, and the stale hover stash was correctly
+   discarded at drain time by the earlier confinement fix — exactly the pre-existing, working
+   behavior, unaffected by this change.
+
+All diagnostic logging (`[BLEED-TRACE]`'s new `hover_interrupts_hover` field, the GUARD debug line's
+updated branch-decision text) is left in place, matching this session's standing practice.
+
+---
+
+## Guard-masking bug (theme stuck unapplied for 75+ seconds) and hover-preview confinement — both root-caused, fixed, and live-verified together over a real 15-minute session (2026-07-21)
+
+**Context:** continuation of the same night's theme-bleed work (see the entry below). After the
+Pass 1/Pass 2 fixes there, the user kept finding theme-state bugs that didn't fit either mechanism
+— panels showing a theme that was never actually selected, sometimes for a full minute or more,
+and separately a panel briefly showing colors from a theme the cursor had only grazed in passing.
+Both were root-caused via direct live log tracing (not guessed at) across several rounds of
+screen-recorded repro, and both are now fixed and confirmed via a real 15-minute mixed-use test
+session (03:00–03:15), not just isolated single-shot repros.
+
+### Bug 1 — the no-op guard could mask a theme that was requested but never painted
+
+`ThemeManager._on_theme_changed`'s no-op guard compares the incoming `(theme_name, hover)` against
+`_active_display_theme_internal`/`_is_hover_active` and skips the whole apply if they already
+match — a legitimate optimization (this app was measurably slow re-applying themes on every hover
+tick before this guard existed). The bug: both fields were written **unconditionally**, the moment
+`_on_theme_changed` decided *what* was being requested, before it decided whether to actually apply
+that request or stash it for later (the `_any_animating`/`_fade_running` branches, used when a fade
+is already in flight). A call that got stashed still left the fields claiming the requested
+theme/hover was already live. When that stash was later drained and replayed with the identical
+`(theme_name, hover)` pair, the guard saw "already matches" and silently no-op'd — `_apply_stylesheets`
+never ran, and the theme stayed stuck at whatever was last *genuinely* applied.
+
+Confirmed live via a full origin-to-symptom trace (session restarted 00:45:16): `'Pyke'` applied
+successfully at `00:46:16,670`; a click to `'Shade of the Evening'` at `00:46:19,867` landed while
+a hover-preview fade was still finishing, got stashed; every subsequent attempt to apply it hit the
+no-op guard from `00:46:20,271` through `00:47:35,799` — over 75 seconds, verified via a temporary
+`_theme_ever_applied` marker (set only inside `_apply_stylesheets`) that stayed pinned at `'Pyke'`
+the entire window. A user screenshot taken inside that window showed exactly the split this predicts:
+Library/Stats/Tags/Sleep's per-button colors still on `'Pyke'`, main window/Speed/Sleep's own panel
+chrome already on `'Shade of the Evening'` (the fast pass and deferred pass diverged, both stuck on
+whatever they'd each last genuinely painted).
+
+Two wrong hypotheses were formed and retracted live before landing on this: (1) "chrome has an
+independent trigger, buttons don't" — traced and found false, `sleep_panel.setStyleSheet()` (chrome)
+is gated by the exact same guard as everything else; (2) "the deferred-restyle batch's last-write-wins
+coalescing raced the fast pass" — retracted immediately on checking the rotated log file, which showed
+the deferred pass *did* genuinely complete for the stuck theme minutes earlier; the actual defect was
+purely the guard-masking mechanism above, confirmed by a third trace showing `_on_fade_finished`
+draining a stash whose fields had already been "poisoned" by an earlier hover call to the same theme
+name.
+
+**Fix:** consolidated both writes into one method, `_mark_theme_applied(theme_name, hover)`, called
+only immediately after `_apply_stylesheets` has genuinely run — at all four real-apply call sites
+(`_on_theme_changed`'s three branches: themes-tab overlay fade, slider-animated fade, instant/no-fade;
+plus `apply_full_pass`, a separate startup-only path with its own direct `_apply_stylesheets` call,
+reached both from `_on_theme_changed`'s early branch and directly from `app.py`). The two old
+unconditional write sites (`_is_hover_active = hover` before the stash-decision branches;
+`_active_display_theme_internal = theme_name` right after them, still before the real apply) were
+deleted, not left as fallbacks. The guard's own comparison logic was deliberately left untouched —
+an explicit design check confirmed the fix needed to be entirely about *when* the fields are
+written, not *how* they're compared; if the guard itself had needed changing too, that would have
+meant the write-timing fix wasn't sufficient on its own. A full read-site audit (every consumer of
+either field in `theme_manager.py`) found no code path anywhere that depends on the old pre-apply
+timing, so no second/staging field was needed.
+
+### Bug 2 — hover previews could be replayed through the same path as a genuine selection
+
+Separate, unrelated mechanism, found while live-testing Bug 1's fix. `get_base_stylesheet`'s narrow
+scope (main window, `QToolTip`, `status_banner`, the overall progress slider, chapter dropdown,
+`undo_overlay`) exists specifically so a hover preview never has to walk the full panel tree — the
+same cost `_schedule_deferred_restyle`'s deferred-batch split exists to avoid for genuine changes.
+This confinement was never actually enforced at the one place it needed to be: none of the three
+`_pending_fade_call` drain sites (`_on_fade_finished`, `snap_theme_forward`, `complete_main_fade`)
+checked whether the stashed call was a hover preview before replaying it. A transient cursor
+pass-over a swatch (not a deliberate hover-select, just transit on the way to dismissing a panel)
+fires a real `hover=True` call; if that call got stashed (a previous selection's fade still
+settling) and was later drained on panel-dismiss, it got applied through the FULL path — reaching
+`_schedule_deferred_restyle` and every panel-level stylesheet, exactly like a real click would.
+
+Confirmed via a screen-recorded live repro (`02:06:46`–`02:07:11`): user selected `Melnibonéan`
+(genuine), then moved the cursor toward the dismiss direction, transiting over `Urras` for a
+fraction of a second; `Urras`'s hover call got stashed (the previous fade was still finishing);
+`snap_theme_forward`'s drain (fixed under Bug 1 to correctly reach the deferred pass) applied it
+with `hover=True` at `02:06:48,161` — confirmed via `[SNAP-DRAIN-TRACE] ... theme_name='Urras'
+hover=True`. Sleep/Stats panels visibly showed `Urras`-derived colors afterward, despite `Urras`
+never being a genuine selection.
+
+**Fix:** at all three drain sites, check the stashed call's `hover` flag before replaying it. If
+`True`, discard — clear `_pending_fade_call`, do not call `_on_theme_changed` at all. There is no
+correct later moment to apply an abandoned preview; by the time any of these drains run, the user
+has moved on (cursor elsewhere, or the panel that was showing the preview has already closed).
+Recorded as a permanent architectural rule in CLAUDE.md: *"Hover-preview theme application must
+never reach `_schedule_deferred_restyle` or any panel-level stylesheet... a preview must never be
+replayed through the same apply path as a genuine selection."* One adjacent check done before
+implementing: `user_initiated=False` (automatic rotation, automatic cover-theme changes) is a
+real, separate flag from `hover` and was confirmed to never conflict with it — every automatic-change
+call site always passes `hover=False`, so the hover-only discard check can't accidentally swallow
+a legitimate automatic theme change.
+
+### Live verification — both fixes together, not just reasoned to compose
+
+Per explicit instruction, the two fixes were verified running together over a real 15-minute mixed
+interaction session (03:00–03:15), not just argued to be compatible. Log analysis: 55 hover-flagged
+stashes correctly discarded across all three drain sites (54 via `_on_fade_finished`, 1 via
+`snap_theme_forward`) with zero reaching the apply path; zero occurrences of the actual Bug 1
+signature (`hover=False` + the diagnostic `SUSPECT_MASKED_STASH=True` marker). 15 occurrences of
+`SUSPECT_MASKED_STASH=True` did appear, but all 15 were `hover=True` — traced and found to be a
+false-positive gap in the diagnostic marker itself (it doesn't distinguish "guard blocked a real
+pending apply" from "guard correctly no-op'd a redundant hover re-entry," and only non-hover
+applies ever update the `_theme_ever_applied` comparison value, so any hover no-op will always look
+like a mismatch even when it's completely benign). This is a diagnostic-precision gap only — it
+does not affect app behavior — logged as a follow-up in TODO.md, not fixed this session.
+
+**Diagnostic logging from this investigation (`[GUARD-MASK-TRACE]`, `[FADE-FINISHED-TRACE]`,
+`[SNAP-DRAIN-TRACE]`, `_theme_ever_applied`) is deliberately left in place**, per explicit
+instruction — useful for confirming the fix holds under future real usage, and for diagnosing the
+`SUSPECT_MASKED_STASH` false-positive follow-up.
+
+---
+
+## Theme-bleed: two independent causes found and closed via a read-only audit + two fix passes; hover-pulsate confirmed gone live, one of at least three causes still open, and a new responsiveness regression is unexplained (2026-07-20)
+
+**Context:** theme-bleed (hover-preview colors leaking into `content_container`/`main_window`) had
+been investigated across multiple sessions via direct trigger-hunting (see the `complete_main_fade`
+entries elsewhere in this file) with partial, unverified fixes. Rather than continue hunting
+triggers one at a time, a read-only audit (`Agent` tool, `Explore` subagent) was run first to map
+every code path by which preview/hover theme state could reach those two widgets, before any fix
+was attempted — full detail in `Audit_ThemeReach_260720.md` (not reproduced here; this entry covers
+what was actually implemented from it).
+
+**Audit findings (summary):** the audit inventoried every `setStyleSheet()` call site on
+`content_container`/`main_window` and their descendants, checked each against CLAUDE.md's
+invariant #4 (`_apply_stylesheets` is the sole dispatcher), and traced whether hover state could
+reach those two widgets. It found one confirmed invariant-#4 bypass and one separate,
+structurally-independent pixel-capture mechanism — see the two fix passes below, each named after
+the audit's own path label.
+
+### Pass 1 — state-read bypass (audit "Path A"), landed but confirmed insufficient alone
+
+`MainWindow._set_bg_suppressed` (`app.py`) read `theme_manager._active_display_theme` directly and
+called `content_container.setStyleSheet(...)` outside `_apply_stylesheets` entirely — a real
+bypass of invariant #4. It derived the theme name from `_active_display_theme` with **no check of
+`_is_hover_active`**, and is invoked from `library_controller.apply_library_state` on book-load and
+empty-state transitions — a call graph with zero coupling to `ThemeManager`'s fade/hover state
+machine, so it can fire at any moment, including mid-hover-preview. The audit confirmed via a
+whole-repo grep that `_active_display_theme` had no writes outside `theme_manager.py` and exactly
+one cross-file read (this one) — so this was a clean field-privatization, not a flat replacement
+needing to accommodate some other legitimate external consumer.
+
+**Fix:** renamed the field to `_active_display_theme_internal` (20 occurrences within
+`theme_manager.py`, pure rename, no behavior change) and added
+`ThemeManager.get_active_theme()` — a resolving accessor that returns the actual active theme
+(the live cover theme dict if one is active, else `_current_theme_name`) while a hover preview is
+live, and the raw internal value otherwise. Return type matches the field's own type (`str` or a
+cover-theme `dict`) since `_set_bg_suppressed`'s existing cover-theme-flash-avoidance logic depends
+on that. `_set_bg_suppressed` now calls the accessor instead of reading the field. Verified via a
+repo-wide grep after the rename that nothing else referenced the old bare name in code (two
+comment-only hits: the accessor's own historical docstring, and an unrelated English-language
+comment in `library.py` that happens to contain the string). 212/216 tests passed (4 pre-existing,
+confirmed-unrelated failures in `test_cover_theme_pending.py`, verified via `git stash` comparison
+against the unmodified branch tip).
+
+**Live test result (same day): insufficient alone.** The user tested with blur ON immediately after
+this fix landed and reported the hover-pulsate bleed was still visibly present (screenshot: the
+blurred transport-bar area still showing the hovered theme's colors). This was the first hard
+evidence that the live bug was actually Mechanism B (below), not this bypass — Pass 1 was a real,
+necessary fix (closes a genuine invariant-#4 violation) but was not the live cause of what the user
+was actually seeing.
+
+### Pass 2 — hover-unaware blur grab (audit "Path D" / "Mechanism B"), landed same day, fixed the visible symptom
+
+Traced directly from the user's screenshot rather than re-guessing. Mechanism, confirmed by reading
+the code (not assumed): a hover-preview restyle calls `_apply_stylesheets(hover=True)`, which
+rewrites `content_container`'s stylesheet (`theme_manager.py` call site). Rewriting a parent's
+stylesheet forces Qt to repolish/repaint every styled descendant — including all 12 widgets
+`TransportBarBlurOverlay` tracks (`transport_bar_blur.py`: chapter labels, sliders, buttons, speed
+button). Confirmed these widgets have no stylesheet of their own (grepped `theme_manager.py` for
+direct `setStyleSheet`/`update()`/`polish()` calls on any of them — none found), so their repaint is
+a deterministic consequence of the `content_container` restyle, not incidental timing overlap with
+something else (e.g. the marquee label or a slider animation).
+
+`_DirtyRectTracker.eventFilter` (`transport_bar_blur.py`) sees these repaints as real `QEvent.Paint`
+events — correctly, by its own design, since it has no way to distinguish "restyled because of a
+genuine theme change" from "restyled because of a hover preview" — and calls
+`TransportBarBlurOverlay._schedule_refresh()`, which arms a coalescing `QTimer.singleShot(0, ...)`.
+`refresh_dirty()` then calls `_grab_and_blur()`, which grabs `main_window`'s **live composited
+frame at that exact instant** — showing the hovered theme's colors — and bakes it into the overlay
+pixmap. Confirmed via grep: `transport_bar_blur.py` had **zero** references to `_is_hover_active`
+anywhere before this fix — no part of the blur pipeline had any hover awareness at all. This also
+explained a second symptom the user reported independently ("panels are slow... the grab has very
+high frequency"): every hover tick that restyles `content_container` fires a repaint on all 12
+tracked widgets, which is 12 potential dirty-triggering paints per hover step, not one.
+
+**Fix:** added a gate in `refresh_dirty()` (`transport_bar_blur.py`), placed immediately before the
+existing `_POST_RESTYLE_COOLDOWN_S` cooldown gate: early-return while
+`theme_manager._is_hover_active` is `True`, without calling `take_dirty_union()` — so the
+accumulated dirty rect is not consumed or lost, just left for a later real paint to pick up (same
+non-destructive-decline pattern the pre-existing cooldown gate already uses, per its own comment).
+
+**Hover-end safety, traced explicitly before shipping (not assumed by analogy):** the risk with a
+"skip while hovering" gate is that if nothing ever re-triggers a refresh after hover ends, the
+overlay could go stale indefinitely — a real concern given the separate, still-open frozen-overlay
+bug (below). Traced the actual resume path: `_on_theme_unhovered()` (`theme_manager.py`) calls
+`_on_theme_changed(..., hover=False, fade_ms=_SNAPBACK_FADE_MS)` — a normal restyle. Critically,
+`_on_theme_changed` sets `self._is_hover_active = hover` **unconditionally, before** any of its
+animation/panel guards run (line ~458, ahead of the fade/panel-animation branches) — so by the time
+this snapback restyle actually repaints `content_container` and its descendants, `_is_hover_active`
+is already `False`. That repaint fires a fresh, real `QEvent.Paint` on the tracked widgets, which
+re-arms `_schedule_refresh()` and lands in `refresh_dirty()` with the new gate now clear — hover-end
+self-corrects through the ordinary event-driven path. No separate `force_refresh_now`-style forced
+call was needed or added.
+
+**Known gap found in the same code path, deliberately NOT fixed this session — logged here in full
+so a future session doesn't have to re-derive it:** `refresh_dirty()`'s early-return gates (both the
+new hover gate and the pre-existing `_POST_RESTYLE_COOLDOWN_S` gate) do not re-arm themselves.
+`_schedule_refresh()`'s `QTimer.singleShot(0, self.refresh_dirty)` fires exactly once per arm; if
+`refresh_dirty()` declines via either gate, `_refresh_pending` was already reset to `False` at the
+top of the method (before either gate is checked), and nothing schedules another attempt. A
+declined tick is retried **only if some later real `QEvent.Paint` fires on a tracked widget** — the
+hover case verified above is safe specifically because hover-end reliably produces exactly such a
+paint, but this is a property of what triggered the decline, not a general guarantee the gate
+mechanism provides. If a tick is ever declined for a reason that is NOT followed by any further
+repaint, the accumulated dirty union sits in the tracker uncomposited indefinitely, with no error
+and no future retry — visually indistinguishable from the separately-tracked, still-unexplained
+frozen-overlay bug (see the "blur overlay's refresh timer stops firing permanently" entry
+elsewhere in this file / TODO.md). Not investigated further, not touched, per explicit scope
+instruction to stay narrowly on the hover gate this session.
+
+**Live test result:** user confirmed the hover-pulsate bleed is visually gone. **Also reported: general
+UI responsiveness is now slow.** Not yet triaged — candidate causes not yet checked: whether the new
+gate's decline path (or the resulting change in when/how often grabs actually happen) is adding
+overhead somewhere, or whether this is unrelated to today's changes entirely. Needs live
+profiling before attributing a cause; not assumed to be the hover gate just because of proximity in
+time.
+
+**Verification status, stated plainly:** the specific symptom the user reported (hover-pulsate into
+the blurred area) is confirmed gone live. This is NOT the same as "theme-bleed is fixed" — the
+audit identified at least three independent causes, and `complete_main_fade()`'s stale-fallback-
+reapply path (a separate, already-partially-mitigated, still-unverified mechanism from an earlier
+session — see that entry elsewhere in this file) was neither touched nor re-verified this session.
+No soak test (blur on, repeated hover+panel-open cycles, multi-minute stretches) has been run
+against either of today's two fixes. Test suite: 212/216 passed both times today (4 pre-existing,
+confirmed-unrelated failures, unchanged by either fix).
+
+---
+
+## FIXED and live-verified with raw before/after tick data: transport-bar blur reworked from a 1200ms polling timer to event-driven refresh; the rework itself introduced a feedback loop, closed with a measured wall-clock suppression window (2026-07-20)
+
+**Motivation:** the punch-through-flash investigation (see the entry below) found the polling timer's
+`refresh_dirty()` was the mechanism colliding with Qt's post-restyle repaint backlog, but only some of
+those collisions were on ticks with real dirty content — many were the timer firing on schedule and
+finding nothing to do, an unnecessary cost layered on top of the real one. Direction: replace the poll
+with event-driven refresh — `_DirtyRectTracker`'s existing `QEvent.Paint` observation (already
+correctly wired, just previously only used to accumulate state a poll would later consume) now calls
+`TransportBarBlurOverlay._schedule_refresh()` directly on every real paint, which arms a coalescing
+`QTimer.singleShot(0, ...)` — never a fixed interval, never fires unless something genuinely repainted
+first. `_REFRESH_INTERVAL_MS`/`_refresh_timer` removed entirely. A one-time forced refresh was added on
+settings-tab switch (`QTabWidget.currentChanged`, wired in `panels.py`) since a tab switch changes
+`settings_panel`'s own visible content without generating a `Paint` event on any of the transport bar's
+own tracked widgets.
+
+**Bug introduced by the rework, found live during its own testing, fixed same session:**
+`_grab_and_blur()`'s existing `hide()`→`main_window.grab()`→`show()` cycle on the currently-open panel
+(done to keep the panel's own translucent wash out of the captured pixels — unchanged, pre-existing
+behavior) forces Qt to repaint the tracked transport-bar widgets underneath the panel, since they're
+momentarily exposed/re-occluded. Under the OLD polling design this was invisible — the timer didn't
+care what caused dirtiness. Under the NEW event-driven design, the tracker saw these self-inflicted
+repaints as real content changes and called `_schedule_refresh()` again, which called
+`_grab_and_blur()` again, which hid/showed the panel again, causing another self-inflicted repaint —
+an unbounded feedback loop. Confirmed live: continuous `COMPOSITED` ticks firing far faster than any
+real content could plausibly be changing, described directly by the user as visible stutter and "no
+hover" (the overlay was refreshing so fast the constant grab activity itself froze normal interaction).
+
+**First fix attempt, tried and confirmed insufficient:** a plain boolean (`_grab_in_progress`) set
+`True` at the start of the hide→grab→show sequence and cleared in a `finally` block the instant the
+sequence's Python call returned. Did NOT stop the loop — confirmed live it kept ticking. Root cause of
+that failure, found via a direct isolated PySide6 measurement (not assumed): Qt does not deliver every
+repaint this sequence triggers synchronously. One paint lands inline (~1ms), but 1-2 more land on
+LATER event-loop turns. A follow-up measurement using wall-clock timestamps (not turn counts) found
+every deferred paint arrives within **~20ms** of the sequence, consistently, across a 200ms observation
+window — turn-counting was rejected as a sizing method because a separate measurement showed the paint
+count still climbing across multiple `singleShot(0)` turns (1→2→2→3), not settling after exactly one.
+
+**Fix that worked:** `_grab_suppress_until`, a `perf_counter()` deadline (not a boolean, not a turn
+count) — set to `now + 50ms` at the START of the hide→grab→show sequence and re-extended to
+`now + 50ms` again in the `finally` block after it completes. `_DirtyRectTracker` drops any paint event
+observed while `time.perf_counter() < _grab_suppress_until` — not queued, simply dropped, accepted
+tradeoff being at most one hover-step of staleness in the cached blur (never the live, unblurred UI),
+self-correcting on the next real paint or forced refresh. 50ms was chosen with real margin over the
+measured ~20ms deferred-paint window.
+
+**Verification — raw tick-interval data, before and after, on direct request (not narrative
+description):**
+
+BEFORE (pre-fix, `03:21:04`, 20 consecutive `COMPOSITED` ticks), intervals in ms:
+```
+33.0, 17.0, 19.0, 14.0, 20.0, 15.0, 15.0, 17.0, 27.0, 17.0, 27.0, 16.0, 21.0, 15.0, 17.0, 12.0, 17.0, 9.0, 16.0
+```
+avg 18.1ms, min 9.0ms, max 33.0ms — the tight machine-gunning loop.
+
+AFTER (post-fix, `04:18:03` onward, 17 consecutive `COMPOSITED` ticks), intervals in ms:
+```
+61.0, 127.0, 1554.0, 64.0, 63.0, 69.0, 65.0, 65.0, 75.0, 1222.0, 1393.0, 1457.0, 2035.0, 1390.0, 2081.0, 1391.0
+```
+avg 819.5ms, min 61.0ms, max 2081.0ms. Not uniform — two clusters: a short run of ~60-130ms intervals
+(the settings-panel slide-in animation's own frame cadence, several real repaints in quick succession)
+followed by long ~1.2-2.1 SECOND gaps (steady state, driven by the separate spurious-`enterEvent` bug's
+own ~1.3-1.4s cycle — see that entry below). Minimum post-fix interval (61ms) is more than 3x the
+pre-fix AVERAGE (18ms); the tight repeating sub-40ms pattern is gone entirely. Confirmed live by the
+user as no longer producing stutter/frozen-hover.
+
+**What this does NOT fix, stated plainly:** the residual punch-through-flash collision (a real,
+event-driven grab landing right after a real restyle) is unchanged — this rework only removed the
+*unnecessary* polling-driven grab volume, never claimed to eliminate the collision itself. See the
+entry below for that bug's continued-open status, now confirmed to be getting hit far more often than
+normal usage would produce because of the separate spurious-`enterEvent` bug (see further below).
+
+---
+
+## STILL OPEN, NOT FIXED: the "heartbeat" (`ThemeItem.enterEvent` firing repeatedly on a stationary cursor) has TWO independent spurious triggers — a guard against one is in place, the bug still reproduces because the second trigger is unidentified (2026-07-20)
+
+**Do not describe this as fixed, partially or otherwise. The reported symptom is unchanged: the cursor
+still triggers repeated spurious hover cycles while stationary.** A guard was added against one of the
+two confirmed triggers, and that guard measurably works for the case it targets (verified via log:
+alternating cycles show it correctly suppressing the trigger it covers) — but the bug as experienced is
+not resolved, because a second, independent trigger produces the same symptom on the cycles the guard
+doesn't cover. "One of two causes addressed" is not the same as "fixed" when the second cause alone is
+sufficient to keep reproducing the bug in full.
+
+**This entry replaces two earlier, sequentially disproven theories in this same investigation — both
+retracted here explicitly, not silently superseded, per the session's own standard:**
+
+1. **First theory (disproven):** `update_theme_list_visuals()`'s `btn.style().unpolish()`/`.polish()`
+   calls were the cause. A fix was implemented (only repolish a button whose `selected`/`active_display`
+   state actually changed) and tested live: the fix's own instrumentation showed **`repolished 0/58
+   buttons`** on every single cycle — zero repolish calls happening at all — while the spurious
+   `enterEvent` kept firing on the identical schedule. **This conclusively disproves the theory**, not
+   merely fails to confirm it. The guard itself was kept (it's a harmless, legitimate minor
+   optimization independent of this bug), but the comment attributing it to fixing the heartbeat was
+   corrected.
+2. **Second theory (real, but only half the picture):** checkpoint-level tracing across every
+   `_apply_stylesheets` call in the log, with zero exceptions across the sample, showed the spurious
+   `enterEvent` landing 8-15ms after `settings_panel.setStyleSheet(ss_panels)` completes (specifically
+   — NOT `mw.setStyleSheet(base)`, which was checked and ruled out: its completion-to-enterEvent gap was
+   86-98ms, ~6-10x longer and inconsistent with being the direct trigger). `settings_panel` is the real,
+   direct Qt ancestor of every `ThemeItem` — its `setStyleSheet()` call forces a style/geometry cascade
+   through that whole subtree, re-evaluating hit-testing for whatever the cursor rests on.
+
+**A guard was implemented against trigger #2 and is live-verified to suppress that specific trigger when
+it fires:** a two-signal guard in `ThemeItem.enterEvent` (`title_bar.py`) —
+`main_window._spurious_enter_guard_until` (a `perf_counter()` deadline set/cleared via `try/finally`
+around `settings_panel.setStyleSheet()` in `_apply_stylesheets`, `theme_manager.py`) combined with a
+cursor-position match against the position `ThemeItem`'s own `leaveEvent` reported moments earlier.
+**Before implementing, the investigation explicitly checked (per direct instruction) whether "no
+preceding leaveEvent" alone would have been a safe discriminator — it would NOT have been:** live
+logging showed the spurious cascade ALSO fires a fully realistic-looking `leaveEvent` immediately before
+every spurious `enterEvent`, at the identical cursor position, indistinguishable by event shape alone
+from a genuine quick leave-and-return. This is why the time-window signal (derived from code under our
+control) is the load-bearing one, with cursor-position as a secondary check — not the other way around.
+Both signals combined were required.
+
+**The reported bug is NOT fixed. Reproducing the stationary-hover scenario after this change shows the
+heartbeat still happening, unchanged from the user's perspective — the cursor still triggers repeated
+spurious hover cycles while stationary.** What the log shows is that the guard correctly suppresses one
+of the two triggers, alternating with a second, unguarded trigger passing through:
+```
+leaveEvent  pos=(60, 208)
+enterEvent  SUPPRESSED (synthetic)  in_window=True   pos_matches=True   <- one trigger, suppressed
+...
+leaveEvent  pos=(60, 208)
+enterEvent  PASSED       (real)     in_window=False  pos_matches=True   <- second, unguarded trigger
+```
+The `PASSED` case is a **second, distinct spurious leave/enter pair** — confirmed NOT caused by either
+`_apply_stylesheets` call (`hover=False` snapback or `hover=True` preview): it fires ~500ms after the
+guarded `hover=False` restyle completes, and — critically — **before** the next `hover=True` restyle
+even begins (confirmed via timestamp ordering, not assumed). It correlates with two back-to-back
+`_on_theme_changed: EARLY-RETURN no-op guard` lines for the already-active theme, appearing immediately
+before the spurious leave/enter pair each time — but what triggers THOSE calls (candidates not yet
+checked: the 700ms `_panel_guard_timer` retry mechanism, or something else entirely) was not identified
+before the session ended. **Since either trigger alone reproduces the full user-visible symptom, this
+change does not resolve the bug — it only demonstrates that one of its (at least two) causes is now
+correctly handled.**
+
+**Representative log excerpt, the WORKING half of the fix** (timestamps abbreviated to HH:MM:SS,mmm):
+```
+40,274  leaveEvent  pos=(60, 208)
+40,517  enterEvent SUPPRESSED (synthetic)  guard_until=40280.523397  last_leave_pos=(60, 208)
+```
+
+**Representative log excerpt, the UNFIXED second trigger:**
+```
+41,038  leaveEvent  pos=(60, 208)
+41,038  [_on_theme_changed EARLY-RETURN no-op guard] theme_name='Urras' (x2, back to back)
+41,047  enterEvent PASSED (real)  in_window=False  guard_until=40280.523397 (long expired)
+41,128  [hover debounce] firing preview for 'Sitting in the Wing Chair' 80.8ms after last enterEvent
+```
+
+**Flagged as a possible wider pattern, per the escalation instructions — NOT investigated:** any other
+call site in the codebase that calls `style().unpolish()`/`.polish()`, or any other full-subtree
+`setStyleSheet()` call, on a widget the cursor could plausibly be resting over could have a similar
+latent issue. Not searched for beyond the two call sites checked here (`update_theme_list_visuals`,
+`_apply_stylesheets`'s `settings_panel`/`mw` calls). See `DEBT_INVENTORY.md`.
+
+**Diagnostic logging status:** `ThemeItem.enterEvent`/`leaveEvent` (`title_bar.py`) log
+`[ENTEREVENT-TRACE]` on every firing, including whether the guard suppressed or passed the event and
+why (`in_window`, `pos_matches`, `guard_until`, `last_leave_pos`) — **left in place deliberately**, not
+temporary, since the bug is only partially fixed and this logging is what a future session will need
+to find the second trigger. Do not remove until the second trigger is found and fixed.
+
+**Process note, for the record:** this investigation went through three sequential theories before
+landing on a real (if partial) fix — each one tested live and either disproven outright (theory 1) or
+found to explain only part of the symptom (theory 2/the shipped fix). The session was explicit at each
+step about which claims were confirmed by log evidence versus still theoretical, and retracted the
+first theory outright rather than quietly moving past it. The user's own insistence on checking the
+leaveEvent-reliability assumption BEFORE implementing (rather than after) caught a real gap in the
+originally-proposed single-signal design before it shipped.
+
+---
+
+## NEW BUG, confirmed real via one accidental live occurrence, ROOT CAUSE NOT CONFIRMED — "the timer stopped" was this investigation's own first guess and static analysis found a gap in that claim, not evidence for it: the blur overlay froze on stale content while the app kept running, cause unknown (2026-07-20)
+
+**Confirmed via direct log+screenshot correlation:** at `02:00:29,040`, `show_for_panel ENTRY
+panel='stats_panel' self._active=False` → mandatory first-pass grab succeeds → `show_for_panel DONE
+panel='stats_panel'`. Normal, successful open, no error logged. After that `DONE` line, zero further
+`transport_bar_blur` log activity of any kind appears for over a minute, while the app kept running and
+the theme kept changing live via `T` rotation — confirmed by a screenshot taken at ~`02:02:xx` showing
+the overlay's grabbed transport-bar buttons in a blue theme while the surrounding, unblurred chrome had
+moved on to pink/magenta.
+
+**Correction, made during this same investigation's static analysis pass — read before trusting
+anything above about "the timer stopped":** the title/framing above ("refresh timer stops firing
+permanently") was this investigation's initial hypothesis, stated too confidently before the code was
+actually read. `refresh_dirty()` (the timer's connected slot), as it existed at the time of the
+occurrence, had **multiple silent early-return paths and zero log statements anywhere in the method** —
+meaning a healthy timer firing exactly on schedule every 1200ms, hitting an early return every single
+tick (e.g. because nothing dirtied the tracked widgets), would ALSO produce exactly zero log output.
+**"No log lines after `show_for_panel DONE`" was never actually evidence the timer died** — it is
+equally consistent with the timer running perfectly and correctly finding nothing to do. This
+correction is being stated explicitly and separately, not folded silently into a revised theory,
+because presenting an unconfirmed claim as confirmed is exactly the failure this session already had
+to walk back once tonight on a different bug (see the theme-bleed entry below) — the same standard
+applies here.
+
+**What IS still a real, open question, now correctly scoped:** whether the overlay's pixmap content
+was frozen (confirmed, via the screenshot's two-tone mismatch) because (a) the timer genuinely stopped
+firing, (b) the timer kept firing but `_tracker`'s dirty-union stayed empty every tick because the
+tracked widgets' `QEvent.Paint` events never fired during this particular T-rotation-while-Stats-open
+sequence, or (c) something else. Static analysis (below) ranks these candidates but does NOT resolve
+between (a) and (b) — that requires the newly-added permanent logging (see the entry below) to catch
+the next real occurrence.
+
+This is a third, distinct bug from both the punch-through flash and the theme-bleed-into-main-window
+issue documented elsewhere in this file — found by accident while trying to reproduce the theme-bleed
+bug, not something being deliberately investigated. **Not reliably reproducible on demand** — caught
+once, by the user happening to screenshot it.
+
+---
+
+## Static analysis + permanent logging for the frozen-overlay bug above — ranked candidates, no confirmed root cause (2026-07-20)
+
+**Method note, per explicit instruction:** this investigation deliberately did NOT prioritize live
+reproduction (the bug isn't reliably reproducible on demand) — static code reading plus permanent
+logging for the next accidental occurrence, per the user's explicit direction.
+
+**Ruled out by direct code reading:**
+- **`_refresh_timer.start()` never being called** — ruled out for the one occurrence caught: `.start()`
+  (`transport_bar_blur.py`, `show_for_panel`) is the line immediately before the `show_for_panel DONE`
+  log line, which DID appear in the log. Since `DONE` logged, `.start()` already ran.
+- **An unhandled exception in the `refresh_dirty` slot silently stopping the `QTimer`** — tested
+  directly in an isolated PySide6 harness (a `QTimer` connected to a slot that raises on its 2nd tick):
+  the exception's traceback prints to stderr but the **timer keeps firing on every subsequent tick
+  regardless** (confirmed: 10 ticks observed over a 500ms window despite the slot raising on tick 2,
+  `timer.isActive()` still `True` at the end). PySide6/Qt does not stop or disconnect a timer because
+  its connected slot raised. This rules out the specific "exception kills the timer" mechanism named in
+  the investigation prompt.
+- **The timer object being garbage-collected or reparented** — `self._refresh_timer = QTimer(main_window)`
+  is parented to `main_window`, which lives for the app's full lifetime; no reparenting exists anywhere
+  in the file.
+- **A second/overlapping `show_for_panel` call silently stopping-without-restarting the timer** — ruled
+  out for this mechanism specifically: `show_for_panel` early-returns immediately if `self._active` is
+  already `True` (now logged — see below), a pure no-op that never touches the timer. The only place
+  `.stop()` is called at all is `hide_for_panel()`, which is a full, symmetric teardown (also hides the
+  overlay and clears `_active`) — inconsistent with the screenshot showing a visibly *shown*, frozen
+  overlay rather than a missing one, so this path doesn't fit the observed symptom.
+
+**NOT ruled out, ranked by plausibility given the actual code:**
+1. **(Most plausible) The tracked widgets simply never repainted during this specific sequence, so
+   `_tracker`'s dirty-union legitimately stayed empty every tick — no bug, working as designed, just an
+   unexpected input.** `_DirtyRectTracker.eventFilter` only marks a rect dirty on a real `QEvent.Paint`
+   for one of the 12 tracked widgets; a `T`-rotation theme change does not directly force those specific
+   widgets to repaint, and per every restyle-timing finding elsewhere in this file tonight, Qt's repaint
+   scheduling for a stylesheet change is deferred/batched and not guaranteed to hit any specific widget
+   promptly. If the tracked widgets' pixels didn't visually need to change (or their repaint kept
+   getting deferred past the timer's 1200ms tick), the tracker would never report anything dirty, and
+   `refresh_dirty()` would correctly and silently no-op forever — which matches the total-silence
+   symptom without requiring the timer to have failed at all. Complicating this ranking: the SAME log
+   window shows multiple successful `_grab_and_blur`/dirty-composite cycles in the ~40 seconds
+   immediately BEFORE the freeze (`01:59:48` through `02:00:29`), meaning dirty events clearly were
+   flowing correctly moments earlier in the same session — so if this is the explanation, something
+   about the specific `show_for_panel` at `02:00:29` (a fresh Stats-panel open, resetting the tracker)
+   would need to have left the newly re-armed tracker unable to see further paints, which is not fully
+   explained by "restyle repaint scheduling is generally deferred" alone.
+2. **A genuine timer death after some N ticks, mechanism unidentified.** Not ruled out by the exception
+   test above (that test only covers ONE specific mechanism); Qt's `QTimer` can stop for other reasons
+   this investigation didn't have code-level evidence to check (e.g. event-loop starvation from
+   elsewhere in the app, though nothing in this codebase's own code should cause that for a plain
+   interval timer). Ranked below (1) only because (1) is directly supported by a real, cited code gap
+   (`_DirtyRectTracker`'s paint-event dependency), while this candidate has no specific supporting code
+   citation — it's the residual "something else" category.
+
+**Permanent logging added (required deliverable, done regardless of the above ranking):**
+`transport_bar_blur.py` now logs, at all times (not a temporary debug flag): every `_refresh_timer
+.start()` call with `isActive()`/`interval()` confirmation; every `refresh_dirty()` tick with a running
+counter and, for every early-return path, which specific reason it took (`inactive_or_no_tracker`,
+`cooldown_gate`, `no_dirty`, `dirty_empty_after_intersect`, `overlay_pixmap_null`), or `COMPOSITED` with
+the dirty rect on a real update; every `hide_for_panel()` entry with the timer's `isActive()` state and
+total tick count for that session; every `show_for_panel` early-return reason
+(`already_active`/`empty_bounding_rect`/`empty_intersection_with_panel`). The next occurrence of this
+bug will show either (a) `refresh_dirty` ticks stopping entirely (supports timer death) or (b)
+`refresh_dirty` ticks continuing indefinitely with `reason=no_dirty` (supports candidate 1 above,
+tracker never seeing paints) — this distinction was previously invisible and is now directly
+diagnosable from existing logs without a deliberate live repro.
+
+---
+
+## UNTESTED code change, NOT VERIFIED, NOT COMMITTED: a theory-driven fix for "hovered theme bleeds into the whole live main window" exists in `theme_manager.py`, but has never been tested under the one condition where either bug reproduces (2026-07-19/20)
+
+**Status, stated plainly because an earlier version of this entry claimed the opposite: this fix has
+NOT been verified. Do not trust the "FIXED"/"live-tested"/"verified" language that was previously
+here — it was wrong, and the assistant said so directly only after being corrected by the user three
+times in a row.**
+
+**What actually happened, precisely:** both bugs (the punch-through flash AND the theme-bleed) only
+reproduce with blur ON. The assistant wrote a code change in `complete_main_fade()` (below) intended
+to fix the theme-bleed bug, then tested it — but every test that reported "no issues" was run with
+**blur OFF**. Blur-off was already independently established, HOURS before this fix was written, as a
+condition that eliminates both bugs regardless of any other code change — the user demonstrated this
+directly earlier the same session, before touching `complete_main_fade()` at all. Testing the fix with
+blur off therefore reproduces a result that was already known and has nothing to do with whether the
+fix does anything: it is a control condition, not a test of the change. The assistant repeatedly
+described this blur-off "no issues" result as evidence the fix worked — first as "live-tested across
+several variations," then, after pushback, as merely lacking one confirmed exercise of the new code
+path, and only on a fourth correction did it identify the actual error: there is no test of this fix,
+under blur-on, at all. **The user was direct about the pattern this fits: over the course of about a
+week, error after error came from confidently asserting things were fixed, correct, or verified
+without ground the assertion actually supported — this entry is a fresh, dated instance of exactly
+that failure mode, not a one-off.**
+
+**Additionally, per the user (this is why "no reproduction across many tests" was never going to be
+meaningful evidence even under the right condition): the theme-bleed bug does not reproduce
+reliably or on a fixed timescale.** Sometimes it appears almost immediately; sometimes it has taken
+around five minutes of use to surface. A short test session — even run under the correct condition —
+finding no recurrence would not be strong evidence of a fix; the absence could just as easily mean the
+session wasn't long enough or lucky enough to hit the window. Any future verification attempt needs
+to account for this explicitly (e.g. a long-duration soak test with blur on, not a handful of
+deliberate hover-then-open attempts) rather than trusting a short session's silence.
+
+**The mechanism this code change targets (recorded as a hypothesis with supporting trace evidence,
+NOT as a confirmed fix) — still worth keeping, since the reasoning may well be correct even though the
+fix is unverified:**
+
+1. Rapid theme interaction (hovering several swatches in quick succession, or otherwise triggering
+   more than one `_on_theme_changed` call before the first one's fade animation finishes) can leave a
+   second call stashed in `self._pending_fade_call` (`theme_manager.py`, the `elif _fade_running:`
+   branch of `_on_theme_changed`) — by design, meant to be resumed by `_on_fade_finished` once the
+   in-flight fade completes naturally.
+2. `complete_main_fade()` (`theme_manager.py:765-800`) is called at the top of **every** panel-open
+   flow (`_open_stats_flow`, `_open_tags_flow`, `_open_library_flow`, etc., via `panels.py`'s
+   `_complete_main_fade()`). Its whole purpose is to instantly finish an in-flight fade before the
+   opening panel paints — waiting for the fade's normal ~200-750ms duration is not acceptable there,
+   so it force-stops the animation with `.stop()`.
+3. `QPropertyAnimation.stop()` does **not** emit Qt's `finished` signal. `_on_fade_finished` is the
+   only code that resumes `_pending_fade_call` — so if a panel opened while a fade was in flight AND
+   a second theme call was stashed, that stashed call was silently orphaned. It never ran, for that
+   hover/theme cycle.
+4. `complete_main_fade()` then reapplied the theme itself, using `self._active_display_theme` /
+   `self._is_hover_active` (the old line 800) — but both were **stale** at that point, still holding
+   whatever theme name and hover state the *orphaned* call would have corrected them to (the write to
+   `_active_display_theme` only happens after the `_fade_running` guard the stashed call got caught
+   by — see `_on_theme_changed`, line ~498). So the stale reapplication would put the **wrong theme**
+   back onto the fast synchronous path (`main_window`/`content_container`/title bar/sidebar/settings/
+   speed/sleep) — which would explain "the hovered theme bleeding into the live main window," not a
+   captured-frame staleness issue.
+5. This would also explain a real, independently-noticed detail: Speed/Sleep panels never looked
+   wrong while Stats/Tags/Library did. The fast synchronous path (the one this theory says is
+   corrupted) covers Speed/Sleep directly, so they'd always match whatever (possibly wrong) theme the
+   fast path had — internally consistent, never visibly mismatched. Stats/Tags/Library are restyled
+   via a *separate*, deferred path (`_apply_stylesheets_deferred`) this theory says the bug never
+   touches — so they'd keep showing the correct theme, and the mismatch would only be visible as a
+   contrast between the two.
+
+**Why disabling blur eliminates both bugs is NOT explained by this theory, and was never chased.**
+The mechanism above has no dependency on blur code at all — nothing in `transport_bar_blur.py` is
+referenced anywhere in steps 1-5. If this theory is complete, the bug should reproduce with blur off
+too, just as reliably (accounting for the 5-minute-worst-case timing above). That was never actually
+tested for long enough to mean anything. This is a real, acknowledged gap in the theory, not a minor
+footnote — it means the theory itself may be incomplete or wrong, not just unverified in its details.
+
+**The code change (uncommitted, in `theme_manager.py`, `complete_main_fade()`):** checks
+`self._pending_fade_call` immediately after clearing `_fade_in_flight` and stopping the animation. If
+a call is pending, it consumes it and re-invokes `_on_theme_changed(*pending)` — mirroring
+`_on_fade_finished`'s own resume pattern — instead of falling through to the old
+`self._apply_stylesheets(self._active_display_theme, hover=self._is_hover_active)` reapplication. The
+guard-condition safety argument for why the resumed call can't loop or re-stash (checked against
+`_on_theme_changed`'s actual conditions, not by analogy) still holds as a piece of static reasoning —
+but static reasoning about safety is not the same as verification that the change fixes the reported
+bug, and should not be presented as if it were.
+
+**What an actual verification would require, not yet done:** a soak test — blur ON, repeated hover
+and panel-open cycles, run long enough (at least several 5+ minute stretches, given the reported
+worst-case reproduction time) to give a real absence-of-recurrence result some weight. Nothing run
+tonight meets that bar.
+
+---
+
+## OPEN, root cause partially understood but not fixed: a collision between the blur overlay's grab and Qt's post-theme-restyle repaint backlog causes an intermittent flash during theme hover — three fix attempts tried, all failed or reverted (2026-07-19)
+
+**Symptom, corrected (an earlier draft of this entry described it wrong — see below):** the flash
+does NOT require rapid hovering. A single hover-and-hold over one theme swatch in Settings → Themes
+is enough to trigger it intermittently, in exactly the region the blur overlay covers (the transport
+bar behind the settings panel). What's actually seen is the display flashing **between themes** — it
+reads as the main window itself peeking through, not simply "wrong/unthemed color." **It is not
+confirmed whether this is the live main window becoming visible for a frame, or the blur overlay's
+grabbed/blurred pixmap showing stale-theme content** — the user flagged this ambiguity directly and
+it was not resolved before the session ended. Reproducible on a fresh restart, not a one-off. The
+user was explicit up front that the overlay/masking machinery added earlier this same session (see
+the entry below) must not be assumed unrelated without checking.
+
+**Earlier, inaccurate description (corrected above, kept here so the correction is traceable):**
+this entry originally said the bug required "rapidly hovering theme swatches" and described the
+symptom as the blur overlay showing "unthemed/wrong-colored content." Both are wrong — hold, not
+rapid, triggers it, and the visual is themes flashing against each other / the main window peeking
+through, not a flat wrong color. The investigation and fix attempts below were conducted under the
+"grab collides with restyle backlog" framing, which may still be a correct mechanism for whatever IS
+happening, but the exact visual being explained was mischaracterized while that work was done —
+this should be re-verified against the corrected symptom description before trusting any
+conclusion below as fully explaining what the user is actually seeing.
+
+**Root cause, confirmed via direct sub-call timing (not guessed):** `TransportBarBlurOverlay
+.refresh_dirty()` (`ui/transport_bar_blur.py`) periodically calls `_grab_and_blur()`, which calls
+`main_window.grab(padded_rect)`. That `grab()` call is a **synchronous** Qt operation — it forces
+any pending/queued repaint or QSS repolish work to resolve immediately, rather than waiting for
+Qt's normal event-loop-driven paint cycle. `ThemeManager._apply_stylesheets()` (the method that
+runs on every hover-preview tick) leaves exactly this kind of backlog behind it, measured directly
+via `[_apply_stylesheets]` debug timing already in the codebase: `total=230-320ms`, dominated by
+`mw.setStyleSheet(base)=155-180ms` — which cascades a QSS repolish to every descendant of
+`main_window`, not just the top-level rule's own selector. A `grab()` landing inside or shortly
+after that backlog window measured **250-350ms**, vs. a normal **5-10ms** grab landing clear of it.
+During rapid hover (theme restyles firing roughly every 1.2-1.5s via the hover-debounce timer), a
+`grab()` colliding with this window is common, not rare.
+
+**Attempt 1 — `_fade_in_flight` guard (failed, reverted):** gated the grab on `theme_manager
+._fade_in_flight` being `False`. Live-tested by the user: "Bug is there." The flag can read `False`
+even while the actual repaint backlog is still settling — it tracks the fade-overlay animation's
+own state, not Qt's repaint queue, so the two are not reliably correlated. Reverted.
+
+**Attempt 2 — `QTimer.singleShot(0, ...)` deferral (failed, reverted):** deferred the grab call by
+one event-loop turn, on the theory that yielding once would let Qt drain the queued repaint work
+first. First live test showed improvement (1 spike vs. 4-10 before); a second test showed spikes
+got WORSE (9 outliers). Root cause of the failure: the backlog is not queued Qt *event-loop* work
+that a `singleShot(0)` turn lets drain — it is **lazy** repaint/repolish state that Qt computes
+on-demand, synchronously, the moment something (any `grab()` call, from any caller, at any point)
+forces it to resolve. Deferring by one turn does not change whether that forcing still happens; it
+can even land the deferred call at a *worse* moment relative to a still-in-flight restyle. Confirmed
+via log evidence: a grab firing just 9ms after `_apply_stylesheets`'s own logged completion still
+cost 280ms — the "wait a turn" strategy has no mechanism to actually avoid this. Reverted cleanly
+(removed the `_composite_dirty()` split method that had been introduced to support the defer).
+
+**Attempt 3 — post-restyle cooldown gate (failed on a real gap, reverted):** added
+`ThemeManager._last_apply_stylesheets_at` (a `perf_counter()` timestamp) and a
+`_POST_RESTYLE_COOLDOWN_S = 0.4` check in `refresh_dirty()`: skip the tick if less than 400ms has
+passed since the last completed restyle, re-checking on the *next* tick without losing the
+accumulated dirty union. First version stamped the timestamp only at `_apply_stylesheets`'s *exit*.
+Traced live: a `refresh_dirty()` tick could fire and pass the gate (correctly seeing a stale,
+>400ms-old timestamp from the *previous* restyle) and then have `_grab_and_blur()` collide with a
+**new** restyle that started — and hadn't yet stamped its own timestamp — while the grab was still
+running. Fixed by additionally stamping at *entry* (so "a restyle is in flight" becomes visible to
+the gate immediately, not only after it finishes) — this half of the fix is real and still in the
+code (`theme_manager.py`, both the `__init__` declaration comment and the entry+exit stamp sites).
+**But live-retesting after that fix showed the flash still occurring on nearly every restyle**,
+traced to a *different*, more fundamental gap the entry-stamp fix cannot close: the gate only
+evaluates conditions at the instant `refresh_dirty()` is *called*. `_grab_and_blur()`'s `grab()`
+call itself was, at that point in the investigation, believed to take the full 250-350ms — meaning
+a restyle could start and complete *while a grab that had already passed the gate was still
+running*. No pre-call gate can see a future event. This is why the interval-based mitigation (below)
+empirically worked where the gate did not: at `_REFRESH_INTERVAL_MS >= 1200`, a tick rarely lands
+close enough to the ~1.2-1.5s hover-restyle cadence to still have a grab exposed when the next
+restyle fires — pure timing-alignment luck, not a structural fix.
+
+**The user's own empirical interval sweep — collected independently, without being asked to
+interpret it, and initially dismissed by the assistant before being shown to matter:** the user
+manually tested `_REFRESH_INTERVAL_MS` values from 50ms to 9000ms and reported raw pass/fail without
+theorizing: 50/100ms → flashes; 200ms through 1100ms → flashes; **1200ms → no flashes**; 2000/4000/
+9000ms → no flashes. The assistant's first reaction was to assert this timer "is NOT" the blur
+code's own refresh timer — wrong, and corrected directly by the user, who had to point out the
+assistant's own recent edit to that exact constant before the connection was acknowledged. This
+sweep is what ultimately reframed the investigation away from "make the gate smarter" and toward
+"find out what's actually inside the ~250-350ms cost" (see below).
+
+**The real bottleneck, found via sub-call profiling — NOT `grab()` itself:** `_grab_and_blur()` was
+instrumented with fine-grained timing splitting `overlay.hide()` / `panel.hide()` / the raw
+`main_window.grab()` call / `panel.show()` / `overlay.show()` into separate brackets. Result,
+confirmed across many live samples: **the raw `grab()` call itself is consistently ~2-3ms** — cheap,
+exactly as a small (~300×238px) region should be. The entire 220-270ms cost is inside
+**`self._active_panel.hide()`** — hiding the currently-open settings panel before the grab (done so
+the grab doesn't capture the panel's own translucent wash baked into the pixels — see the
+`main_window`-grab-source fix in the entry below). **This overturns the original diagnosis.** The
+"grab() forces the repaint backlog to resolve" theory was wrong in its specific attribution: `grab()`
+was never the expensive call. `hide()` on the panel's subtree is. The mechanism for *why* `hide()`
+specifically costs 220-270ms (whether it's the same repolish-backlog phenomenon, attributed to the
+wrong call, or something else entirely — e.g. `_release_panel_focus`'s focus-transfer work, or a
+`hideEvent` side effect) was **not** further diagnosed before the next attempt (below) was tried and
+had to be reverted for an unrelated, more serious reason.
+
+**Attempt 4 — grab `content_container` directly instead of `main_window`, avoiding the panel
+hide()/show() entirely (tried and REVERTED — broke theme hover-preview/snapback):** since
+`content_container` (unlike `main_window`) does not contain the panel in its subtree at all, grabbing
+it directly removes the need to hide the panel before every grab. This reintroduces the *original*
+bug this session's first entry (below) already fixed — `content_container` has no styled background
+of its own, so a bare grab would again return Qt's default palette grey instead of the theme's real
+color — so the fix additionally read `theme_manager.get_current_theme()['bg_main']` and painted it
+as an explicit solid-fill base layer under the grabbed content before blurring, rather than relying
+on any ancestor's painted background. Implementation composited the (possibly `grab()`-clamped, since
+`content_container` is smaller than `main_window` and the padded rect can extend past its own
+bounds) grabbed pixmap onto a `bg_main`-filled canvas at the correct offset, then blurred.
+
+Two live-confirmed problems, in order found:
+
+1. **Geometry/DPI bug (partially fixed before problem 2 was found):** the first version came back
+   visibly larger and shifted right compared to the real transport bar underneath. Root cause:
+   `QPixmap.size()` returns **device**-pixel dimensions; a plain `QPixmap(padded_rect.size())`
+   defaults to `devicePixelRatio()==1.0`, so drawing a DPR>1 `grab()` result onto it (or building a
+   same-shaped output pixmap in `_blur_pixmap`) reads as too-large/shifted to every downstream
+   consumer. Fixed by explicitly stamping `setDevicePixelRatio()` on both the compositing canvas (in
+   `_grab_and_blur`) and the blur output pixmap (in `_blur_pixmap`) to match the source grab's DPR,
+   and computing `QGraphicsScene.render()`'s target rect in logical (DPR-divided) coordinates. This
+   half of the fix was verified correct in isolation (geometry matched) before problem 2 below was
+   found.
+
+2. **Theme hover-preview/snapback broke — far more serious, root cause NOT diagnosed:** after the
+   DPI fix, live-testing showed the settings panel's theme hover preview no longer correctly
+   reverted on unhover. The user's exact description: hovering a swatch changed the app's actual
+   colors to the hovered theme while the settings panel's own selection state stayed on the
+   *previously active* theme (not the hovered one); un-hovering did **not** revert the colors back;
+   *reopening* the settings panel afterward is what finally snapped the colors back to the true
+   active theme. Described by the user as "horrible regression." Neither change made in this attempt
+   should, on its face, touch hover/snapback state: `theme_manager.get_current_theme()` is
+   documented and confirmed (via `grep` across the whole `theme_manager.py`) to be read-only (calls
+   `_resolve_theme(active)`, no mutation); removing `panel.hide()`/`panel.show()` calls should if
+   anything reduce side effects, not introduce new ones. **The actual mechanism was never found** —
+   this was surfaced live, immediately assessed as too severe and too poorly understood to keep
+   iterating on, and the whole attempt was reverted back to the known-good `main_window`-grab +
+   panel-hide/show version (flash present, but geometry and snapback both correct) rather than risk
+   compounding an unverified fix on top of a confirmed-broken one. **Anyone re-attempting the
+   `content_container`-direct-grab approach must diagnose this coupling first** — it is real,
+   reproducible, and currently unexplained, not a cosmetic side issue.
+
+**Current state, end of session:** reverted cleanly to the `main_window`-grab + panel-hide/show
+version (the state documented in the entry below, plus the harmless, still-in-place
+`_last_apply_stylesheets_at` entry+exit stamping and the `refresh_dirty()` cooldown gate — both
+inert now that the gate's premise was found insufficient, but neither wrong nor actively harmful to
+leave in place). The punch-through flash is **still present and unfixed**. `_REFRESH_INTERVAL_MS` is
+at `1200` (empirically flash-free per the user's sweep, not a real fix). TEMP PERF instrumentation
+(`[PERF]` `logger.warning` calls in `show_for_panel`/`_grab_and_blur`, plus the gate-check
+diagnostic added and left in `refresh_dirty()`) is still in the file — not yet removed, since the
+bug isn't resolved. See TODO.md for the deferred next steps.
+
+**Separately, confirmed real and pre-existing, explicitly out of scope for this investigation per
+the user's own instruction:** `ThemeItem.enterEvent` (`title_bar.py`) fires repeatedly (~1.4-1.6s
+apart) for a **stationary** cursor resting on a theme swatch — confirmed via log evidence showing
+`[hover debounce] firing preview...` lines recurring on that cadence with no mouse movement in
+between. This has apparently always silently re-triggered real restyles on a timer-like cadence even
+at rest; it only became visible/consequential tonight because `grab()`/`hide()` now has something
+expensive to collide with on each of those spurious re-fires. The user was explicit: stay scoped to
+the blur collision only, do not fix the spurious `enterEvent` itself in this pass — noted here and in
+TODO.md as a separate, deferred, pre-existing finding.
+
+---
+
+## FIXED and live-verified: composited-overlay transport-bar blur grabbed the wrong background entirely — `content_container.grab()` returned Qt's default palette grey, not the theme's real color, because `content_container` has no styled background of its own (2026-07-19)
+
+**Feature context:** `blur-composited-overlay` branch, `ui/transport_bar_blur.py`
+(`TransportBarBlurOverlay`) — a single rasterized grab of the mini transport bar's union bounding
+rect, blurred as one image and composited into an overlay under whichever panel (settings/speed/
+sleep/stats/tags) is currently open, per the accepted plan
+(`~/.claude/plans/good-catch-claude-twinkly-kay.md`).
+
+**Symptom, as the user actually reported it, several times, in these words:** "the background
+color is wrong" / "background in the grab is corrupted" / a directly-quoted theme hex value
+(`"bg_main": "#1A002E"`) pasted from an IDE selection to make the claim unambiguous. Visually: the
+blurred region's background read as a flat near-black/grey rather than the active theme's real
+background color (a distinct purple for "Chatsubo," for example) — not merely "blurred," a
+genuinely different color.
+
+**Root cause:** `content_container` (the widget `_grab_and_blur` called `.grab()` on, aliased as
+`_common_ancestor` throughout `transport_bar_blur.py`) has **no `background-color` rule of its
+own**. The theme's `bg_main` color is painted by `get_base_stylesheet()` onto `QWidget#mainwindow`
+(`themes.py`, `_get_gradient_style(t, "bg", t['bg_main'])` → `QWidget#mainwindow { background: ...
+}`) — `main_window` itself, not `content_container`. In normal on-screen Qt compositing,
+`content_container` is transparent-by-default and `main_window`'s background paints through
+underneath it, so the app looks correct to the eye. But `QWidget.grab()` only rasterizes a widget's
+**own** paint buffer plus its children's — it does not include whatever ancestor background is
+merely showing through it in the final composited frame. So `content_container.grab(rect)` was
+always returning Qt's plain default `QPalette` window color, confirmed by direct measurement to be
+exactly `#202326` on the dev machine, completely independent of which theme was active — this is
+why the corruption's exact shade appeared to shift when the user tested different themes (each
+theme's real color differs, but the WRONG color returned by `grab()` never changed, since it was
+never reading the theme at all).
+
+**Fix (`b2e0eb0`):** `_grab_and_blur` now grabs from `main_window` instead of `content_container`.
+Since `main_window` genuinely paints `bg_main` on itself, its `.grab()` correctly returns the real
+themed background. The rect passed to `.grab()` is translated from `content_container`-local space
+into `main_window`-local space via `main_window.mapFromGlobal(content_container.mapToGlobal(rect.topLeft()))`
+(a `mapToGlobal`/`mapFromGlobal` round-trip, not `mapTo()` — see the mapTo-between-siblings note
+below, which is a distinct but related finding from earlier in the same investigation). Because
+`main_window`'s widget subtree also contains the currently-open panel (raised above
+`content_container`), grabbing `main_window` while the panel is visible would additionally capture
+the panel's own translucent `rgba(bg_main, panel_opacity_hover)` wash on top of the real content —
+double-applying the panel's own tint before blur even ran. Fixed by hiding `self._active_panel`
+(a new field, set in `show_for_panel`, cleared in `hide_for_panel`) for the duration of each grab,
+mirroring the pre-existing overlay-hide pattern from an earlier fix in the same file (see below).
+
+**Five other real bugs found and fixed in the same investigation, before this one, roughly in
+discovery order** (all in `transport_bar_blur.py`, all confirmed live, not just reasoned about):
+
+1. **Overlay positioned in the wrong region entirely ("pink wash").** The `QLabel` overlay was
+   constructed as `QLabel(main_window)` but positioned using `content_container`-relative
+   coordinates (`self._overlay.setGeometry(self._bounding_rect)`, where `_bounding_rect` is
+   computed in `content_container` space). `content_container` sits below the title bar + progress
+   bar in `main_window`'s `root_layout` (`app.py:596-604`) — it is NOT at `(0,0)` within
+   `main_window`. Fixed by reparenting the overlay to `content_container` (`QLabel(self._common_ancestor)`)
+   so its positioning coordinate space actually matches where it's being told to go.
+
+2. **Self-referential grab ("burn effect," compounding black corruption).** Once fix #1 landed, the
+   overlay became a sibling widget *inside* `content_container`'s own subtree — meaning
+   `content_container.grab()` (as it was at the time) rasterized the overlay's own prior blurred
+   output along with the real content. Every `refresh_dirty()` call (every ~50ms while a panel is
+   open) would grab-and-reblur its own previous result, compounding progressively toward solid
+   black over a handful of cycles. Fixed by hiding the overlay (`self._overlay.hide()`) for the
+   duration of every grab call and restoring its prior visibility state afterward — this pattern is
+   what the panel-hiding fix for the `content_container`→`main_window` change (above) directly
+   mirrors.
+
+3. **`QStackedWidget` inactive-page geometry is bogus.** `vol_stack` (`sleep_timer_label` /
+   `vol_container`[`volume_slider`] / `muted_icon_label`) only ever shows one page at a time.
+   Confirmed via direct test: a hidden `QStackedWidget` page's `.size()` returns Qt's
+   uninitialized-widget default sentinel (`640×480`), not its real small size, because it's never
+   actually been laid out while hidden. Including all three pages unconditionally in the
+   bounding-rect union blew the rect out to cover unrelated areas of the window (this is what
+   produced the "cover art peeking through, blurred" artifact the user flagged from an early raw
+   grab). Fixed by resolving only `vol_stack.currentWidget()` — via a new
+   `_vol_stack_active_widget()` helper, called fresh on every bounding-rect computation and every
+   `show_for_panel()` call, never cached, since the active page can change while a panel stays open
+   (mute toggled, sleep timer started/stopped mid-session).
+
+4. **"No blur at all" — a live/mid-animation position read.** `show_for_panel(panel)` is called
+   synchronously immediately after the panel's slide-in `QPropertyAnimation.start()` (every
+   `_start_*_entry` in `panels.py`). At that exact moment the panel is typically still off-screen or
+   barely moved — reading its position via `panel.mapToGlobal(QPoint(0,0))` at that instant produced
+   a `panel_rect` that never overlapped the transport-bar union, so `raw_rect.intersected(panel_rect)`
+   came back empty and `show_for_panel` silently no-op'd on every single call. Confirmed via the
+   user's own debug-log request: `_panel_rect_in_common_space` logged the exact rects at the moment
+   of the bug, immediately showing the intersection was empty. Fixed by computing the panel's
+   **settled** (post-slide-in target) rect directly: `QRect(QPoint(0, panel.y()), panel.size())` in
+   `main_window`-local space — every panel-open `QPropertyAnimation` in this codebase animates ONLY
+   `x`, always ending at `x=0`, with `y`/width/height already final at call time (confirmed via
+   `grep` across every `_*_animation.setEndValue(QPoint(0, ...))` call site in `panels.py`).
+
+5. **`mapTo()` between sibling widgets silently returns the wrong point.** Computing a panel's rect
+   in `content_container`'s coordinate space requires translating between two widgets that are
+   BOTH children of `main_window` but neither is an ancestor of the other. `QWidget.mapTo(target,
+   point)` is only valid when `target` is in `widget`'s parent hierarchy (an ancestor) — called on
+   true siblings, Qt emits `QWidget::mapTo(): parent must be in parent hierarchy` and silently
+   returns the point **untranslated** (confirmed via a direct isolated test: a widget at
+   main-window-local `(20,100)` mapped via `mapTo()` into a sibling's space returned `(20,100)`
+   unchanged, not the correct `(20,50)`). Fixed by using `mapToGlobal()`/`mapFromGlobal()` instead,
+   which is valid for any two widgets regardless of hierarchy — confirmed correct via the same
+   isolated-test methodology, and reused for the `content_container`→`main_window` grab-source fix
+   at the top of this note.
+
+**A padding/alpha fix that was real but insufficient, kept anyway:** `QGraphicsBlurEffect` treats
+"outside the source pixmap" as transparent and blends that transparency into the blurred result
+near every edge — confirmed via direct measurement that a fully opaque solid-color test pixmap came
+back with corner alpha as low as 194/255 after blurring, converging to 255 only around 4x the blur
+radius of padding. Since every dirty sub-rect (and the bounding rect itself) has edges, this hit on
+every single grab. Fixed by grabbing with a padding margin (`4 * _BLUR_RADIUS`), blurring the
+padded pixmap, then cropping the artifact-carrying margin away before compositing. This fix is
+real, independently verified, and stayed in the shipped code — but it did **not** resolve the color
+corruption the user was reporting, because the corruption's actual cause (the wrong grab source,
+above) was upstream of anything the padding fix could touch. Recorded here specifically as a
+caution against declaring a bug fixed because *a* real bug was found and fixed in the vicinity — the
+user's reported symptom must stop reproducing, not merely improve or partially explain.
+
+**The investigation failure that delayed finding the real root cause — recorded because the user
+was explicit that this needs to be on the record, not softened:** every isolated test built to
+reproduce the corruption (a raw grab saved to disk from a synthetic widget and inspected, that grab
+run through the blur function standalone, the blurred/cropped result inspected) came back visually
+clean — because every synthetic test widget was built with an explicit `background-color` style
+rule on the exact widget being grabbed, which the *real* `content_container` never has. This
+difference between the test setup and production reality was never checked; instead, each clean
+isolated-test result was treated as evidence the grab/blur/crop pipeline was correct, and the
+investigation moved on to test other hypotheses (a bounding-rect-too-small "coverage gap" theory,
+tested by widening the rect to the panel's full size — ruled out live, the corrupted area got
+*bigger*, not smaller or gone; a `refresh_dirty()`/repeated-compositing theory, tested by disabling
+dirty-tracking entirely and leaving only the single mandatory first-pass grab — corruption was
+still present identically). The user directly and repeatedly told the assistant the background
+color itself was the wrong thing (not buttons, not coordinates, not layout), first in general terms
+and then by pasting the theme's literal `bg_main` hex value from an IDE selection when the
+assistant kept re-examining the wrong part of a screenshot. The assistant said "you're right"
+multiple times across this exchange without the retraction actually taking hold — the "the grab is
+clean" premise survived, unstated but unchanged, into three further rounds of diagnostic work. This
+produced a new standing CLAUDE.md rule (added the same session, committed separately): when the
+user says a specific claim is wrong, the required response is to restate the corrected belief,
+name what it replaces, and check every downstream step that depended on it — not just say "you're
+right" and continue reasoning from the same premise. Full rule text in CLAUDE.md, directly below
+"The user sees the rendered pixels..." (the closest existing rule in spirit, now generalized beyond
+visual/pixel claims specifically).
+
+**Sibling comparison branch:** `blur-direct-widget` (applies `QGraphicsBlurEffect` per-widget
+instead of compositing one grabbed region) was built in the same session as a cheap-fallback
+comparison. Its own real bug (a `deleteLater()` double-delete crash on panel-close) and its known,
+accepted limitation (icon buttons blur into jagged/washed edges under this approach, confirmed
+worse — not better — at a higher blur radius) are recorded in SESSION.md, 2026-07-19 Session 1,
+not repeated here since neither touches this branch's code.
+
+**Verification:** fix confirmed correct live by the user immediately after the `main_window`-grab
+fix landed, across the exact theme ("Chatsubo") that had been used to demonstrate the bug. Temporary
+debug instrumentation (`_debug_log`/`_debug_save` in `transport_bar_blur.py`, writing per-grab PNGs
+and exact rect/geometry data to `/tmp/tbb_debug` — added at the user's explicit request specifically
+to inspect the real production call site rather than trust another synthetic test) was removed from
+the file once the fix was confirmed; the debug output files were also deleted from `/tmp`.
+
+---
+
 ## FIXED and live-verified: search-field match-state (red/no-match) styling went stale after any book-set mutation — tag add/remove, exclude/restore, missing-detection, scan-add, metadata edit — because only `filter_books()` (the `textChanged` path) ever resynced `filter_empty` or re-applied the stylesheet (2026-07-18)
 
 **Bug (second, unrelated report the same session as the persistence fix below):** the search

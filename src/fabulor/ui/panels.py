@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLa
 from PySide6.QtWidgets import QLineEdit, QApplication
 from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
 from .title_bar import ThemeItem
+from .transport_bar_blur import TransportBarBlurOverlay
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,69 @@ class PanelManager:
         self.main_window.sleep_trigger_btn.clicked.connect(self._open_sleep_flow)
         self.main_window.stats_trigger_btn.clicked.connect(self._open_stats_flow)
         self.main_window.tags_trigger_btn.clicked.connect(self._open_tags_flow)
+
+        # Composited-overlay transport-bar blur (see ui/transport_bar_blur.py and the
+        # accepted plan). Comparison branch — see blur-direct-widget for the
+        # per-widget-effect alternative.
+        self._transport_bar_blur = TransportBarBlurOverlay(main_window)
+        # CACHED-FRAME REWORK (2026-07-20): a settings-tab switch (Themes/Look/
+        # Library/Audio/Controls) changes what's visible inside settings_panel
+        # itself, not inside the transport bar's own tracked widgets — the
+        # overlay's _DirtyRectTracker would never see it as a Paint event on any
+        # tracked widget, so it needs its own explicit one-time forced refresh.
+        # force_refresh_now() itself no-ops if the overlay isn't currently active
+        # (e.g. Stats/Tags/Speed/Sleep panels are open instead — mw.tabs only
+        # exists inside settings_panel), so this connection is safe to leave
+        # permanently wired regardless of which panel is actually open.
+        main_window.tabs.currentChanged.connect(
+            lambda _index: self._transport_bar_blur.force_refresh_now()
+        )
+
+    def _apply_transport_bar_blur(self, panel):
+        # Clip to `panel`'s own geometry — nothing renders blurred outside what
+        # the panel actually covers (e.g. total_time_label sits at the far right
+        # of the content area by layout design, past settings_panel's narrower
+        # 90%-width edge; that sliver must stay crisp, not just "technically
+        # correct blur that peeks past the panel." Confirmed live, 2026-07-19.)
+        if self.config.get_blur_enabled():
+            self._transport_bar_blur.show_for_panel(panel)
+
+    def _clear_transport_bar_blur(self):
+        self._transport_bar_blur.hide_for_panel()
+
+    def apply_blur_live(self, enabled: bool):
+        """Apply or clear blur on the ALREADY-OPEN Settings panel the instant the
+        Settings > Blur toggle is clicked, without needing a close/reopen. The
+        toggle lives in the Settings panel, so settings_panel is the only panel
+        this is ever reachable from — scope to it, don't try to handle others.
+
+        Covers both blur mechanisms: the transport-bar composited overlay (the
+        primary one — _apply/_clear_transport_bar_blur) AND the cover-image
+        blur_effect (blur_animation 0<->10). The blur_effect ON side mirrors the
+        existing OFF side in MainWindow.set_blur_selection (which already zeroes
+        the radius when the toggle goes Off); this adds the missing ON direction so
+        Off->On also re-blurs the cover image live (previously only On->Off worked).
+
+        REQUIRED animation guard: bail if any panel/sidebar slide is running.
+        Applying/clearing blur mid-animation is not something the two-button toggle
+        UI should ever trigger, but 'this state is unreachable so no guard needed'
+        is exactly the assumption that caused three regressions this session — the
+        guard is one cheap line, so it's here, not assumed."""
+        if not self.settings_panel.isVisible():
+            return
+        if self.is_any_panel_animating():
+            return
+        if enabled:
+            self._apply_transport_bar_blur(self.settings_panel)
+            # Cover-image blur ON side (mirror of set_blur_selection's OFF side).
+            self.blur_animation.stop()
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setEndValue(10)
+            self.blur_animation.start()
+        else:
+            self._clear_transport_bar_blur()
+            self.blur_animation.stop()
+            self.blur_effect.setBlurRadius(0)
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -298,6 +362,7 @@ class PanelManager:
                 self.settings_panel_animation.finished.disconnect(_on_settings_slide_finished)
             except (TypeError, RuntimeError):
                 pass
+            self._apply_transport_bar_blur(self.settings_panel)
 
         self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
         self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
@@ -345,8 +410,17 @@ class PanelManager:
 
         self.speed_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.speed_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_speed_slide_finished():
+            try:
+                self.speed_panel_animation.finished.disconnect(_on_speed_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.speed_panel)
+
+        self.speed_panel_animation.finished.connect(_on_speed_slide_finished)
         self.speed_panel_animation.start()
-        
+
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
@@ -480,6 +554,7 @@ class PanelManager:
         self.speed_panel_animation.finished.connect(self._on_speed_hidden)
         self.main_window._validate_smart_rewind_settings()
         self.speed_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -522,6 +597,15 @@ class PanelManager:
 
         self.stats_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_stats_slide_finished():
+            try:
+                self.stats_panel_animation.finished.disconnect(_on_stats_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.stats_panel)
+
+        self.stats_panel_animation.finished.connect(_on_stats_slide_finished)
         self.stats_panel_animation.start()
 
         if self.config.get_blur_enabled():
@@ -559,8 +643,17 @@ class PanelManager:
 
         self.sleep_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_sleep_slide_finished():
+            try:
+                self.sleep_panel_animation.finished.disconnect(_on_sleep_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.sleep_panel)
+
+        self.sleep_panel_animation.finished.connect(_on_sleep_slide_finished)
         self.sleep_panel_animation.start()
-        
+
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
             self.blur_animation.setEndValue(10)
@@ -576,6 +669,7 @@ class PanelManager:
         self.sleep_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.sleep_panel_animation.finished.connect(self._on_sleep_hidden)
         self.sleep_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -600,6 +694,7 @@ class PanelManager:
         self.stats_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.stats_panel_animation.finished.connect(self._on_stats_hidden)
         self.stats_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -649,6 +744,15 @@ class PanelManager:
         self._claim_panel_focus(self.tags_panel)
         self.tags_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_tags_slide_finished():
+            try:
+                self.tags_panel_animation.finished.disconnect(_on_tags_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.tags_panel)
+
+        self.tags_panel_animation.finished.connect(_on_tags_slide_finished)
         self.tags_panel_animation.start()
         if mw.config.get_blur_enabled():
             self.blur_animation.setStartValue(0)
@@ -664,6 +768,7 @@ class PanelManager:
         self.tags_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.tags_panel_animation.finished.connect(self._on_tags_hidden)
         self.tags_panel_animation.start()
+        self._clear_transport_bar_blur()
         if self.main_window.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_animation.currentValue() or 8)
             self.blur_animation.setEndValue(0)
@@ -757,6 +862,7 @@ class PanelManager:
         self.settings_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
         self.settings_panel_animation.finished.connect(self._on_settings_hidden)
         self.settings_panel_animation.start()
+        self._clear_transport_bar_blur()
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
@@ -836,6 +942,7 @@ class PanelManager:
             self.speed_panel_animation,
             self.sleep_panel_animation,
             self.stats_panel_animation,
+            self.tags_panel_animation,
             self.blur_animation,
         ]
         if self.book_detail_panel_animation:

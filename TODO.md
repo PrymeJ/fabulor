@@ -6,6 +6,104 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
+  fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
+  investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
+  instrumentation. Not root-caused — no hypothesis yet on mechanism (candidate areas to check when
+  picked up: `chapter_list.py`'s selection/scroll handling on click, and whether this interacts
+  with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits racing the click's own
+  selection, given how many other chapter-UI bugs in this codebase have come from exactly that kind
+  of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
+  Needs live instrumentation added first to catch an occurrence with real state, before any fix is
+  attempted — do not fix blind. Not started.
+- **[2026-07-21] Themes tab: narrow the hover-preview region to EXCLUDE the bottom buttons (Add
+  all / Remove all / Change now) and the interval-selection area — hovering there should revert to
+  the active theme, not keep previewing.** Currently the whole Themes tab (its `leaveEvent` /
+  `pool_container.leaveEvent`, `main_window_builders.py:714`/`:768`) drives hover preview via
+  `_on_theme_hovered`/`_on_theme_unhovered`, so moving the cursor down onto the bulk buttons or the
+  interval labels keeps whatever the last-hovered swatch previewed instead of snapping back to the
+  active theme. Desired: those bottom regions behave like "not hovering a theme" — i.e. trigger the
+  same revert `_on_theme_unhovered` does. Not started.
+- **[2026-07-21] "Cover art based theme" should trigger a live PREVIEW on hover even when its mode
+  is Off.** Right now `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns if
+  `self._cover_theme` is None, and with cover-art mode Off there's effectively no preview — hovering
+  the "Cover art based theme" entry does nothing. Desired: hovering it should preview the cover-
+  derived theme regardless of the Off/With pool/Exclusive selection, so the user can see what it
+  would look like before committing. Not started — needs to confirm a cover theme is buildable for
+  the current book (there may be no cover / no `_cover_theme` computed while mode is Off) before it
+  can preview anything.
+- **[2026-07-21] Transport-bar blur scope: cover art area needs the same clip/blur treatment as the
+  bottom (transport) part — deferred, blocked on the placeholder-text rehaul.** Currently
+  `TransportBarBlurOverlay` only tracks the mini transport bar (chapter label, chapter progress,
+  time labels, transport buttons, speed button, vol_stack) — the cover art area is out of scope
+  entirely. Per the user, the cover art region should eventually get the same bounding-rect/clip
+  treatment `_apply_transport_bar_blur` already gives the bottom part, but this is intentionally
+  pending until the cover-art placeholder text is reworked first (no-cover-book state) — doing the
+  blur scoping before that rehaul would mean redoing the bounding-rect/geometry work once the
+  placeholder layout changes underneath it. Not started.
+- **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
+  later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
+  the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
+  one was `hover=True` (an ordinary, correct hover no-op, not the actual bug — which is `hover=False`
+  + the marker). The marker doesn't distinguish "guard blocked a real pending apply" from "guard
+  correctly no-op'd a redundant hover re-entry," because only non-hover applies update the
+  `_theme_ever_applied` comparison value it checks against. Diagnostic-precision issue only — does
+  not affect app behavior, both real fixes are confirmed working via the same session's log. Full
+  detail: NOTES.md, "Guard-masking bug ... and hover-preview confinement" entry, 2026-07-21.
+- **[2026-07-21] Theme-bleed: VERIFIED FIXED with blur ON, not yet soak-tested.** Two of (at
+  least) three independent causes were closed 2026-07-20 (state-read bypass in
+  `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`). User has now explicitly tested
+  and confirmed this live with blur ON (not the earlier blur-OFF-only tests that couldn't have
+  caught it) — no bleed observed. Not a soak test yet (short/targeted session, not sustained
+  multi-minute+ repeated cycling), so keep as pending rather than closed until a longer soak
+  confirms it holds. Full root-cause detail, the audit trail, and the fix mechanism for both
+  passes: NOTES.md, "Theme-bleed Pass 1 + Pass 2" entry, 2026-07-20. Session narrative: SESSION.md,
+  Session 3, 2026-07-20. Separately, still open: general responsiveness was reported slow after
+  this fix landed — not soak-related, not yet triaged. Candidate follow-up (not started): the new
+  responsiveness complaint may be the hover gate's decline path adding overhead elsewhere, or may
+  be unrelated — needs live profiling, not assumed.
+- **[2026-07-20] `refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick — candidate
+  mechanism for the still-open frozen-overlay bug below, NOT investigated or touched this
+  session.** Found while implementing the hover gate above. Detail: NOTES.md, same entry as above.
+- **[2026-07-20] NEW: blur overlay's refresh timer stops firing permanently after a normal
+  `show_for_panel` call — confirmed via one accidental occurrence, root cause not yet found.**
+  Overlay freezes on stale content indefinitely (confirmed via screenshot: grabbed transport-bar
+  buttons showing an old theme's blue while the live, unblurred chrome around them had moved on to
+  pink/magenta) while the app keeps running and the real theme keeps changing. Log shows
+  `show_for_panel DONE` succeeding normally, then zero `transport_bar_blur` log lines of any kind for
+  over a minute. Distinct third bug from the punch-through flash and the theme-bleed item below — found
+  by accident, not reliably reproducible. See NOTES.md for full detail; investigation in progress
+  (static analysis + permanent timer-lifecycle logging, per the user's explicit direction not to rely
+  on live repro as the primary method).
+- **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
+  ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously
+  uncommitted/unverified — every earlier "no issues" report had been run with blur OFF, which was
+  already independently known to mask this bug regardless of the fix) has now been explicitly
+  tested and confirmed live by the user WITH blur ON. Since the bug's own reproduction was
+  inconsistent (sometimes immediate, sometimes ~5 minutes), a single positive session is real
+  evidence but not conclusive — an actual soak test (blur on, repeated hover+panel-open cycles,
+  several 5+ minute stretches) is still the bar for calling this fully closed. Keep as pending until
+  that soak test happens. This was a real, separate bug from the punch-through-flash item below —
+  the two got conflated in earlier drafts of this TODO/NOTES.
+- **[2026-07-21] Spurious-`enterEvent` heartbeat — BOTH triggers now identified and fixed; the
+  underlying punch-through-FLASH collision is a separate, still-open item (below).** The heartbeat
+  (spurious repeated enter/leave on a stationary cursor over a `ThemeItem`, each spurious enter
+  emitting `hovered()` → unwanted preview) had two triggers: (1) the `setStyleSheet`-cascade in
+  `_apply_stylesheets` (guarded by `_spurious_enter_guard_until` since 2026-07-20, kept); (2) the
+  transport-bar blur grab (`_grab_and_blur`) hiding/re-showing the settings panel every tick —
+  identified 2026-07-21 via `[ENTEREVENT-TRACE]` log forensics and fixed (`1a00abd`, see NOTES.md +
+  SESSION.md Session 8). The fix records `_last_leave_was_synthetic = not isVisible()` in
+  `ThemeItem.leaveEvent` and drops the enter when that flag + `pos_matches` hold. Verified live: 10
+  synthetic suppressed, 0 surviving heartbeat, 33 genuine hovers unaffected. `[ENTEREVENT-TRACE]`/
+  `vis=` logging left in for soak-verification (remove after a clean soak). **What remains OPEN,
+  separately:** the punch-through-FLASH itself — the underlying collision of a real, event-driven
+  `main_window.grab()` landing right after a restyle against Qt's post-restyle repaint/repolish
+  backlog (measured live, outliers up to 357ms). That was never fixed, only reduced in frequency
+  (event-driven rework) and de-amplified (the heartbeat that used to drive extra spurious restyles
+  is now cut). **Whether the visible flash is the live main window or the overlay's grabbed pixmap
+  was never confirmed** — resume there if it resurfaces: (1) confirm what's flashing (live vs.
+  grabbed pixmap); (2) the heartbeat is no longer a contributing amplifier, so any remaining flash
+  is the raw grab-vs-restyle timing collision alone.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches

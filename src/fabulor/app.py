@@ -252,10 +252,13 @@ class VisualsInterface:
 
 
 class PanelInterface:
-    def __init__(self, speed_panel, sleep_panel, audio_tab):
+    def __init__(self, speed_panel, sleep_panel, audio_tab, main):
         self._speed = speed_panel
         self._sleep = sleep_panel
         self._audio = audio_tab
+        # panel_manager is created AFTER this interface (see _setup_ui ordering),
+        # so hold `main` and read main.panel_manager lazily at call time.
+        self._main = main
     def validate_speed_panel_settings(self):
         if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
     def update_speed_panel_visuals(self, theme_name=None):
@@ -264,6 +267,9 @@ class PanelInterface:
         if self._sleep: self._sleep.update_panel_styling()
     def update_audio_panel_visuals(self):
         if self._audio: self._audio.update_visuals()
+    def apply_blur_live(self, enabled):
+        pm = getattr(self._main, 'panel_manager', None)
+        if pm: pm.apply_blur_live(enabled)
 
 
 class UICallbackInterface:
@@ -508,7 +514,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Wire SettingsController with explicit, minimal interfaces (defined at module level).
         visuals = VisualsInterface(self)
-        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab)
+        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab, self)
         ui_callbacks = UICallbackInterface(self)
         library = LibraryInterface(self.db, self.library_panel)
         player = PlayerInterface(self)
@@ -1277,8 +1283,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # while a cover theme is active regenerates the stylesheet with pool
         # colors, causing a visible flash to the non-cover theme on every book
         # switch (apply_library_state always calls _set_bg_suppressed(False)).
-        theme_name = (getattr(self.theme_manager, '_active_display_theme', None)
-                      or self.theme_manager._current_theme_name)
+        #
+        # Routed through ThemeManager.get_active_theme() (not the raw
+        # _active_display_theme_internal field) as of 2026-07-20 — this call
+        # site has no coupling to ThemeManager's fade/hover state machine and
+        # can fire at any moment, including mid-hover-preview; the raw field
+        # holds the PREVIEWED theme name for the duration of a hover, so a
+        # direct read could paint content_container with a theme the user was
+        # only hovering, not the actual active one. get_active_theme() resolves
+        # against hover state so this can never happen. See
+        # Audit_ThemeReach_260720.md (Mechanism A / Pass 1).
+        theme_name = self.theme_manager.get_active_theme()
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)
         )
@@ -2420,6 +2435,20 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Gated on _focus_allows_global_shortcuts: a panel-local focused widget (a text
         # field, the library list) owns the key even when it doesn't accept it — see that
         # method's docstring.
+        # TEMP INSTRUMENTATION (2026-07-21, [T-KEY-TRACE]): investigating a user-reported
+        # regression where T (theme rotate) is sometimes swallowed or fires late while a
+        # panel is open. Scoped to Key_T only, not every key, to stay quiet. Remove once
+        # the mechanism is confirmed/fixed.
+        if event.key() == Qt.Key.Key_T:
+            allows = self._focus_allows_global_shortcuts()
+            focus = QApplication.focusWidget()
+            logger.warning(
+                f"[T-KEY-TRACE] keyPressEvent t={time.perf_counter():.6f} "
+                f"focus_allows_global_shortcuts={allows} "
+                f"focusWidget={focus!r} "
+                f"panel_visible={self.panel_manager.is_any_panel_visible() if getattr(self, 'panel_manager', None) else None} "
+                f"isAutoRepeat={event.isAutoRepeat()}"
+            )
         if self._focus_allows_global_shortcuts() and self.shortcuts.handle_key_event(event):
             return
         super().keyPressEvent(event)

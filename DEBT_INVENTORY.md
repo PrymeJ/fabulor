@@ -19,6 +19,22 @@ Newest entries at the top within each section, matching SESSION.md/NOTES.md conv
 
 ## Theme system
 
+- **The "heartbeat" bug (spurious repeated `ThemeItem.enterEvent`) is STILL OPEN, NOT FIXED — one of two
+  confirmed triggers has a guard, but the bug still reproduces in full because the second trigger is
+  unidentified; other full-subtree `setStyleSheet()`/repolish call sites elsewhere may share either
+  mechanism** (2026-07-20) — an earlier version of this entry attributed the bug to
+  `style().unpolish()`/`.polish()` in `update_theme_list_visuals()`; that theory was tested and
+  **conclusively disproven** (the fix's own instrumentation showed zero repolish calls happening while
+  the bug kept reproducing). A second, real trigger is confirmed: `settings_panel.setStyleSheet()` in
+  `_apply_stylesheets` (`theme_manager.py`) forces a style cascade that re-triggers Qt hit-testing on
+  descendant widgets — a guard against this specific trigger was added, live-verified to correctly
+  suppress it when it fires. But a third, distinct trigger causes the bug on the alternating cycles and
+  was not identified before the investigation ended — since either trigger alone reproduces the full
+  user-visible symptom, the bug is unresolved, not partially fixed. Any other call site in the codebase
+  that calls a full-subtree `setStyleSheet()` or `style().unpolish()`/`.polish()` on a widget the cursor
+  could plausibly be resting over could have a similar latent issue — not searched for. See NOTES.md
+  "STILL OPEN, NOT FIXED" (2026-07-20) for the full mechanism, both confirmed triggers, and what's still
+  unknown.
 - **Cover-pool right-click silently no-ops before a cover theme is computed** (2026-07-12) — `ThemeManager._on_cover_pool_btn_right_clicked` (`theme_manager.py:948-959`) returns immediately with zero feedback if `self._cover_theme is None` (no book loaded yet, or cover-theme extraction hasn't finished). Same shape as the drag-area's `db.get_book_count() > 0` gate, but easier to hit repeatedly on the pool button since its enablement is cover-state-dependent rather than a one-time check. Not currently a priority; surfaced during investigation of a separate right-click reliability report. See NOTES.md "Cover-pool right-click silent no-op".
 - **Theme transitions** — long-term path is per-element `@Property(QColor)` animation; Themes tab QSS complexity makes it non-trivial today. `THEME_ANIM_TODO` comments mark instrumented widgets. See CLAUDE.md "Pending / Known Debt".
 - **Spurious sidebar expand during theme hover — root cause unknown** (2026-05-26, corrected 2026-07-01) — original race theory (deferred-retry leaves `sidebar_expanded` stale) disproven by source tracing: the flag is written synchronously at click time and the 300ms animation / 700ms retry-guard duration gap rules out staleness. No mitigation exists in source despite prior docs claiming one (see NOTES.md correction). DEBUG-level `perf_counter()` instrumentation added 2026-07-01 (commits `3aeed97`, `90029f0`) to catch the next live repro. See NOTES.md "Theme System — Known Bugs (2026-05-26, corrected 2026-07-01)".

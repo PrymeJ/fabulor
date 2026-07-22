@@ -551,6 +551,43 @@ undone by `hide()` itself).
 - [ ] **Lock guard:** a book whose title and/or author was edited and LOCKED (book detail panel) keeps its locked field(s) after a naming-pattern click; only unlocked fields re-parse
 - [ ] Manage folders list box is shorter than before (~4 paths visible), with the naming pattern section below it
 
+## Transport bar blur (composited overlay, blur enabled in Settings — 2026-07-21)
+
+Applies to every panel that blurs the mini transport bar: Settings, Speed, Sleep, Stats, Tags.
+(Library and Book Detail never apply transport-bar blur — not in scope here.)
+
+### Appear timing + fade-in
+- [ ] Opening any of the five panels: the transport bar stays LIVE (unblurred) while the panel is still sliding in — no blur visible until the slide-in animation has fully finished
+- [ ] Once the panel finishes sliding in, the blur fades in smoothly (not an instant snap) over the panel's mini transport bar
+- [ ] The fade-in plays every time a panel opens, not just the first time this session
+- [ ] Rapidly reopening a panel (close, then immediately reopen) doesn't leave the blur stuck at partial opacity or double-fade
+
+### Dismiss timing (no lingering blur)
+- [ ] Closing any of the five panels: the transport bar snaps back to LIVE view immediately when the close/slide-out animation STARTS — it does not stay blurred for the whole slide-out duration
+- [ ] No fade-out animation on dismiss (this is intentional — dismiss is instant, only appear fades)
+- [ ] Switching directly between two of the five panels (e.g. Settings → Stats via sidebar) doesn't leave a stale blurred frame visible during the transition
+
+### Cross-panel non-regression
+- [ ] Blur still clips to each panel's own width (e.g. Settings' narrower panel doesn't blur the total_time_label sliver past its right edge)
+- [ ] Toggling "Blur" off in Settings still fully disables both the appear-fade and the composited overlay (no blur, no fade, transport bar always live)
+- [ ] Blur/fade behavior unaffected by which panel triggered it — spot-check at least two of the five (e.g. Speed and Tags) live, not just Settings
+
+### Cursor stability while blur is on (fixed 2026-07-21)
+- [x] Resting the mouse motionless over a Stats book row (hand-cursor widget) with blur ON: cursor stays a steady hand, no hand↔arrow flicker
+- [x] Resting the mouse motionless over a cover-pool swatch (Settings → Themes tab) with blur ON: steady cursor, no flicker (note: this swatch has no hand cursor set at all — expected arrow, not a regression)
+- [x] Resting the mouse over "Change now" with blur ON: steady arrow (it has no hand cursor property — this is correct, not a bug)
+- [ ] Real mouse movement between widgets/panels still updates the cursor correctly with blur ON (the override-cursor fix must not stick a stale shape past genuine movement)
+- [ ] Same checks with blur OFF: no flicker (this code path doesn't run without blur, so should be unaffected either way)
+- [x] Timeline tassel's hover cursor is steady (not shaky) with blur ON (fixed 2026-07-21 — synthetic hide-driven leaveEvent no longer clears the dynamic hand cursor; `leaveEvent` guarded on `isVisible()`)
+- [ ] Moving the cursor genuinely OFF the tassel (blur ON) still reverts it to arrow correctly (the real-mouse-out path still works)
+
+### Live blur toggle (Settings > Blur On/Off, applies immediately — 2026-07-21)
+- [ ] With the Settings panel open and Blur OFF: clicking Blur **On** immediately blurs the transport bar (bottom part) — no close/reopen needed
+- [ ] Same click also re-blurs the cover image immediately (the previously-broken Off→On direction)
+- [ ] With Blur ON: clicking **Off** immediately clears both the transport-bar overlay and the cover-image blur
+- [ ] Several On/Off cycles: no stuck overlay, no double-apply artifacts, blur matches a fresh open-with-blur-On
+- [ ] Close and reopen Settings after toggling: the normal open/close blur flow is unaffected (live-apply didn't corrupt the overlay's active state)
+
 ## Settings panel
 
 - [x] All clicks on buttons dismisses and performs

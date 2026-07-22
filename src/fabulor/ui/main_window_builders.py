@@ -676,6 +676,15 @@ def build_themes_tab(mw):
     pool_header.setObjectName("settings_header")
     pool_layout.addWidget(pool_header)
 
+    # Swatch box: the cover-art-theme entry + all theme swatch rows, and ONLY these — this is
+    # the sole hover-active region (see the leaveEvent wiring below). The header above and the
+    # bulk-button/interval rows below are deliberately outside it, so moving onto any of them
+    # reverts the preview exactly like leaving the tab does.
+    swatch_box = QWidget()
+    swatch_box_layout = QVBoxLayout(swatch_box)
+    swatch_box_layout.setContentsMargins(0, 0, 0, 0)
+    swatch_box_layout.setSpacing(0)
+
     # Cover art based theme entry — always present, state reflects mode and cover availability
     cover_pool_row = QHBoxLayout()
     cover_pool_row.setContentsMargins(0, 0, 0, 0)
@@ -687,7 +696,7 @@ def build_themes_tab(mw):
     cover_pool_btn.hovered.connect(lambda _: mw.theme_manager._on_cover_pool_btn_hovered())
     mw.theme_manager.cover_pool_btn = cover_pool_btn
     cover_pool_row.addWidget(cover_pool_btn)
-    pool_layout.addLayout(cover_pool_row)
+    swatch_box_layout.addLayout(cover_pool_row)
     mw.theme_manager.theme_widgets = {}
 
     limit = max(230, mw.settings_panel.width() - 20)
@@ -709,21 +718,24 @@ def build_themes_tab(mw):
         if len(row_items) == 1:
             row_layout.addStretch()
 
-        pool_layout.addLayout(row_layout)
+        swatch_box_layout.addLayout(row_layout)
 
-    themes_tab.leaveEvent = lambda _: mw.theme_manager._on_theme_unhovered()
+    swatch_box.leaveEvent = lambda _: mw.theme_manager._on_themes_tab_left(swatch_box)
+    pool_layout.addWidget(swatch_box)
+    pool_layout.addSpacing(10)
 
     # Add/Remove All Buttons
     bulk_layout = QHBoxLayout()
-    bulk_layout.setSpacing(10)
+    bulk_layout.setSpacing(4)
     mw.add_all_btn = QPushButton("Add all")
     mw.add_all_btn.setObjectName("theme_add_all")
-    mw.add_all_btn.setFixedWidth(80)
+    mw.add_all_btn.setFixedWidth(77)
     mw.remove_all_btn = QPushButton("Remove all")
     mw.remove_all_btn.setObjectName("theme_remove_all")
-    mw.remove_all_btn.setFixedWidth(80)
+    mw.remove_all_btn.setFixedWidth(77)
     mw.change_now_btn = QPushButton("Change now")
     mw.change_now_btn.setObjectName("theme_change_now")
+    mw.change_now_btn.setFixedWidth(77)
 
     mw.add_all_btn.clicked.connect(mw.theme_manager.select_all_themes)
     mw.remove_all_btn.clicked.connect(mw.theme_manager.deselect_all_themes)
@@ -765,7 +777,6 @@ def build_themes_tab(mw):
     interval_row.addStretch()
     pool_layout.addLayout(interval_row)
 
-    mw.theme_manager.pool_container.leaveEvent = lambda _: mw.theme_manager._on_theme_unhovered()
     themes_layout.addWidget(mw.theme_manager.pool_container)
     themes_layout.addStretch()
     mw.tabs.addTab(themes_tab, "Themes")

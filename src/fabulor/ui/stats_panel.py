@@ -2233,8 +2233,14 @@ class TasselOverlay(QWidget):
         little slack for sway. Kept separate from the tab so the empty top-
         right corner (right of the tab, above the tassel) is NOT clickable."""
         slack = int(self.KICK_AMP) + 2
+        # Right-side slack is decoupled from (and much tighter than) the general
+        # slack — the hit zone was too wide to the right of the visible tassel body
+        # (tuned live 2026-07-21). The visible fringe ends at
+        # _HEAD_X + _HEAD_W + _FRINGE_SPREAD; right_slack offsets the right hit edge
+        # from there (negative = pull it 1px INSIDE the fringe edge).
+        right_slack = -1
         left = self._HEAD_X - slack
-        right = self._HEAD_X + self._HEAD_W + self._FRINGE_SPREAD + slack
+        right = self._HEAD_X + self._HEAD_W + self._FRINGE_SPREAD + right_slack
         top = self._HEAD_Y - 2
         bottom = self._HEAD_Y + self._HEAD_H + self._FRINGE_LEN + 2
         return QRect(left, top, right - left, bottom - top)
@@ -2505,7 +2511,18 @@ class TasselOverlay(QWidget):
             self.unsetCursor()
 
     def leaveEvent(self, event):
-        self.unsetCursor()
+        # Only clear the hand cursor on a GENUINE mouse-out (widget still visible).
+        # When blur is on, transport_bar_blur._grab_and_blur hides then re-shows the
+        # whole Stats panel ~5×/sec to grab the transport bar behind it, and each
+        # hide delivers a SYNTHETIC leaveEvent to this descendant tassel while it is
+        # mid-hide (isVisible() False) — with no mouseMoveEvent on re-show to restore
+        # the cursor. Unsetting on those cleared the hand 5×/sec, making the cursor
+        # visibly "shaky" under blur (confirmed live 2026-07-21: 85 synthetic
+        # vis=False leaves vs. 1 real vis=True leave in one hover). Guarding on
+        # isVisible() lets the hand survive the hide/show churn while a real
+        # mouse-out (fired while still visible) still clears it correctly.
+        if self.isVisible():
+            self.unsetCursor()
 
     @property
     def is_busy(self) -> bool:
