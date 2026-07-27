@@ -720,6 +720,9 @@ def build_themes_tab(mw):
 
         swatch_box_layout.addLayout(row_layout)
 
+    # SOLE hover-active-region boundary (CLAUDE.md rule — do NOT add a second wired
+    # leaveEvent anywhere in this hierarchy; themes_tab and pool_container wirings were
+    # deliberately removed when swatch_box was introduced).
     swatch_box.leaveEvent = lambda _: mw.theme_manager._on_themes_tab_left(swatch_box)
     pool_layout.addWidget(swatch_box)
     pool_layout.addSpacing(10)
