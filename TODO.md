@@ -6,27 +6,11 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] PRE-EXISTING: the cover carousel never appears at app start — only after
-  unloading the active book. BLOCKS the visual_area blur-clip work; fix this first, separately.**
-  Confirmed pre-existing by running a pristine `HEAD` (`928fb74`) with all session changes stashed
-  and the runtime tree verified byte-identical to the last commit. **Mechanism found, not yet
-  fixed:** `MainWindow.__init__` calls `library_controller._check_library_status()` at
-  `app.py:494`, but `self.show()` is not until `app.py:571`. Qt reports `isVisible() == False` for
-  every child while its top-level window is unshown (confirmed directly), so `_show_carousel`'s
-  `not self.no_book_section.isVisible()` guard always early-returns at startup — instrumented trace
-  shows exactly one call, `EARLY-RETURN reason=not_no_book_state`. Unloading a book re-enters the
-  state machine after the window is up, which is why that path works.
-  **Not yet established: how far back this goes** — needs a bisect (candidate files:
-  `app.py`, `library_controller.py`, `carousel.py`) to find which commit introduced the ordering,
-  and whether an earlier arrangement worked. Do NOT fix this as a side effect of the blur work.
-  **Consequence once fixed:** re-test whether v1's and v2's carousel symptoms still reproduce
-  against a genuinely working baseline — v2 (paint-time mask) currently has NO evidence against it
-  at all and may simply be viable. Full detail: NOTES.md, "OPEN: `visual_area` blur-clip attempts"
-  (2026-07-27), CORRECTION 2.
-
 - **[2026-07-27] Confine panel-blur to the actually-occluded region of `visual_area` (cover art /
   theme bg_image / quotes) — the ~30px sliver beside an open panel must stay sharp.** NOT fixed.
-  **BLOCKED on the pre-existing carousel bug above — do not resume until that is fixed.** Two
+  **UNBLOCKED as of `f4d5fc7`** (the pre-existing carousel-at-startup regression is fixed and
+  verified on its own merits). Next action: re-apply and re-verify attempt 2 against that baseline.
+  Two
   attempts, both reverted, but the evidence against them was largely mis-attributed: both were
   judged against a baseline where the carousel was ALREADY broken at app start. Attempt 1
   (grab-based cached-pixmap overlay) did cause real, separate damage — clipped "Go to Library"

@@ -1,3 +1,53 @@
+## FIXED: carousel never appeared on a fresh no-book app start — a ten-day-old regression from an unrelated correct fix (2026-07-27, `f4d5fc7`)
+
+**Symptom:** on a fresh launch with no book loaded, the ambient cover carousel never appeared. It
+could only be triggered by loading a book and then unloading it.
+
+**Bisected to `cd5ec5b` (2026-07-17)** — *"fix: stop scanning the library on every launch"* — via a
+**behavioral** bisect (9 automated steps over 273 revisions) that drove a real `MainWindow` through
+its real startup path and asked whether `_carousel` existed and was visible, rather than bisecting
+on when the relevant lines last changed. `ad15f53` (the carousel's own introduction commit) tests
+GOOD, so this was a **true regression**, not "broken since inception and never noticed" — that
+distinction is what justified digging through the history at all.
+
+**Mechanism — the carousel lost an accidental trigger; it was never directly broken.**
+`_show_carousel` guarded on `not self.no_book_section.isVisible()`. Qt reports
+`isVisible() == False` for **every** child widget until its top-level window has been shown
+(confirmed by direct probe, not assumed), and `_check_library_status()` runs in `MainWindow.__init__`
+at ~`app.py:494` while `self.show()` is at ~`app.py:571`. So that guard *always* early-returned at
+startup.
+
+Before `cd5ec5b`, every launch ran an unconditional library scan whose completion fired
+`_on_scan_finished` → `apply_current_state()` a second time — **after** the window was up, with the
+guard now passing. Removing that scan was correct (it contradicted the documented contract), but the
+carousel had been silently riding it as its only post-show trigger.
+
+**Fix:** test the authoritative state (`self.current_file`) instead of re-deriving it from a
+widget's paint status. `_show_carousel` has exactly one caller — `apply_library_state`'s
+`not has_book` branch — which has *already* established that state from the same underlying value,
+so the visibility check was a redundant and fragile re-derivation. One line, plus a comment
+recording the Qt gotcha and an explicit "do NOT reintroduce a visibility-based guard here."
+
+**Blast-radius check (worth the ten minutes it cost):** before choosing the fix, a probe snapshotted
+14 pieces of startup UI state, re-ran `apply_current_state()`, and diffed. Only the carousel differed
+(counted twice, as `exists`/`visible`); the other 12 were already correct. Every other piece of chrome
+uses `setVisible()` — state-based, works fine pre-`show()` — and the carousel was the *only* thing
+reading `isVisible()`. That is what justified the targeted boolean-state fix instead of a broader
+"re-run `apply_current_state()` after `show()`" reconciliation patch: the problem was genuinely
+scoped to one widget, not one symptom among several. After the fix the same probe reports **0 of 14**
+wrong and the re-apply is a true no-op — nothing depends on a second reconciliation pass anymore.
+
+**Transferable lesson:** a guard that re-derives an already-known fact through a *widget's* state
+(visibility, geometry, paint status) instead of reading the authoritative value is fragile in a way
+that is invisible until some unrelated change removes whatever incidental trigger was compensating.
+Prefer the real state value when the caller already has it.
+
+**Consequence for the blur work:** this symptom had been attributed to two separate blur
+implementations. See the entry below — both attributions were wrong, and attempt 2 in particular was
+reverted for a failure it did not cause.
+
+---
+
 ## OPEN: `visual_area` blur-clip attempts — TWO successive root causes disproven; the "carousel missing at app start" symptom turned out to be a PRE-EXISTING bug unrelated to the blur work (2026-07-27)
 
 **Status:** OPEN — blur-clip mechanism still unknown; the original whole-widget over-blur bug is
@@ -127,9 +177,22 @@ a side effect of the blur work** — tracked separately in TODO.md, including ho
 ### Current state
 
 Blur/clip work fully reverted — `app.py`, `ui/panels.py`, `ui/transport_bar_blur.py` at committed
-state, `ui/visual_area_blur.py` deleted. The original whole-widget over-blur bug is unfixed. Held
-deliberately in this state until the pre-existing startup regression is root-caused and fixed on its
-own, so a future fix cannot end up papering over two overlapping bugs.
+state, `ui/visual_area_blur.py` deleted. The original whole-widget over-blur bug is unfixed.
+
+**UNBLOCKED as of `f4d5fc7`** — the pre-existing carousel-at-startup regression is now fixed and
+verified independently (see the entry above), so a genuinely working baseline exists for the first
+time. Next action is to **re-apply attempt 2 and re-run its full verification pass**, with the
+carousel check as a real gate rather than a formality.
+
+**Careful framing, and it matters:** attempt 2 having "no evidence against it" is NOT the same as
+attempt 2 being cleared. The one test that appeared to fail it simply does not count, because the
+failure it reported was caused by something else. Its own correctness properties (clip boundary,
+liveness, seam-freedom, coordinate math) were verified by pixel probe and still stand — but they were
+verified *offscreen*, and offscreen verification has already given false confidence twice in this
+exact area. The live re-test is a required step. **Attempt 1 stays rejected on its own merits** —
+its clipped "Go to Library" button and blur-toggle geometry jump came from a raised cached-pixmap
+sibling sitting above `visual_area`, a structural z-order fact that today's carousel fix does not
+touch; re-introducing that sibling would still produce both failures. Do not re-attempt v1.
 
 
 ---
