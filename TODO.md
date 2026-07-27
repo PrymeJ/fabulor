@@ -6,6 +6,23 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-27] FIXED (trace-confirmed + unit-pinned, live-verification pending): a theme preview
+  self-cancelled ~775ms after appearing, with the mouse sitting still.** Repro: hover outside the
+  swatch area, come back onto a swatch, hold still — the preview flashes correctly, then reverts to
+  the active theme with no user action. Confirmed PRE-EXISTING (reproduced with the same day's
+  declined-tick re-arm fix stashed), so unrelated to that work despite surfacing alongside it.
+  **Mechanism** (read from a live DEBUG capture, not theorised — three prior hypotheses all missed
+  it): leaving stashes a snapback into `_pending_fade_call` whenever a fade is in flight; re-entering
+  and settling applies a genuine preview; `_on_fade_finished` then drains the stash unconditionally
+  and replays the obsolete snapback on top, cancelling the live preview. The drain had a discard for
+  the OPPOSITE case (`pending[3]` — the 2026-07-21 hover-confinement rule) but no symmetric check
+  for a snapback superseded by a live hover; its own trace line was already printing
+  `_is_hover_active=True` at that moment, unused. **Fix:** mirror-image discard gated on
+  `_is_hover_active and _pending_hover_theme is None` (both halves load-bearing — see NOTES.md).
+  Scoped to `_on_fade_finished` ONLY; the other two drain sites are panel-dismiss paths where a
+  superseding live hover isn't a real state. `tests/test_superseded_snapback.py` (7 tests).
+  **Still to do:** confirm live that the flash-then-revert is gone — it's a visual behaviour and the
+  unit tests only pin the drain decision.
 - **[2026-07-27] CLOSED (measured, not pursued): blur-grab residual cost.** Re-measured after that
   day's blur fixes and found to be a much smaller problem than first recorded. Kept as a record so
   the analysis is not re-derived; see the reopening bar below before acting on any recurrence.
@@ -94,9 +111,32 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   this fix landed — not soak-related, not yet triaged. Candidate follow-up (not started): the new
   responsiveness complaint may be the hover gate's decline path adding overhead elsewhere, or may
   be unrelated — needs live profiling, not assumed.
-- **[2026-07-20] `refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick — candidate
-  mechanism for the still-open frozen-overlay bug below, NOT investigated or touched this
-  session.** Found while implementing the hover gate above. Detail: NOTES.md, same entry as above.
+- **[2026-07-20] ~~`refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick~~ — REAL
+  GAP, FIXED 2026-07-27. Was a candidate mechanism for the frozen-overlay bug below; the stranding
+  path is now traced concretely, so that entry should be re-read against this.** Found while
+  implementing the hover gate. Both declining gates (hover-active, post-restyle cooldown) returned
+  without scheduling any retry, on the documented reasoning that "the next real paint picks it up"
+  — the dirty union is deliberately not consumed, so a later paint would find it.
+  **Why that reasoning does not hold** (static trace, `theme_manager.py`): the hover gate's own
+  docstring argues hover-end self-corrects because `_on_theme_unhovered`'s snapback restyle
+  repaints the tracked widgets. But the snapback is `_on_theme_changed(..., hover=False)`, and that
+  method's no-op guard (`_active_display_theme_internal == theme_name and _is_hover_active ==
+  hover`, line ~684) returns early **without calling `_apply_stylesheets`** whenever the requested
+  pair is already the applied one. That is exactly the state after a hover preview was DECLINED
+  here instead of painted: the live theme never moved, `_mark_theme_applied` was never reached for
+  the hovered theme, so the snapback is a genuine duplicate → guard fires → no restyle → no Paint
+  event → the stranded union is never retried. Overlay holds stale content indefinitely while the
+  app keeps running.
+  **Fix:** `_rearm_after_decline()` / `_fire_rearm()` (`transport_bar_blur.py`) — a delayed
+  (`_DECLINE_REARM_MS = 450`, sized above `_POST_RESTYLE_COOLDOWN_S` so one retry normally clears
+  the cooldown outright rather than spinning) coalescing retry, armed by both declining gates only.
+  Deliberately on its own `_rearm_pending` flag, NOT routed through `_schedule_refresh` — that is
+  the tracker's real-paint entry point, and a declined tick must not masquerade as observed paint.
+  A no-dirty tick is NOT a decline and does not re-arm (that would spin forever with nothing to
+  chase). Cleared in `hide_for_panel`. Pinned by `tests/test_blur_decline_rearm.py` (7 tests).
+  **Not yet live-verified** — the mechanism is static-traced and unit-pinned, but per this area's
+  standing rule (offscreen harnesses cannot see compositing defects here) the stale-overlay
+  symptom itself needs a live confirmation before this is called fully closed.
 - **[2026-07-20] NEW: blur overlay's refresh timer stops firing permanently after a normal
   `show_for_panel` call — confirmed via one accidental occurrence, root cause not yet found.**
   Overlay freezes on stale content indefinitely (confirmed via screenshot: grabbed transport-bar
@@ -117,6 +157,25 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   trigger differs from this entry's, the SHAPE matches exactly. Worth re-reading this entry's
   screenshot evidence against that mechanism: any content change that produces no Paint event on a
   tracked widget strands the cache identically.
+  **UPDATE 2026-07-27 (b): a concrete stranding path matching this entry's evidence has now been
+  traced, and fixed.** See the declined-tick entry above for the full trace. Summary: a hover
+  preview declined by `refresh_dirty`'s hover gate leaves the live theme unmoved, so the eventual
+  snapback hits `_on_theme_changed`'s no-op guard and never calls `_apply_stylesheets` — no
+  restyle, therefore no Paint event on any tracked widget, therefore no further
+  `_schedule_refresh`, therefore permanent silence in the log and a permanently stale cached frame.
+  **This matches the recorded symptom on every point**: the screenshot showed grabbed transport
+  buttons frozen in an OLD THEME's blue while live chrome had moved to pink/magenta (a
+  theme-transition-shaped freeze, which is what this path produces — not an arbitrary one);
+  `show_for_panel DONE` succeeded normally beforehand (this path strands only later, mid-session);
+  and zero subsequent `transport_bar_blur` lines is precisely the predicted output, since the
+  tracker never sees another paint to log about. It was also found by accident during theme
+  hovering, which is the only way to enter this path. That is a strong match, but the original
+  occurrence was never reproduced, so this is **not confirmed as THE cause** — the fix removes a
+  real mechanism of exactly this shape rather than a mechanism proven to have produced that
+  screenshot. Resume by trying to reproduce the freeze with the fix in place: hover swatches
+  repeatedly with a panel open and a book playing. If it no longer occurs across a long session,
+  close on that basis; if it recurs, the remaining suspects are other no-Paint-event content
+  changes (the `6eebc31` hidden-widget class), not the gate path.
 - **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
   ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously
   uncommitted/unverified — every earlier "no issues" report had been run with blur OFF, which was
@@ -153,9 +212,19 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   much rarer now that the heartbeat amplifier is gone, but 13s of idle observation with only ONE
   restyle in the window is nowhere near enough to call it fixed — the collision needs a restyle and a
   grab to coincide, and that barely had a chance to happen here. Treat as "not reproduced in a short
-  idle capture", NOT as evidence of resolution. Also still outstanding: `[ENTEREVENT-TRACE]` logging
-  is still present in `ui/title_bar.py` (5 sites), left in for soak-verification — remove after a
-  clean soak.
+  idle capture", NOT as evidence of resolution.
+  **UPDATE 2026-07-27 (loose end resolved): `[ENTEREVENT-TRACE]` logging (5 sites,
+  `ui/title_bar.py`) demoted from WARNING to DEBUG rather than removed.** Removing it would have
+  destroyed exactly the instrumentation this item still needs — the collision requires a
+  restyle-heavy capture, and hover is what drives restyles, so these are the sites that would
+  record it. At WARNING they were writing to the log file on every enter/leave on the mouse-hover
+  hot path (real, ongoing cost for a soak that never happened); at DEBUG they cost nothing by
+  default and come back in full via `FABULOR_LOG_LEVEL=DEBUG`. Delete once this item closes.
+  **Still open, unchanged:** the flash itself. The decisive capture has NOT been run — it needs
+  restyles and grabs coinciding (hover swatches repeatedly, panel open, book playing, for minutes),
+  not idle observation. If >100ms grabs appear, the recorded open question is still the next step:
+  confirm whether the visible flash is the live main window or the overlay's grabbed pixmap — that
+  was never established and it determines the fix.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
