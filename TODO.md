@@ -6,22 +6,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] "No book selected" label does not blur under an open panel, despite sitting
-  inside the clip region.** Surfaced while verifying the shipped `visual_area` blur clip
-  (`e230d79`). `no_book_label` sits at y=80..102 in visual_area-local coords and the clip rect
-  `(0,0,260,280)` geometrically contains it — verified — yet it renders sharp live. Not
-  root-caused; no hypothesis worth acting on yet. Probe before theorising: this bug class has
-  already burned five disproven diagnoses in one session (see NOTES.md 2026-07-27), and offscreen
-  harnesses were repeatedly unable to see the real defect. Not started.
-
-- **[2026-07-27] Decide whether the cover carousel should blur behind an open panel at all.**
-  Design question, not a defect. The carousel is parented to `content_container` and
-  `stackUnder(visual_area)` — a SIBLING, so `ClippedBlurEffect` (which masks `visual_area`) cannot
-  reach it: thumbnails stay sharp while the stripes and "Go to Library" button, which DO live
-  inside visual_area, blur. If it should blur, it needs its own treatment as a sibling; note the
-  reverted grab-overlay approach is not available (a static cached pixmap cannot sit over a
-  ~30fps scrolling strip — that was attempt 1's real, separate damage). Not started.
-
 - **[2026-07-27] Fix the blur-grab feedback loop (`_grab_and_blur` hide/show re-expose).** Root
   cause CONFIRMED, not started. `_grab_and_blur` hides `_active_panel` to grab; Qt re-exposes all
   13 tracked transport widgets; the tracker reads those as real paints and schedules another grab.

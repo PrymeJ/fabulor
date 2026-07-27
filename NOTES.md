@@ -118,13 +118,35 @@ y=300 down, and the overlay's **cached** pixmap sat frozen over the lower two-th
 strip: sharp above y=300, blurred and stuck below. Fixed by skipping hidden widgets; the no-book
 rect is now `None` (no overlay at all).
 
-### Known remaining gaps (not fixed, not regressions)
+### Follow-ups, both since resolved
 
-- **"No book selected" label does not blur** despite sitting inside the clip region. Unexplained;
-  needs its own probe.
-- **Carousel thumbnails do not blur.** Structural: the carousel is parented to `content_container`
-  and `stackUnder(visual_area)`, i.e. a SIBLING — a mask on `visual_area` cannot reach it. Whether
-  it *should* blur is a design question, not a defect.
+- **"No book selected" label** — NOT a bug. It does blur; the effect is just hard to discern on
+  bold text at that size. No change made.
+- **Carousel thumbnails** — FIXED (`dcef0e7`). The carousel is a SIBLING of `visual_area`
+  (parented to `content_container`, `stackUnder`'d), so `ClippedBlurEffect` on `visual_area` could
+  never reach it: the stripe and "Go to Library" button blurred while the thumbnails stayed sharp.
+  It **cannot be reparented** into `visual_area` to inherit that effect — the carousel is
+  `CAROUSEL_STRIPE_W` (300px, full window width, bleeding to both edges by design, `ad15f53`) while
+  `visual_area` is 280px inset 10px each side; `carousel_holder` is 300px but overflows its 280px
+  parent and is clipped, which is *why* the carousel was made a sibling in the first place.
+  Reparenting would shave 20px off the stripe.
+
+  Fix: give the carousel its **own** `ClippedBlurEffect`, driven from the same `blur_animation` so
+  radius and clip stay in step, with its clip computed against its own geometry
+  (`MainWindow._carousel_clip_rect`) rather than reusing `visual_area`'s — the two have different
+  insets, so 30px of sliver on the carousel and 20px on `visual_area` land on the same screen x.
+  Verified on a scrolling widget before wiring: repaints continue normally under the effect, the
+  clip blurs, the sliver stays sharp. That is what distinguishes this from the reverted
+  cached-pixmap overlay, which froze the strip because a static frame cannot sit over moving
+  content.
+
+- **Ghost transport buttons after unloading a book with a panel open** — FIXED (`6eebc31`), a
+  separate bug found in the same pass. `_on_book_removed` hides the transport chrome, but a widget
+  being hidden emits no Paint event, so `_DirtyRectTracker` never saw the change and the transport
+  overlay kept compositing its cached snapshot of buttons that were gone. Fixed by calling the
+  already-existing `force_refresh_now()` (built for exactly this: "a content change that doesn't
+  produce a Paint event on any of the 12 tracked widgets"). The tell was that a panel close/reopen
+  always resolved it — state was correct, only the cached pixmap was stale.
 
 ---
 
