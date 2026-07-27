@@ -6,31 +6,37 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] Fix the blur-grab feedback loop (`_grab_and_blur` hide/show re-expose).** Root
-  cause CONFIRMED, not started. `_grab_and_blur` hides `_active_panel` to grab; Qt re-exposes all
-  13 tracked transport widgets; the tracker reads those as real paints and schedules another grab.
-  Round-trips in ~64ms; `_GRAB_FEEDBACK_SUPPRESS_S` is 50ms, so every burst lands ~14ms past the
-  guard. Measured: 163 grabs / 5.1s, zero early-returns, 131 of 158 composites re-grabbing the
-  FULL transport-bar rect. Only `chapter_progress` and `chapter_selector` (the latter only while
-  scrolling) genuinely need high-frequency refresh — the other 11 are loop-driven.
-  **Blocked on an open question:** whether the panel `hide()` is strictly necessary for the grab.
-  A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was reverted 2026-07-19
-  because it broke theme hover-preview/snapback for reasons never diagnosed — confront that before
-  retrying. Widening the suppress window past 64ms is cheap mitigation but treats the symptom and
-  its correct value drifts with grab cost. `[DIRTY-TRACE]` instrumentation is in place and is the
-  verification instrument — a working fix collapses the synchronized 13-widget burst to just the
-  two genuinely-changing widgets. Full detail in NOTES.md (2026-07-27).
+- **[2026-07-27] Blur-grab residual cost — RE-MEASURED, much smaller than first characterised.
+  Decide whether it is worth pursuing at all.** Not started; no longer blocked.
 
-- **[2026-07-27] Decide what to do about the tassel's ±1px idle sway being invisible under blur.**
-  Root cause CONFIRMED, no fix chosen. NOT a stalled animation — driver, paint and compositing are
-  all healthy under blur (90 ticks/5.1s, zero dropped, correct sine values); confirmed by raising
-  `IDLE_AMP` 1.0 → 10.0, which sways normally with blur ON (reverted after the test). `IDLE_AMP =
-  1.0` gives a ±1px excursion that only moves at a few pixel-boundary crossings per ~3.5s cycle,
-  and the blur loop's ~15×/sec ancestor hide/show tears down the backing store faster than that
-  animation can register. **Likely resolves itself once the loop above is fixed** — fix that first
-  and re-check before changing `IDLE_AMP`, since raising the amplitude would be compensating for a
-  bug rather than a design choice. Full detail + the three disproven theories in NOTES.md
-  (2026-07-27).
+  **Original characterisation (now partly WRONG, kept so it isn't re-derived):** `_grab_and_blur`
+  hides `_active_panel` to grab, Qt re-exposes the tracked transport widgets, the tracker reads
+  those as real paints and schedules another grab. First measured (morning, before that day's other
+  fixes): 163 grabs / 5.1s, median gap 64ms, **131 of 158 composites re-grabbing the FULL rect**,
+  all 13 tracked widgets repainting synchronized within ~2ms. Concluded the 50ms
+  `_GRAB_FEEDBACK_SUPPRESS_S` never catches a 64ms loop.
+
+  **Re-measured the same day, after `_compute_bounding_rect` began skipping hidden widgets and the
+  Timeline skip landed** (Settings panel open, book playing, ~13s idle):
+  - 120 grabs / 13s (~9/s, was ~32/s); median gap 61ms
+  - **Zero full-rect grabs** — every one is the real `260x198` region
+  - **The synchronized 13-widget burst is GONE.** Paints are now spread thin (mostly 1-4 per
+    ms-timestamp): `chapter_selector` 84, `play_pause_btn` 36, everything else <= 8. Those top two
+    are GENUINE content change (a scrolling marquee and a playing-state icon), not loop-driven.
+  - **The suppression guard is doing 94% of the work: 2655 suppressed vs 157 passed.** The earlier
+    "the guard never catches it" reading was wrong — what remains is a ~6% leak, not a runaway loop.
+  - Cost: **463ms of grab work over ~13s ≈ 3.6% of the main thread**, mean 3.86ms, max **19.11ms**.
+
+  **Open question is now a judgement call, not a diagnosis:** is ~3.6% worth more work, given the
+  two dominant paint sources are legitimately changing? If yes, the target is the ~6% that escapes
+  the guard — NOT the guard's sizing, which the numbers show is fine. The 19ms outlier is the part
+  that could still starve a 33ms animation timer, so it may be worth attacking spikes rather than
+  average cost.
+
+  **Still true and still load-bearing:** whether the panel `hide()` is strictly necessary for the
+  grab is unresolved. A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was
+  reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
+  confront that before retrying, do not just re-attempt it. Full detail in NOTES.md (2026-07-27).
 
 - **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
@@ -56,15 +62,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   would look like before committing. Not started — needs to confirm a cover theme is buildable for
   the current book (there may be no cover / no `_cover_theme` computed while mode is Off) before it
   can preview anything.
-- **[2026-07-21] Transport-bar blur scope: cover art area needs the same clip/blur treatment as the
-  bottom (transport) part — deferred, blocked on the placeholder-text rehaul.** Currently
-  `TransportBarBlurOverlay` only tracks the mini transport bar (chapter label, chapter progress,
-  time labels, transport buttons, speed button, vol_stack) — the cover art area is out of scope
-  entirely. Per the user, the cover art region should eventually get the same bounding-rect/clip
-  treatment `_apply_transport_bar_blur` already gives the bottom part, but this is intentionally
-  pending until the cover-art placeholder text is reworked first (no-cover-book state) — doing the
-  blur scoping before that rehaul would mean redoing the bounding-rect/geometry work once the
-  placeholder layout changes underneath it. Not started.
 - **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
   later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
   the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
