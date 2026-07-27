@@ -1041,7 +1041,27 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts, extending the
+*Last updated: 2026-07-27 — `visual_area` blur clipped to the panel-occluded region, so the ~30px
+sliver beside an open panel stays sharp (`ClippedBlurEffect`, `ui/visual_area_blur.py`). Shipped on
+the third attempt after five successively disproven root causes; the real defect was a two-pass
+`draw()` rendering the source twice, found only by stretching the blur-in animation to 8s to see
+whether the artifact scaled with it. Four other bugs fixed in the same arc: the cover carousel never
+appearing at app start (a 10-day-old regression from `cd5ec5b`, behaviourally bisected — it had been
+riding a removed launch scan as its only post-`show()` trigger); ghost transport buttons after
+unloading a book with a panel open (hidden widgets emit no Paint event, so the overlay kept a stale
+cached frame); the carousel thumbnails never blurring (it is a SIBLING of `visual_area` and cannot be
+reparented in, so it got its own effect); and the tassel staying stiff on click with blur on
+(`hideEvent` was resetting the kick, which the blur grab's ~64ms hide/show then wiped). Ended by
+skipping the transport grab under the deliberately-opaque Timeline tab — measured at ~15 grabs/sec ×
+~4.4ms of invisible work, which was delaying the tassel's 33ms timer to 22.8fps. **No new DO-NOT rule**
+— the transferable lessons are process-shaped and live in NOTES.md: take the reported symptom
+literally rather than reinterpreting it to fit the current theory ("thicker" ruled out every
+reveal-based explanation), verify the baseline before attributing a symptom to your change, and treat
+offscreen harnesses as unable to see compositing/paint-order defects in this area (they returned
+byte-identical output for a bug that was plainly visible live). TESTING.md gained a live-only
+"Panel blur" section. The ~64ms grab feedback loop is untouched and is the next piece of work.*
+
+*Previously: 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts, extending the
 focus-ownership invariant from Session 3 into a panel with far more clickable-then-hideable
 widgets than any panel tested so far. Left/Right cycles Stats/History/Tags/Cover; top-level
 F/Del-x/k arm the same finished-toggle/remove/lock actions their buttons already call;

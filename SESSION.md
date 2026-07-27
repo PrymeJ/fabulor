@@ -1,3 +1,73 @@
+## Session Summary — 2026-07-27 — Clipped the `visual_area` blur to the panel-occluded region; fixed a 10-day-old carousel regression, a tassel stiffness bug, and a measured main-thread cost — after five disproven root causes
+
+Long session, mostly spent being wrong in instructive ways. Shipped: the blur sliver fix
+(`e230d79`), carousel-at-startup (`f4d5fc7`), ghost transport buttons (`6eebc31`), carousel blur
+(`dcef0e7`), tassel kick (`e364713`), Timeline grab skip (`f9e134b`).
+
+**The original task** was confining panel-blur to the region a panel actually occludes — the ~30px
+sliver beside it was blurring too. Two implementations were written and reverted before the third
+shipped. Attempt 1 (a grab-based cached-pixmap overlay raised into `content_container`) caused real
+damage: clipped "Go to Library" button, geometry jumping on blur toggle, and a frozen strip over the
+scrolling carousel. Attempt 2 (`ClippedBlurEffect`, a paint-time `QGraphicsBlurEffect` subclass) was
+reverted for a symptom it **did not cause** and later shipped essentially unchanged.
+
+**Five successive root causes were each disproven the same day** — the reusable part of this
+session, written up in NOTES.md. In order: z-order coupling with the carousel; "the missing carousel
+proves each attempt broken"; grab-and-blur colliding in one event-loop turn; a stale overlay pixmap
+at full opacity; and `_grab_and_blur`'s panel `hide()`/`show()` exposing content for a frame. Each
+was killed by measurement rather than argument — the last by disabling the hide/show outright and
+watching the flash persist.
+
+**The pattern behind those failures matters more than any of them.** The user's description of the
+flash — "same two images on top of each other", "brighter and thick" — was a constraint every theory
+failed, and it kept being reinterpreted to fit whichever mechanism was current instead of being
+treated as evidence. "Thicker" cannot come from a reveal-then-restore; only a genuine double-render
+produces it. The real cause was exactly that: `draw()` painted the source twice (a `drawSource` pass
+plus `super().draw()`, whose padded output bled past the clip and composited on top). Fixed by
+rendering the blur into an offscreen pixmap first, then blitting only the clipped part — one write
+per output pixel. **The discriminating test was the user's**: stretch the blur-in to 8s and see
+whether the thickened state persisted (it did, ~2s) or stayed a blip.
+
+**A pre-existing regression surfaced mid-investigation and was mis-attributed to the blur work.**
+The cover carousel never appeared on a fresh no-book launch. Both attempts were judged against that
+already-broken baseline. A **behavioural** bisect (9 automated steps over 273 revisions, driving a
+real `MainWindow` and asking whether `_carousel` existed and was visible) pinned it to `cd5ec5b`,
+2026-07-17 — a correct fix that removed an unconditional launch scan. The carousel had been silently
+riding that scan's completion as its only post-`show()` trigger, because `_show_carousel` guarded on
+`no_book_section.isVisible()` and Qt reports `isVisible()` False for every child until the top-level
+window is shown. Fixed by testing the authoritative state (`current_file`) the sole caller already
+had. A blast-radius probe (14 startup state values, re-applied and diffed) showed the carousel was
+the **only** thing affected, which is what justified the targeted fix over a broader
+reconciliation patch.
+
+**Two further bugs found while verifying.** Ghost transport buttons persisted over the quote screen
+after removing the last scan location with a panel open — `_on_book_removed` hides the chrome, but a
+hidden widget emits no Paint event, so the tracker never saw it and the overlay kept compositing a
+cached snapshot; fixed with the already-existing `force_refresh_now()`. The tell was the user's: a
+panel close/reopen always resolved it, so state was correct and only the cache was stale. Separately,
+the carousel thumbnails never blurred — it is a **sibling** of `visual_area`, and cannot be
+reparented in (300px full-width by design vs. `visual_area`'s 280px inset), so it got its own
+`ClippedBlurEffect` driven from the same animation.
+
+**Ended on measurement rather than theory.** The tassel stayed stiff on click with blur on while its
+idle sway worked — `hideEvent` was resetting the kick, and the blur grab's ~64ms hide/show wiped
+every impulse within 64ms. After fixing that the swing ran in slow motion, and the user's read
+("performance, not physics") was right: measured `ticks=42 anim=1.39s wall=1.85s ratio=1.33x
+eff_fps=22.8`, **zero dropped** — late frames, not lost ones, from ~15 grabs/sec at ~4.4ms each.
+The user then identified the real waste: the Timeline tab is deliberately opaque (the heatmap encodes
+minutes as cell alpha, so a noisy backdrop would corrupt it), so every one of those grabs produced an
+invisible image. Gated on a new `StatsPanel.covers_opaquely()`, asked of the panel rather than by tab
+index. The ~64ms feedback loop itself is untouched and is the next piece of work.
+
+Two process notes worth keeping. **Offscreen verification repeatedly gave false confidence** — the
+double-render was byte-identical in every harness (including a transparent-child-over-themed-
+background model) and only ever visible live; the same held for the carousel and the ghost buttons.
+And a diagnostic that drove the real folder-removal handler against the live DB deleted both scan
+locations; recovery was clean only because `remove_scan_location` soft-deletes. Point mutating
+probes at a throwaway config.
+
+---
+
 ## Session Summary — 2026-07-22 Session 2 — Narrowed the theme-hover-active region to `swatch_box`; found and fixed a real row-clipping regression via live geometry logging after several blind layout guesses failed
 
 Deferred follow-up from Session 1: confined the theme-hover-active region (where leaving reverts the

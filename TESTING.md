@@ -110,6 +110,47 @@ VT/CUE keep `_CHAPTER_BOUNDARY_EPSILON = 0.35`.
 - [ ] VT (multi-file): chapter-list clicks across file boundaries load the correct chapter; slider/labels track — identical to before (uses unchanged `+0.35`). NOTE: VT first-word audio clip is a **known, separately-deferred** issue — do not expect this change to fix it
 - [ ] CUE: chapter-list clicks unchanged
 
+## Panel blur — clip, timing, carousel, opaque-tab skip — 2026-07-27
+
+**All of these are LIVE-ONLY checks.** Every bug in this section was invisible to offscreen
+harnesses — the double-render came back byte-identical in every scripted comparison and was only
+ever visible in the running app. Do not treat a passing script as coverage here.
+
+### Sliver clip (cover art / theme bg_image / quotes — all one `visual_area` widget)
+- [ ] Open Settings over a book with cover art: the ~20px sliver to the RIGHT of the panel stays sharp; the area behind the panel blurs
+- [ ] Same with a theme that has a `bg_image` ("The Overlook" plus one other) — sliver sharp, occluded part blurred
+- [ ] Quote screen (no library folders configured): same split, no hard-edged artifacts during the slide
+- [ ] Library panel: no blur artifacts and NO sharp strip — it is full-width and opaque, so it is skipped entirely (null clip), not given a full-rect clip
+- [ ] "No book selected" label blurs (subtly — it is bold text; verify it is not sharp rather than expecting an obvious effect)
+
+### Blur-in timing and the double-render regression
+- [ ] Panel open: blur starts only AFTER the panel has settled, not during the slide — it must not run ahead of the panel and expose a clip edge over uncovered content
+- [ ] Blur builds smoothly (1500ms InOutQuad) with **no bright/"thick" flash** at any point — a momentary double-image means the two-pass `draw()` has regressed
+- [ ] Settings > Blur ON toggle: same, no flash (this path has no panel slide, so it isolates the render from the timing)
+- [ ] Settings > Blur OFF: clears promptly (500ms), live view returns as the panel slides away
+- [ ] **Diagnostic if a flash ever reappears:** temporarily raise `_BLUR_IN_MS` (panels.py) to ~8000. A one-frame artifact stays a blip; a render bug stretches with the animation. This is what identified the original double-render.
+
+### Carousel (no-book state)
+- [ ] Fresh launch with no book loaded: the carousel appears **at startup**, without needing to load and unload a book first
+- [ ] Panel open over the carousel: thumbnails blur along with the stripe and "Go to Library" button — no sharp thumbnails against a blurred stripe
+- [ ] Carousel keeps scrolling smoothly while blurred — no frozen strip, no ghosting, no horizontal seam across the thumbnails
+- [ ] Panel close: carousel un-blurs cleanly, no blurred band left behind
+- [ ] Blur toggle on/off with a panel open over the carousel: no geometry jump, no clipped "Go to Library" button
+
+### Opaque Timeline tab (grab skip)
+- [ ] Stats → Timeline with blur on: no blur is applied behind the panel (correct — the tab is deliberately opaque so the heatmap's alpha-encoded minutes stay readable)
+- [ ] Stats → Overall / Day / Week / Month: blur DOES apply normally on those tabs
+- [ ] Switch Timeline → another tab → back: no stale blurred band left behind the opaque tab in either direction
+
+### Tassel (bookmark) with blur ON
+- [ ] Resting state: gentle idle sway continues normally
+- [ ] Click the bookmark: it swings visibly — not stiff/motionless (regression check for `hideEvent` resetting the kick)
+- [ ] The swing runs at normal speed, not slow motion (it should settle in ~1.4s; noticeably slower means the sway timer is being starved again)
+
+### Stale-cache regressions (state is correct; only the cached pixmap goes stale)
+- [ ] Remove the last scan location while a panel is open with an active book: no ghost transport buttons left over the quote screen
+- [ ] General tell for this bug class: if closing and reopening the panel fixes the visual, it is a missed repaint, not wrong state — look for a content change that produced no Paint event on a tracked widget
+
 ## Finish-book status banner (revert/dismiss)
 
 - [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
