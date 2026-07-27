@@ -697,8 +697,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.visual_area.setGraphicsEffect(self.blur_effect)
 
         self.blur_animation = QPropertyAnimation(self.blur_effect, b"blurRadius")
-        self.blur_animation.setDuration(500)
-        self.blur_animation.setEasingCurve(QEasingCurve.OutCubic)
+        # Duration/curve are tuned against TransportBarBlurOverlay's own fade-in
+        # (_FADE_IN_MS = 1500, ui/transport_bar_blur.py) so the cover area and the
+        # transport bar blur in together rather than at visibly different rates.
+        #
+        # Was 500ms/OutCubic and read as an abrupt snap once the blur was moved to
+        # start at slide-finished (2026-07-27): OutCubic front-loads hard —
+        # measured 58% of the radius applied by 25% of the animation and 88% by
+        # halfway — so at 500ms the whole visible change happened in roughly the
+        # first 150ms. That is most noticeable on the cover art, which is exactly
+        # where the eye already is. InOutQuad eases in gently instead (2% at 10%,
+        # 12% at 25%) so the blur builds rather than snapping.
+        self.blur_animation.setDuration(1500)
+        self.blur_animation.setEasingCurve(QEasingCurve.InOutQuad)
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)

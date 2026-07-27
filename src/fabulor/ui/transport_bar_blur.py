@@ -584,8 +584,33 @@ class TransportBarBlurOverlay:
         return panel_rect_in_common_space(panel, self._common_ancestor)
 
     def _compute_bounding_rect(self) -> QRect | None:
+        """Union of the tracked widgets that are ACTUALLY VISIBLE.
+
+        The isVisible() filter is load-bearing, not a micro-optimization (found
+        live 2026-07-27). In the no-book state `_set_interface_visible(False)`
+        hides almost all of the transport chrome — measured: only
+        progress_slider remains visible, the other five sampled widgets are
+        hidden — but this used to union every tracked widget unconditionally,
+        including hidden ones whose geometry the layout still reports. That
+        produced a full-height rect (measured `QRect(10, 300, 260, 198)`,
+        spanning y=300..497) covering a region where nothing was actually
+        drawn.
+
+        In the no-book state the ambient CoverCarousel occupies y=227..392, so
+        that phantom rect overlapped it from y=300 down. The overlay's CACHED
+        pixmap then sat frozen over the lower two-thirds of the scrolling
+        carousel: sharp above y=300, blurred and stuck below it — a visible
+        horizontal seam straight across the cover thumbnails. Restricting the
+        union to visible widgets keeps the rect on chrome that is genuinely
+        on screen.
+
+        Returns None when nothing tracked is visible, which callers already
+        treat as "no blur" via their empty/None rect guards.
+        """
         rect: QRect | None = None
         for widget in self._all_tracked_widgets():
+            if not widget.isVisible():
+                continue
             top_left = widget.mapTo(self._common_ancestor, QPoint(0, 0))
             widget_rect = QRect(top_left, widget.size())
             rect = widget_rect if rect is None else rect.united(widget_rect)

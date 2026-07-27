@@ -39,8 +39,8 @@ drive this effect.
 """
 import logging
 
-from PySide6.QtCore import QRect
-from PySide6.QtGui import QRegion
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsBlurEffect
 
 logger = logging.getLogger(__name__)
@@ -83,17 +83,41 @@ class ClippedBlurEffect(QGraphicsBlurEffect):
 
         source_rect = self.sourceBoundingRect().toRect()
 
-        # 1) Everything OUTSIDE the clip: unblurred source (this is the sliver
-        #    beside the panel — the whole point of this class).
-        outside = QRegion(source_rect) - QRegion(self._clip)
-        if not outside.isEmpty():
-            painter.save()
-            painter.setClipRegion(outside)
-            self.drawSource(painter)
-            painter.restore()
+        # ONE blurred render, composited ONCE — see the "double-render" note
+        # below for why this must not go back to a two-pass draw.
+        #
+        # Render the blur into an offscreen pixmap first, then blit only the
+        # clipped part of it. super().draw(painter) renders the WHOLE source
+        # blurred and would rely on the painter's clip to mask it; but
+        # QGraphicsBlurEffect pads and offsets its own output, so its render can
+        # bleed past the clip boundary and land on top of the sharp drawSource
+        # pass underneath — the same pixels rendered twice, compositing to a
+        # visibly brighter, "thicker" image.
+        #
+        # DOUBLE-RENDER BUG (found live 2026-07-27): the original implementation
+        # here drew the source twice — drawSource() for the region outside the
+        # clip, then super().draw() for the region inside it. That produced a
+        # sustained bright/thick "two images superimposed" state during the
+        # blur-in animation. Proven to be the blur render itself, not a one-frame
+        # artifact, by stretching the blur-in to 8s: the thickened state then
+        # persisted for ~2s, scaling with the animation rather than staying a
+        # blip. NOTE: this was NOT reproducible offscreen — plain-vs-clipped
+        # comparisons across radii 0..10, including a transparent-child-over-
+        # themed-background model of visual_area, came back byte-identical every
+        # time. Live observation is the only thing that sees it; do not "verify"
+        # a change here with an offscreen harness alone.
+        blurred = QPixmap(source_rect.size())
+        blurred.fill(Qt.transparent)
+        p = QPainter(blurred)
+        p.translate(-source_rect.topLeft())
+        super().draw(p)
+        p.end()
 
-        # 2) INSIDE the clip: the normal blurred rendering.
+        # Sharp source everywhere, then the blurred copy over just the clip.
+        # Each output pixel is written by exactly one of these two blits — the
+        # clip is applied to the ALREADY-rendered blur, so nothing can bleed.
+        self.drawSource(painter)
         painter.save()
         painter.setClipRect(self._clip)
-        super().draw(painter)
+        painter.drawPixmap(source_rect.topLeft(), blurred)
         painter.restore()

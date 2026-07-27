@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 # stutter's root cause is found. See NOTES.md / TODO.md 2026-07-16/17 entry.
 _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 
+# visual_area blur-in / blur-out durations. Deliberately ASYMMETRIC:
+# blurring IN is a slow build matched to TransportBarBlurOverlay._FADE_IN_MS
+# (1500) so both halves of the window blur together; clearing OUT stays snappy
+# so the live view returns immediately as the panel starts sliding away, which
+# also mirrors the transport bar's instant dismiss. Both are applied per
+# direction because the two paths share one QPropertyAnimation object.
+_BLUR_IN_MS = 1500
+_BLUR_OUT_MS = 500
+
 class PanelManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -109,6 +118,7 @@ class PanelManager:
             return
         self._apply_visual_area_clip(panel)
         self.blur_animation.stop()
+        self.blur_animation.setDuration(_BLUR_IN_MS)
         self.blur_animation.setStartValue(self.blur_effect.blurRadius())
         self.blur_animation.setEndValue(8 if panel is self.tags_panel else 10)
         self.blur_animation.start()
@@ -566,6 +576,7 @@ class PanelManager:
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
@@ -621,6 +632,7 @@ class PanelManager:
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
@@ -737,6 +749,7 @@ class PanelManager:
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
@@ -763,6 +776,7 @@ class PanelManager:
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
@@ -933,6 +947,7 @@ class PanelManager:
 
         if self.config.get_blur_enabled():
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
             self._clear_visual_area_clip()
