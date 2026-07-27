@@ -1215,10 +1215,30 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.scan_section.setVisible(visible)
 
     def _show_carousel(self):
-        """Build and place the carousel synchronously. Safe to call multiple times."""
+        """Build and place the carousel synchronously. Safe to call multiple times.
+
+        The no-book test is `self.current_file` ONLY — deliberately NOT
+        `no_book_section.isVisible()`. Qt reports isVisible() == False for every
+        child widget until its top-level window has been shown, and
+        `_check_library_status()` runs in `__init__` (app.py, ~line 494) well
+        before `self.show()` (~line 571) — so an isVisible() test here always
+        early-returns at startup and the carousel never appears on a fresh
+        no-book launch. That was a live bug for ten days (bisected to cd5ec5b,
+        2026-07-17): before that commit an unconditional launch scan happened to
+        fire `_on_scan_finished` -> `apply_current_state()` a second time AFTER
+        the window was up, which re-ran this path with the guard now passing.
+        Removing that scan was correct, but the carousel had been silently
+        riding it as its only post-show trigger.
+
+        `current_file` is the same authoritative value `compute_library_state`
+        derives `state["has_book"]` from, and the sole caller
+        (`apply_library_state`'s `not has_book` branch, library_controller.py)
+        has already established that state before calling here — so this reads
+        the real state directly instead of re-deriving it from a widget's paint
+        status. Do NOT reintroduce a visibility-based guard here."""
         if self._carousel is not None:
             return   # already showing — do not reshuffle mid-display
-        if self.current_file or not self.no_book_section.isVisible():
+        if self.current_file:
             return   # not in the no-book state
         pixmaps, cover_h = builders.build_carousel_covers(self)
         if not pixmaps:
