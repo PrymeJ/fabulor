@@ -157,8 +157,11 @@ class ThemeManager(QObject):
         self._hover_debounce_timer.timeout.connect(self._fire_pending_hover)
         self._pending_hover_theme = None
         self._hover_seen_at = None  # perf_counter of the most recent enterEvent
-        self._hover_seen_pos = None  # QCursor.pos() at that same enterEvent (see
-                                      # _on_themes_tab_left's synthetic-leave test)
+        # Rolling cursor reference for _on_themes_tab_left's synthetic-leave test —
+        # updated on every genuine swatch enter AND on every leave. It is a
+        # same-position comparator, NOT a one-shot token: never set it back to None on
+        # a leave (see that method for the ~70-spurious-snapback bug that caused).
+        self._last_swatch_pos = None
 
         self._save_on_fade = False
         self._fade_in_flight = False
@@ -1704,7 +1707,7 @@ class ThemeManager(QObject):
         # Cursor position at the most recent genuine swatch enter — the reference point
         # _on_themes_tab_left uses to tell a real mouse-out from a blur-grab synthetic
         # leave. See that method for the full mechanism.
-        self._hover_seen_pos = QCursor.pos()
+        self._last_swatch_pos = QCursor.pos()
         self._hover_debounce_timer.start()  # restart on each enter → coalesces the sweep
 
     def _fire_pending_hover(self):
@@ -1802,7 +1805,7 @@ class ThemeManager(QObject):
 
         The claim that "this widget has no enterEvent to pair against" is what led to the
         weaker test. True as far as it goes — but the ENTER side is already recorded
-        elsewhere: `_on_theme_hovered` stores `_hover_seen_pos` on every genuine swatch
+        elsewhere: `_on_theme_hovered` stores `_last_swatch_pos` on every genuine swatch
         enter. That gives the same two-signal test `ThemeItem` uses, without a second wired
         event handler (which CLAUDE.md forbids here):
 
@@ -1816,7 +1819,20 @@ class ThemeManager(QObject):
         `_MOUSE_JITTER_PX` absorbs sub-pixel/±1px OS-level cursor jitter, which would
         otherwise read as "real movement" and fire a spurious snapback."""
         pos = QCursor.pos()
-        seen = self._hover_seen_pos
+        seen = self._last_swatch_pos
+        # Update the reference to WHERE THE CURSOR IS NOW, on every leave, before
+        # deciding. This is a same-position comparator, not a one-shot token.
+        #
+        # DO NOT consume it (set it to None) on a genuine leave. That was the first
+        # implementation and it was WRONG — live-confirmed 2026-07-28, 01:36:15-20: the
+        # first genuine leave consumed the reference, and then EVERY subsequent
+        # blur-grab synthetic leave hit the `seen is None` fallback and fired a snapback.
+        # Measured ~70 spurious snapbacks in 5 seconds with the cursor provably frozen
+        # (pos=(222,271) identical across the whole burst). They were invisible only
+        # because _on_theme_changed's no-op guard happened to catch every one — pure
+        # luck: with a live preview showing, each would have killed it. Consuming the
+        # reference disarmed the very test that was supposed to suppress those leaves.
+        self._last_swatch_pos = pos
         if seen is not None:
             moved = max(abs(pos.x() - seen.x()), abs(pos.y() - seen.y()))
             if moved <= _MOUSE_JITTER_PX:
@@ -1828,13 +1844,9 @@ class ThemeManager(QObject):
                 return
         logger.debug(
             f"[SWATCH-LEAVE] genuine leave at {(pos.x(), pos.y())} "
-            f"(last enter {((seen.x(), seen.y()) if seen is not None else None)}, "
+            f"(last ref {((seen.x(), seen.y()) if seen is not None else None)}, "
             f"visible={tab_widget.isVisible()}) -> snapback"
         )
-        # Consume the reference point: the cursor is now outside the swatch area, so the
-        # next genuine enter will set a fresh one. Without this, a second leave arriving
-        # before any new enter would compare against a stale position.
-        self._hover_seen_pos = None
         self._on_theme_unhovered()
 
     def update_theme_list_visuals(self):

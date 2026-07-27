@@ -233,7 +233,7 @@ def test_synthetic_leave_with_unmoved_cursor_is_suppressed():
     # The blur grab hides settings_panel (an ANCESTOR of swatch_box) ~15x/sec, firing a
     # leave each time with the cursor never having moved. Must not snap back.
     tm = _make_tm()
-    tm._hover_seen_pos = _Pos(242, 266)
+    tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(242, 266), widget_visible=False) is False
 
 
@@ -242,21 +242,21 @@ def test_genuine_leave_is_honoured_even_while_hidden():
     # by the live isVisible() check. Cursor moved => genuine => snapback must fire,
     # regardless of visibility.
     tm = _make_tm()
-    tm._hover_seen_pos = _Pos(242, 266)
+    tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(330, 266), widget_visible=False) is True
 
 
 def test_jitter_below_threshold_is_treated_as_unmoved():
     # Sub-pixel/±1px OS mouse-reporting jitter must not read as real movement.
     tm = _make_tm()
-    tm._hover_seen_pos = _Pos(242, 266)
+    tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(242 + _MOUSE_JITTER_PX, 266), widget_visible=False) is False
 
 
 def test_movement_just_above_jitter_threshold_is_genuine():
     # Upper-boundary pin — catches a wrong constant or a `<`/`<=` slip.
     tm = _make_tm()
-    tm._hover_seen_pos = _Pos(242, 266)
+    tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(242 + _MOUSE_JITTER_PX + 1, 266), widget_visible=True) is True
 
 
@@ -265,13 +265,32 @@ def test_leave_with_no_recorded_enter_is_honoured():
     # honouring the leave. Failing open here costs at most a redundant snapback;
     # failing closed would strand a preview, which is the bug being fixed.
     tm = _make_tm()
-    tm._hover_seen_pos = None
+    tm._last_swatch_pos = None
     assert _leave(tm, _Pos(100, 100)) is True
 
 
-def test_genuine_leave_consumes_the_reference_position():
-    # Prevents a second leave comparing against a stale enter position.
+def test_genuine_leave_updates_the_reference_instead_of_clearing_it():
+    # REGRESSION PIN (live-found 2026-07-28, 01:36:15-20). The first implementation
+    # CONSUMED the reference (set it to None) on a genuine leave. Every subsequent
+    # blur-grab synthetic leave then hit the `seen is None` fallback and fired a
+    # snapback: ~70 of them in 5 seconds with the cursor provably frozen at
+    # pos=(222,271). Invisible only because the no-op guard caught each one — with a
+    # live preview showing, every one would have killed it.
+    #
+    # The reference must roll forward to the current position, so the NEXT leave still
+    # has something to compare against.
     tm = _make_tm()
-    tm._hover_seen_pos = _Pos(242, 266)
+    tm._last_swatch_pos = _Pos(242, 266)
     _leave(tm, _Pos(330, 266))
-    assert tm._hover_seen_pos is None
+    assert tm._last_swatch_pos is not None
+    assert (tm._last_swatch_pos.x(), tm._last_swatch_pos.y()) == (330, 266)
+
+
+def test_synthetic_leaves_after_a_genuine_leave_are_still_suppressed():
+    # The end-to-end shape of the same regression: one real mouse-out, then a burst of
+    # grab-synthetic leaves at a frozen cursor. Only the first may snap back.
+    tm = _make_tm()
+    tm._last_swatch_pos = _Pos(242, 266)
+    assert _leave(tm, _Pos(222, 271), widget_visible=False) is True   # genuine mouse-out
+    for _ in range(10):                                               # grab burst, frozen
+        assert _leave(tm, _Pos(222, 271), widget_visible=False) is False
