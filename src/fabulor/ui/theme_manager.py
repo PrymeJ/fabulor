@@ -157,10 +157,10 @@ class ThemeManager(QObject):
         self._hover_debounce_timer.timeout.connect(self._fire_pending_hover)
         self._pending_hover_theme = None
         self._hover_seen_at = None  # perf_counter of the most recent enterEvent
-        # Rolling cursor reference for _on_themes_tab_left's synthetic-leave test —
-        # updated on every genuine swatch enter AND on every leave. It is a
-        # same-position comparator, NOT a one-shot token: never set it back to None on
-        # a leave (see that method for the ~70-spurious-snapback bug that caused).
+        # Cursor position at the last genuine swatch ENTER — the anchor for
+        # _on_themes_tab_left's secondary "visible but unmoved" check. Written ONLY by
+        # _on_theme_hovered; never updated on a leave and never consumed. Both of those
+        # variants were tried and both broke (see _on_themes_tab_left's docstring).
         self._last_swatch_pos = None
 
         self._save_on_fade = False
@@ -1769,49 +1769,66 @@ class ThemeManager(QObject):
         landing inside one of those windows was silently dropped, which is why the snapback
         was intermittent when moving from a swatch to the dismiss sliver.
 
-        The claim that "this widget has no enterEvent to pair against" is what led to the
-        weaker test. True as far as it goes — but the ENTER side is already recorded
-        elsewhere: `_on_theme_hovered` stores `_last_swatch_pos` on every genuine swatch
-        enter. That gives the same two-signal test `ThemeItem` uses, without a second wired
-        event handler (which CLAUDE.md forbids here):
+        FINAL FORM (2026-07-28, after two failed intermediate designs — read this before
+        touching the condition, both failures are easy to reintroduce):
 
-          * a blur-grab synthetic leave fires with the cursor NOT moved from the last
-            genuine enter — the user did nothing;
-          * a real mouse-out to the sliver, the tab header, or off-panel ALWAYS moves the
-            cursor first.
+        **Visibility is the primary signal, and it is sufficient.** A real mouse-out of
+        `swatch_box` always happens while the widget is VISIBLE; a blur-grab synthetic
+        leave always fires while it is HIDDEN (the grab hides `settings_panel`, an
+        ancestor, then re-shows it). Measured over a full live session: 6 real mouse-outs,
+        all `visible=True`, all at the right-hand edge (x = 254, 254, 256, 254, 254, 238)
+        exiting toward the dismiss sliver — and **zero** real mouse-outs while hidden.
 
-        So position-changed is the discriminator, and visibility is no longer consulted at
-        all: a genuine leave is honoured whether or not a grab happens to be mid-flight.
-        `_MOUSE_JITTER_PX` absorbs sub-pixel/±1px OS-level cursor jitter, which would
-        otherwise read as "real movement" and fire a spurious snapback."""
+        The two intermediate designs and why each failed:
+
+        1. *Position vs. the last genuine ENTER, ignoring visibility.* Rejected the
+           original `isVisible()` check on the theory that a real mouse-out could land
+           inside a hide window. Live data says that never happens. Worse, this design
+           CONSUMED the reference on a genuine leave, so every later synthetic leave hit
+           the `None` fallback and fired a snapback — ~70 in 5 seconds with the cursor
+           frozen (01:36:15-20).
+        2. *Position vs. the last LEAVE (rolling reference), ignoring visibility.* Fixed
+           the consume bug but broke the comparison: consecutive synthetic leaves are
+           ~65ms apart, so a cursor merely MOVING ACROSS the swatch area travels 4-14px
+           between them — well past `_MOUSE_JITTER_PX`. Each synthetic leave then read as
+           genuine and called `_on_theme_unhovered`, whose `_hover_debounce_timer.stop()`
+           killed the 80ms debounce ~15x/sec, so previews never fired while the cursor was
+           in motion (02:25:47-54, three misses back to back). That is the 2026-07-22
+           debounce-kill bug, reopened by a different route.
+
+        Both failures share one root error: trying to infer "did the user leave?" from
+        cursor deltas, when the widget's own visibility answers it directly.
+
+        The position check is KEPT, but only as a secondary guard for the one case
+        visibility cannot cover — a leave delivered while visible whose cursor has not
+        actually moved (a stylesheet-cascade artifact of the kind `ThemeItem`'s
+        `_spurious_enter_guard_until` handles). `_MOUSE_JITTER_PX` absorbs sub-pixel
+        reporting noise there. It is compared against the last genuine ENTER, never
+        against the last leave — see failure 2."""
+        visible = tab_widget.isVisible()
         pos = QCursor.pos()
+        if not visible:
+            # Hidden ⇒ blur-grab synthetic. Never a real mouse-out (0 counterexamples in
+            # a full live session). Do NOT fall through to a position test here: while
+            # the cursor is in motion the grab's ~65ms cadence makes every synthetic
+            # leave look like movement, which killed the hover debounce (failure 2).
+            logger.debug(
+                f"[SWATCH-LEAVE] suppressed synthetic leave (widget hidden by blur grab) "
+                f"at {(pos.x(), pos.y())}"
+            )
+            return
         seen = self._last_swatch_pos
-        # Update the reference to WHERE THE CURSOR IS NOW, on every leave, before
-        # deciding. This is a same-position comparator, not a one-shot token.
-        #
-        # DO NOT consume it (set it to None) on a genuine leave. That was the first
-        # implementation and it was WRONG — live-confirmed 2026-07-28, 01:36:15-20: the
-        # first genuine leave consumed the reference, and then EVERY subsequent
-        # blur-grab synthetic leave hit the `seen is None` fallback and fired a snapback.
-        # Measured ~70 spurious snapbacks in 5 seconds with the cursor provably frozen
-        # (pos=(222,271) identical across the whole burst). They were invisible only
-        # because _on_theme_changed's no-op guard happened to catch every one — pure
-        # luck: with a live preview showing, each would have killed it. Consuming the
-        # reference disarmed the very test that was supposed to suppress those leaves.
-        self._last_swatch_pos = pos
         if seen is not None:
             moved = max(abs(pos.x() - seen.x()), abs(pos.y() - seen.y()))
             if moved <= _MOUSE_JITTER_PX:
                 logger.debug(
-                    f"[SWATCH-LEAVE] suppressed synthetic leave — cursor unmoved "
-                    f"({moved}px <= {_MOUSE_JITTER_PX}) at {(pos.x(), pos.y())}, "
-                    f"visible={tab_widget.isVisible()}"
+                    f"[SWATCH-LEAVE] suppressed leave — visible but cursor unmoved "
+                    f"({moved}px <= {_MOUSE_JITTER_PX}) at {(pos.x(), pos.y())}"
                 )
                 return
         logger.debug(
             f"[SWATCH-LEAVE] genuine leave at {(pos.x(), pos.y())} "
-            f"(last ref {((seen.x(), seen.y()) if seen is not None else None)}, "
-            f"visible={tab_widget.isVisible()}) -> snapback"
+            f"(last enter {((seen.x(), seen.y()) if seen is not None else None)}) -> snapback"
         )
         self._on_theme_unhovered()
 

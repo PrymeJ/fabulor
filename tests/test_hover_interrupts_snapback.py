@@ -220,28 +220,43 @@ def _leave(tm, cursor_pos, widget_visible=True, monkeypatch=None):
     return bool(calls)
 
 
-def test_synthetic_leave_with_unmoved_cursor_is_suppressed():
-    # The blur grab hides settings_panel (an ANCESTOR of swatch_box) ~15x/sec, firing a
-    # leave each time with the cursor never having moved. Must not snap back.
+def test_leave_while_hidden_is_always_suppressed():
+    # Primary discriminator. The blur grab hides settings_panel (an ANCESTOR of
+    # swatch_box) ~15x/sec; every such leave is synthetic. Measured over a full live
+    # session: 6 real mouse-outs, ALL visible=True; zero real mouse-outs while hidden.
     tm = _make_tm()
     tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(242, 266), widget_visible=False) is False
 
 
-def test_genuine_leave_is_honoured_even_while_hidden():
-    # THE SLIVER BUG: a real mouse-out landing inside a grab window used to be dropped
-    # by the live isVisible() check. Cursor moved => genuine => snapback must fire,
-    # regardless of visibility.
+def test_moving_cursor_while_hidden_is_still_suppressed():
+    # REGRESSION PIN (live-found 2026-07-28, 02:25:47-54 — three misses back to back).
+    # A rolling-reference design compared each leave against the PREVIOUS leave, so a
+    # cursor merely moving ACROSS the swatch area travelled 4-14px between consecutive
+    # synthetic leaves (~65ms apart) and every one read as genuine. Each then called
+    # _on_theme_unhovered -> _hover_debounce_timer.stop(), killing the 80ms debounce
+    # ~15x/sec so previews never fired while the cursor was in motion.
+    #
+    # Movement while hidden must NOT make a leave genuine.
     tm = _make_tm()
     tm._last_swatch_pos = _Pos(242, 266)
-    assert _leave(tm, _Pos(330, 266), widget_visible=False) is True
+    for dx in (6, 12, 18, 24):   # a cursor sweeping across the swatches
+        assert _leave(tm, _Pos(242 + dx, 266), widget_visible=False) is False
 
 
-def test_jitter_below_threshold_is_treated_as_unmoved():
-    # Sub-pixel/±1px OS mouse-reporting jitter must not read as real movement.
+def test_genuine_mouse_out_while_visible_fires():
+    # A real mouse-out toward the dismiss sliver: visible, and the cursor has moved.
     tm = _make_tm()
     tm._last_swatch_pos = _Pos(242, 266)
-    assert _leave(tm, _Pos(242 + _MOUSE_JITTER_PX, 266), widget_visible=False) is False
+    assert _leave(tm, _Pos(330, 266), widget_visible=True) is True
+
+
+def test_visible_but_unmoved_is_suppressed():
+    # Secondary guard: a leave delivered while VISIBLE with the cursor unmoved is a
+    # stylesheet-cascade artifact, not a mouse-out. Jitter absorbed by _MOUSE_JITTER_PX.
+    tm = _make_tm()
+    tm._last_swatch_pos = _Pos(242, 266)
+    assert _leave(tm, _Pos(242 + _MOUSE_JITTER_PX, 266), widget_visible=True) is False
 
 
 def test_movement_just_above_jitter_threshold_is_genuine():
@@ -251,37 +266,21 @@ def test_movement_just_above_jitter_threshold_is_genuine():
     assert _leave(tm, _Pos(242 + _MOUSE_JITTER_PX + 1, 266), widget_visible=True) is True
 
 
-def test_leave_with_no_recorded_enter_is_honoured():
-    # No reference point (never hovered a swatch, or already consumed): fall back to
-    # honouring the leave. Failing open here costs at most a redundant snapback;
-    # failing closed would strand a preview, which is the bug being fixed.
+def test_visible_leave_with_no_recorded_enter_is_honoured():
+    # No anchor yet: with the widget visible, honour the leave. Failing open costs at
+    # most a redundant snapback; failing closed would strand a preview.
     tm = _make_tm()
     tm._last_swatch_pos = None
-    assert _leave(tm, _Pos(100, 100)) is True
+    assert _leave(tm, _Pos(100, 100), widget_visible=True) is True
 
 
-def test_genuine_leave_updates_the_reference_instead_of_clearing_it():
-    # REGRESSION PIN (live-found 2026-07-28, 01:36:15-20). The first implementation
-    # CONSUMED the reference (set it to None) on a genuine leave. Every subsequent
-    # blur-grab synthetic leave then hit the `seen is None` fallback and fired a
-    # snapback: ~70 of them in 5 seconds with the cursor provably frozen at
-    # pos=(222,271). Invisible only because the no-op guard caught each one — with a
-    # live preview showing, every one would have killed it.
-    #
-    # The reference must roll forward to the current position, so the NEXT leave still
-    # has something to compare against.
+def test_reference_is_not_touched_by_leaves():
+    # The anchor is the last genuine ENTER, written only by _on_theme_hovered. Neither
+    # consuming it (bug 1: ~70 spurious snapbacks) nor rolling it forward on each leave
+    # (bug 2: killed the debounce while moving) is acceptable.
     tm = _make_tm()
-    tm._last_swatch_pos = _Pos(242, 266)
-    _leave(tm, _Pos(330, 266))
-    assert tm._last_swatch_pos is not None
-    assert (tm._last_swatch_pos.x(), tm._last_swatch_pos.y()) == (330, 266)
-
-
-def test_synthetic_leaves_after_a_genuine_leave_are_still_suppressed():
-    # The end-to-end shape of the same regression: one real mouse-out, then a burst of
-    # grab-synthetic leaves at a frozen cursor. Only the first may snap back.
-    tm = _make_tm()
-    tm._last_swatch_pos = _Pos(242, 266)
-    assert _leave(tm, _Pos(222, 271), widget_visible=False) is True   # genuine mouse-out
-    for _ in range(10):                                               # grab burst, frozen
-        assert _leave(tm, _Pos(222, 271), widget_visible=False) is False
+    anchor = _Pos(242, 266)
+    tm._last_swatch_pos = anchor
+    _leave(tm, _Pos(330, 266), widget_visible=True)
+    _leave(tm, _Pos(400, 300), widget_visible=False)
+    assert tm._last_swatch_pos is anchor
