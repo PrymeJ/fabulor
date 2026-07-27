@@ -342,6 +342,24 @@ class TransportBarBlurOverlay:
 
     # -- lifecycle ----------------------------------------------------------
 
+    def _panel_hides_everything(self, panel) -> bool:
+        """True when `panel` paints opaquely over the whole region we'd blur, so
+        the grab's result cannot be seen by anyone.
+
+        Currently only the Stats panel's Timeline tab qualifies (its heatmap
+        needs an opaque backdrop — see StatsPanel.covers_opaquely). Grabbing
+        under it is pure cost: measured 2026-07-27, ~15 grabs/sec at ~4.4ms of
+        synchronous grab+blur on the main thread, producing an image nothing
+        renders, while delaying the tassel's 33ms sway timer to an effective
+        22.8fps (a visibly slow swing).
+
+        Deliberately asks the PANEL whether it is opaque rather than testing tab
+        indices or object names here — a new opaque surface only has to grow its
+        own covers_opaquely() to be honoured, and tab reordering can't break it.
+        """
+        checker = getattr(panel, 'covers_opaquely', None)
+        return bool(callable(checker) and checker())
+
     def show_for_panel(self, panel):
         """Mandatory full-rect first pass, called once on panel-open. Computes
         the bounding rect fresh (cheap — a handful of mapTo calls), clips it to
@@ -352,6 +370,10 @@ class TransportBarBlurOverlay:
         correct blur that peeks past the panel." Confirmed live, 2026-07-19),
         grabs+blurs the whole (clipped) region, shows the overlay, then arms
         dirty-tracking for subsequent updates while the panel stays open."""
+        if self._panel_hides_everything(panel):
+            # Nothing behind this panel is visible — skip the grab entirely
+            # rather than blurring an image nobody can see.
+            return
         # TEMP PERF INSTRUMENTATION (2026-07-19, user-requested): measure the
         # mandatory full-rect pass's real cost on panel-open. Remove once the
         # bottleneck is identified and addressed.
@@ -450,6 +472,10 @@ class TransportBarBlurOverlay:
         self._refresh_tick_count = getattr(self, '_refresh_tick_count', 0) + 1
         _tick = self._refresh_tick_count
 
+        if self._active_panel is not None and self._panel_hides_everything(self._active_panel):
+            # Opaque surface moved over us (e.g. a tab switch to Timeline) —
+            # stop re-grabbing until something visible is behind the panel again.
+            return
         if not self._active or self._tracker is None:
             logger.warning(
                 f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN "
@@ -527,6 +553,8 @@ class TransportBarBlurOverlay:
         show_for_panel's own existing mandatory first pass. No-op if the overlay
         isn't currently active, same as every other entry point here."""
         if not self._active or self._bounding_rect is None:
+            return
+        if self._active_panel is not None and self._panel_hides_everything(self._active_panel):
             return
         logger.warning("[TIMER-TRACE] force_refresh_now: tab-switch triggered full-rect refresh")
         blurred = self._grab_and_blur(self._bounding_rect)

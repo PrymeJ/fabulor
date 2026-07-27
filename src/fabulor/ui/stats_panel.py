@@ -3000,6 +3000,26 @@ class StatsPanel(QWidget):
         if bdp and bdp.isVisible():
             bdp._rebuild_tag_chips()
 
+    def covers_opaquely(self) -> bool:
+        """True when the visible tab paints an OPAQUE background, so nothing
+        behind this panel can show through.
+
+        Only the Timeline tab does: `QWidget#stats_time_tab { background:
+        bg_main }` in themes.py overrides the blanket `QTabWidget QWidget {
+        background: transparent }` that every other tab uses. That is a
+        deliberate design requirement, not an oversight — the hourly heatmap
+        encodes minutes-listened as cell ALPHA (dimmer = fewer minutes), so any
+        texture or imagery showing through would corrupt the reading. Do not
+        "fix" it by making this tab transparent.
+
+        Read by TransportBarBlurOverlay to skip grab+blur work whose result
+        cannot be seen (measured 2026-07-27: ~15 grabs/sec at ~4.4ms each,
+        entirely under this opaque tab, delaying the tassel's 33ms sway timer to
+        an effective 22.8fps and visibly slowing its swing).
+        """
+        current = self.tabs.currentWidget() if getattr(self, 'tabs', None) else None
+        return current is not None and current.objectName() == "stats_time_tab"
+
     def _build_time_tab(self) -> QWidget:
         widget = QWidget()
         widget.setObjectName("stats_time_tab")
@@ -3618,6 +3638,18 @@ class StatsPanel(QWidget):
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
+        # Switching INTO the opaque Timeline tab makes the blurred transport
+        # region invisible; switching OUT of it makes it visible again. Tell the
+        # overlay so it can drop / rebuild its cached frame instead of either
+        # grabbing under an opaque surface or leaving a stale blur behind.
+        # See covers_opaquely() for why Timeline alone is opaque.
+        pm = getattr(self, '_panel_manager', None)
+        blur = getattr(pm, '_transport_bar_blur', None) if pm else None
+        if blur is not None:
+            if self.covers_opaquely():
+                blur.hide_for_panel()
+            elif self.isVisible():
+                blur.show_for_panel(self)
         if self.tabs.tabText(index) == "Overall":
             self.refresh_overall()
         elif self.tabs.tabText(index) == "Day":
