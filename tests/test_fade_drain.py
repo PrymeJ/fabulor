@@ -38,7 +38,6 @@ class _FakeTM:
         self._pending_hover_theme = pending_hover_theme
         self._active_display_theme_internal = "Active"
         self._fade_in_flight = True
-        self._fade_is_selection = True
         self._fade_overlay = _FakeOverlay()
         self._save_on_fade = False
         self.replayed = []
@@ -104,14 +103,12 @@ def test_nothing_pending_is_a_noop():
     (_HOVER_CALL, True),
     (None, False),
 ])
-def test_drain_always_clears_fade_flags(pending, hover_active):
+def test_drain_always_clears_fade_in_flight(pending, hover_active):
     # An early-return that skipped the clear would strand every subsequent theme change
-    # in the _fade_running stash branch. _fade_is_selection must clear alongside
-    # _fade_in_flight — a stale True would wrongly protect the NEXT fade from a hover.
+    # in the _fade_running stash branch.
     fake = _FakeTM(pending, is_hover_active=hover_active)
     _drain(fake)
     assert fake._fade_in_flight is False
-    assert fake._fade_is_selection is False
 
 
 def test_stash_is_consumed_on_every_path():

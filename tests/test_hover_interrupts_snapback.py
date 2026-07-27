@@ -8,7 +8,10 @@ preview never appeared at all and nothing retried it. Root cause: the interrupt
 predicate asked `_is_hover_active` ("was the last APPLIED theme a preview?") instead of
 what the RUNNING fade actually is. A snapback applies with hover=False, so it looked
 identical to a genuine user selection — the one fade a preview must never interrupt.
-Fixed by recording the fade's own origin in `_fade_is_selection`.
+Fixed by letting a genuine hover interrupt any in-flight fade. (An intermediate fix
+kept a `_fade_is_selection` flag to still protect a genuine selection's settle-fade;
+that protection was removed the same day — it had no requirement behind it and
+swallowed real previews for 750ms after every click.)
 
 BUG 2 — the "superseded snapback" discard (048ae3a) was reverted. `_is_hover_active`
 does not mean "a hover is live now", so after a genuine mouse-out it stays True and the
@@ -90,8 +93,8 @@ class _Pos:
         return self._y
 
 
-def _make_tm(*, fade_in_flight=False, fade_is_selection=False, is_hover_active=False,
-             anim_running=False, pending=None, snapback_in_progress=False):
+def _make_tm(*, fade_in_flight=False, is_hover_active=False,
+             anim_running=False, pending=None):
     """Build a ThemeManager with only the state _on_theme_changed's guard block reads."""
     # ThemeManager subclasses QObject, so object.__new__ is rejected — use the class's
     # own __new__ to get an uninitialised instance without running __init__ (which would
@@ -100,9 +103,7 @@ def _make_tm(*, fade_in_flight=False, fade_is_selection=False, is_hover_active=F
     tm.main_window = _FakeMainWindow()
     tm.config = _FakeConfig()
     tm._fade_in_flight = fade_in_flight
-    tm._fade_is_selection = fade_is_selection
     tm._is_hover_active = is_hover_active
-    tm._snapback_in_progress = snapback_in_progress
     tm._pending_fade_call = pending
     tm._active_display_theme_internal = "Active"
     tm._fade_anim = _FakeAnim(running=anim_running)
@@ -133,56 +134,47 @@ def _branch(tm, theme, *, hover, user_initiated=True, fade_ms=200, bypass=True):
 # --- BUG 1: which fades a hover may interrupt ------------------------------
 
 def test_hover_interrupts_a_snapback_fade():
-    # THE BUG. Snapback fade running (_fade_is_selection False, and _is_hover_active
+    # THE BUG. Snapback fade running (_is_hover_active
     # False because the snapback applied with hover=False). Before the fix this stashed
     # and was then discarded, so no preview ever appeared. It must now fall through.
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=False, is_hover_active=False,
-                  anim_running=True)
+    tm = _make_tm(fade_in_flight=True, is_hover_active=False, anim_running=True)
     assert _branch(tm, "Razorgirl", hover=True) == 'fellthrough'
 
 
 def test_hover_interrupts_another_hover_fade():
     # The 2026-07-21 fix must survive the predicate rename.
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=False, is_hover_active=True,
-                  anim_running=True)
+    tm = _make_tm(fade_in_flight=True, is_hover_active=True, anim_running=True)
     assert _branch(tm, "Area X", hover=True) == 'fellthrough'
 
 
-def test_hover_does_not_interrupt_a_genuine_selection_fade():
-    # Hard constraint: a preview must never interrupt a real selection's settle-fade.
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=True, is_hover_active=False,
-                  anim_running=True)
-    assert _branch(tm, "Area X", hover=True) == 'stashed'
+def test_hover_interrupts_a_genuine_selection_fade():
+    # CHANGED 2026-07-28. A hover used to be stashed (then discarded) during a genuine
+    # selection's 750ms settle-fade, on the 2026-07-21 assertion that "a preview must
+    # never interrupt a real selection". That assertion had no requirement or recorded
+    # symptom behind it — the entry preserved it as scope discipline — and it was
+    # live-confirmed to swallow real previews for the whole fade after every click
+    # (01:50:17,921 'Fire and Blood' -> 01:50:18,653 DISCARDING hover-flagged).
+    #
+    # The click has already applied AND persisted the theme by the time the fade starts;
+    # the settle-fade is cosmetic. The requirement this was believed to protect — a
+    # preview must not survive panel dismissal — lives at snap_theme_forward /
+    # complete_main_fade, not here.
+    tm = _make_tm(fade_in_flight=True, is_hover_active=False, anim_running=True)
+    assert _branch(tm, "Area X", hover=True) == 'fellthrough'
 
 
 def test_hover_interrupts_a_rotation_fade():
     # Deliberate widening (not an accident): an automatic rotation is not a genuine
     # selection, so a hover may interrupt it. Pinned so it is not later "fixed".
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=False, is_hover_active=False,
-                  anim_running=True)
+    tm = _make_tm(fade_in_flight=True, is_hover_active=False, anim_running=True)
     assert _branch(tm, "Solaris", hover=True) == 'fellthrough'
 
 
-@pytest.mark.parametrize("is_selection", [True, False])
-def test_non_hover_call_still_stashes_during_any_fade(is_selection):
-    # The `hover` conjunct short-circuits: a snapback or selection arriving mid-fade
-    # stashes exactly as before, regardless of the new flag.
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=is_selection, anim_running=True)
+def test_non_hover_call_still_stashes_during_any_fade():
+    # Only `hover` matters now: a snapback, selection, or rotation arriving mid-fade
+    # stashes and replays via the drain sites exactly as before.
+    tm = _make_tm(fade_in_flight=True, anim_running=True)
     assert _branch(tm, "Wasp Factory", hover=False) == 'stashed'
-
-
-# --- _fade_is_selection's own computation ---------------------------------
-
-@pytest.mark.parametrize("user_initiated,hover,snapback,expected", [
-    (True,  False, False, True),   # genuine click/right-click selection
-    (True,  True,  False, False),  # hover preview
-    (True,  False, True,  False),  # snapback (marked by _on_theme_unhovered)
-    (False, False, False, False),  # automatic rotation / cover theme
-])
-def test_fade_is_selection_computation(user_initiated, hover, snapback, expected):
-    tm = _make_tm(snapback_in_progress=snapback)
-    _branch(tm, "X", hover=hover, user_initiated=user_initiated, fade_ms=750)
-    assert tm._fade_is_selection is expected
 
 
 # --- BUG 2's structural replacement: superseded-stash clear ----------------
@@ -192,8 +184,7 @@ def test_interrupt_clears_a_superseded_stash():
     # against the fade being stopped — it would fire against the NEXT fade instead (the
     # 775ms flash-then-revert). The interrupt must drop it.
     stale = ("Not the Only Fruit", False, 200, False, True, True)
-    tm = _make_tm(fade_in_flight=True, fade_is_selection=False, is_hover_active=True,
-                  anim_running=True, pending=stale)
+    tm = _make_tm(fade_in_flight=True, is_hover_active=True, anim_running=True, pending=stale)
     _branch(tm, "Eyes of Ibad", hover=True)
     assert tm._pending_fade_call is None
     assert tm._fade_anim.stopped is True
