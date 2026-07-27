@@ -48,12 +48,92 @@ reverted for a failure it did not cause.
 
 ---
 
-## OPEN: `visual_area` blur-clip attempts — TWO successive root causes disproven; the "carousel missing at app start" symptom turned out to be a PRE-EXISTING bug unrelated to the blur work (2026-07-27)
+## FIXED: `visual_area` blur is now clipped to the panel-occluded region — shipped on the third attempt, after FIVE disproven root causes (2026-07-27, `e230d79`)
 
-**Status:** OPEN — blur-clip mechanism still unknown; the original whole-widget over-blur bug is
-unfixed. Two implementations attempted, both cleanly reverted; nothing from this work remains in
-the tree. **Two separate confident diagnoses in this entry were each disproven within hours — read
-both CORRECTION blocks before trusting any reasoning here.**
+**Status:** RESOLVED. The sliver beside an open panel stays sharp; the occluded region blurs.
+Shipped mechanism is `ClippedBlurEffect` (`ui/visual_area_blur.py`), a paint-time
+`QGraphicsBlurEffect` subclass — attempt 2's design, with a rendering bug fixed (see "The bug that
+made attempt 2 look broken" below).
+
+**Read this entry for the disproven-theory trail, not for a mechanism.** Five successive confident
+diagnoses were each disproven the same day, three of them after being written up as findings. The
+CORRECTION blocks below are the load-bearing part.
+
+### What shipped
+
+- `ClippedBlurEffect.draw()` renders the blur into an **offscreen pixmap first**, then blits only
+  the clipped part of that finished pixmap. One render, one composite per output pixel.
+- `panel_rect_in_common_space()` extracted to module level in `transport_bar_blur.py` so both blur
+  surfaces derive the clip boundary from the same panel rect by the same rules.
+- Blur starts from each panel's **slide-finished** callback (matching the transport bar's existing
+  timing), eased 1500ms/`InOutQuad` in, 500ms out.
+- Library panel is **skipped entirely** (null clip): full-width and opaque, so there is no sliver to
+  preserve and nothing under it is ever visible.
+- `TransportBarBlurOverlay._compute_bounding_rect()` now **skips hidden widgets** — see the carousel
+  fix below.
+
+### The bug that made attempt 2 look broken
+
+Attempt 2's original `draw()` was a **two-pass** render: `drawSource()` for the region outside the
+clip, then `super().draw()` for the region inside it. `super().draw()` renders the WHOLE source
+blurred and relied on the painter's clip to mask it — but `QGraphicsBlurEffect` pads and offsets its
+own output, so its render bled past the clip boundary and composited **on top of** the sharp pass
+underneath. The same pixels were rendered twice, reading as a sustained bright, "thick"
+double-image throughout the blur-in.
+
+**How it was finally caught:** every state probe said both mechanisms were behaving correctly —
+because they were. The defect was in *rendering*, which state logging cannot see. The discriminating
+test was **stretching the blur-in animation to 8s**: the thickened state then persisted for ~2s
+instead of staying a one-frame blip, proving it scaled with the animation and was therefore the blur
+render itself, not a compositing artifact.
+
+**NOT reproducible offscreen.** Plain-vs-clipped comparisons across radii 0..10, including a
+transparent-child-over-themed-background model of `visual_area`, came back **byte-identical every
+time**. Live observation was the only thing that ever saw it. Do not "verify" a change to that
+`draw()` with an offscreen harness alone.
+
+### Five disproven root causes (the actual value of this entry)
+
+| # | Theory | How it died |
+|---|---|---|
+| 1 | Cached-pixmap sibling raised into the carousel's stacking context (attempt 1) | Attempt 2 added no widget, no cached pixmap, changed no stacking — same symptom. See CORRECTION 1. |
+| 2 | The missing carousel proved each attempt broken | Carousel-at-startup was a PRE-EXISTING 10-day-old regression. See CORRECTION 2. |
+| 3 | Grab and blur-in colliding in one event-loop turn | A `singleShot(0)` deferral tested exactly this and changed nothing. Removed rather than left as dead complexity. |
+| 4 | Stale overlay pixmap shown at full opacity / the two blur regions overlapping | Trace: `overlay_visible=False`, `had_pixmap=False`, opacity correctly `0.00`. Measured: `visual_area` ends y=290, transport starts y=300 — no intersection. |
+| 5 | `_grab_and_blur`'s panel `hide()`/`show()` exposing content for one frame | **Disabled the hide/show outright** — the flash persisted. Direct causal test, not inference. |
+
+**The pattern worth learning:** theories 1, 4 and 5 each explained *some* of the symptom and were
+argued from plausible mechanism. The user's own description — "two images on top of each other",
+"brighter and thick" — was a constraint every one of them failed, and it kept being reinterpreted to
+fit the current theory instead of being treated as evidence. "Thicker" is not something a
+reveal-then-restore can produce; only a genuine double-render is. Take the reported symptom
+literally before reinterpreting it.
+
+### Carousel frozen-strip fix (same session, separate cause)
+
+In the no-book state `_set_interface_visible(False)` hides nearly all transport chrome, but the
+layout still reports its geometry — so `_compute_bounding_rect` unioned hidden widgets into a
+phantom `QRect(10, 300, 260, 198)`. The carousel occupies y=227..392, so that rect covered it from
+y=300 down, and the overlay's **cached** pixmap sat frozen over the lower two-thirds of a scrolling
+strip: sharp above y=300, blurred and stuck below. Fixed by skipping hidden widgets; the no-book
+rect is now `None` (no overlay at all).
+
+### Known remaining gaps (not fixed, not regressions)
+
+- **"No book selected" label does not blur** despite sitting inside the clip region. Unexplained;
+  needs its own probe.
+- **Carousel thumbnails do not blur.** Structural: the carousel is parented to `content_container`
+  and `stackUnder(visual_area)`, i.e. a SIBLING — a mask on `visual_area` cannot reach it. Whether
+  it *should* blur is a design question, not a defect.
+
+---
+
+### Historical detail below (attempt-by-attempt trail, superseded by the summary above)
+
+**Status at the time:** OPEN — blur-clip mechanism still unknown; the original whole-widget
+over-blur bug unfixed. Two implementations attempted, both cleanly reverted. **Two separate
+confident diagnoses in this entry were each disproven within hours — read both CORRECTION blocks
+before trusting any reasoning here.**
 
 > **CORRECTION 1 (same day):** this entry originally asserted the cause was "`visual_area` cannot
 > use a static cached-pixmap overlay while a scrolling sibling shares its stacking context."

@@ -6,26 +6,21 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] Confine panel-blur to the actually-occluded region of `visual_area` (cover art /
-  theme bg_image / quotes) — the ~30px sliver beside an open panel must stay sharp.** NOT fixed.
-  **UNBLOCKED as of `f4d5fc7`** (the pre-existing carousel-at-startup regression is fixed and
-  verified on its own merits). Next action: re-apply and re-verify attempt 2 against that baseline.
-  Two
-  attempts, both reverted, but the evidence against them was largely mis-attributed: both were
-  judged against a baseline where the carousel was ALREADY broken at app start. Attempt 1
-  (grab-based cached-pixmap overlay) did cause real, separate damage — clipped "Go to Library"
-  button, geometry jumping on blur toggle, frozen strip over the carousel — so it stays rejected.
-  **Attempt 2 (paint-time `QGraphicsBlurEffect.draw()` mask) has NO evidence against it**: its only
-  reported symptom was the missing carousel, now known to be pre-existing, and its clip correctness,
-  liveness, seam-freedom and coordinate math were all verified by pixel probe. Two successive root
-  causes (z-order coupling; "any QGraphicsEffect breaks carousel transparency") were each proposed
-  and each DISPROVEN — the second by direct measurement showing identical carousel visibility and
-  identical `mapTo`/`isVisible` across every effect variant. **When resumed: re-test attempt 2
-  against the fixed baseline first** rather than designing a third approach. Prior design decisions
-  (library-panel exclusion, invalidation triggers, granularity, fade behavior) carry over for the
-  mask shape. **Single source of truth: NOTES.md "OPEN: `visual_area` blur-clip attempts"
-  (2026-07-27)** — read both CORRECTION blocks first. Also subsumes the carousel
-  split-scroll/frozen-blur finding.
+- **[2026-07-27] "No book selected" label does not blur under an open panel, despite sitting
+  inside the clip region.** Surfaced while verifying the shipped `visual_area` blur clip
+  (`e230d79`). `no_book_label` sits at y=80..102 in visual_area-local coords and the clip rect
+  `(0,0,260,280)` geometrically contains it — verified — yet it renders sharp live. Not
+  root-caused; no hypothesis worth acting on yet. Probe before theorising: this bug class has
+  already burned five disproven diagnoses in one session (see NOTES.md 2026-07-27), and offscreen
+  harnesses were repeatedly unable to see the real defect. Not started.
+
+- **[2026-07-27] Decide whether the cover carousel should blur behind an open panel at all.**
+  Design question, not a defect. The carousel is parented to `content_container` and
+  `stackUnder(visual_area)` — a SIBLING, so `ClippedBlurEffect` (which masks `visual_area`) cannot
+  reach it: thumbnails stay sharp while the stripes and "Go to Library" button, which DO live
+  inside visual_area, blur. If it should blur, it needs its own treatment as a sibling; note the
+  reverted grab-overlay approach is not available (a static cached pixmap cannot sit over a
+  ~30fps scrolling strip — that was attempt 1's real, separate damage). Not started.
 
 - **[2026-07-27] Fix the blur-grab feedback loop (`_grab_and_blur` hide/show re-expose).** Root
   cause CONFIRMED, not started. `_grab_and_blur` hides `_active_panel` to grab; Qt re-exposes all
