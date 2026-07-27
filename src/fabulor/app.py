@@ -1009,6 +1009,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # leave stale player chrome visible.
         self.library_controller.apply_current_state()
 
+        # The reconcile above HIDES the transport chrome. If a panel is open with
+        # blur on, that chrome sits behind the blur overlay's cached snapshot —
+        # and a widget being hidden emits no Paint event, so _DirtyRectTracker
+        # never observes the change and never schedules a refresh. The overlay
+        # then keeps showing blurred transport buttons that are no longer there
+        # (found live 2026-07-27: removing the last scan location while the
+        # Settings panel was open left ghost buttons over the quote screen until
+        # the panel was closed and reopened).
+        #
+        # force_refresh_now() is the mechanism already built for exactly this
+        # class of event — "a content change that doesn't produce a Paint event
+        # on any of the 12 tracked widgets" — and it no-ops when the overlay
+        # isn't active, so this is safe on every other path into here.
+        pm = getattr(self, 'panel_manager', None)
+        if pm is not None:
+            pm._transport_bar_blur.force_refresh_now()
+
     def get_current_file(self):
         """Return the currently loaded file path."""
         return self.current_file
