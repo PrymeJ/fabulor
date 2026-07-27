@@ -71,6 +71,16 @@ class ThemeItem(RightClickButton):
         # blur-grab synthetic-drop branch (the "heartbeat" second-trigger fix).
         self._last_leave_was_synthetic = False
 
+    # [ENTEREVENT-TRACE] logging below (5 sites, this method + leaveEvent) was
+    # left at WARNING for a soak-verification that never happened. Demoted to
+    # DEBUG 2026-07-27 rather than deleted: these sites sit on the mouse-hover
+    # hot path and were writing to the log file on every enter/leave, but they
+    # are also the exact instrumentation the still-open punch-through-flash
+    # item needs (TODO.md — it requires a restyle-heavy capture, and hover IS
+    # what drives restyles). At DEBUG they cost nothing by default and come
+    # back in full with FABULOR_LOG_LEVEL=DEBUG. Delete only once that item is
+    # closed on evidence.
+
     def enterEvent(self, event):
         # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; full
         # mechanism in NOTES.md / theme_manager.py's _apply_stylesheets, the
@@ -105,7 +115,7 @@ class ThemeItem(RightClickButton):
         in_window = now < guard_until
         pos_matches = self._last_leave_pos == (pos.x(), pos.y())
         if in_window and pos_matches:
-            logger.warning(
+            logger.debug(
                 f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent SUPPRESSED (synthetic) "
                 f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
                 f"vis={self.isVisible()} "
@@ -128,7 +138,7 @@ class ThemeItem(RightClickButton):
         # already re-shown by then (all synthetic enters logged vis=True); the
         # signal is the LEAVE's visibility, captured in _last_leave_was_synthetic.
         if self._last_leave_was_synthetic and pos_matches:
-            logger.warning(
+            logger.debug(
                 f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent SUPPRESSED (blur-grab synthetic) "
                 f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
                 f"vis={self.isVisible()} last_leave_pos={self._last_leave_pos!r}"
@@ -137,7 +147,7 @@ class ThemeItem(RightClickButton):
         # Genuine enter — consume the synthetic-leave flag so a later real enter
         # can never be wrongly suppressed by a stale True.
         self._last_leave_was_synthetic = False
-        logger.warning(
+        logger.debug(
             f"[ENTEREVENT-TRACE] t={now:.6f} ThemeItem.enterEvent PASSED "
             f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
             f"vis={self.isVisible()} "
@@ -154,7 +164,7 @@ class ThemeItem(RightClickButton):
         # hidden by the blur grab's panel hide) — read by enterEvent's blur-grab
         # synthetic-drop branch. A genuine mouse-out fires while still visible.
         self._last_leave_was_synthetic = not self.isVisible()
-        logger.warning(
+        logger.debug(
             f"[ENTEREVENT-TRACE] t={time.perf_counter():.6f} ThemeItem.leaveEvent "
             f"theme_name={self.theme_name!r} pos=({pos.x()}, {pos.y()}) "
             f"vis={self.isVisible()}"
