@@ -6,37 +6,48 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] Blur-grab residual cost — RE-MEASURED, much smaller than first characterised.
-  Decide whether it is worth pursuing at all.** Not started; no longer blocked.
+- **[2026-07-27] CLOSED (measured, not pursued): blur-grab residual cost.** Re-measured after that
+  day's blur fixes and found to be a much smaller problem than first recorded. Kept as a record so
+  the analysis is not re-derived; see the reopening bar below before acting on any recurrence.
 
-  **Original characterisation (now partly WRONG, kept so it isn't re-derived):** `_grab_and_blur`
-  hides `_active_panel` to grab, Qt re-exposes the tracked transport widgets, the tracker reads
-  those as real paints and schedules another grab. First measured (morning, before that day's other
-  fixes): 163 grabs / 5.1s, median gap 64ms, **131 of 158 composites re-grabbing the FULL rect**,
-  all 13 tracked widgets repainting synchronized within ~2ms. Concluded the 50ms
-  `_GRAB_FEEDBACK_SUPPRESS_S` never catches a 64ms loop.
+  **The original characterisation was WRONG in two specific ways** (recorded so they are not
+  repeated): (1) "the 50ms `_GRAB_FEEDBACK_SUPPRESS_S` never catches a 64ms loop" — it catches
+  **94%** (2655 suppressed vs 157 passed); (2) "all 13 tracked widgets repaint in a synchronized
+  self-inflicted burst" — that burst is **gone** once `_compute_bounding_rect` skips hidden widgets.
 
-  **Re-measured the same day, after `_compute_bounding_rect` began skipping hidden widgets and the
-  Timeline skip landed** (Settings panel open, book playing, ~13s idle):
-  - 120 grabs / 13s (~9/s, was ~32/s); median gap 61ms
-  - **Zero full-rect grabs** — every one is the real `260x198` region
-  - **The synchronized 13-widget burst is GONE.** Paints are now spread thin (mostly 1-4 per
-    ms-timestamp): `chapter_selector` 84, `play_pause_btn` 36, everything else <= 8. Those top two
-    are GENUINE content change (a scrolling marquee and a playing-state icon), not loop-driven.
-  - **The suppression guard is doing 94% of the work: 2655 suppressed vs 157 passed.** The earlier
-    "the guard never catches it" reading was wrong — what remains is a ~6% leak, not a runaway loop.
-  - Cost: **463ms of grab work over ~13s ≈ 3.6% of the main thread**, mean 3.86ms, max **19.11ms**.
+  **Post-fix measurement** (Settings open, book playing, ~13s idle): 120 grabs/13s (was ~32/s),
+  median gap 61ms, **zero full-rect grabs**, cost ≈**3.6% of the main thread** (mean 3.86ms).
+  Remaining paint sources are dominated by `chapter_selector` (84) and `play_pause_btn` (36) — a
+  scrolling marquee and a playing-state icon, i.e. **genuine content change, not loop-driven**.
 
-  **Open question is now a judgement call, not a diagnosis:** is ~3.6% worth more work, given the
-  two dominant paint sources are legitimately changing? If yes, the target is the ~6% that escapes
-  the guard — NOT the guard's sizing, which the numbers show is fine. The 19ms outlier is the part
-  that could still starve a 33ms animation timer, so it may be worth attacking spikes rather than
-  average cost.
+  **The 19.11ms outlier was characterised and found to have no condition attached.** Ruled out, each
+  by measurement: not the widget or region (its rect `(68,417,164,24)` was the SMALLEST and most
+  common, grabbed 83 times at ~2.7ms); not size (area correlates sanely — 7k px→1.64ms,
+  51k px→5.80ms, neither near 15ms); not the documented restyle-backlog collision (no
+  `_apply_stylesheets` anywhere near it); not a self-inflicted cascade (the preceding paints were
+  all correctly SUPPRESSED). Breakdown was `grab_ms=15.28` / blur 3.78 / crop 0.05 — i.e. **`QWidget.grab()`
+  itself**, not the blur. Distribution is otherwise tight: p50 3.48ms, p95 6.26ms, p99 8.00ms, and
+  **1 of 120** samples above 10ms. Conclusion: environmental tail latency on a synchronous render
+  (backing-store realloc / compositor / scheduler preemption), with nothing to fix.
 
-  **Still true and still load-bearing:** whether the panel `hide()` is strictly necessary for the
-  grab is unresolved. A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was
+  **REOPENING BAR — deliberately a condition, not a recurrence count.** A single further outlier is
+  NOT grounds to reopen; the whole point of this entry is that isolated spikes were already observed
+  and explained. Reopen only if a capture shows the spike **correlating with something specific** —
+  i.e. one of: (a) it repeatedly lands on a particular widget or rect rather than being spread across
+  whichever grab happens to be running; (b) it reproducibly follows a particular app state or action
+  (theme change, tab switch, book load, scan, panel transition); (c) it clusters in time rather than
+  appearing as isolated samples; or (d) the frequency itself shifts materially — several per
+  thousand rather than ~1 in 120. Absent one of those, a recurrence is the same environmental tail
+  already documented here. **A user-visible intermittent stutter is independently sufficient** to
+  reopen regardless of the above, since that is a symptom rather than a statistic — but capture a
+  longer window (minutes, not 13s) before concluding, as one 13s sample can establish "no visible
+  condition" but cannot characterise a tail.
+
+  **Still genuinely open and unresolved:** whether the panel `hide()` is strictly necessary for the
+  grab. Removing the grab would remove its tail latency too, so this remains the one structural
+  improvement available. A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was
   reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
-  confront that before retrying, do not just re-attempt it. Full detail in NOTES.md (2026-07-27).
+  confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
 - **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
@@ -96,6 +107,16 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   by accident, not reliably reproducible. See NOTES.md for full detail; investigation in progress
   (static analysis + permanent timer-lifecycle logging, per the user's explicit direction not to rely
   on live repro as the primary method).
+  **UPDATE 2026-07-27:** two changes landed that touch this bug's surface and should be accounted for
+  before resuming. (a) `show_for_panel`/`refresh_dirty`/`force_refresh_now` now early-return when an
+  opaque panel covers the region (`_panel_hides_everything`) — a NEW legitimate reason for "zero
+  transport_bar_blur log lines", so that symptom alone is no longer diagnostic; check the active
+  Stats tab before treating silence as the freeze. (b) `_on_book_removed` now calls
+  `force_refresh_now()` because hidden widgets emit no Paint event and left a stale cached frame
+  (`6eebc31`) — that was a genuine instance of "overlay stuck on stale content", and while its
+  trigger differs from this entry's, the SHAPE matches exactly. Worth re-reading this entry's
+  screenshot evidence against that mechanism: any content change that produces no Paint event on a
+  tracked widget strands the cache identically.
 - **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
   ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously
   uncommitted/unverified — every earlier "no issues" report had been run with blur OFF, which was
@@ -125,6 +146,16 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   was never confirmed** — resume there if it resurfaces: (1) confirm what's flashing (live vs.
   grabbed pixmap); (2) the heartbeat is no longer a contributing amplifier, so any remaining flash
   is the raw grab-vs-restyle timing collision alone.
+  **UPDATE 2026-07-27 (evidence, not a fix):** a 13s instrumented capture (Settings open, book
+  playing) recorded **zero grabs over 100ms** — the 357ms-class outlier that defines this bug did
+  not occur at all; worst was 19.11ms, and that one was characterised as environmental with no
+  restyle nearby (see the CLOSED grab-cost entry above). This is consistent with the flash being
+  much rarer now that the heartbeat amplifier is gone, but 13s of idle observation with only ONE
+  restyle in the window is nowhere near enough to call it fixed — the collision needs a restyle and a
+  grab to coincide, and that barely had a chance to happen here. Treat as "not reproduced in a short
+  idle capture", NOT as evidence of resolution. Also still outstanding: `[ENTEREVENT-TRACE]` logging
+  is still present in `ui/title_bar.py` (5 sites), left in for soak-verification — remove after a
+  clean soak.
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
