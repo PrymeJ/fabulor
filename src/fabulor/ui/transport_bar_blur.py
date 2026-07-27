@@ -91,6 +91,43 @@ _POST_RESTYLE_COOLDOWN_S = 0.4
 _GRAB_FEEDBACK_SUPPRESS_S = 0.05
 
 
+def panel_rect_in_common_space(panel, common_ancestor) -> QRect:
+    """`panel`'s TARGET (settled, post-slide-in) geometry, mapped into
+    `common_ancestor`'s coordinate space — NOT its live/current position.
+
+    SHARED (2026-07-27): extracted from TransportBarBlurOverlay so the
+    visual_area clipped-blur derives its clip boundary from the SAME panel rect
+    by the same rules — one clip mechanism, not two that can drift apart. Both
+    callers use this; do not re-derive panel geometry anywhere else.
+
+    show_for_panel() is called synchronously right after the panel's
+    slide-in QPropertyAnimation.start() (panels.py, every _start_*_entry),
+    so at the moment this runs the panel is typically still off-screen or
+    mid-flight, not yet at its resting position — confirmed live
+    (2026-07-19): reading panel.mapToGlobal() here produced an empty
+    intersection with the transport-bar rect every time, silently
+    no-opping show_for_panel entirely (the "no blur at all" regression).
+    Every panel-open animation in panels.py animates ONLY x, always
+    ending at x=0 with y fixed for the whole slide (confirmed: every
+    `_*_animation.setEndValue(QPoint(0, ...))` call site) — so the
+    settled rect is always (0, panel.y(), panel.width(), panel.height())
+    in main_window-local coordinates; panel.y()/.size() are already
+    final by the time this runs, only .x() is still animating.
+
+    `panel` is a raw child of main_window while `common_ancestor`
+    (content_container) is a SIBLING of panel, not an ancestor of it — Qt's
+    widget.mapTo(target, ...) only works when `target` is in `widget`'s
+    parent hierarchy (an ancestor); called on siblings it emits
+    "QWidget::mapTo(): parent must be in parent hierarchy" and silently
+    returns an UNTRANSLATED point (confirmed live via a direct test), so
+    the main_window-local rect below is round-tripped through
+    panel.parentWidget() (== main_window) instead."""
+    settled_rect_in_main_window = QRect(QPoint(0, panel.y()), panel.size())
+    global_top_left = panel.parentWidget().mapToGlobal(settled_rect_in_main_window.topLeft())
+    top_left = common_ancestor.mapFromGlobal(global_top_left)
+    return QRect(top_left, panel.size())
+
+
 def _blur_pixmap(pixmap: QPixmap, radius: float = _BLUR_RADIUS) -> QPixmap:
     """Blur pixmap via a disposable QGraphicsBlurEffect + offscreen QGraphicsScene.
     Never attaches the effect to a real widget — built and discarded per call."""
@@ -541,35 +578,10 @@ class TransportBarBlurOverlay:
     # -- geometry -------------------------------------------------------------
 
     def _panel_rect_in_common_space(self, panel) -> QRect:
-        """`panel`'s TARGET (settled, post-slide-in) geometry, mapped into
-        _common_ancestor's coordinate space — NOT its live/current position.
-
-        show_for_panel() is called synchronously right after the panel's
-        slide-in QPropertyAnimation.start() (panels.py, every _start_*_entry),
-        so at the moment this runs the panel is typically still off-screen or
-        mid-flight, not yet at its resting position — confirmed live
-        (2026-07-19): reading panel.mapToGlobal() here produced an empty
-        intersection with the transport-bar rect every time, silently
-        no-opping show_for_panel entirely (the "no blur at all" regression).
-        Every panel-open animation in panels.py animates ONLY x, always
-        ending at x=0 with y fixed for the whole slide (confirmed: every
-        `_*_animation.setEndValue(QPoint(0, ...))` call site) — so the
-        settled rect is always (0, panel.y(), panel.width(), panel.height())
-        in main_window-local coordinates; panel.y()/.size() are already
-        final by the time this runs, only .x() is still animating.
-
-        `panel` is a raw child of main_window while _common_ancestor
-        (content_container) is a SIBLING of panel, not an ancestor of it — Qt's
-        widget.mapTo(target, ...) only works when `target` is in `widget`'s
-        parent hierarchy (an ancestor); called on siblings it emits
-        "QWidget::mapTo(): parent must be in parent hierarchy" and silently
-        returns an UNTRANSLATED point (confirmed live via a direct test), so
-        the main_window-local rect below is round-tripped through
-        panel.parentWidget() (== main_window) instead."""
-        settled_rect_in_main_window = QRect(QPoint(0, panel.y()), panel.size())
-        global_top_left = panel.parentWidget().mapToGlobal(settled_rect_in_main_window.topLeft())
-        top_left = self._common_ancestor.mapFromGlobal(global_top_left)
-        return QRect(top_left, panel.size())
+        """Thin wrapper over the module-level panel_rect_in_common_space() — see
+        that function for the full rationale. Kept as a method so existing call
+        sites read unchanged."""
+        return panel_rect_in_common_space(panel, self._common_ancestor)
 
     def _compute_bounding_rect(self) -> QRect | None:
         rect: QRect | None = None

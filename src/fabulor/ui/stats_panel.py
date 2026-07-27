@@ -2299,8 +2299,19 @@ class TasselOverlay(QWidget):
     def _on_sway_tick(self):
         # Safety net: stop repainting if we're not actually visible, even if a
         # hideEvent was never delivered (tab-stack propagation is not assumed).
+        import logging as _lg, time as _t
+        self._dbg_ticks = getattr(self, '_dbg_ticks', 0) + 1
+        self._dbg_dropped = getattr(self, '_dbg_dropped', 0)
         if not self.isVisible():
+            self._dbg_dropped += 1
+            _lg.getLogger("fabulor").warning(
+                f"[TASSEL-TRACE] tick DROPPED (not visible) t={_t.perf_counter():.4f} "
+                f"ticks={self._dbg_ticks} dropped={self._dbg_dropped}")
             return
+        if self._dbg_ticks % 10 == 0:
+            _lg.getLogger("fabulor").warning(
+                f"[TASSEL-TRACE] tick OK t={_t.perf_counter():.4f} ticks={self._dbg_ticks} "
+                f"dropped={self._dbg_dropped} phase={self._idle_phase:.4f} sway={self._current_sway():.4f}")
         self._idle_phase += self.IDLE_STEP
         if self._idle_phase > 2 * math.pi:
             self._idle_phase -= 2 * math.pi
@@ -2353,6 +2364,13 @@ class TasselOverlay(QWidget):
         return base_sway
 
     def paintEvent(self, event):
+        import logging as _lg, time as _t
+        self._dbg_paints = getattr(self, '_dbg_paints', 0) + 1
+        if self._dbg_paints % 10 == 0:
+            _lg.getLogger("fabulor").warning(
+                f"[TASSEL-TRACE] paintEvent #{self._dbg_paints} t={_t.perf_counter():.4f} "
+                f"ticks={getattr(self, '_dbg_ticks', 0)} sway={self._current_sway():.4f} "
+                f"show_tassel={self._show_tassel} vis={self.isVisible()}")
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -2484,11 +2502,19 @@ class TasselOverlay(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        import logging as _lg, time as _t
+        _lg.getLogger("fabulor").warning(
+            f"[TASSEL-TRACE] showEvent t={_t.perf_counter():.4f} "
+            f"timer_active={self._sway_timer.isActive()} phase={self._idle_phase:.4f}")
         if self._show_tassel and not self._sway_timer.isActive():
             self._sway_timer.start()
 
     def hideEvent(self, event):
         super().hideEvent(event)
+        import logging as _lg, time as _t
+        _lg.getLogger("fabulor").warning(
+            f"[TASSEL-TRACE] hideEvent t={_t.perf_counter():.4f} "
+            f"timer_active={self._sway_timer.isActive()} phase={self._idle_phase:.4f}")
         self._sway_timer.stop()
         self._kick_active = False
         self._kick_t = 0.0

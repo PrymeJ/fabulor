@@ -28,6 +28,7 @@ from .library_controller import LibraryController
 from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
+from .ui.visual_area_blur import ClippedBlurEffect
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
@@ -200,6 +201,8 @@ class VisualsInterface:
             btn.style().polish(btn)
         if not enabled:
             m.blur_effect.setBlurRadius(0)
+            # Drop any stale clip too, so a later re-enable starts clean.
+            m.blur_effect.set_clip_rect(None)
 
     def set_notches_selection(self, enabled):
         m = self._main
@@ -681,8 +684,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Speed/grid visual initialization moved to after SettingsController binding
 
-        # Initialize Blur Effect for background depth
-        self.blur_effect = QGraphicsBlurEffect(self.visual_area)
+        # Initialize Blur Effect for background depth.
+        # ClippedBlurEffect (not a plain QGraphicsBlurEffect) so the blur can be
+        # confined to the region an open panel actually occludes — the sliver
+        # beside the panel stays sharp. A null clip (the resting state) draws the
+        # source through unblurred, so this is safe to leave permanently
+        # attached. PanelManager owns the clip rect; see ui/visual_area_blur.py
+        # for why this is a paint-time mask and NOT a grab-based overlay.
+        self.blur_effect = ClippedBlurEffect(self.visual_area)
         self.blur_effect.setBlurHints(QGraphicsBlurEffect.AnimationHint)
         self.blur_effect.setBlurRadius(0)
         self.visual_area.setGraphicsEffect(self.blur_effect)

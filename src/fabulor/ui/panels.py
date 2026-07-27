@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLa
 from PySide6.QtWidgets import QLineEdit, QApplication
 from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
 from .title_bar import ThemeItem
-from .transport_bar_blur import TransportBarBlurOverlay
+from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,73 @@ class PanelManager:
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
 
+    def _start_visual_area_blur(self, panel):
+        """Set the clip and run the visual_area blur-in — called ONLY from a
+        panel's slide-FINISHED callback, never at panel-open.
+
+        TIMING IS LOAD-BEARING (found live 2026-07-27): starting this at
+        panel-open meant the cover art / theme background / quote card began
+        blurring while the panel was still sliding, so the blur visibly ran
+        ahead of the panel and briefly exposed a hard-edged clip boundary over
+        content the panel had not covered yet. The transport bar has always
+        applied its blur from the slide-finished callback
+        (_apply_transport_bar_blur); this matches that, so the two halves of the
+        window blur together once the panel is settled. Panel CLOSE is
+        unaffected — clearing immediately at close-start is correct and already
+        matches the transport bar.
+        """
+        if not self.config.get_blur_enabled():
+            return
+        self._apply_visual_area_clip(panel)
+        self.blur_animation.stop()
+        self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+        self.blur_animation.setEndValue(8 if panel is self.tags_panel else 10)
+        self.blur_animation.start()
+
+    def _apply_visual_area_clip(self, panel):
+        """Confine visual_area's blur to the region `panel` actually occludes, so
+        the sliver beside the panel stays sharp (cover art / theme bg_image /
+        quotes all live in that one widget). Called from _start_visual_area_blur
+        at slide-finished; paired with _clear_visual_area_clip on close.
+
+        LIBRARY-PANEL EXCLUSION — the library panel is full window width
+        (setFixedWidth(window_w) in _update_panel_geometry, unlike every other
+        panel's int(width * 0.9)) and fully opaque, so it occludes everything:
+        there is no sliver to keep sharp and nothing blurred under it is ever
+        visible. It is therefore skipped ENTIRELY (null clip = no blur), not
+        given a full-rect clip.
+
+        That distinction is load-bearing, not an optimization (found live
+        2026-07-27): a full-rect clip made the ambient CoverCarousel — which
+        scrolls at ~30fps beneath visual_area in the no-book state — ghost and
+        then freeze in place while the unblurred sliver kept animating. Blurring
+        a region nobody can see, over live scrolling content, bought nothing and
+        broke the carousel. Keeping this as its own explicit branch also means a
+        future change to the library panel's width cannot silently reroute it
+        into generic clip math.
+        """
+        mw = self.main_window
+        effect = getattr(mw, 'blur_effect', None)
+        if effect is None or not hasattr(effect, 'set_clip_rect'):
+            return
+        if panel is self.library_panel:
+            effect.set_clip_rect(None)   # null = blur nothing
+            return
+
+        va = mw.visual_area
+        common = mw.content_container
+        panel_rect = panel_rect_in_common_space(panel, common)
+        # panel_rect is in content_container space; the effect's clip must be in
+        # visual_area-LOCAL space.
+        va_top_left = va.mapTo(common, QPoint(0, 0))
+        local = panel_rect.translated(-va_top_left.x(), -va_top_left.y())
+        effect.set_clip_rect(local.intersected(va.rect()))
+
+    def _clear_visual_area_clip(self):
+        effect = getattr(self.main_window, 'blur_effect', None)
+        if effect is not None and hasattr(effect, 'set_clip_rect'):
+            effect.set_clip_rect(None)
+
     def apply_blur_live(self, enabled: bool):
         """Apply or clear blur on the ALREADY-OPEN Settings panel the instant the
         Settings > Blur toggle is clicked, without needing a close/reopen. The
@@ -114,15 +181,15 @@ class PanelManager:
             return
         if enabled:
             self._apply_transport_bar_blur(self.settings_panel)
-            # Cover-image blur ON side (mirror of set_blur_selection's OFF side).
-            self.blur_animation.stop()
-            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
+            # Immediate (not deferred to a slide-finished callback) is correct
+            # here: the panel is already open and settled — this is the live
+            # Settings > Blur toggle, not a panel-open transition.
+            self._start_visual_area_blur(self.settings_panel)
         else:
             self._clear_transport_bar_blur()
             self.blur_animation.stop()
             self.blur_effect.setBlurRadius(0)
+            self._clear_visual_area_clip()
 
     def _toggle_sidebar(self):
         """Slides the sidebar in or out."""
@@ -209,11 +276,6 @@ class PanelManager:
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} library_panel_animation.start() "
                      f"duration={self.library_panel_animation.duration()}ms")
         self.library_panel_animation.start()
-        
-        if self.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
 
     def _on_library_shown(self):
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_library_shown: "
@@ -363,6 +425,9 @@ class PanelManager:
             except (TypeError, RuntimeError):
                 pass
             self._apply_transport_bar_blur(self.settings_panel)
+            # visual_area blur starts HERE (not at panel-open) so it matches the
+            # transport bar's timing — see _start_visual_area_blur.
+            self._start_visual_area_blur(self.settings_panel)
 
         self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
         self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
@@ -374,12 +439,11 @@ class PanelManager:
             f"sidebar.pos()={self.sidebar.pos()} sidebar.isVisible()={self.sidebar.isVisible()}"
         )
 
-        if self.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
-        else:
+        if not self.config.get_blur_enabled():
+
             self.blur_effect.setBlurRadius(0)
+
+            self._clear_visual_area_clip()
 
     def _open_speed_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -417,14 +481,12 @@ class PanelManager:
             except (TypeError, RuntimeError):
                 pass
             self._apply_transport_bar_blur(self.speed_panel)
+            # visual_area blur starts HERE (not at panel-open) so it matches the
+            # transport bar's timing — see _start_visual_area_blur.
+            self._start_visual_area_blur(self.speed_panel)
 
         self.speed_panel_animation.finished.connect(_on_speed_slide_finished)
         self.speed_panel_animation.start()
-
-        if self.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
 
     def _on_sidebar_closed_for_panel(self):
         """Handler for sidebar animation finishing when a panel needs to open.
@@ -506,6 +568,7 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
 
     def _on_library_hidden(self):
         logger.debug(f"t={time.perf_counter():.6f} [BOOKSWITCH-TRACE] _on_library_hidden: entry")
@@ -560,6 +623,7 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
 
     def _on_speed_hidden(self):
         try:
@@ -604,16 +668,18 @@ class PanelManager:
             except (TypeError, RuntimeError):
                 pass
             self._apply_transport_bar_blur(self.stats_panel)
+            # visual_area blur starts HERE (not at panel-open) so it matches the
+            # transport bar's timing — see _start_visual_area_blur.
+            self._start_visual_area_blur(self.stats_panel)
 
         self.stats_panel_animation.finished.connect(_on_stats_slide_finished)
         self.stats_panel_animation.start()
 
-        if self.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
-        else:
+        if not self.config.get_blur_enabled():
+
             self.blur_effect.setBlurRadius(0)
+
+            self._clear_visual_area_clip()
 
     def _open_sleep_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
@@ -650,14 +716,12 @@ class PanelManager:
             except (TypeError, RuntimeError):
                 pass
             self._apply_transport_bar_blur(self.sleep_panel)
+            # visual_area blur starts HERE (not at panel-open) so it matches the
+            # transport bar's timing — see _start_visual_area_blur.
+            self._start_visual_area_blur(self.sleep_panel)
 
         self.sleep_panel_animation.finished.connect(_on_sleep_slide_finished)
         self.sleep_panel_animation.start()
-
-        if self.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(10)
-            self.blur_animation.start()
 
     def _close_sleep_flow(self):
         """Slides the sleep panel back out."""
@@ -675,6 +739,7 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
 
     def _on_sleep_hidden(self):
         try:
@@ -700,8 +765,10 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
         else:
             self.blur_effect.setBlurRadius(0)
+            self._clear_visual_area_clip()
 
     def _on_stats_hidden(self):
         try:
@@ -751,13 +818,12 @@ class PanelManager:
             except (TypeError, RuntimeError):
                 pass
             self._apply_transport_bar_blur(self.tags_panel)
+            # visual_area blur starts HERE (not at panel-open) so it matches the
+            # transport bar's timing — see _start_visual_area_blur.
+            self._start_visual_area_blur(self.tags_panel)
 
         self.tags_panel_animation.finished.connect(_on_tags_slide_finished)
         self.tags_panel_animation.start()
-        if mw.config.get_blur_enabled():
-            self.blur_animation.setStartValue(0)
-            self.blur_animation.setEndValue(8)
-            self.blur_animation.start()
 
     def _close_tags_flow(self):
         if self.tags_panel_animation.state() == QAbstractAnimation.State.Running:
@@ -773,6 +839,7 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_animation.currentValue() or 8)
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
 
     def _on_tags_hidden(self):
         try:
@@ -868,8 +935,10 @@ class PanelManager:
             self.blur_animation.setStartValue(self.blur_effect.blurRadius())
             self.blur_animation.setEndValue(0)
             self.blur_animation.start()
+            self._clear_visual_area_clip()
         else:
             self.blur_effect.setBlurRadius(0)
+            self._clear_visual_area_clip()
 
     def _on_settings_hidden(self):
         try:
