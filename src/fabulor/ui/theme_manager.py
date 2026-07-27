@@ -4,7 +4,7 @@ import time
 import warnings
 from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
-from PySide6.QtGui import QFont, QFontMetrics, QColor
+from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
@@ -58,6 +58,14 @@ _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
 _HOVER_DEBOUNCE_MS    = 80        # coalesce rapid hover sweeps into one preview restyle
+# Cursor movement at or below this (Chebyshev distance, px) counts as "unmoved" when
+# deciding whether a swatch_box leaveEvent was a real mouse-out or a blur-grab synthetic
+# (see _on_themes_tab_left). Sized for sub-pixel/±1px OS-level mouse-reporting jitter,
+# which would otherwise read as genuine movement and fire a spurious snapback while the
+# user is holding still. Deliberately tiny: a real mouse-out of the swatch box crosses
+# far more than 2px, so this cannot swallow one. Do NOT widen without re-checking that a
+# slow, deliberate mouse-out still registers.
+_MOUSE_JITTER_PX      = 2
 
 
 
@@ -149,9 +157,37 @@ class ThemeManager(QObject):
         self._hover_debounce_timer.timeout.connect(self._fire_pending_hover)
         self._pending_hover_theme = None
         self._hover_seen_at = None  # perf_counter of the most recent enterEvent
+        self._hover_seen_pos = None  # QCursor.pos() at that same enterEvent (see
+                                      # _on_themes_tab_left's synthetic-leave test)
 
         self._save_on_fade = False
         self._fade_in_flight = False
+
+        # FADE-ORIGIN DISCRIMINATOR (2026-07-28). _fade_in_flight is a plain bool with
+        # no memory of what STARTED the running fade, and until now nothing else
+        # recorded it either: _save_on_fade is False for both a snapback and a genuine
+        # selection, and fade_ms (200 vs 750) is only ever handed to
+        # _fade_anim.setDuration(), never stored. The only nearby field,
+        # _is_hover_active, answers a DIFFERENT question ("was the last APPLIED theme a
+        # preview?"), which is why it could not serve here.
+        #
+        # _fade_is_selection is True ONLY while the in-flight fade came from a genuine
+        # user selection — the one kind of fade a hover preview must never interrupt.
+        # False for a hover preview, a snapback, an automatic rotation, and a
+        # cover-theme change; False whenever no fade is running.
+        #
+        # Phrased POSITIVELY on purpose: it names the single forbidden case, so any
+        # future fade origin defaults to interruptible. The inverse phrasing (enumerate
+        # the exempt cases) is what let the snapback case go unnoticed — a fade type
+        # nobody thought about defaulted to "do not interrupt" and silently swallowed
+        # hovers. See the elif branch in _on_theme_changed for the live evidence.
+        self._fade_is_selection = False
+        # Set only for the duration of _on_theme_unhovered's own _on_theme_changed call
+        # (try/finally, so an exception cannot strand it True). This is an explicit
+        # marker at the single site that produces a snapback, deliberately NOT a
+        # `fade_ms == _SNAPBACK_FADE_MS` sniff — the hover fade duration is
+        # user-configurable and could coincidentally equal 200.
+        self._snapback_in_progress = False
 
         # perf_counter() timestamp bracketing the most recent _apply_stylesheets()
         # call — stamped at BOTH entry and exit of that method (not just exit; a
@@ -238,6 +274,7 @@ class ThemeManager(QObject):
             f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
         )
         self._fade_in_flight = False
+        self._fade_is_selection = False  # companion flag — no fade running, so no origin
         self._fade_overlay.hide()
         self._unfreeze_fade_labels()
         if self._save_on_fade:
@@ -271,44 +308,25 @@ class ThemeManager(QObject):
                     f"[FADE-FINISHED-TRACE] _on_fade_finished DISCARDING hover-flagged "
                     f"pending_fade_call={pending!r} (confinement — not replayed)"
                 )
-            elif self._is_hover_active and self._pending_hover_theme is None:
-                # SUPERSEDED-SNAPBACK DISCARD (2026-07-27). The mirror image of the
-                # hover-confinement discard directly above, and the same reasoning
-                # read the other way round: that branch drops a stashed HOVER because
-                # by drain time the user has moved on; this one drops a stashed
-                # SNAPBACK because by drain time the user has moved back ON.
-                #
-                # The bug (confirmed live from a DEBUG trace, not theorised — see
-                # NOTES.md 2026-07-27): leaving the swatch area stashes a snapback
-                # here whenever a fade is in flight (_on_theme_unhovered ->
-                # _on_theme_changed(hover=False) -> the _fade_running branch). If the
-                # cursor then RE-ENTERS and settles on a swatch before that fade
-                # finishes, the debounce fires a genuine preview and applies it — and
-                # then this drain replays the now-obsolete snapback on top, reverting
-                # to the active theme with the mouse sitting perfectly still. Measured
-                # in the captured repro: preview applied at t=01,265, stale snapback
-                # applied at t=02,042 — a visible ~775ms flash-then-revert that no
-                # user action caused. The drain's own trace line already recorded
-                # _is_hover_active=True at that moment; the site simply never looked.
-                #
-                # Discriminator: _is_hover_active is True only when the last
-                # GENUINELY APPLIED call was a hover preview (written by
-                # _mark_theme_applied at real apply time, never on a stashed/skipped
-                # call — see its docstring), so it cannot be True from the abandoned
-                # hover that preceded the leave. _pending_hover_theme is None
-                # additionally confirms no newer hover is still mid-debounce, so this
-                # only fires when a preview is genuinely APPLIED AND SETTLED, not
-                # merely queued. A real un-hover after this point issues its OWN fresh
-                # snapback through the normal path (that call is not stashed —
-                # _fade_in_flight is cleared above before this drain runs), so
-                # discarding here cannot strand the theme on a preview.
-                logger.warning(
-                    f"[FADE-FINISHED-TRACE] _on_fade_finished DISCARDING superseded snapback "
-                    f"pending_fade_call={pending!r} — a live hover preview "
-                    f"(_active_display_theme_internal="
-                    f"{getattr(self, '_active_display_theme_internal', None)!r}) was applied "
-                    f"while this was stashed; replaying it would cancel that preview"
-                )
+            # REMOVED 2026-07-28: a "superseded snapback" discard used to sit here
+            # (048ae3a), gated on `self._is_hover_active and self._pending_hover_theme
+            # is None`. It was WRONG and is reverted — do not reintroduce any
+            # hover-state-based discard at this site.
+            #
+            # Why it was wrong: _is_hover_active does NOT mean "a hover is live now" —
+            # it means "the last APPLIED theme was a preview" (sole writer,
+            # _mark_theme_applied). After a GENUINE mouse-out it stays True, because
+            # only an apply clears it and a discarded snapback never applies. So the
+            # guard read a real leave as "a preview is showing, protect it" and ate the
+            # legitimate snapback, stranding the UI on a preview. Live-confirmed 3x
+            # (2026-07-28, 00:27:54 / 00:28:02 / 00:28:07), each with `leaveEvent
+            # vis=True` — a real mouse-out — followed by the correct snapback being
+            # discarded ~5ms later.
+            #
+            # The 775ms flash-then-revert it was trying to fix is now handled
+            # structurally instead, at the interrupt site in _on_theme_changed: the
+            # stash is cleared when a newer call claims the fade slot, keying on
+            # supersession as a fact rather than inferring it from hover state here.
             else:
                 logger.warning(
                     f"[FADE-FINISHED-TRACE] _on_fade_finished DRAINING pending_fade_call={pending!r} "
@@ -341,6 +359,7 @@ class ThemeManager(QObject):
         # complete_main_fade, which also clears the flag before/independently of its
         # own stop. See NOTES.md, 2026-07-21.
         self._fade_in_flight = False
+        self._fade_is_selection = False  # companion flag — no fade running, so no origin
         # Drain any stash left by _on_theme_changed's _fade_running guard branch
         # (e.g. an unhover snapback that arrived while THIS fade was still
         # running) via a FULL re-call to _on_theme_changed(*pending) — mirroring
@@ -762,19 +781,30 @@ class ThemeManager(QObject):
             and self.main_window.panel_manager.is_any_full_panel_visible()
         )
         _fade_running = getattr(self, '_fade_in_flight', False)
-        # hover-interrupts-hover exception (2026-07-21) — see the elif branch below for
-        # the full mechanism. Computed here too so the GUARD/BLEED-TRACE log lines
-        # correctly report "interrupting" instead of the misleading "stashing" when this
-        # call is about to skip the stash and fall through to a fresh apply instead.
-        _hover_interrupts_hover = bool(hover and self._is_hover_active)
+        # Snapback marker for the fade this call may be about to START (read here so the
+        # two _fade_is_selection write sites below share one computation).
+        _is_snapback = bool(getattr(self, '_snapback_in_progress', False))
+        # _fade_is_selection for the fade THIS call would start, if it starts one.
+        _starts_selection_fade = bool(user_initiated and not hover and not _is_snapback)
+        # HOVER-INTERRUPT PREDICATE (widened 2026-07-28; was
+        # `_hover_interrupts_hover = bool(hover and self._is_hover_active)`).
+        # Computed here so the GUARD/BLEED-TRACE log lines correctly report
+        # "interrupting" instead of the misleading "stashing" when this call is about to
+        # skip the stash and fall through to a fresh apply instead.
+        #
+        # RENAMED deliberately rather than repurposed: the old name is cited in three
+        # comment blocks and in CLAUDE.md, and a name saying "hover interrupts hover"
+        # for a predicate that now also covers snapbacks and rotations would actively
+        # mislead the next reader of this file.
+        _hover_may_interrupt = bool(hover and not self._fade_is_selection)
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
             f"any_panel_animating={_any_animating} panel_open={_panel_open} "
             f"bypass_panel_open_guard={bypass_panel_open_guard} "
-            f"fade_in_flight={_fade_running} "
-            f"hover_interrupts_hover={_hover_interrupts_hover}"
+            f"fade_in_flight={_fade_running} fade_is_selection={self._fade_is_selection} "
+            f"hover_may_interrupt={_hover_may_interrupt}"
             + (" -> queuing deferred retry (panel_guard_timer)" if _any_animating or _panel_open
-               else " -> interrupting in-flight hover fade" if _fade_running and _hover_interrupts_hover
+               else " -> interrupting in-flight fade" if _fade_running and _hover_may_interrupt
                else " -> stashing for fade completion" if _fade_running else "")
         )
         # INVESTIGATION LOGGING (2026-07-20, Option A bleed-trace) — same info as
@@ -783,8 +813,8 @@ class ThemeManager(QObject):
             f"[BLEED-TRACE] _on_theme_changed theme_name={theme_name!r} hover={hover} "
             f"any_panel_animating={_any_animating} panel_open={_panel_open} "
             f"bypass_panel_open_guard={bypass_panel_open_guard} "
-            f"fade_in_flight={_fade_running} "
-            f"hover_interrupts_hover={_hover_interrupts_hover}"
+            f"fade_in_flight={_fade_running} fade_is_selection={self._fade_is_selection} "
+            f"hover_may_interrupt={_hover_may_interrupt}"
         )
         # if/elif, NOT two independent ifs: a single call must only ever be claimed by
         # ONE of the two defer-and-resume mechanisms below, never both (which could fire
@@ -806,7 +836,7 @@ class ThemeManager(QObject):
             )
             self._panel_guard_timer.start()
             return
-        elif _fade_running and not _hover_interrupts_hover:
+        elif _fade_running and not _hover_may_interrupt:
             # A theme fade is already in flight. A flat-timer retry (like the panel-
             # animation branch above) would be a real mismatch here — _PANEL_ANIM_GUARD_MS
             # (700ms) is SHORTER than _THEME_SWITCH_FADE_MS (750ms), so a blind retry would
@@ -818,24 +848,50 @@ class ThemeManager(QObject):
             # restyle's own coalescing comment elsewhere in this file — nothing invisible
             # was shown in between, so only the latest request matters).
             #
-            # EXCEPTION carved out by the `not (hover and self._is_hover_active)` clause
-            # (2026-07-21, see Investigation_HoverInterruptsHover_260721.md): a genuine,
-            # debounce-cleared hover arriving while the CURRENTLY-RUNNING fade is ITSELF a
-            # hover preview must NOT be stashed here — it falls through instead to the
-            # normal stop-and-apply flow below (the `_fade_anim.stop()` at the "Clear any
-            # in-progress animation" block a few lines down, then a fresh fade for the new
-            # theme). Confirmed live: hovering theme A, then genuinely resting on theme B
-            # while A's preview fade was still running, silently stashed B's call — and,
-            # per the hover-confinement discard fix shipped earlier the same night, that
-            # stash then got discarded at drain time rather than ever previewing, leaving
-            # the user staring at A's stale colors while deliberately hovering B. This
-            # exception is scoped tightly: `self._is_hover_active` reflects whether the
-            # LAST GENUINELY APPLIED call (i.e. whatever started the fade now running) was
-            # itself a hover — set by _mark_theme_applied at the point that fade's own
-            # apply ran, so it's accurate even though the fade animation itself hasn't
-            # finished yet. If the in-flight fade is a GENUINE SELECTION's settle-fade
-            # (_is_hover_active False), a new hover must NOT interrupt it — that case still
-            # falls through to the stash below, unchanged, exactly as before this fix.
+            # EXCEPTION, widened 2026-07-28 from `not (hover and self._is_hover_active)`
+            # to `not (hover and not self._fade_is_selection)`. The rule is now: a hover
+            # may interrupt ANY in-flight fade EXCEPT a genuine user selection's
+            # settle-fade. Previously it could only interrupt another HOVER's fade.
+            #
+            # WHY (live-confirmed twice, 2026-07-28 — 'Fire and Blood' at 00:11:14 and
+            # 'Razorgirl' at 00:11:23, identical shape): a snapback applies with
+            # hover=False, so it sets _is_hover_active=False via _mark_theme_applied.
+            # A hover arriving during that snapback's own fade therefore evaluated
+            # `_hover_interrupts_hover` False, got stashed here, and was then DISCARDED
+            # by _on_fade_finished's confinement rule (pending[3]) — so the preview never
+            # appeared AT ALL, and nothing retried it. Holding the cursor still did not
+            # help: only a NEW enterEvent can re-trigger a preview, and the cursor had
+            # not left. Trace:
+            #     23,127  snapback applied      -> _is_hover_active=False, fade starts
+            #     23,679  hover, fade_in_flight=True, interrupts=False -> STASHED
+            #     23,933  drain: pending[3] True -> DISCARDED -> no preview, ever
+            #
+            # _is_hover_active was the wrong discriminator for this decision: it reports
+            # what was last APPLIED, not what the RUNNING fade is. _fade_is_selection
+            # answers the actual question, and names the single forbidden case so a fade
+            # origin nobody has thought of yet defaults to interruptible rather than
+            # silently swallowing hovers (which is exactly how the snapback case hid).
+            #
+            # This adds NO member to the _pending_fade_call tuple — _fade_is_selection is
+            # instance state about the RUNNING fade, never about a stashed call — so
+            # CLAUDE.md's stash-tuple rule is satisfied trivially, no exclusivity
+            # re-check needed.
+            #
+            # A genuine, debounce-cleared hover that IS allowed to interrupt falls
+            # through instead to the normal stop-and-apply flow below (the
+            # `_fade_anim.stop()` at the "Clear any in-progress animation" block a few
+            # lines down, then a fresh fade for the new
+            # theme). The original 2026-07-21 case this exception was built for is
+            # unchanged and still covered: hovering theme A, then genuinely resting on
+            # theme B while A's preview fade was still running, used to stash B's call
+            # and then discard it at drain time, leaving the user staring at A's stale
+            # colors while deliberately hovering B.
+            #
+            # If the in-flight fade IS a genuine selection's settle-fade
+            # (_fade_is_selection True), a new hover must NOT interrupt it — that case
+            # still falls through to the stash below, unchanged, exactly as before. That
+            # is the one protected case, and it is protected by the fade's OWN recorded
+            # origin rather than by inference from what was last applied.
             #
             # 6-tuple as of 2026-07-22 (was a 5-tuple: theme_name, save, fade_ms, hover,
             # user_initiated). bypass_panel_open_guard is now carried through too — see
@@ -872,6 +928,30 @@ class ThemeManager(QObject):
         # Clear any in-progress animation
         if self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
+            # SUPERSEDED-STASH CLEAR (2026-07-28). QPropertyAnimation.stop() does NOT
+            # emit `finished`, so _on_fade_finished never runs for the fade just
+            # stopped — and any call stashed against it is therefore never drained by
+            # the site that was supposed to drain it. Left in place, it survives and
+            # fires against the NEXT fade instead: live-confirmed 2026-07-27 as a
+            # preview appearing correctly and then reverting ~775ms later with the
+            # cursor sitting perfectly still (a stashed snapback draining onto a
+            # freshly-applied preview).
+            #
+            # A stash whose fade slot has just been claimed by a newer call is
+            # superseded BY CONSTRUCTION. Dropping it here keys on that structural
+            # fact, at the moment it becomes true. The earlier attempt at this
+            # (048ae3a, reverted) instead tried to INFER supersession at drain time
+            # from _is_hover_active — which reports the last APPLIED theme, not
+            # whether a hover is live, so it read a genuine mouse-out as "a preview is
+            # showing, protect it" and ate the legitimate snapback, stranding the UI
+            # on a preview. Do not reintroduce a hover-state-based test here.
+            #
+            # Scope note: this drops ANY stash, including a stashed genuine selection.
+            # That is correct — its fade slot is gone — but it IS a behaviour change,
+            # and the case to watch is a click's settle-fade being interrupted before
+            # its stashed call ever replays. The selection itself is unaffected (it was
+            # applied when the click ran; only the queued RE-call is dropped).
+            self._pending_fade_call = None
 
         # Automatic theme changes (cover art, rotation) snap instantly when the Themes tab
         # is active — avoids the overlay dissolving the tab's live preview widgets. Other
@@ -923,6 +1003,10 @@ class ThemeManager(QObject):
 
             self._save_on_fade = save
             self._fade_in_flight = True
+            # Companion of _fade_in_flight — records what STARTED this fade, so a later
+            # hover can tell a protected genuine-selection fade from an interruptible
+            # one. See the field's declaration in __init__ and the elif stash branch.
+            self._fade_is_selection = _starts_selection_fade
             self._fade_sliders = []   # themes-tab path animates no sliders separately
             self._fade_anim.setDuration(fade_ms)
             self._theme_fade_anim = self._fade_anim
@@ -937,6 +1021,12 @@ class ThemeManager(QObject):
         elif fade_ms > 0:
             # Auto-rotation (or any non-themes-tab fade): sliders may be mid-interaction.
             # Exclude them from the overlay and animate their color properties instead.
+            # Set the fade-origin companion HERE rather than inside
+            # _do_fade_with_slider_animation, so the whole decision stays in this method
+            # and that helper's signature doesn't have to widen. That method sets
+            # _fade_in_flight = True a few statements later in this same synchronous
+            # call — no event-loop turn intervenes, so the two flags cannot disagree.
+            self._fade_is_selection = _starts_selection_fade
             self._do_fade_with_slider_animation(theme_name, hover, save, fade_ms)
         else:
             self._fade_overlay.hide()
@@ -1159,6 +1249,7 @@ class ThemeManager(QObject):
             logger.warning("[BLEED-TRACE] complete_main_fade EARLY-RETURN (no fade in flight)")
             return
         self._fade_in_flight = False
+        self._fade_is_selection = False  # companion flag — no fade running, so no origin
         if hasattr(self, '_fade_anim') and self._fade_anim.state() == QPropertyAnimation.Running:
             self._fade_anim.stop()
         # Stop any slider color animations where they are — the repolish below
@@ -1610,6 +1701,10 @@ class ThemeManager(QObject):
         restyles for the one the cursor settles on (see _fire_pending_hover)."""
         self._pending_hover_theme = theme_name
         self._hover_seen_at = time.perf_counter()
+        # Cursor position at the most recent genuine swatch enter — the reference point
+        # _on_themes_tab_left uses to tell a real mouse-out from a blur-grab synthetic
+        # leave. See that method for the full mechanism.
+        self._hover_seen_pos = QCursor.pos()
         self._hover_debounce_timer.start()  # restart on each enter → coalesces the sweep
 
     def _fire_pending_hover(self):
@@ -1630,14 +1725,30 @@ class ThemeManager(QObject):
     def _on_theme_unhovered(self):
         # Cancel any hover preview still queued by the debounce so a stale name
         # can't fire its restyle after the cursor has already left the tab.
+        #
+        # NOTE (criterion: "snap back right away, no 80ms guard"): the debounce is an
+        # ENTRY-side coalescer only — it lives in _on_theme_hovered and is stopped here,
+        # so the snapback below is issued synchronously with no delay. Do not add a
+        # debounce to this path.
         self._hover_debounce_timer.stop()
         self._pending_hover_theme = None
-        if self._cover_theme_active and self._cover_theme:
-            self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS,
-                                    hover=False, bypass_panel_open_guard=True)
-        else:
-            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
-                                    hover=False, bypass_panel_open_guard=True)
+        # SNAPBACK MARKER (2026-07-28) — this method is the SOLE producer of a snapback,
+        # so mark it at the source rather than sniffing fade_ms downstream (the hover
+        # fade duration is user-configurable and could coincidentally equal
+        # _SNAPBACK_FADE_MS). Read by _on_theme_changed to keep _fade_is_selection False
+        # for the fade this call starts, which is what lets a subsequent hover interrupt
+        # it instead of being stashed and discarded. try/finally so an exception in the
+        # apply cannot strand the flag True and mislabel every later selection fade.
+        self._snapback_in_progress = True
+        try:
+            if self._cover_theme_active and self._cover_theme:
+                self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                        hover=False, bypass_panel_open_guard=True)
+            else:
+                self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                        hover=False, bypass_panel_open_guard=True)
+        finally:
+            self._snapback_in_progress = False
 
     def _on_themes_tab_left(self, tab_widget):
         """`swatch_box`'s leaveEvent handler (wired in main_window_builders.py as a bare
@@ -1676,9 +1787,54 @@ class ThemeManager(QObject):
         silently dropping a genuinely-still-hovered theme's preview. Confirmed live
         2026-07-22 (see NOTES.md) — a genuine ThemeItem.enterEvent PASSED followed 7ms later
         by a synthetic-recorded leaveEvent, well inside the debounce window, with no
-        `[hover debounce]` fire ever appearing for that hover."""
-        if not tab_widget.isVisible():
-            return
+        `[hover debounce]` fire ever appearing for that hover.
+
+        SUPERSEDED 2026-07-28 — the `isVisible()`-only test above was NOT sufficient, and
+        the paragraph above overstates it. It reads visibility LIVE, at delivery time, so
+        whether a genuine leave is honoured depends on where the blur grab happens to be in
+        its hide/show cycle. `settings_panel` is an ANCESTOR of `swatch_box`
+        (swatch_box -> pool_container -> themes_tab -> tabs -> settings_panel), and
+        `_grab_and_blur` hides/shows it roughly every 65ms while a book plays — measured
+        live at ~15 synthetic leave/enter pairs per second on a perfectly stationary cursor
+        (2026-07-28, 00:28:13, cursor pinned at pos=(242,266) throughout). A real mouse-out
+        landing inside one of those windows was silently dropped, which is why the snapback
+        was intermittent when moving from a swatch to the dismiss sliver.
+
+        The claim that "this widget has no enterEvent to pair against" is what led to the
+        weaker test. True as far as it goes — but the ENTER side is already recorded
+        elsewhere: `_on_theme_hovered` stores `_hover_seen_pos` on every genuine swatch
+        enter. That gives the same two-signal test `ThemeItem` uses, without a second wired
+        event handler (which CLAUDE.md forbids here):
+
+          * a blur-grab synthetic leave fires with the cursor NOT moved from the last
+            genuine enter — the user did nothing;
+          * a real mouse-out to the sliver, the tab header, or off-panel ALWAYS moves the
+            cursor first.
+
+        So position-changed is the discriminator, and visibility is no longer consulted at
+        all: a genuine leave is honoured whether or not a grab happens to be mid-flight.
+        `_MOUSE_JITTER_PX` absorbs sub-pixel/±1px OS-level cursor jitter, which would
+        otherwise read as "real movement" and fire a spurious snapback."""
+        pos = QCursor.pos()
+        seen = self._hover_seen_pos
+        if seen is not None:
+            moved = max(abs(pos.x() - seen.x()), abs(pos.y() - seen.y()))
+            if moved <= _MOUSE_JITTER_PX:
+                logger.debug(
+                    f"[SWATCH-LEAVE] suppressed synthetic leave — cursor unmoved "
+                    f"({moved}px <= {_MOUSE_JITTER_PX}) at {(pos.x(), pos.y())}, "
+                    f"visible={tab_widget.isVisible()}"
+                )
+                return
+        logger.debug(
+            f"[SWATCH-LEAVE] genuine leave at {(pos.x(), pos.y())} "
+            f"(last enter {((seen.x(), seen.y()) if seen is not None else None)}, "
+            f"visible={tab_widget.isVisible()}) -> snapback"
+        )
+        # Consume the reference point: the cursor is now outside the swatch area, so the
+        # next genuine enter will set a fresh one. Without this, a second leave arriving
+        # before any new enter would compare against a stale position.
+        self._hover_seen_pos = None
         self._on_theme_unhovered()
 
     def update_theme_list_visuals(self):
