@@ -90,6 +90,14 @@ _POST_RESTYLE_COOLDOWN_S = 0.4
 # above that.
 _GRAB_FEEDBACK_SUPPRESS_S = 0.05
 
+# Retry delay for a tick turned away by one of refresh_dirty()'s two DECLINING
+# gates (hover-active, post-restyle cooldown) — see _rearm_after_decline() for
+# why a declined tick cannot rely on "the next real paint picks it up". Sized
+# above _POST_RESTYLE_COOLDOWN_S (0.4s) so one retry normally clears the
+# cooldown window outright instead of re-declining repeatedly; the hover gate
+# clears on its own timescale (cursor movement) and simply retries until then.
+_DECLINE_REARM_MS = 450
+
 
 def panel_rect_in_common_space(panel, common_ancestor) -> QRect:
     """`panel`'s TARGET (settled, post-slide-in) geometry, mapped into
@@ -284,6 +292,11 @@ class TransportBarBlurOverlay:
         # real repaint happened first.
         self._refresh_pending = False
 
+        # Retry flag for _rearm_after_decline() — kept separate from
+        # _refresh_pending so a declined tick's retry never reads as observed
+        # paint activity (see that method's docstring).
+        self._rearm_pending = False
+
         # FEEDBACK-LOOP GUARD (2026-07-20, found live during this same rework's
         # own testing): _grab_and_blur()'s hide()->grab()->show() cycle on
         # self._active_panel forces Qt to repaint the tracked transport-bar
@@ -451,6 +464,50 @@ class TransportBarBlurOverlay:
         self._refresh_pending = True
         QTimer.singleShot(0, self.refresh_dirty)
 
+    def _rearm_after_decline(self):
+        """Re-arm a refresh that one of refresh_dirty()'s two DECLINING gates
+        (hover-active, post-restyle cooldown) turned away, so the accumulated
+        dirty union is retried instead of waiting for a future paint that may
+        never come.
+
+        Why this is needed (2026-07-27): both gates deliberately decline WITHOUT
+        consuming take_dirty_union(), on the reasoning that "the next real paint
+        picks it up". That reasoning holds only while more paints are guaranteed
+        to arrive. The hover gate's own docstring argues hover-end self-corrects
+        because the snapback restyle repaints the tracked widgets — but the
+        snapback is `_on_theme_changed(..., hover=False)`, which hits that
+        method's no-op guard and returns WITHOUT calling _apply_stylesheets
+        whenever the snapback target theme is already the applied
+        (theme_name, hover) pair. That is exactly the case when a hover preview
+        was declined here rather than painted: the live theme never moved, so the
+        snapback is a genuine duplicate, the guard fires, no restyle runs, no
+        Paint event is emitted, and the last-declined dirty union is stranded on a
+        cache nothing will refresh. The overlay then holds stale content
+        indefinitely while the app keeps running — the shape reported in the
+        frozen-overlay bug (TODO.md, 2026-07-20).
+
+        Deliberately a delayed retry, not a singleShot(0): both gates are
+        time-based, so an immediate turn would just re-decline in a tight loop
+        until the window expires. The interval is sized above
+        _POST_RESTYLE_COOLDOWN_S so a single retry normally clears the cooldown
+        gate outright rather than spinning through several declines.
+
+        Not routed through _schedule_refresh(): that is the tracker's real-paint
+        entry point and its coalescing flag is meant to answer "did something
+        genuinely repaint". Keeping the retry on its own flag preserves that
+        meaning and keeps a declined tick from masquerading as observed paint.
+        """
+        if self._rearm_pending:
+            return
+        self._rearm_pending = True
+        QTimer.singleShot(_DECLINE_REARM_MS, self._fire_rearm)
+
+    def _fire_rearm(self):
+        self._rearm_pending = False
+        if not self._active:
+            return
+        self._schedule_refresh()
+
     def refresh_dirty(self):
         """Re-grab+reblur only the union of sub-rects dirtied since the last
         composite (or since show_for_panel's reset), patch it into the overlay
@@ -508,6 +565,7 @@ class TransportBarBlurOverlay:
         theme_manager = getattr(self.main_window, 'theme_manager', None)
         if getattr(theme_manager, '_is_hover_active', False):
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=hover_active_gate")
+            self._rearm_after_decline()
             return
 
         # See _POST_RESTYLE_COOLDOWN_S's declaration above for the root cause
@@ -518,6 +576,7 @@ class TransportBarBlurOverlay:
         last_restyle = getattr(theme_manager, '_last_apply_stylesheets_at', None)
         if last_restyle is not None and (time.perf_counter() - last_restyle) < _POST_RESTYLE_COOLDOWN_S:
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=cooldown_gate")
+            self._rearm_after_decline()
             return
 
         dirty = self._tracker.take_dirty_union()
@@ -602,6 +661,11 @@ class TransportBarBlurOverlay:
         self._bounding_rect = None
         self._active = False
         self._active_panel = None
+        # Any in-flight decline-retry is left to fire once and no-op on its own
+        # `if not self._active` guard (same safety property the coalescing
+        # singleShot already relies on); clearing the flag here just lets the
+        # next panel-open arm a fresh one instead of inheriting a stale True.
+        self._rearm_pending = False
 
     # -- geometry -------------------------------------------------------------
 
