@@ -117,11 +117,27 @@ class PanelManager:
         if not self.config.get_blur_enabled():
             return
         self._apply_visual_area_clip(panel)
+        # The carousel is a sibling of visual_area with its own effect — set its
+        # clip now so it blurs in step rather than staying sharp.
+        self.main_window.sync_carousel_blur(self.blur_effect.blurRadius(), True)
         self.blur_animation.stop()
         self.blur_animation.setDuration(_BLUR_IN_MS)
         self.blur_animation.setStartValue(self.blur_effect.blurRadius())
         self.blur_animation.setEndValue(8 if panel is self.tags_panel else 10)
         self.blur_animation.start()
+
+    def blurred_panel(self):
+        """The panel the visual_area blur is currently clipped to, or None.
+
+        Used by MainWindow._carousel_clip_rect: the carousel is a SIBLING of
+        visual_area with its own effect, so it needs to know which panel edge to
+        clip against. Returns None for the library panel — it is full-width and
+        opaque, so nothing behind it blurs (see _apply_visual_area_clip)."""
+        for panel in (self.settings_panel, self.speed_panel, self.sleep_panel,
+                      self.stats_panel, self.tags_panel):
+            if panel.isVisible():
+                return panel
+        return None
 
     def _apply_visual_area_clip(self, panel):
         """Confine visual_area's blur to the region `panel` actually occludes, so
@@ -166,6 +182,9 @@ class PanelManager:
         effect = getattr(self.main_window, 'blur_effect', None)
         if effect is not None and hasattr(effect, 'set_clip_rect'):
             effect.set_clip_rect(None)
+        # Clear the sibling carousel's clip too, or it keeps a blurred band after
+        # the panel is gone.
+        self.main_window.sync_carousel_blur(0.0, False)
 
     def apply_blur_live(self, enabled: bool):
         """Apply or clear blur on the ALREADY-OPEN Settings panel the instant the

@@ -710,6 +710,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # 12% at 25%) so the blur builds rather than snapping.
         self.blur_animation.setDuration(1500)
         self.blur_animation.setEasingCurve(QEasingCurve.InOutQuad)
+        # Drive the carousel's own effect from the same animation. The carousel
+        # is a SIBLING of visual_area (see _show_carousel) so it is not covered
+        # by blur_effect; without this it stays sharp while everything around it
+        # blurs. No-op whenever no carousel exists.
+        self.blur_animation.valueChanged.connect(
+            lambda v: self._sync_carousel_radius(v)
+        )
         
         # Initialize PanelManager after all relevant widgets are created
         self.panel_manager = PanelManager(self)
@@ -960,6 +967,52 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._reload_excluded_books()
         if path == self.current_file:
             self._on_book_removed()
+
+    def _carousel_clip_rect(self):
+        """The carousel's blur clip, in CAROUSEL-local coordinates.
+
+        Mirrors PanelManager._apply_visual_area_clip's rule (blur only what the
+        open panel actually occludes) but for the carousel's own geometry, which
+        differs: the carousel is full window width while visual_area is inset
+        10px each side, so the same panel edge lands at a different local x.
+        Returns None (= blur nothing) when no panel is open or blur is off.
+        """
+        car = getattr(self, '_carousel', None)
+        if car is None:
+            return None
+        pm = getattr(self, 'panel_manager', None)
+        if pm is None or not self.config.get_blur_enabled():
+            return None
+        panel = pm.blurred_panel()
+        if panel is None:
+            return None
+        from .ui.transport_bar_blur import panel_rect_in_common_space
+        panel_rect = panel_rect_in_common_space(panel, self.content_container)
+        car_tl = car.mapTo(self.content_container, QPoint(0, 0))
+        local = panel_rect.translated(-car_tl.x(), -car_tl.y())
+        return local.intersected(car.rect())
+
+    def _sync_carousel_radius(self, radius):
+        """Per-frame radius follower for the carousel's own effect, driven by
+        blur_animation.valueChanged. Only touches the radius — the clip is owned
+        by sync_carousel_blur so an in-flight animation can't resurrect a clip
+        that was just cleared on panel close."""
+        eff = getattr(self, '_carousel_blur', None)
+        if eff is not None and getattr(self, '_carousel', None) is not None:
+            eff.setBlurRadius(float(radius))
+
+    def sync_carousel_blur(self, radius, clip):
+        """Keep the carousel's own effect in step with visual_area's blur.
+
+        Called from PanelManager on every blur radius change and on clip
+        set/clear, since the carousel is a sibling and is not covered by
+        visual_area's effect. No-op when no carousel exists (the common case —
+        it only lives in the no-book state)."""
+        eff = getattr(self, '_carousel_blur', None)
+        if eff is None or getattr(self, '_carousel', None) is None:
+            return
+        eff.setBlurRadius(radius)
+        eff.set_clip_rect(self._carousel_clip_rect() if clip else None)
 
     def _on_book_removed(self):
         """Helper for controller when the currently playing folder is removed from library."""
@@ -1293,6 +1346,29 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # visual_area's QSS background is already suppressed by the not-has_book
         # branch of apply_library_state (set_bg_suppressed(True)), so the stripe
         # paints through. Suppression is owned by the state machine, not here.
+
+        # The carousel needs its OWN blur effect: it is a SIBLING of visual_area
+        # (parented to content_container above), so visual_area's ClippedBlurEffect
+        # cannot reach it — without this the stripe and the "Go to Library" button
+        # blur behind an open panel while the cover thumbnails stay sharp.
+        #
+        # It cannot simply be reparented into visual_area to inherit that effect:
+        # the carousel is CAROUSEL_STRIPE_W (300px, full window width, bleeding to
+        # both edges by design — see ad15f53) while visual_area is only 280px,
+        # inset 10px each side. carousel_holder is 300px but overflows its 280px
+        # parent and is clipped, which is why the real carousel was made a sibling
+        # in the first place. Reparenting would shave 20px off the stripe.
+        #
+        # Verified safe on a scrolling widget before wiring: the strip keeps
+        # repainting normally under the effect (no freeze — unlike the reverted
+        # cached-pixmap overlay approach), the clip region blurs, and the sliver
+        # stays sharp.
+        self._carousel_blur = ClippedBlurEffect(self._carousel)
+        self._carousel_blur.setBlurHints(QGraphicsBlurEffect.AnimationHint)
+        self._carousel_blur.setBlurRadius(self.blur_effect.blurRadius())
+        self._carousel_blur.set_clip_rect(self._carousel_clip_rect())
+        self._carousel.setGraphicsEffect(self._carousel_blur)
+
         self._carousel.show()
 
         # Slide in from the right over 200ms; covers reveal only after 325ms so they
