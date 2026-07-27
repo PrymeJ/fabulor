@@ -6,6 +6,69 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-27] PRE-EXISTING: the cover carousel never appears at app start — only after
+  unloading the active book. BLOCKS the visual_area blur-clip work; fix this first, separately.**
+  Confirmed pre-existing by running a pristine `HEAD` (`928fb74`) with all session changes stashed
+  and the runtime tree verified byte-identical to the last commit. **Mechanism found, not yet
+  fixed:** `MainWindow.__init__` calls `library_controller._check_library_status()` at
+  `app.py:494`, but `self.show()` is not until `app.py:571`. Qt reports `isVisible() == False` for
+  every child while its top-level window is unshown (confirmed directly), so `_show_carousel`'s
+  `not self.no_book_section.isVisible()` guard always early-returns at startup — instrumented trace
+  shows exactly one call, `EARLY-RETURN reason=not_no_book_state`. Unloading a book re-enters the
+  state machine after the window is up, which is why that path works.
+  **Not yet established: how far back this goes** — needs a bisect (candidate files:
+  `app.py`, `library_controller.py`, `carousel.py`) to find which commit introduced the ordering,
+  and whether an earlier arrangement worked. Do NOT fix this as a side effect of the blur work.
+  **Consequence once fixed:** re-test whether v1's and v2's carousel symptoms still reproduce
+  against a genuinely working baseline — v2 (paint-time mask) currently has NO evidence against it
+  at all and may simply be viable. Full detail: NOTES.md, "OPEN: `visual_area` blur-clip attempts"
+  (2026-07-27), CORRECTION 2.
+
+- **[2026-07-27] Confine panel-blur to the actually-occluded region of `visual_area` (cover art /
+  theme bg_image / quotes) — the ~30px sliver beside an open panel must stay sharp.** NOT fixed.
+  **BLOCKED on the pre-existing carousel bug above — do not resume until that is fixed.** Two
+  attempts, both reverted, but the evidence against them was largely mis-attributed: both were
+  judged against a baseline where the carousel was ALREADY broken at app start. Attempt 1
+  (grab-based cached-pixmap overlay) did cause real, separate damage — clipped "Go to Library"
+  button, geometry jumping on blur toggle, frozen strip over the carousel — so it stays rejected.
+  **Attempt 2 (paint-time `QGraphicsBlurEffect.draw()` mask) has NO evidence against it**: its only
+  reported symptom was the missing carousel, now known to be pre-existing, and its clip correctness,
+  liveness, seam-freedom and coordinate math were all verified by pixel probe. Two successive root
+  causes (z-order coupling; "any QGraphicsEffect breaks carousel transparency") were each proposed
+  and each DISPROVEN — the second by direct measurement showing identical carousel visibility and
+  identical `mapTo`/`isVisible` across every effect variant. **When resumed: re-test attempt 2
+  against the fixed baseline first** rather than designing a third approach. Prior design decisions
+  (library-panel exclusion, invalidation triggers, granularity, fade behavior) carry over for the
+  mask shape. **Single source of truth: NOTES.md "OPEN: `visual_area` blur-clip attempts"
+  (2026-07-27)** — read both CORRECTION blocks first. Also subsumes the carousel
+  split-scroll/frozen-blur finding.
+
+- **[2026-07-27] Fix the blur-grab feedback loop (`_grab_and_blur` hide/show re-expose).** Root
+  cause CONFIRMED, not started. `_grab_and_blur` hides `_active_panel` to grab; Qt re-exposes all
+  13 tracked transport widgets; the tracker reads those as real paints and schedules another grab.
+  Round-trips in ~64ms; `_GRAB_FEEDBACK_SUPPRESS_S` is 50ms, so every burst lands ~14ms past the
+  guard. Measured: 163 grabs / 5.1s, zero early-returns, 131 of 158 composites re-grabbing the
+  FULL transport-bar rect. Only `chapter_progress` and `chapter_selector` (the latter only while
+  scrolling) genuinely need high-frequency refresh — the other 11 are loop-driven.
+  **Blocked on an open question:** whether the panel `hide()` is strictly necessary for the grab.
+  A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was reverted 2026-07-19
+  because it broke theme hover-preview/snapback for reasons never diagnosed — confront that before
+  retrying. Widening the suppress window past 64ms is cheap mitigation but treats the symptom and
+  its correct value drifts with grab cost. `[DIRTY-TRACE]` instrumentation is in place and is the
+  verification instrument — a working fix collapses the synchronized 13-widget burst to just the
+  two genuinely-changing widgets. Full detail in NOTES.md (2026-07-27).
+
+- **[2026-07-27] Decide what to do about the tassel's ±1px idle sway being invisible under blur.**
+  Root cause CONFIRMED, no fix chosen. NOT a stalled animation — driver, paint and compositing are
+  all healthy under blur (90 ticks/5.1s, zero dropped, correct sine values); confirmed by raising
+  `IDLE_AMP` 1.0 → 10.0, which sways normally with blur ON (reverted after the test). `IDLE_AMP =
+  1.0` gives a ±1px excursion that only moves at a few pixel-boundary crossings per ~3.5s cycle,
+  and the blur loop's ~15×/sec ancestor hide/show tears down the backing store faster than that
+  animation can register. **Likely resolves itself once the loop above is fixed** — fix that first
+  and re-check before changing `IDLE_AMP`, since raising the amplitude would be compensating for a
+  bug rather than a design choice. Full detail + the three disproven theories in NOTES.md
+  (2026-07-27).
+
 - **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
   Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md

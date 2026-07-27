@@ -1,3 +1,258 @@
+## OPEN: `visual_area` blur-clip attempts — TWO successive root causes disproven; the "carousel missing at app start" symptom turned out to be a PRE-EXISTING bug unrelated to the blur work (2026-07-27)
+
+**Status:** OPEN — blur-clip mechanism still unknown; the original whole-widget over-blur bug is
+unfixed. Two implementations attempted, both cleanly reverted; nothing from this work remains in
+the tree. **Two separate confident diagnoses in this entry were each disproven within hours — read
+both CORRECTION blocks before trusting any reasoning here.**
+
+> **CORRECTION 1 (same day):** this entry originally asserted the cause was "`visual_area` cannot
+> use a static cached-pixmap overlay while a scrolling sibling shares its stacking context."
+> **Wrong** — see "Why the z-order explanation is disproven" below. Written after attempt 1, before
+> attempt 2 existed to test it. Preserved only as a recorded dead end. The generalizable-sounding
+> rule it stated ("any overlay mechanism for one of these two widgets must account for the other")
+> was an over-generalization from a single observation and should not be cited.
+
+> **CORRECTION 2 (same day, more important):** this entry then claimed both attempts "killed the
+> carousel," treating the missing carousel as the signal that each implementation was broken.
+> **That premise was wrong too.** Verified by running the app at a pristine `HEAD` (`928fb74`) with
+> ALL session changes stashed — including a full recursive diff confirming the runtime tree was
+> byte-identical to the last commit: **the carousel does not appear at app start on committed code
+> either.** It only appears after unloading the active book. So "no carousel at startup" is a
+> PRE-EXISTING bug that predates this session and is unrelated to the blur work — it was never
+> evidence about either attempt. Both attempts were reverted partly on the strength of a symptom
+> that neither of them caused. Attempt 1 did cause real, separate damage (clipped "Go to Library"
+> button, geometry jumping on blur toggle, frozen strip over the carousel); attempt 2's only
+> reported symptom was the missing carousel, which is now known to be pre-existing — **so attempt 2
+> (the paint-time mask) was never actually shown to be broken and may well be viable.** Do not
+> treat it as a failed approach; re-test it once the startup bug below is fixed.
+>
+> **Root cause of the pre-existing startup bug (found, not yet fixed):** `MainWindow.__init__` calls
+> `library_controller._check_library_status()` at `app.py:494`, but `self.show()` is not called
+> until `app.py:571`. `_show_carousel` guards on `not self.no_book_section.isVisible()` and returns
+> early. Qt reports `isVisible() == False` for **every** child widget while its top-level window has
+> not been shown yet — confirmed directly: calling `child.show()` before `window.show()` still
+> leaves `child.isVisible()` False, flipping to True only after the window is shown. So at startup
+> the carousel path always early-returns; unloading a book re-enters the state machine after the
+> window is up, which is why that is the only way to trigger it. Instrumented trace on unmodified
+> code shows exactly one call, `EARLY-RETURN reason=not_no_book_state`.
+
+### The symptoms — and which ones were real evidence
+
+Reported for both attempts: **the carousel is absent at app start** in the no-book state. Per
+CORRECTION 2 above, that symptom is PRE-EXISTING (reproduces at `HEAD` with everything stashed) and
+was never evidence about either attempt.
+
+Attempt 1 additionally showed a clipped "Go to Library" button, geometry jumping on blur toggle,
+and a frozen non-scrolling strip over the live carousel — **those three are genuine, attempt-1-only
+damage** and are the real reason it was reverted.
+
+Attempt 2 showed **no symptom other than the pre-existing one**.
+
+### Attempt 1 — grab-based `VisualAreaBlurOverlay` (reverted)
+
+A cached-pixmap `QLabel` parented to `content_container` (the carousel's own parent), `raise_()`d
+above everything.
+
+**Original diagnosis (now disproven as the cause of the missing carousel):** that the overlay was a
+new sibling injected into the carousel's stacking context, and that a static cached frame cannot sit
+over live scrolling content. It looked strongly supported — it explained all four symptoms at once,
+and the frozen strip in particular is exactly what a cached pixmap over moving content produces.
+That story may still describe attempt 1's three *real* symptoms, but it was never independently
+confirmed, so treat it as unverified rather than established.
+
+### Attempt 2 — `ClippedBlurEffect` paint-time mask (reverted)
+
+A `QGraphicsBlurEffect` subclass overriding `draw()` to blur only inside a clip rect, attached to
+`visual_area` in place of the plain effect. Verified before implementing, by pixel probe: the clip
+is a real hard boundary (sliver keeps pure source pixels, zero blurred bleed), no edge-alpha seam,
+`draw()` invoked per paint, tracks moving content with no frozen frame. Coordinate conversion
+(content_container → visual_area-local) verified end-to-end.
+
+**Reverted solely on the missing-carousel symptom — now known to be pre-existing (CORRECTION 2). No
+other defect was ever observed in it. This approach is NOT known to be broken and should be
+re-tested against a genuinely working baseline once the startup bug is fixed.**
+
+### Why the z-order explanation is disproven
+
+Attempt 2 shares **none** of the properties attempt 1's diagnosis blamed:
+
+- It added **no widget at all** to any stacking context — no new sibling, no `raise_()`.
+- It introduced **no cached pixmap** — the effect re-renders on every paint (verified: a moving
+  marker tracked correctly across repaints).
+- Parenting, geometry, and z-order of every existing widget were **completely unchanged**.
+
+Same symptom, none of the blamed causes present. CORRECTION 2 later explained why: neither attempt
+caused that symptom at all.
+
+### Superseded hypothesis: "any `QGraphicsEffect` on `visual_area` breaks carousel transparency"
+
+Proposed after the z-order theory fell, on the grounds that the one thing common to both attempts
+was `visual_area` ending up with a non-trivial effect attached. The idea: Qt renders an
+effect-bearing widget through an offscreen path, which might not preserve the transparency the
+carousel relies on (`_set_bg_suppressed(True)` → `setAutoFillBackground(False)`).
+
+**DISPROVEN by direct probe, before any code was written for it:**
+
+- **Transparency:** carousel-red pixel count **identical (2250)** across no effect, stock blur
+  radius 0, stock blur radius 5, and a `draw()`-override effect with a null clip.
+- **Geometry/visibility:** `carousel_holder.mapTo(content_container).y` = **154 in all four
+  variants**; `no_book_section.isVisible()` True in all four.
+
+Dead. Recorded so it is not re-proposed — a plausible-sounding story the measurements do not support.
+
+### The actual cause of the missing carousel (pre-existing)
+
+Startup ordering — not blur, not effects, not z-order. `_check_library_status()` runs at
+`app.py:494`; `self.show()` is at `app.py:571`. Qt reports `isVisible() == False` for all children
+until the top-level window is shown, so `_show_carousel`'s `not no_book_section.isVisible()` guard
+always early-returns at startup. Unloading a book re-enters the state machine after the window is
+up, which is why that is the only way to trigger it. **Not yet fixed, and deliberately NOT fixed as
+a side effect of the blur work** — tracked separately in TODO.md, including how far back it goes.
+
+### Process lessons
+
+1. **Verify the baseline before attributing a symptom to your change.** Both attempts were judged
+   against an assumed-working carousel that was already silently broken at app start. Two confident
+   root causes were built on that assumption and both were wrong. Before diagnosing "my change broke
+   X," confirm X worked immediately beforehand — here, one stash-and-run at `HEAD` would have caught
+   it before either diagnosis was written.
+2. **Headless verification cannot detect compositing/paint-order regressions.** Imports, tests, clip
+   arithmetic, pixel probes and startup-without-exceptions all passed both times. Same class as the
+   existing "DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone"
+   rule.
+3. **A diagnosis that explains every symptom is not thereby verified** — it needs a prediction that
+   could have failed. Attempt 1's root cause was written up as *confirmed* on a single-observation
+   inference and retracted within hours.
+
+### Current state
+
+Blur/clip work fully reverted — `app.py`, `ui/panels.py`, `ui/transport_bar_blur.py` at committed
+state, `ui/visual_area_blur.py` deleted. The original whole-widget over-blur bug is unfixed. Held
+deliberately in this state until the pre-existing startup regression is root-caused and fixed on its
+own, so a future fix cannot end up papering over two overlapping bugs.
+
+
+---
+
+## Open Investigation: tassel "freeze" with blur ON is a 1px perceptibility failure, not a stalled animation — and the blur grab is running a self-sustaining feedback loop (2026-07-27)
+
+**Status:** Both root causes identified and confirmed live. Neither is fixed. Instrumentation
+deliberately LEFT IN PLACE (see "Instrumentation still in the tree" at the end) — it is what
+makes the fix verifiable, and removing it would mean rebuilding it.
+
+Two distinct bugs, same root cause, which is why they presented together.
+
+### Bug 1: the tassel was never frozen — a ±1px sway can't survive the hide/show churn
+
+**Symptom as reported:** with the transport-bar blur ON, the tassel does not animate at all;
+turning blur OFF, animation resumes. Immediate, not tied to hover/panel-open/book-load.
+
+**Confirmed live (2026-07-27):** with `TasselOverlay.IDLE_AMP` temporarily raised 1.0 → 10.0, the
+tassel sways normally **with blur ON**. That single test settles it — driver, paint, and
+compositing are all healthy under blur. `IDLE_AMP` has been reverted to 1.0.
+
+**Trace evidence that the driver was healthy all along** (5.1s window, blur ON, Stats/Timeline
+open, book playing):
+- 90 sway ticks, **zero** dropped by `_on_sway_tick`'s `isVisible()` guard
+- `_idle_phase` advancing exactly `IDLE_STEP` (0.03) per tick, no gaps
+- `paintEvent` firing and computing correct, monotonically-changing sway values
+  (`0.06 → 0.09 → 0.15 → … → 0.99`, i.e. a correct sine traversal)
+
+**Mechanism:** `IDLE_AMP = 1.0` means the entire idle excursion is ±1px over a ~3.5s cycle, so
+the rendered position only changes at the handful of phase points where the rounded value crosses
+a pixel boundary. Meanwhile `_grab_and_blur` hides and re-shows `stats_panel` (the tassel's
+ancestor) ~15×/sec — see Bug 2 — and each cycle tears down and rebuilds the widget's backing
+store. A 1px animation has no margin to survive that churn; a 10px one has plenty of pixel
+crossings to show through. **Blur does not break the animation; it consumes the headroom a 1px
+animation was already running on.**
+
+Note the tassel is genuinely OUTSIDE the blur region (blur `_bounding_rect` is
+`(10, 300, 260, 198)` — the transport bar at the bottom; the tassel sits at `move(2, REST_Y)`,
+top-left of the Timeline tab, y≈0). It is not occluded by the overlay. It is affected only via
+the ancestor hide/show, which propagates a real `hideEvent`/`showEvent` pair to it every cycle.
+
+**Three wrong theories died on the way here.** Recording them so they are not re-attempted:
+1. *"`hideEvent` → `_sway_timer.stop()` starves the timer."* The code path is real
+   (`stats_panel.py`, `hideEvent`), but two harnesses (bare-ancestor, then the real
+   `stats_panel > QTabWidget > page > tassel` hierarchy, incl. grab + cursor override) both
+   showed **~96% of baseline phase advance**. Not the mechanism. Both harnesses were also sized
+   at a 200ms grab cadence taken from the `COMPOSITED` log lines — that was wrong (the real
+   hide/show cadence is ~64ms; `COMPOSITED` only counts grabs that pass the gates), so the
+   harnesses under-stressed the real condition regardless.
+2. *"The timer is starved by the 64ms restart cycle."* Disproven by the phase data above — zero
+   dropped ticks, clean 0.03/tick advance.
+3. *"A stale blurred overlay pixmap covers the tassel."* Disproven by geometry: the blur rect
+   starts at y=300, the tassel is at y≈0. Nothing covers it.
+
+### Bug 2: `_grab_and_blur`'s own hide/show is a self-sustaining feedback loop
+
+Independently reported by the user as "I don't need the grab and refresh to be this aggressive."
+Confirmed as a real loop, not a tuning preference.
+
+**The loop:** `_grab_and_blur` calls `self._active_panel.hide()` to take its grab → Qt re-exposes
+all 13 tracked transport widgets underneath → `_DirtyRectTracker` sees 13 real Paint events →
+`_schedule_refresh()` arms another grab → repeat.
+
+**Proof it is self-inflicted, not genuine content change:** all 13 widgets repaint within the
+same ~2ms window every cycle (`[DIRTY-TRACE]` timestamps `43.829` → `43.831`, thirteen widgets).
+Independent content changes would not arrive synchronized like that.
+
+**Why `_grab_suppress_until` does not stop it:** the guard is sized at
+`_GRAB_FEEDBACK_SUPPRESS_S = 0.05` (50ms), but the loop round-trips in **~64ms** (measured burst
+gaps: 65, 64, 64, 63, 64, 64, 64, 64…). Every burst lands ~14ms *after* the guard expires, so the
+guard never catches it. The 64ms is the loop's own round-trip time (grab ~3ms + blur + Qt's
+deferred re-expose), not a cadence driven by real content. The guard's declaration comment cites
+a measured ~20ms deferred-paint window; that measurement no longer describes the current path.
+
+**Measured cost (5.1s window):** 163 `_grab_and_blur` calls, **zero** early-returns from any of
+`refresh_dirty`'s gates, and **131 of 158 composites re-grabbed the FULL bounding rect**
+`(10, 300, 260, 198)` rather than a small dirty slice. ~3ms per grab, ~15/sec ≈ 5% of the main
+thread doing work that no content change asked for.
+
+**Why the full-rect unions happen:** `_DirtyRectTracker.eventFilter` builds each dirty rect from
+`obj.size()` (the whole widget) rather than `event.rect()`. But **fixing that alone would buy
+very little** — the trace shows `event.rect()` is usually equal or near-equal to the full widget
+size anyway. The full-rect unions come from `united()`ing 13 widgets spread across the entire
+transport bar (chapter label top-left, speed button bottom-right), not from per-widget
+over-reporting. Do not treat `obj.size()` → `event.rect()` as the fix for this.
+
+### What the user wants from the refresh scope
+
+Only **`chapter_progress`** (the chapter slider) and **`chapter_selector`** (the chapter label,
+and only while it is long enough to scroll) need high-frequency refresh. The other 11 tracked
+widgets — transport buttons, time labels, speed button, sleep timer display — have no genuine
+continuous motion and are only repainting because the loop forces them to.
+
+This points the fix at the loop itself rather than at per-widget throttling: break the
+self-inflicted re-expose and the remaining traffic should collapse to just those two widgets, at
+whatever rate they actually change.
+
+**Blocked on / open question before proposing a fix:** whether the `self._active_panel.hide()`
+in `_grab_and_blur` is strictly necessary. The file already documents an attempt to avoid it
+(grab `content_container` directly with a `bg_main` fill composited underneath), reverted
+2026-07-19 because it broke theme hover-preview/snapback in a way that was **never diagnosed** —
+that coupling is explicitly flagged there as real and unexplained. Any fix that removes or defers
+the hide must confront that first; do not simply retry the reverted approach. Widening
+`_GRAB_FEEDBACK_SUPPRESS_S` past 64ms is the obvious cheap mitigation but it treats the symptom
+and its correct value is a function of the loop's round-trip, which will drift with grab cost.
+
+### Instrumentation still in the tree (deliberate — do NOT remove until both bugs are fixed)
+
+- `ui/stats_panel.py`: `[TASSEL-TRACE]` on `showEvent`/`hideEvent`, `_on_sway_tick` (fired vs.
+  dropped counters, every 10th tick), and `paintEvent` (every 10th paint).
+- `ui/transport_bar_blur.py`: `[DIRTY-TRACE]` in `_DirtyRectTracker.eventFilter`, logging the
+  painting widget's object name, `event.rect()`, and `obj.size()`.
+
+`[DIRTY-TRACE]` is the verification instrument for a Bug 2 fix: **if the fix works, the
+synchronized 13-widget burst collapses to just `chapter_progress`/`chapter_selector`** at their
+genuine change rate. A pre-instrumentation backup of `stats_panel.py` is in this session's
+scratchpad.
+
+**Test baseline unchanged:** `pytest tests/ -q` — only the 4 pre-existing
+`test_cover_theme_pending.py` failures. The instrumentation adds no new failures.
+
+---
+
 ## Open Investigation: Intermittent chapter-number flicker on backward seek to boundary (2026-07-22)
 
 **Status:** Open, low-frequency repro (weeks between occurrences). Instrumentation already in
