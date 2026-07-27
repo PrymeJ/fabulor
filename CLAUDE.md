@@ -358,6 +358,26 @@ would let the hover-preview confinement discard rule (`pending[3]`, unaffected b
 bypassed on replay — see the "Hover-preview theme application must never reach
 `_schedule_deferred_restyle`..." rule area (2026-07-21) for why that confinement exists.
 
+### DO NOT make any panel-dismiss path depend on a *stashed* snapback to restore the active theme
+`_close_settings_flow` (`panels.py`) must call `_on_theme_unhovered()` — which issues a **fresh**
+snapback — *before* `snap_theme_forward()`; `hide_all_panels` and `handle_drag_area_right_click`
+follow the same ordering. That ordering is what guarantees the active theme is applied when a panel
+is dismissed while an unselected preview is showing.
+
+It is load-bearing because `_on_theme_changed`'s interrupt site clears `_pending_fade_call`
+whenever a newer call claims the fade slot (added 2026-07-28 — `_fade_anim.stop()` emits no
+`finished`, so a stash left against a stopped fade is never drained by the site meant to drain it
+and instead fires against the *next* fade: the 775ms flash-then-revert). The clear is correct, and
+the dismiss ordering is what makes it safe. **A dismiss path that instead relied on a stashed
+snapback would silently strand the UI on an unselected preview** — no exception, no failing test,
+just the wrong colors persisting after the panel closes.
+
+This is a silent structural precondition that no assertion enforces: `tests/test_fade_drain.py`
+pins today's drain behaviour but cannot stop a future refactor from routing a dismiss path through
+the stash. Same shape as the "content change that produces no Paint event strands the blur cache"
+class — if you change any dismiss path, re-verify it issues its own snapback rather than inheriting
+one.
+
 ### Only `swatch_box.leaveEvent` may call `_on_themes_tab_left` — never add a second bare `_on_theme_unhovered()` lambda anywhere in the Themes tab hierarchy
 With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch could
 silently never convert into an applied preview — confirmed live (2026-07-22) via a trace showing a
@@ -375,10 +395,25 @@ likely, given the ~200ms cadence — the debounce timer was killed before it cou
 dropping a genuine hover's preview.
 
 **FIXED (2026-07-22), two passes:** `ThemeManager._on_themes_tab_left(tab_widget)`
-(`theme_manager.py`, near `_on_theme_unhovered`) checks `tab_widget.isVisible()` first and skips the
-snapback entirely when the leave fired while the widget was hidden by the blur grab — a real
-mouse-out of any container always happens while it's visible, so this check cannot false-negative a
-genuine leave. Pass 1 wired only `themes_tab.leaveEvent` through it — insufficient in practice.
+(`theme_manager.py`, near `_on_theme_unhovered`) checked `tab_widget.isVisible()` first and skipped
+the snapback entirely when the leave fired while the widget was hidden by the blur grab. **The
+claim recorded here at the time — "a real mouse-out of any container always happens while it's
+visible, so this check cannot false-negative a genuine leave" — was WRONG, and was disproven live
+on 2026-07-28.** It reads visibility at delivery time, so a genuine mouse-out landing inside one of
+the grab's hide windows *was* dropped: measured ~15 synthetic leave/enter pairs per second on a
+perfectly stationary cursor (00:28:13, cursor pinned at `pos=(242,266)`), which is a wide enough
+target to swallow real leaves intermittently. Symptom: moving from a swatch to the right-hand
+dismiss sliver often failed to snap back, leaving the preview stuck.
+
+**SUPERSEDED (2026-07-28):** visibility is no longer consulted. `_on_themes_tab_left` now compares
+the live cursor position against `_hover_seen_pos` (recorded by `_on_theme_hovered` on every genuine
+swatch enter) — the same two-signal shape `ThemeItem` already uses, but without a second wired event
+handler, which the rule below forbids. A blur-grab synthetic leave fires with the cursor unmoved; a
+real mouse-out always moves it first. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel/±1px OS-level mouse
+jitter that would otherwise read as real movement and fire a spurious snapback. Pinned by
+`tests/test_hover_interrupts_snapback.py`.
+
+Pass 1 wired only `themes_tab.leaveEvent` through it — insufficient in practice.
 **`pool_container` (the container at the time) needed the fix too, confirmed live, not assumed from
 the shared lambda shape**: a temporary caller-identifying trace on `_on_theme_unhovered` showed 133
 of 134 calls in one hover session came from `pool_container.leaveEvent`, not `themes_tab.leaveEvent`

@@ -6,7 +6,25 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-27] FIXED (trace-confirmed + unit-pinned, live-verification pending): a theme preview
+- **[2026-07-28] AWAITING LIVE VERIFICATION — three hover/preview bugs fixed (`57a7dd0`,
+  `197e112`, `554476b`).** (1) A hover arriving during a **snapback fade** was stashed and then
+  discarded, so no preview ever appeared and nothing retried it — the interrupt predicate asked
+  `_is_hover_active` (what was last *applied*) instead of what the running fade *is*; fixed with
+  `_fade_is_selection`, which also widens the rule to rotation/cover-theme fades that were
+  swallowing hovers identically. (2) **`048ae3a` reverted** — its guard read a genuine mouse-out as
+  "a preview is live, protect it" and ate legitimate snapbacks (confirmed 3×); the 775ms
+  flash-then-revert it targeted is structural (`_fade_anim.stop()` emits no `finished`) and is now
+  handled by clearing the stash at the interrupt site. (3) The **swatch-leave** check used live
+  `isVisible()`, which the blur grab's ~15/sec ancestor hide/show could false-negative — now
+  discriminated by cursor movement (`_MOUSE_JITTER_PX`). Full analysis: NOTES.md, 2026-07-28.
+  **Two BLOCKING live checks before this closes** (a green suite is not evidence for either — the
+  reverted guard was unit-green and still wrong live): (a) interrupt a genuine click's 750ms
+  settle-fade and confirm the *selected* theme still ends up applied and persisted, across several
+  interrupt timings; (b) the sliver snapback, 10+ repetitions with a book playing, watching for
+  jitter false-negatives (±1-2px movement on a "stationary" cursor reading as a real leave) —
+  `swatch_box`'s geometry is new territory for a mechanism proven only on a single swatch.
+- **[2026-07-27] SUPERSEDED by the entry above — the fix described here was reverted 2026-07-28
+  (`197e112`); see NOTES.md for why the discriminator was wrong: a theme preview
   self-cancelled ~775ms after appearing, with the mouse sitting still.** Repro: hover outside the
   swatch area, come back onto a swatch, hold still — the preview flashes correctly, then reverts to
   the active theme with no user action. Confirmed PRE-EXISTING (reproduced with the same day's

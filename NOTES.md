@@ -1,4 +1,134 @@
-## FIXED: a theme preview self-cancelled ~775ms after appearing, with the mouse sitting still (2026-07-27)
+## FIXED: hover previews swallowed during a snapback fade, plus two adjacent bugs (2026-07-28)
+
+Three independent bugs in the theme hover/preview path, all found by reading live DEBUG traces
+literally rather than by testing a hypothesis. Worth recording mainly because **three separate
+root-cause theories were disproven first**, and each was a plausible read of real evidence.
+
+### The theories that were wrong, and why
+
+1. **"Cycle-count accumulation"** — the handoff framed it as "preview stops applying after N
+   hover cycles", implying state piling up. The prescribed capture (one swatch, repeated, cycle
+   count as the only variable) would have held constant the variable that actually mattered.
+   Disproven by the user: *"go hover on another theme, it works"*.
+2. **"Specific themes go dead"** — my misreading of that correction. Disproven immediately: a theme
+   that missed previewed fine again later.
+3. **"Exit and re-entry of the swatch area is the trigger"** — fit the first capture perfectly.
+   Disproven by *"this time I didn't even go out"*.
+
+The actual trigger is **timing against an in-flight fade**, which any of those paths can produce.
+The lesson is the one already in this file: take the reported symptom literally, and treat a
+correction as invalidating the downstream reasoning, not just the sentence it contradicts.
+
+### BUG 1 — a hover arriving during a SNAPBACK fade was dropped forever
+
+`_hover_interrupts_hover = bool(hover and self._is_hover_active)` decided whether an incoming hover
+could interrupt the running fade. A snapback applies with `hover=False`, so `_mark_theme_applied`
+sets `_is_hover_active=False` — making the snapback fade indistinguishable from a **genuine user
+selection's** settle-fade, the one fade a preview must never interrupt. The hover was stashed, then
+discarded by the 2026-07-21 confinement rule. Nothing retried it, and holding the cursor still did
+not help: only a new `enterEvent` can retrigger a preview, and the cursor had not left.
+
+Live-confirmed twice, identical shape (00:11:14 'Fire and Blood', 00:11:23 'Razorgirl'):
+
+```
+23,127  snapback 'Not the Only Fruit' applied  -> _is_hover_active=False, fade starts
+23,679  hover 'Razorgirl', fade_in_flight=True
+        hover_interrupts_hover=False           -> STASHED
+23,763  fade finishes, drain sees pending[3]=True
+23,933  DISCARDING hover-flagged               -> NO PREVIEW, EVER
+```
+
+Screenshots confirmed the active theme was correctly painted throughout — the snapback repaints
+fine; the *hover* is what vanishes. That ruled out a "bookkeeping-only, screen stale" explanation.
+
+**Root cause:** nothing recorded what STARTED the running fade. `_fade_in_flight` is a plain bool;
+`_save_on_fade` is False for both snapback and selection; `fade_ms` (200 vs 750) is handed to
+`_fade_anim.setDuration()` and never stored. `_is_hover_active` was the only nearby field and it
+answers a different question.
+
+**Fix:** `_fade_is_selection`, written beside every `_fade_in_flight` write and cleared beside every
+clear. Snapback is marked at its sole source (`_on_theme_unhovered`, try/finally) rather than
+sniffed from `fade_ms` — the hover fade duration is user-configurable and could coincidentally equal
+`_SNAPBACK_FADE_MS`.
+
+**Phrased positively on purpose.** It names the ONE forbidden case, so a future fade origin defaults
+to interruptible. The inverse phrasing is precisely how this bug hid: the rule enumerated the exempt
+cases ("hover may interrupt a hover"), so a fade type nobody had considered defaulted to "do not
+interrupt" and silently swallowed hovers. The same reasoning widened the fix to rotation and
+cover-theme fades, which were swallowing hovers identically — deliberate, not incidental.
+
+### BUG 2 — the 048ae3a guard was a regression (reverted)
+
+See the retitled 2026-07-27 entry below for the full analysis. Short version: `_is_hover_active`
+means "the last APPLIED theme was a preview", not "a hover is live now", so after a genuine
+mouse-out it stays True and the guard ate legitimate snapbacks.
+
+**Its replacement is structural rather than inferential.** `_fade_anim.stop()` emits no `finished`,
+so a stash left against a stopped fade is never drained by the site meant to drain it and fires
+against the NEXT fade — that is the real 775ms flash-then-revert, and it predates the guard.
+Clearing `_pending_fade_call` at the interrupt site keys on supersession as a **fact at the moment
+it becomes true**, reads no hover state, and therefore cannot repeat the guard's mistake.
+
+**Post-clear guarantee (why this cannot strand the UI):** every dismiss path calls
+`_on_theme_unhovered()` — issuing a FRESH snapback — before `snap_theme_forward()`. The snapback
+that lands is created *after* any clear could have run, so the clear cannot suppress it. This is a
+silent structural precondition that no assertion enforces, so it is now a CLAUDE.md rule.
+
+### BUG 3 — the swatch-leave check could drop a genuine leave
+
+`_on_themes_tab_left` gated on `tab_widget.isVisible()`, read at delivery time. The 2026-07-22 note
+recorded that this "cannot false-negative a genuine leave" — **that claim was wrong.**
+`settings_panel` is an ANCESTOR of `swatch_box`, and `_grab_and_blur` hides/shows it roughly every
+65ms while a book plays: measured ~15 synthetic leave/enter pairs per second on a perfectly
+stationary cursor (00:28:13, pinned at `pos=(242,266)` across the whole burst). A real mouse-out
+landing in one of those hide windows was silently dropped — the intermittent "snapback didn't work
+when moving to the dismiss sliver".
+
+**Fix:** compare the cursor against `_hover_seen_pos` (recorded on every genuine swatch enter) — the
+same two-signal shape `ThemeItem` uses, but without a second wired `leaveEvent`, which CLAUDE.md
+forbids here. A grab-synthetic leave fires with the cursor unmoved; a real mouse-out always moves it
+first. Visibility is no longer consulted at all. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel OS-level
+mouse-reporting jitter that would otherwise read as movement and fire a spurious snapback.
+
+### Verification
+
+`tests/test_hover_interrupts_snapback.py` (17) + `tests/test_fade_drain.py` (10). The BUG 1 pin was
+confirmed to FAIL against the old predicate before being kept — a test that passes both before and
+after pins nothing. Suite: 246 passed, 4 pre-existing `test_cover_theme_pending.py` failures
+(verified unrelated by stashing).
+
+**Live verification is required and is NOT covered by any of this** — the decision logic is unit
+tested, the Qt paint/timing behaviour cannot be. Two items are merge-blocking: (1) a genuine
+selection's stashed re-call being dropped by the interrupt-clear, and (2) the jitter threshold on
+`swatch_box`'s larger geometry, which is new territory for a mechanism proven only on a single
+swatch. A green suite is not evidence for either — 048ae3a was unit-green and trace-reasoned and
+still wrong live.
+
+## REVERTED (2026-07-28): a theme preview self-cancelled ~775ms after appearing, with the mouse sitting still (2026-07-27)
+
+> **This entry's fix was WRONG and has been reverted (`197e112`).** The symptom and the captured
+> trace below are accurate; the *discriminator* the fix chose was not. Kept in full because the
+> reasoning error is the transferable part.
+>
+> **The error:** `_is_hover_active` was read as "a hover preview is live right now". It actually
+> means "the last **applied** theme was a preview" — sole writer `_mark_theme_applied`, at real
+> apply time. After a **genuine** mouse-out it stays `True`, because only an apply clears it and a
+> discarded snapback never applies. So the guard read a real leave as "protect the preview" and ate
+> the legitimate snapback, stranding the UI on a preview that no longer had a cursor on it.
+> Live-confirmed 3× on 2026-07-28 (00:27:54, 00:28:02, 00:28:07), each following a real
+> `leaveEvent vis=True` — the user-reported "snapbacks didn't work in the sliver area".
+>
+> **What made it look right:** the one captured cycle it was designed against was real, and the
+> guard did fix it. The state it keyed on happened to be correct *in that cycle* and wrong in the
+> general case — the same "correct read of insufficient data" failure as the two theories before it.
+> A single clean trace is not enough to characterise a discriminator; the question to ask of any
+> such flag is "what writes it, and when does it get cleared?", not "is it True in my repro?".
+>
+> **The real cause of the 775ms revert**, found later: `_fade_anim.stop()` emits no `finished`, so a
+> stash left against a stopped fade is never drained by the site meant to drain it, and fires
+> against the *next* fade instead. Structural, and it predates this fix. Now handled at the
+> interrupt site by clearing `_pending_fade_call` when a newer call claims the fade slot — keying on
+> supersession as a fact rather than inferring it from hover state. See the 2026-07-28 entry above.
 
 **Symptom (user-reported):** hover outside the swatch area, come back onto a swatch, hold still. The
 preview appears correctly for a moment, then reverts to the active theme on its own. No mouse
