@@ -271,6 +271,44 @@ class ThemeManager(QObject):
                     f"[FADE-FINISHED-TRACE] _on_fade_finished DISCARDING hover-flagged "
                     f"pending_fade_call={pending!r} (confinement — not replayed)"
                 )
+            elif self._is_hover_active and self._pending_hover_theme is None:
+                # SUPERSEDED-SNAPBACK DISCARD (2026-07-27). The mirror image of the
+                # hover-confinement discard directly above, and the same reasoning
+                # read the other way round: that branch drops a stashed HOVER because
+                # by drain time the user has moved on; this one drops a stashed
+                # SNAPBACK because by drain time the user has moved back ON.
+                #
+                # The bug (confirmed live from a DEBUG trace, not theorised — see
+                # NOTES.md 2026-07-27): leaving the swatch area stashes a snapback
+                # here whenever a fade is in flight (_on_theme_unhovered ->
+                # _on_theme_changed(hover=False) -> the _fade_running branch). If the
+                # cursor then RE-ENTERS and settles on a swatch before that fade
+                # finishes, the debounce fires a genuine preview and applies it — and
+                # then this drain replays the now-obsolete snapback on top, reverting
+                # to the active theme with the mouse sitting perfectly still. Measured
+                # in the captured repro: preview applied at t=01,265, stale snapback
+                # applied at t=02,042 — a visible ~775ms flash-then-revert that no
+                # user action caused. The drain's own trace line already recorded
+                # _is_hover_active=True at that moment; the site simply never looked.
+                #
+                # Discriminator: _is_hover_active is True only when the last
+                # GENUINELY APPLIED call was a hover preview (written by
+                # _mark_theme_applied at real apply time, never on a stashed/skipped
+                # call — see its docstring), so it cannot be True from the abandoned
+                # hover that preceded the leave. _pending_hover_theme is None
+                # additionally confirms no newer hover is still mid-debounce, so this
+                # only fires when a preview is genuinely APPLIED AND SETTLED, not
+                # merely queued. A real un-hover after this point issues its OWN fresh
+                # snapback through the normal path (that call is not stashed —
+                # _fade_in_flight is cleared above before this drain runs), so
+                # discarding here cannot strand the theme on a preview.
+                logger.warning(
+                    f"[FADE-FINISHED-TRACE] _on_fade_finished DISCARDING superseded snapback "
+                    f"pending_fade_call={pending!r} — a live hover preview "
+                    f"(_active_display_theme_internal="
+                    f"{getattr(self, '_active_display_theme_internal', None)!r}) was applied "
+                    f"while this was stashed; replaying it would cancel that preview"
+                )
             else:
                 logger.warning(
                     f"[FADE-FINISHED-TRACE] _on_fade_finished DRAINING pending_fade_call={pending!r} "
