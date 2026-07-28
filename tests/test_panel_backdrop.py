@@ -140,3 +140,62 @@ def test_legacy_setter_still_works():
     assert cfg.get_panel_backdrop() == "frosty"
     cfg.set_blur_enabled(False)
     assert cfg.get_panel_backdrop() == "transparent"
+
+
+# --- the backdrop must never change WHICH theme is applied -----------------
+#
+# THE BUG (user-found 2026-07-28, screenshots): with cover-art mode Exclusive and a
+# blue cover-derived theme live, switching the panel background Opaque <-> Frosty
+# reverted the app to the green POOL theme. A backdrop setting has no business
+# changing colours.
+#
+# Cause: restyle_for_backdrop_change passed tm._current_theme_name (the pool theme)
+# to apply_full_pass instead of tm.get_active_theme(), which is the sanctioned
+# accessor and returns a dict for a live cover theme.
+
+class _FakeTM:
+    def __init__(self, active):
+        self._active = active
+        self._current_theme_name = "PoolTheme"
+        self.applied = []
+
+    def get_active_theme(self):
+        return self._active
+
+    def apply_full_pass(self, theme, hover=False):
+        self.applied.append(theme)
+
+
+class _FakeMain:
+    def __init__(self, tm):
+        self.theme_manager = tm
+
+
+def _restyle(tm):
+    from fabulor.app import VisualsInterface
+    v = VisualsInterface.__new__(VisualsInterface)
+    v._main = _FakeMain(tm)
+    VisualsInterface.restyle_for_backdrop_change(v)
+
+
+def test_restyle_preserves_a_live_cover_theme():
+    # A cover-derived theme is a dict, not a name — passing the pool name here is
+    # what visibly reverted the colours.
+    cover = {"accent": "#3A6A8A", "bg_main": "#0A1A2A"}
+    tm = _FakeTM(cover)
+    _restyle(tm)
+    assert tm.applied == [cover]
+    assert tm.applied != [tm._current_theme_name]
+
+
+def test_restyle_uses_the_pool_theme_when_no_cover_theme_is_live():
+    tm = _FakeTM("PoolTheme")
+    _restyle(tm)
+    assert tm.applied == ["PoolTheme"]
+
+
+def test_restyle_is_a_noop_without_a_theme_manager():
+    from fabulor.app import VisualsInterface
+    v = VisualsInterface.__new__(VisualsInterface)
+    v._main = type("M", (), {})()
+    VisualsInterface.restyle_for_backdrop_change(v)   # must not raise

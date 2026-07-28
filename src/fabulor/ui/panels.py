@@ -402,6 +402,32 @@ class PanelManager:
             self.sidebar_expanded = False
 
         self.sidebar_animation.start()
+        # SIDEBAR-VISIBILITY PROBE (2026-07-28). "App start: right click, no sidebar,
+        # right click, no sidebar, right click, finally sidebar" — the flag flips and
+        # the animation runs on ALL THREE, so the failure is between starting the
+        # slide and the widget being on screen. Records what the animation was
+        # actually told to do and where the widget is when it finishes, since three
+        # hypotheses (width==0, _on_sidebar_hidden, resize_panels) have already been
+        # ruled out by reading code alone.
+        def _probe(_pre=self.sidebar_expanded):
+            try:
+                logger.warning(
+                    f"[SIDEBAR-VIS] settled expanded={_pre} "
+                    f"pos={self.sidebar.pos()} size={self.sidebar.size()} "
+                    f"visible={self.sidebar.isVisible()} hidden={self.sidebar.isHidden()} "
+                    f"parent_visible={self.sidebar.parentWidget().isVisible() if self.sidebar.parentWidget() else None} "
+                    f"end={self.sidebar_animation.endValue()} "
+                    f"opacity={self.sidebar.windowOpacity()}"
+                )
+            except (AttributeError, RuntimeError):
+                pass
+        QTimer.singleShot(340, _probe)
+        logger.warning(
+            f"[SIDEBAR-VIS] start expanded={self.sidebar_expanded} "
+            f"from={self.sidebar_animation.startValue()} to={self.sidebar_animation.endValue()} "
+            f"pos_now={self.sidebar.pos()} visible={self.sidebar.isVisible()} "
+            f"raised_above={self.sidebar.parentWidget().children().index(self.sidebar) if self.sidebar.parentWidget() else None}"
+        )
 
     def _open_library_flow(self):
         # One overlay at a time: drop this open if any overlay is already present, mid-slide,
@@ -1563,6 +1589,16 @@ class PanelManager:
         # swallowed". active_full_panel now excludes a closing panel — see
         # _is_closing — so this chain must not be re-inlined.
         panel = self.active_full_panel()
+        # DISPATCH PROBE (2026-07-28) at WARNING — pairs with [RCLICK] in app.py.
+        # An [RCLICK] with no [RCLICK-BRANCH] means the press never reached here;
+        # a branch that changes nothing visible means it was swallowed downstream.
+        # `closing` is the field that matters for the "close the panel, right click
+        # gets swallowed" report: a panel mid-slide must NOT be dispatched to.
+        logger.warning(
+            f"[RCLICK-BRANCH] panel={panel!r} "
+            f"closing={[k for k, _ in self._CLOSE_ANIMS if self._is_closing(k)]} "
+            f"sidebar_expanded={self.sidebar_expanded}"
+        )
         if panel == "library":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_library")
             self._close_library_flow()
@@ -1589,7 +1625,12 @@ class PanelManager:
             self.main_window.chapter_list_widget.fade_out()
         else:
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=toggle_sidebar (no panel visible)")
+            _pre = self.sidebar_expanded
             self._toggle_sidebar()
+            logger.warning(
+                f"[RCLICK-BRANCH] -> toggle_sidebar {_pre} -> {self.sidebar_expanded}"
+                f"{'  <-- NO CHANGE' if _pre == self.sidebar_expanded else ''}"
+            )
 
     def resize_panels(self):
         """Adjusts panel positions and sizes on window resize."""

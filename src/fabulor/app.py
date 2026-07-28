@@ -195,13 +195,20 @@ class VisualsInterface:
     def restyle_for_backdrop_change(self):
         """One full stylesheet pass, for a panel-backdrop MODE CHANGE only.
 
+        Restyles whatever is ACTUALLY DISPLAYED — get_active_theme() returns a dict
+        for a live cover-derived theme, or the pool theme name otherwise. Passing
+        _current_theme_name here instead was a real bug (2026-07-28): with cover-art
+        mode Exclusive the panel-background setting reverted the app to the pool
+        theme, so switching Opaque/Frosty visibly changed the COLOURS. A backdrop
+        setting must never change which theme is applied.
+
         Deliberately separate from set_blur_selection: that one is a visual sync
         called from the settings refresh batch, and a restyle there fires on every
         sync (~250ms each, three per second — it stuttered the panel slide and
         crashed the app, 2026-07-28)."""
         tm = getattr(self._main, 'theme_manager', None)
         if tm is not None:
-            tm.apply_full_pass(tm._current_theme_name)
+            tm.apply_full_pass(tm.get_active_theme())
 
     def set_blur_selection(self, mode):
         """Paint the panel-backdrop button states. Panel backdrop is
@@ -495,6 +502,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_anim.setDuration(400)
         self.undo_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.undo_anim.finished.connect(self._on_undo_anim_finished)
+
+        # Dedupe set for the [RCLICK] delivery probe in eventFilter.
+        self._rclick_seen = set()
+        self._rclick_n = 0
 
         QApplication.instance().installEventFilter(self)
 
@@ -3514,6 +3525,35 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
+        # RIGHT-CLICK DELIVERY PROBE (restored 2026-07-28). Removed once when the
+        # input-level question looked settled; the panel-CLOSE case was never
+        # covered by that conclusion, and clicks are still going missing there.
+        #
+        # Installed on QApplication, so it sees every press Qt dispatches anywhere,
+        # before any widget handler runs. Deduplicated on event.timestamp(): Qt
+        # dispatches one physical press to several objects, and counting each was
+        # what produced the bogus "236 for 100 clicks" figure the first time round.
+        #
+        # Read it against how many times you actually clicked:
+        #   grep '\[RCLICK\]' fabulor.log | wc -l
+        if event.type() == QEvent.Type.MouseButtonPress:
+            try:
+                if event.button() == Qt.RightButton:
+                    _stamp = int(event.timestamp())
+                    if _stamp not in self._rclick_seen:
+                        self._rclick_seen.add(_stamp)
+                        self._rclick_n = getattr(self, '_rclick_n', 0) + 1
+                        pm = self.panel_manager
+                        logger.warning(
+                            f"[RCLICK] #{self._rclick_n} "
+                            f"active_panel={pm.active_full_panel() if pm else None!r} "
+                            f"sidebar_expanded={pm.sidebar_expanded if pm else None} "
+                            f"any_animating={pm._any_panel_animating() if pm else None} "
+                            f"t={time.perf_counter():.6f}"
+                        )
+            except (AttributeError, RuntimeError):
+                pass
+
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
                 return True
