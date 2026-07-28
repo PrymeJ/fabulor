@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from ..themes import THEMES
+from ..themes import THEMES, preset_ramp_rgb
 from mpv import ShutdownError
 
 # Canonical presets shown in the "Default speed" row. When a non-preset default
@@ -246,25 +246,29 @@ class SpeedControlsPanel(QWidget):
 
     def update_visuals(self, theme_name=None):
         t = self.theme_manager.get_current_theme()
-        accent = QColor(t['accent'])
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 
         for i, btn in enumerate(self._speed_grid_buttons):
-            alpha = int(75 + (180 * (i / (len(self._speed_presets) - 1))))
-            c = QColor(accent)
-            c.setAlpha(alpha)
-            # Per-instance setStyleSheet (needed for the per-button alpha ramp) wins
-            # over the panel-level QPushButton:hover/:pressed QSS, so those states
-            # must be reproduced here explicitly or these buttons never visibly
-            # react to hover/press (found live 2026-07-21 — same shape as the sleep
-            # panel's time-preset ramp, see sleep_timer.py's update_panel_styling).
+            # OPAQUE ramp (2026-07-28). This used to set an ALPHA ramp
+            # (75..255) on the accent, which made the low buttons ~29% opaque and
+            # let whatever sits behind the panel show through them — with a
+            # translucent panel the cover art was legible inside the button grid.
+            # preset_ramp_rgb blends the same progression in colour space instead:
+            # identical look, no bleed. See its docstring for the full mechanism.
+            c = QColor(*(int(v) for v in
+                         preset_ramp_rgb(t, i, len(self._speed_presets)).split(',')))
+            # Per-instance setStyleSheet (needed for the per-button ramp) wins over
+            # the panel-level QPushButton:hover/:pressed QSS, so those states must be
+            # reproduced here explicitly or these buttons never visibly react to
+            # hover/press (found live 2026-07-21 — same shape as the sleep panel's
+            # time-preset ramp, see sleep_timer.py's update_panel_styling).
             hover_c = c.lighter(130)
             pressed_c = c.darker(130)
             btn.setStyleSheet(
-                f"QPushButton {{ background-color: rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()}); "
+                f"QPushButton {{ background-color: rgb({c.red()}, {c.green()}, {c.blue()}); "
                 f"color: {btn_text}; border: none; }}"
-                f"QPushButton:hover {{ background-color: rgba({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}, {hover_c.alpha()}); }}"
-                f"QPushButton:pressed {{ background-color: rgba({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}, {pressed_c.alpha()}); }}"
+                f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
+                f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
             )
 
         def sync_btn(group, current):

@@ -2911,6 +2911,56 @@ def _hex_to_rgb(hex_str):
     h = hex_str.lstrip('#')
     return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
 
+# Sleep/Speed preset-button ramp. Reproduces the span of the OLD alpha ramp
+# (75..255 out of 255) as colour-mix ratios, so the visual progression is unchanged
+# while the emitted colours are fully opaque. See preset_ramp_rgb.
+_RAMP_MIN_MIX = 75 / 255
+_RAMP_MAX_MIX = 1.0
+
+
+def preset_ramp_rgb(theme, index, count):
+    """OPAQUE "r,g,b" string for step `index` of `count` in the Sleep/Speed preset
+    ramp — blended from the panel background toward the theme accent.
+
+    Callers emit it as `rgb({...})`, never `rgba(...)`. Returns a plain string
+    rather than a QColor because this module is deliberately Qt-free (it builds
+    stylesheet text and imports only `math`).
+
+    WHY THIS EXISTS (2026-07-28, user-found with screenshots). Both panels built the
+    ramp by varying ALPHA on the accent —
+    `alpha = int(75 + (180 * (i / (n - 1))))`, emitted as
+    `background-color: rgba(r, g, b, alpha)` — so the low-alpha buttons were only
+    ~29% opaque and composited against whatever sat behind the panel. Since every
+    theme's `panel_opacity_hover` is 0.88-0.95, that meant the COVER ART showed
+    through: the words "INFINITE JEST" were legible inside the Playback-speed grid.
+
+    The ramp is meant to be a purely visual progression — buttons reading as
+    progressively stronger toward the longer durations / higher speeds. Alpha
+    achieved that but with a side effect on everything behind it. Blending the same
+    ratio in COLOUR SPACE looks the same on an opaque panel and cannot bleed.
+
+    The blend base is `bg_main`, which is what the old alpha was compositing against
+    in the normal case, so the appearance is preserved rather than re-tuned.
+
+    NOTE for the three-state panel background (Transparent | Frosty glass | Opaque,
+    TODO.md): this is what makes that safe. Under Opaque the old bug would have been
+    invisible rather than fixed; under Transparent it would have been worse.
+    """
+    def _rgb(hex_str, fallback):
+        h = (hex_str or fallback).lstrip('#')
+        if len(h) != 6:
+            h = fallback.lstrip('#')
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+    base = _rgb(theme.get('bg_main'), '#000000')
+    accent = _rgb(theme.get('accent'), '#888888')
+    span = max(1, count - 1)
+    ratio = _RAMP_MIN_MIX + (_RAMP_MAX_MIX - _RAMP_MIN_MIX) * (index / span)
+    return ",".join(
+        str(round(b + (a - b) * ratio)) for b, a in zip(base, accent)
+    )
+
+
 def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
     """Helper to construct qlineargradient or fallback to flat color/rgba."""
     start = t.get(f"gradient_{prefix}_start")
