@@ -1342,22 +1342,54 @@ class PanelManager:
     # PanelManager already owns every _close_*_flow and the visible-panel priority chain
     # (handle_drag_area_right_click), so close-logic and "which panel is open" stay in one place.
 
+    _CLOSE_ANIMS = (
+        ("library", "library_panel_animation"),
+        ("settings", "settings_panel_animation"),
+        ("speed", "speed_panel_animation"),
+        ("sleep", "sleep_panel_animation"),
+        ("stats", "stats_panel_animation"),
+        ("tags", "tags_panel_animation"),
+    )
+
+    def _is_closing(self, key):
+        """True while `key`'s panel is mid-slide — still isVisible(), but on its way
+        out (2026-07-28).
+
+        A panel stays isVisible() for the WHOLE close animation, so
+        active_full_panel used to keep naming it for another ~300ms after the user
+        had already dismissed it. A right-click arriving in that window was routed
+        to that panel's close flow, which early-returns while its own animation runs
+        — so the click was silently swallowed instead of falling through to the
+        sidebar toggle. Reported live: "close the panel, right click gets
+        swallowed."
+
+        Same shape as the sidebar drop fixed earlier today, in four more places
+        (_close_speed_flow / _close_sleep_flow / _close_stats_flow /
+        _close_tags_flow all guard identically). Fixed here rather than in each
+        flow: those guards are correct — restarting a running slide would break it —
+        the bug is that the DISPATCHER treated a closing panel as an open one.
+        """
+        anim = getattr(self, dict(self._CLOSE_ANIMS).get(key, ""), None)
+        return anim is not None and anim.state() == QAbstractAnimation.State.Running
+
     def active_full_panel(self):
         """Which single full panel/overlay is currently open, as a string key
         ('library'/'settings'/'speed'/'sleep'/'stats'/'tags'/'book_detail'/'chapter_list'),
         or None. Same visibility checks and priority order as handle_drag_area_right_click —
-        there is no existing single accessor, so this centralizes it."""
-        if self.library_panel.isVisible():
+        there is no existing single accessor, so this centralizes it.
+
+        A panel that is mid-CLOSE does not count as open — see _is_closing."""
+        if self.library_panel.isVisible() and not self._is_closing("library"):
             return "library"
-        if self.settings_panel.isVisible():
+        if self.settings_panel.isVisible() and not self._is_closing("settings"):
             return "settings"
-        if self.speed_panel.isVisible():
+        if self.speed_panel.isVisible() and not self._is_closing("speed"):
             return "speed"
-        if self.sleep_panel.isVisible():
+        if self.sleep_panel.isVisible() and not self._is_closing("sleep"):
             return "sleep"
-        if self.stats_panel.isVisible():
+        if self.stats_panel.isVisible() and not self._is_closing("stats"):
             return "stats"
-        if self.tags_panel.isVisible():
+        if self.tags_panel.isVisible() and not self._is_closing("tags"):
             return "tags"
         if self.book_detail_panel and self.book_detail_panel.isVisible():
             return "book_detail"
@@ -1522,28 +1554,37 @@ class PanelManager:
             f"sidebar_expanded={self.sidebar_expanded}"
         )
         self.library_panel.cancel_preload()
-        if self.library_panel.isVisible():
+        # Route through active_full_panel rather than re-deriving the chain here.
+        # This used to be a duplicated isVisible() ladder, which meant a panel
+        # mid-CLOSE (still isVisible() for its whole ~300ms slide) was treated as
+        # open: the right-click went to that panel's close flow, which early-returns
+        # while its own animation runs, and the click vanished instead of falling
+        # through to the sidebar. Reported live as "close the panel, right click gets
+        # swallowed". active_full_panel now excludes a closing panel — see
+        # _is_closing — so this chain must not be re-inlined.
+        panel = self.active_full_panel()
+        if panel == "library":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_library")
             self._close_library_flow()
-        elif self.settings_panel.isVisible():
+        elif panel == "settings":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_settings")
             self._close_settings_flow()
-        elif self.speed_panel.isVisible():
+        elif panel == "speed":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_speed")
             self._close_speed_flow()
-        elif self.sleep_panel.isVisible():
+        elif panel == "sleep":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_sleep")
             self._close_sleep_flow()
-        elif self.stats_panel.isVisible():
+        elif panel == "stats":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_stats")
             self._close_stats_flow()
-        elif self.tags_panel.isVisible():
+        elif panel == "tags":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_tags")
             self._close_tags_flow()
-        elif self.book_detail_panel and self.book_detail_panel.isVisible():
+        elif panel == "book_detail":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_book_detail")
             self._close_book_detail_flow()
-        elif self.main_window.chapter_list_widget.isVisible():
+        elif panel == "chapter_list":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=chapter_list_fade_out")
             self.main_window.chapter_list_widget.fade_out()
         else:

@@ -426,3 +426,71 @@ def test_repeated_clicks_schedule_exactly_one_replay():
     for _ in range(6):
         PanelManager._toggle_sidebar(pm)
     assert len(pm.settled_calls) == 1
+
+
+# --- Group E: a CLOSING panel is not an open one --------------------------
+#
+# THE BUG (reported live 2026-07-28): "close the panel, right click gets
+# swallowed." A panel stays isVisible() for its whole ~300ms close slide, so the
+# right-click dispatcher still named it as the active panel and routed the click to
+# that panel's close flow — which early-returns while its own animation runs. The
+# click vanished instead of falling through to the sidebar toggle.
+#
+# Same shape as the sidebar drop fixed earlier the same day, in four more places.
+# Fixed at the DISPATCHER, not in each close flow: those guards are correct
+# (restarting a running slide would break it); the bug was treating a closing panel
+# as an open one.
+
+class _Anim:
+    def __init__(self, running):
+        from PySide6.QtCore import QAbstractAnimation
+        self._running = running
+        self._R = QAbstractAnimation.State.Running
+        self._S = QAbstractAnimation.State.Stopped
+
+    def state(self):
+        return self._R if self._running else self._S
+
+
+class _Panel:
+    def __init__(self, visible):
+        self._visible = visible
+
+    def isVisible(self):
+        return self._visible
+
+
+def _make_dispatch_pm(*, visible, closing):
+    pm = PanelManager.__new__(PanelManager)
+    for key, attr in PanelManager._CLOSE_ANIMS:
+        setattr(pm, f"{key}_panel" if key != "library" else "library_panel",
+                _Panel(key == visible))
+        setattr(pm, attr, _Anim(key == closing))
+    pm.book_detail_panel = None
+    pm.main_window = type("MW", (), {"chapter_list_widget": _Panel(False)})()
+    return pm
+
+
+def test_settled_open_panel_is_reported():
+    pm = _make_dispatch_pm(visible="settings", closing=None)
+    assert pm.active_full_panel() == "settings"
+
+
+def test_closing_panel_is_not_reported_as_open():
+    # THE PIN. Still isVisible(), but mid-slide — so the next right-click must fall
+    # through to the sidebar rather than being eaten by the close flow.
+    pm = _make_dispatch_pm(visible="settings", closing="settings")
+    assert pm.active_full_panel() is None
+
+
+@pytest.mark.parametrize("key", ["library", "settings", "speed", "sleep", "stats", "tags"])
+def test_every_closing_panel_falls_through(key):
+    # All six close flows have the identical early-return guard, so all six had the
+    # bug — not just the settings panel the user happened to report it on.
+    pm = _make_dispatch_pm(visible=key, closing=key)
+    assert pm.active_full_panel() is None
+
+
+def test_is_closing_is_false_for_an_unknown_key():
+    pm = _make_dispatch_pm(visible=None, closing=None)
+    assert pm._is_closing("nonexistent") is False
