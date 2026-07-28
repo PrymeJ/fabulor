@@ -328,14 +328,19 @@ def test_resume_redefers_into_the_timer_if_the_panel_is_still_open():
     assert tm._panel_guard_timer.starts == 1
 
 
-# --- Group D: sidebar toggle queued instead of dropped ----------------------
+# --- Group D: sidebar toggle defers to a TARGET STATE, not a queued toggle ---
 #
-# Measured live 2026-07-28: 5 of 25 sidebar right-clicks (20%) were silently
-# discarded by _toggle_sidebar's re-entrancy guard. Four arrived within the 300ms
-# slide (gaps 164/250/274/290ms vs a 408ms median click interval) — click a little
-# faster than the animation and the click vanished with no trace. Also the
-# "misses especially after the panel was closed" case, since a panel close leaves
-# animations in flight.
+# Two live-measured failures shaped this:
+#   1. Original: the re-entrancy guard silently DISCARDED clicks arriving during the
+#      300ms slide. 5 of 25 (20%) lost, four inside the slide window.
+#   2. First fix (queue the toggle): each replay STARTED A NEW SLIDE that caught the
+#      next click, which queued, which replayed... Eight consecutive toggles at
+#      306-322ms, the sidebar running continuously one step behind the user, while the
+#      log reported 26 clicks -> 26 toggles with "zero losses".
+#
+# Root error in (2): queueing a RELATIVE operation. The user is asking for the sidebar
+# to END UP somewhere, so the deferred value is the desired FINAL state and repeated
+# clicks overwrite it — an even number during one slide cancels out.
 
 class _FakeSidebarAnim:
     def __init__(self, running):
@@ -348,62 +353,76 @@ class _FakeSidebarAnim:
         return self._R if self._running else self._S
 
 
-def _make_sidebar_pm(anim_running):
+def _make_sidebar_pm(anim_running, expanded=False):
     pm = PanelManager.__new__(PanelManager)
     pm.sidebar_animation = _FakeSidebarAnim(anim_running)
-    pm.sidebar_expanded = False
+    pm.sidebar_expanded = expanded
     pm._sidebar_toggle_queued = False
+    pm._sidebar_pending_target = None
     pm.settled_calls = []
     pm.call_when_panels_settled = lambda cb: pm.settled_calls.append(cb)
-    pm.entered = []
     return pm
 
 
-def test_toggle_during_slide_is_queued_not_dropped():
-    # THE BUG. Previously this returned silently and the click was lost.
-    pm = _make_sidebar_pm(anim_running=True)
+def test_click_during_slide_defers_a_target_not_a_toggle():
+    # Slide heading to expanded=True; one click during it means "no, I want False".
+    pm = _make_sidebar_pm(anim_running=True, expanded=True)
     PanelManager._toggle_sidebar(pm)
-    assert pm._sidebar_toggle_queued is True
+    assert pm._sidebar_pending_target is False
     assert len(pm.settled_calls) == 1
 
 
-def test_repeated_toggles_during_one_slide_coalesce():
-    # A burst must settle on ONE net toggle, not queue several sequential slides
-    # that keep moving after the user stops clicking.
-    pm = _make_sidebar_pm(anim_running=True)
-    for _ in range(5):
-        PanelManager._toggle_sidebar(pm)
-    assert len(pm.settled_calls) == 1
-
-
-def test_queued_toggle_replays_once_settled():
-    pm = _make_sidebar_pm(anim_running=True)
+def test_two_clicks_during_one_slide_cancel_out():
+    # THE RUNAWAY PIN. Under the queued-toggle design these produced extra slides.
+    # As a target, the second click restores the in-flight destination -> no-op.
+    pm = _make_sidebar_pm(anim_running=True, expanded=True)
     PanelManager._toggle_sidebar(pm)
-    replay = pm.settled_calls[0]
-    pm.sidebar_animation._running = False          # slide finished
-    calls = []
-    pm._toggle_sidebar = lambda: calls.append(1)   # observe the re-entry
-    replay()
-    assert pm._sidebar_toggle_queued is False
-    assert calls == [1]
-
-
-def test_queued_replay_stands_down_if_still_animating():
-    # call_when_panels_settled waits on ALL animations, so the settle can arrive
-    # with the sidebar's own slide still running. Re-check rather than assume.
-    pm = _make_sidebar_pm(anim_running=True)
     PanelManager._toggle_sidebar(pm)
+    assert pm._sidebar_pending_target is True      # back to where the slide is heading
+    assert len(pm.settled_calls) == 1              # still only one replay scheduled
+
+
+def test_satisfied_target_starts_no_new_slide():
+    # The cycle's source: replaying when the target already matches state started a
+    # fresh slide, which caught the next click.
+    pm = _make_sidebar_pm(anim_running=True, expanded=True)
+    PanelManager._toggle_sidebar(pm)
+    PanelManager._toggle_sidebar(pm)               # cancels out -> target True
     replay = pm.settled_calls[0]
+    pm.sidebar_animation._running = False
     calls = []
     pm._toggle_sidebar = lambda: calls.append(1)
-    replay()                                        # still running
-    assert calls == []
-    assert pm._sidebar_toggle_queued is False       # flag cleared so a later click re-queues
+    replay()
+    assert calls == []                             # no slide started
+    assert pm._sidebar_pending_target is None      # consumed
 
 
-def test_flag_clears_so_a_later_click_can_queue_again():
-    pm = _make_sidebar_pm(anim_running=True)
+def test_unsatisfied_target_applies_once_settled():
+    pm = _make_sidebar_pm(anim_running=True, expanded=True)
+    PanelManager._toggle_sidebar(pm)               # target False, state True
+    replay = pm.settled_calls[0]
+    pm.sidebar_animation._running = False
+    calls = []
+    pm._toggle_sidebar = lambda: calls.append(1)
+    replay()
+    assert calls == [1]
+    assert pm._sidebar_pending_target is None
+
+
+def test_replay_stands_down_if_still_animating():
+    # call_when_panels_settled waits on ALL animations, so the sidebar's own slide can
+    # still be running when the settle arrives.
+    pm = _make_sidebar_pm(anim_running=True, expanded=True)
     PanelManager._toggle_sidebar(pm)
-    pm.settled_calls[0]()                           # replay (still animating -> stands down)
-    PanelManager._toggle_sidebar(pm)                # a NEW click during a new slide
-    assert len(pm.settled_calls) == 2
+    calls = []
+    pm._toggle_sidebar = lambda: calls.append(1)
+    pm.settled_calls[0]()
+    assert calls == []
+    assert pm._sidebar_toggle_queued is False      # a later click can defer again
+
+
+def test_repeated_clicks_schedule_exactly_one_replay():
+    pm = _make_sidebar_pm(anim_running=True, expanded=False)
+    for _ in range(6):
+        PanelManager._toggle_sidebar(pm)
+    assert len(pm.settled_calls) == 1
