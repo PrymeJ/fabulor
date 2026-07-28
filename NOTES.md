@@ -1,3 +1,87 @@
+## OPEN: sidebar right-click sometimes does nothing, and the log says it worked (2026-07-28, unresolved)
+
+**Status: not fixed. Three mechanisms proposed and disproven tonight.** Read this before proposing
+a fourth — the eliminations are the value here.
+
+**Symptom:** right-click the main window (the only way to open the sidebar — no panel open). Nothing
+appears. Click again, it opens. Sometimes needs three clicks.
+
+### The contradiction that matters
+
+Captured 21:49:24 with `[SIDEBAR-VIS]` in place:
+
+| | what the log says | what the user saw |
+|---|---|---|
+| click A (21:49:24,144) | `[RCLICK] #19` -> `_toggle_sidebar` opening -> `False -> True` -> settled `pos=(0,56) size=(70,200) visible=True hidden=False parent_visible=True` | **nothing** |
+| click B (~1-2s later) | **no log lines at all** | **sidebar opened** |
+
+The click the app recorded as a complete success was invisible; the click it never saw is the one
+that worked.
+
+**The user's objection, which is unanswered:** if the app believed the sidebar was open after click
+A, click B should have logged a CLOSE. It opened instead. So either `sidebar_expanded` went back to
+False through a path that logs nothing, or the `[RCLICK]` at 21:49:24 does not correspond to the
+press the user made. Both are unexplained.
+
+### Disproven tonight
+
+1. **`sidebar.width() == 0` before first layout.** `width=70`, `pos=(-70,56)`, endpoints
+   `(-70,56)->(0,56)` — identical on failing and succeeding opens.
+2. **`_on_sidebar_hidden` resetting state.** It guards on `not self.sidebar_expanded`; harmless.
+3. **`resize_panels` repositioning.** It sets the sidebar's height only, never its x.
+4. **Widget geometry/visibility at settle.** `[SIDEBAR-VIS]` shows the failing open ending
+   byte-identical to the working one (`21:49:03` vs `21:49:24`): same position, size, visibility,
+   parent visibility, animation end value.
+
+Earlier the same day, also disproven for the broader right-click-loss question (see the "six
+disproven mechanisms" entry): blur, hover-fade duration, hit-testing/widget state, the animation
+guard, and the mouse/input stack (a bare Qt widget took 100 clicks and lost none, on two mice).
+
+### What is left
+
+Every property readable from the widget is correct in the failing case. That points at
+**compositing/paint** rather than state — the class of thing this codebase already documents as
+invisible to offscreen inspection (see the 2026-07-27 blur entry, where scripted comparison returned
+byte-identical output for a plainly visible defect).
+
+Next measurement, not yet taken: whether a Paint event is actually delivered to the sidebar across
+the slide in the failing case. If none arrives, that is the answer.
+
+**Probes currently in the tree** (uncommitted at session end, safe to keep):
+`[RCLICK]` (app.py, deduplicated per physical press), `[RCLICK-BRANCH]` (panels.py, dispatch
+decision + which panels are mid-close), `[SIDEBAR-VIS]` (panels.py, animation endpoints + settled
+geometry).
+
+---
+
+## PARTIALLY FIXED: full restyles during ordinary interaction — the "fixed" claim was measured wrong (2026-07-28)
+
+**What was fixed** (`a41698c`): the three-state backdrop shipped with `apply_full_pass` inside
+`set_blur_selection`, which is a VISUAL SYNC called from the settings refresh batch — so every sync
+became a ~250ms blocking restyle. Measured at three per second, ~75% of the main thread; it
+stuttered the panel slide and then the app stopped starting. Moved to a dedicated
+`restyle_for_backdrop_change` on the mode-change path only.
+
+**What was NOT fixed, and how the claim went wrong.** That fix was verified by launching the app and
+counting restyles over 25 seconds — while the app sat IDLE. Zero, naturally, because nothing was
+happening. The user's response, which was correct: *"'Panel slide still smooth' — I have doubts
+about this one."*
+
+Re-measured under real interaction (21:47:24-21:49:27, a two-minute session):
+**23 full restyles at ~250ms each**, in bursts 1.5-2.5s apart. Roughly 160-186ms of each is
+`mw.setStyleSheet(base)` alone.
+
+**Caller unidentified.** None of the 23 has a `[BLEED-TRACE] _on_theme_changed`, a
+`_toggle_sidebar ENTRY`, or a `complete_main_fade ENTRY` next to it, so the obvious paths are ruled
+out. `complete_main_fade` and `snap_theme_forward` are the only two direct callers of
+`_apply_stylesheets` outside `_on_theme_changed`; neither appears in the trace.
+
+This is very likely what the user perceives as a rough panel slide, and it predates tonight's work.
+
+**The transferable lesson:** measuring a cost on an idle app answers nothing. The same trap is
+already documented for the blur-grab cost (2026-07-27). Verify under the interaction that triggers
+the work.
+
 ## FIXED: cover art visible through the Sleep/Speed preset buttons — an alpha ramp where a colour ramp was meant (2026-07-28, `fa6d301`)
 
 **Symptom:** user-found while checking panel opacity, with screenshots — the words "INFINITE JEST"

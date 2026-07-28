@@ -126,6 +126,41 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
   confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
+- **[2026-07-28] OPEN — sidebar right-click sometimes does nothing, and the log says it worked.**
+  Right-click the main window with no panel open (the only way to open the sidebar). Nothing
+  appears; the next click opens it. Sometimes takes three.
+  **The contradiction to solve** (captured 21:49:24 with `[SIDEBAR-VIS]`): the click the app logged
+  as a full success — `[RCLICK]` -> toggle `False -> True` -> widget settled at `pos=(0,56)
+  size=(70,200) visible=True hidden=False parent_visible=True` — showed nothing on screen, while
+  the NEXT click logged nothing at all and visibly opened it. **The user's unanswered objection:**
+  if the app thought the sidebar was open after the first click, the second should have logged a
+  CLOSE. It opened instead.
+  **Four mechanisms disproven** (detail in NOTES.md, "OPEN: sidebar right-click sometimes does
+  nothing"): `sidebar.width()==0`, `_on_sidebar_hidden`, `resize_panels`, and widget
+  geometry/visibility at settle — the failing open is byte-identical to a working one on every
+  readable property. Plus the six eliminated earlier in the day for the broader right-click
+  question.
+  **Next measurement, not yet taken:** whether a Paint event is delivered to the sidebar across the
+  slide in the failing case. Everything readable is correct, which points at compositing rather than
+  state — the class this codebase already documents as invisible to offscreen inspection.
+  Probes in the tree: `[RCLICK]`, `[RCLICK-BRANCH]`, `[SIDEBAR-VIS]`.
+- **[2026-07-28] OPEN — ~250ms full restyles during ordinary interaction; the earlier "fixed" claim
+  was measured on an IDLE app.** `a41698c` genuinely fixed a 3/sec storm (a restyle wrongly placed
+  on the settings visual-sync path). It was then verified by counting restyles over 25 idle seconds
+  — zero, because nothing was happening. The user doubted it; re-measured under real interaction,
+  **23 full restyles at ~250ms each in two minutes**, bursts 1.5-2.5s apart, ~160-186ms of each
+  being `mw.setStyleSheet(base)`.
+  **Caller unidentified:** none of the 23 has a `[BLEED-TRACE] _on_theme_changed`,
+  `_toggle_sidebar ENTRY` or `complete_main_fade ENTRY` alongside it, so the obvious paths are out.
+  Predates tonight's work; very likely what reads as a rough panel slide. Lesson recorded in
+  NOTES.md: measuring a cost on an idle app answers nothing — the same trap as the 2026-07-27
+  blur-grab measurement.
+- **[2026-07-28] UNVERIFIED — three commits landed without live confirmation.** `3132be7`
+  (three-state panel background), `a41698c` (restyle-storm fix, now known partial — see above),
+  `a4f4e71` (mid-close panel no longer dispatched to on right-click). The backdrop feature crashed
+  the app before it could be tested, and the session ended before any of the three were confirmed.
+  Verify or revert rather than building on them. `f3221f6` (backdrop must not change the applied
+  theme) IS confirmed correct by the user.
 - **[2026-07-28] Some themes need a preset-ramp colour override — known theme-data issue, not a code
   bug.** Exposed (not caused) by `fa6d301`, which replaced the Sleep/Speed alpha ramp with an honest
   `bg_main` -> `accent` colour blend. The old alpha version composited against the cover art as well
