@@ -16,9 +16,13 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   site — `grep 'OUTCOME' fabulor.log | grep 'applied=False'` should stay empty for right-clicks.
   Six candidate causes were eliminated en route (hardware, input stack, blur, hit-testing, restyle
   load, animation) — kept in NOTES.md so they are not re-derived.
-  **Still open, unrelated:** the theme-swatch log-vs-eyes disagreement from the morning (log said
-  89/90 clicks applied distinct themes; user watched half the early ones do nothing — the recording
-  would settle it) and one 1046ms sidebar drop the slide window does not explain.
+  **Two adjacent threads also closed (2026-07-28, same session):** (a) the morning's theme-swatch
+  log-vs-eyes disagreement (log said 89/90 clicks applied distinct themes while half appeared to do
+  nothing) — no longer reproducible after this fix, which is consistent with it having been the same
+  one-step-behind bug seen before it was understood; (b) the single 1046ms sidebar drop the 300ms
+  slide window did not explain — 30 further app starts with right-clicks, with and without cover-based
+  themes, produced no missed sidebar toggles at all. Both put to bed unless they recur; the DEBUG
+  regression detector above is how (a) would be spotted again.
 - **[2026-07-28] CLOSED (live-verified): sidebar right-clicks discarded mid-slide** (`f0dbc99`,
   `911b4c5`). The re-entrancy guard silently dropped 5 of 25 clicks (20%) arriving inside the 300ms
   slide. The first fix — queueing the toggle — was worse: each replay started a new slide that
@@ -122,6 +126,19 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
   confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
+- **[2026-07-28] NEW (user's own list): three-state panel background — Transparent | Frosty glass |
+  Opaque.** Today the panel backdrop is a BOOLEAN (`blur_enabled`), so this is a widening, not an
+  addition. Scope, from a read of the call sites: `config.get_blur_enabled`/`set_blur_enabled`
+  (stored as the string "true"/"false"), the `blur_mode_changed` signal and
+  `settings_controller._update_blur_mode`/`_update_blur_visuals`, `panels.apply_blur_live`, and
+  the branches in `panels.py` (`_start_visual_area_blur`, `set_blur_selection_live`,
+  `_apply_transport_bar_blur`) plus one in `app.py`. Frosty glass is presumably today's blur;
+  Transparent and Opaque are the new poles.
+  Worth settling before starting: whether Opaque means the panel paints a solid theme colour (in
+  which case `_panel_hides_everything` in `transport_bar_blur.py` already has the "nothing behind
+  this is visible, skip the grab" machinery and should be reused — see the Timeline-tab precedent),
+  and whether the three-state setting should keep the old boolean key for backward compatibility or
+  migrate it. Not started.
 - **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
   Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
@@ -138,14 +155,21 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
   Needs live instrumentation added first to catch an occurrence with real state, before any fix is
   attempted — do not fix blind. Not started.
-- **[2026-07-21] "Cover art based theme" should trigger a live PREVIEW on hover even when its mode
-  is Off.** Right now `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns if
-  `self._cover_theme` is None, and with cover-art mode Off there's effectively no preview — hovering
-  the "Cover art based theme" entry does nothing. Desired: hovering it should preview the cover-
-  derived theme regardless of the Off/With pool/Exclusive selection, so the user can see what it
-  would look like before committing. Not started — needs to confirm a cover theme is buildable for
-  the current book (there may be no cover / no `_cover_theme` computed while mode is Off) before it
-  can preview anything.
+- **[2026-07-21, spec expanded 2026-07-28] "Cover art based theme": hover should preview, and
+  right-click should activate, regardless of the current mode.** Two halves, both from the user:
+  **(a) Hover preview.** `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns when
+  `self._cover_theme` is None, so with mode Off, hovering the "Cover art based theme" entry does
+  nothing. It should preview the cover-derived theme whatever the Off/With pool/Exclusive selection
+  is, so the look can be seen before committing. Needs to confirm a cover theme is BUILDABLE for the
+  current book first (there may be no cover, or no `_cover_theme` computed while mode is Off) —
+  that check is the actual work; the preview call itself already exists.
+  **(b) Right-click activates from Off.** Currently: mode Off → right-clicking the label is a no-op;
+  mode With pool → right-click sets it. Desired: right-click under Off should ALSO activate it, and
+  switch the mode to With pool. Rationale (user's): right-click means "I want this", and Off is just
+  a state to move out of rather than a reason to refuse.
+  Note both halves sit on the hover/preview path that changed twice on 2026-07-28 (hover interrupts
+  any fade; selections interrupt too) — re-read those before touching, since a preview arriving
+  mid-fade now behaves differently than when this entry was written.
 - **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
   later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
   the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
@@ -163,7 +187,11 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   multi-minute+ repeated cycling), so keep as pending rather than closed until a longer soak
   confirms it holds. Full root-cause detail, the audit trail, and the fix mechanism for both
   passes: NOTES.md, "Theme-bleed Pass 1 + Pass 2" entry, 2026-07-20. Session narrative: SESSION.md,
-  Session 3, 2026-07-20. Separately, still open: general responsiveness was reported slow after
+  Session 3, 2026-07-20.
+  **Repro recipe (clarified 2026-07-28):** the soak needs hover-a-swatch-to-preview and then CLOSE
+  THE PANEL, repeatedly. A long session spent *inside* the Themes tab does not exercise it — the
+  2026-07-28 session did hundreds of hovers and selections without touching this path, so that day's
+  clean result is NOT evidence either way. Separately, still open: general responsiveness was reported slow after
   this fix landed — not soak-related, not yet triaged. Candidate follow-up (not started): the new
   responsiveness complaint may be the hover gate's decline path adding overhead elsewhere, or may
   be unrelated — needs live profiling, not assumed.
