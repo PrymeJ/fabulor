@@ -28,6 +28,13 @@ _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 _BLUR_IN_MS = 1500
 _BLUR_OUT_MS = 500
 
+# Re-check cadence for call_when_panels_settled's settle watch. One frame at
+# 60fps: caps the overshoot past the true settle instant at ~16ms, versus the
+# up-to-700ms overshoot the theme guard's _PANEL_ANIM_GUARD_MS poll used to add
+# on top of a 1500ms blur-in. Each tick is nine cheap QAbstractAnimation.state()
+# reads, so ~90 wakeups across a blur-in is negligible.
+_SETTLE_POLL_MS = 16
+
 class PanelManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -60,6 +67,24 @@ class PanelManager:
         self.book_detail_panel: "BookDetailPanel | None" = None
         self.book_detail_panel_animation: QPropertyAnimation | None = None
         self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
+
+        # Settle watch for call_when_panels_settled (see that method). Deliberately
+        # a predicate re-check rather than a `finished` subscription — QPropertyAnimation
+        # .stop() does NOT emit `finished` (verified empirically 2026-07-28; also
+        # asserted at theme_manager.py's three stop()-related comments), and
+        # blur_animation.stop() runs unconditionally on every panel open
+        # (_start_visual_area_blur) and on blur-toggle-off, so a signal-based resume
+        # would be silently dropped exactly as it was three times against _fade_anim.
+        #
+        # timeout is connected ONCE, here, permanently: there is no per-call connect
+        # anywhere in this mechanism, so a stale connection is unrepresentable and a
+        # double-fire is structurally impossible.
+        self._settled_watch_timer = QTimer(main_window)
+        self._settled_watch_timer.setSingleShot(True)
+        self._settled_watch_timer.setInterval(_SETTLE_POLL_MS)
+        self._settled_watch_timer.timeout.connect(self._on_settled_watch_tick)
+        self._settled_watch_armed = False
+        self._panels_settled_waiters: list = []
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -1051,6 +1076,81 @@ class PanelManager:
         if self.book_detail_panel_animation:
             animations.append(self.book_detail_panel_animation)
         return any(anim.state() == QAbstractAnimation.State.Running for anim in animations)
+
+    def call_when_panels_settled(self, callback):
+        """Invoke `callback` once nothing in `_any_panel_animating()` is running.
+        Synchronous and immediate when nothing is running — the panel-side analogue
+        of ClickSlider.when_animations_done (ui/controls.py).
+
+        WHY THIS EXISTS (2026-07-28). `ThemeManager._on_theme_changed`'s animation
+        guard used to defer via a flat 700ms retry timer (`_PANEL_ANIM_GUARD_MS`).
+        Against a 1500ms blur-in that guarantees at least two retry rounds and adds
+        up to 700ms of pure polling overshoot: the first theme hover after opening
+        Settings took ~2.1s to preview, every time (live-traced 03:34:44-47). Slides
+        are only 200-300ms AND finish before the blur starts (`_start_visual_area_blur`
+        is called FROM the slide-finished callback), so the blur is the long pole.
+
+        WHY A PREDICATE RE-CHECK AND NOT `finished`. Mirroring the `_fade_running`
+        branch's signal-based resume is the obvious move and it is WRONG here:
+        `QPropertyAnimation.stop()` does not emit `finished` (verified empirically,
+        2026-07-28), and `blur_animation.stop()` runs unconditionally on every panel
+        open (`_start_visual_area_blur`) and on blur-toggle-off. A `finished`-based
+        resume would be silently dropped — the exact failure already diagnosed three
+        times against `_fade_anim`. `stateChanged` fails differently: it fires on that
+        same `stop()`, i.e. mid-panel-open BEFORE the replacement blur starts, which is
+        precisely the window the guard protects (a 300ms restyle landing mid-tween
+        freezes the blur for ~310ms — measured).
+
+        So: event-driven in EFFECT (fires within one frame of the true settle instant),
+        predicate-driven in MECHANISM (immune to `stop()` by construction). Same
+        property transport_bar_blur.py relies on after its own polled→event-driven
+        migration: never try to cancel an armed callback; let it fire and make the
+        callback cheap to re-evaluate.
+
+        Measured against the shipped mechanism: a restyle fired by this watch leaves the
+        blur tween byte-identical to running it alone (94 frames, 17.0ms worst gap, both
+        cases), versus a 316.2ms freeze for one landing mid-tween.
+        """
+        if not self._any_panel_animating():
+            callback()
+            return
+        self._panels_settled_waiters.append(callback)
+        self._arm_settled_watch()
+
+    def _arm_settled_watch(self):
+        """Arm the settle tick if it is not already armed.
+
+        The early-return is load-bearing, not an optimisation: it means the timer is
+        NEVER restarted while running. `_panel_guard_timer` — the mechanism this
+        replaces — did `stop()` then `start()` on every re-arm, so its 700ms deadline
+        was retriggerable; because re-arming was driven by mouse motion (hover sweeps
+        produce enter/leave pairs far faster than 700ms apart), a queued call could be
+        starved indefinitely. That was the 2026-07-22 "snapback hangs" incident, whose
+        fix addressed the entry into the branch but left this property intact. Here the
+        deadline is absolute and additional waiters simply join the queue.
+        """
+        if self._settled_watch_armed:
+            return
+        self._settled_watch_armed = True
+        self._settled_watch_timer.start()
+
+    def _on_settled_watch_tick(self):
+        if self._any_panel_animating():
+            self._settled_watch_armed = False
+            self._arm_settled_watch()
+            return
+        self._settled_watch_armed = False
+        # Swap BEFORE invoking: a callback may synchronously re-enter
+        # call_when_panels_settled (ThemeManager._on_theme_changed resumes via a full
+        # re-call, which can re-defer), and that new waiter must land in a fresh list
+        # rather than one being iterated.
+        waiters, self._panels_settled_waiters = self._panels_settled_waiters, []
+        logger.debug(
+            f"t={time.perf_counter():.6f} [settle-watch] panels settled, "
+            f"draining {len(waiters)} waiter(s)"
+        )
+        for cb in waiters:
+            cb()
 
     def is_any_full_panel_visible(self):
         """Returns True if any full panel or the chapter-list overlay is open — i.e.

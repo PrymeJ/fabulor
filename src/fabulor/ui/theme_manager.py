@@ -808,13 +808,51 @@ class ThemeManager(QObject):
             f"fade_in_flight={_fade_running} "
             f"hover_may_interrupt={_hover_may_interrupt}"
         )
-        # if/elif, NOT two independent ifs: a single call must only ever be claimed by
-        # ONE of the two defer-and-resume mechanisms below, never both (which could fire
-        # it twice). Both mechanisms resume via a FULL re-call to _on_theme_changed
+        # if/elif/elif, NOT independent ifs: a single call must only ever be claimed by
+        # ONE of the THREE defer-and-resume mechanisms below, never more (which could
+        # fire it twice). All three resume via a FULL re-call to _on_theme_changed
         # (never a direct apply) — see each branch's comment — so ownership correctly
-        # transfers to whichever condition is still true at resume time; neither branch
-        # needs to know about the other.
-        if _any_animating or _panel_open:
+        # transfers to whichever condition is still true at resume time; no branch
+        # needs to know about the others.
+        #
+        # ORDER MATTERS: _any_animating is tested before _panel_open. When both are
+        # true the animating branch claims the call, and its full re-call re-evaluates
+        # both fresh — so a still-open panel correctly re-defers into the _panel_open
+        # branch on the second pass. (Was two branches until 2026-07-28, when the
+        # combined `if _any_animating or _panel_open:` was split; see each branch.)
+        if _any_animating:
+            # SPLIT from the _panel_open case 2026-07-28. These two used to share one
+            # flat 700ms retry timer, but they are different kinds of wait: this one
+            # ends when an ANIMATION finishes (a clock), the one below ends when the
+            # USER closes a panel (an action). Polling the animation case against a
+            # 1500ms blur-in guaranteed two retry rounds and up to 700ms of overshoot —
+            # the first hover after opening Settings took ~2.1s to preview, every time.
+            #
+            # PanelManager.call_when_panels_settled resumes within ~16ms of the true
+            # settle instant. See its docstring for why it re-checks the predicate
+            # instead of subscribing to `finished` (stop() emits no `finished`, and
+            # blur_animation.stop() runs on every panel open — a signal-based resume
+            # would be dropped, exactly as it was three times against _fade_anim).
+            #
+            # Resume is a FULL re-call, never a direct apply — same rule as the two
+            # branches below, and what makes interleaving safe: it re-evaluates
+            # _any_animating AND _panel_open fresh, so if the panel is still open when
+            # the animation settles, the call correctly re-defers into the elif below.
+            # ALL SIX ARGS must be forwarded; dropping bypass_panel_open_guard is what
+            # caused the 2026-07-22 hang (see CLAUDE.md's stash-tuple rule).
+            self.main_window.panel_manager.call_when_panels_settled(
+                lambda: self._on_theme_changed(theme_name, save, fade_ms, hover, user_initiated,
+                                                bypass_panel_open_guard)
+            )
+            return
+        elif _panel_open:
+            # Unchanged. This wait is NOT animation-driven — it ends when the user
+            # closes the panel, and there is no signal to subscribe to for that, so a
+            # re-check cadence is the right shape and 700ms is a cadence rather than an
+            # overshoot. Note this branch now requires `not hover and not
+            # bypass_panel_open_guard` (see _panel_open's computation above), so hover
+            # can no longer reach this timer at all — which removes the trigger for the
+            # 2026-07-22 starvation, since mouse motion was what drove the re-arming.
             self._panel_guard_timer.stop()
             try:
                 with warnings.catch_warnings():
