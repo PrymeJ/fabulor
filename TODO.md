@@ -126,6 +126,29 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
   confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
+- **[2026-07-28] Some themes need a preset-ramp colour override — known theme-data issue, not a code
+  bug.** Exposed (not caused) by `fa6d301`, which replaced the Sleep/Speed alpha ramp with an honest
+  `bg_main` -> `accent` colour blend. The old alpha version composited against the cover art as well
+  as the panel, which incidentally lifted the low steps; the blend does not, so themes whose accent
+  and background are close in luminance, or whose midpoint is unflattering, now show it.
+  **Examples confirmed live by the user** (first three ramp steps of 13, computed against the real
+  theme dicts):
+    Gravity's Rainbow  bg #2B0052 -> accent #00FF00 : 30,75,58 / 28,90,53 / 25,105,48
+                       (purple to green passes through muddy olive; button text also goes
+                        light-on-light at the top of the ramp)
+    Plum Island        bg #1E2A2E -> accent #6A4A6A : 52,51,64 / 57,53,67 / 61,55,71
+                       (accent only ~40 units from bg — the whole ramp is compressed)
+    Blindsight         bg #141414 -> accent #3A6A8A : 31,45,55 / 33,50,62 / 36,55,69
+                       (same shape on near-black)
+  **Plan:** per-theme dict overrides for the ramp endpoints, so a theme can supply its own
+  ramp start/end rather than deriving both from `bg_main`/`accent`. `preset_ramp_rgb`
+  (`themes.py`) is the single place that reads them, and it already falls back cleanly on missing
+  keys (pinned by `tests/test_preset_ramp.py`). If the new keys are optional and only some themes
+  set them, check whether they belong in `_NO_BASE_INHERIT_KEYS` — see the CLAUDE.md rule, since
+  "The Color Purple" is the base every theme inherits unset keys from and a literal value there
+  would silently override every other theme's derived fallback.
+  Also worth deciding at the same time: `button_text` contrast, which is the other half of the
+  Gravity's Rainbow case — the ramp can be fixed and the label still be unreadable.
 - **[2026-07-28] CLOSED: Sleep/Speed preset buttons were translucent, showing the cover art
   through them** (`fa6d301`). Both panels built the ramp as an alpha ramp (75..255) on the accent,
   emitted as `rgba()`; at alpha 75 the first button is ~29% opaque and composited against whatever
