@@ -369,6 +369,24 @@ class PanelManager:
 
             self.call_when_panels_settled(_replay)
             return
+        # TEMP INSTRUMENTATION (2026-07-28, user-requested): WHO called this.
+        # A live trace showed eight sidebar CLOSES with no right-click behind them.
+        # Six had no logged cause at all — [SIDEBAR-TRACE] only names the right-click
+        # caller, while left-click dismisses, sidebar button clicks and the six
+        # _open_*_flow queued-close paths all call this silently. That blind spot is
+        # what made those closes look spontaneous; this names every caller directly
+        # instead of inferring one. At WARNING so it is greppable without DEBUG.
+        # Remove once the long-standing "have to click three or four times to bring
+        # the sidebar up" report is settled.
+        import traceback
+        _stack = traceback.extract_stack()[:-1]
+        _callers = " <- ".join(
+            f"{fr.name}:{fr.lineno}" for fr in _stack[-4:] if fr.name != '_toggle_sidebar'
+        )
+        logger.warning(
+            f"[TOGGLE-CALLER] {'opening' if not self.sidebar_expanded else 'closing'} "
+            f"expanded(pre)={self.sidebar_expanded} via {_callers}"
+        )
         logger.debug(
             f"t={time.perf_counter():.6f} [_toggle_sidebar ENTRY] "
             f"sidebar_expanded(pre)={self.sidebar_expanded} "

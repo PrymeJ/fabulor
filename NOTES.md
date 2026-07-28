@@ -1,3 +1,106 @@
+## FIXED: sidebar right-clicks silently discarded mid-slide — and the queued-toggle fix that made it worse (2026-07-28, `f0dbc99` + `911b4c5`)
+
+**Symptom:** right-clicking the main window to toggle the sidebar missed intermittently,
+"especially after the panel was closed". Long-standing, pre-dating the blur work.
+
+### The drop (`f0dbc99`)
+
+`_toggle_sidebar`'s re-entrancy guard returned early whenever `sidebar_animation` was running,
+with no log and no trace. Measured live: **5 of 25 clicks (20%) discarded**. Four arrived inside
+the 300ms slide — gaps of 164/250/274/290ms against a **408ms median click interval**, which is
+exactly why it read as intermittent: click a little faster than the animation and the click
+vanished. Closing a panel leaves animations in flight, which is the "after the panel was closed"
+case.
+
+The guard itself is correct — restarting the animation mid-flight would break it. Discarding the
+user's intent is a separate thing, and it was losing real input.
+
+### The queued-toggle fix, and why it was worse (`f0dbc99` → `911b4c5`)
+
+Queueing the toggle removed the drop and introduced a **self-perpetuating cycle**: each replay
+started a NEW slide, which caught the next click, which queued, which replayed. Measured in the
+following session — eight consecutive toggles at **306-322ms intervals**, the sidebar sliding
+open/closed continuously and always one step behind the user.
+
+The log reported this as a **perfect run**: 26 clicks → 26 toggles, zero losses. Pryme caught it
+from that alone:
+
+> "26 clicks, 26 toggles, perfectly alternating. This is a problem by itself."
+
+Correct, and the reasoning is worth keeping: *a run with reported misses cannot also be a run where
+every click did exactly what it asked.* I had the contradiction in front of me and read it as good
+news.
+
+**Root error: queueing a RELATIVE operation.** "Toggle" means invert whatever the state is, so
+deferring several makes the outcome depend on how many happened to land mid-slide. The user is
+asking for the sidebar to END UP somewhere. The deferred value is now the desired final state;
+repeated clicks overwrite it, an even number cancels out, and a replay whose target already matches
+starts no slide — which stops the cycle at its source rather than damping it.
+
+### What this did NOT fix
+
+The original complaint — *"start the app, right-click, no sidebar; I need to click three or four
+times"* — **remains unexplained**. It is a different failure: those presses leave no trace at any
+instrumented level, including a `QApplication`-wide filter that sees every press Qt dispatches.
+
+---
+
+## Right-click losses: six disproven mechanisms, and where it actually stands (2026-07-28)
+
+Recorded because the eliminations are the durable result, and because re-deriving them would cost
+another day.
+
+**The reports:** theme swatches missing right-clicks; sidebar right-clicks missing after app start;
+the same felt unreliability in VS Code's editor but NOT its chat pane; ~30-40 left-clicks in
+Fabulor with no misses at all.
+
+### Disproven, each by measurement
+
+| # | hypothesis | how it died |
+|---|---|---|
+| 1 | The blur grab swallows presses | 244 clicks across 3 fade settings, blur on/off: ~2-3% either way. Blur scored *better* in 2 of 3 batches. |
+| 2 | Hover-preview fade duration matters | 0ms / 750ms / 1500ms — no effect. |
+| 3 | Hit-testing / geometry / widget state | `enabled=True visible=True transparent_for_mouse=False under_mouse=True`, point inside rect, `parent.childAt()` agreeing. All normal on failures. |
+| 4 | The sidebar animation guard | Real, fixed — but the app-start case reaches `_toggle_sidebar` and still shows nothing. |
+| 5 | `sidebar.width()==0` before first layout | `width=70`, `pos=(-70,56)`, endpoints identical on failing and succeeding opens. |
+| 6 | Mouse hardware / input stack | Standalone Qt widget, **100 clicks → 100 received**, both a cordless and a corded mouse. |
+
+Additionally ruled out with a synthetic-load harness (`tools/click_test.py`): a blocking 143ms
+`setStyleSheet` at 3/sec (Fabulor's measured restyle cost) and continuous animation **both produce
+zero losses** outside Fabulor. So "heavy main-thread work" is not a general cause either.
+
+### Two instrumentation bugs that produced false findings
+
+Both worth naming, because each generated a confident number that was wrong:
+
+1. **`[RCLICK-MISS]` fired on `QWindow`'s dispatch**, before Qt routes a press to the child widget —
+   so it flagged *successful* clicks as failures. Source of a bogus "37 misses" and of a ~3%
+   routing-bug rate that does not survive scrutiny.
+2. **The `[RCLICK-AUDIT]` filter counted one press multiple times** as Qt propagated it up the
+   object hierarchy: 236 counts for 100 physical clicks. Fixed by deduplicating on
+   `event.timestamp()`.
+
+A third false finding was mine rather than the probe's: I twice explained away Pryme's observations
+by attributing `Fabulor started` lines to my own file edits, when they were deliberate restarts
+he was triggering. The lesson is the one CLAUDE.md already states about `entr` — but inverted:
+**do not attribute a restart to your own tooling without asking.**
+
+### Where it stands
+
+Unexplained: presses that leave **no trace at any level**. `16:53:26` is the cleanest instance —
+no `[RCLICK-AUDIT]` line at all, so Qt never received it. Same shape as the swatch batch where 60
+counted clicks produced 33 arrivals.
+
+Since a bare Qt widget on the same hardware is lossless even under synthetic load, the difference
+must be something about Fabulor's own structure — a deep widget tree, an app-wide event filter,
+monkey-patched `mousePressEvent` handlers, panels that hide and show. That is the next place to
+look, and the next measurement is a deduplicated per-press counter inside Fabulor giving an exact
+arrivals-vs-clicks number, since the earlier audit's double-counting made that number unreliable.
+
+**Still open too:** the theme-swatch log-vs-eyes disagreement (log says 89/90 clicks applied
+distinct themes; user watched half the early ones do nothing) and one 1046ms sidebar drop that the
+slide window does not explain.
+
 ## FIXED: first theme hover after opening Settings was dead for ~2s — a polling mismatch, then the blur itself (2026-07-28, `8c348b0` + `434763f`)
 
 **Symptom:** open the Settings panel, hover a theme swatch — nothing for ~2 seconds. Every

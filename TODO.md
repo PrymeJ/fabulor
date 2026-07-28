@@ -6,6 +6,35 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-28] OPEN — right-clicks intermittently never reach the app at all.** Reported on theme
+  swatches and on the main-window sidebar toggle ("start the app, right-click, no sidebar — I need
+  to click three or four times"), and felt outside Fabulor too (VS Code's editor unreliable, its
+  chat pane fine). Long-standing, pre-dates the blur work.
+  **Six causes eliminated by measurement** (full detail + the two probe bugs that produced false
+  findings: NOTES.md, "Right-click losses: six disproven mechanisms"): the blur grab (244 clicks
+  across 3 fade settings — blur scored *better* in 2 of 3 batches); hover-fade duration
+  (0/750/1500ms, no effect); hit-testing/geometry/widget state; the sidebar animation guard (real
+  and fixed, but the app-start case still fails); `sidebar.width()==0` before first layout
+  (`width=70` identical on failing and succeeding opens); and the mouse/input stack —
+  `tools/click_test.py`, a bare Qt widget, took **100 clicks and lost none** on both a cordless and
+  a corded mouse. A synthetic-load harness also showed a blocking 143ms restyle at 3/sec and
+  continuous animation both lose nothing.
+  **The residue:** presses that leave no trace at ANY level, including a `QApplication`-wide filter.
+  `16:53:26` is the cleanest instance. Since a bare widget on the same hardware is lossless even
+  under load, the difference is something about Fabulor's own structure — deep widget tree, app-wide
+  event filter, monkey-patched `mousePressEvent` handlers, panels that hide/show.
+  **Next measurement:** a deduplicated per-press counter inside Fabulor for an exact
+  arrivals-vs-clicks number. The earlier `[RCLICK-AUDIT]` double-counted (236 for 100 clicks), so
+  that number has never been measured cleanly. Do this on a branch off a clean base.
+  **Also open:** the theme-swatch log-vs-eyes disagreement (log: 89/90 clicks applied distinct
+  themes; user watched half the early ones do nothing — the recording would settle it), and one
+  1046ms sidebar drop the slide window does not explain.
+- **[2026-07-28] CLOSED (live-verified): sidebar right-clicks discarded mid-slide** (`f0dbc99`,
+  `911b4c5`). The re-entrancy guard silently dropped 5 of 25 clicks (20%) arriving inside the 300ms
+  slide. The first fix — queueing the toggle — was worse: each replay started a new slide that
+  caught the next click, producing eight consecutive toggles at 306-322ms with the sidebar running
+  one step behind. Root error was queueing a RELATIVE operation; now defers the desired FINAL state,
+  so repeated clicks overwrite and an even number cancels out. Live-confirmed responsive.
 - **[2026-07-28 Session 2] CLOSED (live-verified): first theme hover after opening Settings was dead
   ~2s.** Two parts. (1) `8c348b0` — the guard deferred via a flat 700ms retry against a 1500ms
   blur-in, guaranteeing two retry rounds plus up to 700ms of overshoot; replaced with

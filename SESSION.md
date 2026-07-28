@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-28 Session 2 — Killed the ~2s dead first hover after opening Settings: a polling mismatch, then the blur itself
+## Session Summary — 2026-07-28 Session 2 — Killed the ~2s dead first hover, fixed two sidebar click-loss bugs, and eliminated six candidate causes for a right-click loss that is still open
 
 Shipped: `8c348b0` (event-driven guard resume), `434763f` (Themes-tab blur-in shortening). Two
 commits, no regressions, no reverts — a marked contrast with Session 1, and for a reason worth
@@ -74,6 +74,55 @@ assertions drifted from a reworked implementation; still outstanding).
 `tests/test_panel_settle_resume.py` adds 21 tests, every regression pin confirmed to fail against
 pre-fix code before being kept — including one that catches a retriggerable timer, pinning the
 2026-07-22 starvation property directly.
+
+### Part 3 — sidebar right-clicks, and a fix that made things worse
+
+Same underlying complaint, different surface: right-clicking the main window to toggle the sidebar
+missed intermittently. `_toggle_sidebar`'s re-entrancy guard was silently discarding clicks that
+arrived during the 300ms slide — **5 of 25 (20%)**, four of them inside the slide window against a
+408ms median click interval.
+
+Queueing the toggle fixed the drop and **introduced a worse bug**: each replay started a new slide,
+which caught the next click, which queued, which replayed. Eight consecutive toggles at 306-322ms,
+the sidebar running continuously one step behind the user.
+
+The log called that a perfect run — 26 clicks, 26 toggles, zero losses. Pryme caught it from the
+log alone: *"26 clicks, 26 toggles, perfectly alternating. This is a problem by itself."* A run
+with reported misses cannot also be a run where every click did what it asked. I had the
+contradiction in front of me and reported it as good news.
+
+Root error: queueing a RELATIVE operation. Fixed by deferring the desired FINAL state instead, so
+repeated clicks overwrite rather than accumulate and an even number cancels out.
+
+### Part 4 — six eliminations on a bug that is still open
+
+The original complaint — *"start the app, right-click, no sidebar; I need to click three or four
+times"* — is **not** fixed. What we have instead is a solid list of things it is not: the blur grab
+(244 clicks, blur scored better in 2 of 3 batches), hover-fade duration (0/750/1500ms, no effect),
+hit-testing and widget state, the animation guard, `sidebar.width()==0` before first layout, and —
+decisively — the mouse and input stack, via a standalone Qt widget that took **100 clicks and lost
+none**, on both a cordless and a corded mouse. A synthetic-load harness then showed that neither a
+blocking 143ms restyle at 3/sec nor continuous animation loses presses outside Fabulor.
+
+**Two of my probes produced false findings**, which is the part worth remembering. `[RCLICK-MISS]`
+fired on `QWindow`'s dispatch *before* Qt routes to the child, flagging successful clicks as
+failures and generating a bogus 3% "routing bug" rate. `[RCLICK-AUDIT]` counted each press once per
+object as Qt propagated it — 236 counts for 100 clicks. **A probe is code and can be wrong; when a
+measurement contradicts the user, suspect the probe first.** I did the opposite for several rounds.
+
+I also twice explained away Pryme's observations by blaming `Fabulor started` lines on my own file
+edits, when he was triggering those restarts deliberately. Both times he corrected me flatly. The
+pattern to avoid: reaching for an explanation that dismisses the report rather than asking what he
+actually did.
+
+### What the day cost, and what it bought
+
+Seven mechanisms proposed, six disproven by measurement, three real bugs fixed. The eliminations
+are durable — they are in NOTES.md so nobody re-derives them — but the headline bug survived.
+
+The one process change that would have helped most: **verify the probe before trusting its output**.
+Every false lead today traced back to instrumentation I had not sanity-checked, and each one cost a
+round of Pryme's testing time.
 
 ## Session Summary — 2026-07-28 Session 1 — Theme hover previews: three real bugs, two self-inflicted regressions, and one correct check I removed and had to restore
 
