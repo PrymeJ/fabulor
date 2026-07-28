@@ -1,3 +1,61 @@
+## FIXED: theme right-clicks applied one step behind — the "missing clicks" were never missing (2026-07-28, `4700b31`)
+
+**Symptom, reported for a long time:** right-clicking a theme swatch often did nothing. Felt like
+lost clicks, and was investigated as such for a full day.
+
+**It was not a lost click.** Every press reached Qt, the widget and the handler. What the trace
+showed, on ten consecutive selections:
+
+```
+18:22:00,861  HANDLER 'Syl Anagist'
+18:22:00,861  OUTCOME applied=False  ever_applied='Sitting in the Wing Chair'
+18:22:01,198  DRAINING pending_fade_call=('Syl Anagist', ...)   <- 337ms later
+```
+
+Each click applied the theme from the **previous** click. Click steadily and you stay permanently
+one behind; the last click of a burst never lands until something else triggers a drain. Visually
+indistinguishable from a click that did nothing.
+
+**Mechanism.** `_on_theme_changed`'s `_fade_running` branch stashes any non-interrupting call.
+Hovering a swatch itself starts a 375ms preview fade, and the click ~400ms later lands inside it —
+so the selection queued behind the preview it had just superseded. Hover-then-click is simply how
+the grid is used, which made this near-universal rather than an edge case.
+
+Earlier the same day the hover path was fixed to interrupt rather than stash. The commit comment
+explicitly left the rest alone: *"a snapback, a genuine selection, a rotation — those stash and
+replay via the drain sites exactly as before."* Half the problem was fixed and the other half
+written down as intentional.
+
+**Fix.** A deliberate selection interrupts too. It is explicit user intent and it makes the preview
+fade it would queue behind obsolete by definition.
+
+A snapback is indistinguishable from a click by `(user_initiated, hover)` alone — both `(True,
+False)` — so the selection site marks itself via `_selection_in_progress` rather than the guard
+inferring it. Deliberately an instance marker, not a new `_on_theme_changed` parameter: a selection
+never reaches the stash, so it never needs to survive a replay, and widening the 6-tuple would trip
+CLAUDE.md's stash-tuple rule for no benefit. Scoped to `_on_theme_right_clicked`, the path measured.
+
+**Verified live:** a four-minute run, **104 right-click selections, 104 applied immediately, zero
+stashed.** Before the fix, every click in the failing batch read `applied=False`. The 11 fade drains
+in the same window are snapbacks, which still stash correctly.
+
+**A DEBUG regression detector is left in place** at that site. If this recurs:
+`grep 'OUTCOME' fabulor.log | grep 'applied=False'` should be empty for right-click selections.
+
+### The transferable part
+
+The report was *"my clicks are missing"*, and I took it literally in the wrong direction — as presses
+being lost — for a day. Six mechanisms were eliminated (hardware, input stack, blur, hit-testing,
+restyle load, animation), which was genuinely necessary work, but two of my own probes produced
+confident false numbers along the way (`[RCLICK-MISS]` firing before Qt routes to the child;
+`[RCLICK-AUDIT]` counting one press per object, 236 for 100 clicks). **A probe is code and can be
+wrong; when a measurement contradicts the user, suspect the probe first.**
+
+The user's own framing was more accurate than mine throughout: clicks *felt* missing rather than
+being provably lost. "Applied, but one step behind" satisfies that description exactly, and it was
+visible in the very first trace I pulled — the `OUTCOME applied=False ever_applied=<previous>` lines
+were there hours before I read what they meant.
+
 ## FIXED: sidebar right-clicks silently discarded mid-slide — and the queued-toggle fix that made it worse (2026-07-28, `f0dbc99` + `911b4c5`)
 
 **Symptom:** right-clicking the main window to toggle the sidebar missed intermittently,

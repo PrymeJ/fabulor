@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-28 Session 2 — Killed the ~2s dead first hover, fixed two sidebar click-loss bugs, and eliminated six candidate causes for a right-click loss that is still open
+## Session Summary — 2026-07-28 Session 2 — Killed the ~2s dead first hover, fixed two sidebar click-loss bugs, and found the "missing right-clicks" were applying one step behind
 
 Shipped: `8c348b0` (event-driven guard resume), `434763f` (Themes-tab blur-in shortening). Two
 commits, no regressions, no reverts — a marked contrast with Session 1, and for a reason worth
@@ -114,6 +114,21 @@ I also twice explained away Pryme's observations by blaming `Fabulor started` li
 edits, when he was triggering those restarts deliberately. Both times he corrected me flatly. The
 pattern to avoid: reaching for an explanation that dismisses the report rather than asking what he
 actually did.
+
+### Part 5 — the actual cause, found after the eliminations
+
+The bug was never at the input layer. Right-clicks were **applying one step behind**: each click
+landed the theme from the PREVIOUS click, because hovering a swatch starts a 375ms preview fade and
+the click ~400ms later stashes behind it. Ten consecutive selections in one trace each read
+`applied=False` with `ever_applied` naming the prior theme.
+
+Fixed by letting a deliberate selection interrupt an in-flight fade — the same treatment hovers got
+that morning, on the half I had explicitly written down as "leave alone". Verified live: **104
+selections, 104 applied immediately, zero stashed.**
+
+The `OUTCOME applied=False ever_applied=<previous>` lines that name the bug outright were in the
+first trace I pulled, hours before I read what they meant. I was looking for absent lines, not
+wrong ones.
 
 ### What the day cost, and what it bought
 
