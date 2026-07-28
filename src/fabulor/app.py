@@ -3485,53 +3485,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        # TEMP INSTRUMENTATION (2026-07-28, user-requested): right-click delivery
-        # audit. A deliberate 30-click run produced only 33 RECEIVED across 60 clicks
-        # — ~45% of right-presses never reached RightClickButton.mousePressEvent at
-        # all, with and without blur. This filter is installed on QApplication
-        # (app.py's installEventFilter call), so it sees EVERY mouse press Qt
-        # dispatches anywhere in the app, before any widget handler can consume it.
-        #
-        # It distinguishes three cases the widget-level probe cannot:
-        #   line here + [CLICK-TRACE] RECEIVED -> delivered correctly
-        #   line here, NO RECEIVED             -> Qt routed it to the WRONG widget
-        #                                         (obj= tells us which)
-        #   no line at all                     -> Qt never got the press; the loss is
-        #                                         upstream of the app entirely (X/
-        #                                         Wayland/input stack) — which matches
-        #                                         the user's report of right-click
-        #                                         feeling less responsive on openSUSE
-        #                                         generally, not just in Fabulor.
-        # Remove once the question is settled.
-        if event.type() == QEvent.Type.MouseButtonPress:
-            try:
-                if event.button() == Qt.RightButton:
-                    _cls = type(obj).__name__
-                    _name = getattr(obj, 'theme_name', None)
-                    # What is ACTUALLY under the cursor right now, independent of
-                    # where Qt chose to dispatch. The discriminator that matters:
-                    #   under=ThemeItem, dispatched to QWindow/QLabel
-                    #       -> hit-testing sent the press to the wrong widget while
-                    #          the swatch was under the pointer (a routing bug)
-                    #   under=QWindow/QLabel too
-                    #       -> the swatch genuinely was not under the cursor; the
-                    #          press landed in a gap or on a neighbour (aim/layout)
-                    # Cross-app context (2026-07-28): the user sees the same
-                    # unreliability in VS Code's editor but NOT its chat pane, so the
-                    # loss is surface-dependent rather than device-wide.
-                    _under = QApplication.widgetAt(QCursor.pos())
-                    _under_cls = type(_under).__name__ if _under is not None else None
-                    _under_name = getattr(_under, 'theme_name', None)
-                    logger.warning(
-                        f"[RCLICK-AUDIT] press dispatched to {_cls} "
-                        f"theme_name={_name!r} objName={obj.objectName()!r} "
-                        f"| under_cursor={_under_cls} theme_name={_under_name!r} "
-                        f"| pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
-                        f"t={time.perf_counter():.6f}"
-                    )
-            except (AttributeError, RuntimeError):
-                pass
-
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
                 return True
