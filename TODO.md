@@ -127,18 +127,26 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
 - **[2026-07-28] NEW (user's own list): three-state panel background — Transparent | Frosty glass |
-  Opaque.** Today the panel backdrop is a BOOLEAN (`blur_enabled`), so this is a widening, not an
-  addition. Scope, from a read of the call sites: `config.get_blur_enabled`/`set_blur_enabled`
-  (stored as the string "true"/"false"), the `blur_mode_changed` signal and
-  `settings_controller._update_blur_mode`/`_update_blur_visuals`, `panels.apply_blur_live`, and
-  the branches in `panels.py` (`_start_visual_area_blur`, `set_blur_selection_live`,
-  `_apply_transport_bar_blur`) plus one in `app.py`. Frosty glass is presumably today's blur;
-  Transparent and Opaque are the new poles.
-  Worth settling before starting: whether Opaque means the panel paints a solid theme colour (in
-  which case `_panel_hides_everything` in `transport_bar_blur.py` already has the "nothing behind
-  this is visible, skip the grab" machinery and should be reused — see the Timeline-tab precedent),
-  and whether the three-state setting should keep the old boolean key for backward compatibility or
-  migrate it. Not started.
+  Opaque.** Smaller than it first looks, because the opacity machinery already exists.
+  **What is already there** (found 2026-07-28 after the user pointed at `settings_tab_hover_opacity`):
+  `panel_opacity_hover` is a per-theme float (0.88-0.95 across the theme set, every theme sets one)
+  and the panel background is ALREADY painted as `rgba(bg_main, panel_opacity_hover)` —
+  `themes.py:3458` in `get_settings_stylesheet`, with a second consumer around `:3724`. So the three
+  states are mostly a matter of choosing the alpha and whether the blur runs:
+    Opaque        -> force alpha 1.0 (probably a one-line override at the stylesheet site)
+    Frosty glass  -> today's blur + the theme's own `panel_opacity_hover`
+    Transparent   -> no blur + the theme's own `panel_opacity_hover`
+  The per-theme values stay as the Transparent/Frosty look; only Opaque overrides them.
+  **Check before starting** (neither confirmed): (a) whether stats/tags/book-detail panels use this
+  same rule or paint their own backgrounds — only the settings/speed/sleep group was traced;
+  (b) whether Opaque should skip the blur work entirely. If the panel is fully opaque the blur
+  behind it cannot be seen, which is exactly what `_panel_hides_everything`
+  (`transport_bar_blur.py`) already exploits for the Timeline tab — reusing it would make Opaque
+  CHEAPER than the other two rather than equal cost.
+  **The widening that remains:** `blur_enabled` is a boolean stored as "true"/"false"
+  (`config.py`), with the `blur_mode_changed` signal, `settings_controller._update_blur_mode`/
+  `_update_blur_visuals`, `panels.apply_blur_live`, three branches in `panels.py` and one in
+  `app.py`. Decide whether to migrate that key or keep it for backward compatibility. Not started.
 - **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
   Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
