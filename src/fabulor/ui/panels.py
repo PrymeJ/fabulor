@@ -26,6 +26,25 @@ _STUTTER_PROFILE_ENABLED = os.environ.get("FABULOR_STUTTER_PROFILE") == "1"
 # also mirrors the transport bar's instant dismiss. Both are applied per
 # direction because the two paths share one QPropertyAnimation object.
 _BLUR_IN_MS = 1500
+# Themes-tab exception (2026-07-28). Opening Settings onto the Themes tab uses a
+# much shorter blur-in, because that is the one surface where the user's next
+# action is expected to be a HOVER, and a hover cannot preview until the blur has
+# settled (ThemeManager._on_theme_changed's animation guard — a restyle landing
+# mid-tween freezes the blur for ~240ms, measured, so the guard must stay).
+#
+# Reported live: the first hover after opening Settings was dead for ~1.1s and
+# "would make the user wonder if it is broken". Measured dead window, hover
+# arriving 430ms after open (the real repro): 1091ms at 1500ms -> 0ms at 400ms.
+# Worst case, hovering 50ms after open: 366ms. Crucially this introduces NO
+# stall — worst frame gap stays ~17ms, identical to blur-alone baseline, because
+# it moves the settle point earlier rather than letting a restyle collide with a
+# running tween.
+#
+# Deliberately NOT a global reduction of _BLUR_IN_MS: every other panel keeps the
+# 1500ms feel, since nowhere else is the user racing the blur. Revert by deleting
+# this constant and its use in _start_visual_area_blur if the shorter blur-in
+# reads as abrupt on that tab.
+_BLUR_IN_THEMES_TAB_MS = 400
 _BLUR_OUT_MS = 500
 
 # Re-check cadence for call_when_panels_settled's settle watch. One frame at
@@ -146,10 +165,35 @@ class PanelManager:
         # clip now so it blurs in step rather than staying sharp.
         self.main_window.sync_carousel_blur(self.blur_effect.blurRadius(), True)
         self.blur_animation.stop()
-        self.blur_animation.setDuration(_BLUR_IN_MS)
+        self.blur_animation.setDuration(self._blur_in_duration_for(panel))
         self.blur_animation.setStartValue(self.blur_effect.blurRadius())
         self.blur_animation.setEndValue(8 if panel is self.tags_panel else 10)
         self.blur_animation.start()
+
+    def _blur_in_duration_for(self, panel):
+        """Blur-in duration for `panel` — shorter when opening onto the Themes tab.
+
+        See _BLUR_IN_THEMES_TAB_MS for the measurements and the rationale. In short:
+        a theme hover cannot preview until the blur settles (the animation guard in
+        ThemeManager._on_theme_changed, which must stay — a restyle landing mid-tween
+        freezes the blur ~240ms), so on the one tab where hovering is the expected
+        next action the 1500ms blur-in reads as a broken first hover.
+
+        Only the tab ACTIVE AT OPEN TIME matters: switching to the Themes tab while
+        Settings is already open starts no blur-in, so there is nothing to shorten.
+
+        Tab test mirrors ThemeManager._on_theme_changed's own `themes_tab_active`
+        (Themes is index 0) rather than inventing a second convention — but without
+        its `settings_panel.isVisible()` clause, since this runs from the
+        slide-finished callback where the panel's visibility state is not the thing
+        being asked about.
+        """
+        if panel is not self.settings_panel:
+            return _BLUR_IN_MS
+        tabs = getattr(self.main_window, 'tabs', None)
+        if tabs is not None and tabs.currentIndex() == 0:
+            return _BLUR_IN_THEMES_TAB_MS
+        return _BLUR_IN_MS
 
     def blurred_panel(self):
         """The panel the visual_area blur is currently clipped to, or None.

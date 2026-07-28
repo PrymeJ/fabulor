@@ -22,7 +22,70 @@ pin the decision logic: which mechanism claims a call, and the waiter queue's li
 import pytest
 
 from fabulor.ui.panels import PanelManager
+from fabulor.ui.panels import _BLUR_IN_MS, _BLUR_IN_THEMES_TAB_MS
 from fabulor.ui.theme_manager import ThemeManager
+
+
+# --- Group C: Themes-tab blur-in shortening --------------------------------
+#
+# The guard fix above removed the POLLING overshoot but not the wait itself: a
+# hover still cannot preview until the blur settles, so the first hover after
+# opening Settings stayed dead for ~1.1s — reported as "would make the user
+# wonder if it is broken".
+#
+# Shortening the blur-in on the Themes tab collapses that window (measured: 1091ms
+# -> 0ms for a hover arriving 430ms after open; 366ms worst case at 50ms) and,
+# unlike letting the hover interrupt the blur, introduces NO stall — worst frame
+# gap stays ~17ms, identical to blur-alone baseline. It moves the settle point
+# earlier rather than colliding a restyle with a running tween.
+
+class _FakeTabs:
+    def __init__(self, index):
+        self._index = index
+
+    def currentIndex(self):
+        return self._index
+
+
+def _make_blur_pm(tab_index, *, has_tabs=True):
+    pm = PanelManager.__new__(PanelManager)
+    pm.settings_panel = object()
+    pm.main_window = type("MW", (), {})()
+    if has_tabs:
+        pm.main_window.tabs = _FakeTabs(tab_index)
+    return pm
+
+
+def test_themes_tab_gets_the_short_blur_in():
+    pm = _make_blur_pm(0)
+    assert pm._blur_in_duration_for(pm.settings_panel) == _BLUR_IN_THEMES_TAB_MS
+
+
+@pytest.mark.parametrize("tab_index", [1, 2, 3, 4])
+def test_other_settings_tabs_keep_the_full_blur_in(tab_index):
+    # Look/Library/Audio/Controls: nobody is racing the blur there.
+    pm = _make_blur_pm(tab_index)
+    assert pm._blur_in_duration_for(pm.settings_panel) == _BLUR_IN_MS
+
+
+def test_non_settings_panels_keep_the_full_blur_in():
+    # Stats/Tags/Speed/Sleep share the same blur_animation singleton — their
+    # panel-open feel must be untouched, even though Themes is the active tab.
+    pm = _make_blur_pm(0)
+    assert pm._blur_in_duration_for(object()) == _BLUR_IN_MS
+
+
+def test_missing_tabs_falls_back_to_the_full_blur_in():
+    # mw.tabs only exists inside settings_panel; never assume it is there.
+    pm = _make_blur_pm(0, has_tabs=False)
+    pm.main_window.tabs = None
+    assert pm._blur_in_duration_for(pm.settings_panel) == _BLUR_IN_MS
+
+
+def test_short_blur_in_is_actually_shorter():
+    # Guards against someone "tidying" the two constants to the same value and
+    # silently reinstating the dead first hover.
+    assert _BLUR_IN_THEMES_TAB_MS < _BLUR_IN_MS
 
 
 # --- Group A: call_when_panels_settled / _arm_settled_watch / tick ----------
