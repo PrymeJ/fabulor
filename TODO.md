@@ -6,7 +6,20 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-28] AWAITING LIVE VERIFICATION — theme hover previews, three bugs fixed across six
+- **[2026-07-28 Session 2] CLOSED (live-verified): first theme hover after opening Settings was dead
+  ~2s.** Two parts. (1) `8c348b0` — the guard deferred via a flat 700ms retry against a 1500ms
+  blur-in, guaranteeing two retry rounds plus up to 700ms of overshoot; replaced with
+  `PanelManager.call_when_panels_settled` (~16ms resume) for the animating case only, `_panel_open`
+  keeps the timer since it ends on a user action. Deliberately a predicate re-check, NOT a
+  `finished` subscription — `stop()` emits no `finished` and `blur_animation.stop()` runs on every
+  panel open, so a signal-based resume would be silently dropped (the failure already diagnosed 3x
+  against `_fade_anim`). Also fixes the 2026-07-22 starvation: the new arm never restarts a running
+  timer, and hover can no longer reach the old one. (2) `434763f` — the remaining ~1.1s was the blur
+  itself, so the blur-in is now 400ms when Settings opens onto the Themes tab. Measured: 0ms dead
+  window for a hover 400ms+ after open, 366ms worst case, and NO stall (worst frame gap ~17ms,
+  identical to baseline). Both live-confirmed; the shorter blur-in does not read as abrupt.
+  Full analysis and the disproven alternatives: NOTES.md, 2026-07-28.
+- **[2026-07-28 Session 1] CLOSED (live-verified): theme hover previews swallowed, three bugs across six
   commits (`ac87e0a`, `57a7dd0`, `197e112`, `554476b`, `9b8d9df`, `70159d6`, `6eb07ca`).**
   (1) A hover arriving during a **snapback fade** was stashed then discarded — no preview ever
   appeared and nothing retried it. The predicate is now simply `bool(hover)`: a genuine hover

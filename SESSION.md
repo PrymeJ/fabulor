@@ -1,4 +1,81 @@
-## Session Summary — 2026-07-28 — Theme hover previews: three real bugs, two self-inflicted regressions, and one correct check I removed and had to restore
+## Session Summary — 2026-07-28 Session 2 — Killed the ~2s dead first hover after opening Settings: a polling mismatch, then the blur itself
+
+Shipped: `8c348b0` (event-driven guard resume), `434763f` (Themes-tab blur-in shortening). Two
+commits, no regressions, no reverts — a marked contrast with Session 1, and for a reason worth
+naming: **every design decision here was settled by a measurement before it was written**, twice
+against my own stated instinct.
+
+**The bug**, carried over as the first item from Session 1: first theme hover after opening Settings
+was dead ~2s; subsequent hovers instant; close/reopen and it returns. Pryme isolated it before any
+code was read — blur OFF, no delay.
+
+**Part 1 — polling mismatch.** `_PANEL_ANIM_GUARD_MS` (700ms flat retry) against `_BLUR_IN_MS`
+(1500ms) guarantees two retry rounds plus up to 700ms of overshoot. Replaced the poll with
+`PanelManager.call_when_panels_settled` for the animating case only; the `_panel_open` case keeps
+the timer because it ends on a user action, not a clock. Result: ~1.7s → ~1.1s.
+
+**Part 2 — the remaining wait was the blur.** Part 1 worked exactly as designed *and the problem was
+still there* — a 1.1s dead hover still reads as broken. Fixed by shortening the blur-in to 400ms
+scoped to the Themes tab. First hover now previews immediately (0ms dead window for a hover arriving
+400ms+ after open; 366ms worst case). Both live-confirmed by Pryme.
+
+### Three things measurement overturned
+
+1. **"A blur tween isn't geometry, so it shouldn't block a restyle."** My opening instinct, and the
+   fix I was leaning toward. Measured: a 300ms restyle landing mid-blur freezes it **310.9ms** vs
+   17.1ms baseline. The hitch protection is real; removing `blur_animation` from the guard would
+   have traded the wait for a visible stutter on every panel open.
+2. **"Mirror the `_fade_running` branch and resume off `blur_animation.finished`."** What Pryme
+   asked for, and what I planned to build. Verified empirically that `stop()` emits `stateChanged`
+   but **not** `finished` — and `blur_animation.stop()` runs on every panel open. That resume would
+   have been silently dropped, reproducing a failure already diagnosed three times against
+   `_fade_anim`. Shipped a predicate re-check instead: event-driven in effect, immune to `stop()` by
+   construction.
+3. **"A hover restyle is cheaper, and the hitch would be mostly hidden."** My own proposal for
+   closing the remaining 1.1s. Both halves false: hover restyle **222.7ms** vs generic **230.6ms**
+   (one grep of existing logs), and the stall measured **244ms with 1066ms of tween still to run** —
+   not hidden at all. Rejected in favour of the tab-scoped shortening.
+
+### What made the difference
+
+Session 1 shipped two self-inflicted regressions by designing from single traces. This session had
+the same opportunities and took none of them, because of a specific discipline Pryme enforced:
+
+- **"Measure it the same way the 310.9ms number was measured, before deciding whether it needs
+  scoping at all."** That instruction killed proposal 3 outright. The harness already existed; I had
+  simply not thought to point it at the new question.
+- **"Trace the connect/disconnect lifecycle rather than assuming it's safe because the neighbouring
+  branch does it."** Tracing it produced a better design than the one I was going to write: no
+  per-call connection at all, so double-fire is structurally impossible and stale connections are
+  unrepresentable. It also *fixed* the 2026-07-22 starvation rather than inheriting it — the new arm
+  never restarts a running timer, and hover can no longer reach the old one.
+- **"Your fallback isn't a global change, it's a tab-scoped one."** Correct, and better than what I
+  proposed: same benefit, no effect on panel-open feel anywhere else, revert is one constant.
+
+### A process note on my own verification list
+
+The live-verification checklist I handed over was written for me, not for Pryme: "watch for blur
+stutter on open", "toggle blur off mid-hover". The response — *"I don't understand what those items
+need me to test"* — was correct, and one item was not reasonably doable by hand at all. The workable
+split, which is what we used: **Pryme drives the app and reports what it feels like; I read the log
+and produce the numbers.** Ask for actions and impressions, never for measurements a human has to
+eyeball with a stopwatch.
+
+### Numbers
+
+| | first hover after opening Settings |
+|---|---|
+| start of session | ~1.7-2.1s |
+| after `8c348b0` | ~1.1s |
+| after `434763f` | **~0s** (366ms worst case) |
+
+Suite 263 passed / 4 pre-existing stale failures (`test_cover_theme_pending.py`, unrelated —
+assertions drifted from a reworked implementation; still outstanding).
+`tests/test_panel_settle_resume.py` adds 21 tests, every regression pin confirmed to fail against
+pre-fix code before being kept — including one that catches a retriggerable timer, pinning the
+2026-07-22 starvation property directly.
+
+## Session Summary — 2026-07-28 Session 1 — Theme hover previews: three real bugs, two self-inflicted regressions, and one correct check I removed and had to restore
 
 Shipped: blur-refresh re-arm (`ac87e0a`), `048ae3a` revert + structural replacement (`197e112`),
 swatch-leave discriminator (`554476b` → `9b8d9df` → `6eb07ca`), hover-interrupts-any-fade

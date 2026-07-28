@@ -358,6 +358,40 @@ would let the hover-preview confinement discard rule (`pending[3]`, unaffected b
 bypassed on replay — see the "Hover-preview theme application must never reach
 `_schedule_deferred_restyle`..." rule area (2026-07-21) for why that confinement exists.
 
+### DO NOT resume a panel-animation wait via a `finished` signal — and DO NOT drop `blur_animation` from `_any_panel_animating()`
+Two halves of one fact: `_on_theme_changed`'s animation guard must wait for the blur, and it must
+not wait for it by subscribing to a signal.
+
+**Why the blur must stay in the predicate** (`panels.py`, `_any_panel_animating` — note the sibling
+`is_any_panel_animating` deliberately EXCLUDES it, for the preloader): a ~300ms synchronous
+`_apply_stylesheets` landing mid-blur-tween freezes it for **310.9ms** (measured offscreen on the
+animation clock; 17.1ms worst gap without). "A blur tween isn't geometry so it can't hitch" is the
+obvious instinct and it is wrong.
+
+**Why the resume must not use `finished`:** `QPropertyAnimation.stop()` emits `stateChanged` but
+**NOT** `finished` (verified empirically 2026-07-28), and `blur_animation.stop()` runs
+unconditionally on every panel open (`_start_visual_area_blur`) and on blur-toggle-off. A
+`finished`-based resume is therefore silently dropped — the same failure already diagnosed three
+times against `_fade_anim` (see the three `stop()` comments in `theme_manager.py`).
+`stateChanged` fails differently: it fires on that same `stop()`, mid-panel-open, *before* the
+replacement blur starts — precisely the window the guard exists to protect.
+
+`PanelManager.call_when_panels_settled` is the correct shape: **event-driven in effect** (resumes
+within one 16ms tick of the true settle), **predicate-driven in mechanism** (re-checks
+`_any_panel_animating()`, so `stop()` cannot drop it). It has NO per-call signal connection — one
+permanent `timeout.connect` at construction, a coalescing flag, a waiter list — so double-fire is
+structurally impossible and a stale connection is unrepresentable.
+
+`_arm_settled_watch` must **never restart a running timer**. That early-return is what makes the
+deadline absolute; `_panel_guard_timer` (which this replaced for the animating case) did
+`stop()`+`start()` on every re-arm, so its deadline was retriggerable by mouse motion and a queued
+call could starve indefinitely — the 2026-07-22 "snapback hangs" incident, whose fix addressed the
+entry into the branch but left that property intact.
+
+The `_panel_open` half still uses `_panel_guard_timer`, correctly: it ends when the USER closes a
+panel, not on a clock, so there is no signal to subscribe to and 700ms is a re-check cadence rather
+than an overshoot.
+
 ### DO NOT make any panel-dismiss path depend on a *stashed* snapback to restore the active theme
 `_close_settings_flow` (`panels.py`) must call `_on_theme_unhovered()` — which issues a **fresh**
 snapback — *before* `snap_theme_forward()`; `hide_all_panels` and `handle_drag_area_right_click`
@@ -1093,7 +1127,22 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-07-27 — `visual_area` blur clipped to the panel-occluded region, so the ~30px
+*Last updated: 2026-07-28 — theme hover/preview reliability, across two sessions. Session 1 fixed
+three bugs (a hover during a snapback fade was stashed then discarded so no preview ever appeared;
+the `048ae3a` superseded-snapback guard was reverted as a regression, its 775ms flash-then-revert
+now handled structurally by clearing the stash at the interrupt site; the swatch-leave check ended
+up back on `isVisible()` after two cursor-delta replacements each shipped a regression) — and
+corrected two claims the same session had written into these docs. Session 2 killed the ~2s dead
+first hover after opening Settings: a 700ms retry polling against a 1500ms blur-in, replaced with
+`PanelManager.call_when_panels_settled` (predicate re-check, NOT a `finished` subscription — see
+the new rule above), then the remaining ~1.1s closed by shortening the blur-in to 400ms scoped to
+the Themes tab. New rule added covering both halves of the guard. The transferable lesson across
+both sessions is in NOTES.md: three separate approaches were killed by pointing an existing
+measurement harness at a claim that merely looked plausible ("a blur tween can't hitch a restyle",
+"a hover restyle is cheaper", "the hitch would be hidden") — each was checkable in minutes and each
+would otherwise have shipped.*
+
+*Previously: 2026-07-27 — `visual_area` blur clipped to the panel-occluded region, so the ~30px
 sliver beside an open panel stays sharp (`ClippedBlurEffect`, `ui/visual_area_blur.py`). Shipped on
 the third attempt after five successively disproven root causes; the real defect was a two-pass
 `draw()` rendering the source twice, found only by stretching the blur-in animation to 8s to see

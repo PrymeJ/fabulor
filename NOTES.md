@@ -1,3 +1,129 @@
+## FIXED: first theme hover after opening Settings was dead for ~2s — a polling mismatch, then the blur itself (2026-07-28, `8c348b0` + `434763f`)
+
+**Symptom:** open the Settings panel, hover a theme swatch — nothing for ~2 seconds. Every
+subsequent hover instant. Close and reopen, ~2 seconds again. Described as "would make the user
+wonder if it is broken."
+
+**The user's own experiment isolated it before any code was read:** blur OFF → no delay.
+
+### Part 1 — the polling mismatch (`8c348b0`)
+
+`_on_theme_changed`'s guard branch (`if _any_animating or _panel_open:`) deferred via
+`_panel_guard_timer`, a flat 700ms single-shot retry. Live trace (03:34:44-47):
+
+```
+44,803  slide finished; _start_visual_area_blur begins the 1500ms blur-in
+45,553  hover -> any_panel_animating=True  -> queuing deferred retry
+46,232  retry              -> STILL True   -> queuing again
+46,912  retry              -> False        -> applies
+47,248  _apply_stylesheets                 (~1.7s after the hover)
+```
+
+`_PANEL_ANIM_GUARD_MS` (700) polling against `_BLUR_IN_MS` (1500) makes **two retry rounds
+structurally guaranteed**, adding up to 700ms of pure overshoot. Slides are only 200-300ms and
+finish *before* the blur starts — `_start_visual_area_blur` is called FROM the slide-finished
+callback — so the blur is unambiguously the long pole.
+
+**Fix:** `PanelManager.call_when_panels_settled`, resuming within ~16ms of the true settle instant.
+The branch splits: the animating case uses the new resume, the `_panel_open` case keeps the timer
+(it ends on a USER ACTION — closing a panel — not a clock, so there is no signal to subscribe to).
+
+**Why NOT `finished`, despite that being the obvious mirror of the `_fade_running` branch.**
+Verified empirically this session: `QPropertyAnimation.stop()` emits `stateChanged` but **not**
+`finished`. `blur_animation.stop()` runs unconditionally on every panel open
+(`_start_visual_area_blur`) and on blur-toggle-off — so a `finished`-based resume would be silently
+dropped, the exact failure already diagnosed three times against `_fade_anim`. `stateChanged` fails
+differently: it fires on that same `stop()`, mid-panel-open, *before* the replacement blur starts —
+precisely the window the guard protects.
+
+So the resume is **event-driven in effect, predicate-driven in mechanism**: it re-checks
+`_any_panel_animating()` on a 16ms tick. Same property `transport_bar_blur.py` relied on after its
+own polled→event-driven migration — never try to cancel an armed callback; let it fire and make it
+cheap to re-evaluate.
+
+**It also fixes the 2026-07-22 starvation rather than inheriting it.** `_arm_settled_watch` early-
+returns when already armed and never restarts a running timer, so the deadline is absolute where
+`_panel_guard_timer`'s was retriggerable by mouse motion; waiters queue instead of destroying each
+other. And since `_panel_open` requires `not hover`, hover can no longer reach that timer at all —
+the incident loses its trigger.
+
+**No per-call signal connection anywhere in the mechanism** — one permanent `timeout.connect` at
+construction, a coalescing flag, a waiter list. Double-fire is structurally impossible and a stale
+connection is unrepresentable. That shape came directly from a review challenge to trace the
+connect/disconnect lifecycle rather than assume it safe because the neighbouring branch does it.
+
+### Part 2 — the remaining wait was the blur itself (`434763f`)
+
+Part 1 worked exactly as designed (measured live: one deferral, no retries, ~1.1s vs ~1.7s) **and
+the problem was still there.** A ~1.1s dead first hover still reads as broken. The wait was no
+longer polling — it was `_BLUR_IN_MS`, the floor the guard has to respect.
+
+**The option that looked obvious was measured and rejected.** Letting a hover interrupt the blur
+rested on two claims, both disproven:
+
+1. *"A hover-preview restyle is cheaper than the generic one."* No — from this session's own logs,
+   `hover=True` median **222.7ms** (n=5) vs `hover=False` **230.6ms** (n=3). Same band. (`mw
+   .setStyleSheet(base)` alone is ~143ms of it.)
+2. *"The hitch would be mostly hidden by the panel sliding over it."* No — measured **244ms of stall
+   with 1066ms of tween still to run**. Not a flicker at the tail; a visible freeze two-thirds of
+   the way through a background animation that then resumes.
+
+**Shipped instead: a shorter blur-in scoped to the Themes tab**, the one surface where the user's
+next action is expected to be a hover. Measured on the same offscreen animation-clock harness:
+
+| case | worst frame gap | dead window |
+|---|---|---|
+| 1500ms, hover @430ms (the real repro) | 17.0ms | **1091ms** |
+| 400ms, hover @430ms | 16.7ms | **0ms** |
+| 400ms, hover @200ms | 16.9ms | 201ms |
+| 400ms, hover @50ms (worst case) | 16.8ms | 366ms |
+
+**No stall in any case** — worst gap stays ~17ms, identical to blur-alone baseline. That is
+structural, not luck: shortening moves the settle point earlier rather than colliding a restyle with
+a running tween. The guard is untouched, so hovers still land after settle.
+
+Deliberately not a global reduction of `_BLUR_IN_MS`: every other panel and every other Settings tab
+keeps the 1500ms feel, since nowhere else is the user racing the blur. Reverting is deleting one
+constant and its use.
+
+### Why the guard could not simply drop `blur_animation`
+
+The first instinct — a blur tween isn't geometry, so it shouldn't block a restyle — is wrong, and
+measurably so: a 300ms restyle landing mid-blur freezes it **310.9ms** (vs 17.1ms worst case
+without). The hitch protection is real; removing it trades the wait for a visible stutter on every
+panel open.
+
+### Verification
+
+`tests/test_panel_settle_resume.py` (21 tests): the waiter-queue lifecycle, the branch split, the
+six-arg resume, and the tab-scoped duration selection. Every regression pin was confirmed to FAIL
+against the pre-fix code before being kept — including one that catches a retriggerable timer,
+pinning the 2026-07-22 starvation property directly. Suite: 263 passed, 4 pre-existing stale
+failures in `test_cover_theme_pending.py` (unrelated — see the note at the end of the previous
+session's entry).
+
+Live-confirmed by the user: first hover now previews immediately, and the shorter blur-in does not
+read as abrupt on that tab.
+
+**Net:** first-hover latency ~1.7-2.1s → ~0s for a hover arriving 400ms+ after open; 366ms worst
+case.
+
+### The transferable part
+
+Two claims were killed by measurement in this arc, both of the shape "these two things look
+comparable so they will behave comparably":
+
+- A hover restyle is not cheaper than a generic one — checkable in one grep of existing logs, and
+  it invalidated an entire proposed approach.
+- "The hitch would be hidden" was a plausible mitigation with nothing behind it. The harness that
+  produced the original 310.9ms figure could answer it directly, and did.
+
+Both were caught by a review challenge insisting the harness be run *before* deciding, not after
+shipping. The offscreen animation-clock harness (`QPropertyAnimation` + `valueChanged` frame-gap
+sampling) is genuinely useful for this class of question — **but it measures the animation clock,
+not compositing**, and the 2026-07-27 lesson stands: it has returned byte-identical output for a
+plainly visible paint bug. Use it to answer "is the tween stalled", never "does it look right".
+
 ## FIXED: hover previews swallowed — three bugs, two self-inflicted regressions, six commits (2026-07-28)
 
 Three independent bugs in the theme hover/preview path, all found by reading live DEBUG traces
