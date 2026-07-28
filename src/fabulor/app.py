@@ -13,7 +13,7 @@ from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
     QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation
 )
-from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent
+from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
@@ -2958,11 +2958,44 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             elif self.current_file:
                 self.toggle_play_pause()
         elif event.button() == Qt.RightButton:
+            # TEMP INSTRUMENTATION (2026-07-28, user-requested): right-click on the
+            # main window to toggle the sidebar "also has misses, especially after
+            # the panel was closed". Both early-returns below are silent, so a
+            # swallowed click currently leaves no trace at all. At WARNING so it is
+            # greppable without DEBUG; pairs with handle_drag_area_right_click's own
+            # existing branch logging (DEBUG) in panels.py.
+            _elapsed = (self._dialog_close_time.elapsed()
+                        if self._dialog_close_time.isValid() else None)
             if self._dialog_close_time.isValid() and self._dialog_close_time.elapsed() < 500:
+                logger.warning(
+                    f"[SIDEBAR-TRACE] right-click SWALLOWED by the post-dialog guard "
+                    f"({_elapsed}ms < 500ms since a file dialog closed) "
+                    f"t={time.perf_counter():.6f}"
+                )
                 return
             # Guard: Only allow sidebar right-click toggle if books are indexed
-            if self.db.get_book_count() > 0:
+            _count = self.db.get_book_count()
+            if _count > 0:
+                pm = self.panel_manager
+                logger.warning(
+                    f"[SIDEBAR-TRACE] right-click ACCEPTED "
+                    f"sidebar_expanded={pm.sidebar_expanded} "
+                    f"any_panel_visible={pm.is_any_panel_visible()} "
+                    f"any_animating={pm._any_panel_animating()} "
+                    f"dialog_guard_elapsed={_elapsed} t={time.perf_counter():.6f}"
+                )
                 self.panel_manager.handle_drag_area_right_click(event)
+                logger.warning(
+                    f"[SIDEBAR-TRACE] right-click DONE "
+                    f"sidebar_expanded={pm.sidebar_expanded} "
+                    f"any_panel_visible={pm.is_any_panel_visible()} "
+                    f"t={time.perf_counter():.6f}"
+                )
+            else:
+                logger.warning(
+                    f"[SIDEBAR-TRACE] right-click SWALLOWED — no indexed books "
+                    f"(get_book_count()={_count}) t={time.perf_counter():.6f}"
+                )
 
     def toggle_play_pause(self):
         self.panel_manager.hide_all_panels()
@@ -3452,6 +3485,53 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
+        # TEMP INSTRUMENTATION (2026-07-28, user-requested): right-click delivery
+        # audit. A deliberate 30-click run produced only 33 RECEIVED across 60 clicks
+        # — ~45% of right-presses never reached RightClickButton.mousePressEvent at
+        # all, with and without blur. This filter is installed on QApplication
+        # (app.py's installEventFilter call), so it sees EVERY mouse press Qt
+        # dispatches anywhere in the app, before any widget handler can consume it.
+        #
+        # It distinguishes three cases the widget-level probe cannot:
+        #   line here + [CLICK-TRACE] RECEIVED -> delivered correctly
+        #   line here, NO RECEIVED             -> Qt routed it to the WRONG widget
+        #                                         (obj= tells us which)
+        #   no line at all                     -> Qt never got the press; the loss is
+        #                                         upstream of the app entirely (X/
+        #                                         Wayland/input stack) — which matches
+        #                                         the user's report of right-click
+        #                                         feeling less responsive on openSUSE
+        #                                         generally, not just in Fabulor.
+        # Remove once the question is settled.
+        if event.type() == QEvent.Type.MouseButtonPress:
+            try:
+                if event.button() == Qt.RightButton:
+                    _cls = type(obj).__name__
+                    _name = getattr(obj, 'theme_name', None)
+                    # What is ACTUALLY under the cursor right now, independent of
+                    # where Qt chose to dispatch. The discriminator that matters:
+                    #   under=ThemeItem, dispatched to QWindow/QLabel
+                    #       -> hit-testing sent the press to the wrong widget while
+                    #          the swatch was under the pointer (a routing bug)
+                    #   under=QWindow/QLabel too
+                    #       -> the swatch genuinely was not under the cursor; the
+                    #          press landed in a gap or on a neighbour (aim/layout)
+                    # Cross-app context (2026-07-28): the user sees the same
+                    # unreliability in VS Code's editor but NOT its chat pane, so the
+                    # loss is surface-dependent rather than device-wide.
+                    _under = QApplication.widgetAt(QCursor.pos())
+                    _under_cls = type(_under).__name__ if _under is not None else None
+                    _under_name = getattr(_under, 'theme_name', None)
+                    logger.warning(
+                        f"[RCLICK-AUDIT] press dispatched to {_cls} "
+                        f"theme_name={_name!r} objName={obj.objectName()!r} "
+                        f"| under_cursor={_under_cls} theme_name={_under_name!r} "
+                        f"| pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
+                        f"t={time.perf_counter():.6f}"
+                    )
+            except (AttributeError, RuntimeError):
+                pass
+
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
                 return True

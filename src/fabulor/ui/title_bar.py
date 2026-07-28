@@ -48,7 +48,33 @@ class RightClickButton(QPushButton):
     rightClicked = Signal()
 
     def mousePressEvent(self, event):
+        # TEMP INSTRUMENTATION (2026-07-28): LEFT presses are logged too, because the
+        # user reports ~30-40 left-clicks with no misses on the same widgets where
+        # right-clicks feel unreliable. Same widget, same position, same session —
+        # only the button differs, which rules out hit-testing/geometry/blur (none of
+        # those care which button it is) and points at this method's own asymmetry:
+        # the right branch calls event.accept() and never reaches super(), while left
+        # goes through QPushButton's normal press/release machinery.
+        if event.button() == Qt.LeftButton:
+            logger.warning(
+                f"[CLICK-TRACE] LEFT press theme_name={getattr(self, 'theme_name', None)!r} "
+                f"vis={self.isVisible()} t={time.perf_counter():.6f}"
+            )
         if event.button() == Qt.RightButton:
+            # TEMP INSTRUMENTATION (2026-07-28, user-requested): counting right-clicks
+            # that reach Qt at all, to test whether the transport-bar blur grab's
+            # hide/show cycle on settings_panel swallows theme selections. This is the
+            # EARLIEST observable point — if a click is lost before here, Qt never
+            # delivered the event and no line appears at all. Paired with
+            # [CLICK-TRACE] in ThemeManager._on_theme_right_clicked (the handler) and
+            # _on_theme_changed's own [BLEED-TRACE]. Remove once the question is settled.
+            _name = getattr(self, 'theme_name', None)
+            logger.warning(
+                f"[CLICK-TRACE] RightClickButton.mousePressEvent RECEIVED "
+                f"theme_name={_name!r} vis={self.isVisible()} "
+                f"pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
+                f"t={time.perf_counter():.6f}"
+            )
             self.rightClicked.emit()
             event.accept()
         else:

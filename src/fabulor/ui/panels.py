@@ -104,6 +104,9 @@ class PanelManager:
         self._settled_watch_timer.timeout.connect(self._on_settled_watch_tick)
         self._settled_watch_armed = False
         self._panels_settled_waiters: list = []
+        # Coalescing flag for a sidebar toggle requested mid-slide — see
+        # _toggle_sidebar. Only the LAST request during a slide is replayed.
+        self._sidebar_toggle_queued = False
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -290,8 +293,53 @@ class PanelManager:
             self._clear_visual_area_clip()
 
     def _toggle_sidebar(self):
-        """Slides the sidebar in or out."""
+        """Slides the sidebar in or out.
+
+        A toggle requested while the slide is already running is QUEUED, not dropped
+        (2026-07-28). The re-entrancy guard below is legitimate — restarting the
+        animation mid-flight would break it — but discarding the user's intent is a
+        separate thing, and it was silently losing real clicks.
+
+        Measured live: 5 of 25 sidebar right-clicks (20%) were discarded here. Four
+        arrived within the 300ms slide (gaps of 164/250/274/290ms against a 408ms
+        median click interval), which is why it reads as intermittent rather than
+        broken — click a little faster than the animation and your click vanishes.
+        This is also the "misses especially after the panel was closed" case: a panel
+        close leaves animations in flight, so the next right-click lands in the window.
+        (One 1046ms drop in that sample is NOT explained by the slide window and is
+        still open — do not assume this fix covers it.)
+
+        Coalescing is deliberate: only the LAST request during a slide is replayed, so
+        a burst of fast clicks settles on one net toggle rather than queuing several
+        sequential 300ms slides that keep moving after the user stops clicking.
+        """
         if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
+            if self._sidebar_toggle_queued:
+                logger.debug(
+                    f"t={time.perf_counter():.6f} [_toggle_sidebar] already queued — "
+                    f"coalescing (expanded={self.sidebar_expanded})"
+                )
+                return
+            self._sidebar_toggle_queued = True
+            logger.debug(
+                f"t={time.perf_counter():.6f} [_toggle_sidebar] QUEUED — slide in "
+                f"flight (expanded={self.sidebar_expanded}); will apply on settle"
+            )
+
+            def _replay():
+                self._sidebar_toggle_queued = False
+                # Re-check rather than assuming: the settle may arrive with another
+                # animation still running (call_when_panels_settled waits on ALL of
+                # them), or state may have changed via another path in the meantime.
+                if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
+                    return
+                logger.debug(
+                    f"t={time.perf_counter():.6f} [_toggle_sidebar] replaying queued "
+                    f"toggle (expanded={self.sidebar_expanded})"
+                )
+                self._toggle_sidebar()
+
+            self.call_when_panels_settled(_replay)
             return
         logger.debug(
             f"t={time.perf_counter():.6f} [_toggle_sidebar ENTRY] "
