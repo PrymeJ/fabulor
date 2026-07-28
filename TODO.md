@@ -126,6 +126,23 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
   confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
 
+- **[2026-07-28] BUG (user-found, screenshots): Sleep/Speed preset buttons are translucent, so the
+  cover art shows THROUGH them.** Confirmed visible — the "INFINITE JEST" cover text is legible
+  inside the Playback-speed buttons.
+  **Mechanism:** `sleep_timer.py:170` and `speed_controls.py:253` both build a per-button visual
+  ramp with `alpha = int(75 + (180 * (i / (n-1))))` applied to the theme accent, emitted as
+  `background-color: rgba(r, g, b, alpha)` via a per-instance `setStyleSheet`. Alpha 75 at the first
+  button is ~29% opaque, so it composites against whatever is behind the panel rather than
+  producing a defined colour. Identical code in both files, including the hover/pressed variants.
+  **Fix (the user's, and it is the right one):** produce the ramp by CALCULATING THE COLOUR STEPS
+  instead of varying alpha — blend accent toward the panel background by the same ratio and emit
+  opaque `rgb()`. Same appearance on an opaque panel, no bleed-through on a translucent one.
+  **Do this BEFORE or WITH the three-state background below.** Under Opaque the bug is invisible
+  (nothing behind to show through), so shipping that first would mask it rather than fix it — and
+  under Transparent it would get worse, since more is visible behind the panel.
+  Scope note: only these two files have the stylesheet-alpha shape. The other `setAlpha` sites
+  (library, stats_panel, book_detail_panel) are QPainter-drawn against a known surface, which is a
+  different and legitimate case — do not sweep them in.
 - **[2026-07-28] NEW (user's own list): three-state panel background — Transparent | Frosty glass |
   Opaque.** Smaller than it first looks, because the opacity machinery already exists.
   **What is already there** (found 2026-07-28 after the user pointed at `settings_tab_hover_opacity`):
