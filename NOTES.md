@@ -1,3 +1,52 @@
+## FIXED: cover art visible through the Sleep/Speed preset buttons — an alpha ramp where a colour ramp was meant (2026-07-28, `fa6d301`)
+
+**Symptom:** user-found while checking panel opacity, with screenshots — the words "INFINITE JEST"
+from the cover art were legible *inside* the Playback-speed buttons.
+
+**Mechanism.** `sleep_timer.py` and `speed_controls.py` both built their per-button visual ramp by
+varying ALPHA on the theme accent:
+
+```python
+alpha = int(75 + (180 * (i / (n - 1))))     # 75 .. 255
+c.setAlpha(alpha)
+btn.setStyleSheet(f"background-color: rgba({r}, {g}, {b}, {alpha}); ...")
+```
+
+At alpha 75 the first button is ~29% opaque, so it composites against whatever sits behind the
+panel. Every theme's `panel_opacity_hover` is 0.88-0.95, so the panel is itself translucent and the
+cover art beneath it came through. Identical code in both files, including the hover/pressed
+variants.
+
+**The diagnosis was the user's**, and it named the fix as well as the fault: *"the gradient effect
+should not be created by using alpha, but calculating the color steps to create the same effect."*
+The ramp is meant to be a purely visual progression — buttons reading as progressively stronger
+toward the longer durations / higher speeds. Alpha achieved that, but with a side effect on
+everything behind it.
+
+**Fix.** `preset_ramp_rgb` (`themes.py`) blends the same progression in COLOUR space, from
+`bg_main` toward `accent`, and emits opaque `rgb()`. `_RAMP_MIN_MIX`/`_RAMP_MAX_MIX` reproduce the
+old 75..255 alpha span as mix ratios, so the appearance is preserved rather than re-tuned. Shared
+helper because both files had the identical code and would otherwise drift. Kept Qt-free (returns
+`"r,g,b"`, not a `QColor`) because `themes.py` imports only `math` and builds stylesheet text.
+
+**Sequencing mattered.** This had to land BEFORE the three-state panel background
+(Transparent | Frosty glass | Opaque, TODO.md): under Opaque the bug would have been invisible
+rather than fixed, and under Transparent it would have been worse.
+
+### Scope note — do NOT sweep the other `setAlpha` call sites
+
+Only these two files had the bug. `library.py`, `stats_panel.py` and `book_detail_panel.py` also
+call `setAlpha`, but those are **QPainter-drawn against a known surface** — the widget paints
+itself onto a parent it controls, so alpha there is a legitimate blend, not a hole through to the
+desktop. The bug is specific to the *stylesheet* form, where a translucent colour lands on a widget
+whose ancestor is itself translucent. A future "remove alpha from the UI" sweep that touches the
+painter sites would break real, working blending.
+
+**Tests:** `tests/test_preset_ramp.py` (8) pins that the emitted value has three channels and never
+four, that the last step is the full accent, that the progression is monotonic toward it, that the
+span matches the old alpha range, and that a missing theme key or a single-button panel does not
+raise.
+
 ## FIXED: theme right-clicks applied one step behind — the "missing clicks" were never missing (2026-07-28, `4700b31`)
 
 **Symptom, reported for a long time:** right-clicking a theme swatch often did nothing. Felt like
