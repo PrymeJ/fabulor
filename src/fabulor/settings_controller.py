@@ -1,3 +1,4 @@
+from fabulor import themes
 class SettingsController:
     """Handles logic for application settings and synchronizes visual states."""
     def __init__(self, config, visuals, panels, ui_callbacks, library, player):
@@ -108,12 +109,21 @@ class SettingsController:
         touch any of the eleven blur call sites. 'opaque' deliberately does NOT
         blur: a fully opaque panel hides what is behind it, so blurring would be
         invisible work.
+
+        The restyle lives HERE, on the mode-change path, and nowhere else.
+        set_blur_selection is a visual sync called from the settings refresh batch;
+        putting the restyle there made every sync a ~250ms blocking full pass
+        (three per second — enough to stutter the panel slide and crash the app).
         """
         self.config.set_panel_backdrop(mode)
-        # set_blur_selection owns BOTH the button states and the alpha override +
-        # restyle, because the override has to be applied before any stylesheet is
-        # rebuilt and only the visuals facade reaches MainWindow's theme_manager.
+        # Applied BEFORE the restyle below — _resolve_theme reads the override while
+        # building every stylesheet.
+        themes.set_panel_alpha_override(self.config.get_panel_alpha_override())
         self._update_blur_visuals()
+        # Repaint the already-open panels so the change lands immediately rather
+        # than on the next open — the control lives inside Settings, so the user is
+        # looking at the surface being changed.
+        self.visuals.restyle_for_backdrop_change()
         # Covers the transport-bar overlay AND the cover-image blur.
         self.panels.apply_blur_live(self.config.get_blur_enabled())
 

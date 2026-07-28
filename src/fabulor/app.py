@@ -192,15 +192,31 @@ class VisualsInterface:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
+    def restyle_for_backdrop_change(self):
+        """One full stylesheet pass, for a panel-backdrop MODE CHANGE only.
+
+        Deliberately separate from set_blur_selection: that one is a visual sync
+        called from the settings refresh batch, and a restyle there fires on every
+        sync (~250ms each, three per second — it stuttered the panel slide and
+        crashed the app, 2026-07-28)."""
+        tm = getattr(self._main, 'theme_manager', None)
+        if tm is not None:
+            tm.apply_full_pass(tm._current_theme_name)
+
     def set_blur_selection(self, mode):
-        """Panel backdrop: "transparent" | "frosty" | "opaque" (2026-07-28; this used
-        to take a bool). Owns three things that must happen in order: the button
-        selected-states, the panel alpha override, and the restyle that makes the
-        override visible on the already-open panel."""
+        """Paint the panel-backdrop button states. Panel backdrop is
+        "transparent" | "frosty" | "opaque" (2026-07-28; this used to take a bool).
+
+        VISUAL SYNC ONLY — no restyle here. This is called from the settings
+        visual-refresh batch (see _finish_startup and sync_all_settings_visuals),
+        not just on a mode change, so anything expensive in here runs on every
+        sync. An earlier version of this method called apply_full_pass, which made
+        every refresh a ~250ms blocking restyle: measured at three per second,
+        ~75% of the main thread, which made the settings panel slide visibly stutter
+        and then took the app down. The restyle belongs on the mode-change path
+        only — see SettingsController._update_panel_backdrop.
+        """
         m = self._main
-        # Applied BEFORE any stylesheet is rebuilt — _resolve_theme reads it while
-        # building every one of them.
-        themes.set_panel_alpha_override(m.config.get_panel_alpha_override())
         if hasattr(m, 'blur_buttons'):
             for state, btn in m.blur_buttons.items():
                 btn.setProperty("selected", "true" if state == mode else "false")
@@ -211,12 +227,6 @@ class VisualsInterface:
             # Drop any stale clip too, so a later re-enable starts clean.
             if m.panel_manager is not None:
                 m.panel_manager._clear_visual_area_clip()
-        # Repaint the open panels so the change lands immediately rather than on the
-        # next open — the control lives inside Settings, so the user is looking at
-        # the surface being changed.
-        tm = getattr(m, 'theme_manager', None)
-        if tm is not None:
-            tm.apply_full_pass(tm._current_theme_name)
 
     def set_notches_selection(self, enabled):
         m = self._main
