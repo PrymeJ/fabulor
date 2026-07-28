@@ -1,3 +1,69 @@
+## Session Summary — 2026-07-28 — Theme hover previews: three real bugs, two self-inflicted regressions, and one correct check I removed and had to restore
+
+Shipped: blur-refresh re-arm (`ac87e0a`), `048ae3a` revert + structural replacement (`197e112`),
+swatch-leave discriminator (`554476b` → `9b8d9df` → `6eb07ca`), hover-interrupts-any-fade
+(`57a7dd0` → `70159d6`). Six code commits for three bugs. Two of those commits fixed regressions
+introduced earlier in the same session.
+
+**Started** as a handoff on three blur-adjacent items. Item 3 (a declined `refresh_dirty` tick never
+re-arming) was a real gap and fixed cleanly. Investigating it surfaced the actual subject of the
+session: theme hover previews intermittently not appearing.
+
+**Four root-cause theories were disproven before the real ones were found**, each a plausible read of
+real evidence:
+1. *Cycle-count accumulation* — the handoff's framing ("stops after N cycles"). Its prescribed
+   capture would have held constant the one variable that mattered. Disproven by the user:
+   *"go hover on another theme, it works"*.
+2. *Specific themes go dead* — my misreading of that correction, disproven immediately.
+3. *Exit/re-entry of the swatch area is the trigger* — fit the first capture perfectly. Disproven by
+   *"this time I didn't even go out"*.
+4. *The `_on_fade_finished` drain is eating previews* — true for one capture, but the mechanism was
+   upstream.
+
+The real causes: a hover arriving during a **snapback fade** was stashed then discarded (nothing
+retried it, and holding the cursor still never helps because only a new `enterEvent` retriggers a
+preview); the **selection-fade protection** swallowed hovers for 750ms after every click; and the
+**swatch-leave check** needed to stay exactly as it already was.
+
+**Two regressions I introduced and then had to fix:**
+- `048ae3a` (shipped the previous session) keyed a discard on `_is_hover_active`, read as "a hover is
+  live now". It means "the last APPLIED theme was a preview" — after a genuine mouse-out it stays
+  True, so the guard ate legitimate snapbacks and stranded the UI on a preview. Confirmed 3x live.
+- `554476b`/`9b8d9df` replaced the working `isVisible()` swatch-leave check with cursor-delta tests,
+  twice. Attempt 1 consumed its reference and fired ~70 spurious snapbacks in 5s. Attempt 2 rolled
+  the reference forward and killed the 80ms hover debounce ~15x/sec while the cursor moved —
+  reopening the exact 2026-07-22 bug the check existed to prevent.
+
+**The thing worth remembering.** All three misfires shared a shape: *a mechanism designed from one
+clean trace, where the trace was consistent with several models.* What broke the cycle each time was
+counting over a whole session and actively hunting counterexamples — 6 real mouse-outs (all
+`visible=True`) vs 12 false positives; `_theme_ever_applied` only tracking non-hover applies, which
+made a `SUSPECT_MASKED_STASH=True` line a false positive by construction. Confirming the current
+theory against fresh evidence is what kept producing regressions.
+
+Three specific traps, all live-confirmed:
+- **`_is_hover_active` and `_theme_ever_applied` mean less than their names suggest.** Before keying
+  a guard on a flag, find its sole writer and read the condition. Both were misread this session,
+  once in shipped code and once in analysis.
+- **An unverified claim is not a false claim.** The 2026-07-22 `isVisible()` assertion was recorded
+  without evidence and was correct; replacing it cost three commits.
+- **A constraint I invented was fed back to the user as their own.** The "a preview must never
+  interrupt a real selection" rule went into both options of an `AskUserQuestion` as a fixed premise
+  — unrejectable — and was later restated as something they had confirmed. They had not; their
+  actual requirement was about panel dismissal, enforced elsewhere entirely and never related. Pryme
+  caught it: *"Not exactly what I said."* Check whether a constraint traces to a stated requirement
+  or to your own earlier framing before building on it.
+
+**Process that worked**, and should be reused: reading captures literally rather than fitting them to
+the current theory; verifying every regression pin FAILS against the code it pins before keeping it
+(a test that passes both before and after pins nothing); and leaving a falsification probe
+(`[SWATCH-LEAVE-SUSPECT]`) rather than declaring the premise proven.
+
+**Still unverified.** The visibility fix has not been tested under real use. Pryme tests everything
+independently regardless of what the suite says — the check is `grep -c "SWATCH-LEAVE-SUSPECT"` over
+a session with a book playing, which must be 0. Docs (CLAUDE.md, NOTES.md, TODO.md) were corrected in
+the same pass, including retracting two claims this session had itself written into them.
+
 ## Session Summary — 2026-07-27 — Clipped the `visual_area` blur to the panel-occluded region; fixed a 10-day-old carousel regression, a tassel stiffness bug, and a measured main-thread cost — after five disproven root causes
 
 Long session, mostly spent being wrong in instructive ways. Shipped: the blur sliver fix

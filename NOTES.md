@@ -1,4 +1,4 @@
-## FIXED: hover previews swallowed during a snapback fade, plus two adjacent bugs (2026-07-28)
+## FIXED: hover previews swallowed — three bugs, two self-inflicted regressions, six commits (2026-07-28)
 
 Three independent bugs in the theme hover/preview path, all found by reading live DEBUG traces
 literally rather than by testing a hypothesis. Worth recording mainly because **three separate
@@ -44,18 +44,29 @@ fine; the *hover* is what vanishes. That ruled out a "bookkeeping-only, screen s
 **Root cause:** nothing recorded what STARTED the running fade. `_fade_in_flight` is a plain bool;
 `_save_on_fade` is False for both snapback and selection; `fade_ms` (200 vs 750) is handed to
 `_fade_anim.setDuration()` and never stored. `_is_hover_active` was the only nearby field and it
-answers a different question.
+answers a different question ("what was last APPLIED", not "what is the running fade").
 
-**Fix:** `_fade_is_selection`, written beside every `_fade_in_flight` write and cleared beside every
-clear. Snapback is marked at its sole source (`_on_theme_unhovered`, try/finally) rather than
-sniffed from `fade_ms` — the hover fade duration is user-configurable and could coincidentally equal
-`_SNAPBACK_FADE_MS`.
+**First fix, since removed:** a `_fade_is_selection` companion flag recording the fade's origin, so a
+hover could interrupt anything except a genuine selection's settle-fade.
 
-**Phrased positively on purpose.** It names the ONE forbidden case, so a future fade origin defaults
-to interruptible. The inverse phrasing is precisely how this bug hid: the rule enumerated the exempt
-cases ("hover may interrupt a hover"), so a fade type nobody had considered defaulted to "do not
-interrupt" and silently swallowed hovers. The same reasoning widened the fix to rotation and
-cover-theme fades, which were swallowing hovers identically — deliberate, not incidental.
+**Final fix:** the predicate is simply `bool(hover)` — a genuine hover interrupts ANY in-flight fade.
+The selection-fade protection turned out to be unjustified. It came from the 2026-07-21 entry, which
+preserved it as scope discipline ("exactly the pre-existing, working behavior, unaffected by this
+change") with the parenthetical "(a preview must never interrupt a real selection)" and **no
+recorded symptom, bug, or requirement behind it anywhere**. It was then live-confirmed to swallow
+real previews: selecting a theme and continuing to browse discarded every hover for the whole 750ms
+settle-fade (01:50:17,921 'Fire and Blood' stashed with `fade_is_selection=True` -> 01:50:18,653
+`DISCARDING hover-flagged`). A click applies AND persists the theme before the fade starts, so the
+settle-fade is cosmetic — interrupting it costs a visual flourish, protecting it cost previews at
+exactly the moment the user is most likely to keep hovering. `_fade_is_selection` and the snapback
+marker that fed it were both deleted rather than left as dead state.
+
+**A process note worth keeping.** The selection-fade constraint reached the plan because it was put
+into both options of an `AskUserQuestion` as a fixed premise — so it could not be rejected — and was
+later restated back to the user as something they had confirmed. They had not; their actual
+requirement was about panel DISMISSAL (a preview must not survive closing the panel), which is
+enforced at `snap_theme_forward`/`complete_main_fade` and was never related. Check whether a
+"constraint" traces to a stated requirement or to your own earlier framing before building on it.
 
 ### BUG 2 — the 048ae3a guard was a regression (reverted)
 
@@ -74,35 +85,79 @@ it becomes true**, reads no hover state, and therefore cannot repeat the guard's
 that lands is created *after* any clear could have run, so the clear cannot suppress it. This is a
 silent structural precondition that no assertion enforces, so it is now a CLAUDE.md rule.
 
-### BUG 3 — the swatch-leave check could drop a genuine leave
+### BUG 3 — the swatch-leave discriminator, and two failed attempts at it
 
-`_on_themes_tab_left` gated on `tab_widget.isVisible()`, read at delivery time. The 2026-07-22 note
-recorded that this "cannot false-negative a genuine leave" — **that claim was wrong.**
-`settings_panel` is an ANCESTOR of `swatch_box`, and `_grab_and_blur` hides/shows it roughly every
-65ms while a book plays: measured ~15 synthetic leave/enter pairs per second on a perfectly
-stationary cursor (00:28:13, pinned at `pos=(242,266)` across the whole burst). A real mouse-out
-landing in one of those hide windows was silently dropped — the intermittent "snapback didn't work
-when moving to the dismiss sliver".
+**The original design was right; I broke it twice before restoring it.** Recorded in full because
+the failure mode of each attempt is easy to reintroduce.
 
-**Fix:** compare the cursor against `_hover_seen_pos` (recorded on every genuine swatch enter) — the
-same two-signal shape `ThemeItem` uses, but without a second wired `leaveEvent`, which CLAUDE.md
-forbids here. A grab-synthetic leave fires with the cursor unmoved; a real mouse-out always moves it
-first. Visibility is no longer consulted at all. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel OS-level
-mouse-reporting jitter that would otherwise read as movement and fire a spurious snapback.
+`_on_themes_tab_left` gated on `tab_widget.isVisible()`. The 2026-07-22 note claimed this "cannot
+false-negative a genuine leave", which read as an unverified assertion, so it was replaced with a
+cursor-position test on the theory that a real mouse-out could land inside a blur-grab hide window.
+
+**Attempt 1 — position vs. the last genuine ENTER, visibility ignored.** It also CONSUMED the
+reference on a genuine leave, so every later synthetic leave hit the `None` fallback (written to
+fail open) and fired a snapback: **~70 in 5 seconds** with the cursor provably frozen at
+`pos=(222,271)` (01:36:15-20). Invisible only because the no-op guard caught every one — with a live
+preview showing, each would have killed it.
+
+**Attempt 2 — position vs. the last LEAVE (rolling reference), visibility still ignored.** Fixed the
+consume bug, broke the comparison. Consecutive synthetic leaves are ~65ms apart, so a cursor merely
+MOVING ACROSS the swatch area travels 4-14px between them — past `_MOUSE_JITTER_PX`. Every synthetic
+leave then read as genuine and called `_on_theme_unhovered`, whose `_hover_debounce_timer.stop()`
+killed the 80ms debounce ~15x/sec, so **previews never fired while the cursor was in motion**
+(02:25:47-54, three misses back to back). That is the 2026-07-22 debounce-kill bug, reopened by a
+different route.
+
+**Final: visibility is primary, and it is sufficient.** Counted over a full live session rather than
+reasoned from one trace: **6 real mouse-outs, all `visible=True`**, all at the right-hand edge
+(x = 254, 254, 256, 254, 254, 238) exiting toward the dismiss sliver — and **12 "genuine" leaves
+while hidden, all false positives**. Zero real mouse-outs arrived while hidden, so the premise that
+justified replacing the check was never supported by any observation.
+
+The position test survives only as a secondary guard for the one case visibility cannot cover: a
+leave delivered while VISIBLE with the cursor unmoved (a stylesheet-cascade artifact). It anchors to
+the last genuine ENTER, never to the last leave, and is never consumed — both variants are pinned by
+tests that fail against them.
+
+**The shared root error in both attempts:** trying to infer "did the user leave?" from cursor deltas,
+when the widget's own visibility answers it directly. Also a reminder that "this claim is unverified"
+is not the same as "this claim is wrong" — the 2026-07-22 assertion happened to be correct, and
+replacing it cost three commits.
+
+**Falsification probe left in place:** a `[SWATCH-LEAVE-SUSPECT]` WARNING fires if a leave is
+suppressed while hidden AND the cursor is outside `swatch_box`'s bounds — i.e. a real exit that was
+eaten, the one thing that would falsify the premise. `grep -c "SWATCH-LEAVE-SUSPECT"` must be 0. If
+it is not, bring the lines back rather than patching around them; they carry the cursor position and
+widget rect.
 
 ### Verification
 
-`tests/test_hover_interrupts_snapback.py` (17) + `tests/test_fade_drain.py` (10). The BUG 1 pin was
-confirmed to FAIL against the old predicate before being kept — a test that passes both before and
-after pins nothing. Suite: 246 passed, 4 pre-existing `test_cover_theme_pending.py` failures
+`tests/test_hover_interrupts_snapback.py` + `tests/test_fade_drain.py`. Every regression pin was
+confirmed to FAIL against the code it pins before being kept — a test that passes both before and
+after pins nothing. Suite: 242 passed, 4 pre-existing `test_cover_theme_pending.py` failures
 (verified unrelated by stashing).
 
-**Live verification is required and is NOT covered by any of this** — the decision logic is unit
-tested, the Qt paint/timing behaviour cannot be. Two items are merge-blocking: (1) a genuine
-selection's stashed re-call being dropped by the interrupt-clear, and (2) the jitter threshold on
-`swatch_box`'s larger geometry, which is new territory for a mechanism proven only on a single
-swatch. A green suite is not evidence for either — 048ae3a was unit-green and trace-reasoned and
-still wrong live.
+**Live verification is NOT covered by any of this** — the decision logic is unit tested; the Qt
+paint/timing behaviour cannot be. How to test the visibility premise: use the Themes tab normally
+with a book playing (the grab only fires during playback, which is what creates synthetic leaves),
+then with the app closed run `grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log` — must be 0.
+
+### What this session should have done differently
+
+Six commits for three bugs, two of which were regressions from earlier commits in the same session.
+The pattern in all three misfires was the same: **a mechanism was designed from one clean trace, and
+the trace was consistent with several models.** What broke the cycle each time was counting over a
+whole session and actively looking for counterexamples (12 false positives vs 6 real leaves; the
+`_theme_ever_applied` field that only tracks non-hover applies) rather than confirming the current
+theory against fresh evidence.
+
+Two specific traps worth naming:
+- **`_is_hover_active` and `_theme_ever_applied` both mean something narrower than their names
+  suggest** — the first is "the last APPLIED theme was a preview", the second is "the last NON-HOVER
+  apply". Both were misread as live state during this session, once in shipped code (048ae3a) and
+  once in analysis. Before keying a guard on a flag, find its sole writer and read the condition.
+- **An unverified claim is not a false claim.** The 2026-07-22 `isVisible()` assertion was recorded
+  without evidence and turned out to be correct; replacing it cost three commits.
 
 ## REVERTED (2026-07-28): a theme preview self-cancelled ~775ms after appearing, with the mouse sitting still (2026-07-27)
 

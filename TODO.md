@@ -6,23 +6,29 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-28] AWAITING LIVE VERIFICATION — three hover/preview bugs fixed (`57a7dd0`,
-  `197e112`, `554476b`).** (1) A hover arriving during a **snapback fade** was stashed and then
-  discarded, so no preview ever appeared and nothing retried it — the interrupt predicate asked
-  `_is_hover_active` (what was last *applied*) instead of what the running fade *is*; fixed with
-  `_fade_is_selection`, which also widens the rule to rotation/cover-theme fades that were
-  swallowing hovers identically. (2) **`048ae3a` reverted** — its guard read a genuine mouse-out as
-  "a preview is live, protect it" and ate legitimate snapbacks (confirmed 3×); the 775ms
+- **[2026-07-28] AWAITING LIVE VERIFICATION — theme hover previews, three bugs fixed across six
+  commits (`ac87e0a`, `57a7dd0`, `197e112`, `554476b`, `9b8d9df`, `70159d6`, `6eb07ca`).**
+  (1) A hover arriving during a **snapback fade** was stashed then discarded — no preview ever
+  appeared and nothing retried it. The predicate is now simply `bool(hover)`: a genuine hover
+  interrupts ANY in-flight fade, including a genuine selection's settle-fade (that protection had no
+  requirement behind it and swallowed previews for 750ms after every click). (2) **`048ae3a`
+  reverted** — it keyed on `_is_hover_active`, which means "the last APPLIED theme was a preview",
+  not "a hover is live now", so it ate legitimate snapbacks after a real mouse-out. The 775ms
   flash-then-revert it targeted is structural (`_fade_anim.stop()` emits no `finished`) and is now
-  handled by clearing the stash at the interrupt site. (3) The **swatch-leave** check used live
-  `isVisible()`, which the blur grab's ~15/sec ancestor hide/show could false-negative — now
-  discriminated by cursor movement (`_MOUSE_JITTER_PX`). Full analysis: NOTES.md, 2026-07-28.
-  **Two BLOCKING live checks before this closes** (a green suite is not evidence for either — the
-  reverted guard was unit-green and still wrong live): (a) interrupt a genuine click's 750ms
-  settle-fade and confirm the *selected* theme still ends up applied and persisted, across several
-  interrupt timings; (b) the sliver snapback, 10+ repetitions with a book playing, watching for
-  jitter false-negatives (±1-2px movement on a "stationary" cursor reading as a real leave) —
-  `swatch_box`'s geometry is new territory for a mechanism proven only on a single swatch.
+  handled by clearing the stash at the interrupt site. (3) The **swatch-leave check** ended up back
+  where it started: `isVisible()` is the discriminator. Two cursor-delta replacements were tried and
+  both shipped regressions (~70 spurious snapbacks; then the 80ms debounce killed ~15x/sec while
+  moving). Full analysis: NOTES.md and SESSION.md, 2026-07-28.
+  **How to verify live** (the unit suite covers decision logic only; Qt paint/timing is not
+  testable here): use the Themes tab normally with a book playing — the blur grab only fires during
+  playback, which is what creates the synthetic leaves. Sweep across swatches, sit still on one,
+  leave to the dismiss sliver, come back. Then with the app closed (logs rotate at 2MB under DEBUG):
+  `grep -c "SWATCH-LEAVE-SUSPECT" ~/.local/state/fabulor/log/fabulor.log` — **must be 0**. That probe
+  fires only when a leave is suppressed while hidden AND the cursor is outside `swatch_box`, i.e. a
+  real exit that was eaten — the one observation that falsifies the premise. If non-zero, bring the
+  lines back rather than patching around them; they carry the cursor position and widget rect.
+  Also worth watching: previews appearing reliably while the cursor is in motion (regression 2's
+  symptom), and after clicking a theme (the selection-fade case).
 - **[2026-07-27] SUPERSEDED by the entry above — the fix described here was reverted 2026-07-28
   (`197e112`); see NOTES.md for why the discriminator was wrong: a theme preview
   self-cancelled ~775ms after appearing, with the mouse sitting still.** Repro: hover outside the

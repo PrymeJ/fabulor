@@ -395,23 +395,40 @@ likely, given the ~200ms cadence — the debounce timer was killed before it cou
 dropping a genuine hover's preview.
 
 **FIXED (2026-07-22), two passes:** `ThemeManager._on_themes_tab_left(tab_widget)`
-(`theme_manager.py`, near `_on_theme_unhovered`) checked `tab_widget.isVisible()` first and skipped
-the snapback entirely when the leave fired while the widget was hidden by the blur grab. **The
-claim recorded here at the time — "a real mouse-out of any container always happens while it's
-visible, so this check cannot false-negative a genuine leave" — was WRONG, and was disproven live
-on 2026-07-28.** It reads visibility at delivery time, so a genuine mouse-out landing inside one of
-the grab's hide windows *was* dropped: measured ~15 synthetic leave/enter pairs per second on a
-perfectly stationary cursor (00:28:13, cursor pinned at `pos=(242,266)`), which is a wide enough
-target to swallow real leaves intermittently. Symptom: moving from a swatch to the right-hand
-dismiss sliver often failed to snap back, leaving the preview stuck.
+(`theme_manager.py`, near `_on_theme_unhovered`) checks `tab_widget.isVisible()` first and skips the
+snapback entirely when the leave fired while the widget was hidden by the blur grab — a real
+mouse-out of any container always happens while it's visible, so this check cannot false-negative a
+genuine leave.
 
-**SUPERSEDED (2026-07-28):** visibility is no longer consulted. `_on_themes_tab_left` now compares
-the live cursor position against `_hover_seen_pos` (recorded by `_on_theme_hovered` on every genuine
-swatch enter) — the same two-signal shape `ThemeItem` already uses, but without a second wired event
-handler, which the rule below forbids. A blur-grab synthetic leave fires with the cursor unmoved; a
-real mouse-out always moves it first. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel/±1px OS-level mouse
-jitter that would otherwise read as real movement and fire a spurious snapback. Pinned by
-`tests/test_hover_interrupts_snapback.py`.
+**That claim was recorded without evidence, was briefly assumed to be wrong, and is CORRECT
+(re-verified by counting, 2026-07-28).** Over a full live session: 6 real mouse-outs, ALL
+`visible=True`, all at the right-hand edge (x = 254, 254, 256, 254, 254, 238) exiting toward the
+dismiss sliver — and 12 leaves classified genuine while hidden, all false positives. **Zero** real
+mouse-outs arrived while hidden.
+
+**DO NOT replace this visibility check with a cursor-position/delta test.** That was tried twice on
+2026-07-28, both times reasoning from a single trace, and both attempts shipped a regression:
+1. Position vs. the last genuine ENTER, consuming the reference on a genuine leave — every later
+   synthetic leave hit the `None` fallback and fired a snapback (~70 in 5s, cursor frozen at
+   `pos=(222,271)`).
+2. Position vs. the last LEAVE (rolling reference) — consecutive synthetic leaves are ~65ms apart,
+   so a cursor merely MOVING ACROSS the swatch area travels 4-14px between them, past the jitter
+   threshold. Every one read as genuine, and `_on_theme_unhovered`'s `_hover_debounce_timer.stop()`
+   killed the 80ms debounce ~15x/sec — previews never fired while the cursor was in motion. That is
+   this very bug, reopened by a different route.
+
+Both share one root error: inferring "did the user leave?" from cursor deltas when the widget's own
+visibility answers it directly. A position check remains ONLY as a secondary guard for a leave
+delivered while VISIBLE with the cursor unmoved (a stylesheet-cascade artifact); it anchors to the
+last genuine ENTER (`_last_swatch_pos`, written only by `_on_theme_hovered`), never to the last
+leave, and is never consumed. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel reporting noise there. Both
+failed variants are pinned by tests that fail against them
+(`tests/test_hover_interrupts_snapback.py`).
+
+A `[SWATCH-LEAVE-SUSPECT]` WARNING probe fires if a leave is suppressed while hidden AND the cursor
+is outside `swatch_box`'s bounds — the one observation that would falsify the premise.
+`grep -c "SWATCH-LEAVE-SUSPECT"` must be 0; if it is not, bring those lines back rather than
+patching around them.
 
 Pass 1 wired only `themes_tab.leaveEvent` through it — insufficient in practice.
 **`pool_container` (the container at the time) needed the fix too, confirmed live, not assumed from

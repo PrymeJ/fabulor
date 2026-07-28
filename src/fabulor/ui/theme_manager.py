@@ -1812,10 +1812,31 @@ class ThemeManager(QObject):
             # a full live session). Do NOT fall through to a position test here: while
             # the cursor is in motion the grab's ~65ms cadence makes every synthetic
             # leave look like movement, which killed the hover debounce (failure 2).
-            logger.debug(
-                f"[SWATCH-LEAVE] suppressed synthetic leave (widget hidden by blur grab) "
-                f"at {(pos.x(), pos.y())}"
-            )
+            #
+            # FALSIFICATION PROBE: this branch's whole premise is "a real mouse-out never
+            # arrives while hidden". If that is wrong, the symptom is a suppressed leave
+            # whose cursor has left swatch_box's bounds entirely — a real exit we ate.
+            # Flag exactly that case at WARNING so it is greppable without DEBUG:
+            #     grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log     -> must be 0
+            # A non-zero count falsifies the premise; do NOT patch around it, bring the
+            # lines back (they carry the cursor pos and the widget rect to diagnose with).
+            try:
+                local = tab_widget.mapFromGlobal(pos)
+                outside = not tab_widget.rect().contains(local)
+            except Exception:
+                outside = False
+            if outside:
+                logger.warning(
+                    f"[SWATCH-LEAVE-SUSPECT] suppressed a leave while hidden, but the "
+                    f"cursor is OUTSIDE swatch_box — this may be a real mouse-out that "
+                    f"was eaten. pos={(pos.x(), pos.y())} local={(local.x(), local.y())} "
+                    f"rect={tab_widget.rect()}"
+                )
+            else:
+                logger.debug(
+                    f"[SWATCH-LEAVE] suppressed synthetic leave (widget hidden by blur "
+                    f"grab) at {(pos.x(), pos.y())}"
+                )
             return
         seen = self._last_swatch_pos
         if seen is not None:
