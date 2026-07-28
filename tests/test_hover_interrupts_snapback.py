@@ -104,6 +104,7 @@ def _make_tm(*, fade_in_flight=False, is_hover_active=False,
     tm.config = _FakeConfig()
     tm._fade_in_flight = fade_in_flight
     tm._is_hover_active = is_hover_active
+    tm._selection_in_progress = False
     tm._pending_fade_call = pending
     tm._active_display_theme_internal = "Active"
     tm._fade_anim = _FakeAnim(running=anim_running)
@@ -284,3 +285,42 @@ def test_reference_is_not_touched_by_leaves():
     _leave(tm, _Pos(330, 266), widget_visible=True)
     _leave(tm, _Pos(400, 300), widget_visible=False)
     assert tm._last_swatch_pos is anchor
+
+
+# --- A deliberate selection interrupts too (2026-07-28) --------------------
+#
+# THE BUG this pins. Right-clicking theme swatches, ten consecutive selections each
+# logged `applied=False` with `ever_applied` naming the PREVIOUS click's theme —
+# every one stashed behind an in-flight fade and drained ~340ms later. Reported as
+# "my right-clicks are missing", and it survived a full day of investigating lost
+# presses: nothing was ever lost at the input level (a bare-widget harness took
+# 100/100, and every click reached Qt, the widget AND the handler). The click
+# applied — one step late, against a theme the user had already moved on from.
+#
+# Near-universal rather than an edge case because hovering a swatch STARTS a 375ms
+# preview fade, and the click ~400ms later lands inside it. Hover-then-click is
+# simply how the grid is used.
+#
+# A snapback is indistinguishable from a click by (user_initiated, hover) alone —
+# both (True, False) — so selection is marked at its source.
+
+def test_selection_interrupts_an_in_flight_fade():
+    tm = _make_tm(fade_in_flight=True, is_hover_active=True, anim_running=True)
+    tm._selection_in_progress = True
+    assert _branch(tm, "Syl Anagist", hover=False) == 'fellthrough'
+
+
+def test_snapback_still_stashes_during_a_fade():
+    # The discriminator that matters: same (user_initiated, hover) as a click, but
+    # NOT marked. Must keep stashing — letting a snapback interrupt would reopen the
+    # flash-then-revert class.
+    tm = _make_tm(fade_in_flight=True, is_hover_active=True, anim_running=True)
+    tm._selection_in_progress = False
+    assert _branch(tm, "Wasp Factory", hover=False) == 'stashed'
+
+
+def test_selection_marker_defaults_off():
+    # getattr fallback: a ThemeManager built without the field must behave as before.
+    tm = _make_tm(fade_in_flight=True, anim_running=True)
+    del tm._selection_in_progress
+    assert _branch(tm, "X", hover=False) == 'stashed'

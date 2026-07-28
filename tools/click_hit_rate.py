@@ -32,12 +32,18 @@ DEFAULT = Path.home() / ".local/state/fabulor/log/fabulor.log"
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    argv = sys.argv[1:]
     since = None
-    for i, a in enumerate(sys.argv):
-        if a == "--since" and i + 1 < len(sys.argv):
-            since = sys.argv[i + 1]
-    path = Path(args[0]) if args else DEFAULT
+    positional = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--since" and i + 1 < len(argv):
+            since = argv[i + 1]
+            i += 2                      # consume BOTH, or the value is read as a path
+            continue
+        positional.append(argv[i])
+        i += 1
+    path = Path(positional[0]) if positional else DEFAULT
     if not path.exists():
         print(f"no such log: {path}")
         return 1
