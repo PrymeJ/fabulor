@@ -18,6 +18,7 @@ class SettingsController:
         main.undo_mode_changed.connect(self._update_undo_mode)
         main.fade_mode_changed.connect(self._update_fade_mode)
         main.blur_mode_changed.connect(self._update_blur_mode)
+        main.panel_backdrop_changed.connect(self._update_panel_backdrop)
         main.hover_fade_changed.connect(self._update_hover_fade)
         main.chapter_digit_mode_changed.connect(self._update_chapter_digit_mode)
         main.chapter_digit_autoplay_changed.connect(self._update_chapter_digit_autoplay)
@@ -95,17 +96,29 @@ class SettingsController:
         self.visuals.set_fade_selection(current)
 
     def _update_blur_mode(self, enabled):
-        """Changes the blur setting."""
-        self.config.set_blur_enabled(enabled)
+        """Legacy On/Off entry point. Maps onto the three-state backdrop so any
+        remaining caller of blur_mode_changed still works."""
+        self._update_panel_backdrop("frosty" if enabled else "transparent")
+
+    def _update_panel_backdrop(self, mode):
+        """Panel backdrop: transparent | frosty | opaque (2026-07-28).
+
+        Only 'frosty' runs the blur — get_blur_enabled() is defined as
+        `mode == "frosty"`, which is why widening to three states did not have to
+        touch any of the eleven blur call sites. 'opaque' deliberately does NOT
+        blur: a fully opaque panel hides what is behind it, so blurring would be
+        invisible work.
+        """
+        self.config.set_panel_backdrop(mode)
+        # set_blur_selection owns BOTH the button states and the alpha override +
+        # restyle, because the override has to be applied before any stylesheet is
+        # rebuilt and only the visuals facade reaches MainWindow's theme_manager.
         self._update_blur_visuals()
-        # Apply the change immediately to the already-open Settings panel (the
-        # only panel this toggle is reachable from) instead of waiting for a
-        # close/reopen. Covers the transport-bar overlay AND the cover-image blur.
-        self.panels.apply_blur_live(enabled)
+        # Covers the transport-bar overlay AND the cover-image blur.
+        self.panels.apply_blur_live(self.config.get_blur_enabled())
 
     def _update_blur_visuals(self):
-        enabled = self.config.get_blur_enabled()
-        self.visuals.set_blur_selection(enabled)
+        self.visuals.set_blur_selection(self.config.get_panel_backdrop())
 
     def _update_hover_fade(self, mode):
         self.config.set_hover_fade_mode(mode)

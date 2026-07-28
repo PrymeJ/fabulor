@@ -17,6 +17,7 @@ from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionVali
 
 from .player import Player, _CHAPTER_BOUNDARY_EPSILON, _CHAPTER_WALK_TOLERANCE
 from .config import Config
+from . import themes
 from .themes import THEMES, _resolve_theme, get_player_stylesheet
 from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direct child of MainWindow
 from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
@@ -191,18 +192,31 @@ class VisualsInterface:
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
-    def set_blur_selection(self, enabled):
+    def set_blur_selection(self, mode):
+        """Panel backdrop: "transparent" | "frosty" | "opaque" (2026-07-28; this used
+        to take a bool). Owns three things that must happen in order: the button
+        selected-states, the panel alpha override, and the restyle that makes the
+        override visible on the already-open panel."""
         m = self._main
-        if not hasattr(m, 'blur_buttons'): return
-        for state, btn in m.blur_buttons.items():
-            is_selected = (state == "On" if enabled else state == "Off")
-            btn.setProperty("selected", "true" if is_selected else "false")
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
-        if not enabled:
+        # Applied BEFORE any stylesheet is rebuilt — _resolve_theme reads it while
+        # building every one of them.
+        themes.set_panel_alpha_override(m.config.get_panel_alpha_override())
+        if hasattr(m, 'blur_buttons'):
+            for state, btn in m.blur_buttons.items():
+                btn.setProperty("selected", "true" if state == mode else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+        if mode != "frosty":
             m.blur_effect.setBlurRadius(0)
             # Drop any stale clip too, so a later re-enable starts clean.
-            m.blur_effect.set_clip_rect(None)
+            if m.panel_manager is not None:
+                m.panel_manager._clear_visual_area_clip()
+        # Repaint the open panels so the change lands immediately rather than on the
+        # next open — the control lives inside Settings, so the user is looking at
+        # the surface being changed.
+        tm = getattr(m, 'theme_manager', None)
+        if tm is not None:
+            tm.apply_full_pass(tm._current_theme_name)
 
     def set_notches_selection(self, enabled):
         m = self._main
@@ -318,7 +332,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     notch_animation_mode_changed = Signal(bool)
     undo_mode_changed = Signal(int)
     fade_mode_changed = Signal(int)
-    blur_mode_changed = Signal(bool)
+    blur_mode_changed = Signal(bool)          # legacy; kept for any external caller
+    panel_backdrop_changed = Signal(str)      # "transparent" | "frosty" | "opaque"
     hover_fade_changed = Signal(str)
     chapter_digit_mode_changed = Signal(str)
     chapter_digit_autoplay_changed = Signal(bool)
@@ -737,6 +752,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         )
         self.library_panel.back_requested.connect(self.panel_manager._close_library_flow)
 
+        # Apply the saved panel-backdrop alpha BEFORE the first full stylesheet pass
+        # below, or an "opaque" setting would not take effect until the user next
+        # touched the control. _resolve_theme reads this while building every sheet.
+        themes.set_panel_alpha_override(self.config.get_panel_alpha_override())
         self.theme_manager.apply_full_pass(self.theme_manager._current_theme_name)
         self._settle_vol_stack()
 

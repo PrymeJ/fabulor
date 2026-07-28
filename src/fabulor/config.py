@@ -23,11 +23,48 @@ class Config:
     def set_theme(self, name):
         self.settings.setValue("theme", name)
 
+    # Panel backdrop, three states (2026-07-28). Widened from a blur on/off boolean.
+    #   "transparent"  -> no blur; the theme's own panel_opacity_hover alpha
+    #   "frosty"       -> blur;    the theme's own panel_opacity_hover alpha
+    #   "opaque"       -> no blur; alpha forced to 1.0, overriding the theme
+    # Stored under a NEW key. The old "blur_enabled" boolean is still read once, by
+    # get_panel_backdrop's migration branch, so an existing install keeps the look it
+    # had (True -> frosty, False -> transparent) instead of silently resetting.
+    PANEL_BACKDROP_MODES = ("transparent", "frosty", "opaque")
+
+    def get_panel_backdrop(self):
+        v = self.settings.value("panel_backdrop", None)
+        if v in self.PANEL_BACKDROP_MODES:
+            return v
+        # Migrate from the pre-2026-07-28 boolean, once.
+        return "frosty" if self.settings.value("blur_enabled", "false") == "true" else "transparent"
+
+    def set_panel_backdrop(self, mode):
+        if mode not in self.PANEL_BACKDROP_MODES:
+            mode = "transparent"
+        self.settings.setValue("panel_backdrop", mode)
+        # Keep the legacy key in step so a downgrade (or any reader still on the old
+        # accessor) sees something sane rather than a stale value.
+        self.settings.setValue("blur_enabled", str(mode == "frosty").lower())
+
     def get_blur_enabled(self):
-        return self.settings.value("blur_enabled", "false") == "true"
+        """Should the blur actually RUN. Kept as the predicate for all eleven blur
+        call sites, so widening to three states did not touch any of them: only
+        'frosty' blurs. 'opaque' deliberately returns False — a fully opaque panel
+        hides whatever is behind it, so blurring it is invisible work (the same
+        reasoning _panel_hides_everything already uses for the Timeline tab)."""
+        return self.get_panel_backdrop() == "frosty"
 
     def set_blur_enabled(self, enabled):
-        self.settings.setValue("blur_enabled", str(enabled).lower())
+        """Legacy setter, retained for the Settings toggle's On/Off path. Maps onto
+        the three-state key: On -> frosty, Off -> transparent (never opaque, which is
+        only reachable from the three-state control)."""
+        self.set_panel_backdrop("frosty" if enabled else "transparent")
+
+    def get_panel_alpha_override(self):
+        """1.0 when the panel must paint fully opaque, else None to use the theme's
+        own panel_opacity_hover. Read by get_settings_stylesheet."""
+        return 1.0 if self.get_panel_backdrop() == "opaque" else None
 
     def get_theme_fade_duration(self):
         return self._safe_int("theme_fade_duration", 750)

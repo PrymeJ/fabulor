@@ -3006,6 +3006,26 @@ def _get_gradient_style(t, prefix, fallback_color, opacity=1.0):
 _NO_BASE_INHERIT_KEYS = ("bookmark_body", "bookmark_icon", "tassel_cord", "tassel_head", "tassel_fringe", "streak_grid_outline", "streak_grid_dot", "slider_progress", "placeholder_cover")
 
 
+# Panel-backdrop alpha override (2026-07-28). None = use each theme's own
+# panel_opacity_hover; 1.0 = paint panels fully opaque, for the "Opaque" backdrop
+# mode. Set once by SettingsController when the mode changes, and applied inside
+# _resolve_theme so it reaches ALL EIGHT `rgba(bg_main, panel_opacity_hover)` sites
+# across the stylesheet functions without threading a parameter through each of
+# them. Module-level because these functions are pure string builders with no
+# instance to hang state on, and every one of them funnels through _resolve_theme.
+#
+# The library panel is deliberately unaffected — it paints its own opaque
+# background already (`library_bg` at :3304 uses panel_opacity_hover but the panel
+# is full-width and opaque in practice).
+_PANEL_ALPHA_OVERRIDE = None
+
+
+def set_panel_alpha_override(alpha):
+    """Force every panel's background alpha, or pass None to restore per-theme."""
+    global _PANEL_ALPHA_OVERRIDE
+    _PANEL_ALPHA_OVERRIDE = alpha
+
+
 def _resolve_theme(theme_name):
     base = THEMES["The Color Purple"].copy()
     for key in _NO_BASE_INHERIT_KEYS:
@@ -3018,6 +3038,8 @@ def _resolve_theme(theme_name):
         base["library_slider_fill"] = base["accent"]
     if "library_slider_bg" not in base:
         base["library_slider_bg"] = base["bg_deep"]
+    if _PANEL_ALPHA_OVERRIDE is not None:
+        base["panel_opacity_hover"] = _PANEL_ALPHA_OVERRIDE
     return base
 
 

@@ -809,18 +809,23 @@ def build_appearance_tab(mw):
     fade_row.addStretch()
     app_layout.addLayout(fade_row)
 
-    blur_header = QLabel("Blur")
+    # Panel backdrop, three states (2026-07-28; was a Blur On/Off pair). The button
+    # LABELS are user-facing; the values sent on the signal are the config's mode
+    # strings, so the two can be renamed independently.
+    blur_header = QLabel("Panel background")
     blur_header.setObjectName("settings_header")
     app_layout.addWidget(blur_header)
 
     blur_row = QHBoxLayout()
     mw.blur_buttons = {}
-    for state in ["On", "Off"]:
-        btn = QPushButton(state)
+    for label, mode in (("Transparent", "transparent"),
+                        ("Frosty glass", "frosty"),
+                        ("Opaque", "opaque")):
+        btn = QPushButton(label)
         btn.setObjectName("pattern_button")
-        btn.clicked.connect(lambda _, s=state: mw.blur_mode_changed.emit(s == "On"))
+        btn.clicked.connect(lambda _, m=mode: mw.panel_backdrop_changed.emit(m))
         blur_row.addWidget(btn)
-        mw.blur_buttons[state] = btn
+        mw.blur_buttons[mode] = btn
     blur_row.addStretch()
     app_layout.addLayout(blur_row)
 
