@@ -471,6 +471,12 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.undo_anim.finished.connect(self._on_undo_anim_finished)
 
+        # TEMP (branch investigate/rclick-delivery): dedupe set for the per-press
+        # right-click counter in eventFilter. Qt dispatches one physical press to
+        # several objects; keying on event.timestamp() collapses them to one count.
+        self._rclick_seen = set()
+        self._rclick_n = 0
+
         QApplication.instance().installEventFilter(self)
 
         # Restore last played book if it exists
@@ -3485,50 +3491,38 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        # TEMP INSTRUMENTATION (2026-07-28, user-requested): right-click delivery
-        # audit. A deliberate 30-click run produced only 33 RECEIVED across 60 clicks
-        # — ~45% of right-presses never reached RightClickButton.mousePressEvent at
-        # all, with and without blur. This filter is installed on QApplication
-        # (app.py's installEventFilter call), so it sees EVERY mouse press Qt
-        # dispatches anywhere in the app, before any widget handler can consume it.
+        # TEMP INSTRUMENTATION (2026-07-28, branch investigate/rclick-delivery):
+        # DEDUPLICATED per-press counter. Installed on QApplication, so it sees every
+        # mouse press Qt dispatches anywhere, before any widget handler runs.
         #
-        # It distinguishes three cases the widget-level probe cannot:
-        #   line here + [CLICK-TRACE] RECEIVED -> delivered correctly
-        #   line here, NO RECEIVED             -> Qt routed it to the WRONG widget
-        #                                         (obj= tells us which)
-        #   no line at all                     -> Qt never got the press; the loss is
-        #                                         upstream of the app entirely (X/
-        #                                         Wayland/input stack) — which matches
-        #                                         the user's report of right-click
-        #                                         feeling less responsive on openSUSE
-        #                                         generally, not just in Fabulor.
-        # Remove once the question is settled.
+        # Deduplication is the point. The previous version counted each press once per
+        # object as Qt propagated it up the hierarchy — 236 counts for 100 physical
+        # clicks — which made every arrivals-vs-clicks number unreliable. That single
+        # bug is why "60 clicks produced 33 arrivals" was never trustworthy, and it is
+        # the number this branch exists to measure cleanly. event.timestamp() is stable
+        # across the propagation chain for one physical press.
+        #
+        # Established before this branch (see NOTES.md, "six disproven mechanisms"):
+        # a bare Qt widget on the same hardware takes 100 clicks and loses none, with
+        # or without a blocking 143ms restyle and continuous animation. So whatever
+        # loses presses is specific to THIS app's structure, and the first thing to
+        # establish is an exact count.
         if event.type() == QEvent.Type.MouseButtonPress:
             try:
                 if event.button() == Qt.RightButton:
-                    _cls = type(obj).__name__
-                    _name = getattr(obj, 'theme_name', None)
-                    # What is ACTUALLY under the cursor right now, independent of
-                    # where Qt chose to dispatch. The discriminator that matters:
-                    #   under=ThemeItem, dispatched to QWindow/QLabel
-                    #       -> hit-testing sent the press to the wrong widget while
-                    #          the swatch was under the pointer (a routing bug)
-                    #   under=QWindow/QLabel too
-                    #       -> the swatch genuinely was not under the cursor; the
-                    #          press landed in a gap or on a neighbour (aim/layout)
-                    # Cross-app context (2026-07-28): the user sees the same
-                    # unreliability in VS Code's editor but NOT its chat pane, so the
-                    # loss is surface-dependent rather than device-wide.
-                    _under = QApplication.widgetAt(QCursor.pos())
-                    _under_cls = type(_under).__name__ if _under is not None else None
-                    _under_name = getattr(_under, 'theme_name', None)
-                    logger.warning(
-                        f"[RCLICK-AUDIT] press dispatched to {_cls} "
-                        f"theme_name={_name!r} objName={obj.objectName()!r} "
-                        f"| under_cursor={_under_cls} theme_name={_under_name!r} "
-                        f"| pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
-                        f"t={time.perf_counter():.6f}"
-                    )
+                    _stamp = int(event.timestamp())
+                    if _stamp not in self._rclick_seen:
+                        self._rclick_seen.add(_stamp)
+                        self._rclick_n = getattr(self, '_rclick_n', 0) + 1
+                        _under = QApplication.widgetAt(QCursor.pos())
+                        logger.warning(
+                            f"[RCLICK] #{self._rclick_n} stamp={_stamp} "
+                            f"first_obj={type(obj).__name__} "
+                            f"under_cursor={type(_under).__name__ if _under else None} "
+                            f"theme={getattr(_under, 'theme_name', None)!r} "
+                            f"pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
+                            f"t={time.perf_counter():.6f}"
+                        )
             except (AttributeError, RuntimeError):
                 pass
 
