@@ -471,12 +471,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.undo_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.undo_anim.finished.connect(self._on_undo_anim_finished)
 
-        # TEMP (branch investigate/rclick-delivery): dedupe set for the per-press
-        # right-click counter in eventFilter. Qt dispatches one physical press to
-        # several objects; keying on event.timestamp() collapses them to one count.
-        self._rclick_seen = set()
-        self._rclick_n = 0
-
         QApplication.instance().installEventFilter(self)
 
         # Restore last played book if it exists
@@ -3491,41 +3485,6 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def eventFilter(self, obj, event):
         """Global event filter to handle dismissing popups on clicks outside."""
-        # TEMP INSTRUMENTATION (2026-07-28, branch investigate/rclick-delivery):
-        # DEDUPLICATED per-press counter. Installed on QApplication, so it sees every
-        # mouse press Qt dispatches anywhere, before any widget handler runs.
-        #
-        # Deduplication is the point. The previous version counted each press once per
-        # object as Qt propagated it up the hierarchy — 236 counts for 100 physical
-        # clicks — which made every arrivals-vs-clicks number unreliable. That single
-        # bug is why "60 clicks produced 33 arrivals" was never trustworthy, and it is
-        # the number this branch exists to measure cleanly. event.timestamp() is stable
-        # across the propagation chain for one physical press.
-        #
-        # Established before this branch (see NOTES.md, "six disproven mechanisms"):
-        # a bare Qt widget on the same hardware takes 100 clicks and loses none, with
-        # or without a blocking 143ms restyle and continuous animation. So whatever
-        # loses presses is specific to THIS app's structure, and the first thing to
-        # establish is an exact count.
-        if event.type() == QEvent.Type.MouseButtonPress:
-            try:
-                if event.button() == Qt.RightButton:
-                    _stamp = int(event.timestamp())
-                    if _stamp not in self._rclick_seen:
-                        self._rclick_seen.add(_stamp)
-                        self._rclick_n = getattr(self, '_rclick_n', 0) + 1
-                        _under = QApplication.widgetAt(QCursor.pos())
-                        logger.warning(
-                            f"[RCLICK] #{self._rclick_n} stamp={_stamp} "
-                            f"first_obj={type(obj).__name__} "
-                            f"under_cursor={type(_under).__name__ if _under else None} "
-                            f"theme={getattr(_under, 'theme_name', None)!r} "
-                            f"pos=({QCursor.pos().x()}, {QCursor.pos().y()}) "
-                            f"t={time.perf_counter():.6f}"
-                        )
-            except (AttributeError, RuntimeError):
-                pass
-
         if event.type() == QEvent.Type.KeyPress:
             if self._handle_tab_escape(event):
                 return True

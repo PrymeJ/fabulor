@@ -1728,17 +1728,6 @@ class ThemeManager(QObject):
         self.update_interval_visuals()
     def _on_theme_right_clicked(self, theme_name):
         """Selects a theme and immediately activates it."""
-        # TEMP INSTRUMENTATION (2026-07-28, user-requested) — see the matching
-        # [CLICK-TRACE] in RightClickButton.mousePressEvent (title_bar.py). A click
-        # that logs there but NOT here was lost between the widget and this handler;
-        # one that logs here but produces no [BLEED-TRACE] apply was lost inside
-        # _on_theme_changed. Remove once the question is settled.
-        logger.warning(
-            f"[CLICK-TRACE] _on_theme_right_clicked HANDLER theme_name={theme_name!r} "
-            f"blur_enabled={self.config.get_blur_enabled()} "
-            f"was_current={theme_name == getattr(self, '_current_theme_name', None)} "
-            f"t={time.perf_counter():.6f}"
-        )
         # A hover preview may still be queued (debounce hasn't fired yet) or
         # in flight for this or another swatch the cursor swept over en route.
         # Cancel it so a stale delayed preview can't land after this commit and
@@ -1760,12 +1749,17 @@ class ThemeManager(QObject):
             self._on_theme_changed(theme_name, save=False, bypass_panel_open_guard=True)
         finally:
             self._selection_in_progress = False
-        # TEMP INSTRUMENTATION (2026-07-28) — the OUTCOME of this click. `applied` is
-        # the authoritative "did the switch actually happen" signal: _theme_ever_applied
-        # is written only where _apply_stylesheets genuinely runs for a non-hover call.
-        # A HANDLER line whose OUTCOME shows applied=False is a click that arrived and
-        # was then swallowed downstream.
-        logger.warning(
+        # REGRESSION DETECTOR (2026-07-28, kept at DEBUG). `applied` is the
+        # authoritative "did this click's theme actually get painted" signal:
+        # _theme_ever_applied is written only where _apply_stylesheets genuinely runs
+        # for a non-hover call. `applied=False` here means the selection was stashed
+        # behind an in-flight fade and will land late, against a theme the user has
+        # already moved on from — which is exactly how the 2026-07-28 "my right-clicks
+        # are missing" bug presented (ten consecutive clicks each applying the PREVIOUS
+        # click's theme). If that ever recurs, this line is how it is spotted:
+        #     grep 'OUTCOME' fabulor.log | grep 'applied=False'
+        # should be empty for right-click selections.
+        logger.debug(
             f"[CLICK-TRACE] _on_theme_right_clicked OUTCOME theme_name={theme_name!r} "
             f"applied={getattr(self, '_theme_ever_applied', None) == theme_name} "
             f"ever_applied={getattr(self, '_theme_ever_applied', None)!r} "
