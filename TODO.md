@@ -60,7 +60,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-06-25] Cover Panel has no duplicate-cover detection
 
 ### Cleanup / process
-- [2026-07-28] `a4f4e71` (mid-close panel right-click dispatch) still unverified — verify or revert
 - [2026-06-27] Unused imports / dead names flagged by pyflakes in app.py and ui/panels.py
 - [2026-06-27] Excluded Books popup corner-radius mismatch
 - [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints)
@@ -742,17 +741,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
   size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
   wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
-
-- **[2026-07-28] UNVERIFIED, still live in the code: `a4f4e71` (mid-close panel no longer
-  dispatched to on right-click).** Narrowed from an earlier three-commit bundle — `3132be7`
-  (three-state panel background) is confirmed shipped and working (see that entry above, which now
-  also tracks a newly-reported click-lag issue); `a41698c` (restyle-storm fix) is confirmed partial,
-  its remaining performance issue is covered by the app-wide restyle perf-pass item; `f3221f6`
-  (backdrop must not change the applied theme) is already confirmed correct and needs no further
-  tracking. `a4f4e71` itself is the one still genuinely unconfirmed — not remembered as tested since
-  it landed. Verify (right-click the drag area while a panel is mid-close-slide, confirm the click
-  falls through to the sidebar toggle rather than being swallowed) or revert rather than building on
-  it further.
 
 - **[2026-06-27] Unused imports / dead names flagged by pyflakes in `app.py` and `ui/panels.py`.**
   Pre-existing, not introduced this session (confirmed via `git log -p`), surfaced while checking a

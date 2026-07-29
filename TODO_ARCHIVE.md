@@ -290,3 +290,20 @@ order these entries had in TODO.md before the split (2026-07-30).
   Superseded, not folded into any future async-`_apply_stylesheets` redesign — the root cause here
   turned out to be a scan-trigger bug, not something requiring the deferred/async stylesheet
   architecture change this entry originally pointed toward.
+
+- **[2026-07-28, CLOSED (live-verified 2026-07-30): `a4f4e71` (mid-close panel no longer dispatched
+  to on right-click).** Narrowed from an earlier three-commit bundle logged the same night as
+  UNVERIFIED — `3132be7` (three-state panel background) and `f3221f6` were resolved separately (see
+  TODO.md's three-state panel background entry and its own closed record above); `a41698c`'s
+  remaining performance issue is covered by the app-wide restyle perf-pass item in TODO.md. This was
+  the one commit left genuinely unconfirmed. Fix: a panel stays `isVisible()` for its entire ~300ms
+  close-slide, and `handle_drag_area_right_click` used to derive "which panel is open" from a
+  duplicated `isVisible()` ladder — so a right-click arriving mid-close was routed into that panel's
+  own close flow, which early-returns while its animation runs, silently swallowing the click
+  instead of falling through to the sidebar toggle. Same shape as the sidebar drop fixed earlier the
+  same day, present in four more places (`_close_speed_flow`/`_close_sleep_flow`/
+  `_close_stats_flow`/`_close_tags_flow`). Fixed at the dispatcher: `active_full_panel()` now
+  excludes a panel via `_is_closing(key)` (checks whether the panel's close *animation* is actually
+  running, not just `isVisible()`), so a mid-close panel no longer reads as "the open panel."
+  Verified live: right-clicking during a panel's close-slide now correctly falls through to the
+  sidebar toggle.
