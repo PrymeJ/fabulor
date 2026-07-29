@@ -1,3 +1,93 @@
+## HIGH-CONFIDENCE CANDIDATE FIX (not yet confirmed root cause, not yet shipped): route sidebar right-click through Qt's native context-menu pipeline instead of a hand-rolled mousePressEvent branch (2026-07-29)
+
+**Status: strong positive signal, one testing session, NOT confirmed as root cause.**
+Do not close this out or remove the diagnostic probes based on this entry alone —
+see "why this is high confidence, not confirmed" below.
+
+**The experiment (branch `investigate/rclick-contextmenu`, uncommitted, stashed):**
+`visual_area`'s right-click handling was moved off the existing hand-rolled
+`mousePressEvent` branch (`_on_drag_area_pressed`, which intercepts every press
+directly as a plain Python function assigned over `QWidget.mousePressEvent`) onto
+Qt's native `Qt.ContextMenuPolicy.CustomContextMenu` +
+`customContextMenuRequested` signal — the same delivery mechanism
+`library.py`'s `_list_view` already uses for its own right-click-to-detail path,
+which has never been observed to drop a click. Left-click is completely
+unchanged, still on the original `mousePressEvent` path. No actual context menu
+is shown; the signal is used purely as a "a right-click-equivalent gesture was
+recognized here" notification, with the exact same downstream logic
+(`handle_drag_area_right_click`) that used to run inline inside the old branch.
+
+**Why this was tried:** every confirmed-failing right-click surface in the app
+(sidebar, theme swatches) uses a hand-rolled `mousePressEvent` override to detect
+`Qt.RightButton`. Both known-reliable right-click-adjacent paths — Library's
+Book Detail (`customContextMenuRequested`) and Stats' Book Detail (actually
+LEFT-click, via the `clicked` signal, not right-click at all — a factual
+correction made mid-session; see the entry below for detail) — use a NATIVE Qt
+signal instead of raw press interception. The user independently confirmed this
+asymmetry (never left-click, never mouse wheel, only right-click) and that
+Library's right-click-to-detail has never been seen to fail.
+
+**Result: five minutes of continuous, deliberately adversarial testing (idle
+clicks, clicks immediately after closing Stats/Settings/Tags/Library, clicks
+during active panel-close animation) produced ZERO confirmed misses** — versus
+six confirmed misses across a comparable amount of testing earlier the same
+session on the old mechanism. One click (03:19:55) was initially reported as
+"dubious" by the user (uncertain whether they'd actually pressed the button) —
+checked against the log and it was a genuine SUCCESS: `[WCLICK] RightButton` →
+`[RCLICK] #122` → `[SIDEBAR-TRACE] ACCEPTED`/`DONE`, fired correctly even while
+`any_animating=True` and Library was mid-close (`closing=['library']`) — exactly
+the condition that used to drop clicks. The user's own uncertainty was about
+whether they'd pressed the button, not a real miss.
+
+**Why this is HIGH CONFIDENCE, not CONFIRMED root cause — read before acting
+further:**
+1. One five-minute session is not enough data to rule out a rare miss recurring,
+   given the bug's own history — the user reports it has been present since near
+   the beginning of the project (predating disciplined documentation, which is
+   why no one could recall exactly why the right-click code was last touched)
+   and has always been intermittent enough to be attributed to "the app being
+   busy" or "the mouse acting up," never reliably reproducible on demand.
+2. No mechanism has been PROVEN — only a strong behavioral correlation (native
+   Qt gesture-recognition pipeline vs. hand-rolled press interception). The
+   working theory is that Qt's own C++-level context-menu gesture recognition
+   (used by every Qt app, exercised constantly, including by unrelated software
+   on this same system) is more robust against whatever this platform/session
+   does to right-presses than a thin Python `mousePressEvent` branch is — but
+   nothing in this session traced WHY the raw branch is less robust.
+2b. The user's own framing, worth preserving verbatim: this bug's age is itself
+    evidence *for* the theory, not just a caveat — it long predates every
+    per-session theory tested and eliminated tonight (blur, opaque-mode alpha,
+    frameless windowing, main-thread stalls, `grab()`, the theme-fade-defer
+    fix), so any explanation has to be something equally old. `mousePressEvent`
+    interception is exactly that: present since very early in the project.
+3. **Do not remove `[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[STALL-PROBE]`/
+   `[FOCUS-RELEASE]` or close the investigation** until this has been soaked
+   over real, everyday use across multiple sessions (the user's own plan:
+   soak tonight and into tomorrow before deciding). If misses recur on this new
+   mechanism, that disproves the theory cleanly; if they don't recur over a much
+   longer real-use window, confidence should rise accordingly, but "root cause
+   confirmed" is a higher bar than this session reached.
+
+**What changed in code, precisely (all on `investigate/rclick-contextmenu`, not
+`main`, not shipped):**
+- `app.py`, `_setup_ui`: `visual_area.setContextMenuPolicy(Qt.ContextMenuPolicy.
+  CustomContextMenu)` + `.customContextMenuRequested.connect(self.
+  _on_drag_area_context_menu)` added alongside the existing `mousePressEvent`
+  assignment (left-click branch untouched).
+- `app.py`, `_on_drag_area_pressed`: the entire `elif event.button() ==
+  Qt.RightButton:` branch was REMOVED (left-click branch unchanged).
+- `app.py`, new method `_on_drag_area_context_menu(self, pos)`: contains the
+  exact same logic the removed branch had (dialog-close guard, book-count guard,
+  `[SIDEBAR-TRACE]` logging, `handle_drag_area_right_click` call) — `pos` (the
+  local `QPoint` Qt's signal provides) is unused; `handle_drag_area_right_click`
+  never actually read anything off the `event` object it used to receive, so it
+  is now called with `None`.
+- `tools/click_test.py` gained the `--frameless` flag (see the entry above —
+  used to eliminate that theory, kept as a permanent addition to the harness,
+  not temporary instrumentation).
+
+---
+
 ## OPEN: sidebar right-click sometimes does nothing — six recording-verified misses, one reliable repro condition, mechanism still unknown (2026-07-29, third session, updated)
 
 **Update to this entry, same session.** Three more confirmed misses found (six total
