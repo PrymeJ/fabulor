@@ -30,6 +30,16 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   about what they mean; this exact discipline is what caught the falsifying instance cleanly instead
   of it being missed or explained away.
 
+  **Working plan, decided 2026-07-29 late session:** `investigate/rclick-contextmenu` is now the
+  active working branch for ALL work, not just this investigation — normal development continues on
+  it rather than pausing to "soak" in isolation. The branch itself is never discarded regardless of
+  outcome: either (a) the new mechanism holds up over real everyday use and gets merged to `main`
+  (possibly still with an unknown root cause, on the strength of a lower observed miss rate alone),
+  or (b) it doesn't help and the context-menu-specific change is stripped back out while any
+  unrelated work done on the branch in the meantime is preserved/rebased onto `main`. Report any
+  future miss the same way as always: a timestamp, log quoted verbatim first, no narration before
+  the user confirms what they actually did.
+
 - **[2026-07-28] CLOSED (live-verified): "my right-clicks are missing" — they were applying one
   step behind** (`4700b31`). Not lost presses: every click reached Qt, the widget and the handler.
   Each applied the PREVIOUS click's theme, because hovering a swatch starts a 375ms preview fade and
