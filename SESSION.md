@@ -1,3 +1,32 @@
+## Session Summary — 2026-07-29 Session 4 — Right-click investigation closed: not a Fabulor bug
+
+Added a per-guard instrumentation pass to the sidebar right-click chain (`[EARLIEST]` — an app-level
+`QObject` filter installed before every other one, confirmed via a standalone Qt test that filters
+run in reverse install order — plus `[CONTEXTMENU-ARM/RECEIVED/TIMEOUT]` and `[GUARD-CHAIN]` mirrors)
+to localize a future miss to one of four categories: true dispatch loss, consumed before Fabulor's
+own probes, swallowed by a named guard, or passed everything but no-opped. First real test surfaced a
+tempting but wrong lead — a 10.7s gap in every click probe lined up with a burst of expensive
+(~550-600ms) theme hover-preview restyle cycles, and this session initially concluded the clicks were
+"too fast" and landed on the wrong swatch mid-restyle. The user corrected this immediately and
+precisely: that explanation didn't match what they'd actually done (deliberate hover-then-click, the
+exact pattern a prior fix already protects), and it was withdrawn as constructed-not-verified rather
+than defended. Restyle cost was still worth checking on its own terms, which led to a `[SETSTYLE-PROBE]`
+addition — confirmed the real DEBUG-off cost of `mw.setStyleSheet(base)` is ~205-265ms, higher than an
+older ~143ms figure quoted in `tools/click_test.py`, not explained by DEBUG-logging overhead. That's
+now a standalone TODO item, unrelated to the click investigation.
+
+The actual answer came from outside Fabulor entirely: the user tested right-clicks across several
+unrelated apps (Vivaldi, qBittorrent, VS Code, Calibre — all affected; Spotify, Konsole — not),
+switched from Wayland to X11, and after ~2 hours of otherwise-clean testing reproduced a miss on the
+**bare X11 desktop with no application running at all**. That rules out anything in Fabulor's code as
+the cause. `investigate/rclick-contextmenu`'s premise (a click-delivery-mechanism fix) is not
+supported by this evidence and was discarded; since `main` never had that mechanism, no revert was
+needed there. The branch is kept, not deleted or merged, with the experiment and every diagnostic
+probe added across both sessions committed to it as a single WIP commit for future reference. `main`
+gets only doc updates closing the investigation (NOTES.md, TODO.md, this entry) — no code changes.
+
+---
+
 ## Session Summary — 2026-07-29 Session 3 — Seven recording-verified right-click losses, a long trail of eliminated theories, and a candidate fix that looked strong and then failed on its own soak test
 
 **Update, same session, after the summary below was written:** the candidate fix (routing sidebar

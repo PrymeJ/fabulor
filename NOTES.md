@@ -1,3 +1,58 @@
+## CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop with no app involved (2026-07-29)
+
+**This closes the investigation below.** Every entry under this one — six then
+seven recording-verified misses, the guard-chain instrumentation, the
+`customContextMenuRequested` experiment and its falsification — was chasing a
+real symptom inside the wrong system. New evidence, gathered by the user
+independently of any Fabulor instrumentation:
+
+- Right-clicks were tested across several unrelated apps under Wayland:
+  Vivaldi (many misses), qBittorrent (misses), VS Code (misses, confirmed on a
+  second day), Calibre (misses). Spotify and Konsole: no misses.
+- Switched to X11. ~20 minutes of right-clicking, mostly in apps other than
+  Fabulor: clean. After roughly 2 hours, a miss reappeared in Vivaldi, then in
+  qBittorrent.
+- Tested right-clicks on the bare X11 **desktop itself — no application in the
+  loop at all**, just the OS context menu. Misses reproduced there too.
+- A corded mouse was plugged in at this point (the wireless mouse used
+  throughout the rest of the investigation was never confirmed or ruled out as
+  a contributing factor either way — this was not a controlled A/B, so no
+  conclusion should be drawn about the mouse specifically).
+
+A miss on the bare desktop with zero application code in the path cannot be
+explained by anything in Fabulor — not the guard chain, not the click-delivery
+mechanism (`mousePressEvent` vs. `customContextMenuRequested`), not the restyle
+cost, not any panel/animation state. All of those are downstream of a press
+Fabulor never gets a chance to see. The cross-app pattern (most apps affected,
+two visibly not) also fits a compositor/input-stack/driver-level explanation
+better than six-plus sessions of Fabulor-specific guard-chain archaeology ever
+did.
+
+**Decision:** the `investigate/rclick-contextmenu` branch's premise (that the
+sidebar's click-delivery mechanism was the cause) is not supported by this
+evidence. The `customContextMenuRequested` experiment was discarded — `main`
+never had it, so no revert was needed on `main` itself. The branch is kept
+(not deleted, not merged) with the experiment and all diagnostic probes
+committed on it as a WIP commit, in case it's ever useful again. `main` keeps
+its original `mousePressEvent`-based mechanism, unchanged throughout.
+
+**What stays open:** nothing, on Fabulor's side. This is not a Fabulor bug as
+far as current evidence shows. If it resurfaces as clearly Fabulor-specific in
+the future (e.g. reproduces in Fabulor but demonstrably not on the bare
+desktop under otherwise-identical conditions), re-open with that distinction
+stated up front, since it's the one thing that would actually implicate the
+app again.
+
+**Process note, for the record:** this session repeatedly constructed
+plausible-sounding explanations (mouse movement speed, restyle timing) that
+felt consistent with the log data and were wrong, corrected each time by the
+user checking them against what they actually did. The eventual answer came
+from the user's own methodical elimination outside the app entirely, not from
+further Fabulor-side log reading. Worth remembering next time a symptom looks
+like it's "in the code" because the code's logs are what's on hand to read.
+
+---
+
 ## FALSIFIED as a complete fix (may still reduce incidence): the customContextMenuRequested reroute did not eliminate misses — a seventh miss reproduced ON the new mechanism (2026-07-29, same night)
 
 **Update, same night, soak testing continued after the entry below was written.**

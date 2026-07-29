@@ -6,39 +6,37 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-29] Sidebar/panel right-click dispatch loss — the `customContextMenuRequested` reroute
-  on `investigate/rclick-contextmenu` is FALSIFIED as a complete fix; still open, do NOT merge.** See
-  NOTES.md ("FALSIFIED as a complete fix... a seventh miss reproduced ON the new mechanism") for the
-  full trace — read it before touching this, and read the superseded entry right below it for why the
-  experiment was tried in the first place. Seven confirmed misses total now, six on the OLD
-  `mousePressEvent`-based mechanism, ONE on the NEW `customContextMenuRequested`-based one (03:48:43-46,
-  same exact silent-gap signature: zero output at every probe level including `[WCLICK]`). The
-  experiment moved sidebar right-click detection off a hand-rolled `mousePressEvent` branch onto Qt's
-  native context-menu signal (no actual menu shown), based on the observation that Library's
-  right-click-to-Book-Detail path (same native signal) had never been seen to fail while every
-  hand-rolled right-click surface (sidebar, theme swatches) had. That observation is NOT fully
-  disproven — the new mechanism may still have a lower miss rate — but "eliminates the bug" is wrong,
-  confirmed by direct reproduction. **Do not merge this branch as a fix. Do not remove any diagnostic
-  probe** (`[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[STALL-PROBE]`/`[FOCUS-RELEASE]`, still in `app.py`/
-  `panels.py` on both `main` and the branch). Next steps, in rough priority: (1) the guard-chain lead
-  (sidebar's right-click sits downstream of `is_overlay_open_or_committed()`/`_any_panel_animating()`/
-  `complete_main_fade()`; `chapter_list`/`progress_slider` don't, and have never been seen to miss —
-  still untested directly); (2) the `T` theme-rotation shortcut, equally old, untested; (3) whether the
-  new mechanism's miss RATE is meaningfully lower than the old one's — would need a controlled,
-  counted comparison, not impressionistic soak testing, to say anything defensible. **Process
-  reminder for next time a miss is reported:** quote the exact log lines back before saying anything
-  about what they mean; this exact discipline is what caught the falsifying instance cleanly instead
-  of it being missed or explained away.
+- **[2026-07-29] CLOSED, not a Fabulor bug: sidebar/theme-swatch right-click dispatch loss.** See
+  NOTES.md ("CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop
+  with no app involved") for the full account. Right-click misses were independently confirmed to
+  reproduce across several unrelated apps (Vivaldi, qBittorrent, VS Code, Calibre) and, decisively,
+  on the **bare X11 desktop with no application in the loop at all**. That rules out anything in
+  Fabulor's own code as the cause. The `investigate/rclick-contextmenu` branch (the
+  `customContextMenuRequested` delivery-mechanism experiment) was discarded — `main` never had it,
+  so nothing needed reverting on `main`. The branch itself is kept, not deleted, with the experiment
+  and all diagnostic probes (`[EARLIEST]`/`[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[GUARD-CHAIN]`/
+  `[CONTEXTMENU-ARM/RECEIVED/TIMEOUT]`/`[STALL-PROBE]`/`[SETSTYLE-PROBE]`) committed on it as a WIP
+  commit, in case any of it is useful again later. Nothing pending on Fabulor's side unless it
+  resurfaces with clear evidence it's Fabulor-specific (reproduces in the app but demonstrably not
+  on the bare desktop under otherwise-identical conditions).
 
-  **Working plan, decided 2026-07-29 late session:** `investigate/rclick-contextmenu` is now the
-  active working branch for ALL work, not just this investigation — normal development continues on
-  it rather than pausing to "soak" in isolation. The branch itself is never discarded regardless of
-  outcome: either (a) the new mechanism holds up over real everyday use and gets merged to `main`
-  (possibly still with an unknown root cause, on the strength of a lower observed miss rate alone),
-  or (b) it doesn't help and the context-menu-specific change is stripped back out while any
-  unrelated work done on the branch in the meantime is preserved/rebased onto `main`. Report any
-  future miss the same way as always: a timestamp, log quoted verbatim first, no narration before
-  the user confirms what they actually did.
+- **[2026-07-29] App-wide performance pass needed; theme restyle cost is one confirmed contributor.**
+  While instrumenting the right-click investigation above, a WARNING-level probe
+  (`[SETSTYLE-PROBE]` in `theme_manager.py`'s `_apply_stylesheets`) measured the real, DEBUG-off cost
+  of `mw.setStyleSheet(get_base_stylesheet(...))` — the synchronous restyle that fires on every theme
+  hover-preview and click — at a consistent **~205-265ms** across 55 clean samples (one hover/click
+  cycle each), no new themes added and no obvious stylesheet bloat to explain it. This is notably
+  higher than the ~143ms figure `tools/click_test.py`'s docstring cites (source/conditions for that
+  older number unknown — not confirmed to be a logging-overhead artifact; DEBUG-on measurements this
+  session ran 212-281ms, DEBUG-off 205-265ms, so DEBUG logging is not the main driver of the
+  discrepancy). This single call is one piece of a restyle pipeline that in earlier sessions measured
+  550-600ms total per hover-preview cycle end to end. Needs its own investigation/pass, scoped
+  separately from any specific bug — likely candidates worth checking first: whether
+  `get_base_stylesheet`'s generated QSS string has grown, whether `setStyleSheet`'s repolish cost
+  scales with total widget count (relevant given CLAUDE.md's "test at 10x library size" rule elsewhere
+  in the codebase), and whether this cost is inherent to Qt's stylesheet engine at this app's window
+  complexity or genuinely regressed from a past baseline. `[SETSTYLE-PROBE]` is left in place
+  (WARNING-level, harmless) and can be reused directly for before/after comparisons.
 
 - **[2026-07-28] CLOSED (live-verified): "my right-clicks are missing" — they were applying one
   step behind** (`4700b31`). Not lost presses: every click reached Qt, the widget and the handler.
