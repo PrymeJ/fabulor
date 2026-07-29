@@ -478,9 +478,25 @@ class ShimmerButton(QPushButton):
         self._shimmer_anim.setEndValue(2.0)
         self._shimmer_anim.finished.connect(self._on_shimmer_done)
 
-    def play_shimmer(self):
+    def play_shimmer(self, reverse=False):
+        """`reverse=True` sweeps top-right -> bottom-left instead of the normal
+        bottom-left -> top-right — used to visually distinguish "no change was made"
+        from "a change was made" at the same call site (see _on_speed_right_clicked).
+        A forward call always restarts the sweep (existing behavior, unchanged); a
+        reverse call while a shimmer is already running is a no-op rather than a
+        restart, so a repeated right-click on an already-default speed doesn't retrigger
+        the animation — the forward direction doesn't need this because it signals a
+        real state change per click, so restarting it is the correct feedback."""
+        if reverse and self._shimmer_anim.state() == QPropertyAnimation.State.Running:
+            return
         if self._shimmer_anim.state() == QPropertyAnimation.State.Running:
             self._shimmer_anim.stop()
+        if reverse:
+            self._shimmer_anim.setStartValue(2.0)
+            self._shimmer_anim.setEndValue(-1.0)
+        else:
+            self._shimmer_anim.setStartValue(-1.0)
+            self._shimmer_anim.setEndValue(2.0)
         self._shimmer_anim.start()
 
     def _on_shimmer_done(self):
