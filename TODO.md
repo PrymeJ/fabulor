@@ -4,21 +4,73 @@ Deferred work — short, dated, status-tracked entries. Not for root-cause write
 NOTES.md) or session logs (SESSION.md). When an entry is started, move it under "In Progress" with
 the date; when done, delete it (the commit/SESSION.md entry is the permanent record).
 
-## Pending
+Closed/fixed/superseded entries live in [TODO_ARCHIVE.md](TODO_ARCHIVE.md), not here — this file is
+open/pending work only, grouped by topic (not by date) with a summary index below.
 
-- **[2026-07-29] CLOSED, not a Fabulor bug: sidebar/theme-swatch right-click dispatch loss.** See
-  NOTES.md ("CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop
-  with no app involved") for the full account. Right-click misses were independently confirmed to
-  reproduce across several unrelated apps (Vivaldi, qBittorrent, VS Code, Calibre) and, decisively,
-  on the **bare X11 desktop with no application in the loop at all**. That rules out anything in
-  Fabulor's own code as the cause. The `investigate/rclick-contextmenu` branch (the
-  `customContextMenuRequested` delivery-mechanism experiment) was discarded — `main` never had it,
-  so nothing needed reverting on `main`. The branch itself is kept, not deleted, with the experiment
-  and all diagnostic probes (`[EARLIEST]`/`[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[GUARD-CHAIN]`/
-  `[CONTEXTMENU-ARM/RECEIVED/TIMEOUT]`/`[STALL-PROBE]`/`[SETSTYLE-PROBE]`) committed on it as a WIP
-  commit, in case any of it is useful again later. Nothing pending on Fabulor's side unless it
-  resurfaces with clear evidence it's Fabulor-specific (reproduces in the app but demonstrably not
-  on the bare desktop under otherwise-identical conditions).
+## Summary index
+
+### Right-click / theme-restyle performance
+- [2026-07-29] App-wide performance pass needed — theme restyle measured ~205-265ms per hover/click
+- [2026-07-28] ~250ms full restyles during ordinary interaction — caller not yet identified
+- [2026-07-21] Theme-bleed fix verified with blur ON, needs a longer soak test
+- [2026-07-20] `refresh_dirty` declined-tick re-arm gap — real gap found and fixed, not yet live-verified
+- [2026-07-20] Blur overlay refresh timer permanently stops firing — one accidental occurrence, fix landed but not confirmed
+- [2026-07-21] Theme bleeding into the whole main window — verified fixed with blur ON, needs a soak test
+- [2026-07-21] Spurious enterEvent heartbeat fixed; the underlying punch-through flash collision is still open
+
+### Theme color/data
+- [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
+- [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
+- [2026-07-21] "Cover art based theme": hover-preview and right-click-to-activate from any mode
+- [2026-06-19] Remove theme inheritance from "The Color Purple"
+
+### Chapter list / library click
+- [2026-07-22] Intermittent chapter-number flicker on backward seek to a boundary
+- [2026-07-21] Chapter list highlight fluctuates and scrolls to bottom on click
+- [2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap (diagnostic-only)
+
+### VT / seek / progress tracking
+- [2026-07-18] `closeEvent` can save near-zero progress on a SIGTERM race (narrow, not confirmed to matter)
+- [2026-07-14] VT progress restore silently resets on book-switch — root cause confirmed, not fixed
+- [2026-07-14] VT missing-file handling — consolidated design, not yet implemented
+- [2026-07-13] Chapter-elapsed label reads ~1s short near a chapter boundary
+- [2026-07-12] Chapter-slider load-time retrace disagrees with the restore seek by 0.35s
+- [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary proximity
+- [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
+
+### Panel focus / keyboard navigation
+- [2026-07-12] Stats Day/Week/Month sub-nav and Tags panel keyboard nav — deferred, larger scope
+- [2026-07-11] History tab scroll has no row-height viewport quantization (blocked on tags-gutter work)
+- [2026-07-11] History tab delete-session animation still pauses near the end (blocked on the above)
+- [2026-07-10] Traveling focus marker must be keyboard-only, not mouse-activated
+- [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
+- [2026-07-09] Keyboard-selection focus indicator is nearly invisible
+
+### Volume / transport UI
+- [2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible
+- [2026-06-23] Slider→muted-icon transition is abrupt
+- [2026-06-23] Clicking the muted icon should restore volume — to what value, undecided
+
+### Misc UI polish
+- [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
+- [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
+- [2026-07-01] ScrollingLabel first-glyph clipping
+- [2026-06-25] Shimmer plays on speed right-click even when speed is already default
+- [2026-06-25] Tag action button's revert timer can fire mid-edit
+- [2026-06-25] Cover Panel has no duplicate-cover detection
+
+### Cleanup / process
+- [2026-07-28] `a4f4e71` (mid-close panel right-click dispatch) still unverified — verify or revert
+- [2026-06-27] Unused imports / dead names flagged by pyflakes in app.py and ui/panels.py
+- [2026-06-27] Excluded Books popup corner-radius mismatch
+- [2026-06-25] Pre-release cleanup pass (remove Q-key shortcut, stray debug prints)
+
+### Big deferred architecture
+- [2026-07-14] Incremental `@Property` color animation instead of whole-theme stylesheet swap (40-80h, high risk)
+- [2026-07-14] Close the P1↔P2 race precondition structurally (insurance, not a live bug)
+- [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
+
+## Pending
 
 - **[2026-07-29] App-wide performance pass needed; theme restyle cost is one confirmed contributor.**
   While instrumenting the right-click investigation above, a WARNING-level probe
@@ -38,144 +90,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   complexity or genuinely regressed from a past baseline. `[SETSTYLE-PROBE]` is left in place
   (WARNING-level, harmless) and can be reused directly for before/after comparisons.
 
-- **[2026-07-28] CLOSED (live-verified): "my right-clicks are missing" — they were applying one
-  step behind** (`4700b31`). Not lost presses: every click reached Qt, the widget and the handler.
-  Each applied the PREVIOUS click's theme, because hovering a swatch starts a 375ms preview fade and
-  the click ~400ms later stashed behind it — near-universal, since hover-then-click is how the grid
-  is used. Fixed by letting a deliberate selection interrupt an in-flight fade (the half explicitly
-  left alone when hovers got the same treatment that morning). Verified over a four-minute run: 104
-  selections, 104 applied immediately, zero stashed. A DEBUG regression detector remains at that
-  site — `grep 'OUTCOME' fabulor.log | grep 'applied=False'` should stay empty for right-clicks.
-  Six candidate causes were eliminated en route (hardware, input stack, blur, hit-testing, restyle
-  load, animation) — kept in NOTES.md so they are not re-derived.
-  **Two adjacent threads also closed (2026-07-28, same session):** (a) the morning's theme-swatch
-  log-vs-eyes disagreement (log said 89/90 clicks applied distinct themes while half appeared to do
-  nothing) — no longer reproducible after this fix, which is consistent with it having been the same
-  one-step-behind bug seen before it was understood; (b) the single 1046ms sidebar drop the 300ms
-  slide window did not explain — 30 further app starts with right-clicks, with and without cover-based
-  themes, produced no missed sidebar toggles at all. Both put to bed unless they recur; the DEBUG
-  regression detector above is how (a) would be spotted again.
-- **[2026-07-28] CLOSED (live-verified): sidebar right-clicks discarded mid-slide** (`f0dbc99`,
-  `911b4c5`). The re-entrancy guard silently dropped 5 of 25 clicks (20%) arriving inside the 300ms
-  slide. The first fix — queueing the toggle — was worse: each replay started a new slide that
-  caught the next click, producing eight consecutive toggles at 306-322ms with the sidebar running
-  one step behind. Root error was queueing a RELATIVE operation; now defers the desired FINAL state,
-  so repeated clicks overwrite and an even number cancels out. Live-confirmed responsive.
-- **[2026-07-28 Session 2] CLOSED (live-verified): first theme hover after opening Settings was dead
-  ~2s.** Two parts. (1) `8c348b0` — the guard deferred via a flat 700ms retry against a 1500ms
-  blur-in, guaranteeing two retry rounds plus up to 700ms of overshoot; replaced with
-  `PanelManager.call_when_panels_settled` (~16ms resume) for the animating case only, `_panel_open`
-  keeps the timer since it ends on a user action. Deliberately a predicate re-check, NOT a
-  `finished` subscription — `stop()` emits no `finished` and `blur_animation.stop()` runs on every
-  panel open, so a signal-based resume would be silently dropped (the failure already diagnosed 3x
-  against `_fade_anim`). Also fixes the 2026-07-22 starvation: the new arm never restarts a running
-  timer, and hover can no longer reach the old one. (2) `434763f` — the remaining ~1.1s was the blur
-  itself, so the blur-in is now 400ms when Settings opens onto the Themes tab. Measured: 0ms dead
-  window for a hover 400ms+ after open, 366ms worst case, and NO stall (worst frame gap ~17ms,
-  identical to baseline). Both live-confirmed; the shorter blur-in does not read as abrupt.
-  Full analysis and the disproven alternatives: NOTES.md, 2026-07-28.
-- **[2026-07-28 Session 1] CLOSED (live-verified): theme hover previews swallowed, three bugs across six
-  commits (`ac87e0a`, `57a7dd0`, `197e112`, `554476b`, `9b8d9df`, `70159d6`, `6eb07ca`).**
-  (1) A hover arriving during a **snapback fade** was stashed then discarded — no preview ever
-  appeared and nothing retried it. The predicate is now simply `bool(hover)`: a genuine hover
-  interrupts ANY in-flight fade, including a genuine selection's settle-fade (that protection had no
-  requirement behind it and swallowed previews for 750ms after every click). (2) **`048ae3a`
-  reverted** — it keyed on `_is_hover_active`, which means "the last APPLIED theme was a preview",
-  not "a hover is live now", so it ate legitimate snapbacks after a real mouse-out. The 775ms
-  flash-then-revert it targeted is structural (`_fade_anim.stop()` emits no `finished`) and is now
-  handled by clearing the stash at the interrupt site. (3) The **swatch-leave check** ended up back
-  where it started: `isVisible()` is the discriminator. Two cursor-delta replacements were tried and
-  both shipped regressions (~70 spurious snapbacks; then the 80ms debounce killed ~15x/sec while
-  moving). Full analysis: NOTES.md and SESSION.md, 2026-07-28.
-  **How to verify live** (the unit suite covers decision logic only; Qt paint/timing is not
-  testable here): use the Themes tab normally with a book playing — the blur grab only fires during
-  playback, which is what creates the synthetic leaves. Sweep across swatches, sit still on one,
-  leave to the dismiss sliver, come back. Then with the app closed (logs rotate at 2MB under DEBUG):
-  `grep -c "SWATCH-LEAVE-SUSPECT" ~/.local/state/fabulor/log/fabulor.log` — **must be 0**. That probe
-  fires only when a leave is suppressed while hidden AND the cursor is outside `swatch_box`, i.e. a
-  real exit that was eaten — the one observation that falsifies the premise. If non-zero, bring the
-  lines back rather than patching around them; they carry the cursor position and widget rect.
-  Also worth watching: previews appearing reliably while the cursor is in motion (regression 2's
-  symptom), and after clicking a theme (the selection-fade case).
-- **[2026-07-27] SUPERSEDED by the entry above — the fix described here was reverted 2026-07-28
-  (`197e112`); see NOTES.md for why the discriminator was wrong: a theme preview
-  self-cancelled ~775ms after appearing, with the mouse sitting still.** Repro: hover outside the
-  swatch area, come back onto a swatch, hold still — the preview flashes correctly, then reverts to
-  the active theme with no user action. Confirmed PRE-EXISTING (reproduced with the same day's
-  declined-tick re-arm fix stashed), so unrelated to that work despite surfacing alongside it.
-  **Mechanism** (read from a live DEBUG capture, not theorised — three prior hypotheses all missed
-  it): leaving stashes a snapback into `_pending_fade_call` whenever a fade is in flight; re-entering
-  and settling applies a genuine preview; `_on_fade_finished` then drains the stash unconditionally
-  and replays the obsolete snapback on top, cancelling the live preview. The drain had a discard for
-  the OPPOSITE case (`pending[3]` — the 2026-07-21 hover-confinement rule) but no symmetric check
-  for a snapback superseded by a live hover; its own trace line was already printing
-  `_is_hover_active=True` at that moment, unused. **Fix:** mirror-image discard gated on
-  `_is_hover_active and _pending_hover_theme is None` (both halves load-bearing — see NOTES.md).
-  Scoped to `_on_fade_finished` ONLY; the other two drain sites are panel-dismiss paths where a
-  superseding live hover isn't a real state. `tests/test_superseded_snapback.py` (7 tests).
-  **Still to do:** confirm live that the flash-then-revert is gone — it's a visual behaviour and the
-  unit tests only pin the drain decision.
-- **[2026-07-27] CLOSED (measured, not pursued): blur-grab residual cost.** Re-measured after that
-  day's blur fixes and found to be a much smaller problem than first recorded. Kept as a record so
-  the analysis is not re-derived; see the reopening bar below before acting on any recurrence.
-
-  **The original characterisation was WRONG in two specific ways** (recorded so they are not
-  repeated): (1) "the 50ms `_GRAB_FEEDBACK_SUPPRESS_S` never catches a 64ms loop" — it catches
-  **94%** (2655 suppressed vs 157 passed); (2) "all 13 tracked widgets repaint in a synchronized
-  self-inflicted burst" — that burst is **gone** once `_compute_bounding_rect` skips hidden widgets.
-
-  **Post-fix measurement** (Settings open, book playing, ~13s idle): 120 grabs/13s (was ~32/s),
-  median gap 61ms, **zero full-rect grabs**, cost ≈**3.6% of the main thread** (mean 3.86ms).
-  Remaining paint sources are dominated by `chapter_selector` (84) and `play_pause_btn` (36) — a
-  scrolling marquee and a playing-state icon, i.e. **genuine content change, not loop-driven**.
-
-  **The 19.11ms outlier was characterised and found to have no condition attached.** Ruled out, each
-  by measurement: not the widget or region (its rect `(68,417,164,24)` was the SMALLEST and most
-  common, grabbed 83 times at ~2.7ms); not size (area correlates sanely — 7k px→1.64ms,
-  51k px→5.80ms, neither near 15ms); not the documented restyle-backlog collision (no
-  `_apply_stylesheets` anywhere near it); not a self-inflicted cascade (the preceding paints were
-  all correctly SUPPRESSED). Breakdown was `grab_ms=15.28` / blur 3.78 / crop 0.05 — i.e. **`QWidget.grab()`
-  itself**, not the blur. Distribution is otherwise tight: p50 3.48ms, p95 6.26ms, p99 8.00ms, and
-  **1 of 120** samples above 10ms. Conclusion: environmental tail latency on a synchronous render
-  (backing-store realloc / compositor / scheduler preemption), with nothing to fix.
-
-  **REOPENING BAR — deliberately a condition, not a recurrence count.** A single further outlier is
-  NOT grounds to reopen; the whole point of this entry is that isolated spikes were already observed
-  and explained. Reopen only if a capture shows the spike **correlating with something specific** —
-  i.e. one of: (a) it repeatedly lands on a particular widget or rect rather than being spread across
-  whichever grab happens to be running; (b) it reproducibly follows a particular app state or action
-  (theme change, tab switch, book load, scan, panel transition); (c) it clusters in time rather than
-  appearing as isolated samples; or (d) the frequency itself shifts materially — several per
-  thousand rather than ~1 in 120. Absent one of those, a recurrence is the same environmental tail
-  already documented here. **A user-visible intermittent stutter is independently sufficient** to
-  reopen regardless of the above, since that is a symptom rather than a statistic — but capture a
-  longer window (minutes, not 13s) before concluding, as one 13s sample can establish "no visible
-  condition" but cannot characterise a tail.
-
-  **Still genuinely open and unresolved:** whether the panel `hide()` is strictly necessary for the
-  grab. Removing the grab would remove its tail latency too, so this remains the one structural
-  improvement available. A prior attempt to avoid it (grab `content_container` + `bg_main` fill) was
-  reverted 2026-07-19 because it broke theme hover-preview/snapback for reasons **never diagnosed** —
-  confront that first; do not simply re-attempt it. Full detail in NOTES.md (2026-07-27).
-
-- **[2026-07-28] OPEN — sidebar right-click sometimes does nothing, and the log says it worked.**
-  Right-click the main window with no panel open (the only way to open the sidebar). Nothing
-  appears; the next click opens it. Sometimes takes three.
-  **The contradiction to solve** (captured 21:49:24 with `[SIDEBAR-VIS]`): the click the app logged
-  as a full success — `[RCLICK]` -> toggle `False -> True` -> widget settled at `pos=(0,56)
-  size=(70,200) visible=True hidden=False parent_visible=True` — showed nothing on screen, while
-  the NEXT click logged nothing at all and visibly opened it. **The user's unanswered objection:**
-  if the app thought the sidebar was open after the first click, the second should have logged a
-  CLOSE. It opened instead.
-  **Four mechanisms disproven** (detail in NOTES.md, "OPEN: sidebar right-click sometimes does
-  nothing"): `sidebar.width()==0`, `_on_sidebar_hidden`, `resize_panels`, and widget
-  geometry/visibility at settle — the failing open is byte-identical to a working one on every
-  readable property. Plus the six eliminated earlier in the day for the broader right-click
-  question.
-  **Next measurement, not yet taken:** whether a Paint event is delivered to the sidebar across the
-  slide in the failing case. Everything readable is correct, which points at compositing rather than
-  state — the class this codebase already documents as invisible to offscreen inspection.
-  Probes in the tree: `[RCLICK]`, `[RCLICK-BRANCH]`, `[SIDEBAR-VIS]`.
 - **[2026-07-28] OPEN — ~250ms full restyles during ordinary interaction; the earlier "fixed" claim
   was measured on an IDLE app.** `a41698c` genuinely fixed a 3/sec storm (a restyle wrongly placed
   on the settings visual-sync path). It was then verified by counting restyles over 25 idle seconds
@@ -187,104 +101,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   Predates tonight's work; very likely what reads as a rough panel slide. Lesson recorded in
   NOTES.md: measuring a cost on an idle app answers nothing — the same trap as the 2026-07-27
   blur-grab measurement.
-- **[2026-07-28] UNVERIFIED — three commits landed without live confirmation.** `3132be7`
-  (three-state panel background), `a41698c` (restyle-storm fix, now known partial — see above),
-  `a4f4e71` (mid-close panel no longer dispatched to on right-click). The backdrop feature crashed
-  the app before it could be tested, and the session ended before any of the three were confirmed.
-  Verify or revert rather than building on them. `f3221f6` (backdrop must not change the applied
-  theme) IS confirmed correct by the user.
-- **[2026-07-28] Some themes need a preset-ramp colour override — known theme-data issue, not a code
-  bug.** Exposed (not caused) by `fa6d301`, which replaced the Sleep/Speed alpha ramp with an honest
-  `bg_main` -> `accent` colour blend. The old alpha version composited against the cover art as well
-  as the panel, which incidentally lifted the low steps; the blend does not, so themes whose accent
-  and background are close in luminance, or whose midpoint is unflattering, now show it.
-  **Examples confirmed live by the user** (first three ramp steps of 13, computed against the real
-  theme dicts):
-    Gravity's Rainbow  bg #2B0052 -> accent #00FF00 : 30,75,58 / 28,90,53 / 25,105,48
-                       (purple to green passes through muddy olive; button text also goes
-                        light-on-light at the top of the ramp)
-    Plum Island        bg #1E2A2E -> accent #6A4A6A : 52,51,64 / 57,53,67 / 61,55,71
-                       (accent only ~40 units from bg — the whole ramp is compressed)
-    Blindsight         bg #141414 -> accent #3A6A8A : 31,45,55 / 33,50,62 / 36,55,69
-                       (same shape on near-black)
-  **Plan:** per-theme dict overrides for the ramp endpoints, so a theme can supply its own
-  ramp start/end rather than deriving both from `bg_main`/`accent`. `preset_ramp_rgb`
-  (`themes.py`) is the single place that reads them, and it already falls back cleanly on missing
-  keys (pinned by `tests/test_preset_ramp.py`). If the new keys are optional and only some themes
-  set them, check whether they belong in `_NO_BASE_INHERIT_KEYS` — see the CLAUDE.md rule, since
-  "The Color Purple" is the base every theme inherits unset keys from and a literal value there
-  would silently override every other theme's derived fallback.
-  Also worth deciding at the same time: `button_text` contrast, which is the other half of the
-  Gravity's Rainbow case — the ramp can be fixed and the label still be unreadable.
-- **[2026-07-28] CLOSED: Sleep/Speed preset buttons were translucent, showing the cover art
-  through them** (`fa6d301`). Both panels built the ramp as an alpha ramp (75..255) on the accent,
-  emitted as `rgba()`; at alpha 75 the first button is ~29% opaque and composited against whatever
-  sat behind the translucent panel. Replaced with `preset_ramp_rgb` (`themes.py`) — the same
-  progression blended in colour space from `bg_main` toward `accent`, emitted opaque. The old
-  75..255 span is reproduced as mix ratios so the look is preserved. Scope note (also in NOTES.md):
-  the other `setAlpha` sites are QPainter-drawn against a known surface and are NOT the same bug —
-  do not sweep them. `tests/test_preset_ramp.py` (8 tests).
-- **[2026-07-28] NEW (user's own list): three-state panel background — Transparent | Frosty glass |
-  Opaque.** Smaller than it first looks, because the opacity machinery already exists.
-  **What is already there** (found 2026-07-28 after the user pointed at `settings_tab_hover_opacity`):
-  `panel_opacity_hover` is a per-theme float (0.88-0.95 across the theme set, every theme sets one)
-  and the panel background is ALREADY painted as `rgba(bg_main, panel_opacity_hover)` —
-  `themes.py:3458` in `get_settings_stylesheet`, with a second consumer around `:3724`. So the three
-  states are mostly a matter of choosing the alpha and whether the blur runs:
-    Opaque        -> force alpha 1.0 (probably a one-line override at the stylesheet site)
-    Frosty glass  -> today's blur + the theme's own `panel_opacity_hover`
-    Transparent   -> no blur + the theme's own `panel_opacity_hover`
-  The per-theme values stay as the Transparent/Frosty look; only Opaque overrides them.
-  **Check before starting** (neither confirmed): (a) whether stats/tags/book-detail panels use this
-  same rule or paint their own backgrounds — only the settings/speed/sleep group was traced;
-  (b) whether Opaque should skip the blur work entirely. If the panel is fully opaque the blur
-  behind it cannot be seen, which is exactly what `_panel_hides_everything`
-  (`transport_bar_blur.py`) already exploits for the Timeline tab — reusing it would make Opaque
-  CHEAPER than the other two rather than equal cost.
-  **The widening that remains:** `blur_enabled` is a boolean stored as "true"/"false"
-  (`config.py`), with the `blur_mode_changed` signal, `settings_controller._update_blur_mode`/
-  `_update_blur_visuals`, `panels.apply_blur_live`, three branches in `panels.py` and one in
-  `app.py`. Decide whether to migrate that key or keep it for backward compatibility. Not started.
-- **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
-  both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
-  Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
-  for captured instance + working theory (mpv settle undershoot, ~0.435s, outside
-  `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.
 
-- **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
-  fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
-  investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
-  instrumentation. Not root-caused — no hypothesis yet on mechanism (candidate areas to check when
-  picked up: `chapter_list.py`'s selection/scroll handling on click, and whether this interacts
-  with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits racing the click's own
-  selection, given how many other chapter-UI bugs in this codebase have come from exactly that kind
-  of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
-  Needs live instrumentation added first to catch an occurrence with real state, before any fix is
-  attempted — do not fix blind. Not started.
-- **[2026-07-21, spec expanded 2026-07-28] "Cover art based theme": hover should preview, and
-  right-click should activate, regardless of the current mode.** Two halves, both from the user:
-  **(a) Hover preview.** `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns when
-  `self._cover_theme` is None, so with mode Off, hovering the "Cover art based theme" entry does
-  nothing. It should preview the cover-derived theme whatever the Off/With pool/Exclusive selection
-  is, so the look can be seen before committing. Needs to confirm a cover theme is BUILDABLE for the
-  current book first (there may be no cover, or no `_cover_theme` computed while mode is Off) —
-  that check is the actual work; the preview call itself already exists.
-  **(b) Right-click activates from Off.** Currently: mode Off → right-clicking the label is a no-op;
-  mode With pool → right-click sets it. Desired: right-click under Off should ALSO activate it, and
-  switch the mode to With pool. Rationale (user's): right-click means "I want this", and Off is just
-  a state to move out of rather than a reason to refuse.
-  Note both halves sit on the hover/preview path that changed twice on 2026-07-28 (hover interrupts
-  any fade; selections interrupt too) — re-read those before touching, since a preview arriving
-  mid-fade now behaves differently than when this entry was written.
-- **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
-  later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
-  the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
-  one was `hover=True` (an ordinary, correct hover no-op, not the actual bug — which is `hover=False`
-  + the marker). The marker doesn't distinguish "guard blocked a real pending apply" from "guard
-  correctly no-op'd a redundant hover re-entry," because only non-hover applies update the
-  `_theme_ever_applied` comparison value it checks against. Diagnostic-precision issue only — does
-  not affect app behavior, both real fixes are confirmed working via the same session's log. Full
-  detail: NOTES.md, "Guard-masking bug ... and hover-preview confinement" entry, 2026-07-21.
 - **[2026-07-21] Theme-bleed: VERIFIED FIXED with blur ON, not yet soak-tested.** Two of (at
   least) three independent causes were closed 2026-07-20 (state-read bypass in
   `_set_bg_suppressed`, hover-unaware blur grab in `refresh_dirty`). User has now explicitly tested
@@ -301,6 +118,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   this fix landed — not soak-related, not yet triaged. Candidate follow-up (not started): the new
   responsiveness complaint may be the hover gate's decline path adding overhead elsewhere, or may
   be unrelated — needs live profiling, not assumed.
+
 - **[2026-07-20] ~~`refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick~~ — REAL
   GAP, FIXED 2026-07-27. Was a candidate mechanism for the frozen-overlay bug below; the stranding
   path is now traced concretely, so that entry should be re-read against this.** Found while
@@ -327,6 +145,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   **Not yet live-verified** — the mechanism is static-traced and unit-pinned, but per this area's
   standing rule (offscreen harnesses cannot see compositing defects here) the stale-overlay
   symptom itself needs a live confirmation before this is called fully closed.
+
 - **[2026-07-20] NEW: blur overlay's refresh timer stops firing permanently after a normal
   `show_for_panel` call — confirmed via one accidental occurrence, root cause not yet found.**
   Overlay freezes on stale content indefinitely (confirmed via screenshot: grabbed transport-bar
@@ -366,6 +185,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   repeatedly with a panel open and a book playing. If it no longer occurs across a long session,
   close on that basis; if it recurs, the remaining suspects are other no-Paint-event content
   changes (the `6eebc31` hidden-widget class), not the gate path.
+
 - **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
   ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously
   uncommitted/unverified — every earlier "no issues" report had been run with blur OFF, which was
@@ -376,6 +196,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   several 5+ minute stretches) is still the bar for calling this fully closed. Keep as pending until
   that soak test happens. This was a real, separate bug from the punch-through-flash item below —
   the two got conflated in earlier drafts of this TODO/NOTES.
+
 - **[2026-07-21] Spurious-`enterEvent` heartbeat — BOTH triggers now identified and fixed; the
   underlying punch-through-FLASH collision is a separate, still-open item (below).** The heartbeat
   (spurious repeated enter/leave on a stationary cursor over a `ThemeItem`, each spurious enter
@@ -415,6 +236,123 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   not idle observation. If >100ms grabs appear, the recorded open question is still the next step:
   confirm whether the visible flash is the live main window or the overlay's grabbed pixmap — that
   was never established and it determines the fix.
+
+- **[2026-07-28] Some themes need a preset-ramp colour override — known theme-data issue, not a code
+  bug.** Exposed (not caused) by `fa6d301`, which replaced the Sleep/Speed alpha ramp with an honest
+  `bg_main` -> `accent` colour blend. The old alpha version composited against the cover art as well
+  as the panel, which incidentally lifted the low steps; the blend does not, so themes whose accent
+  and background are close in luminance, or whose midpoint is unflattering, now show it.
+  **Examples confirmed live by the user** (first three ramp steps of 13, computed against the real
+  theme dicts):
+    Gravity's Rainbow  bg #2B0052 -> accent #00FF00 : 30,75,58 / 28,90,53 / 25,105,48
+                       (purple to green passes through muddy olive; button text also goes
+                        light-on-light at the top of the ramp)
+    Plum Island        bg #1E2A2E -> accent #6A4A6A : 52,51,64 / 57,53,67 / 61,55,71
+                       (accent only ~40 units from bg — the whole ramp is compressed)
+    Blindsight         bg #141414 -> accent #3A6A8A : 31,45,55 / 33,50,62 / 36,55,69
+                       (same shape on near-black)
+  **Plan:** per-theme dict overrides for the ramp endpoints, so a theme can supply its own
+  ramp start/end rather than deriving both from `bg_main`/`accent`. `preset_ramp_rgb`
+  (`themes.py`) is the single place that reads them, and it already falls back cleanly on missing
+  keys (pinned by `tests/test_preset_ramp.py`). If the new keys are optional and only some themes
+  set them, check whether they belong in `_NO_BASE_INHERIT_KEYS` — see the CLAUDE.md rule, since
+  "The Color Purple" is the base every theme inherits unset keys from and a literal value there
+  would silently override every other theme's derived fallback.
+  Also worth deciding at the same time: `button_text` contrast, which is the other half of the
+  Gravity's Rainbow case — the ramp can be fixed and the label still be unreadable.
+
+- **[2026-07-28] SHIPPED and confirmed working (`3132be7`): three-state panel background —
+  Transparent | Frosty glass | Opaque.** Design notes below are kept as reference, not as an
+  unstarted plan — the feature is live and the user has confirmed it works. One real issue found
+  since, not yet investigated:
+  **Perceptible lag when clicking an option.** Clicking Transparent/Frosty glass/Opaque sets the
+  chosen mode only after a noticeable delay, rather than applying immediately. Not yet
+  investigated — this report was delayed by other bugs competing for attention at the time,
+  so treat it as fresh, not as something already triaged. Worth checking first against the
+  general restyle-cost item above (`mw.setStyleSheet(base)` measured ~205-265ms per call) — if
+  clicking a background mode triggers a full restyle pass, that alone could be the whole lag,
+  in which case this may not need its own separate fix once the perf pass lands.
+
+  **Original design notes, kept for reference:** smaller than it first looks, because the opacity
+  machinery already exists. **What was already there** (found 2026-07-28 after the user pointed at
+  `settings_tab_hover_opacity`): `panel_opacity_hover` is a per-theme float (0.88-0.95 across the
+  theme set, every theme sets one) and the panel background is ALREADY painted as
+  `rgba(bg_main, panel_opacity_hover)` — `themes.py:3458` in `get_settings_stylesheet`, with a
+  second consumer around `:3724`. So the three states are mostly a matter of choosing the alpha and
+  whether the blur runs:
+    Opaque        -> force alpha 1.0 (probably a one-line override at the stylesheet site)
+    Frosty glass  -> today's blur + the theme's own `panel_opacity_hover`
+    Transparent   -> no blur + the theme's own `panel_opacity_hover`
+  The per-theme values stay as the Transparent/Frosty look; only Opaque overrides them.
+  Open questions noted at the time, status against the shipped implementation not rechecked:
+  (a) whether stats/tags/book-detail panels use this same rule or paint their own backgrounds —
+  only the settings/speed/sleep group was traced; (b) whether Opaque should skip the blur work
+  entirely. If the panel is fully opaque the blur behind it cannot be seen, which is exactly what
+  `_panel_hides_everything` (`transport_bar_blur.py`) already exploits for the Timeline tab —
+  reusing it would make Opaque CHEAPER than the other two rather than equal cost.
+  **The widening that remains:** `blur_enabled` is a boolean stored as "true"/"false"
+  (`config.py`), with the `blur_mode_changed` signal, `settings_controller._update_blur_mode`/
+  `_update_blur_visuals`, `panels.apply_blur_live`, three branches in `panels.py` and one in
+  `app.py`. Whether that key was migrated or kept for backward compatibility as part of the ship
+  is not confirmed here — check the current code rather than assuming either way.
+
+- **[2026-07-21, spec expanded 2026-07-28] "Cover art based theme": hover should preview, and
+  right-click should activate, regardless of the current mode.** Two halves, both from the user:
+  **(a) Hover preview.** `_on_cover_pool_btn_hovered` (`theme_manager.py`) early-returns when
+  `self._cover_theme` is None, so with mode Off, hovering the "Cover art based theme" entry does
+  nothing. It should preview the cover-derived theme whatever the Off/With pool/Exclusive selection
+  is, so the look can be seen before committing. Needs to confirm a cover theme is BUILDABLE for the
+  current book first (there may be no cover, or no `_cover_theme` computed while mode is Off) —
+  that check is the actual work; the preview call itself already exists.
+  **(b) Right-click activates from Off.** Currently: mode Off → right-clicking the label is a no-op;
+  mode With pool → right-click sets it. Desired: right-click under Off should ALSO activate it, and
+  switch the mode to With pool. Rationale (user's): right-click means "I want this", and Off is just
+  a state to move out of rather than a reason to refuse.
+  Note both halves sit on the hover/preview path that changed twice on 2026-07-28 (hover interrupts
+  any fade; selections interrupt too) — re-read those before touching, since a preview arriving
+  mid-fade now behaves differently than when this entry was written.
+
+- **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
+  via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
+  own dict — any key a theme doesn't define falls back to Purple's literal value, not to that
+  theme's own derived fallback (e.g. an accent-derived color). `_NO_BASE_INHERIT_KEYS` in
+  `themes.py` is a manually-maintained escape hatch for keys where this is wrong, and it's easy to
+  forget to update when adding a new optional key (see CLAUDE.md rule on `_NO_BASE_INHERIT_KEYS`,
+  added 2026-06-19). Made sense early when Purple was a stable default; doesn't anymore — Purple
+  probably won't even ship as the default theme. Target design: no theme inherits literal values
+  from another theme; every key is either required (defined in all themes) or has a documented
+  code-level fallback chain, never "whatever the base template happened to set."
+  **Blocked on:** user's planned full pass over every theme (adding keys where current fallbacks
+  don't look right) — doing the inheritance refactor before that pass would only have a partial
+  picture of which keys actually need it. Revisit once that pass is done.
+
+- **[2026-07-22] Investigate intermittent chapter-number flicker on backward seek to boundary — repros via
+  both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
+  Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
+  for captured instance + working theory (mpv settle undershoot, ~0.435s, outside
+  `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.
+
+- **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
+  fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
+  investigated.** User-reported, intermittent ("sometimes"), not yet reproduced under
+  instrumentation. Not root-caused — no hypothesis yet on mechanism (candidate areas to check when
+  picked up: `chapter_list.py`'s selection/scroll handling on click, and whether this interacts
+  with `_on_time_pos_change`'s chapter-walk-driven `chapter_changed` emits racing the click's own
+  selection, given how many other chapter-UI bugs in this codebase have come from exactly that kind
+  of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
+  Needs live instrumentation added first to catch an occurrence with real state, before any fix is
+  attempted — do not fix blind. Not started.
+
+- **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
+  later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after
+  the guard-masking + hover-confinement fixes landed: the marker fired `True` 15 times, but every
+  one was `hover=True` (an ordinary, correct hover no-op, not the actual bug — which is `hover=False`
+  + the marker). The marker doesn't distinguish "guard blocked a real pending apply" from "guard
+  correctly no-op'd a redundant hover re-entry," because only non-hover applies update the
+  `_theme_ever_applied` comparison value it checks against. Diagnostic-precision issue only — does
+  not affect app behavior, both real fixes are confirmed working via the same session's log. Full
+  detail: NOTES.md, "Guard-masking bug ... and hover-preview confinement" entry, 2026-07-21.
+
 - **[2026-07-18] `closeEvent` can save a near-zero progress if SIGTERM/close lands between
   `load_book` and the VT restore-seek landing — found via a 400-cycle cold-launch stress test,
   narrow and not confirmed to matter in real usage.** Test: 5 VT + 5 M4B books, 40 cold launches
@@ -434,151 +372,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   interrupted before restore ever ran. Real usage doesn't SIGTERM the app mid-book-load, so it's
   unclear this narrow race is worth pursuing on its own. Not triaged as a priority; revisit only if
   a similar shape shows up from real usage, not from stress-test cadence alone.
-- **[VERIFIED, 2026-07-18] Rapid-switch progress-integrity check against tonight's final
-  startup-sequencing state — PASSED, no data-integrity issue found.** Ran the Bug-1/Bug-2-era
-  repro (rapid switching between Colorless Tsukuru Tazaki and Sometimes a Great Notion, 00:44-00:46)
-  against the committed state (`cd5ec5b` + `0990e00`). Log-confirmed across many rapid switches:
-  `_restore_position`'s `book_data.progress` always matched the correct prior value for each book
-  (Tazaki → `23307.624886`, Sometimes a Great Notion → `56004.037344...`) on every switch, no
-  near-zero transient, no dropped restore. Progress integrity holds.
-- **[FIXED, committed `1025b0a`, 2026-07-18] "Theme-ROTATION landing mid-flow-animation" —
-  CORRECTED: not a rotation-timer bug at all, it was `clear_cover_theme()`'s revert-to-pool-theme
-  path (no cover on the switched-to book) with no stand-down, plus a real second bug it exposed.**
-  Originally logged as "theme rotation," but the user later corrected the framing: "Against the
-  Day" had no cover art, so the theme change was `clear_cover_theme()` reverting to the pool theme,
-  not the independent rotation timer. Two bugs, both fixed, see NOTES.md's 2026-07-18 entry for the
-  full trace: (1) `_show_no_cover_state` had no stand-down at all, unlike the has-cover path's
-  existing `is_any_panel_visible()` defer — fixed via a new `_PENDING_CLEAR_COVER_THEME` sentinel;
-  (2) that fix exposed `_run_deferred_restyle` never checking `_fade_in_flight`, only the flow
-  animation, so the fade the reverted-theme starts could still get its flush landed mid-fade if a
-  fast-loading (no-cover) book's own flow animation finished first — fixed by adding the
-  `_fade_in_flight` guard condition and wiring `_on_fade_finished` to re-trigger the check. Live-
-  verified: cover→placeholder switch, cover-art-based theme ON, fade now completes smoothly.
-- **[VERIFIED, 2026-07-18] 4-condition × 10-sample worst_gap matrix (VT/ON, VT/OFF, M4B/ON,
-  M4B/OFF) re-run against the fully-fixed final state (all five bugs committed) — PASSED, all
-  four conditions clean.** 10 samples/condition judged sufficient rather than the original 30 —
-  the earlier 30-sample runs were specifically needed to detect an intermittent timing race (scan
-  duration vs. animation duration); with that race now removed at the source (no scan on normal
-  launch), a smaller sample is enough to confirm the healthy baseline holds, not to hunt for a
-  rare collision. Results: VT/OFF 51.8ms/34.2ms median (max 70.1/50.5), VT/ON 50.3ms/33.1ms median
-  (max 60.8/47.0), M4B/OFF 41.0ms/25.2ms median (max 61.2/44.4), M4B/ON 32.3ms/17.1ms median (max
-  48.8/40.2) — all four in the same healthy ~30-70ms range, cover-ON and cover-OFF statistically
-  indistinguishable in both formats, no trace of the original 400-570ms stutter. Corroborated by
-  the user's own incidental testing while chasing the other fixes this session: no progress lost,
-  flow smooth throughout. This closes out the last open verification item from tonight's work.
-
-- **[FIXED, committed `5cfe3a3`, 2026-07-17] Bare-Qt-chrome-at-startup bug — CORRECTED root cause
-  (not "book has a cover + mode Off" as first diagnosed; see NOTES.md correction entry at the
-  top).** Real cause: `_setup_ui` applied only the visible-surface pass at startup
-  (`_apply_stylesheets` alone), never the deferred invisible-surface pass. Any later startup call
-  into `_on_theme_changed` with the same theme name (always true for `clear_cover_theme()`, hit by
-  BOTH the no-cover case and the cover-mode-Off case — cover presence is irrelevant) hit the
-  same-name no-op guard and never reached the deferred pass, leaving
-  library/settings/speed/sleep/stats/book_detail panels unstyled for the session. Fixed via a
-  shared `apply_full_pass()` helper, called once at startup. Live-verified (log evidence in
-  `NOTES_THEMING_CURRENT_STATE.md`): panels show correctly styled on first open after a cold
-  launch with cover-theme Off. A SECOND, unrelated regression was found and fixed in the same
-  commit — theme hover preview no longer reaching settings/speed/sleep panels (introduced by the
-  same night's earlier deferred-restyle narrowing, which had moved that styling into a
-  not-hover-gated method alongside panels that were ALREADY correctly hover-gated before the
-  narrowing). Also live-verified via real hover events in the log.
-  Every cover-OFF trace/number from tonight's Regime A benchmarking (both the original 8-batch
-  pass and the corrected V2 re-run) is still VOID and must not be cited going forward — those runs
-  predate this fix. Re-running is a separate decision, not automatic.
-
-- **[FIXED, committed `cd5ec5b`, 2026-07-18] Post-library-scan cover-refresh
-  (`library_controller.py:161`) racing the book-load flow animation — SUPERSEDES this entry's own
-  "not yet confirmed why" open question.** The mechanism traced here (every book-load calling
-  `apply_cover_theme` twice — once at startup, again from the post-scan cover-refresh whenever a
-  background scan finishes — with the second call's synchronous `_apply_stylesheets` freezing the
-  flow animation if the scan happened to finish mid-animation) was correct. The actual fix was
-  upstream of this call site entirely: `handle_background_tasks` was starting a library scan on
-  EVERY app launch, unconditionally, contradicting CLAUDE.md's own documented contract — gating
-  `scanner.start()` behind the same `manual/force_refresh/has_indexed_books` predicate that already
-  gated its status message means a normal launch no longer scans at all, so the second
-  `apply_cover_theme` call this entry describes never fires in that case. This also answers the
-  entry's own deferred question ("why does the second call still hit the no-`_fade_anim` branch") —
-  it doesn't anymore, because there's no second call to begin with on a normal launch. Manual/forced
-  scans (Rescan, add/remove folder) still trigger the post-scan refresh exactly as before — that
-  path was never the bug. See NOTES.md's 2026-07-17/18 entry for the full trace and the empty-
-  library-panel regression this fix's first (incomplete) attempt caused and then also fixed in the
-  same commit. Confirmed NOT a VT-specific bug either, exactly as this entry's own "likely NOT
-  actually a VT bug" note predicted — final 10-sample benchmark (2026-07-18) shows VT and M4B
-  behaving identically post-fix.
-
-- **[CLOSED, 2026-07-18, by explicit user decision] Flow-animation/theme-apply narrowing work —
-  umbrella issue from 2026-07-16/17, now closed.** Original closure bar was ALL FOUR criteria
-  simultaneously: (1) app launch smooth cover ON/OFF × VT/non-VT, (2) book-switch smooth same
-  matrix, (3) no progress loss under rapid switching, (4) library panel doesn't stutter on open.
-  Status at closure: (1)/(2) — confirmed via the final 10-sample worst_gap benchmark (2026-07-18,
-  see entry above), all four conditions in the healthy 30-70ms range. (3) — confirmed via the
-  rapid-switch progress-integrity re-check (2026-07-18, see entry above), no data loss across many
-  switches. (4) — library-panel-open stutter remains **not separately re-verified this session**;
-  it was INCONCLUSIVE at the time this umbrella was written and was not the direct target of any
-  of tonight's five fixes (though `cd5ec5b`'s startup-population fix does address a RELATED
-  first-open symptom — the empty-panel flash — which is a different bug from the stutter this
-  criterion originally meant). Explicitly asked and closed rather than left open on a technicality:
-  the user has not observed this stutter during tonight's extensive testing and elected to close
-  this umbrella now, on the basis that if it resurfaces it will be noticeable and can be
-  investigated fresh at that point — not on the basis that (4) was formally re-verified. If it
-  resurfaces, treat as a new investigation; the INCONCLUSIVE trail (cache-miss hypothesis that
-  failed correlation testing twice) in NOTES.md's 2026-07-16/17 entry is background, not a
-  confirmed dead end to avoid re-checking.
-
-- **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
-  stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
-  RANK-1 fix; not investigated, not designed, out of scope for now.** Raised by Pryme while the
-  cold-launch theme work was in flight. The reasoning worth preserving: the current architecture can
-  only change colors by regenerating and re-applying whole stylesheets — a full-widget-tree
-  `_apply_stylesheets` pass — which is precisely the ~400ms synchronous main-thread cost that is the
-  measured root of Race 3, Regime B, and RANK-1 in the first place (median 318ms, pipeline median
-  442ms, max 759ms; `mw.setStyleSheet(base)` alone is ~180ms because Qt re-polishes every
-  descendant — see `review/Report_260714_synchronous_main_thread_work.md`). An incremental approach
-  — animating individual colors via `@Property` on the widgets that need them, rather than swapping
-  the whole stylesheet and masking the transition with a full-window overlay — might not need that
-  pass at all, which would dissolve the cost rather than sequence around it.
-  **Known prior art / why this is big, not a quick win:** NOTES.md 2026-06-19 ("Main-window theme
-  fade interrupt ... full color-animation rework DEFERRED") records that this exact rework was
-  **started in a prior session and abandoned as ~40–80h with high regression risk** — every
-  QSS-styled widget (buttons + their `:hover`/`:pressed`/`:disabled` states, panel chrome, Themes-tab
-  pool items, gradients, cover-derived colors) would need converting from QSS-driven coloring to
-  custom-paint `@Property` coloring, because QSS pseudo-states have no custom-paint equivalent and
-  would each be reimplemented by hand. The cheaper middle path (snap panel chrome instantly, keep
-  slider tweens) was **explicitly rejected by Pryme** — instant theme snaps read as jarring/violent,
-  which is the whole reason the overlay fade exists. Also relevant: `ClickSlider` ALREADY paints from
-  `@Property` colors rather than QSS at paint time — it is the one widget class where this model is
-  already proven in-tree (and, not coincidentally, the one whose colors can get stranded — see the
-  2026-06-19 entry).
-  **Status:** a real, recorded idea with a real prior estimate against it. Do NOT fold into
-  Findings 1/2/3 or the RANK-1 fix — if it is ever picked up it needs its own investigate-then-plan
-  cycle sized against that 40–80h prior estimate, not a mid-fix scope expansion.
-
-- **[RANK-2, 2026-07-14] Close the P1↔P2 race precondition structurally (insurance, not a live-bug
-  fix) — deferred, deliberately separate from the RANK-1 theme-apply fix.** The structural hazard:
-  a Qt-queued writer (`_vt_restore_pending`, written via the `book_ready`→`_on_file_ready`
-  QueuedConnection at `app.py:389`) racing an mpv-thread reader (`_on_file_loaded`'s read of it),
-  exposed whenever ANY ~100ms+ synchronous main-thread op starves the Qt queue in that window. Today
-  the only such op is theme-apply (fixed narrowly by RANK-1), but the pattern re-opens for the next
-  heavy sync op anyone adds later (a heavier chapter populate, a sync DB migration, etc.). Feasibility
-  already investigated (see `review/Report_260714_theme_apply_safety_feasibility.md`, RANK-2 section):
-  - **VT path:** both `book_ready` emit sites (`ungate_play`, `_on_playlist_resolved`) run on the Qt
-    main thread, so a Direct (non-queued) connection COULD run `_restore_position`/`defer_vt_restore`
-    synchronously before the subsequent `_apply_pending_cover_theme`, removing the race precondition
-    entirely for VT. **But** `book_ready`/`_on_file_ready` is a single shared connection (can't be
-    Direct-for-VT / Queued-for-non-VT without a second signal or per-emit juggling), the VT emit is
-    deliberately placed BEFORE `instance.play()` (CLAUDE.md book_ready invariant), and making restore
-    synchronous there changes the timing the shipped VT fixes (`_on_vt_file_switched` gated clear,
-    `_on_end_file` ERROR reset, `_logical_pos`) were verified against — so it TOUCHES the blast radius
-    of the VT-fragile zone even without editing those functions.
-  - **Non-VT path:** `book_ready` is emitted from the mpv thread, so the QueuedConnection is
-    MANDATORY thread-marshaling — the precondition cannot be removed at all; non-VT's only protection
-    is "don't run a long sync op in the window" (i.e. the RANK-1 fix).
-  - **Why deferred, not done now:** it's insurance against a hypothetical future sync op, not a live
-    bug (RANK-1 closes all three currently-observed victims); its cheapest shape still re-architects a
-    connection in the highest-risk zone in the codebase. If ever attempted, it needs its own
-    investigate-then-plan cycle and the full VT+Undo verification bar (`tools/fs_race_harness.py`,
-    `tools/vt_restore_race_harness.py`, live checklist) re-run — NOT bundled with RANK-1. Captured
-    here so this structural risk is dated and tracked, not left buried in a review report.
 
 - **[2026-07-14, STILL OPEN — trigger condition likely narrowed by tonight's work, NOT re-verified,
   do not assume fixed] VT progress restore silently resets on book-switch (not cold app-launch) —
@@ -603,45 +396,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   tonight's incidental testing. If revisited: re-run the original repro from NOTES.md's 2026-07-14
   entry specifically, with the `[BOOKSWITCH-TRACE]` instrumentation (still in place), before
   concluding either way.
-
-- **[FIXED, committed `cd5ec5b`, 2026-07-18] Cover-theme `_apply_stylesheets` freezing the
-  app-start flow animation (Regime B) — same root mechanism as the post-library-scan cover-refresh
-  entry above, fixed by the same commit.** This 2026-07-14 measurement (400-600ms worst frame gap,
-  up to 791ms, cover-theme-ON cold launches) predates the later, more precise trace that identified
-  the actual second-call trigger (the unconditional launch scan). Gating `scanner.start()` behind
-  the manual/force/no-indexed-books predicate removes the second `apply_cover_theme` call on a
-  normal launch entirely, which is what this entry's "cold launch, no panel animating to trigger
-  the existing guard" gap was really describing — there's no longer a second call for that guard to
-  need to catch. Final 10-sample benchmark (2026-07-18) confirms cold-launch worst_gap now sits in
-  the healthy 30-70ms range across VT/M4B × cover ON/OFF, down from the 400-791ms measured here.
-  Superseded, not folded into any future async-`_apply_stylesheets` redesign — the root cause here
-  turned out to be a scan-trigger bug, not something requiring the deferred/async stylesheet
-  architecture change this entry originally pointed toward.
-
-- **[RANK-LOW, MEASURED 2026-07-14] App-start flow-animation baseline roughness (Regime A) — a
-  standalone ~70ms hitch at animation start, independent of everything else.** Present on EVERY cold
-  launch of EVERY book type, cover on or off, with no theme apply anywhere near the window (worst
-  frame gap ~70–76ms median, never observed >108ms). A synchronous burst at animation start:
-  chapter-list `populate` + repeated `_update_chapter_label_from_index setCurrentRow` calls + the
-  first mpv `time_pos` samples, all landing in the animation's first ~50–90ms. Real but
-  sub-perceptible-to-mild — a rough *start*, not a freeze. **Independent of P1/P2/P3 (confirmed by
-  measurement — occurs on M4B and MP3, which have no `_vt_restore_pending`/`file_switched` at all)
-  and independent of the RANK-1 theme-apply hazard.** This is the ONLY part of the old combined
-  "flow-animation stutter" item that is a genuine standalone animation-timing bug — it is what the
-  original 2026-07-13 trace-only investigation correctly found (it was right about this, blind to
-  Regime B). **Verification bar for any fix touching this or near-app-start VT load timing:** re-run
-  `tools/fs_race_harness.py`, `tools/vt_restore_race_harness.py`, and the VT+Undo checklist, since
-  any timing change near app-start VT loading risks interacting with the `_vt_restore_pending`/
-  `file_switched`-guard fixes. Full detail in NOTES.md (2026-07-14) and
-  `review/Data_260714_flow_animation_stutter.md`.
-
-  *Historical note: these two entries replace a single 2026-07-13 "first-app-launch-only VT
-  flow-animation stutter" item that was traced (code-reading only) to the progress slider's own
-  `QPropertyAnimation` glide and believed to be one isolated bug. The 2026-07-14 live measurement
-  found it was two genuinely different bugs with different ranks — keeping them as one entry would
-  recreate the "one bug wearing two names" confusion the investigation resolved. The original trace
-  was right about Regime A and blind to Regime B; its "the trace found nothing, not a live-forced
-  test showed nothing" caveat is what prompted the measurement that split them.*
 
 - **[2026-07-14] VT missing-file handling — consolidated design (supersedes three earlier,
   narrower entries from the same night: the cross-file chapter-cycling bug, the
@@ -810,6 +564,24 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   investigate-then-plan cycle, live-verified against the exact stuck-Next/Prev bug this constant
   was built to fix, same as before.
 
+- **[2026-07-15] Undo doesn't return to the true origin after rapid repeat Next/Prev within
+  `undo_duration` — narrowed live to Next/Prev specifically, not general undo/restore.**
+  `save_seek_position(old_pos, duration_limit)` (`player.py`) only writes `_undo_pos` when it's
+  unset or when more than `duration_limit`s (default 3s, `config.get_undo_duration()`) have passed
+  since the last capture — a rapid second capture within that window is skipped, which by reading
+  the code should leave `_undo_pos` pointing at the FIRST departure point (chapter 3), not the most
+  recent one (chapter 4). Concrete repro, live-tested by the user: in chapter 3 with ~30s left,
+  click Next twice in quick succession (chapter 3 → 4 → 5), then click Undo — **actually lands at
+  the chapter 3/4 boundary ("beginning of chapter 4"), not back in chapter 3.** Further live
+  testing (2026-07-15) narrowed this to Next/Prev specifically — every other undo/restore path
+  (seeking, smart-rewind, chapter-slider clicks) correctly returns to the true origin position;
+  only rapid repeated Next/Prev clicks fail to chain back past the most recent hop. Root cause NOT
+  yet diagnosed — the shared `_last_undo_click_time`/skip logic described above doesn't obviously
+  explain why Next/Prev's call path would behave differently from every other `save_seek_position`
+  caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
+  diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
+  attempting a fix.
+
 - **[2026-07-12] DEFERRED (not planned for the current shipping push): Stats Day/Week/Month
   sub-navigation and Tags panel keyboard nav.** Explicitly scoped OUT while implementing Book
   Detail's Left/Right tab-switching + per-tab actions (History row nav, Cover thumbnail nav) the
@@ -827,6 +599,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   don't. Sleep/Playback/Settings are considered adequately served by their existing
   `panel_tab_widgets` Tab-cycling and are NOT being extended further either (no focus-zone gap
   there — Tab-cycle already reaches every control).
+
 - **[2026-07-11] FIX (blocked on upcoming tags-gutter layout work): History tab's `_history_scroll`
   has no row-height viewport quantization, unlike every other scrollable list in the app.**
   `book_detail_panel.py`'s `_history_scroll` (`QScrollArea`) is added via `outer.addWidget(...,
@@ -843,6 +616,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   quantization now would likely need redoing once that lands. Do this AFTER the tags-gutter work.
   See NOTES.md "History tab delete-session animation" for the full writeup, including the reverted
   attempt's exact shape (don't repeat it blind).
+
 - **[2026-07-11] TUNE (blocked on the above): History tab delete-session collapse animation still
   "pauses near the end," per the user — bearable, not fixed.** Two other bugs in the same code path
   were fixed this session (collapse stall from a `minimumHeight` floor, `813f7d9`; post-delete
@@ -851,6 +625,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   per-frame cost during a single 150ms animation). Per the user, don't resume tuning this until the
   viewport-quantization item above is settled — no point polishing an animation inside a viewport
   that doesn't have stable row boundaries yet.
+
 - **[2026-07-10] DESIGN + IMPLEMENT: traveling focus marker must be keyboard-only — mouse must not
   activate it, and mouse should hide an already-active marker.** Lives on the not-yet-merged
   `feature/traveling-focus-marker` branch (see that branch's SESSION.md entry, "Traveling-border-
@@ -869,6 +644,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   `QFocusEvent` the app-wide filter receives) rather than inventing a separate mouse-tracking
   mechanism — `_update_focus_marker` doesn't currently branch on it, so this is a targeted
   narrowing of that existing check, not a rebuild.
+
 - **[2026-07-10] DECIDE: PageUp/PageDown jump distance in the library list.** `52b7abb` fixed
   PageUp/PageDown/Home/End so the viewport actually follows the selection (they were never
   broken navigation-wise, just invisible — `setAutoScroll(False)` ate the native scroll-follow).
@@ -879,6 +655,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   something tied to `ITEM_DIMENSIONS`/`cols` like the existing wheel-scroll fix's
   `rows_per_screen * cell_h` computation) or leave native behavior alone. Not yet tested live
   across all five modes to see whether native feels right or wrong anywhere.
+
 - **[2026-07-09] FIX: keyboard-selection focus indicator is nearly invisible.** Across the Tab/
   Escape live-testing, Pryme reported it's "almost impossible to see where the focus is" for
   keyboard-focused controls in general (not just the Library keyboard-selection highlight from the
@@ -886,6 +663,30 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   the new Tab cycling). Floated a glow-style indicator as one option, undecided. Explicitly
   deferred to a future session ("we'll try and decide tomorrow") — do not implement a specific
   fix without discussing the visual approach first.
+
+- **[2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible.** Only
+  `visual_area` (the cover art) currently handles volume wheel events (`wheelEvent` in `app.py`).
+  Scrolling directly over the volume slider or the muted icon while either is visible/showing is a
+  no-op, which is surprising — muscle memory expects scrolling over a volume control to adjust it,
+  especially right after it's been shown. Needs care: if the empty space *around* where the slider
+  appears (within `vol_stack`'s 104×24 box) also accepts scroll, that could itself feel inconsistent
+  once the box is empty/hidden again. Decide the exact hit-region before implementing.
+
+- **[2026-06-23] Slider→muted-icon transition is abrupt.** When volume hits 0% with no sleep timer
+  active, `_show_volume_overlay` jumps straight to the muted icon with no transition (see
+  `ed563a4`/`81734d3` — this was a deliberate choice to skip the slider preview, not an oversight).
+  Visually it reads as a hard cut. Idea floated: a quick two-sided mask/wipe that conceals the
+  volume bar first, then reveals the muted icon, rather than an instant swap. Needs a concrete
+  animation design before implementing — not just "add a fade."
+
+- **[2026-06-23] Clicking the muted icon (and a future `M` key) should restore volume — to what
+  value?** Naive "restore to 100%" is probably wrong. Likely wants the same kind of "value before
+  manipulation started" capture that `Player.save_seek_position`/`undo_seek` already use for
+  seeking (one-level undo, captured at the start of a manipulation). Needs its own capture point
+  for volume — probably at the first wheel/drag/key event of a manipulation "session," not on every
+  change. Design this alongside the `M` key shortcut, not before — see git history around
+  `ed563a4` for the muted-icon work this builds on.
+
 - **[2026-07-03] DECIDE: excluding the currently-playing book behaves differently for M4B vs VT.**
   Not a bug to fix — a design decision to make later. When the loaded/playing book is excluded
   (user-trash) or flagged missing while playing, single-file **M4B** books keep playing (only the
@@ -925,6 +726,34 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   tradeoff. Needs a fresh look — possibly `QTextLayout` instead of raw `drawText`, or a containing
   widget with `setContentsMargins` rather than painting directly.
 
+- **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
+  `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
+  already equals the default speed, since there's nothing to reset. See NOTES.md "TODO (before
+  release): suppress shimmer when speed is already the default" (~line 1006).
+
+- **[2026-06-25] Tag action button's check→delete revert timer can fire mid-edit.** After a tag
+  rename, an unguarded `QTimer.singleShot(2000, ...)` reverts the action button's visual state; if
+  the user starts a new edit within that 2s window, the revert can fire mid-edit and silently undo
+  the in-progress state. Low-priority UX papercut, not a correctness bug. Fix: capture/cancel the
+  timer when a new edit starts. See NOTES.md "tag action button check → delete 2s timer" (~line
+  1568).
+
+- **[2026-06-25] Cover Panel: no duplicate-cover detection.** Adding the same cover image twice (via
+  `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
+  size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
+  wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
+
+- **[2026-07-28] UNVERIFIED, still live in the code: `a4f4e71` (mid-close panel no longer
+  dispatched to on right-click).** Narrowed from an earlier three-commit bundle — `3132be7`
+  (three-state panel background) is confirmed shipped and working (see that entry above, which now
+  also tracks a newly-reported click-lag issue); `a41698c` (restyle-storm fix) is confirmed partial,
+  its remaining performance issue is covered by the app-wide restyle perf-pass item; `f3221f6`
+  (backdrop must not change the applied theme) is already confirmed correct and needs no further
+  tracking. `a4f4e71` itself is the one still genuinely unconfirmed — not remembered as tested since
+  it landed. Verify (right-click the drag area while a panel is mid-close-slide, confirm the click
+  falls through to the sidebar toggle rather than being swallowed) or revert rather than building on
+  it further.
+
 - **[2026-06-27] Unused imports / dead names flagged by pyflakes in `app.py` and `ui/panels.py`.**
   Pre-existing, not introduced this session (confirmed via `git log -p`), surfaced while checking a
   warning on an unrelated edit. `app.py`: `QModelIndex`, `QRegularExpression` (QtCore),
@@ -938,6 +767,7 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   Run `python -m pyflakes src/fabulor/app.py src/fabulor/ui/panels.py` to reproduce. Low priority,
   cosmetic/lint-only except the undefined-name one, which should be checked for being a latent bug
   rather than assumed harmless.
+
 - **[2026-06-27] Excluded Books popup (`ui/excluded_books.py`) corner-radius mismatch.**
   The popup's selection highlight is flat/square; `settings_folder_list`'s is rounded (`4px`).
   Should match (one or the other) since they're both "selected row in a themed list" in the same
@@ -952,20 +782,6 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
   excluded and is easy to forget about otherwise. Not theme-specific; no single theme needs
   singling out.
 
-- **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
-  `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
-  already equals the default speed, since there's nothing to reset. See NOTES.md "TODO (before
-  release): suppress shimmer when speed is already the default" (~line 1006).
-- **[2026-06-25] Tag action button's check→delete revert timer can fire mid-edit.** After a tag
-  rename, an unguarded `QTimer.singleShot(2000, ...)` reverts the action button's visual state; if
-  the user starts a new edit within that 2s window, the revert can fire mid-edit and silently undo
-  the in-progress state. Low-priority UX papercut, not a correctness bug. Fix: capture/cancel the
-  timer when a new edit starts. See NOTES.md "tag action button check → delete 2s timer" (~line
-  1568).
-- **[2026-06-25] Cover Panel: no duplicate-cover detection.** Adding the same cover image twice (via
-  `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
-  size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
-  wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
 - **[2026-06-25] Pre-release cleanup pass (bundle into one commit, not piecemeal).** Narrowed
   2026-07-15 after audit — the third original sub-item (switch VT playlist-resolution temp files
   from `delete=False` to `delete=True`) is stale: that `ffmetadata`/`concat` tempfile mechanism in
@@ -979,57 +795,86 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
     logic has since moved into `SessionRecorder.close()`, so those exact function names are gone;
     the underlying ask (strip leftover debug prints before release) still applies to what's there now.
   See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for original context.
-- **[2026-07-15] Undo doesn't return to the true origin after rapid repeat Next/Prev within
-  `undo_duration` — narrowed live to Next/Prev specifically, not general undo/restore.**
-  `save_seek_position(old_pos, duration_limit)` (`player.py`) only writes `_undo_pos` when it's
-  unset or when more than `duration_limit`s (default 3s, `config.get_undo_duration()`) have passed
-  since the last capture — a rapid second capture within that window is skipped, which by reading
-  the code should leave `_undo_pos` pointing at the FIRST departure point (chapter 3), not the most
-  recent one (chapter 4). Concrete repro, live-tested by the user: in chapter 3 with ~30s left,
-  click Next twice in quick succession (chapter 3 → 4 → 5), then click Undo — **actually lands at
-  the chapter 3/4 boundary ("beginning of chapter 4"), not back in chapter 3.** Further live
-  testing (2026-07-15) narrowed this to Next/Prev specifically — every other undo/restore path
-  (seeking, smart-rewind, chapter-slider clicks) correctly returns to the true origin position;
-  only rapid repeated Next/Prev clicks fail to chain back past the most recent hop. Root cause NOT
-  yet diagnosed — the shared `_last_undo_click_time`/skip logic described above doesn't obviously
-  explain why Next/Prev's call path would behave differently from every other `save_seek_position`
-  caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
-  diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
-  attempting a fix.
 
-- **[2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible.** Only
-  `visual_area` (the cover art) currently handles volume wheel events (`wheelEvent` in `app.py`).
-  Scrolling directly over the volume slider or the muted icon while either is visible/showing is a
-  no-op, which is surprising — muscle memory expects scrolling over a volume control to adjust it,
-  especially right after it's been shown. Needs care: if the empty space *around* where the slider
-  appears (within `vol_stack`'s 104×24 box) also accepts scroll, that could itself feel inconsistent
-  once the box is empty/hidden again. Decide the exact hit-region before implementing.
-- **[2026-06-23] Slider→muted-icon transition is abrupt.** When volume hits 0% with no sleep timer
-  active, `_show_volume_overlay` jumps straight to the muted icon with no transition (see
-  `ed563a4`/`81734d3` — this was a deliberate choice to skip the slider preview, not an oversight).
-  Visually it reads as a hard cut. Idea floated: a quick two-sided mask/wipe that conceals the
-  volume bar first, then reveals the muted icon, rather than an instant swap. Needs a concrete
-  animation design before implementing — not just "add a fade."
-- **[2026-06-23] Clicking the muted icon (and a future `M` key) should restore volume — to what
-  value?** Naive "restore to 100%" is probably wrong. Likely wants the same kind of "value before
-  manipulation started" capture that `Player.save_seek_position`/`undo_seek` already use for
-  seeking (one-level undo, captured at the start of a manipulation). Needs its own capture point
-  for volume — probably at the first wheel/drag/key event of a manipulation "session," not on every
-  change. Design this alongside the `M` key shortcut, not before — see git history around
-  `ed563a4` for the muted-icon work this builds on.
-- **[2026-06-19] Remove theme inheritance from "The Color Purple."** Every theme currently resolves
-  via `_resolve_theme()` as `THEMES["The Color Purple"].copy()` overlaid with the requested theme's
-  own dict — any key a theme doesn't define falls back to Purple's literal value, not to that
-  theme's own derived fallback (e.g. an accent-derived color). `_NO_BASE_INHERIT_KEYS` in
-  `themes.py` is a manually-maintained escape hatch for keys where this is wrong, and it's easy to
-  forget to update when adding a new optional key (see CLAUDE.md rule on `_NO_BASE_INHERIT_KEYS`,
-  added 2026-06-19). Made sense early when Purple was a stable default; doesn't anymore — Purple
-  probably won't even ship as the default theme. Target design: no theme inherits literal values
-  from another theme; every key is either required (defined in all themes) or has a documented
-  code-level fallback chain, never "whatever the base template happened to set."
-  **Blocked on:** user's planned full pass over every theme (adding keys where current fallbacks
-  don't look right) — doing the inheritance refactor before that pass would only have a partial
-  picture of which keys actually need it. Revisit once that pass is done.
+- **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme
+  stylesheet swap + overlay punch-through — explicitly SEPARATE from Findings 1/2/3 and from the
+  RANK-1 fix; not investigated, not designed, out of scope for now.** Raised by Pryme while the
+  cold-launch theme work was in flight. The reasoning worth preserving: the current architecture can
+  only change colors by regenerating and re-applying whole stylesheets — a full-widget-tree
+  `_apply_stylesheets` pass — which is precisely the ~400ms synchronous main-thread cost that is the
+  measured root of Race 3, Regime B, and RANK-1 in the first place (median 318ms, pipeline median
+  442ms, max 759ms; `mw.setStyleSheet(base)` alone is ~180ms because Qt re-polishes every
+  descendant — see `review/Report_260714_synchronous_main_thread_work.md`). An incremental approach
+  — animating individual colors via `@Property` on the widgets that need them, rather than swapping
+  the whole stylesheet and masking the transition with a full-window overlay — might not need that
+  pass at all, which would dissolve the cost rather than sequence around it.
+  **Known prior art / why this is big, not a quick win:** NOTES.md 2026-06-19 ("Main-window theme
+  fade interrupt ... full color-animation rework DEFERRED") records that this exact rework was
+  **started in a prior session and abandoned as ~40–80h with high regression risk** — every
+  QSS-styled widget (buttons + their `:hover`/`:pressed`/`:disabled` states, panel chrome, Themes-tab
+  pool items, gradients, cover-derived colors) would need converting from QSS-driven coloring to
+  custom-paint `@Property` coloring, because QSS pseudo-states have no custom-paint equivalent and
+  would each be reimplemented by hand. The cheaper middle path (snap panel chrome instantly, keep
+  slider tweens) was **explicitly rejected by Pryme** — instant theme snaps read as jarring/violent,
+  which is the whole reason the overlay fade exists. Also relevant: `ClickSlider` ALREADY paints from
+  `@Property` colors rather than QSS at paint time — it is the one widget class where this model is
+  already proven in-tree (and, not coincidentally, the one whose colors can get stranded — see the
+  2026-06-19 entry).
+  **Status:** a real, recorded idea with a real prior estimate against it. Do NOT fold into
+  Findings 1/2/3 or the RANK-1 fix — if it is ever picked up it needs its own investigate-then-plan
+  cycle sized against that 40–80h prior estimate, not a mid-fix scope expansion.
+
+- **[RANK-2, 2026-07-14] Close the P1↔P2 race precondition structurally (insurance, not a live-bug
+  fix) — deferred, deliberately separate from the RANK-1 theme-apply fix.** The structural hazard:
+  a Qt-queued writer (`_vt_restore_pending`, written via the `book_ready`→`_on_file_ready`
+  QueuedConnection at `app.py:389`) racing an mpv-thread reader (`_on_file_loaded`'s read of it),
+  exposed whenever ANY ~100ms+ synchronous main-thread op starves the Qt queue in that window. Today
+  the only such op is theme-apply (fixed narrowly by RANK-1), but the pattern re-opens for the next
+  heavy sync op anyone adds later (a heavier chapter populate, a sync DB migration, etc.). Feasibility
+  already investigated (see `review/Report_260714_theme_apply_safety_feasibility.md`, RANK-2 section):
+  - **VT path:** both `book_ready` emit sites (`ungate_play`, `_on_playlist_resolved`) run on the Qt
+    main thread, so a Direct (non-queued) connection COULD run `_restore_position`/`defer_vt_restore`
+    synchronously before the subsequent `_apply_pending_cover_theme`, removing the race precondition
+    entirely for VT. **But** `book_ready`/`_on_file_ready` is a single shared connection (can't be
+    Direct-for-VT / Queued-for-non-VT without a second signal or per-emit juggling), the VT emit is
+    deliberately placed BEFORE `instance.play()` (CLAUDE.md book_ready invariant), and making restore
+    synchronous there changes the timing the shipped VT fixes (`_on_vt_file_switched` gated clear,
+    `_on_end_file` ERROR reset, `_logical_pos`) were verified against — so it TOUCHES the blast radius
+    of the VT-fragile zone even without editing those functions.
+  - **Non-VT path:** `book_ready` is emitted from the mpv thread, so the QueuedConnection is
+    MANDATORY thread-marshaling — the precondition cannot be removed at all; non-VT's only protection
+    is "don't run a long sync op in the window" (i.e. the RANK-1 fix).
+  - **Why deferred, not done now:** it's insurance against a hypothetical future sync op, not a live
+    bug (RANK-1 closes all three currently-observed victims); its cheapest shape still re-architects a
+    connection in the highest-risk zone in the codebase. If ever attempted, it needs its own
+    investigate-then-plan cycle and the full VT+Undo verification bar (`tools/fs_race_harness.py`,
+    `tools/vt_restore_race_harness.py`, live checklist) re-run — NOT bundled with RANK-1. Captured
+    here so this structural risk is dated and tracked, not left buried in a review report.
+
+- **[RANK-LOW, MEASURED 2026-07-14] App-start flow-animation baseline roughness (Regime A) — a
+  standalone ~70ms hitch at animation start, independent of everything else.** Present on EVERY cold
+  launch of EVERY book type, cover on or off, with no theme apply anywhere near the window (worst
+  frame gap ~70–76ms median, never observed >108ms). A synchronous burst at animation start:
+  chapter-list `populate` + repeated `_update_chapter_label_from_index setCurrentRow` calls + the
+  first mpv `time_pos` samples, all landing in the animation's first ~50–90ms. Real but
+  sub-perceptible-to-mild — a rough *start*, not a freeze. **Independent of P1/P2/P3 (confirmed by
+  measurement — occurs on M4B and MP3, which have no `_vt_restore_pending`/`file_switched` at all)
+  and independent of the RANK-1 theme-apply hazard.** This is the ONLY part of the old combined
+  "flow-animation stutter" item that is a genuine standalone animation-timing bug — it is what the
+  original 2026-07-13 trace-only investigation correctly found (it was right about this, blind to
+  Regime B). **Verification bar for any fix touching this or near-app-start VT load timing:** re-run
+  `tools/fs_race_harness.py`, `tools/vt_restore_race_harness.py`, and the VT+Undo checklist, since
+  any timing change near app-start VT loading risks interacting with the `_vt_restore_pending`/
+  `file_switched`-guard fixes. Full detail in NOTES.md (2026-07-14) and
+  `review/Data_260714_flow_animation_stutter.md`.
+
+  *Historical note: these two entries replace a single 2026-07-13 "first-app-launch-only VT
+  flow-animation stutter" item that was traced (code-reading only) to the progress slider's own
+  `QPropertyAnimation` glide and believed to be one isolated bug. The 2026-07-14 live measurement
+  found it was two genuinely different bugs with different ranks — keeping them as one entry would
+  recreate the "one bug wearing two names" confusion the investigation resolved. The original trace
+  was right about Regime A and blind to Regime B; its "the trace found nothing, not a live-forced
+  test showed nothing" caveat is what prompted the measurement that split them.*
 
 ## In Progress
 
