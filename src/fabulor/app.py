@@ -1143,7 +1143,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         return path
 
     def _update_status_banner_ui(self, text=None, show_banner=None, show_cancel=None, auto_hide=False,
-                                 auto_hide_ms=3000):
+                                 auto_hide_ms=3000, retire_eof_prompt=True):
         # Cancel any pending hide if we are updating text or changing visibility
         if show_banner is not None:
             self.status_hide_timer.stop()
@@ -1158,6 +1158,21 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._slide_banner_in()
         elif show_banner is False:
             self._slide_banner_out()
+
+        if retire_eof_prompt and show_banner is True:
+            # A fresh banner is being presented — it takes over the banner the same
+            # way a starting scan already does (see show_cancel branch below).
+            # Retires any stale EOF revert/close buttons so they don't visually
+            # stack onto an unrelated message. Does NOT clear _eof_book_id: that's
+            # EOF-prompt-specific bookkeeping (guards _on_revert_finish /
+            # _dismiss_eof_prompt), and since the buttons driving those code paths
+            # are now hidden, a stale _eof_book_id is inert — it gets overwritten by
+            # the next real EOF event or cleared by a subsequent
+            # _dismiss_eof_prompt() call. Contrast the show_cancel=True branch below,
+            # which additionally clears _eof_book_id because a scan start is a more
+            # definitive "this EOF prompt is retired" event than a generic banner.
+            self.eof_revert_btn.hide()
+            self.eof_close_btn.hide()
 
         if show_cancel is True:
             self.cancel_scan_btn.show()
@@ -2093,6 +2108,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                         text="Marked as finished.",
                         show_banner=True,
                         show_cancel=False,
+                        retire_eof_prompt=False,
                         auto_hide=False,
                     )
                     self.eof_revert_btn.reset_wipe()
