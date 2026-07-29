@@ -1,8 +1,44 @@
-## HIGH-CONFIDENCE CANDIDATE FIX (not yet confirmed root cause, not yet shipped): route sidebar right-click through Qt's native context-menu pipeline instead of a hand-rolled mousePressEvent branch (2026-07-29)
+## FALSIFIED as a complete fix (may still reduce incidence): the customContextMenuRequested reroute did not eliminate misses — a seventh miss reproduced ON the new mechanism (2026-07-29, same night)
 
-**Status: strong positive signal, one testing session, NOT confirmed as root cause.**
-Do not close this out or remove the diagnostic probes based on this entry alone —
-see "why this is high confidence, not confirmed" below.
+**Update, same night, soak testing continued after the entry below was written.**
+A right-click miss reproduced on `investigate/rclick-contextmenu` — the exact
+same silent-gap signature as all six earlier misses on the OLD mechanism, this
+time on the NEW `customContextMenuRequested`-based one:
+
+`#65` (03:48:43,297) closes the sidebar, settles closed at `43,634`. **Gap:
+`43,634` → `46,861`, ~3.2s, nothing logged at any probe level** — same shape as
+every prior miss. `#66` at `46,861` succeeds, opens the sidebar.
+
+This directly disproves "moving to the native context-menu pipeline eliminates
+the bug." It does not disprove that it REDUCES incidence — five minutes of
+adversarial testing produced zero misses before this one appeared roughly
+15 minutes into a longer soak session, which is a lower rate than the old
+mechanism showed across a comparable testing window earlier the same night, but
+that comparison is impressionistic (different testing conditions, not a
+controlled A/B count) and should not be presented as measured. **Do not claim
+the fix reduces frequency as an established fact — say it plainly as
+unconfirmed, one data point either way.**
+
+**What this means for the investigation:** the mechanism is not "hand-rolled
+`mousePressEvent` vs. native Qt signal" as a clean binary — something else is
+still going on that affects BOTH delivery paths, at least occasionally. The
+native pipeline may still be a genuine partial mitigation, or it may be
+coincidental. Either way, **do not merge `investigate/rclick-contextmenu` as a
+fix, do not remove any diagnostic probe, and do not close this investigation.**
+Continue treating every future miss the same way: quote the exact log lines,
+do not narrate first, let the user confirm against what they actually did.
+
+**Original candidate-fix writeup below, left intact for the reasoning trail —
+read it for the context-menu experiment's rationale and what led to it, but
+treat its confidence level as superseded by this update.**
+
+---
+
+## HIGH-CONFIDENCE CANDIDATE FIX (not yet confirmed root cause, not yet shipped) — SUPERSEDED, see the falsification entry above: route sidebar right-click through Qt's native context-menu pipeline instead of a hand-rolled mousePressEvent branch (2026-07-29)
+
+**Status: SUPERSEDED same night — a miss reproduced on this exact mechanism. See
+the entry above before reading further.** Left otherwise unedited as the
+reasoning trail for why this experiment was tried.
 
 **The experiment (branch `investigate/rclick-contextmenu`, uncommitted, stashed):**
 `visual_area`'s right-click handling was moved off the existing hand-rolled

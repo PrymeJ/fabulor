@@ -6,33 +6,29 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
-- **[2026-07-29] Sidebar/panel right-click dispatch loss — HIGH-CONFIDENCE candidate fix on
-  `investigate/rclick-contextmenu` (uncommitted, stashed on that branch), NOT YET SHIPPED, needs
-  soak time before merging.** See NOTES.md ("HIGH-CONFIDENCE CANDIDATE FIX... not yet confirmed root
-  cause") for the full writeup — read it before touching this. Six recording-verified misses this
-  session, all sharing one shape: a right-click sometimes produces zero output at any probe level,
-  specifically on surfaces using a hand-rolled `mousePressEvent(RightButton)` branch (sidebar, theme
-  swatches) — never on surfaces using a native Qt signal instead (Library's `customContextMenuRequested`
-  Book Detail path, Stats' `clicked`-signal — actually LEFT-click — Book Detail path). Experiment:
-  moved the sidebar's right-click off `mousePressEvent` onto `Qt.CustomContextMenu` +
-  `customContextMenuRequested` (no actual menu shown, used purely as a delivery mechanism — same one
-  Library already uses reliably). Left-click untouched. Result: 5 minutes of adversarial testing
-  (idle, right after panel closes, mid-animation) — zero confirmed misses, vs. six confirmed misses
-  in a comparable amount of testing on the old mechanism earlier the same session. **This is NOT
-  confirmed as root cause** — one session's testing, no traced mechanism for WHY the native pipeline
-  would be more robust, and the bug's own history (intermittent, present since early in the project,
-  previously attributed to "the app being busy" or "the mouse acting up") means it could still recur
-  rarely. Plan (user's own words): soak this over normal use across multiple sessions before deciding.
-  **Do not remove the diagnostic probes** (`[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[STALL-PROBE]`/
-  `[FOCUS-RELEASE]`, all still in `app.py`/`panels.py` on both `main` and the experiment branch) until
-  this is either confirmed clean over a much longer window or a miss recurs and disproves it. If it
-  recurs: the guard-chain lead (sidebar's right-click sits downstream of `is_overlay_open_or_
-  committed()`/`_any_panel_animating()`/`complete_main_fade()`; `chapter_list`/`progress_slider` don't)
-  and the `T` theme-rotation shortcut (equally old, untested) are the next things to check. If clean
-  over the coming days: also apply the same `customContextMenuRequested` pattern to the theme-swatch
-  right-click (`RightClickButton` in `title_bar.py`) and to Stats' Book Detail (add right-click parity
-  there too, per the user — "Stats should open it with right click too, I have never got to adding
-  it" — separate, smaller task, do alongside if this fix ships).
+- **[2026-07-29] Sidebar/panel right-click dispatch loss — the `customContextMenuRequested` reroute
+  on `investigate/rclick-contextmenu` is FALSIFIED as a complete fix; still open, do NOT merge.** See
+  NOTES.md ("FALSIFIED as a complete fix... a seventh miss reproduced ON the new mechanism") for the
+  full trace — read it before touching this, and read the superseded entry right below it for why the
+  experiment was tried in the first place. Seven confirmed misses total now, six on the OLD
+  `mousePressEvent`-based mechanism, ONE on the NEW `customContextMenuRequested`-based one (03:48:43-46,
+  same exact silent-gap signature: zero output at every probe level including `[WCLICK]`). The
+  experiment moved sidebar right-click detection off a hand-rolled `mousePressEvent` branch onto Qt's
+  native context-menu signal (no actual menu shown), based on the observation that Library's
+  right-click-to-Book-Detail path (same native signal) had never been seen to fail while every
+  hand-rolled right-click surface (sidebar, theme swatches) had. That observation is NOT fully
+  disproven — the new mechanism may still have a lower miss rate — but "eliminates the bug" is wrong,
+  confirmed by direct reproduction. **Do not merge this branch as a fix. Do not remove any diagnostic
+  probe** (`[WCLICK]`/`[RCLICK]`/`[LCLICK]`/`[STALL-PROBE]`/`[FOCUS-RELEASE]`, still in `app.py`/
+  `panels.py` on both `main` and the branch). Next steps, in rough priority: (1) the guard-chain lead
+  (sidebar's right-click sits downstream of `is_overlay_open_or_committed()`/`_any_panel_animating()`/
+  `complete_main_fade()`; `chapter_list`/`progress_slider` don't, and have never been seen to miss —
+  still untested directly); (2) the `T` theme-rotation shortcut, equally old, untested; (3) whether the
+  new mechanism's miss RATE is meaningfully lower than the old one's — would need a controlled,
+  counted comparison, not impressionistic soak testing, to say anything defensible. **Process
+  reminder for next time a miss is reported:** quote the exact log lines back before saying anything
+  about what they mean; this exact discipline is what caught the falsifying instance cleanly instead
+  of it being missed or explained away.
 
 - **[2026-07-28] CLOSED (live-verified): "my right-clicks are missing" — they were applying one
   step behind** (`4700b31`). Not lost presses: every click reached Qt, the widget and the handler.

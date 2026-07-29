@@ -1,6 +1,16 @@
-## Session Summary — 2026-07-29 Session 3 — Six recording-verified right-click losses, a long trail of eliminated theories, and a high-confidence (not yet confirmed) candidate fix
+## Session Summary — 2026-07-29 Session 3 — Seven recording-verified right-click losses, a long trail of eliminated theories, and a candidate fix that looked strong and then failed on its own soak test
 
-No commit shipped to `main` besides doc updates — the candidate fix lives on `investigate/
+**Update, same session, after the summary below was written:** the candidate fix (routing sidebar
+right-click through `customContextMenuRequested` instead of `mousePressEvent`) looked strong after
+five clean adversarial minutes, but a seventh miss reproduced on that exact mechanism about 15
+minutes into continued soak testing — same silent-gap signature as all six prior misses on the old
+mechanism. **The fix is falsified as a complete solution.** It may still reduce incidence, but that
+was never measured rigorously and shouldn't be claimed. The bug is still open, `investigate/
+rclick-contextmenu` is not merged, and every diagnostic probe stays in place. Full detail in
+NOTES.md's falsification entry, which now sits above the original (superseded) candidate-fix
+writeup — read both, in that order.
+
+No commit shipped to `main` besides doc updates — the (falsified) candidate fix lives on `investigate/
 rclick-contextmenu`, uncommitted, deliberately not merged pending soak time.
 
 **The bug, restated precisely because loose framing cost real time this session:** right-clicking
