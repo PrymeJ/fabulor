@@ -229,6 +229,7 @@ class TagManagerWidget(QWidget):
         self._tag_name_original: str = ""
         self._confirming_delete: bool = False
         self._cancel_timer: QTimer | None = None
+        self._rename_revert_timer: QTimer | None = None
         self._current_theme: dict = {}
         self._action_btn_mode: str = "delete"
         self._placeholder_color_tags: str = "#888888"
@@ -619,11 +620,23 @@ class TagManagerWidget(QWidget):
             )
             self._set_action_mode("check")
             self.tag_changed.emit()
-            QTimer.singleShot(2000, lambda: self._set_action_mode("delete"))
+            if self._rename_revert_timer:
+                self._rename_revert_timer.stop()
+            self._rename_revert_timer = QTimer(self)
+            self._rename_revert_timer.setSingleShot(True)
+            self._rename_revert_timer.timeout.connect(lambda: self._set_action_mode("delete"))
+            self._rename_revert_timer.start(2000)
         else:
             self._set_action_mode("save_error")
 
     def _on_tag_name_changed(self, text: str):
+        # A new edit starting must cancel any pending revert-to-"delete" from a
+        # previous rename's 2s "check" confirmation — otherwise that stale timer
+        # fires mid-edit and silently flips the button back to "delete" regardless
+        # of the in-progress "save" state (see TODO.md's tag-manager entry).
+        if self._rename_revert_timer:
+            self._rename_revert_timer.stop()
+            self._rename_revert_timer = None
         if text.strip() != self._tag_name_original:
             self._set_action_mode("save")
         else:
