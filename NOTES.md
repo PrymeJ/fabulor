@@ -1,3 +1,372 @@
+## OPEN: sidebar right-click sometimes does nothing — six recording-verified misses, one reliable repro condition, mechanism still unknown (2026-07-29, third session, updated)
+
+**Update to this entry, same session.** Three more confirmed misses found (six total
+now), plus two constraints that rule out entire categories of explanation. Read the
+eliminated-theories list further down (unchanged) before proposing anything new.
+
+**All six confirmed misses, listed together for pattern-matching:**
+
+1. 00:40:43 — after Stats `hide_for_panel` — ~2.4s gap
+2. 00:55:4x — after Settings `hide_for_panel` — ~3.2s gap
+3. 02:04:0x — after Settings `hide_for_panel` — ~2.1s gap (at least one, possibly
+   two misses in this single gap)
+4. 02:23:4x — after Book Detail (opened from Library) closes — ~4.95s gap. Notable:
+   `[FOCUS-RELEASE]` fired with `will_clear=False` (nothing was actually cleared) —
+   the miss still happened, so focus-clearing is not a strict requirement.
+5. 02:28:00 — after Stats closes — ~2.26s gap. `[FOCUS-RELEASE]` `will_clear=True`,
+   `focusWidget=None` after. **Same window, second miss at 02:28:05** — after a
+   Library book hover (misread live as a click; corrected same session) and
+   `_close_library_flow` — ~1.6s gap.
+6. 2:32:06 — after Tags panel closes — ~2.9s gap. `[FOCUS-RELEASE]` `will_clear=True`.
+   **Same testing run, second miss at 2:32:12** — after Library closes — ~1.98s gap.
+
+**Reliable repro condition, now well-supported (six independent instances, zero
+counterexamples where a right-click within a few seconds of ANY panel closing was
+confirmed to land cleanly without landing in a gap):** a right-click within roughly
+1.5–5 seconds of any panel (Stats/Settings/Tags/Library/Book Detail) closing has a
+real, recurring chance of producing absolutely nothing — not logged by `[RCLICK]`,
+not by `[WCLICK]` (the `QApplication`-wide press probe), nothing. This is now the
+single most load-bearing fact in this investigation: **not sidebar-specific, not
+tied to one particular panel, not tied to blur, not tied to `clearFocus()` firing
+specifically** (case 4 above missed with `will_clear=False`).
+
+**Important constraint from the user, ruling out an entire recent-code theory:**
+this bug predates the `_claim_panel_focus`/`_release_panel_focus` mechanism (added
+2026-07-11, see the CLAUDE.md "Keyboard focus ownership" rule) by a large margin —
+the user reports this right-click-loss behavior has been present since long before
+most of the app's current features existed, whereas the focus-claim/release
+machinery is comparatively recent. **`[FOCUS-RELEASE]`'s `focusWidget=None` reading
+correlating with these gaps is therefore very likely incidental, not causal** — it
+cannot be the ORIGINAL mechanism, though it's possible (not established) that it
+independently makes an already-existing window worse or more visible. Do not
+present the focus-release mechanism as an explanation for why this bug EXISTS,
+only, at most, as a possible contributor to one specific window's timing. The
+bug's true age means whatever's responsible is old — present since early in the
+project, likely adjacent to something equally old (the user specifically named `T`
+— the theme-rotation shortcut — as one of the "ancient" surfaces still present from
+early on; not yet checked for relevance, but worth knowing this bug's age is
+comparable).
+
+**Probe additions this session (still live, uncommitted):**
+- `[FOCUS-RELEASE]` (`panels.py`, `_release_panel_focus`) — logs
+  `focused_before`/`will_clear` before, and `focusWidget`/`activeWindow` after, any
+  `clearFocus()` decision. Per the constraint above, treat its correlations as
+  circumstantial, not causal, until/unless a mechanism is actually traced.
+- `[WCLICK]` (`app.py` `eventFilter`) extended to also log `focusWidget`/
+  `activeWindow` at the moment of every real click — gives a baseline of what focus
+  state looks like at SUCCESSFUL clicks, for comparison against gap-adjacent state.
+- `_stall_probe_timer`/`[STALL-PROBE]` (`app.py`) — unchanged from the prior update;
+  still shows no stall coinciding with any of the newly found gaps either.
+
+**Eliminated, same session, after the above:** frameless-window right-click
+handling on this Wayland compositor. `tools/click_test.py` gained a `--frameless`
+flag (`ClickPad(frameless=True)` applies `Qt.FramelessWindowHint`, matching
+`MainWindow`'s own `self.setWindowFlags(Qt.FramelessWindowHint)` exactly — the one
+variable the original clean 100/100 baseline never varied). Result: clean, no
+misses. Raised because right-click (never left-click, never wheel) is uniquely
+affected, and the user pointed out book-detail/theme-swatch/sidebar right-clicks
+share no obvious code in common — a platform-level asymmetry specific to
+right-click was a reasonable next guess. It didn't hold up, and its own internal
+contradiction (chapter_list/progress_slider live in the SAME frameless MainWindow
+and never miss) was flagged before testing, so this is a clean elimination, not a
+surprising one.
+
+**The user's sharper framing of the right-click-only asymmetry, worth restating
+precisely:** never left-click, never mouse wheel, only right-click. Book Detail,
+theme swatches, and the sidebar don't obviously share code — except, per the
+guard-chain lead above, they DO share being screens/actions reached through
+`is_overlay_open_or_committed()`-style gating, unlike chapter_list/slider. The user
+also separately noted: Library's Book Detail open is LEFT-click-triggered (not
+right — "should have been extended to both clicks long ago and it may be helpful
+now") and has never been seen to fail, while Stats' own Book Detail access and the
+sidebar/theme-swatch paths are right-click and DO fail. **This is now the single
+most specific, actionable lead in the investigation**: the asymmetry may not be
+about panels or guards at all, but specifically about `Qt.RightButton` press
+handling somewhere in a shared code path that `Qt.LeftButton` never traverses —
+worth grepping every `event.button() ==`/`Qt.RightButton` branch across the app for
+one that's structurally different from its left-click sibling (extra guard, extra
+signal hop, different connection type), rather than continuing to compare panels
+against each other.
+
+**What remains genuinely untested:** whether the same gap/repro condition exists
+around the `T` theme-rotation shortcut or other "ancient" input paths the user
+mentioned, which might share whatever root mechanism is old enough to predate the
+focus machinery. Not yet checked this session. Also untested: a systematic
+inventory of every right-click-specific code branch in the app, comparing each
+against its left-click equivalent for a structural difference (extra guard/signal
+hop/connection type) — the new leading candidate per the paragraph above.
+
+---
+
+## OPEN: sidebar right-click sometimes does nothing — dispatch-level loss confirmed live via screen recording; mechanism still unknown (2026-07-29, third session, unresolved)
+
+**Read this before the two entries below** — they contain real eliminations from
+earlier the same investigation and are still valid, but several intermediate
+theories in the middle of that trail (blur timing, opaque-mode alpha override,
+"it's actually just left-clicks/button-clicks being misread") were raised and then
+retracted within the same session, some more than once, after being checked against
+a live screen recording next to a desktop clock. Trust the recording-verified
+findings below over anything upstream that reasoned from log timestamps alone.
+
+**Methodology change that mattered:** earlier attempts this session relied on
+correlating the user's verbally-reported click timestamps against log timestamps,
+and repeatedly produced wrong conclusions — mis-attributing real button clicks
+(Library/Settings/Stats/Speed trigger buttons, left-click panel dismissals) to
+"silently dropped right-clicks," and at least once mis-reading which exact log
+lines had been reported on in the first place. The user then recorded their screen
+next to the system clock and read timestamps directly off the video while going
+through the log, which is what finally separated real dispatch-level misses from
+misread button activity. **Any future work on this bug should use a recording as
+the source of truth for "what did I actually click and when," not verbal
+recall matched against log grep results.**
+
+**Confirmed, recording-verified misses (three, all live, all cross-checked against
+a synced screen recording):**
+
+1. **2026-07-29 00:40:43** — right-click, no sidebar. Log: Stats panel's
+   `hide_for_panel ENTRY` at `00:40:42,850`; then **nothing at all** — no
+   `[RCLICK]`, no `[WCLICK]`, no panel/theme/blur activity of any kind — until the
+   next successful `[RCLICK] #6` / `[WCLICK] RightButton` at `00:40:45,245` (~2.4s
+   gap).
+2. **2026-07-29 00:55:4x** — same shape. Settings panel's `hide_for_panel ENTRY` at
+   `00:55:41,977`; silence until `[RCLICK] #29` / `[WCLICK] RightButton` at
+   `00:55:45,183` (~3.2s gap). User confirmed via recording: right-click landed
+   in exactly that 3-second span, no panel/sidebar visible on screen at the time.
+3. **2026-07-29 02:04:0x** — Settings panel's `hide_for_panel ENTRY` at
+   `02:04:05,212`; silence until `[RCLICK] #99` / `[WCLICK] RightButton` at
+   `02:04:07,340` (~2.1s gap). User confirmed via recording (screenshot timestamped
+   `2:04:05` on the OS clock, matching the log): at least one right-click (possibly
+   two) landed inside this gap and produced nothing; the `07` click is what actually
+   opened the sidebar.
+
+**What "confirmed" means here, precisely:** in all three cases, a right-click that
+the user recorded themselves making, at a timestamp cross-checked against the OS
+clock and the log's own wall-clock, produced **zero output** from every probe
+in the chain — not just the app-level `[RCLICK]` (installed in
+`MainWindow.eventFilter`), but also `[WCLICK]` (added this session specifically to
+close this gap — see below), which logs `obj`/`objectName()` for literally any
+`QEvent.Type.MouseButtonPress` with `Qt.RightButton` or `Qt.LeftButton`, on
+`QApplication.instance()`, confirmed by reading the install site
+(`QApplication.instance().installEventFilter(self)`, `app.py:510` — genuinely
+app-wide, not scoped to `MainWindow` alone). If Qt's own dispatch had routed the
+press to ANY widget, `[WCLICK]` would have logged it. It did not, in any of the
+three windows.
+
+**Eliminated this session, each independently, each worth NOT re-deriving:**
+
+- **Paint delivery** — a temporary `_SidebarPaintProbe` (installed on `mw.sidebar`
+  in `main_window_builders.py`, later removed — see the entry below for detail)
+  showed a real Paint event at every step of a working slide, including the final
+  settled position. The sidebar genuinely paints correctly whenever it actually
+  animates. Do not re-investigate "state says open, nothing renders" — that is not
+  what is happening. **The probe itself was removed 2026-07-29** after answering
+  this question, because at ~28% of all log lines during testing it was accelerating
+  log rotation badly enough to cost a correct read of an unrelated window later the
+  same night (see "log rotation" note below). Re-add only if the paint question
+  needs re-asking, and remove again immediately after.
+- **Blur (`get_blur_enabled()` / `_grab_and_blur`)** — directly tested: 2 clean
+  minutes right-clicking with Panel background = Transparent (blur off) produced
+  zero misses; the same test with Opaque (ALSO blur-off — `get_blur_enabled()` is
+  False for both Transparent and Opaque, only Frosty blurs) reproduced misses
+  twice. Since neither mode blurs, blur cannot be the differentiator. The
+  "Opaque forces `panel_opacity_hover=1.0` via `_resolve_theme`" alternate lead
+  that briefly replaced this theory was **itself later invalidated** by further
+  testing (misses recurred with blur genuinely OFF via other means) — do not
+  chase the opaque-alpha-override angle either; it was a two-data-point
+  correlation that did not hold up.
+- **`click_test.py`'s synthetic loads, including a new GRAB toggle** — RESTYLE
+  (blocking `setStyleSheet`) and ANIMATE (continuous `QPropertyAnimation` +
+  200ms timer) were already clean from an earlier investigation the same day
+  (see `tools/click_test.py`'s own docstring, 2026-07-28). This session added a
+  third toggle, **GRAB**, performing a REAL `widget.grab()` on a timer at
+  `GRAB_INTERVAL_MS=65` (matching `_grab_and_blur`'s measured real cadence) —
+  specifically because `grab()` forces a synchronous full repaint into an offscreen
+  pixmap, a meaningfully different Qt operation than a plain restyle or animation
+  tick, and was the one operation the harness had never actually tested. **Result:
+  clean.** No misses with GRAB alone. This rules out `grab()` itself, in isolation,
+  as a sufficient cause. (The user separately noted this harness has an inherent
+  ceiling: it has none of Fabulor's own code in the loop, so it can only rule out
+  generic Qt mechanisms, never something specific to how Fabulor's own state/guards
+  interact with a live teardown — see "what has NOT been tried" below.)
+- **OS/compositor/input-level event loss** — the user had independently already
+  tested and ruled this out before this session even started, via
+  `tools/click_test.py`'s idle baseline (100/100, zero loss on a bare Qt widget,
+  same hardware) and separately with a corded mouse. Re-proposed once this session
+  as a next step and immediately corrected: "that theory got debunked." Do not
+  re-propose OS/compositor-level input loss as an explanation without new evidence
+  — it has been directly tested twice now (once in an earlier, separate
+  investigation; the user confirmed the same conclusion still holds).
+- **`hide_for_panel` itself as the mechanism** — read directly (`transport_bar_blur.py`,
+  `hide_for_panel`): it stops an animation, sets a `QGraphicsOpacityEffect` value,
+  removes event filters **from the tracked transport-chrome widgets only** (not
+  `visual_area`, not `mainwindowWindow`), hides a `QLabel` overlay, clears its
+  pixmap, and resets plain Python attributes (`_bounding_rect`, `_active`,
+  `_active_panel`, `_rearm_pending`). None of this touches focus, mouse grabs, or
+  `visual_area`'s own event handling. **This method cannot be the mechanism on its
+  own** — confirmed by reading the code, not measurement, so treat this as a weaker
+  form of elimination than the measured ones above, but still don't re-derive it
+  without new reason to doubt the read.
+- **Deferred/coalesced-click theory (borrowed from the `4700b31` theme-fade fix)** —
+  briefly proposed: maybe this is the same class of bug as the theme-swatch
+  right-click fix earlier the same day (`4700b31`, "let a deliberate theme selection
+  interrupt an in-flight fade"), where clicks were never lost at the input level but
+  were APPLIED one cycle late against stale state, which read as "missing." **This
+  does not fit the sidebar data and was retracted the same session it was raised.**
+  Two independent reasons: (1) that fix's mechanism is entirely about
+  `_on_theme_changed`'s STYLESHEET APPLICATION timing (a `_selection_in_progress`
+  marker read inside `_on_theme_changed`, gating whether a fade is interrupted vs.
+  stashed) — it never touches `QApplication`-level event dispatch, and the sidebar's
+  `[WCLICK]` probe sits upstream of everything that fix's code path runs, so a
+  fix at that layer cannot explain a press that never reaches `[WCLICK]` at all;
+  (2) the user directly falsified the "arrives during animation, gets deferred"
+  shape of this theory by testing right-clicks during a genuine book-load flow
+  animation — the sidebar opened normally every time, not one step behind, not
+  dropped. **Do not re-propose this fix's mechanism as the explanation without
+  addressing both of these directly.**
+- **A generic "main thread busy" theory, tested with a purpose-built stall probe** —
+  a `QTimer` at 10ms interval (`app.py`, `_stall_probe_timer`) logs `[STALL-PROBE]`
+  whenever the actual gap since its last fire exceeds 30ms, independent of WHAT
+  caused the stall (not tied to any one code path, unlike the retracted
+  `hide_for_panel`/blur-specific theories above). In the 2026-07-29 02:04 miss, a
+  real 285.7ms stall WAS logged — but it fired at `02:04:05,176`, BEFORE the
+  ~2.1s silent gap (`05,212` → `07,340`) that actually swallowed the click. No
+  stall was logged DURING the gap itself. **This is a real negative result, not an
+  absence of testing**: the specific miss that was checked against this probe did
+  NOT coincide with a measured main-thread stall. Do not conclude from this alone
+  that main-thread contention is fully ruled out (one data point, and the probe's
+  10ms granularity could still miss something shorter or oddly-timed), but do not
+  present "the thread was busy" as an explanation for this specific instance
+  without new evidence — the one time it was actually checked, it wasn't.
+
+**What has NOT been tried, and is the honest state of the investigation:**
+
+- No probe has been added to `hide_for_panel`'s three specific stages
+  (event-filter removal / overlay hide+clear / attribute reset) individually
+  timed against the exact millisecond of a miss — only the whole-method entry
+  log exists.
+- Nothing has traced whether some Fabulor-specific state (a guard, a signal
+  connection, a queued call) — as opposed to a generic Qt mechanism — is
+  responsible, which is exactly the caveat the user raised about `click_test.py`'s
+  ceiling: a synthetic harness with none of Fabulor's own code in the loop cannot
+  rule out something specific to how Fabulor's guards/signals interact with a real
+  teardown, only generic Qt operations (restyle, animation, grab).
+- The user's own observation, unaddressed: `chapter_list` and `progress_slider`
+  also receive right-clicks constantly (chapter jump, seek) and have never lost one
+  in 3+ months of real use — but per the user's own correction, this does NOT prove
+  general event-loop robustness, because those two widgets are event SOURCES with no
+  guards downstream of them, never the TAIL end of a guard chain the way
+  `_on_drag_area_pressed` → `handle_drag_area_right_click` is (`is_overlay_open_or_
+  committed()`, `_any_panel_animating()`, `complete_main_fade()`, animation-state
+  checks). This distinction is the most promising unexplored lead standing at the
+  end of this session: whatever's wrong may be specific to being on the RECEIVING
+  end of that guard chain, adjacent to heavy panel-close/theme-fade machinery,
+  not a property of `visual_area` or the drag-area widget itself.
+- Misses are NOT reliably tied to a panel having just closed — the user reported
+  misses with no adjacent panel activity at all in the same session, and separately
+  noted idle right-clicks (no panel activity nearby) "always hit." The
+  panel-close correlation seen in all three recording-verified instances above may
+  be partly a sampling artifact (panel-adjacent moments are what get tested most,
+  since that's where misses are suspected), not proof panel-close is the trigger.
+  Do not treat "right after a panel closes" as a confirmed precondition — it is
+  the common thread across the three CONFIRMED instances so far, nothing more.
+
+**Probes live in the tree, uncommitted, as of session end:**
+`[WCLICK]` (`app.py` `eventFilter`, logs `button`/`obj`/`objectName()` for every
+left/right press app-wide, deduplicated on `(timestamp, button)`), `[LCLICK]`
+(`app.py` `_on_drag_area_pressed`, left-button-specific, pairs with the older
+`[RCLICK]`), `[STALL-PROBE]` (`app.py`, 10ms `QTimer`, logs stalls over 30ms).
+`_SidebarPaintProbe` was added and then REMOVED this session (see above) — it is
+NOT currently in the tree; re-add only if the paint question needs re-checking.
+`tools/click_test.py` gained a `GRAB` toggle (kept — useful going forward, not
+temporary instrumentation the way the app.py probes are).
+
+**Process note for whoever picks this up next:** this session repeatedly produced
+wrong conclusions by reasoning from log content alone and presenting a theory as
+settled before the user had a chance to check it against what they actually did.
+The user corrected this explicitly and it visibly cost them patience and time
+across the session. The fix that actually worked was the user recording their
+screen next to a clock and reading log lines against the recording directly.
+**Any claim about what a specific click did or didn't do should be treated as
+provisional until checked against a synced recording, not treated as established
+just because a plausible log narrative was constructed.** This is the same lesson
+CLAUDE.md's "never substitute a plausible explanation for a checked one" section
+already names — this session is additional, first-hand evidence for why that rule
+exists, not a new lesson.
+
+---
+
+## OPEN: sidebar right-click sometimes does nothing — paint theory ruled out, dispatch-level gap confirmed (2026-07-28, later session, unresolved)
+
+**Continuation of the entry directly below.** New instrumentation this session (`_SidebarPaintProbe`
+in `main_window_builders.py`, an event filter installed on `mw.sidebar` logging `[SIDEBAR-PAINT]` on
+every Paint/Show/Hide/UpdateRequest) answers the "not yet taken" measurement the prior session ended
+on, and rules out the leading theory.
+
+**Paint theory is dead.** Every reproduced open/close this session shows a real Paint event fired at
+every intermediate position of the slide, including one at the final settled `pos=(0,56)`. The
+sidebar genuinely was painted on-screen for every click that reached a logged `[RCLICK]` line. If a
+future session revisits "sidebar shows expanded=True but nothing renders," this specific measurement
+already says the widget-level paint pipeline is not the cause — look elsewhere.
+
+**The real gap is at dispatch, not paint.** `[RCLICK]` (app.py `eventFilter`) is installed
+QApplication-wide and logs on every `MouseButtonPress` with `Qt.RightButton`, deduplicated by
+`event.timestamp()`, *before* any widget handler runs. Reproduced this session: real stretches with
+**zero** `[RCLICK]` output at all — not a swallowed-after-logging case, a click Qt's own event
+dispatch never produced a press event for on this window. This is a stronger/different claim than
+the prior session's framing ("the log says it worked" for a click that appeared to do nothing) — this
+session found clicks the log has literally no record of attempting.
+
+**Ruled out this session:** `_DirtyRectTracker.eventFilter` (`ui/transport_bar_blur.py`) — installed
+on every tracked widget while a panel is open/blurred. Read closely: it only branches on
+`QEvent.Type.Paint`, and always `return False` (never consumes, per its own docstring — "must not
+affect real painting"). It does not look at mouse events at all. Not the mechanism, despite being
+installed on overlapping widgets during the exact window the gaps cluster around.
+
+Also confirmed **not** the overlay: `TransportBarBlurOverlay._overlay` has
+`WA_TransparentForMouseEvents` set at construction (`transport_bar_blur.py:259`) — by design it
+cannot intercept clicks even while shown/raised over the transport chrome.
+
+**Suggestive, not proven:** the dispatch-gap windows this session loosely lined up with
+`show_for_panel`/`hide_for_panel`/`_grab_and_blur` activity for `stats_panel` (a burst of
+`_grab_and_blur` ticks ending right before one gap; `hide_for_panel ENTRY` logging right before
+another). This is a timing correlation from reading adjacent log lines, not a traced causal
+mechanism — do not treat it as confirmed. Two reasons to stay cautious: (1) the user's reported
+click timestamps trail the actual click by however long it took to type them (confirmed directly:
+"I see the miss, I look at the computer clock, I type it... maybe a second" — but the gaps
+themselves, independent of the user's report timing, are real and still unexplained on their own
+terms), (2) no instrumentation yet measures whether `_grab_and_blur`'s `grab()`/blur pass actually
+blocks the Qt event loop long enough to explain a dropped OS-level click, as opposed to merely
+running nearby in time.
+
+**Probes added this session, left in the tree (uncommitted):** `_SidebarPaintProbe`
+(`main_window_builders.py`, installed on `mw.sidebar` in `build_sidebar`) — purely additive, logs
+only, no behavior change. Existing probes from the prior session (`[RCLICK]`, `[RCLICK-BRANCH]`,
+`[SIDEBAR-VIS]`) were reused as-is, not modified.
+
+**Blur-timing theory is also dead — retracted same session, before it was acted on.** Directly
+tested: two minutes of continuous right-clicking with Panel background set to **Transparent**
+(blur genuinely off, `get_blur_enabled()` False) produced zero misses. The same test with **Opaque**
+(blur ALSO off — `get_blur_enabled()` returns False for both Transparent and Opaque, only Frosty
+blurs) reproduced the silent-dispatch gap again, twice, confirmed against the log
+(`grep` for `[RCLICK]` across the reported miss windows — 23:38:15 and 23:38:32 — returns only
+routine `_sync_chapter_ui` ticks, no `[RCLICK]` line at all, same signature as before). Since
+neither mode blurs, blur cannot be the differentiator — whatever correlated with blur-panel
+activity in the first test was coincidental, not causal. **Retracting the "blur/grab timing" lead
+from the entry above; do not chase it further.**
+
+**New, more specific lead:** Transparent (clean) vs. Opaque (reproduces the gap) differ in exactly
+one documented way per `3132be7`'s own description — Opaque forces `panel_opacity_hover` to `1.0`
+inside `_resolve_theme`, overriding the theme's own value; Transparent does not touch it. This is
+the next thing to trace: something in the opaque alpha-override path (or something that only runs
+differently when that override is active) is the more promising differentiator, not blur. Not yet
+traced — this is a correlation from two data points (2 minutes clean vs. 2 reproductions), not a
+confirmed mechanism. Next step: re-run the same clean 2-minute test on **Frosty** (blurs AND does
+not force the opaque override) — if Frosty is also clean, that isolates the opaque alpha-override
+specifically, independent of blur, as the next thing to trace in `_resolve_theme`/wherever the
+override is applied.
+
+---
+
 ## OPEN: sidebar right-click sometimes does nothing, and the log says it worked (2026-07-28, unresolved)
 
 **Status: not fixed. Three mechanisms proposed and disproven tonight.** Read this before proposing

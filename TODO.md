@@ -6,6 +6,44 @@ the date; when done, delete it (the commit/SESSION.md entry is the permanent rec
 
 ## Pending
 
+- **[2026-07-29] Sidebar/panel right-click dispatch gap — SIX misses recording-verified; a reliable
+  repro condition identified; mechanism still unknown.** See NOTES.md ("six recording-verified
+  misses, one reliable repro condition") for the full trace, all six instances, and the full list of
+  eliminated theories (blur, opaque alpha, `grab()`, OS/input loss, the theme-fade-defer mechanism,
+  main-thread stalls) — read it before proposing a new one. **Reliable repro condition, well-supported
+  by six independent instances with zero counterexamples:** a right-click within roughly 1.5–5s of
+  ANY panel closing (Stats/Settings/Tags/Library/Book Detail — not sidebar-specific) has a real,
+  recurring chance of producing absolutely nothing, at any probe level including `[WCLICK]`
+  (`QApplication`-wide press probe — the click never reaches Qt's own dispatch at all). **Important
+  age constraint from the user:** this bug predates the `_claim_panel_focus`/`_release_panel_focus`
+  mechanism (2026-07-11) by a large margin — it has been present since early in the project, well
+  before most current features existed. This rules out the focus-release machinery as the ORIGINAL
+  cause, even though `[FOCUS-RELEASE]`'s `focusWidget=None` reading correlates with every gap so far
+  (treat that correlation as likely incidental, not causal, until a mechanism is actually traced —
+  see NOTES.md for one case where the miss happened with `will_clear=False`, i.e. nothing was even
+  cleared, which independently argues against focus-clearing being required). Most promising untried
+  lead, unchanged: the user's distinction that `chapter_list`/`progress_slider` right-clicks (never
+  miss in 3+ months) are event SOURCES with no guards downstream, while the sidebar/panel right-click
+  is the TAIL of a guard chain (`is_overlay_open_or_committed()`, `_any_panel_animating()`,
+  `complete_main_fade()`) — worth tracing whether something in THAT specific chain, not a generic Qt
+  mechanism, is responsible. **Also eliminated this session:** frameless-window right-click handling
+  (`click_test.py --frameless`, matching `MainWindow`'s own window flags exactly — clean, no misses).
+  **Sharper, more actionable lead from the user, now the top candidate:** it is NEVER left-click,
+  NEVER mouse wheel — only right-click, across every affected surface (Book Detail from Stats, theme
+  swatches, sidebar). Book Detail opened from LIBRARY is left-click-triggered and has never been seen
+  to fail; Book Detail from Stats and the sidebar/theme-swatch paths are right-click and DO fail. This
+  points at something specific to `Qt.RightButton` handling in a shared code path that left-click never
+  touches — next step should be a systematic grep of every `event.button() == Qt.RightButton` branch
+  in the app, comparing each against its left-click sibling for a structural difference (extra guard,
+  extra signal hop, different Qt connection type), rather than continuing to compare panels/widgets
+  against each other. Also untested: whether the same gap exists around the `T` theme-rotation
+  shortcut or other equally old input paths, which might share whatever mechanism is old enough to
+  predate the focus machinery. `click_test.py`'s synthetic harness (RESTYLE, ANIMATE, GRAB, frameless,
+  all clean) has a real ceiling: none of Fabulor's own guard/signal code is in that loop. Blocked on:
+  nothing — the repro condition is reliable enough (six-for-six) and the right-click-only asymmetry is
+  specific enough that this could be actively traced next session without needing a fresh reproduction
+  first.
+
 - **[2026-07-28] CLOSED (live-verified): "my right-clicks are missing" — they were applying one
   step behind** (`4700b31`). Not lost presses: every click reached Qt, the widget and the handler.
   Each applied the PREVIOUS click's theme, because hovering a swatch starts a 375ms preview fade and
