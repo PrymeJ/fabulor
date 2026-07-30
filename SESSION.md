@@ -1,3 +1,49 @@
+## Session Summary — 2026-07-31 Session 1 — Library percentage disagreed with the transport bar
+
+Two displays of one number, rounding differently. The transport bar shows
+`f"{(pos/dur)*100:.1f}%"`; the library row shows a whole number — but it truncated the **raw**
+value (`int(pct * 100)`) rather than the value the label displays. They disagree in exactly one
+band: when the true percentage lands in `[N.95, N+1)`, the label has already rounded up to
+`(N+1).0%` while the library still truncates down to `N%`. Reported live from a screenshot pair:
+a **6.0%** header over a **5%** library row.
+
+Fixed with a shared `BookDelegate._pct_str` used by both library paint sites: `round(x, 1)` first
+(the number the label shows), `int()` second. Truncation itself is deliberate and preserved —
+`0.6%` reads `0%`, `1.9%` reads `1%`. The decimal is **dropped, not rounded**.
+
+That distinction is the whole of the fix, and I got it wrong first: I proposed a plain `round()`,
+then described only half of its effect ("`0.6%` starts showing as `1%`") without noting it would
+also make `1.6%` read `2%`. Pryme's question — *"Why does 0.6% become 1% but 1.6% not 2%?"* —
+caught it, and the answer was that my proposal was simply the wrong operation. The correct
+formulation was his: *"Get the same number from the same source, get rid of the decimal."*
+
+**My verification was also wrong, in a way worth recording.** The first exhaustive test reported
+5 failures, all at `.x95` boundaries. They were artifacts of the test: it synthesized a percentage
+and divided by 100 to fake a ratio, injecting float error the real pipeline never has — in the app
+both displays divide `pos/dur` exactly **once** and share that float. Rewritten to drive real
+`pos`/`dur` pairs: 0 mismatches over 50,000 pairs plus a `.x95` boundary sweep. Lesson: when a test
+of a float-formatting invariant fails only at representation boundaries, suspect the test's own
+arithmetic before the code's.
+
+Checked every other percentage display before calling it done — book detail (×2) and stats (×2)
+all keep a decimal (`.1f` when non-integral) so they never truncate; `app.py:2361`'s `int(percent * 10)`
+is a persistence throttle, not a display. The library was the only site with the mismatch.
+
+**One claim left unresolved.** The change was reported as also fixing "library showed 99.5% as 100%
+before the book was finished." Checked directly, and it does not: at 99.5% the old code showed
+`99%` and the new code still shows `99%`. The change goes the *other* way at the top end —
+99.95%-99.99% now reads `100%` where it used to read `99%`, so premature-100% became slightly more
+likely, not less. Nothing in this commit can turn a 100% into a 99%; the new value is always ≥ the
+old. Possible the observation was of the progress **bar** (`int(rect.width() * pct)` — 119 of 120px
+at 99.5%, visually full) rather than the digits, but that is a guess and was not confirmed. If a
+book reading `100%` before it is finished is unwanted, that is a separate fix (clamp to 99% until
+genuinely finished) and would deliberately put the library back out of step with the header, which
+shows `100.0%` from 99.95% up.
+
+`tests/test_library_percentage.py` (22 tests). Suite: **422 passed, 0 failed**. `252685a`.
+
+---
+
 ## Session Summary — 2026-07-30 Session 4 — Search operators: `@author`, `=year`, and a 4-digit cap
 
 Began as a documentation pass closing Session 3, then turned into a design conversation about the
