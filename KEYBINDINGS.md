@@ -177,10 +177,39 @@ by mouse or keyboard, whichever moved last. Pressing `Tab` to leave the list dro
 highlight **instantly**, with no fade wait, in every mode except List (whose highlight is
 the mouse-hover-fade mechanism itself, unaffected by this).
 
-**Search syntax** (`BookModel._apply_filter_and_sort`): besides the existing `#tag` /
-`>NNNN` / `<NNNN` / year-range special prefixes, a search string starting with `_`
-matches only **titles that start with** the remainder (case-insensitive) — e.g. `_the`
-matches "The Hobbit" but not "In the Woods". Title only, not author/narrator.
+### Search syntax (`BookModel._apply_filter_and_sort`)
+
+With no operator, a search matches a substring of **title, author or narrator** (plus an exact
+4-digit year). The operators below narrow that. All are case-insensitive; the search field's
+tooltip carries the same table.
+
+| Syntax | Matches | Red on no match? |
+|---|---|---|
+| `#tag` | books carrying a tag with that prefix. `#` alone matches everything (escape hatch) | yes |
+| `_start` | **title** starts with the remainder — `_the` matches "The Hobbit", not "In the Woods" | yes |
+| `@name` | **author** only | yes |
+| `=1984` | exact year. `=-282` for BCE | never |
+| `>1900` | year from (≥) | never |
+| `<1900` | year up to (≤) | never |
+| `>1900<1950` | year between; either operator order (`<1950>1900` is the same) | never |
+
+**Why `@` and `=` exist:** the bare search covers three fields at once, so `james baldwin`
+returns both the biography (title match) and the novel (author match), and `1984` returns both
+the book *titled* 1984 and everything published that year. `@` and `=` disambiguate. Clicking an
+author or year in the library grid emits these operator forms for the same reason. There is
+deliberately **no narrator operator** — the collision it would solve (an author who also
+narrates) is too rare to earn one, so a narrator click still emits a bare string.
+
+`=1984` and `<1984>1984` are the same query — the range parser admits a degenerate range
+(`lo <= hi`) on purpose. `=` is just the readable spelling.
+
+**Year filters never turn the field red.** Deciding whether `<50` is a finished filter or a
+half-typed `<500` is impossible from the input alone, and any rule consulting the library would
+make the same keystroke behave differently for different users. Incomplete states stay neutral
+instead. Year *expressions* are capped at 4 digits per number by an input validator
+(`_YearFilterValidator`), which also blocks a repeated operator (`>2000>`) and anything after a
+complete `=NNNN`; it only constrains strings starting with `<`, `>` or `=`, so every other filter
+type types freely.
 
 **Sort / view-mode selection** — the dropdowns themselves are still mouse-only to *open*,
 but sort field/direction and view mode are now also driveable from the keyboard while the

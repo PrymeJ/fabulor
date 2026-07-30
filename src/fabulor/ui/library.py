@@ -1,6 +1,7 @@
 # THEME_ANIM_TODO: LibraryPanel, BookDelegate
 import logging
 import random
+import re
 from collections import namedtuple
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
@@ -11,7 +12,7 @@ from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from .line_edit_dragfix import DragSafeLineEdit
-from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter
+from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter, QValidator
 from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
@@ -162,32 +163,104 @@ PRELOAD_BATCH_SIZE  = 4    # covers dispatched per tick (~80/s). Chosen by measu
 
 _cover_cache: dict = {}  # module-level singleton {book_id (int): QPixmap}, shared by BookModel and idle preloader
 
+# A year in a filter expression: optional leading minus (BCE — the DB stores negative years,
+# see db.parse_year), then 1-4 digits. The 4-digit cap mirrors the Year field's own validator;
+# _YearFilterValidator below enforces it at input time so a 5th digit can never be typed.
+_YEAR_NUM = r'-?\d{1,4}'
+
 def _parse_year_range(text: str):
-    """Parse '>NNNN<NNNN' or '<NNNN>NNNN' into (min, max). Returns None if not a range."""
+    """Parse '>NNNN<NNNN' or '<NNNN>NNNN' into (min, max). Returns None if not a range.
+
+    Accepts negative (BCE) years on either side: '>-500<-100' is a valid range.
+    A degenerate range ('<1984>1984') is deliberately admitted — `lo <= hi`, not `lo < hi` —
+    and yields exactly that year. '=1984' is the readable spelling of the same query.
+    """
     import re
-    m = re.fullmatch(r'>(\d+)<(\d+)|<(\d+)>(\d+)', text)
+    m = re.fullmatch(rf'>({_YEAR_NUM})<({_YEAR_NUM})|<({_YEAR_NUM})>({_YEAR_NUM})', text)
     if not m:
         return None
-    if m.group(1):
+    if m.group(1) is not None:
         lo, hi = int(m.group(1)), int(m.group(2))
     else:
         lo, hi = int(m.group(4)), int(m.group(3))
     return (lo, hi) if lo <= hi else None  # invalidate impossible ranges
 
-def _is_incomplete_year_filter(text: str) -> bool:
-    """True while the user is still typing a year filter — no red yet."""
+def _is_year_number(text: str) -> bool:
+    """True if `text` is a bare year: optional leading minus, 1-4 digits.
+
+    Replaces the `str.isdigit()` test the bare `<`/`>` branches used to run. `isdigit()` is
+    False for '-500', so every negative-year filter silently fell through to a text search —
+    the same defect fixed in the Year *field* on 2026-07-30 (see db.parse_year), which had left
+    the filter unable to express years the DB can store.
+    """
+    return re.fullmatch(_YEAR_NUM, text) is not None
+
+def _parse_exact_year(text: str):
+    """Parse '=NNNN' into an int year. Returns None if not an exact-year filter.
+
+    Exists because a bare '1984' matches the YEAR 1984 *and* any title containing "1984" —
+    the same collision '@' solves for authors. '<1984>1984' is the equivalent degenerate range
+    and still works; this is the short spelling.
+    """
     import re
-    # Single operator alone or with digits: <, >, <2010, >2010
-    if re.fullmatch(r'[<>]\d*', text):
+    m = re.fullmatch(rf'=({_YEAR_NUM})', text)
+    return int(m.group(1)) if m else None
+
+def _is_incomplete_year_filter(text: str) -> bool:
+    """True while the user is still typing a year filter — no red yet.
+
+    Year filters never go red on no-match (all year branches set _filter_no_match = False), so
+    this only governs the transient states. Deciding whether '<50' is complete or a half-typed
+    '<500' is impossible from the input alone — any rule that consults the library would make
+    the same keystroke behave differently per user — so incomplete states simply stay neutral.
+    """
+    import re
+    # Operator alone, or with a partial number: <, >, =, <-, <2010, =-282
+    if re.fullmatch(rf'[<>=]({_YEAR_NUM})?-?', text):
         return True
-    # Range in progress: operator+digits+DIFFERENT operator+incomplete digits
+    # Range in progress: operator+number+DIFFERENT operator+incomplete number
     # >2010< or >2010<20 — but NOT >2010> (same operator = never valid)
-    m = re.fullmatch(r'([<>])(\d+)([<>])(\d*)', text)
+    m = re.fullmatch(rf'([<>])({_YEAR_NUM})([<>])(-?\d*)', text)
     if m and m.group(1) != m.group(3):
-        # Only incomplete if the range isn't yet parseable as complete+invalid
-        # i.e. second number has fewer than 4 digits (still being typed)
-        return len(m.group(4)) < 4
+        # Only incomplete if the second number isn't yet a full 4 digits (still being typed)
+        return len(m.group(4).lstrip('-')) < 4
     return False
+
+
+class _YearFilterValidator(QValidator):
+    """Caps year expressions in the search field at 4 digits per number.
+
+    ONLY constrains strings already committed to being a year expression — i.e. starting with
+    `<`, `>` or `=`. Everything else (tags, `_`, `@`, free text) is accepted untouched, because
+    this one validator sits on a field that accepts every filter type.
+
+    The grammar is pure — it never consults the library, so a keystroke behaves identically for
+    every user (see _is_incomplete_year_filter for why library-aware validation was rejected):
+
+        =  ->  optional '-', then up to 4 digits, then NOTHING (no range form)
+        <  ->  optional '-', up to 4 digits, then optionally the OPPOSITE operator and a
+        >      second number; a repeated operator ('>2000>') is never valid
+
+    Rejecting rather than silently truncating is deliberate: the keystroke does nothing and the
+    text stands, so the caret never jumps.
+    """
+
+    _EXACT = re.compile(rf'=(-?\d{{0,4}})?')
+    _RANGE = re.compile(rf'([<>])(-?\d{{0,4}})(([<>])(-?\d{{0,4}}))?')
+
+    def validate(self, text: str, pos: int):
+        if not text or text[0] not in '<>=':
+            return (QValidator.State.Acceptable, text, pos)
+
+        if text[0] == '=':
+            ok = self._EXACT.fullmatch(text) is not None
+        else:
+            m = self._RANGE.fullmatch(text)
+            # A second operator must differ from the first: '>2000<' narrows, '>2000>' is
+            # nonsense the parser could never resolve.
+            ok = m is not None and (m.group(4) is None or m.group(4) != m.group(1))
+
+        return (QValidator.State.Intermediate if ok else QValidator.State.Invalid, text, pos)
 
 FONT_SIZES = {
     "1 per row": {
@@ -846,6 +919,23 @@ class LibraryPanel(QFrame):
         self.search_field = DragSafeLineEdit()
         self.search_field.setMaxLength(26)
         self.search_field.setPlaceholderText("search #tag")
+        # The field is 63px wide, so the placeholder can only ever advertise one operator. The
+        # tooltip is where the rest are discoverable — '_' existed for months and was forgotten
+        # by its own author for lack of anywhere to read it. Mirrors KEYBINDINGS.md.
+        self.search_field.setToolTip(
+            "Search title, author and narrator\n"
+            "\n"
+            "#tag\t\ttagged books  (# alone = all)\n"
+            "_start\t\ttitle starts with\n"
+            "@name\t\tauthor only\n"
+            "=1984\t\texact year  (=-282 for BCE)\n"
+            ">1900\t\tyear from\n"
+            "<1900\t\tyear up to\n"
+            ">1900<1950\tyear between"
+        )
+        # Caps year expressions at 4 digits per number. Only constrains strings starting with
+        # <, > or = — every other filter type passes through untouched.
+        self.search_field.setValidator(_YearFilterValidator(self.search_field))
         self.search_field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         def _on_search_right_click(_pos):
             self.search_field.clear()
@@ -959,7 +1049,21 @@ class LibraryPanel(QFrame):
                              "consumed on %s)", field, value, src_path, book.path)
                 self.book_selected.emit(book.path)
                 return
-            target = f"<{value}>{value}" if field == "year" else value
+            # Year -> the exact-year operator; author -> the author-scoped operator. Both exist
+            # because a bare value collides with the other fields: a bare '1984' also matches
+            # any title containing "1984", and a bare 'james baldwin' matches both the
+            # biography (title) and the novel (author).
+            #
+            # Narrator stays BARE deliberately — there is no narrator operator. The collision it
+            # would solve (an author who also narrates) is real but rare, and a whole operator
+            # earning its place on that alone was not worth it. Consequence, accepted: an author
+            # click yields '@Name' and a narrator click yields 'Name'.
+            if field == "year":
+                target = f"={value}"
+            elif field == "author":
+                target = f"@{value}"
+            else:
+                target = value
             # The search field has a maxLength, so set_search(target) may store a truncated
             # string. Compare toggle-off against what the field will ACTUALLY hold (target
             # truncated the same way), else a value longer than maxLength never matches on the
@@ -1478,13 +1582,21 @@ class LibraryPanel(QFrame):
 
     @staticmethod
     def _classify_filter(text: str):
-        """Returns 'tag', 'year', or 'text' for a non-empty search string."""
-        import re
+        """Returns 'tag', 'year', or 'text' for a non-empty search string.
+
+        Drives which of the three "Persist search filter" toggles governs this string. Must
+        recognise every year form _apply_filter_and_sort does, or a year filter gets persisted
+        under the user's *text* preference: '=1984' and negative years were both misfiled as
+        'text' before 2026-07-30.
+
+        '@author' is deliberately 'text' — it is a text search, just field-scoped, so the text
+        toggle is the right one to govern it.
+        """
         if text.startswith('#'):
             return 'tag'
-        if (text.startswith('>') and text[1:].isdigit()) or \
-           (text.startswith('<') and text[1:].isdigit()) or \
-           re.fullmatch(r'[<>]\d+[<>]\d+', text):
+        if _parse_year_range(text) is not None or _parse_exact_year(text) is not None:
+            return 'year'
+        if text[:1] in '<>' and _is_year_number(text[1:]):
             return 'year'
         return 'text'
 
@@ -1935,26 +2047,46 @@ class BookModel(QAbstractListModel):
                 matched = [b for b in source if b.path in tagged]
                 self._filter_no_match = not matched
                 books = matched if matched else list(source)
+            # ── Year expressions ──────────────────────────────────────────────────────────
+            # Order matters: the RANGE test must precede the bare-operator tests, because
+            # '>2000<2010' would fail _is_year_number('2000<2010') and fall through to a text
+            # search. Every year branch sets _filter_no_match = False — a year filter never
+            # goes red; see _is_incomplete_year_filter for why.
             elif _parse_year_range(text) is not None:
                 year_min, year_max = _parse_year_range(text)
                 matched = [b for b in source
                            if b.year is not None and year_min <= b.year <= year_max]
                 self._filter_no_match = False
                 books = matched if matched else list(source)
-            elif text.startswith('>') and text[1:].isdigit():
+            elif _parse_exact_year(text) is not None:
+                year_exact = _parse_exact_year(text)
+                matched = [b for b in source if b.year == year_exact]
+                self._filter_no_match = False
+                books = matched if matched else list(source)
+            elif text.startswith('>') and _is_year_number(text[1:]):
                 year_min = int(text[1:])
                 matched = [b for b in source if b.year is not None and b.year >= year_min]
                 self._filter_no_match = False
                 books = matched if matched else list(source)
-            elif text.startswith('<') and text[1:].isdigit():
+            elif text.startswith('<') and _is_year_number(text[1:]):
                 year_max = int(text[1:])
                 matched = [b for b in source if b.year is not None and b.year <= year_max]
                 self._filter_no_match = False
                 books = matched if matched else list(source)
+            # ── Field-scoped text ─────────────────────────────────────────────────────────
             elif text.startswith('_'):
                 # Title-starts-with match (title only). text is already lowercased upstream.
                 prefix = text[1:]
                 matched = [b for b in source if (b.title or "").lower().startswith(prefix)]
+                self._filter_no_match = not matched
+                books = matched if matched else list(source)
+            elif text.startswith('@'):
+                # Author-only substring. Exists because the bare-text branch below searches
+                # title, author AND narrator at once, so 'james baldwin' returns both the
+                # biography (title) and the novel (author). Click-to-filter on an author emits
+                # this form for the same reason — see _on_item_clicked.
+                name = text[1:]
+                matched = [b for b in source if name in (b.author or "").lower()]
                 self._filter_no_match = not matched
                 books = matched if matched else list(source)
             else:
