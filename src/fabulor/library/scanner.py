@@ -11,8 +11,8 @@ from PySide6.QtGui import QImage
 from ..db import LibraryDB
 
 class ScannerWorker(QObject):
-    progress = Signal(int, int) # processed, total
-    finished = Signal(int)      # total_processed
+    progress = Signal(int, int)  # processed, total
+    finished = Signal(int, bool) # total_processed, cancelled
     
     def __init__(self, db_path, force_refresh=False, locations=None):
         super().__init__()
@@ -45,7 +45,13 @@ class ScannerWorker(QObject):
 
             try:
                 for entry in root.iterdir():
-                    if not self._running.is_set(): return
+                    if not self._running.is_set():
+                        # Must still emit finished (cancelled=True) — the only thing that
+                        # tells the QThread to quit is worker.finished.connect(thread.quit)
+                        # in LibraryScanner.start(). Skipping the emit here left the thread
+                        # running forever, blocking any new scan from starting.
+                        self.finished.emit(0, True)
+                        return
                     if entry.is_dir():
                         # Check for audio files inside. A per-folder I/O error
                         # (PermissionError / flaky mount) must NOT crash the whole
@@ -94,10 +100,19 @@ class ScannerWorker(QObject):
 
         for book_dir in book_dirs:
             if not self._running.is_set():
+                # A cancelled scan must still emit finished (cancelled=True), not just
+                # `return` bare — the only thing that tells the QThread to quit is
+                # worker.finished.connect(thread.quit) in LibraryScanner.start(). Skipping
+                # the emit here left the thread running forever, blocking any new scan
+                # from starting (found live: cancel a scan, then try to start another —
+                # it silently no-oped because is_running() stayed True). The cancelled
+                # flag itself is what lets _on_scan_finished skip overwriting the "Scan
+                # cancelled." banner with "Library updated: N books." — flush any pending
+                # batch first so cancelling mid-scan doesn't lose books already extracted.
                 if pending:
                     db.upsert_books_batch(pending)
-                    pending = []
-                break
+                self.finished.emit(processed, True)
+                return
 
             book_path = str(book_dir)
             if not self.force_refresh and book_path in known_paths:
@@ -121,7 +136,7 @@ class ScannerWorker(QObject):
         if pending:
             db.upsert_books_batch(pending)
 
-        self.finished.emit(processed)
+        self.finished.emit(processed, False)
 
     @staticmethod
     def _parse_year(val):
@@ -322,7 +337,7 @@ class ScannerWorker(QObject):
 
 class LibraryScanner(QObject):
     progress = Signal(int, int)
-    finished = Signal(int)
+    finished = Signal(int, bool)  # total_processed, cancelled
 
     def __init__(self, db_path):
         super().__init__()

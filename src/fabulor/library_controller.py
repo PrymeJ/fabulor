@@ -20,6 +20,17 @@ class LibraryController(QObject):
         self.app = app
         self.browser = browser
 
+        # Guards against a queued progress signal landing after cancel: the
+        # scan worker checks its stop flag once per loop iteration but emits
+        # progress for the item it just finished at the BOTTOM of that same
+        # iteration — so one straggling progress(N, total) for work already
+        # done can be queued (cross-thread signal) before the worker's next
+        # iteration notices the cancel and returns. That emit has no way to
+        # know a cancel happened in between, so it silently overwrote the
+        # "Scan cancelled." banner with "Loading library... (N/total)",
+        # which then sat there forever since no further emit ever follows.
+        self._scan_cancel_requested = False
+
     def _refresh_folder_list(self):
         """Updates the folder list widget with current scan locations."""
         locs = self.db.get_scan_locations()
@@ -108,26 +119,40 @@ class LibraryController(QObject):
 
     def _on_cancel_scan_clicked(self):
         """Stops the current scan."""
+        self._scan_cancel_requested = True
         self.scanner.stop()
         self.ui.set_scan_buttons_enabled(True)
-        self.ui.update_status("Scan cancelled.", show_banner=True, show_cancel=False)
+        self.ui.update_status("Scan cancelled.", show_banner=True, show_cancel=False, auto_hide=True)
 
     def _on_scan_progress(self, current, total):
         """Updates the status banner with scan progress."""
+        # A cancel may have already been requested while this progress signal
+        # (for work the worker finished just before noticing the cancel) was
+        # still queued — see _scan_cancel_requested's own comment. Drop it so
+        # "Scan cancelled." isn't silently overwritten with no further update
+        # ever following.
+        if self._scan_cancel_requested:
+            return
         # Logic for banner updates is now handled by the callback which checks visibility
-        self.ui.update_status(f"Loading library... ({current}/{total})", 
+        self.ui.update_status(f"Loading library... ({current}/{total})",
                              show_banner=None, show_cancel=None)
-        
+
         if current == 1:
             self._check_library_status()
 
-    def _on_scan_finished(self, total):
+    def _on_scan_finished(self, total, cancelled=False):
         """Finalizes scan and hides banner."""
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _on_scan_finished: "
-                     f"ENTRY total={total}")
+                     f"ENTRY total={total} cancelled={cancelled}")
         self.ui.set_scan_buttons_enabled(True)
-        self.ui.update_status(f"Library updated: {total} books.",
-                             show_banner=None, show_cancel=False, auto_hide=True)
+        if not cancelled:
+            # A cancelled scan already has its own banner text ("Scan cancelled.", set by
+            # _on_cancel_scan_clicked) — don't overwrite it with a completion-style message.
+            # Everything below (teardown/refreshes) still runs regardless: any books upserted
+            # before the cancel was noticed are real, committed DB state and should be
+            # reflected either way.
+            self.ui.update_status(f"Library updated: {total} books.",
+                                 show_banner=None, show_cancel=False, auto_hide=True)
 
         # If a scan flagged the currently-loaded book as either missing OR
         # excluded, it's gone from the library but still open in the player.
@@ -264,6 +289,7 @@ class LibraryController(QObject):
                     msg = "Rescanning all folders..." if force_refresh else "Library scanning..."
                 self.ui.update_status(msg, show_banner=True, show_cancel=True)
                 self.ui.set_scan_buttons_enabled(False)
+                self._scan_cancel_requested = False
                 self.scanner.start(force_refresh=force_refresh, locations=locations)
 
     def apply_current_state(self):
