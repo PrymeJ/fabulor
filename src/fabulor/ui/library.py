@@ -919,20 +919,10 @@ class LibraryPanel(QFrame):
         self.search_field = DragSafeLineEdit()
         self.search_field.setMaxLength(26)
         self.search_field.setPlaceholderText("search #tag")
-        # The field is 63px wide, so the placeholder can only ever advertise one operator. The
-        # tooltip is where the rest are discoverable — '_' existed for months and was forgotten
-        # by its own author for lack of anywhere to read it. Mirrors KEYBINDINGS.md.
-        self.search_field.setToolTip(
-            "Search title, author and narrator\n"
-            "\n"
-            "#tag\t\ttagged books  (# alone = all)\n"
-            "_start\t\ttitle starts with\n"
-            "@name\t\tauthor only\n"
-            "=1984\t\texact year  (=-282 for BCE)\n"
-            ">1900\t\tyear from\n"
-            "<1900\t\tyear up to\n"
-            ">1900<1950\tyear between"
-        )
+        # No tooltip listing the search operators: the full set needs eight rows, which in a
+        # 300px-wide window either spills outside the app or covers the library behind it.
+        # The operator reference lives in Settings > Library instead (and in KEYBINDINGS.md).
+        #
         # Caps year expressions at 4 digits per number. Only constrains strings starting with
         # <, > or = — every other filter type passes through untouched.
         self.search_field.setValidator(_YearFilterValidator(self.search_field))
