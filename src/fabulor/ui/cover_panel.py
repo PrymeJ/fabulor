@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QButtonGroup, QFileDialog, QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QBrush, QPen
 
 from ..library.cover_manager import (
@@ -156,6 +156,7 @@ class CoverThumbnail(QFrame):
 
 class CoverPanel(QWidget):
     active_cover_changed = Signal(str)  # emits file_path of new active cover
+    cover_error = Signal(str)  # a cover-add failed (too large, unreadable, save/DB failure) — message text
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
@@ -344,18 +345,11 @@ class CoverPanel(QWidget):
         self._add_btn.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         self._add_btn.clicked.connect(self._on_add_cover)
 
-        self._error_label = QLabel()
-        self._error_label.setObjectName("CoverErrorLabel")
-        self._error_label.setWordWrap(True)
-        self._error_label.setFixedWidth(_THUMB_SIZE)
-        self._error_label.hide()
-
         left_wrapper = QVBoxLayout()
         left_wrapper.setContentsMargins(0, 0, 0, 0)
         left_wrapper.setSpacing(6)      # same gap as between thumbs
         left_wrapper.addWidget(self._left_col)
         left_wrapper.addWidget(self._add_btn)
-        left_wrapper.addWidget(self._error_label)
         left_wrapper.addStretch()
 
         # ── Right column ──
@@ -633,13 +627,13 @@ class CoverPanel(QWidget):
 
         error = validate_cover_file(path)
         if error:
-            self._show_error(error)
+            self.cover_error.emit(error)
             return
 
         # Convert PNG to JPEG in memory for storage consistency
         img = QImage(path)
         if img.isNull():
-            self._show_error("Could not read image.")
+            self.cover_error.emit("Could not read image.")
             return
 
         # Determine next slot index (1–4 for user covers)
@@ -659,7 +653,7 @@ class CoverPanel(QWidget):
             dest_path = None
 
         if not dest_path:
-            self._show_error("Failed to save image.")
+            self.cover_error.emit("Failed to save image.")
             return
 
         cover_id = self._db.upsert_cover(
@@ -672,7 +666,7 @@ class CoverPanel(QWidget):
         )
 
         if not cover_id:
-            self._show_error("Failed to save cover.")
+            self.cover_error.emit("Failed to save cover.")
             return
 
         new_cover = {
@@ -724,10 +718,3 @@ class CoverPanel(QWidget):
 
         self._set_add_button_selected(False)
         self._add_btn.setVisible(len(self._covers) < 4)
-
-    # ── Error display ─────────────────────────────────────────────────────────
-
-    def _show_error(self, message: str):
-        self._error_label.setText(message)
-        self._error_label.show()
-        QTimer.singleShot(3000, self._error_label.hide)

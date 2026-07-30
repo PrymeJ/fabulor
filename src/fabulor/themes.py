@@ -4357,7 +4357,6 @@ def get_cover_panel_stylesheet(theme_name="default"):
     accent            = t.get('accent', '#5A8A9F')
     accent_dark       = t.get('accent_dark', '#3A6A7F')
     text              = t.get('text', '#FFFFFF')
-    warning           = t.get('warning_color', '#FF6B6B')
     cover_preview_bg  = t.get('cover_preview_bg', 'transparent')
 
     return f"""
@@ -4397,9 +4396,5 @@ def get_cover_panel_stylesheet(theme_name="default"):
         QPushButton#CoverAddButton:hover, QPushButton#CoverAddButton[kbdSelected="true"] {{
             background-color: {accent_dark};
             color: {text};
-        }}
-        QLabel#CoverErrorLabel {{
-            color: {warning};
-            font-size: 11px;
         }}
     """

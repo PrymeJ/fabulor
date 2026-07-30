@@ -87,6 +87,14 @@ def build_status_banner(mw):
     mw.cancel_scan_btn.setFixedSize(20, 20)
     mw.cancel_scan_btn.setToolTip("Cancel scan")
     mw.cancel_scan_btn.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
+    mw.cancel_scan_btn.hide()  # unlike eof_revert_btn/eof_close_btn (hidden right above), this
+    # was never explicitly hidden at construction — a fresh QWidget added to a visible parent
+    # layout defaults to visible, so cancel_scan_btn silently rode along as "visible" the whole
+    # time status_banner itself was hidden, and reappeared the instant ANY banner message (not
+    # just a scan) made status_banner visible again. Root cause of a reproducible-every-launch
+    # bug: any non-scan banner (e.g. a cover-add error) showed this button and its stale "Scan
+    # cancelled."-shaped state alongside an unrelated message — nothing to do with EOF or the
+    # retire_eof_prompt gate, which only manages the OTHER two buttons.
 
     layout.addStretch()
     layout.addWidget(mw.status_label, 0, Qt.AlignVCenter)
@@ -614,6 +622,7 @@ def build_book_detail_panel(mw):
     mw.book_detail_panel.book_removed.connect(mw._on_book_detail_removed)
     mw.book_detail_panel.tag_filter_requested.connect(mw._on_tag_filter_requested)
     mw.book_detail_panel.open_tag_manager_requested.connect(mw._on_open_tag_manager_from_detail)
+    mw.book_detail_panel.cover_error.connect(mw._on_cover_error)
     mw.theme_manager.theme_applied.connect(mw.book_detail_panel.on_theme_changed)
     mw.book_detail_panel.on_theme_changed(mw.theme_manager.get_current_theme())
 

@@ -2928,6 +2928,15 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _show_cover_placeholder(self):
         self._cover_placeholder.show(self.cover_art_label, self._placeholder_color())
 
+    def _on_cover_error(self, message: str) -> None:
+        """CoverPanel's add-cover flow failed (too large, unreadable, or a
+        save/DB failure). Transient (non-sticky) banner, 3s default — matches
+        the old _error_label's own timeout."""
+        self._update_status_banner_ui(
+            text=message,
+            show_banner=True, auto_hide=True,
+        )
+
     def _on_active_cover_changed(self, book_path: str, file_path: str) -> None:
         if not book_path:
             return

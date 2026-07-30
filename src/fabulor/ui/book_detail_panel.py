@@ -80,6 +80,7 @@ class BookDetailPanel(QWidget):
     book_removed = Signal()
     tag_filter_requested = Signal(str)
     open_tag_manager_requested = Signal()
+    cover_error = Signal(str)  # a cover-add failed (too large, unreadable, save/DB failure)
 
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -324,6 +325,7 @@ class BookDetailPanel(QWidget):
         self._cover_panel = CoverPanel(db=self.db, parent=self)
         self._cover_panel.active_cover_changed.connect(self._on_cover_panel_changed)
         self._cover_panel.active_cover_changed.connect(self._refresh_header_cover)
+        self._cover_panel.cover_error.connect(self.cover_error.emit)
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("stats_tabs")
