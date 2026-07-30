@@ -1,3 +1,71 @@
+## Session Summary — 2026-07-30 Session 3 — Text-input selection defects, and two latent bugs an empty field exposed
+
+Follow-on from Session 2's phantom-filter hunt, which had left the Book Detail metadata editor
+under active testing. Three distinct defects were reported there, all initially described as one
+"strange behaviour," and all in fact separate:
+
+**1. Cut with the context-menu icon did nothing.** `ContextIconMenu` is a
+`Qt.WindowType.Popup`, so opening it moves focus off the field. Both `BookDetailPanel` and
+`TagManagerWidget` have a click-outside handler that reverts edits when focus lands outside a
+`safe` tuple of widgets — and the menu itself was not in either tuple. So right-clicking a
+selection to cut it *reverted the edit* before the cut could run, leaving the selection visibly
+highlighted but the field back to its original text. Fixed by adding `self._ctx_menu` to the tuple
+in both panels (`40715cf`). Ctrl+X was never affected, which is why the report was specifically
+about the icon.
+
+**2. Double-clicking a word selected only part of it, and a plain click could select a run of
+text.** Both are one Qt-level defect, not ours: on this desktop a `mouseMoveEvent` with **zero
+displacement** arrives ~40ms after a press while the button is still down, and `QLineEdit` treats
+any move in that window as the start of a drag-select — discarding the word selection and
+re-anchoring mid-word. Measured live with the mouse untouched:
+
+    DOUBLECLICK   sel='Shards'   cursor=6   click_x=21
+    DRAG-CHANGED  sel='Sha'      cursor=3   x=21      <- same x, 40ms later
+
+The downstream damage is worse than the highlight — a following Cut acts on the truncated
+selection, so cutting a double-clicked "Andrew" yields "And" and leaves "rew Kishino" behind. That
+is data loss in a metadata editor. Fixed with `DragSafeLineEdit` (`ui/line_edit_dragfix.py`), which
+ignores moves that have neither travelled `startDragDistance()` (10px) nor been sustained
+`_DRAG_DWELL_MS` (120ms). The distance check alone was insufficient — a stray move can jump well
+past 10px in a single event, which left occasional one-character selections after the first
+attempt. All five of the app's text inputs now use it; no bare `QLineEdit()` remains.
+
+Pryme's framing of this class of work is worth recording: *"What I don't like is trying to work
+around what we don't own. Mouse issues yesterday. Not your code, but the mouse. mpv issues. Not
+your code. Qt issues. Not your code."* — and, on the same thread, that a workaround is not a
+*lesser* kind of fix but a *bigger* one, because it takes on maintenance of somebody else's
+behaviour. The 120ms dwell is the tuning knob if very fast deliberate drags ever start missing.
+
+**3. Clicking a field jumped the caret to Title.** `_enter_edit_mode` unconditionally focused the
+title field, so a click on Narrator selected the narrator text and then moved the caret away —
+selection visibly in one field, cursor in another. Fixed by threading the clicked field through as
+`focus_field` (`8c11b3b`). Two fields can still show selections at once, which is Qt's own
+behaviour; Pryme chose to leave it (*"Qt, you're drunk. Never seen two selected fields before."*).
+
+**Empty fields, and the two latent bugs they exposed.** Deleting a field's text left no way back
+into edit mode for it — with nothing rendered, there was nothing to click. Fixed by giving all four
+fields placeholders and painting them in the read-only branch at 45% alpha. Then, having emptied a
+*title*, the library search crashed: `_apply_filter_and_sort` dereferenced `b.title.lower()` on a
+`None`. The crash landed between `beginResetModel` and `endResetModel`, stranding the model — every
+subsequent filter logged `beginResetModel called ... without calling endResetModel first`, so the
+first exception broke the panel for the rest of the session. Fixed both halves: `(b.title or "")`
+at both dereferences, and `try/finally` around all three `beginResetModel` pairs (`set_books`,
+`sort_books`, `filter_books`) so an exception can never strand the model again (`8678d68`).
+
+The year field got the same treatment as a side-effect of Session 2's `parse_year` work — the
+validator was tightened from unlimited digits to `^-?\d{0,4}$`.
+
+**Test-suite note:** `tests/test_cover_theme_pending.py` was deleted (`9cbd8c5`). It had never
+passed — it was written against `_cover_theme_apply_pending` / `_cover_apply_wait_inflight` /
+`_resolve_cover_source`, none of which have ever existed in `app.py`; they are listed in
+`plans/Findings_260714_...md` as complexity from a fix that was set aside. Suite went from
+4 failed / 309 passed to **309 passed, 0 failed** — the first clean run in weeks.
+
+`[CUT-PROBE]` and `[FIELD-PROBE]` instrumentation remains committed and live (`FABULOR_CUT_PROBE=0`
+silences the former). Strip when the metadata editor is considered settled.
+
+---
+
 ## Session Summary — 2026-07-30 Session 2 — Phantom library filter: right-click armed a target that fired on a later click
 
 A long-standing, unreproducible report: clicking **blank space** on a library row — the normal way

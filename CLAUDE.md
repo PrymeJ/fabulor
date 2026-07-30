@@ -101,6 +101,27 @@ The real library used for day-to-day testing has been ~400 books. That is not re
 
 ## Running the app (Claude Code / Bash tool)
 
+## TEMPORARY: fabulorenv Python is conda-shadowed (2026-07-30)
+
+`fabulorenv/bin/python` symlinks into miniconda (`/home/pryme/miniconda3/bin/python`),
+so conda's `libstdc++.so.6` shadows the system one. Without a workaround:
+- `pytest` fails collection on 8 files
+- `python main.py` won't start at all — `GLIBCXX_3.4.35 not found (required by
+  /lib64/libopenal.so.1)`
+
+The documented `source fabulorenv/bin/activate && python main.py` does NOT
+currently work on its own. Workaround until the venv is rebuilt cleanly:
+
+    LD_PRELOAD=/usr/lib64/libstdc++.so.6 python main.py
+    LD_PRELOAD=/usr/lib64/libstdc++.so.6 pytest tests/ -q
+
+Root fix (not yet done): rebuild fabulorenv without a conda-symlinked
+interpreter, or pin an explicit libstdc++ resolution in the venv activation
+script so this stops requiring a manual prefix every session.
+
+## END OF TEMPORARY
+
+
 **Always activate the venv before running** — do not invoke `fabulorenv/bin/python` directly:
 
 ```bash
@@ -868,6 +889,52 @@ widget holds focus. `ClickSlider` (progress/chapter/volume sliders) is a `QWidge
 `NoFocus` by default with no `keyPressEvent` override — it does not need an explicit call, but do
 not change its base class or add key handling to it without re-adding one.
 
+### DO NOT use a bare `QLineEdit` for a new text input — subclass `DragSafeLineEdit`
+On this app's target desktop (KDE Plasma / Wayland), a `mouseMoveEvent` with **zero displacement**
+arrives ~40ms after a press while the button is still down. `QLineEdit` reads any move in that
+window as the start of a drag-select: it discards a double-click's word selection and re-anchors
+the caret mid-word, and it turns a plain click into a selection running from the press point to the
+release point. In a metadata editor this is data loss, not a cosmetic glitch — a Cut following a
+double-click acts on the truncated selection ("Andrew" → "And", leaving "rew Kishino" behind).
+Measured live with the mouse physically untouched; full traces in NOTES.md, 2026-07-30.
+
+`ui/line_edit_dragfix.py`'s `DragSafeLineEdit` consumes moves that have not **both** travelled
+`QApplication.startDragDistance()` (10px) **and** been sustained `_DRAG_DWELL_MS` (120ms). **Both
+conditions are required** — the distance check alone was the first attempt and left occasional
+one-character selections, because a spurious move can jump well past 10px in a single event. Do not
+simplify it back to a distance-only check.
+
+All five current text inputs use it (library search, sleep custom-duration, tag name, tag input,
+and `_ElidingLineEdit`); no bare `QLineEdit()` remains. The defect is Qt-level and applies to every
+field in the app, so a new input that skips this base class reintroduces it for that field alone —
+which is exactly how it surfaced twice, reported first in Book Detail and then independently in the
+Tags panel.
+
+### DO NOT omit a panel's own popups from a click-outside handler's `safe`-widget allowlist
+A `Qt.WindowType.Popup` (e.g. `ContextIconMenu`) is a separate top-level window. Showing it moves
+focus off the field, and it reads as "outside" by every containment test a click-outside handler
+cheaply runs — including `isAncestorOf`. `BookDetailPanel` and `TagManagerWidget` both revert the
+in-progress edit when focus lands outside a hardcoded `safe` tuple, and the context menu was in
+neither: right-clicking a selection to cut it silently **reverted the edit first**, so the Cut ran
+against a field whose text had already been restored. The selection stays visually highlighted
+through the revert, so the field looks untouched — the reported symptom was just "cut does
+nothing," and Ctrl+X was unaffected, which is what made it look field-specific rather than
+menu-specific (FIXED 2026-07-30, `40715cf`; both panels needed it).
+
+Any click-outside/focus-loss handler with a `safe` allowlist must list every popup that panel can
+spawn. Same shape as the modal-dialog exception in the keyboard-focus-ownership rule above: a
+widget the panel itself opened still reads as foreign to the panel's own containment checks.
+
+### DO NOT leave a `beginResetModel()` without a `finally`-guaranteed `endResetModel()`
+`BookModel.set_books`/`sort_books`/`filter_books` wrap their reset pairs in `try/finally`. An
+exception between the two calls leaves Qt permanently mid-reset: every subsequent filter or sort
+logs `beginResetModel called ... without calling endResetModel first`, and the library panel stays
+broken until the app restarts. One transient exception becomes a session-long outage. This bit for
+real on 2026-07-30 — an emptied book title made `_apply_filter_and_sort` dereference
+`None.lower()`, and the resulting strand broke the panel far more visibly than the crash itself
+(`8678d68`). The `None` guard is fixed too, but **do not remove the `finally` on the grounds that
+the known trigger is handled** — it guards the class of failure, not that one instance.
+
 ---
 
 ## Tech Stack
@@ -1152,6 +1219,7 @@ src/fabulor/
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
     ├── icon_utils.py         # render_logo_placeholder, render_logo_placeholder_bordered — SVG logo placeholder renderers
+    ├── line_edit_dragfix.py  # DragSafeLineEdit — QLineEdit base for ALL text inputs; suppresses Qt's stray-move drag-select
     └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
 ```
 
@@ -1184,7 +1252,30 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-07-28 — theme hover/preview reliability, across two sessions. Session 1 fixed
+*Last updated: 2026-07-30 — across three sessions. Sessions 1-2 hunted a long-standing,
+unreproducible "clicking blank space filters another book's author" report to its root: `editorEvent`
+checked the event *type* but never the *button*, so a right-click over metadata text armed a
+click-to-filter target that right-click never consumes, and it fired on the next unrelated
+left-click (`90bb36a`). Four root causes were proposed and falsified first — the sharpest lesson is
+Pryme's: **don't ask the app whether the click was real, when the app's false belief that a click
+happened IS the bug**; the only discriminating measurements were ones the app doesn't author
+(`QCursor.pos()`, `event.spontaneous()`). A new CLAUDE.md rule covers the related failure of
+treating a user's report of what they DID as a competing theory rather than as data. Session 3
+fixed three separate text-input defects all first reported as one "strange behaviour": Cut via the
+context-menu icon silently reverting the edit (a `Qt.Popup` reads as focus-left-the-field, and the
+menu was missing from both panels' `safe` allowlists); Qt turning a stationary click into a
+drag-select, which truncated double-clicked words and made a following Cut lose data (fixed app-wide
+by `DragSafeLineEdit`, distance **and** dwell — distance alone was tried and was insufficient); and
+the caret jumping to Title regardless of which field was clicked. Emptying a field then exposed two
+latent bugs — no way back into edit mode with nothing rendered (fixed with read-only placeholders),
+and a `None` title crashing the library filter *between* `beginResetModel`/`endResetModel`, which
+stranded the model and broke the panel for the rest of the session (`8678d68`). Four new rules
+above (DragSafeLineEdit, popup allowlists, `finally`-guaranteed `endResetModel`, plus the Session-2
+report-is-data rule). `tests/test_cover_theme_pending.py` deleted — it had never passed, being
+written against three names that never existed in `app.py`; suite is now 309 passed / 0 failed, the
+first clean run in weeks.*
+
+*Previously: 2026-07-28 — theme hover/preview reliability, across two sessions. Session 1 fixed
 three bugs (a hover during a snapback fade was stashed then discarded so no preview ever appeared;
 the `048ae3a` superseded-snapback guard was reverted as a regression, its 775ms flash-then-revert
 now handled structurally by clearing the stash at the interrupt site; the swatch-leave check ended

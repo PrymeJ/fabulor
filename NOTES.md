@@ -1,4 +1,115 @@
 
+## 2026-07-30 — A `Qt.Popup` context menu counts as "focus left the field", so right-click-to-cut reverted the edit
+
+**Symptom:** selecting text in a Book Detail metadata field, right-clicking it, and clicking the
+Cut icon did nothing — the text stayed, still highlighted. Ctrl+X worked fine. Reported
+independently for the Tags panel's tag-name field.
+
+**Root cause.** `ContextIconMenu` is constructed with `Qt.WindowType.Popup`, so showing it takes
+focus away from the `QLineEdit`. Both `BookDetailPanel.eventFilter` and `TagManagerWidget` run a
+click-outside handler that reverts the in-progress edit whenever focus lands outside a hardcoded
+`safe` tuple of widgets. The menu was not in either tuple. So the sequence was: right-click →
+menu shows → focus leaves field → click-outside handler fires → **edit reverted, field restored to
+its original text** → user clicks Cut → `cut()` runs against a field Qt still reports as having a
+selection, but whose text has already been replaced. Nothing observable happens.
+
+Two things made this hard to see from the outside. The selection *remains visually highlighted*
+through the revert, so the field looks untouched and ready. And the icon path never reaches
+`QLineEdit.keyPressEvent`, so the Ctrl+X probe that was already in place could not see it at all —
+a separate `[CUT-PROBE]` had to be added inside `ContextIconMenu.show_for` and `_do_cut`, logging
+`hasSelectedText()`/`selectedText()` at menu-open time (when enablement is decided) and text
+before/after the cut.
+
+**Fix:** add `self._ctx_menu` to the `safe` tuple in both panels (`40715cf`). One-line each; the
+work was entirely in locating it.
+
+**Generalizable:** any click-outside/focus-loss handler with a `safe`-widget allowlist must include
+every popup that panel can spawn. A `Qt.Popup` is a separate top-level window — it is "outside" by
+every test the handler can cheaply run, including `isAncestorOf`. This is the same shape as the
+modal-dialog exception already documented under the keyboard-focus-ownership rule: a widget the
+panel itself opened still reads as foreign to the panel's own containment checks.
+
+---
+
+## 2026-07-30 — Qt turns a stationary click into a drag-select: double-clicked words lose their tail, single clicks select a run
+
+**Symptom, two reports that turned out to be one defect:** (a) double-clicking a word in a metadata
+field highlighted it, then silently shrank the highlight to a prefix — and a following Cut took
+only that prefix, leaving the rest behind; (b) a single click meant to place the caret sometimes
+highlighted everything from the field's left edge to the click point.
+
+**Root cause — not ours.** On this desktop (KDE Plasma / Wayland) a `mouseMoveEvent` with **zero
+displacement** arrives a few tens of ms after a press while the button is still down. `QLineEdit`
+treats any move while the button is down as the start of a drag-select: it discards the word
+selection and re-anchors the cursor to the press position. Measured live, mouse physically
+untouched in both cases:
+
+    DOUBLECLICK   sel='Shards'   cursor=6   click_x=21
+    DRAG-CHANGED  sel='Sha'      cursor=3   x=21      <- same x, 40ms later
+    DOUBLECLICK   sel='Clayton'  cursor=7   click_x=112
+    DRAG-CHANGED  sel='Cl'       cursor=2   x=112     <- same x
+
+The single-click variant shows the same signature with no preceding `DOUBLECLICK` line and
+`was=''`:
+
+    DRAG-CHANGED  sel='Zara Ra'  cursor=7  x=42  was=''
+
+— a selection running from the field's left edge to the click point, a shape a double-click cannot
+produce.
+
+The damage is not cosmetic. In a metadata editor, a Cut against a truncated selection is data loss:
+cutting a double-clicked "Andrew" yields "And" and leaves "rew Kishino" in the field.
+
+**Fix:** `DragSafeLineEdit` (`ui/line_edit_dragfix.py`) — while a button is down, consume moves that
+have not *both* travelled `QApplication.startDragDistance()` (10px here) **and** been sustained
+`_DRAG_DWELL_MS` (120ms). Past that the guard stands down for the rest of the press and Qt takes
+over, so genuine drags still work from their first real movement.
+
+**The distance check alone was not enough** — that was the first attempt, and it left occasional
+one-character selections. A spurious move can jump well past 10px in a single event; only the dwell
+window catches those. Both conditions are required.
+
+Applied to all five text inputs (library search, sleep custom-duration, tag name, tag input, and
+`_ElidingLineEdit` which subclasses it). No bare `QLineEdit()` remains in the app — new inputs
+should use `DragSafeLineEdit`, since the defect is Qt-level and applies everywhere, not to one
+panel.
+
+**Verification trap worth remembering:** my first test of the guard sent a single 78px move and
+reported FAIL — but 78px *is* a legitimate drag, so the guard was right to allow it. The test was
+wrong, not the code. The test that actually discriminates is a 0-9px move (must be consumed) versus
+a 10px+ sustained move (must pass through).
+
+---
+
+## 2026-07-30 — An emptied title crashed the library filter AND stranded the model, breaking the panel for the session
+
+Found by Pryme deliberately emptying every metadata field to test the new placeholder handling —
+*"That was a great way to catch a latent bug."*
+
+**Two independent defects, and the second is the one that mattered.**
+
+1. `_apply_filter_and_sort` dereferenced `b.title.lower()` at two sites with no `None` guard.
+   Nothing had ever written a `NULL` title before — the scanner always derives one from the folder
+   name — so the path was only reachable once inline metadata editing allowed a field to be
+   cleared. `AttributeError: 'NoneType' object has no attribute 'lower'`.
+
+2. **The crash landed between `beginResetModel()` and `endResetModel()`.** Qt was left mid-reset
+   permanently: every subsequent filter or sort logged `beginResetModel called ... without calling
+   endResetModel first` and the library panel stayed broken until restart. One transient exception
+   became a session-long outage.
+
+**Fix (`8678d68`):** `(b.title or "")` at both dereferences, **and** `try/finally` around all three
+`beginResetModel` pairs (`set_books`, `sort_books`, `filter_books`). The `finally` is the load-
+bearing half — it makes any *future* exception in this code recoverable rather than terminal. Do
+not remove it on the grounds that the `None` case is now handled; it is guarding the class, not the
+instance.
+
+Verified with a synthetic `BookModel` containing a `title=None, author=None` book across filters
+`'dune'`, `'e'`, `'_neu'`, `'xyzzy'` (no-match fallback) and `sort_books("title", "ascending")`,
+plus a forced mid-reset exception confirming the model recovers with no Qt warning.
+
+---
+
 ## 2026-07-30 — Phantom library filter: right-click arms a click-to-filter target that fires on a later unrelated click
 
 **Symptom (as reported, and the report was right):** clicking **blank space** on a library row —

@@ -1288,8 +1288,27 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 
 ### Inline metadata editing
 - [ ] Clicking any header field enters edit mode (all four fields become editable)
+- [ ] **The caret lands in the field that was clicked**, not in Title (fixed 2026-07-30 — clicking Narrator used to select the narrator text and then move the caret to Title)
 - [ ] Narrator and year fields appear with placeholders even when previously hidden
 - [ ] Year field rejects non-digit characters; minus sign allowed as first character only
+- [ ] Year field accepts at most 4 digits — typing or **pasting** `14451` cannot produce a 5-digit year (fixed 2026-07-30; the paste path bypassed the old validator and reached the DB)
+- [ ] A negative year (e.g. `-500`) saves and survives a restart
+
+#### Empty fields (added 2026-07-30)
+- [ ] Clearing a field's text and saving leaves a dimmed placeholder ("Title" / "Author" / "Narrator" / "Year") in read-only mode — the field is still visible and still clickable back into edit mode
+- [ ] All four fields can be emptied at once and the panel remains fully navigable (click and Tab both still enter edit mode)
+- [ ] **Library regression:** with a book whose title is empty, open the library and type in the search field — no crash, and the panel keeps working for the rest of the session (fixed 2026-07-30; the crash used to strand the model mid-reset, breaking every subsequent filter and sort until restart)
+- [ ] Same check for an empty author
+- [ ] Sorting by Title and by Author with an empty-titled/empty-authored book present does not crash
+
+#### Text selection with the mouse (added 2026-07-30 — Qt drag-select workaround)
+Applies to **every** text input in the app: Book Detail metadata fields, library search, tag name (Tags panel), tag input (Book Detail), and the sleep-timer custom duration.
+- [ ] Double-clicking a word selects the **whole** word and it stays selected — no silent shrink to a prefix a moment later
+- [ ] Cut/Ctrl+X immediately after a double-click removes the entire word, not a prefix of it (this was real data loss: cutting "Andrew" left "rew Kishino")
+- [ ] A single click places the caret and selects **nothing** — it does not highlight a run of text from the field's left edge to the click point
+- [ ] A deliberate click-and-drag still selects normally, from the first real movement
+- [ ] A deliberate *fast* drag still registers (the 120ms `_DRAG_DWELL_MS` in `ui/line_edit_dragfix.py` is the knob if this starts failing)
+- [ ] Triple-click / select-all and keyboard selection (Shift+arrows, Ctrl+A) are unaffected
 - [ ] Save label appears only when at least one field differs from original value
 - [ ] Save label disappears if edits are reverted back to original values
 - [ ] Enter in any field saves and shows "Saved" for 1 second
@@ -1313,11 +1332,15 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Menu stays within the application window bounds (does not bleed off-edge)
 - [ ] Menu styled correctly with current theme (no system default appearance)
 - [ ] Right-clicking the tag input field shows same menu with correct state
+- [ ] **The edit is not reverted by opening the menu** — select text, right-click, click Cut: the text is actually cut (fixed 2026-07-30; the menu is a `Qt.Popup`, so it read as "focus left the field" and the click-outside handler reverted the edit first, leaving the selection visibly highlighted but the field restored)
+- [ ] Same check after having typed a change: select part of an edited-but-unsaved field, right-click, Cut — the edit is preserved and the cut applies to it
+- [ ] Escape and click-elsewhere still revert the edit as before (the fix must not have disabled click-outside revert generally)
 
 ### Tag name field context menu (Tag manager)
 - [ ] Right-clicking tag name field shows context menu with correct enabled state
 - [ ] All four actions work correctly
 - [ ] Menu dismisses on action and on click-outside
+- [ ] Cut via the icon actually cuts here too — same `Qt.Popup` revert bug, fixed in this panel as well (2026-07-30)
 - [ ] Save updates title and author in library panel immediately (no panel close required)
 - [ ] Save updates narrator and year in library panel immediately (no panel close required)
 - [ ] Rescan after save: locked fields are not overwritten; unlocked fields update from metadata
