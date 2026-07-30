@@ -941,8 +941,23 @@ class LibraryPanel(QFrame):
         if not book:
             return
         if self._delegate.pending_field_filter:
-            field, value = self._delegate.pending_field_filter
+            field, value, src_path = self._delegate.pending_field_filter
             self._delegate.pending_field_filter = None
+            # A pending target belongs to the click that armed it and to no other. It is armed
+            # in BookDelegate.editorEvent (which cannot apply the filter itself — the search
+            # field and _explicit_filter_text live here, on the panel) and consumed here, on the
+            # QListView.clicked that follows. If the book this handler resolved is not the book
+            # the hit-test ran against, the target has outlived its click: drop it and treat the
+            # event as the ordinary book-selection click it is.
+            #
+            # Backstop, not the primary fix — editorEvent's left-button guard is what stops
+            # right-clicks arming orphans in the first place. Kept because nothing else
+            # structurally prevents a target from outliving its click.
+            if src_path != book.path:
+                logger.debug("dropping stale field-filter target %r=%r (armed on %s, "
+                             "consumed on %s)", field, value, src_path, book.path)
+                self.book_selected.emit(book.path)
+                return
             target = f"<{value}>{value}" if field == "year" else value
             # The search field has a maxLength, so set_search(target) may store a truncated
             # string. Compare toggle-off against what the field will ACTUALLY hold (target
@@ -2011,7 +2026,8 @@ class BookDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._apply_theme(theme)
         self.last_event_was_toggle = False
-        self.pending_field_filter = None  # (field, value) or None
+        self.pending_field_filter = None  # (field, value, src_path) or None — src_path is the
+        # book the hit-test ran against, checked on consume so a target can't outlive its click
         self._hover_book = None  # book under cursor, for scroll-tick cursor refresh
         self._view_mode = "3 per row"
         self._alt_row_color = QColor(255, 255, 255, 10)  # overridden by _apply_theme
@@ -2456,13 +2472,33 @@ class BookDelegate(QStyledItemDelegate):
         if not book:
             return False
 
+        # Click-to-filter and the time-label toggle are LEFT-button interactions only.
+        # Right-click in this view belongs to the context menu (setContextMenuPolicy(
+        # Qt.CustomContextMenu) -> customContextMenuRequested -> _on_context_menu ->
+        # detail_requested, which opens Book Detail); middle-click is unbound.
+        #
+        # Without this guard a right-click whose cursor happened to sit over author/narrator/
+        # year text ran the hit-test and armed pending_field_filter — but right-click never
+        # emits QListView.clicked, so _on_item_clicked never consumed it. The orphaned target
+        # then survived arbitrarily long (54s and ~986 repaints in the captured case) until the
+        # next LEFT-click on blank space, which applied an unrelated book's metadata as a
+        # filter. Reported as "clicking blank space to load a book filters some other book's
+        # author" (2026-07-30; full trace in NOTES.md).
+        #
+        # Guard on the BUTTON, not the event type: the press-vs-release distinction below is
+        # about WHEN to act, not WHETHER.
+        if event.button() != Qt.LeftButton:
+            return False
+
         if self._view_mode in ("1 per row", "2 per row", "List"):
             # List author click-to-filter routes through the same flag+poll as grid;
             # _field_filter_target_at needs `option` for the List branch (grid ignores it).
             target = self._field_filter_target_at(book, event.pos(), option)
             if target:
                 if event.type() == _QEvent.Type.MouseButtonRelease:
-                    self.pending_field_filter = target
+                    # book.path travels with the target so _on_item_clicked can verify it is
+                    # consumed by the same click that armed it — see the guard there.
+                    self.pending_field_filter = (target[0], target[1], book.path)
                 return True
 
         live_pos = index.data(ROLE_LIVE_POS) or 0.0
