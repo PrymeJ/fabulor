@@ -1,4 +1,4 @@
-## Session Summary — 2026-07-30 — TODO cleanup pass: three small fixes, and a status-banner bug that grew into a real investigation
+## Session Summary — 2026-07-30 Session 1 — TODO cleanup pass: three small fixes, and a status-banner bug that grew into a real investigation
 
 Started as an attempt to knock off a few small, isolated TODO items. Landed
 three real fixes and closed one TODO item as decided-against:
@@ -66,6 +66,12 @@ established fact. `f6b8c1e`. Full write-up in NOTES.md.
 Three TODO.md items removed (shimmer, tag-revert: done; duplicate-cover
 detection: decided against) — see TODO_ARCHIVE.md for the closed record of
 all three.
+
+Small follow-up: the status banner gets a 1px stripe on its top edge, a new
+optional `bg_status_banner_stripe` theme key falling back to `accent_dark`
+(not `accent` — too bright for a 1px hairline). No `_NO_BASE_INHERIT_KEYS`
+entry needed since every theme already defines its own `accent_dark`,
+confirmed directly rather than assumed.
 
 ---
 

@@ -8,6 +8,7 @@ bg_main:              The primary background color for the main window and panel
 bg_sidebar:           The background color for the sliding sidebar on the left.
 bg_dropdown:          The background color for lists and dropdown menus (like the chapter list and folder list).
 bg_status_banner:     (Optional) The background color for the status banner at the bottom. Fallback: bg_deep, then bg_main.
+bg_status_banner_stripe: (Optional) 1 px stripe color on status_banner's top edge. Fallback: accent_dark.
 bg_image:             (Optional) A string path (e.g., "img/overlook.png") to set a background image for the cover art area.
 panel_opacity_hover:  A float (0.0 to 1.0) defining the transparency of the sidebar and settings panels when interacted with.
 undo_hover:           The color used when hovering over the undo button. Fallback: accent.
@@ -3053,6 +3054,7 @@ def get_base_stylesheet(theme_name="default"):
     t = _resolve_theme(theme_name)
     main_bg_style = _get_gradient_style(t, "bg", t['bg_main'])
     status_banner_bg = t.get('bg_status_banner', t.get('bg_deep', t['bg_main']))
+    status_banner_stripe = t.get('bg_status_banner_stripe', t['accent_dark'])
 
     return f"""
         QWidget#mainwindow {{
@@ -3068,6 +3070,7 @@ def get_base_stylesheet(theme_name="default"):
         QWidget#status_banner {{
             background: {status_banner_bg};
             border-radius: 0px;
+            border-top: 1px solid {status_banner_stripe};
         }}
         QWidget#status_banner QLabel {{
             color: {t['text']};
