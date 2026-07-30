@@ -49,7 +49,6 @@ class DragSafeLineEdit(QLineEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # x of the last double-click; held only until the button comes back up.
         # x where the current button-press began (plain press OR double-click). Held only
         # while the button is down. None means "not guarding" — either no button is down, or
         # the pointer has already travelled far enough to be a real drag.
