@@ -15,8 +15,17 @@ os.environ["MPV_HOME"] = ""
 try:
     from mpv import MPV
 except OSError as e:
+    # Match python-mpv's OWN "not found" wording, not broad component-name
+    # substrings. mpv.py raises this only when ctypes.util.find_library('mpv')
+    # returns None. Any other OSError here is a real CDLL load failure (missing
+    # or mismatched transitive symbol, GLIBCXX version, eagerly-bound BIND_NOW
+    # symbol, ...) and must surface its own message — those errors also contain
+    # "libmpv" in the .so path, so the old substring match rewrote them into
+    # this misleading "not found" text. Cost real debugging time on 2026-07-30,
+    # when a libstdc++/GLIBCXX mismatch and a libcaca/ncurses symbol break both
+    # showed up as "libmpv not found". See NOTES.md, same date.
     msg = str(e)
-    if "libmpv" in msg or "libcaca" in msg or "libtinfo" in msg or "_nc_curscr" in msg:
+    if "Cannot find libmpv in the usual places" in msg:
         raise SystemExit(
             "❌ libmpv not found.\n\n"
             "Install it with:\n"

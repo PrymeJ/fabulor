@@ -1,3 +1,93 @@
+
+## 2026-07-30 — Dev-loop broken after `zypper dup`: GLIBCXX/libstdc++ conflict with conda
+
+**Symptom:** `fabulorentr` crashed on startup with (verbatim):
+
+```
+OSError: /home/pryme/miniconda3/bin/../lib/libstdc++.so.6: version `GLIBCXX_3.4.35' not found (required by /lib64/libopenal.so.1)
+```
+
+Note which object fails: it is *conda's* `libstdc++.so.6`, with `libopenal.so.1` named 
+only as the requirer. No code had changed; a `sudo zypper dup` preceded it.
+
+**Root cause:** `ctypes.CDLL` (called by `python-mpv`'s `mpv.py` to load libmpv) 
+resolves `libstdc++.so.6` via the normal linker path, which finds miniconda's bundled 
+copy (`/home/pryme/miniconda3/lib/libstdc++.so.6`) before the system's. `zypper dup` 
+upgraded system `libopenal.so.1` (an mpv dependency) to a 
+build requiring `GLIBCXX_3.4.35`. Conda's bundled `libstdc++.so.6` only exports up to 
+`GLIBCXX_3.4.34` — confirmed via `strings <lib> | grep GLIBCXX_3.4.3` on both copies. 
+System `/usr/lib64/libstdc++.so.6` has `3.4.35`.
+
+**Two red herrings chased and ruled out during diagnosis, for the record:**
+- **libmpv soname bump.** `zypper dup` also bumped mpv to `0.41.0+git20260309`, 
+  changing the libmpv soname `.so.1` → `.so.2`. Suspected as a second bug, but 
+  `libmpv2` was correctly installed and `ctypes.util.find_library('mpv')` correctly 
+  resolved it standalone. Not an actual issue — `python-mpv` doesn't hardcode a 
+  soversion on Linux, it defers to `find_library`.
+- **libcaca/ncurses ABI break.** `libmpv.so.2` eagerly links `libcaca.so.0`, which 
+  wants `_nc_curscr@NCURSES6_TINFO_5.7.20081102` — a symbol the post-dup 
+  `libncurses6` (`6.6.20260613-109.3`) doesn't export. This is a real, known class of 
+  Tumbleweed rolling-release breakage (one package not yet rebuilt against a bumped 
+  ncurses). **Turned out to need no action**: the venv already carries a 
+  `fabulorenv/lib/stub/libcaca.so.0` shim (in place since April) providing all 20 
+  caca symbols with only `libc.so.6` as a dependency — no ncurses involved. Venv 
+  activation puts this stub on `LD_LIBRARY_PATH` ahead of the system one, so the 
+  real libcaca/ncurses conflict is never reached. Confirmed via `from mpv import MPV` 
+  succeeding against the *unpatched* system `libmpv.so.2`. A `patchelf 
+  --remove-needed libcaca.so.0` workaround was attempted before this was found and 
+  would **not** have worked regardless — libmpv is built `BIND_NOW`, so stripping the 
+  NEEDED entry just leaves all 20 caca PLT slots undefined and eagerly-bound, 
+  producing a new crash (`undefined symbol: caca_get_dither_antialias_list`) instead.
+
+**Why this took as long as it did:** `player.py`'s import guard substring-matched 
+`"libmpv"`/`"libcaca"`/`"libtinfo"`/`"_nc_curscr"` and rewrote any match into 
+"❌ libmpv not found." A real `CDLL` load failure contains the `.so` path, so it always 
+matched — both the GLIBCXX mismatch and the caca/ncurses issue presented as the same 
+generic not-found message despite being different problems with different fixes. The 
+diagnostic signal was destroyed at the point of failure, so each layer had to be 
+uncovered by hand.
+
+Note the shape: three stacked issues surfaced strictly in order, each hidden behind the 
+previous, and two of the three turned out to need no action at all. There was never a 
+point where all three were visible at once. Don't assume a single root cause after a 
+`dup`.
+
+**Fix:** `~/.bashrc`'s `fabulorentr` function now exports 
+`LD_PRELOAD=/usr/lib64/libstdc++.so.6` before launching, forcing the system 
+libstdc++ to satisfy the symbol instead of conda's older bundled one. Scoped to 
+just that function (not `LD_LIBRARY_PATH`, not `activate`) — an earlier attempt to 
+fix this by prepending `/usr/lib64` to `LD_LIBRARY_PATH` broke PySide6 instead, 
+since it made the *system* Qt6 (also bumped by the same `dup`, to a build requiring 
+`Qt_6.11.1_PRIVATE_API`) shadow the venv's bundled PySide6 Qt libs.
+
+**If this resurfaces after a future `zypper dup`:** re-check with 
+`strings /usr/lib64/libstdc++.so.6 | grep GLIBCXX_3.4.3` vs. the conda copy first — 
+don't re-diagnose from scratch. The libcaca stub in `fabulorenv/lib/stub` should 
+continue to insulate against any future libcaca/ncurses skew on its own; only 
+re-investigate that angle if `from mpv import MPV` fails with a caca/ncurses symbol 
+error even with the stub present (would suggest the stub itself needs updating, not 
+that this is a new issue).
+
+**After editing `fabulorentr`, run `source ~/.bashrc`.** Bash resolves function bodies 
+at source time, so an already-open shell holds the pre-edit definition and will fail 
+identically — this cost a round trip during this very fix, with the corrected function 
+already on disk. `type fabulorentr` confirms which definition is loaded; bash strips 
+comments from stored bodies, so their absence in that output is normal and not a sign 
+the edit is missing.
+
+**Update, same day — fix landed.** `player.py:19` now matches only 
+`"Cannot find libmpv in the usual places"` (python-mpv's own not-found wording) 
+instead of the four broad component-name substrings. Verified three ways: (1) with 
+`LD_PRELOAD` unset, the real GLIBCXX/libopenal error now surfaces verbatim with its 
+full traceback, instead of the misleading generic message; (2) stubbing 
+`find_library('mpv')` to `None` still produces the friendly install message 
+correctly; (3) normal `fabulorentr` launch unaffected, 15s clean. 
+
+Noted in passing, not touched: `mpv.py`'s Windows branch (line ~60) raises a 
+second, separately-worded OSError for a DLL-found-but-CDLL-couldn't-load-it case — 
+already specific, correctly falls through to `raise` unmodified, no fix needed 
+there.
+
 ## FIXED: cancelling a library scan left the worker thread running forever and its "Scan cancelled." banner stuck (2026-07-30)
 
 Found while live-verifying the previous status-banner fixes (below): cancelling
