@@ -58,6 +58,39 @@ The check is cheap: before offering an explanation, ask whether you verified it 
 constructed it. If constructed, say so in the same sentence. "I don't know yet" is a complete and
 acceptable answer; a confident wrong one costs a round of Pryme's testing time.
 
+### A report about what Pryme DID is data, not a competing theory — the next action is a lookup, not a restatement
+
+A wrong theory that gets checked against evidence and dropped is working as intended; that is how
+the correct one gets bought. The failure mode is narrower and worth naming exactly: **inferring that
+an action occurred because a data structure implies it should have, then defending the inference
+when Pryme says it didn't happen.**
+
+2026-07-30, the phantom-filter hunt: a stale `pending_field_filter` target held
+`('narrator', 'Colin Mace')`. Claude wrote "at some earlier point you left-clicked Colin Mace"
+— reasoning backwards from the target's existence to the click that normally creates it. Pryme had
+already said thrice, across the session, that he never clicks author/narrator/year fields. The
+arming event was **two greps away** in a log already open, and said `button=2` — a *right*-click,
+which armed the target through a code path that checked event type but never button. The narrative
+was coherent and wrong; the log was one query away and right.
+
+The distinction that matters: Pryme reporting *what he did* or *what he sees* is an observation
+about the system's real input, not a hypothesis to be weighed against Claude's. Weighing it as a
+hypothesis is a category error — the same one the "user sees the rendered pixels" rule covers for
+visual matters, generalized to actions. So:
+
+- When a report contradicts an inference, **the inference is the suspect.** Go find the evidence
+  that would settle it before restating the claim even once more.
+- Do not ask Pryme to re-describe what he already stated plainly. That is stalling dressed as
+  diligence (see the sidebar instance above).
+- Not the same as accepting everything uncritically — Pryme has said so directly. Check the claim
+  against evidence; just check it *instead of* arguing, and treat "I didn't do that" as pointing at
+  where to look, not as something to overcome.
+
+A related trap from the same session: a claim was correctly made ("the DB accepted the bad year"),
+then **wrongly retracted** on the basis of a query run *after* Pryme had manually deleted the row.
+Absence-after-cleanup is not evidence about the original write. Before retracting, confirm the new
+evidence actually bears on the original claim.
+
 ---
 
 ## Design and test against library sizes an order of magnitude beyond what's on hand
