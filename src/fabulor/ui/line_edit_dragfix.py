@@ -41,7 +41,16 @@ handling and applies to every field in the app, not to one panel — it was firs
 Detail's metadata fields and then independently in the Tags panel.
 """
 
+from PySide6.QtCore import QElapsedTimer
 from PySide6.QtWidgets import QLineEdit, QApplication
+
+# A drag must be sustained, not instantaneous. Spurious movement arrives as a single event a few
+# tens of ms after the press (measured: ~40ms after a double-click), so anything inside this
+# window is treated as noise no matter how far it claims to have travelled — the distance check
+# alone cannot catch a stray move that jumps well past the 10px threshold in one event, which is
+# what left an occasional one-character selection after the first fix. A deliberate press-drag
+# takes far longer than this to begin, so the window costs real drags nothing.
+_DRAG_DWELL_MS = 120
 
 
 class DragSafeLineEdit(QLineEdit):
@@ -53,21 +62,29 @@ class DragSafeLineEdit(QLineEdit):
         # while the button is down. None means "not guarding" — either no button is down, or
         # the pointer has already travelled far enough to be a real drag.
         self._press_anchor_x = None
+        # Time since that press, for the dwell check below.
+        self._press_timer = QElapsedTimer()
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         self._press_anchor_x = event.position().toPoint().x()
+        self._press_timer.start()
 
     def mouseDoubleClickEvent(self, event):
         super().mouseDoubleClickEvent(event)
         self._press_anchor_x = event.position().toPoint().x()
+        self._press_timer.start()
 
     def mouseMoveEvent(self, event):
         anchor = self._press_anchor_x
         if anchor is not None:
-            if abs(event.position().toPoint().x() - anchor) < QApplication.startDragDistance():
-                # Sub-threshold movement while the button is down. Consume it so QLineEdit
-                # never starts a drag-select.
+            far_enough = (abs(event.position().toPoint().x() - anchor)
+                          >= QApplication.startDragDistance())
+            held_long_enough = self._press_timer.elapsed() >= _DRAG_DWELL_MS
+            if not (far_enough and held_long_enough):
+                # Not yet a real drag — either it hasn't travelled far enough, or it moved too
+                # soon after the press to be intentional. Consume it so QLineEdit never starts
+                # a drag-select.
                 #
                 # After a DOUBLE-click this preserves the word selection, which Qt would
                 # otherwise discard, re-anchoring the caret mid-word ('Shards' -> 'Sha').
@@ -79,7 +96,7 @@ class DragSafeLineEdit(QLineEdit):
                 # A click should place the caret; only a deliberate drag should select.
                 event.accept()
                 return
-            # Travelled far enough to be intentional: stand down for the rest of this press.
+            # Far enough AND sustained: a real drag. Stand down for the rest of this press.
             self._press_anchor_x = None
         super().mouseMoveEvent(event)
 

@@ -146,9 +146,20 @@ class _ElidingLineEdit(DragSafeLineEdit):
         # 2 is Qt's hardcoded internal horizontal text margin for QLineEdit.
         rect = self.rect().adjusted(3, 0, -2, 0)
         fm = QFontMetrics(self.font())
-        elided = fm.elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
         painter.setFont(self.font())
-        painter.setPen(self.palette().text().color())
+        # An empty field falls back to its placeholder, dimmed — this branch replaces Qt's own
+        # painting entirely, so without it an emptied title or author renders as a completely
+        # blank row at rest, with nothing to say it is an editable field. (Qt only draws
+        # placeholders itself, in the non-read-only branch above.)
+        text = self.text()
+        if text:
+            painter.setPen(self.palette().text().color())
+        else:
+            text = self.placeholderText()
+            colour = QColor(self.palette().text().color())
+            colour.setAlphaF(0.45)
+            painter.setPen(colour)
+        elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided)
         painter.end()
 
@@ -251,8 +262,13 @@ class BookDetailPanel(QWidget):
             edit.returnPressed.connect(self._on_inline_save)
             return edit
 
-        self._title_label    = make_field("book_detail_title")
-        self._author_label   = make_field("book_detail_author")
+        # All four carry a placeholder. Title and author had none — the assumption being that a
+        # book always has both — but they can be emptied from this very panel, leaving two blank
+        # unlabelled rows with no hint that they are editable at all (narrator and year still
+        # showed theirs). Recovering meant unlocking and rescanning, or knowing to click/Tab into
+        # invisible fields.
+        self._title_label    = make_field("book_detail_title",    placeholder="Title")
+        self._author_label   = make_field("book_detail_author",   placeholder="Author")
         self._narrator_label = make_field("book_detail_narrator", placeholder="Narrator")
         self._year_label     = make_field("book_detail_year",     placeholder="Year")
 
@@ -1488,9 +1504,15 @@ class BookDetailPanel(QWidget):
 
     def _on_field_click(self, event, field):
         QLineEdit.mousePressEvent(field, event)
-        self._enter_edit_mode()
+        # Enter editing on the field that was actually clicked. Without focus_field this
+        # always jumped to the title, throwing away both the field the user picked and the
+        # caret position the click above had just set.
+        self._enter_edit_mode(focus_field=field)
 
-    def _enter_edit_mode(self):
+    def _enter_edit_mode(self, focus_field=None):
+        """focus_field: which field receives focus once editing starts. Defaults to the title,
+        which is right for Tab/keyboard entry (start at the first field) but wrong for a click
+        — a click has already said which field the user wants."""
         if self._editing:
             return
         self._editing = True
@@ -1501,12 +1523,17 @@ class BookDetailPanel(QWidget):
         self._orig_year     = self._year_label.text()
         self._narrator_label.setVisible(True)
         self._year_label.setVisible(True)
+        target = focus_field or self._title_label
         for field in (self._title_label, self._author_label,
                       self._narrator_label, self._year_label):
             field.setReadOnly(False)
             field.setCursor(Qt.CursorShape.IBeamCursor)
-            field.setCursorPosition(0)
-        self._title_label.setFocus()
+            # Don't reset the caret on the field being entered by click — mousePressEvent has
+            # already placed it where the user clicked, and setCursorPosition(0) would send it
+            # back to the start (and drop any selection a drag had just made).
+            if field is not target:
+                field.setCursorPosition(0)
+        target.setFocus()
 
     def _on_meta_action_hover(self, hover: bool):
         """Updates button opacity on hover."""
