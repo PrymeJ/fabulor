@@ -785,11 +785,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
     `_close_session`/`_on_file_ready`/`_on_book_selected_from_library` specifically, but session-close
     logic has since moved into `SessionRecorder.close()`, so those exact function names are gone;
     the underlying ask (strip leftover debug prints before release) still applies to what's there now.
-  - **[added 2026-07-30]** Strip the `[CUT-PROBE]` instrumentation (`ui/text_context_menu.py`,
-    `ui/book_detail_panel.py`, gated by `FABULOR_CUT_PROBE`) and the `[FIELD-PROBE]` instrumentation
-    (`ui/library.py`). Both were committed deliberately while the metadata editor and the phantom
-    click-to-filter bug were under live test; the underlying bugs are fixed, so these are removable
-    once the editor is considered settled.
   See NOTES.md "Cleanup Deferrals — Pre-existing, Deliberate" (~line 2108) for original context.
 
 - **[FUTURE REDESIGN, 2026-07-14] Incremental/`@Property` color animation instead of whole-theme

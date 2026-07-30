@@ -117,8 +117,11 @@ passed — it was written against `_cover_theme_apply_pending` / `_cover_apply_w
 `plans/Findings_260714_...md` as complexity from a fix that was set aside. Suite went from
 4 failed / 309 passed to **309 passed, 0 failed** — the first clean run in weeks.
 
-`[CUT-PROBE]` and `[FIELD-PROBE]` instrumentation remains committed and live (`FABULOR_CUT_PROBE=0`
-silences the former). Strip when the metadata editor is considered settled.
+`[CUT-PROBE]` and `[RECT-BLEED]` instrumentation was left committed and live through testing, then
+stripped at the end of Session 4 (`383f408`) once all three bugs were confirmed fixed. Stripping it
+removed five `_ElidingLineEdit` mouse/key overrides that existed only to log — with the probe gone
+each was a bare `super()` call; the drag-select guard they were measuring lives in
+`DragSafeLineEdit` and was untouched.
 
 ---
 
