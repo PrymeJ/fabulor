@@ -11,6 +11,7 @@ from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .text_context_menu import ContextIconMenu
+from .line_edit_dragfix import DragSafeLineEdit
 
 MAX_TAG_LENGTH = 20
 
@@ -309,7 +310,7 @@ class TagManagerWidget(QWidget):
         name_row.setContentsMargins(4, 0, 0, 0)
         name_row.addWidget(self._detail_dot)
 
-        self._tag_name_edit = QLineEdit()
+        self._tag_name_edit = DragSafeLineEdit()
         self._tag_name_edit.setObjectName("tag_name_field")
         self._tag_name_edit.setMaxLength(MAX_TAG_LENGTH)
         self._tag_name_edit.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -586,7 +587,13 @@ class TagManagerWidget(QWidget):
                     w.mapToGlobal(w.rect().bottomRight())
                 ).contains(gpos)
 
-            safe = (self._tag_name_edit, self._action_btn)
+            # _ctx_menu belongs here: it is the Cut/Copy/Paste menu for _tag_name_edit itself,
+            # so clicking it is not "clicking outside the edit". Without it, pressing Cut ran
+            # _revert_tag_name() first — which setText()s the field back to the original name
+            # and clears the selection — so the button's handler then cut nothing, and the
+            # in-progress rename was silently discarded. Same defect and same fix as
+            # BookDetailPanel.eventFilter's safe tuple (2026-07-30).
+            safe = (self._tag_name_edit, self._action_btn, self._ctx_menu)
             if not any(hits(w) for w in safe):
                 self._revert_tag_name()
         return super().eventFilter(obj, event)
