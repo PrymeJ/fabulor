@@ -2042,7 +2042,9 @@ class BookDelegate(QStyledItemDelegate):
         # (path, field) → [offset, direction, pause_ticks]  direction: -1=left, 1=right
         self._scroll_state: dict    = {}
         self._scroll_hovered_path   = ""
-        self._scroll_field_rects: dict = {}  # path → {field: (x, y, w, h, full_text_w)}
+        # (path, view_mode) → {field: (x, y, w, h, full_text_w)} — see _rect_key for why the
+        # key carries the mode. NOTE _scroll_state above stays keyed (path, field), no mode.
+        self._scroll_field_rects: dict = {}
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setInterval(40)
         self._scroll_timer.timeout.connect(self._advance_scroll)
@@ -2221,6 +2223,21 @@ class BookDelegate(QStyledItemDelegate):
         self._view_mode = mode
         self._update_pulse_timer()
 
+    def _rect_key(self, path: str):
+        """Key into _scroll_field_rects. Composite (path, view_mode) because each mode paints the
+        same book's fields at DIFFERENT coordinates and with a different field SET — 1-per-row is
+        the only mode writing narrator/year, and text_x/text_w differ per mode (1-per-row's text
+        column starts at r.x()+112, 2-per-row's at the cover's left edge). Keyed on the LIVE
+        self._view_mode at call time so a read can never resolve against another mode's geometry;
+        a mode's entries simply become unreachable on switch rather than needing to be wiped.
+
+        Deliberately the raw mode string, NOT a collapsed grid key: "3 per row" and "Square"
+        currently produce identical text rects (same _GRID_MARGINS, same FONT_SIZES), so
+        collapsing them would work today — but that equivalence is hand-maintained across
+        _GRID_MARGINS/FONT_SIZES/ITEM_DIMENSIONS and has already been silently invalidated once
+        (the margins were unified after the comment at the top of this file was written)."""
+        return (path, self._view_mode)
+
     def set_playing_path(self, path: str) -> None:
         self._playing_path = path or ""
         self._update_pulse_timer()
@@ -2329,7 +2346,7 @@ class BookDelegate(QStyledItemDelegate):
     def on_hover_move(self, path: str, viewport_pos) -> None:
         if self._view_mode not in ("1 per row", "2 per row", "3 per row", "Square"):
             return
-        rects = self._scroll_field_rects.get(path, {})
+        rects = self._scroll_field_rects.get(self._rect_key(path), {})
         field_under = None
         for field, (fx, fy, fw, fh, _) in rects.items():
             if fx <= viewport_pos.x() < fx + fw and fy <= viewport_pos.y() < fy + fh:
@@ -2338,7 +2355,7 @@ class BookDelegate(QStyledItemDelegate):
         self._start_scroll_for_path(path, field_override=field_under)
 
     def _start_scroll_for_path(self, path: str, field_override: str = None) -> None:
-        rects = self._scroll_field_rects.get(path, {})
+        rects = self._scroll_field_rects.get(self._rect_key(path), {})
         if not rects:
             return
         elided = {f for f, (_, _, fw, _, ftw) in rects.items() if ftw > fw}
@@ -2370,8 +2387,14 @@ class BookDelegate(QStyledItemDelegate):
         changed = False
         for key, state in list(self._scroll_state.items()):
             path, field = key
-            rects = self._scroll_field_rects.get(path, {})
+            rects = self._scroll_field_rects.get(self._rect_key(path), {})
             if field not in rects:
+                # Also the self-heal for a view-mode switch with a live marquee: _scroll_state
+                # is keyed (path, field) with no mode, so after a switch this lookup resolves
+                # to the NEW mode's key, which either doesn't exist yet (cell not repainted) or
+                # lacks the field (e.g. narrator, which only 1-per-row writes) — either way the
+                # stale entry drops within one 40ms tick, and the empty-dict guard at the top
+                # of this method then stops the timer.
                 del self._scroll_state[key]
                 continue
             _, _, fw, _, ftw = rects[field]
@@ -2627,7 +2650,7 @@ class BookDelegate(QStyledItemDelegate):
                 painter.restore()
             else:
                 painter.drawText(text_x, row_text_y + fm.ascent(), fm.elidedText(value, Qt.ElideRight, text_w))
-        self._scroll_field_rects[book.path] = field_rects
+        self._scroll_field_rects[self._rect_key(book.path)] = field_rects
 
         # Bottom block
         HPAD = -2
@@ -2729,7 +2752,7 @@ class BookDelegate(QStyledItemDelegate):
         self._draw_scrollable_field(
             painter, path=book.path, field="author", value=book.author or "",
             x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects)
-        self._scroll_field_rects[book.path] = field_rects
+        self._scroll_field_rects[self._rect_key(book.path)] = field_rects
 
         # Hover overlay over cover rect — also shown for the keyboard-selected row, same as a
         # mouse hover would, so duration/progress is visible while navigating with the keys.
@@ -2739,7 +2762,8 @@ class BookDelegate(QStyledItemDelegate):
     def _draw_scrollable_field(self, painter, *, path, field, value, x, y, w, color, field_rects, center=False) -> int:
         """Draw one text field: elide at rest, scroll the active hovered field if it overflows.
         Records field_rects[field] = (x, y, w, line_h, full_w) (caller owns the final
-        self._scroll_field_rects[path] = field_rects assignment). Returns the line height.
+        self._scroll_field_rects[self._rect_key(path)] = field_rects assignment — note the
+        mode-scoped key). Returns the line height.
         When center=True and the text fits (no scroll), it is horizontally centered in w.
         Modeled on the original 1-/2-per-row per-field draw."""
         self._set_font(painter, mode=self._view_mode, field=field)
@@ -2795,7 +2819,12 @@ class BookDelegate(QStyledItemDelegate):
             self._draw_cover(painter, cover_rect, cover, book, square=square, bg=self._grid_bg)
             # Drop any stale field-rect entry (e.g. book gained a cover after a no-cover paint),
             # else phantom scroll zones would linger on this real-cover cell until restart.
-            self._scroll_field_rects.pop(book.path, None)
+            # Still required after the (path, mode) re-key: this guards a SAME-mode transition
+            # (no-cover paint writes text rects → cover resolves async → this branch draws no
+            # text and returns early, so nothing would ever overwrite them). Scoped to the
+            # current mode now — another mode's entry for this book is unreachable from here
+            # anyway, and gets popped by this same line when that mode next repaints the cell.
+            self._scroll_field_rects.pop(self._rect_key(book.path), None)
             if hovered or is_kbd_selected:
                 self._draw_hover_overlay(painter, cover_rect, book, show_rem, live_pos, live_dur, large=False)
             return
@@ -2817,7 +2846,7 @@ class BookDelegate(QStyledItemDelegate):
         author_h = self._draw_scrollable_field(
             painter, path=book.path, field="author", value=book.author or "",
             x=text_x, y=text_y, w=text_w, color=self._color_author, field_rects=field_rects, center=True)
-        self._scroll_field_rects[book.path] = field_rects
+        self._scroll_field_rects[self._rect_key(book.path)] = field_rects
 
         # Logo centered in the area below the text rows.
         logo_top = text_y + author_h + 2
@@ -3341,14 +3370,24 @@ class BookDelegate(QStyledItemDelegate):
         """Returns 'author'/'narrator'/'year' if pos hits that field's actual rendered text
         (not its full layout slot) for the given book path in 1-/2-per-row mode, else None.
         This is the field-level hit-test; _field_filter_target_at layers segment resolution
-        on top for multi-value author/narrator."""
-        rects = self._scroll_field_rects.get(path, {})
+        on top for multi-value author/narrator.
+
+        The rect lookup is mode-scoped (_rect_key), so rects painted under a different view
+        mode are unreachable here — a mode switch whose repaint hasn't landed yet reads as
+        'no rects for this book' (returns None) rather than hit-testing stale geometry."""
+        rects = self._scroll_field_rects.get(self._rect_key(path), {})
         for field in ("author", "narrator", "year"):
             if field not in rects:
                 continue
             fx, fy, fw, fh, full_w = rects[field]
             hit_w = min(full_w, fw)
             if fx <= pos.x() < fx + hit_w and fy <= pos.y() < fy + fh:
+                # TEMP PROBE — strip before commit. Regression tripwire only: this invariant is
+                # ALREADY structurally guaranteed by editorEvent's mode gate, so a clean run is
+                # not by itself proof the re-key works (the off-screen-click repro is).
+                if field in ("narrator", "year") and self._view_mode != "1 per row":
+                    logger.warning("[RECT-BLEED] %s returned in mode %s (path=%s)",
+                                   field, self._view_mode, path)
                 return field
         return None
 
@@ -3494,7 +3533,7 @@ class BookDelegate(QStyledItemDelegate):
         field isn't multi-segment or the point misses every visible segment — INCLUDING a point
         in the separator gap between two names, which owns no segment and is therefore a dead
         zone (no filter, cursor stays default). Works whether the marquee is moving or still."""
-        rects = self._scroll_field_rects.get(book_path, {})
+        rects = self._scroll_field_rects.get(self._rect_key(book_path), {})
         if field not in rects:
             return None
         fx, fy, fw, fh, _ = rects[field]
