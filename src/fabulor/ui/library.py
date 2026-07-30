@@ -1827,14 +1827,16 @@ class BookModel(QAbstractListModel):
 
     def set_books(self, books: list[Book]) -> None:
         self.beginResetModel()
-        self._books = list(books)
+        try:                                   # see filter_books for why this is guarded
+            self._books = list(books)
 
-        # Retain live position only for the currently playing book
-        self._live_pos = {k: v for k, v in self._live_pos.items() if k == self._playing_id}
-        self._live_dur = {k: v for k, v in self._live_dur.items() if k == self._playing_id}
+            # Retain live position only for the currently playing book
+            self._live_pos = {k: v for k, v in self._live_pos.items() if k == self._playing_id}
+            self._live_dur = {k: v for k, v in self._live_dur.items() if k == self._playing_id}
 
-        self._apply_filter_and_sort()
-        self.endResetModel()
+            self._apply_filter_and_sort()
+        finally:
+            self.endResetModel()
 
     def set_finished_dates(self, dates: dict) -> None:
         self._finished_dates = dates
@@ -1881,14 +1883,24 @@ class BookModel(QAbstractListModel):
         self._sort_field = field
         self._sort_direction = direction
         self.beginResetModel()
-        self._apply_filter_and_sort()
-        self.endResetModel()
+        try:                                   # see filter_books for why this is guarded
+            self._apply_filter_and_sort()
+        finally:
+            self.endResetModel()
 
     def filter_books(self, text: str) -> None:
         self._filter_text = text.lower()
         self.beginResetModel()
-        self._apply_filter_and_sort()
-        self.endResetModel()
+        # try/finally so an exception in the filter can never strand the model between
+        # begin/endResetModel. It stranded once for real: a book whose title had been emptied
+        # from the Book Detail panel made the filter raise on None.lower(), so endResetModel()
+        # never ran, and every later keystroke hit "beginResetModel called ... without calling
+        # endResetModel first" — a broken model on top of the original error. Guarding the pair
+        # is worth it regardless of that specific cause being fixed.
+        try:
+            self._apply_filter_and_sort()
+        finally:
+            self.endResetModel()
         # True if filter is active and produced no results (# alone is not a real filter)
         self.filter_empty = self._filter_no_match
 
@@ -1942,13 +1954,13 @@ class BookModel(QAbstractListModel):
             elif text.startswith('_'):
                 # Title-starts-with match (title only). text is already lowercased upstream.
                 prefix = text[1:]
-                matched = [b for b in source if b.title.lower().startswith(prefix)]
+                matched = [b for b in source if (b.title or "").lower().startswith(prefix)]
                 self._filter_no_match = not matched
                 books = matched if matched else list(source)
             else:
                 matched = [
                     b for b in source
-                    if text in b.title.lower()
+                    if text in (b.title or "").lower()
                     or text in (b.author or "").lower()
                     or text in (b.narrator or "").lower()
                     or (b.year is not None and len(text) == 4 and text.isdigit() and text == str(b.year))
