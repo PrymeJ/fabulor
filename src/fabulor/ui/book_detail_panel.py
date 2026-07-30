@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegul
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 
+from ..db import parse_year
 from .cover_loader import to_grayscale
 from .stats_panel import _RangeBar
 from .flow_layout import FlowLayout
@@ -169,8 +170,15 @@ class BookDetailPanel(QWidget):
             _meta_field.customContextMenuRequested.connect(
                 lambda pos, f=_meta_field: self._ctx_menu.show_for(f, f.mapToGlobal(pos))
             )
+        # Up to 4 digits, optional leading minus (negative years are deliberate — books written
+        # before year 0). The digit cap is real validation, not cosmetic: without it the field
+        # accepted any length, and a pasted 5+ digit value was written straight through
+        # _commit_inline_save and db.update_book_metadata into books.year, where it persisted
+        # across restarts and produced a "<14451>14451" year-range filter on any year-click for
+        # that book (2026-07-30, see NOTES.md). _commit_inline_save re-checks the range, so a
+        # paste that bypasses the validator still cannot commit.
         self._year_label.setValidator(
-            QRegularExpressionValidator(QRegularExpression(r'^-?\d*$'))
+            QRegularExpressionValidator(QRegularExpression(r'^-?\d{0,4}$'))
         )
         for _f in (self._narrator_label, self._year_label):
             _sp = _f.sizePolicy()
@@ -1472,7 +1480,7 @@ class BookDetailPanel(QWidget):
         if narrator != self._orig_narrator: self._locks['narrator'] = True
         if year_str != self._orig_year: self._locks['year'] = True
 
-        year_int = int(year_str) if year_str.isdigit() else None
+        year_int = parse_year(year_str)
         if self.db.update_book_metadata(self._book_path, title, author, narrator, year_str):
             self.db.set_metadata_locks(self._book_path, **self._locks)
             self._book_data.update({

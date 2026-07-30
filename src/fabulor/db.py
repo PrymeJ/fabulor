@@ -5,6 +5,33 @@ from contextlib import contextmanager
 from .models.book import Book
 import platformdirs
 
+# Year bounds for book metadata. Negative years are deliberate (books written before year 0);
+# the magnitude cap is what stops a pasted or typed junk value reaching books.year, where it
+# persists across restarts and shows up as a "<14451>14451" year-range filter on any year-click
+# for that book (2026-07-30, see NOTES.md). Every write path to books.year must go through
+# parse_year — the widget validator is a convenience, not the enforcement point.
+YEAR_MIN = -9999
+YEAR_MAX = 9999
+
+
+def parse_year(value) -> "int | None":
+    """Parse a user-supplied year to int, or None if absent/malformed/out of range.
+
+    Silently drops invalid input rather than raising — a bad year is never worth failing an
+    otherwise-valid metadata save over. Accepts a leading minus (str.isdigit() does NOT, which
+    is why negative years silently failed to persist before this existed)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        year = int(text)
+    except (TypeError, ValueError):
+        return None
+    return year if YEAR_MIN <= year <= YEAR_MAX else None
+
+
 class LibraryDB:
     """Handles all SQLite database operations for the audiobook library."""
     
@@ -1276,7 +1303,7 @@ class LibraryDB:
                     """UPDATE books
                     SET title=?, author=?, narrator=?, year=?
                     WHERE path=?""",
-                    (title or None, author or None, narrator or None, int(year) if year and year.strip().isdigit() else None, path)
+                    (title or None, author or None, narrator or None, parse_year(year), path)
                 )
             return True
         except Exception:
