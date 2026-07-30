@@ -29,16 +29,15 @@ Checked every other percentage display before calling it done — book detail (�
 all keep a decimal (`.1f` when non-integral) so they never truncate; `app.py:2361`'s `int(percent * 10)`
 is a persistence throttle, not a display. The library was the only site with the mismatch.
 
-**One claim left unresolved.** The change was reported as also fixing "library showed 99.5% as 100%
-before the book was finished." Checked directly, and it does not: at 99.5% the old code showed
-`99%` and the new code still shows `99%`. The change goes the *other* way at the top end —
-99.95%-99.99% now reads `100%` where it used to read `99%`, so premature-100% became slightly more
-likely, not less. Nothing in this commit can turn a 100% into a 99%; the new value is always ≥ the
-old. Possible the observation was of the progress **bar** (`int(rect.width() * pct)` — 119 of 120px
-at 99.5%, visually full) rather than the digits, but that is a guess and was not confirmed. If a
-book reading `100%` before it is finished is unwanted, that is a separate fix (clamp to 99% until
-genuinely finished) and would deliberately put the library back out of step with the header, which
-shows `100.0%` from 99.95% up.
+**One claim raised, checked, and closed live.** The change was reported as also fixing "library
+showed 99.5% as 100% before the book was finished." It does not, and cannot: at 99.5% the old code
+showed `99%` and the new code still shows `99%` — nothing here can turn a 100% into a 99%, since
+the new value is always ≥ the old. The change goes the *other* way at the top end (99.95%-99.99%
+now reads `100%` where it used to read `99%`). Confirmed live immediately after: a book at 99.6%
+header / `99%` library, holding `99%` until the header itself reached 100.0% with 27 seconds left
+of 15h51m — the correct pairing, and the behaviour wanted. Both displays drop the decimal from the
+same number, so they track together all the way to the end. No follow-up needed; the earlier report
+was a misattribution, not an open issue.
 
 `tests/test_library_percentage.py` (22 tests). Suite: **422 passed, 0 failed**. `252685a`.
 
