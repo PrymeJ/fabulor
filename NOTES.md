@@ -1,4 +1,98 @@
 
+## 2026-07-30 — Phantom library filter: right-click arms a click-to-filter target that fires on a later unrelated click
+
+**Symptom (as reported, and the report was right):** clicking **blank space** on a library row —
+the normal way to load a book — sometimes puts a filter in the search field instead. The value is
+a real author/narrator/year, but belongs to a *different* book. Clicking an actual metadata field
+always worked correctly. Unreproducible on demand; appeared over several days, correlating with a
+period of Book Detail metadata-editor testing.
+
+**Root cause — three independent defects, stacked.** Reproduction requires the first two:
+
+1. **`editorEvent` (`library.py`) does not check which mouse button was pressed.** Its only guard
+   is `event.type() == MouseButtonRelease`. A **right-click** release runs the field hit-test and
+   arms `pending_field_filter` exactly like a left-click. Right-click's actual job in this view is
+   Book Detail (`setContextMenuPolicy(Qt.CustomContextMenu)` →
+   `customContextMenuRequested` → `_on_context_menu` → `detail_requested`), so it was never meant
+   to reach the filter path at all.
+2. **`editorEvent` returns `True` on a resolved target, which suppresses `QListView.clicked`.**
+   `_on_item_clicked` — the *only* consumer of `pending_field_filter` — is wired to `clicked`, so
+   it never runs for the click that armed the target. The target is orphaned and survives
+   indefinitely until some later click that does NOT resolve a field (i.e. a blank-space click)
+   finally emits `clicked` and consumes it.
+3. **Year field accepts unlimited digits and persists them.** Validator is `^-?\d*$` with
+   `setMaxLength(300)`; `_commit_inline_save` converts with a bare `isdigit()` check; so does
+   `db.update_book_metadata`. A typed/pasted `14451` was accepted at every layer and **written to
+   the DB** — it survived restarts and kept producing `<14451>14451` (the year-range search
+   convention, `f"<{value}>{value}"`) on any year-click for that book until manually deleted.
+   Negative years are intentional by design (books written before year 0); unlimited digits are
+   not.
+
+**Why it correlated with metadata-editor testing:** opening Book Detail *is* a right-click. A
+session full of right-clicks is a session full of armed-and-orphaned filter targets, each waiting
+for the next blank-space click.
+
+**The captured sequence** (probe instrumentation, `fabulor.log.1`, 2026-07-30):
+
+```
+13:38:37  CLICK book=Anna Smith Spark - The Court of Broken Knives
+          button=2  focus=BookDetailPanel  spontaneous=True  delta=0,0
+          -> target=('narrator', 'Colin Mace')        ← right-click ARMS the target
+          (hit_w=49 live_w=49 — cursor genuinely over the narrator text)
+
+          ... 54 seconds, 986 paints, three more right-clicks ...
+
+13:39:31  CLICK book=Nevil Shute - A Town Like Alice
+          button=1  focus=QListView  spontaneous=True  delta=0,0
+          -> target=None                              ← blank space, correctly resolves nothing
+          APPLY field=narrator value='Colin Mace'
+                editorEvent_book=...Broken Knives | itemClicked_book=...A Town Like Alice
+                *** BOOK MISMATCH ***  *** VALUE NOT OWNED BY CLICKED BOOK ***
+```
+
+**Reproduction:** right-click a book *with the cursor over its author/narrator/year text* to open
+Book Detail → close it → left-click blank space on any other book. The first book's value filters.
+
+### Four wrong root causes were proposed and falsified before this one — the pattern is the lesson
+
+Each was constructed from code reading plus partial log evidence, and each was stated with more
+confidence than the evidence carried:
+
+1. **Cross-mode `_scroll_field_rects` staleness.** The dict is keyed by bare `book.path` with no
+   view-mode dimension, so a rect painted in one mode can be read in another. Real as a latent
+   hazard, and a mode-scoped-key fix was fully written — but **not this bug**. Falsified by the
+   user stating the bug reproduced without ever visiting the second mode. (Fix retained,
+   unverified, in a git stash; do NOT apply it as a fix for this bug.)
+2. **Stale `full_w` widening the hit zone.** `hit_w = min(full_w, fw)` is the only thing making
+   blank space non-clickable, so a `full_w` outliving the text it measured would make dead space
+   clickable. Mechanism verified capable of producing the symptom *synthetically* — then falsified
+   live: the consuming click had `delta=0,0` and the hit-test correctly returned `None`.
+3. **Synthetic (non-spontaneous) mouse events.** Falsified: every captured event had
+   `spontaneous=True` with zero cursor deviation.
+4. **"You left-clicked the narrator earlier."** Asserted twice after the user had already said
+   three times that they never click those fields. Pure circular reasoning — the target's
+   existence was treated as proof of the click that would normally create it. The arming event was
+   two greps away and showed `button=2`.
+
+**Transferable lessons:**
+
+- **Do not ask the app whether the click was real when the app's false belief IS the bug.** Every
+  probe reading state downstream of the wrong belief returns a confirmation of it. The two
+  measurements that actually discriminated were ones the app does not author: `QCursor.pos()`
+  (asks the compositor where the pointer physically is) and `event.spontaneous()` (window-system
+  origin) — and **neither alone was sufficient**; `spontaneous=True` would have wrongly exonerated,
+  `delta=0,0` alone says nothing about the button.
+- **Log the arming event, not just the firing event.** For any deferred/pending-state mechanism,
+  the capture must include what *set* the state. Three of the four wrong theories would have died
+  immediately against the one `button=2` line.
+- **Instrumentation gaps read as findings.** Provenance was recorded at only *one* of four
+  `_scroll_field_rects` write sites, so rects written by the other three inherited a stale label —
+  producing a clean-looking "13/13 two-per-row rects were painted in one-per-row" result that was
+  entirely an artifact of the probe. Caught only because the rect coordinates (`x=11,w=126`)
+  contradicted it. **A probe that writes state must write it at every site, or its absence lies.**
+- **The user's reconstruction of what they did beat log-staring**, repeatedly. When a report and an
+  inference conflict, pull the evidence for the inference before restating it.
+
 ## 2026-07-30 — Dev-loop broken after `zypper dup`: GLIBCXX/libstdc++ conflict with conda
 
 **Symptom:** `fabulorentr` crashed on startup with (verbatim):

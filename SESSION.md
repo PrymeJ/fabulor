@@ -1,3 +1,56 @@
+## Session Summary — 2026-07-30 Session 2 — Phantom library filter: right-click armed a target that fired on a later click
+
+A long-standing, unreproducible report: clicking **blank space** on a library row — the normal way
+to load a book — sometimes filtered on a completely unrelated book's author, narrator, or year
+instead. Clicking an actual metadata field always worked correctly.
+
+**Root cause.** `BookDelegate.editorEvent` checked only the event *type*, never the button. A
+right-click whose cursor happened to sit over author/narrator/year text ran the field hit-test and
+armed `pending_field_filter` — but right-click's job in this view is opening Book Detail, and it
+never emits `QListView.clicked`, so `_on_item_clicked` (the only consumer) never ran. The orphaned
+target survived arbitrarily long — 54 seconds and ~986 repaints in the captured trace — until the
+next left-click on blank space finally emitted `clicked` and consumed it. That is exactly why the
+bug correlated with metadata-editor testing: opening Book Detail *is* a right-click, so every one
+armed another orphan. Fixed by gating on `Qt.LeftButton`, plus a backstop that drops a target whose
+originating book doesn't match the one consuming it. Keyboard nav is untouched — Enter/Space call
+`_on_item_clicked` directly, never entering `editorEvent`. `90bb36a`.
+
+**A second, unrelated bug found in the same area** (`3eda62e`): the Year field accepted any digit
+count and persisted it — a pasted `14451` reached `books.year`, survived restarts, and produced a
+`<14451>14451` filter on every year-click for that book. Same expression also had the inverse bug:
+`str.isdigit()` is `False` for `"-500"`, so negative years — deliberately supported, for books
+written before year 0 — silently never saved at all. Both fixed with a shared `parse_year()` used
+by the commit path and `db.update_book_metadata`, so a paste bypassing the widget validator still
+can't reach the column.
+
+**Four root causes were proposed and falsified before the real one.** This is the part worth
+keeping. In order: cross-mode `_scroll_field_rects` staleness (a full fix was written and stashed
+before the premise was falsified — the bug reproduced without ever visiting the second mode); stale
+`full_w` widening the clickable zone (verified capable of the symptom *synthetically*, then killed
+live by `delta=0,0`); synthetic non-spontaneous mouse events (killed by `spontaneous=True`); and
+finally "you must have left-clicked the author earlier" — asserted twice *after* being told three
+times that those fields are never clicked, treating the target's existence as proof of the click
+that would normally create it. The arming event was two greps away and said `button=2`.
+
+The transferable lessons are in NOTES.md, but the sharpest one is Pryme's: **don't ask the app
+whether the click was real, when the app's false belief that a click happened IS the bug.** Every
+probe reading state downstream of that belief returns a confirmation of it. The two measurements
+that actually discriminated were ones the app doesn't author — `QCursor.pos()` (asks the
+compositor) and `event.spontaneous()` (window-system origin) — and neither was sufficient alone.
+Second lesson: for any deferred/pending-state mechanism, **log what ARMED the state, not just what
+fired it**; three of the four wrong theories would have died instantly against that one line.
+
+Two self-inflicted incidents also worth recording. A probe that wrote provenance at only one of
+four `_scroll_field_rects` write sites made the other three inherit a stale label, producing a
+clean-looking "13/13 rects painted in the wrong mode" finding that was pure instrumentation
+artifact — caught only because the rect coordinates contradicted it. And stripping that probe with
+scripted string-index edits instead of targeted edits silently duplicated two entire class bodies
+(`BookDelegate`, `BookModel`), leaving a file 737 lines too long that still compiled cleanly; it
+was caught only by the diffstat reading 877 insertions for a ~30-line change, then restored from
+HEAD and redone properly.
+
+---
+
 ## Session Summary — 2026-07-30 Session 1 — TODO cleanup pass: three small fixes, and a status-banner bug that grew into a real investigation
 
 Started as an attempt to knock off a few small, isolated TODO items. Landed
