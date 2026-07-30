@@ -44,6 +44,25 @@ found the real mechanism. One-line fix, `9b7eb75`. Full write-up of both
 banner bugs, including the two wrong theories and why they were wrong, in
 NOTES.md.
 
+Verifying THAT fix live surfaced a third, genuinely separate pair of bugs in
+the scan-cancel flow itself: cancelling a scan left its worker `QThread`
+running forever (so no new scan could ever start afterward), and separately
+its "Scan cancelled." banner never had `auto_hide=True` and so sat there
+permanently once the other overwrite bugs stopped clobbering it. Root-caused
+via `[SCAN-CANCEL-PROBE2]` logging across two live-test rounds (the user
+explicitly held the line on keeping probes in place until they'd confirmed a
+fix worked, after the previous investigation's premature probe removal cost a
+"was that actually verified?" round-trip) — traced to
+`ScannerWorker.finished` only being wired to `QThread.quit`, so an earlier
+fix's `return`-without-emitting-`finished` (correct for the banner-overwrite
+bug it targeted) accidentally also skipped the thread-quit signal. Fixed by
+giving `finished` a `cancelled: bool` parameter, always emitted regardless of
+how `run_scan` ends, and using it only to gate the banner text. Planned in
+Plan mode; one review round caught an unverified "these refreshes are still
+meaningful on a cancel" claim in the draft, which the plan now marks as an
+inference with its own dedicated live-verification step rather than an
+established fact. `f6b8c1e`. Full write-up in NOTES.md.
+
 Three TODO.md items removed (shimmer, tag-revert: done; duplicate-cover
 detection: decided against) — see TODO_ARCHIVE.md for the closed record of
 all three.

@@ -1,3 +1,57 @@
+## FIXED: cancelling a library scan left the worker thread running forever and its "Scan cancelled." banner stuck (2026-07-30)
+
+Found while live-verifying the previous status-banner fixes (below): cancelling
+a scan mid-way showed "Scan cancelled." — but it never auto-hid, and no new
+scan could be started afterward. Two distinct bugs, both in
+`ScannerWorker.run_scan`/`LibraryScanner` (`src/fabulor/library/scanner.py`)
+and `library_controller.py`, diagnosed with temporary `[SCAN-CANCEL-PROBE2]`
+logging (kept in place across two rounds of live testing per the user's own
+standing instruction not to remove probes before they explicitly confirm a
+fix works).
+
+**Bug 1 — the scanner's worker thread never quit after a cancel.** An earlier
+fix in this same investigation (see the "Scan cancelled." message never
+sticking entry below) changed the Phase 2 cancellation check from `break`
+(fall through to an unconditional `finished.emit()`) to `return` (skip it
+entirely) — correct for stopping "Scan cancelled." from being immediately
+overwritten by "Library updated: N books.". But `LibraryScanner.start()` wires
+`worker.finished.connect(self._worker_thread.quit)` as the ONLY thing that
+tells the `QThread` to quit its event loop. Skipping `finished.emit()` on
+cancel meant the thread never quit, so `is_running()` (`_worker_thread
+.isRunning()`) stayed `True` forever, and `handle_background_tasks`'s
+`state["mode"] != "scanning"` guard silently blocked any new scan from
+starting. Confirmed live: cancel a scan, then try to start another — it
+no-oped with no visible error. The identical bug already existed for a cancel
+during Phase 1 discovery (a `return` with no emit, pre-existing, never
+reported before because Phase 2 is where nearly all scan time is spent).
+**Fixed** by giving `ScannerWorker.finished`/`LibraryScanner.finished` a new
+`cancelled: bool` parameter and making the emit unconditional — every
+`return` path in `run_scan` (both cancellation checks) now calls
+`self.finished.emit(processed, True)` before returning, and the natural
+end-of-function path emits `(processed, False)`. The thread now always quits;
+`_on_scan_finished(self, total, cancelled=False)` uses the flag purely to
+decide whether to overwrite the banner text, not whether to run at all —
+every other refresh/teardown in that method stays unconditional, since any
+books upserted before the cancel was noticed are real, committed DB state
+regardless of how the scan ended.
+
+**Bug 2 — "Scan cancelled." never had `auto_hide=True`.** It was always
+designed to sit until something else replaced it — before this session's
+fixes, it always WAS replaced almost immediately (first by the earlier
+completion-overwrite bug, then by the stray-queued-progress-emit race fixed
+alongside it), which is very likely why the missing `auto_hide` was never
+noticed. Once those overwrites were fixed, it correctly stayed up — and
+stayed up forever, exactly as the code told it to. **Fixed** by adding
+`auto_hide=True` to `_on_cancel_scan_clicked`'s `update_status` call, using
+the same 3s default every other transient banner message already uses.
+
+Live-verified: cancelling mid-scan now shows "Scan cancelled." for ~3s and
+auto-hides; a new scan can be started immediately after; a scan run to
+completion is fully unaffected (still shows/hides "Library updated: N
+books." exactly as before).
+
+---
+
 ## FIXED: stale EOF-prompt buttons and a never-hidden cancel_scan_btn bleeding into unrelated status banners (2026-07-30)
 
 Two independent bugs in the shared `status_banner` widget, found while routing
