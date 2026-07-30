@@ -1,3 +1,55 @@
+## Session Summary — 2026-07-30 — TODO cleanup pass: three small fixes, and a status-banner bug that grew into a real investigation
+
+Started as an attempt to knock off a few small, isolated TODO items. Landed
+three real fixes and closed one TODO item as decided-against:
+
+- **Speed-button shimmer** now distinguishes "your right-click actually changed
+  the default speed" from "it was already the default" — the same forward
+  shimmer sweep for a real change, a reverse sweep (with its own repeat-click
+  guard) when nothing changed, instead of playing the same "just set" animation
+  either way. `e1e4014`.
+- **Tag rename's 2s revert timer** no longer fires mid-edit and silently
+  reverts an in-progress rename — the timer is now captured and cancelled the
+  moment a new edit starts. `0234853`.
+- **Cover Panel duplicate-cover detection** was attempted, not shipped. Two
+  detection mechanisms (raw source-file bytes, then decoded pixel data) both
+  failed for the same root reason: JPEG re-encoding is lossy, so nothing
+  compared against an already-stored (re-encoded) cover ever matches, even for
+  the literal same source file — confirmed by direct testing, not assumed. A
+  real fix needs a DB schema change (hash the original file before conversion)
+  for what's ultimately the user's own choice to waste a cover slot. Decided
+  not worth it; reverted cleanly, TODO item closed as decided-against rather
+  than done.
+
+The duplicate-detection revert should have been simple, but it was bundled in
+the same uncommitted diff as a separate, still-wanted piece of work: routing
+`CoverPanel`'s error messages (5MB limit, unreadable file, save/DB failure)
+into the shared status banner instead of a small `_error_label` under the "+"
+button. Redoing that (minus duplicate detection) surfaced a real, pre-existing
+bug in the shared banner: a leftover "Marked as finished." prompt's ✕/revert
+buttons could visually stack onto any later, unrelated banner message. Fixed
+via a new `retire_eof_prompt` parameter on `_update_status_banner_ui`, planned
+carefully (Plan mode, one design-agent pass, one plan revision after a
+reviewer's spot-check caught that the reported screenshot's exact message
+wasn't in the plan's call-site table) and scoped to a 9-line diff. `5de8c16`.
+
+Verifying that fix live surfaced a second, unrelated, always-reproducible bug:
+`cancel_scan_btn` was never explicitly hidden at construction (unlike its two
+neighbors), so it rode along as "visible" under a hidden banner since app
+startup and reappeared on ANY banner message, real and clickable — explaining
+a stray "Scan cancelled." banner with no scan ever having run. Two wrong
+theories were tried first (stale process, a racing real scan) and corrected by
+the user's direct, specific reports before temporary `[BANNER-PROBE]` logging
+found the real mechanism. One-line fix, `9b7eb75`. Full write-up of both
+banner bugs, including the two wrong theories and why they were wrong, in
+NOTES.md.
+
+Three TODO.md items removed (shimmer, tag-revert: done; duplicate-cover
+detection: decided against) — see TODO_ARCHIVE.md for the closed record of
+all three.
+
+---
+
 ## Session Summary — 2026-07-29 Session 4 — Right-click investigation closed: not a Fabulor bug
 
 Added a per-guard instrumentation pass to the sidebar right-click chain (`[EARLIEST]` — an app-level

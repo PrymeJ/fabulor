@@ -55,9 +55,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 - [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
 - [2026-07-01] ScrollingLabel first-glyph clipping
-- [2026-06-25] Shimmer plays on speed right-click even when speed is already default
-- [2026-06-25] Tag action button's revert timer can fire mid-edit
-- [2026-06-25] Cover Panel has no duplicate-cover detection
 
 ### Cleanup / process
 - [2026-06-27] Unused imports / dead names flagged by pyflakes in app.py and ui/panels.py
@@ -724,23 +721,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   The committed state (`72d80df`) has a visible 2px gap at the start position as the least-bad
   tradeoff. Needs a fresh look — possibly `QTextLayout` instead of raw `drawText`, or a containing
   widget with `setContentsMargins` rather than painting directly.
-
-- **[2026-06-25] Shimmer plays on speed right-click even when speed is already default.**
-  `_on_speed_right_clicked` always plays the shimmer animation; it should skip it when current speed
-  already equals the default speed, since there's nothing to reset. See NOTES.md "TODO (before
-  release): suppress shimmer when speed is already the default" (~line 1006).
-
-- **[2026-06-25] Tag action button's check→delete revert timer can fire mid-edit.** After a tag
-  rename, an unguarded `QTimer.singleShot(2000, ...)` reverts the action button's visual state; if
-  the user starts a new edit within that 2s window, the revert can fire mid-edit and silently undo
-  the in-progress state. Low-priority UX papercut, not a correctness bug. Fix: capture/cancel the
-  timer when a new edit starts. See NOTES.md "tag action button check → delete 2s timer" (~line
-  1568).
-
-- **[2026-06-25] Cover Panel: no duplicate-cover detection.** Adding the same cover image twice (via
-  `_on_add_cover`, cover_panel.py:497) creates redundant files and DB rows with no content-hash or
-  size/dimension check. Implement before the 4-slot cap becomes a felt constraint — a duplicate
-  wastes a slot. See NOTES.md "Duplicate cover detection not implemented" (~line 2097).
 
 - **[2026-06-27] Unused imports / dead names flagged by pyflakes in `app.py` and `ui/panels.py`.**
   Pre-existing, not introduced this session (confirmed via `git log -p`), surfaced while checking a

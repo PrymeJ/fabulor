@@ -307,3 +307,38 @@ order these entries had in TODO.md before the split (2026-07-30).
   running, not just `isVisible()`), so a mid-close panel no longer reads as "the open panel."
   Verified live: right-clicking during a panel's close-slide now correctly falls through to the
   sidebar toggle.
+
+- **[2026-06-25, CLOSED (live-verified 2026-07-30): shimmer plays on speed right-click even when
+  speed is already default.** `_on_speed_right_clicked` always played the "just set" shimmer sweep,
+  even when the right-clicked speed already equalled the stored default — a silent no-op that looked
+  identical to a dropped click. Fixed by comparing `current` speed against
+  `config.get_default_speed()` *before* calling `set_default_speed`, and playing the shimmer in
+  reverse (top-right to bottom-left, via a new `ShimmerButton.play_shimmer(reverse=...)` parameter)
+  when nothing actually changed — distinct, confirmable feedback instead of silence. A repeat
+  right-click while the reverse sweep is still running is now a no-op rather than restarting it; the
+  forward ("just set") direction keeps its original restart-on-click behavior since it signals a real
+  change every time. Live-verified working as intended.
+
+- **[2026-06-25, CLOSED (live-verified 2026-07-30): tag action button's check→delete revert timer
+  can fire mid-edit.** After a tag rename, an unguarded `QTimer.singleShot(2000, ...)` reverted the
+  action button's visual state; starting a new edit within that 2s window left the stale timer
+  running, and when it fired it silently flipped the button back to delete-mode regardless of the
+  in-progress "save" state. Fixed by capturing the timer (`self._rename_revert_timer`) and having
+  `_on_tag_name_changed` — which fires on every keystroke — stop and clear it before deciding the
+  button's mode. Live-verified: starting a new edit within the 2s window no longer gets silently
+  reverted out from under it.
+
+- **[2026-06-25, DECIDED AGAINST, not implemented (2026-07-30): Cover Panel has no duplicate-cover
+  detection.** Attempted, not shipped. Two detection mechanisms were tried and both failed for the
+  same underlying reason: JPEG re-encoding is lossy, so comparing a freshly-picked image (whether by
+  raw file bytes, by re-encoded JPEG bytes, or by decoded pixel data) against an already-stored cover
+  (itself a previous re-encode) essentially never matches, even for the literal same source file —
+  confirmed directly: `QImage.save(..., "JPEG")` does not reproduce identical bytes across separate
+  encode calls, and a decode → save → reload → decode round trip does not reproduce identical pixels
+  either, at the same resolution, from the same source. A reliable fix needs to compare against
+  something that predates the lossy re-encode — e.g. a hash of the original picked file's raw bytes,
+  stored in a new `book_covers` column — which is a real schema change for a papercut-level feature
+  (wasting one of 4 cover slots on a re-added duplicate is the user's own choice to make, not
+  something worth enforcing). Decided not worth pursuing further at this cost/value ratio. If
+  revisited, do not re-attempt byte- or pixel-comparison against the stored JPEG — start from the
+  schema-change approach or drop it again.

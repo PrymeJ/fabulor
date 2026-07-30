@@ -1,3 +1,62 @@
+## FIXED: stale EOF-prompt buttons and a never-hidden cancel_scan_btn bleeding into unrelated status banners (2026-07-30)
+
+Two independent bugs in the shared `status_banner` widget, found while routing
+cover-add error messages (5MB-too-large, unreadable file, save/DB failure)
+into it from `CoverPanel`'s cramped `_error_label`.
+
+**Bug 1 — stale EOF prompt buttons.** `_update_status_banner_ui` only ever
+hid `eof_revert_btn`/`eof_close_btn` in one place: the `show_cancel is True`
+branch, which exists so a *starting scan* retires a pending "Marked as
+finished." prompt. Every other caller showing a fresh, unrelated banner
+message never touched those two buttons — so a still-showing EOF prompt's
+buttons visually stacked onto whatever message replaced it next. **Fixed**
+by adding `retire_eof_prompt=True` (default) to `_update_status_banner_ui`,
+gated on `show_banner is True` — the precise moment a fresh banner takes
+over, and nothing else. This deliberately does NOT fire for
+`_on_scan_progress`'s ticks or the dismiss calls (`show_banner=None`/`False`),
+and — critically — does NOT fire for `_on_revert_finish`'s "Finished status
+reverted." call, which deliberately omits `show_banner` specifically to keep
+`eof_revert_btn` visible-but-disabled as the reverted state's visual anchor.
+The EOF prompt's own call opts out via `retire_eof_prompt=False` since it
+shows those same buttons itself a few lines later. All 12 other call sites
+needed no change. Committed `5de8c16`.
+
+**Bug 2 — `cancel_scan_btn` never hidden at construction, unlike its two
+neighbors.** Found while live-testing Bug 1's fix: a "Scan cancelled."-shaped
+✕ (a rounded-square button, distinguishable from `eof_close_btn`'s circular
+one only by hovering for the tooltip) kept appearing on a plain cover-add
+error banner, on every clean app launch, with no scan ever having run.
+Diagnosed with temporary `[BANNER-PROBE]` logging (entry/exit widget-visibility
+state + a walked call-chain) rather than continued static reading, after two
+rounds of incorrect theorizing (assuming stale/crashed process state, then a
+concurrent real scan racing the cover-error call — both ruled out by the
+user's direct report: clean start, straight to Cover tab, reproducible every
+time, no scan action taken). The probe showed `cancel_scan_btn.isVisible()`
+flip `False → True` *inside* a call that never touches `show_cancel` at all
+— impossible from the function's own logic, which only calls `.show()`/`.hide()`
+on that widget inside the `show_cancel is True`/`False` branches. Root cause:
+`eof_revert_btn`/`eof_close_btn` are both explicitly `.hide()`-ed right after
+construction in `build_status_banner`; `cancel_scan_btn`, built three lines
+later, never got the same treatment. A freshly-constructed `QWidget` added to
+a visible parent layout defaults to visible, so it silently rode along as
+"visible" the whole time `status_banner` itself was hidden, and reappeared
+the instant *any* banner message — not just a scan — made the parent visible
+again. Because it's a real, connected button (wired to
+`library_controller._on_cancel_scan_clicked`), clicking it did exactly what a
+real cancel-scan click does — hence "Scan cancelled." appearing on click, on
+a scanner that was never running. One-line fix: `mw.cancel_scan_btn.hide()`
+at construction, matching its two neighbors. Committed `9b7eb75`.
+
+**Process note for the record:** the two wrong theories above were each
+constructed to fit incomplete evidence rather than checked against what the
+user actually reported — corrected each time by the user restating the exact
+observed facts (no scan ever ran; the button shape distinguishes which ✕ it
+is) rather than by further log-reading on this end. The eventual, correct
+diagnosis came only after adding direct instrumentation and reading its literal
+output, not from a third round of inference.
+
+---
+
 ## CLOSED, cause is outside Fabulor: right-click loss reproduces on the bare X11 desktop with no app involved (2026-07-29)
 
 **This closes the investigation below.** Every entry under this one — six then
