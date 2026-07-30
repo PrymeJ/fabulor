@@ -5,6 +5,7 @@ from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
 from .title_bar import RightClickButton
 from mpv import ShutdownError
+from .line_edit_dragfix import DragSafeLineEdit
 
 class SleepTimerPanel(QWidget):
     timer_started = Signal()
@@ -57,7 +58,7 @@ class SleepTimerPanel(QWidget):
 
         # Custom time input
         custom_time_layout = QHBoxLayout()
-        self.custom_sleep_input = QLineEdit()
+        self.custom_sleep_input = DragSafeLineEdit()
         self.custom_sleep_input.setPlaceholderText("min")
         self.custom_sleep_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.custom_sleep_input.customContextMenuRequested.connect(lambda _: self.custom_sleep_input.clear())

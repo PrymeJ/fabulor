@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal, QCoreApplication, QRect, QPoint
 from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
+from .line_edit_dragfix import DragSafeLineEdit
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter
 from PIL import Image, ImageFilter
 
@@ -842,7 +843,7 @@ class LibraryPanel(QFrame):
         self._release_focus_on_popup_close(self.style_combo)
         self.style_combo.view().setItemDelegate(_ComboItemDelegate(self, self.style_combo.view()))
 
-        self.search_field = QLineEdit()
+        self.search_field = DragSafeLineEdit()
         self.search_field.setMaxLength(26)
         self.search_field.setPlaceholderText("search #tag")
         self.search_field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
