@@ -52,6 +52,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-06-23] Clicking the muted icon should restore volume — to what value, undecided
 
 ### Misc UI polish
+- [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 - [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
 - [2026-07-01] ScrollingLabel first-glyph clipping
@@ -710,6 +711,28 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   (NOTES.md, same date) — confirmed structurally unrelated: Book Detail never routes through
   `_on_sidebar_closed_for_panel` (no sidebar trigger button opens it; it's reached only from
   library rows, stats rows, and tag chips), so that fix does not touch this path at all.
+
+- **[2026-07-30] In-app help section.** The intended home for all in-app reference material.
+  Raised while looking for somewhere to document the library search operators (`#tag`, `_prefix`,
+  `@author`, `=year`, `>year`, `<year`, ranges — shipped 2026-07-30, `456796c`), which currently
+  exist only in `KEYBINDINGS.md`. That is the same state that let `_` be forgotten by its own
+  author for months.
+
+  **Two placements were tried and rejected on evidence, not theory:**
+  - A tooltip on the search field. Built, then removed the same session (`6f82141`) — the full
+    operator set needs eight rows, which in a 300px-wide window either renders outside the app
+    or covers the library behind it. Both observed live.
+  - Settings > Library. Measured at ~120px tall for eight rows at settings body-font size, versus
+    a folder-list box capped at 70px in a tab already holding five sections plus the Excluded
+    Books line. Would have needed the `ExcludedBooksSection`/`ExcludedBooksPopup` popup pattern,
+    and the tab has no room even for the toggle line.
+
+  The Controls tab had been informally reserved for this, but controls are settled and it is the
+  wrong home for reference material generally.
+
+  Blocked on: nothing technical — it is a design/scope decision about what the help surface is
+  (a panel? a popup? its own overlay?) and it should be built once, after the feature set stops
+  moving, so it can cover everything at once rather than growing per-feature.
 
 - **[2026-07-01] ScrollingLabel first-glyph clipping.** When a chapter name is long enough to scroll,
   the first character ('c', 't', etc.) clips against the widget's left edge at the start position

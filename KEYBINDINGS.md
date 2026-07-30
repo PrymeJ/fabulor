@@ -180,8 +180,15 @@ the mouse-hover-fade mechanism itself, unaffected by this).
 ### Search syntax (`BookModel._apply_filter_and_sort`)
 
 With no operator, a search matches a substring of **title, author or narrator** (plus an exact
-4-digit year). The operators below narrow that. All are case-insensitive; the search field's
-tooltip carries the same table.
+4-digit year). The operators below narrow that. All are case-insensitive.
+
+**Not discoverable in the app yet.** A tooltip was tried and removed — the full set needs eight
+rows, which in a 300px window either spills outside the app or covers the library. Settings >
+Library has no room either (see the screenshots referenced in SESSION.md, 2026-07-30 Session 4:
+the search field is narrow enough that `@` plus a long author name already overflows it). These
+operators are slated for the planned in-app **help section**, where all such reference material
+will live. Until then this file is the only place they are written down — which is exactly how
+`_` came to be forgotten by its own author, so the help section is the fix, not more comments.
 
 | Syntax | Matches | Red on no match? |
 |---|---|---|

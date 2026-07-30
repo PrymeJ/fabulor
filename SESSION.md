@@ -1,3 +1,59 @@
+## Session Summary — 2026-07-30 Session 4 — Search operators: `@author`, `=year`, and a 4-digit cap
+
+Began as a documentation pass closing Session 3, then turned into a design conversation about the
+library search syntax. The existing set was traced first: `#tag`, `_title-prefix`, `>year`,
+`<year`, and two range orderings — four operator characters, all in one if/elif chain in
+`_apply_filter_and_sort`, with `_classify_filter` as a second, quieter consumer driving the
+persist-filter buckets.
+
+**Two operators added, each fixing a demonstrated collision rather than filling out a scheme.**
+The bare search covers title, author *and* narrator at once, so `james baldwin` returns both the
+biography about him and the novel by him, and `1984` returns both the book titled *1984* and
+everything published that year. `@name` and `=1984` disambiguate. Click-to-filter now emits these
+forms, so the benefit arrives passively on every author/year click.
+
+**A narrator operator was considered and rejected** — the collision it would solve is an author
+who also narrates, and Pryme worked through the realistic cases (`tim g`, `scott br`, `simon v`)
+showing ordinary substring search already resolves them. Consequence, accepted explicitly: an
+author click emits `@Name` while a narrator click stays bare. A visible asymmetry, taken over an
+operator that would exist only for symmetry.
+
+**A bug found while implementing:** negative years never worked in the filter. Both bare `<`/`>`
+branches tested `text[1:].isdigit()`, which is `False` for `"-500"`, so every BCE filter silently
+fell through to a text search — the DB could store years the search could not express. This is the
+same `isdigit()` defect fixed in the Year *field* earlier the same day; the filter side had been
+left behind. `_classify_filter` had the matching gap and was filing `=1984` and negative years
+under the user's *text* persistence toggle instead of *year*.
+
+**The 4-digit cap** (`_YearFilterValidator`) is a pure grammar — `=` takes an optional minus and up
+to 4 digits and nothing may follow; `<`/`>` may be followed by the *opposite* operator and a second
+number. It never consults the library, which is the point: Pryme had already reasoned through why
+library-aware validation was wrong (`<50` cannot be distinguished from a half-typed `<500`, and any
+rule that checks the library makes the same keystroke behave differently for different users), and
+that is also why year filters never redden. The validator only constrains strings starting with
+`<`, `>` or `=`, since one validator sits on a field accepting every filter type.
+
+**Discoverability is unresolved and deferred.** A tooltip was built and removed the same session:
+eight rows in a 300px window either spills outside the app or covers the library — both seen live,
+and the screenshot ended the discussion faster than the argument had. Settings > Library was
+measured (~120px needed, against a 70px-max folder box in a tab already holding five sections) and
+rejected too. It goes in the planned in-app help section; new TODO entry records both rejected
+placements with their evidence so neither is re-attempted.
+
+One false alarm worth noting: two screenshots showed matching searches in what looked like a
+no-match red field. I started tracing it as a styling bug before Pryme pointed out the theme itself
+is red-heavy and sent a genuine no-match for comparison. The model was returning `red=False`
+correctly the whole time — I had a reproduction attempt already confirming the code was right and
+was moving on to look for the bug elsewhere rather than concluding there wasn't one.
+
+`tests/test_search_filters.py` — 91 tests covering parsers, validator grammar, incomplete-state
+neutrality, end-to-end matching against a fixture built to contain every collision, and the
+persistence buckets. One test pins the branch *order*: the range test must precede the bare
+operators or `>1950<1990` degrades to a text search. Suite: **400 passed, 0 failed**.
+`456796c`, `6f82141`.
+
+---
+
 ## Session Summary — 2026-07-30 Session 3 — Text-input selection defects, and two latent bugs an empty field exposed
 
 Follow-on from Session 2's phantom-filter hunt, which had left the Book Detail metadata editor
