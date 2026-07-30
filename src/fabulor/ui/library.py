@@ -2674,6 +2674,23 @@ class BookDelegate(QStyledItemDelegate):
 
     # ── Playback resolution ──────────────────────────────────────────────────
 
+    @staticmethod
+    def _pct_str(pct: float) -> str:
+        """Format a 0-1 ratio as the library's whole-number percentage.
+
+        Derives from the SAME number the transport bar's label shows, then drops the decimal —
+        `round(x, 1)` first (what the label displays, app.py `_update_ui_sync`), `int()` second.
+        Truncating the raw value instead put the two displays one point apart whenever the true
+        percentage landed in [N.95, N+1): the label had already rounded up to (N+1).0% while the
+        library still truncated down to N%. Reported live 2026-07-31 with a header reading 6.0%
+        over a library row reading 5%.
+
+        Same defect class as the percentage-label tween documented in CLAUDE.md — two displays
+        of one number disagreeing because one truncates what the other rounds. Truncation
+        itself is correct and deliberate: 0.6% reads 0%, 1.9% reads 1%.
+        """
+        return f"{int(round(pct * 100, 1))}%"
+
     def _resolve_playback(self, book, live_pos: float, live_dur: float) -> tuple:
         """Returns (pos, dur, dur_disp, pct, has_progress, speed)"""
         has_progress = (book.progress or 0.0) > MIN_PROGRESS
@@ -2813,7 +2830,7 @@ class BookDelegate(QStyledItemDelegate):
             self._draw_progress_bar(painter, bar_rect, pct)
 
             # Percentage — same row as bar, right of bar
-            pct_str = f"{int(pct * 100)}%"
+            pct_str = self._pct_str(pct)
             self._set_font(painter, mode=self._view_mode, field="percentage")
             fm_pct  = painter.fontMetrics()
             pct_y   = bar_y + (BAR_H - fm_pct.height()) // 2 + fm_pct.ascent()
@@ -3431,7 +3448,7 @@ class BookDelegate(QStyledItemDelegate):
             painter.drawText(inner.right() - right_w, time_y + fm_total.ascent(), right_str)
 
             # Bar + percentage on same row, percentage right-aligned
-            pct_str = f"{int(pct * 100)}%"
+            pct_str = self._pct_str(pct)
             self._set_font(painter, mode=overlay_mode, field="percentage")
             fm_pct = painter.fontMetrics()
             pct_w  = fm_pct.horizontalAdvance(pct_str)
