@@ -1,15 +1,9 @@
-import logging
-import os
 from pathlib import Path
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolButton, QApplication
 from PySide6.QtCore import Qt, QEvent, QPoint, QSize
 from PySide6.QtGui import QIcon
 
 from .icon_utils import load_themed_icon
-
-_logger = logging.getLogger(__name__)
-# [CUT-PROBE] TEMP — strip with the investigation. FABULOR_CUT_PROBE=0 to silence.
-_CUT_PROBE = os.environ.get("FABULOR_CUT_PROBE", "1") != "0"
 
 _ICONS_DIR = Path(__file__).parent.parent / "assets" / "icons"
 _BTN_SIZE = 20
@@ -88,26 +82,13 @@ class ContextIconMenu(QWidget):
         paste_ok  = has_clip and not read_only
         delete_ok = has_sel and not read_only
 
-        # [CUT-PROBE] TEMP — strip with the investigation. The icon path never reaches
-        # QLineEdit.keyPressEvent, so the Ctrl+X probe cannot see it. Selection state is read
-        # HERE, when the menu opens; if the right-click that opened it already cleared the
-        # selection, cut_ok is False and the button is silently disabled — a click does nothing,
-        # which is the reported "cut with the icon, failed".
-        if _CUT_PROBE:
-            _logger.warning(
-                "[CUT-PROBE] MENU-OPEN    field=%s hasSel=%s sel=%r readOnly=%s hasClip=%s "
-                "-> cut_btn=%s copy_btn=%s paste_btn=%s del_btn=%s focus=%s%s",
-                target.objectName() or "?", has_sel, target.selectedText(), read_only, has_clip,
-                "ENABLED" if cut_ok else "DISABLED", "ENABLED" if copy_ok else "DISABLED",
-                "ENABLED" if paste_ok else "DISABLED", "ENABLED" if delete_ok else "DISABLED",
-                type(QApplication.focusWidget()).__name__,
-                "  *** NO SELECTION AT MENU-OPEN — cut/copy/delete are disabled, clicking them "
-                "does nothing ***" if not has_sel else "")
-
+        # Enablement is decided HERE, once, when the menu opens — the buttons are not
+        # re-evaluated on click. So anything that clears the field's selection between the
+        # right-click and this call silently disables cut/copy/delete, and clicking them does
+        # nothing. That was the 2026-07-30 bug: this menu is a Qt.Popup, so showing it moved
+        # focus off the field, and the owning panel's click-outside handler reverted the edit
+        # before the user could act on it (see NOTES.md).
         if not any((cut_ok, copy_ok, paste_ok, delete_ok)):
-            if _CUT_PROBE:
-                _logger.warning("[CUT-PROBE] MENU-SUPPRESSED field=%s — nothing actionable, "
-                                "menu not shown at all", target.objectName() or "?")
             return
 
         self._cut_btn.setEnabled(cut_ok)
@@ -143,25 +124,6 @@ class ContextIconMenu(QWidget):
         self._target = None
 
     def _do_cut(self):
-        # [CUT-PROBE] TEMP — strip with the investigation.
-        if _CUT_PROBE and self._target is not None:
-            t = self._target
-            before_text = t.text()
-            before_clip = QApplication.clipboard().text()
-            _logger.warning("[CUT-PROBE] ICON-CUT PRE  field=%s hasSel=%s sel=%r readOnly=%s "
-                            "btn_enabled=%s text=%r", t.objectName() or "?",
-                            t.hasSelectedText(), t.selectedText(), t.isReadOnly(),
-                            self._cut_btn.isEnabled(), before_text)
-            t.cut()
-            cut_happened = t.text() != before_text
-            clip_changed = QApplication.clipboard().text() != before_clip
-            _logger.warning("[CUT-PROBE] ICON-CUT POST field=%s text=%r cut_happened=%s "
-                            "clipboard_changed=%s%s", t.objectName() or "?", t.text(),
-                            cut_happened, clip_changed,
-                            "  *** ICON CUT DID NOTHING ***"
-                            if not cut_happened and not clip_changed else "")
-            self._dismiss()
-            return
         if self._target:
             self._target.cut()
         self._dismiss()

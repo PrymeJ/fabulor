@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QStackedLayout
 )
 from PySide6.QtCore import Qt, Signal, QStringListModel, QTimer, QEvent, Property, QSize, QRect, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator, QKeyEvent, QKeySequence
+from PySide6.QtGui import QColor, QPainter, QFontMetrics, QPixmap, QIcon, QRegularExpressionValidator, QKeyEvent
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtWidgets import QApplication
 
@@ -32,98 +32,16 @@ class _MetaActionState(Enum):
     UNLOCKED = auto()
 
 
-# [CUT-PROBE] TEMPORARY — strip with the investigation. Hunting: Ctrl+X in a metadata field
-# sometimes neither cuts nor reaches the clipboard, and double-click sometimes selects only part
-# of a word. Measured (2026-07-30): QLineEdit with NO selection swallows Ctrl+X — accepts the
-# event, cuts nothing, clipboard untouched — which reproduces the reported symptom exactly. So
-# the question is not "why did cut fail" but "why was there no selection". This records the
-# selection state at the moment of each event rather than after the fact, which is the one thing
-# that can't be reconstructed later. FABULOR_CUT_PROBE=0 to silence.
-_CUT_PROBE = os.environ.get("FABULOR_CUT_PROBE", "1") != "0"
-
-
 class _ElidingLineEdit(DragSafeLineEdit):
     """QLineEdit that elides text on the right when read-only.
 
-    Inherits DragSafeLineEdit for the post-double-click stationary-move guard — see
-    line_edit_dragfix.py. That defect is Qt-level and hits every text input in the app, so it
-    lives in the shared base rather than here."""
+    Inherits DragSafeLineEdit for the mouse drag-select guard — see line_edit_dragfix.py. That
+    defect is Qt-level and hits every text input in the app, so it lives in the shared base
+    rather than here; this class adds no mouse handling of its own."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._text_color = QColor()
-
-    def _cut_probe(self, tag, extra=""):
-        if not _CUT_PROBE:
-            return
-        logger.warning(
-            "[CUT-PROBE] %-14s field=%s readOnly=%s hasSel=%s sel=%r selStart=%d "
-            "cursor=%d text=%r%s",
-            tag, self.objectName() or "?", self.isReadOnly(), self.hasSelectedText(),
-            self.selectedText(), self.selectionStart(), self.cursorPosition(),
-            self.text(), extra)
-
-    def keyPressEvent(self, event):
-        # Log BEFORE super(), so the selection state is what QLineEdit will actually act on.
-        if _CUT_PROBE and event.matches(QKeySequence.StandardKey.Cut):
-            self._cut_probe("Ctrl+X PRE")
-            before_text, before_clip = self.text(), QApplication.clipboard().text()
-            super().keyPressEvent(event)
-            cut_happened = self.text() != before_text
-            clip_changed = QApplication.clipboard().text() != before_clip
-            self._cut_probe("Ctrl+X POST",
-                            f" | cut_happened={cut_happened} clipboard_changed={clip_changed}"
-                            + ("  *** CUT DID NOTHING ***"
-                               if not cut_happened and not clip_changed else ""))
-            return
-        super().keyPressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        super().mouseDoubleClickEvent(event)   # DragSafeLineEdit sets the anchor
-        if _CUT_PROBE:
-            # What Qt actually selected vs. where the click landed. A double-click that selects
-            # a fragment (or nothing) shows up here as a selection that doesn't span the word
-            # under cursorPosition.
-            self._cut_probe("DOUBLECLICK", f" | click_x={event.position().toPoint().x()}")
-
-    # [CUT-PROBE] TEMP — the double-click selects the right word, then the selection is found
-    # SHORTER at the next keypress with nothing logged in between (measured 2026-07-30:
-    # 'Andrew'/cursor=6 at 17:26:49.820 became 'And'/cursor=3 by 17:26:51.631). Qt's own state
-    # changed, so this is not a paint issue. These three record every mouse event that can move
-    # a selection, to catch whichever one is truncating it — a third press inside the
-    # double-click interval, or a drag on the second release.
-    def mousePressEvent(self, event):
-        if _CUT_PROBE:
-            self._cut_probe("PRESS", f" | x={event.position().toPoint().x()}")
-        super().mousePressEvent(event)
-        if _CUT_PROBE:
-            self._cut_probe("PRESS-after", f" | x={event.position().toPoint().x()}")
-
-    def mouseMoveEvent(self, event):
-        # The guard itself lives in DragSafeLineEdit; this only reports what it did.
-        guarding = self._press_anchor_x is not None
-        had = self.hasSelectedText()
-        before = self.selectedText()
-        super().mouseMoveEvent(event)
-        if _CUT_PROBE and guarding and self._press_anchor_x is not None \
-                and self.selectedText() == before:
-            self._cut_probe("DRAG-SUPPRESSED",
-                            f" | x={event.position().toPoint().x()} "
-                            f"anchor={self._press_anchor_x} (sub-threshold move while the "
-                            "button is down — would have started a drag-select)")
-        elif _CUT_PROBE and (had or self.hasSelectedText()) and self.selectedText() != before:
-            self._cut_probe("DRAG-CHANGED",
-                            f" | x={event.position().toPoint().x()} was={before!r}"
-                            "  *** selection changed during a mouse MOVE ***")
-
-    def mouseReleaseEvent(self, event):
-        before = self.selectedText()
-        super().mouseReleaseEvent(event)   # DragSafeLineEdit clears the anchor
-        if _CUT_PROBE:
-            self._cut_probe("RELEASE",
-                            f" | x={event.position().toPoint().x()} was={before!r}"
-                            + ("  *** selection SHRANK on release ***"
-                               if before and self.selectedText() != before else ""))
 
     @Property(QColor)
     def text_color(self):

@@ -3517,12 +3517,6 @@ class BookDelegate(QStyledItemDelegate):
             fx, fy, fw, fh, full_w = rects[field]
             hit_w = min(full_w, fw)
             if fx <= pos.x() < fx + hit_w and fy <= pos.y() < fy + fh:
-                # TEMP PROBE — strip before commit. Regression tripwire only: this invariant is
-                # ALREADY structurally guaranteed by editorEvent's mode gate, so a clean run is
-                # not by itself proof the re-key works (the off-screen-click repro is).
-                if field in ("narrator", "year") and self._view_mode != "1 per row":
-                    logger.warning("[RECT-BLEED] %s returned in mode %s (path=%s)",
-                                   field, self._view_mode, path)
                 return field
         return None
 
