@@ -430,6 +430,10 @@ class TagManagerWidget(QWidget):
         row = QWidget()
         row.setObjectName("tag_list_row")
         row.setAttribute(Qt.WA_StyledBackground, True)
+        # Puts the row into Qt's hover tracking (underMouse/style machinery) —
+        # same reasoning as BookDayRow in stats_panel.py; see the note there,
+        # including why this is correctness rather than the arrow-cursor fix.
+        row.setAttribute(Qt.WA_Hover, True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         row.setFixedHeight(31)
 

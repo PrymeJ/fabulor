@@ -165,7 +165,33 @@ class BarChartWidget(QWidget):
             self.setCursor(Qt.PointingHandCursor if new_index != -1 else Qt.ArrowCursor)
             self.update()
     def leaveEvent(self, event):
+        # A leave delivered while this widget is NOT visible is synthetic: the
+        # transport-bar blur grab hides and re-shows the whole panel on every
+        # tick to photograph what is behind it, and Qt fires leave/enter at the
+        # unmoved cursor position as a result. Same mechanism as the ThemeItem
+        # "heartbeat" (NOTES.md 2026-07-21) and the stiff tassel.
+        #
+        # Dropping it matters here because this widget's cursor and its hover
+        # index are set together in mouseMoveEvent but torn down separately: a
+        # synthetic leave cleared _hovered_index while leaving the cursor a hand,
+        # and with the mouse stationary no further mouseMoveEvent ever arrived to
+        # reconcile them — so the grab cycle flipped the cursor hand<->arrow
+        # several times a second over a bar.
+        #
+        # isVisible() AT LEAVE TIME is the right discriminator here, and that was
+        # verified rather than assumed — NOTES.md records the same check being
+        # DISPROVEN for ThemeItem, but that was isVisible() at ENTER time (the
+        # panel is re-shown by then, so it read True); the confirmed discriminator
+        # there was likewise the preceding leave's visibility. Measured live for
+        # this widget while hovering a bar: 51 leaves with vis=False at the grab's
+        # ~80-200ms cadence, against 2 genuine leaves with vis=True, and
+        # hovered_index/cursor stable and CORRECT throughout the synthetic ones.
+        if not self.isVisible():
+            return
         self._hovered_index = -1
+        # Restore the cursor alongside the index. mouseMoveEvent owns both
+        # together; leaving only the index cleared let the two disagree.
+        self.unsetCursor()
         self.update()
 
     @staticmethod
@@ -414,6 +440,17 @@ class BookDayRow(QWidget):
         self._row_data = row_data
         self.setObjectName("stats_book_day_row_alt" if index % 2 else "stats_book_day_row")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        # WA_Hover puts the row into Qt's hover tracking, which underMouse() and
+        # the style/cursor machinery both key off. Without it, measured live:
+        # 70 consecutive samples with widgetAt() returning this row and
+        # cursor=PointingHand, but underMouse() False throughout.
+        #
+        # Kept as correctness, NOT as the fix for the reported arrow cursor —
+        # adding it alone produced no visible change. The arrow at a row's last
+        # pixel is a separate, still-open hit-test seam (TODO.md 2026-07-31):
+        # childAt() returns this row for row-local y=51 while Qt delivers the
+        # press to the rows container instead.
+        self.setAttribute(Qt.WA_Hover, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # A book is archived if its path is missing (location removed), explicitly
         # excluded, or confirmed missing from disk (is_missing — see db.py's
