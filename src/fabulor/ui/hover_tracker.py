@@ -52,18 +52,35 @@ class ScrollHoverTracker(QObject):
         #
         # The filter goes on the QApplication, not the viewport. Rows are
         # children of the scrolled widget, so a move over a row is delivered to
-        # the ROW — a viewport-level filter never sees it (verified: zero moves
-        # observed for a move sent to a row). Enter/Leave on the rows themselves
-        # is what Qt does still deliver reliably, and an app-level filter catches
-        # those wherever they land. Every branch is scoped to this scroll area's
-        # own descendants, so other panels are unaffected.
+        # the ROW — a viewport-level filter never sees it (verified offscreen:
+        # zero moves observed for a move sent to a row).
+        #
+        # HoverEnter/HoverMove/HoverLeave are watched alongside the mouse events
+        # rather than instead of them. A plain QWidget receives MouseMove only
+        # while a button is held or it has setMouseTracking(True) — neither is
+        # true of these rows — so a button-less move across a row produces no
+        # MouseMove at all, and Enter fires once at the boundary. That is why
+        # the first version highlighted on scroll but not on plain hover.
+        # WA_Hover (set below) makes Qt synthesise the Hover* family, which
+        # tracks movement WITHIN a row, so the resync no longer depends on
+        # guessing which event Qt happens to send.
+        #
+        # Every branch is scoped to this scroll area's own descendants, so other
+        # panels are unaffected.
         from PySide6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
 
+    _TRACKED_EVENTS = None  # built lazily; QEvent import is deferred
+
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
-        t = event.type()
-        if t in (QEvent.Type.Enter, QEvent.Type.MouseMove, QEvent.Type.Leave):
+        if ScrollHoverTracker._TRACKED_EVENTS is None:
+            ScrollHoverTracker._TRACKED_EVENTS = frozenset((
+                QEvent.Type.Enter, QEvent.Type.Leave, QEvent.Type.MouseMove,
+                QEvent.Type.HoverEnter, QEvent.Type.HoverMove,
+                QEvent.Type.HoverLeave,
+            ))
+        if event.type() in ScrollHoverTracker._TRACKED_EVENTS:
             try:
                 if self._scroll.isAncestorOf(obj):
                     self._resync()
@@ -100,15 +117,37 @@ class ScrollHoverTracker(QObject):
         viewport = self._scroll.viewport()
         if not viewport.isVisible():
             return
+        # Enumerate before the containment test, not after: this is what applies
+        # WA_Hover, and rows must carry it BEFORE the cursor first arrives or
+        # they emit no Hover events for that first entry.
+        rows = self._current_rows()
         pos = viewport.mapFromGlobal(QCursor.pos())
         if not viewport.rect().contains(pos):
             self._set_hovered(None)
             return
-        self._set_hovered(self._row_at(pos))
+        self._set_hovered(self._row_at(pos, rows))
 
-    def _row_at(self, viewport_pos: QPoint):
+    def _current_rows(self):
+        """Rows as they are right now, each guaranteed to emit Hover events.
+
+        WA_Hover is applied here rather than at each row's construction so both
+        panels get it from one place and a row rebuilt by a refresh can never
+        miss it. Qt only synthesises HoverEnter/HoverMove/HoverLeave for widgets
+        carrying this attribute, and those are what report movement WITHIN a
+        row — without them a button-less move across an already-entered row
+        produces no event at all."""
+        rows = []
         for row in self._rows_of():
-            if row is None or not row.isVisible():
+            if row is None:
+                continue
+            if not row.testAttribute(Qt.WidgetAttribute.WA_Hover):
+                row.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+            rows.append(row)
+        return rows
+
+    def _row_at(self, viewport_pos: QPoint, rows=None):
+        for row in (self._current_rows() if rows is None else rows):
+            if not row.isVisible():
                 continue
             top_left = row.mapTo(self._scroll.viewport(), QPoint(0, 0))
             if top_left.y() <= viewport_pos.y() < top_left.y() + row.height():
