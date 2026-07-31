@@ -577,6 +577,25 @@ class BookDayRow(QWidget):
 
         layout.addLayout(content_block, stretch=1)
 
+        # The row must be the mouse target for its WHOLE rect, not just the
+        # pixels no child happens to cover. Measured before this: BookDayRow
+        # owned 4/52 px at the cover column and 26/52 elsewhere — the rest went
+        # to the labels, none of which has a click handler or its own cursor.
+        # That left bands where a click did nothing and the cursor stayed the
+        # plain arrow: y=0,1 (top margin), y=25,26 (between the title and author
+        # rows) and y=50,51 (bottom margin). Rows stack at setSpacing(0), so
+        # row N's y=50,51 abuts row N+1's y=0,1 and forms a 4px strip that looks
+        # like solid row but is split between two rows — hovering across it
+        # flipped the highlight while the cursor stayed an arrow.
+        #
+        # Safe because every child here is decorative: the cover pixmap and the
+        # four text labels have no mouse handling of their own (audited), so
+        # routing their events to the row changes nothing except which widget
+        # receives them. If a child ever needs its own click behaviour, exclude
+        # it from this loop rather than removing the loop.
+        for _child in self.findChildren(QWidget):
+            _child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
