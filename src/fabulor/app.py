@@ -30,6 +30,7 @@ from .ui.cover_loader import CoverLoaderWorker # For async cover loading
 from .ui.library import LibraryPanel
 from .ui.panels import PanelManager # New import for PanelManager
 from .ui.visual_area_blur import ClippedBlurEffect
+from .ui import scrollbar_jump
 from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
@@ -508,6 +509,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._rclick_n = 0
 
         QApplication.instance().installEventFilter(self)
+
+        # Right-click any scrollbar gutter to jump the handle there, replacing
+        # the native style's system-themed context menu. Application-wide rather
+        # than per-widget: scrollbars here come from QScrollArea/QListWidget/
+        # QListView/QComboBox popups, several created internally by Qt with no
+        # construction site to patch. See ui/scrollbar_jump.py.
+        scrollbar_jump.install(QApplication.instance())
 
         # Restore last played book if it exists
         last_book = self.config.get_last_book()
