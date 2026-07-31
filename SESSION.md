@@ -1,3 +1,64 @@
+## Session Summary — 2026-08-01 Session 1 — Stats right-click, the 2px inset, and the clipped 8th row
+
+Three items off the handoff shortlist, smallest first. All three landed; the middle one corrected a
+claim this project's own docs had asserted without evidence.
+
+**1. Right-click opens Book Detail in Stats (`ed29384`).** The Library reaches detail with a
+right-click (its left click loads the book); a Stats row has only one action, so left click took it
+and right-click was a dead no-op. Both choices were locally sensible, the asymmetry was not. Three
+call sites now accept either button: `BookDayRow`, `FinishedBookThumb` (not in the handoff's list,
+but the same shape in the same panel — leaving it out would have created a second asymmetry inside
+Stats), and `_claim_container_input`'s router, which owns the row-boundary pixel. `BarChartWidget`
+stays left-only: its click navigates to a date, not a book.
+
+**2. The 2px top inset removed (`b2042f2`) — and the reasoning behind it was never real.**
+`TODO.md` stated the inset kept the viewport an exact multiple of the scroll step, and that it was
+load-bearing. The dig disproved every part of that:
+
+- It was attributed to `DEBT_INVENTORY.md`. That file never contained the claim.
+- Both TODO entries stating it were dated **2026-07-31** — written the previous session, by Claude,
+  as an explanation for why Tags drifts and Stats does not. Not a recorded decision; an inference
+  that got written down as fact and then cited as a constraint.
+- Its actual origin is `a9c3815` (2026-05-04), a cosmetic pass that collapsed the rows layout from
+  `(4,4,4,4)` to `(0,2,0,0)` while halving spacing 4→2. The `2` is a leftover of that halving. That
+  commit contains no scroll arithmetic and its subject is text eliding.
+- The mechanism it described does not exist: `setSingleStep` is never called in `stats_panel.py`
+  and `BookDayRow` has no fixed height, so there was no configured step for a margin to tune against.
+
+What actually keeps Stats aligned is the `_STATS_ROW_HEIGHT`-quantized wheel snapping in each tab's
+`wheelEvent`. Pryme's memory of drift was real but belonged to the **Library** panel — the
+2026-07-10 grid-mode work, fixed with scroll-value snapping.
+
+**3. The clipped 8th row (`899284e`, `64e2be6`).** With no Finished section the scroll area absorbed
+the whole leftover column height, clearing 7 rows plus part of an eighth; the partial row at the
+viewport edge rendered clipped. It always scrolled — nothing was ever stranded.
+
+Two failed attempts first, both dying on the same wrong assumption — that "which widget absorbs the
+column's slack" is separable from "where the block sits vertically". It is not. `setFixedHeight`
+and then `setMaximumHeight` each withdrew the scroll area from the column's stretch, and the layout
+redistributed the freed pixels *around* the block, pushing the total label and short lists down from
+the top. Pryme predicted this failure mode before the first attempt and sent reference screenshots
+specifically to pin the states that must not move; the first attempt shipped anyway with a docstring
+asserting short lists were unaffected. They were not.
+
+The shipped fix is a **pair**, and neither half works alone: an `addStretch()` in the outer layout
+between the scroll area and the Finished section (an explicit home for the slack, below the rows),
+plus `_cap_rows_viewport` limiting the viewport to `7 * _STATS_ROW_HEIGHT` when no Finished section
+is present. A stretch never demands space, only absorbs leftover, so the exactly-full case (6 rows +
+Finished) contributes 0px and is untouched. Follow-up: `_fixup_scroll_policy` was scheduled *before*
+the cap, so it measured overflow against the uncapped viewport and left a live scrollbar handle on a
+period with exactly 7 rows and nothing to scroll — reordered in all three refresh paths.
+
+Verified by Pryme overlaying before/after screenshots in an editor: they overlap exactly.
+
+**Process note.** The offscreen harness was tried once for the viewport arithmetic and returned a
+number that failed an obvious sanity check (viewport identical with the Finished section shown and
+hidden, plus a `propagateSizeHints()` warning from the offscreen plugin). It was discarded rather
+than reasoned from — correct per Session 4's calibration, and the reason the fix rests on structure
+readable in the source plus Pryme's live checks instead.
+
+---
+
 ## Session Summary — 2026-07-31 Session 4 — The dead row-boundary pixel: not ours
 
 Continues Session 3's hover work. The remaining symptom — one dead line at every Stats row boundary,

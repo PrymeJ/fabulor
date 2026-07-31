@@ -110,6 +110,18 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   top-level widget's own cursor property, not the platform's actual visible cursor
   state. Don't use it as a proxy for "what does the user currently see."
 - **Qt's `QRect.right()`/`.bottom()` are inclusive (last pixel), not the true edge** — documented historical quirk, not a bug. Use `x()+width()`/`y()+height()`. Suspect first for any single-pixel boundary hit-test mismatch.
+- **Constraining a lone stretch participant's height moves the whole block.** In a `QVBoxLayout`
+  with one `stretch=1` member, that member absorbs all leftover height. `setFixedHeight` or
+  `setMaximumHeight` on it withdraws it from the stretch and the layout redistributes the freed
+  pixels *around* the block — content drifts down from the top. Pair any such cap with an explicit
+  `addStretch()` where the slack should go. Both variants were tried and reverted before this was
+  understood (2026-08-01, Stats rows viewport).
+- **A rationale you inferred is not a rationale that was recorded.** Before treating a documented
+  constraint as load-bearing, check whether it traces to a real decision — `git log -S` the line
+  and read the commit that introduced it. Twice now a plausible explanation written into the docs
+  was later cited as established fact and constrained real work: the Stats 2px inset (2026-08-01)
+  was documented as scroll-step alignment, was actually a leftover from a cosmetic margin pass, and
+  described a mechanism (`setSingleStep`) the file never calls.
 
 ---
 
@@ -1277,7 +1289,22 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-07-30 Session 4 — library search operators. Added `@name` (author only) and
+*Last updated: 2026-08-01 Session 1 — Stats panel: right-click parity, the 2px inset, the clipped
+8th row. Right-click now opens Book Detail in the Stats lists too (`BookDayRow`,
+`FinishedBookThumb`, and `_claim_container_input`'s boundary-pixel router — all three, or
+right-click works everywhere on a row except its seam); `BarChartWidget` stays left-only since its
+click navigates to a date, not a book. The rows layout's 2px top inset was removed: it was
+documented as scroll-step alignment and load-bearing, but that rationale had been **inferred the
+previous session and written down as fact** — `DEBT_INVENTORY.md` never contained it, the inset
+traces to `a9c3815` (a cosmetic pass halving spacing 4→2), and the mechanism it described does not
+exist (`setSingleStep` is never called in `stats_panel.py`). Real alignment comes from the
+row-quantized wheel snapping. The clipped 8th row (no-Finished-section case only) is fixed by
+`_cap_rows_viewport` + a paired `addStretch()`; **two attempts failed first** because constraining
+the scroll area's height at all withdraws it from its column's stretch and drifts the whole block
+down — new Debugging-discipline entries cover both that trap and the inferred-rationale one.
+`899284e`, `64e2be6`, `ed29384`, `b2042f2`.*
+
+*Previously: 2026-07-30 Session 4 — library search operators. Added `@name` (author only) and
 `=NNNN` (exact year), each resolving a demonstrated collision with the bare search's
 title-OR-author-OR-narrator matching, not filling out a scheme: `james baldwin` returns both a
 biography's title and a novel's author, `1984` returns both a title and a year. Click-to-filter

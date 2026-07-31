@@ -39,8 +39,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
 
 ### Stats / Tags row interaction
-- [2026-07-31] Stats rows open Book Detail on LEFT click while Library uses RIGHT — right-click is a no-op
-- [2026-07-31] The rows layout's 2px top inset — why it exists, and whether it can go
 - [2026-07-31] Tags list rows drift on scroll — viewport/scroll step not quantized to row height
 
 ### Panel focus / keyboard navigation
@@ -585,35 +583,24 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
   attempting a fix.
 
-- **[2026-07-31] DECIDE: Stats rows open Book Detail on LEFT click; the Library uses RIGHT click.**
-  Right-click in the Stats lists is currently a no-op. Both behaviours make sense on their own — the
-  Library row's left click loads the book, so detail had to go elsewhere; a Stats row has only one
-  action, so left click taking it is natural — but the inconsistency is confusing in use. Proposal:
-  make right-click ALSO open the detail panel in Stats, so both buttons work there and the Library's
-  muscle memory transfers. Low risk: `BookDayRow.mousePressEvent` already receives the press and
-  currently ignores anything that is not `LeftButton`, and the container router
-  (`_claim_container_input`) would need the same treatment so boundary pixels behave identically.
-
-- **[2026-07-31] INVESTIGATE: the rows layout's 2px top inset — why it exists and whether it can go.**
-  `_day/_week/_month_rows_layout.setContentsMargins(0, 2, 0, 0)`. It was believed to keep the
-  viewport an exact multiple of the scroll step so rows stay aligned when scrolled, and CLAUDE.md's
-  DEBT_INVENTORY entry called it load-bearing on that basis. **Removing it live produced no visual
-  shift and no drift at all** — the grid did not move, which contradicts that account. It is also
-  visible: it shows as a 2px band above the first row (see the Week screenshot, above "The Name of
-  the Rose"). Before removing it, dig through SESSION.md/NOTES.md for when and why it was added —
-  the alignment reasoning may have applied to a layout that has since changed, or it may guard a
-  case not exercised by a simple scroll. Ruled out as the cause of the dead boundary pixel (removing
-  it moved the dead pixel WITH the rows, 53→51).
-
 - **[2026-07-31] FIX: Tags list rows drift on scroll.** Surfaced by the new hover highlight, which
   made the misalignment obvious — it is a row-drift issue, not a highlight issue. The Tags list
   needs the same viewport/scroll-step quantization the rest of the app uses, so rows land on exact
-  boundaries instead of creeping. **Stats Day/Week/Month do NOT have this problem**: their rows
-  layout carries a 2px top inset (`setContentsMargins(0, 2, 0, 0)`) that makes the viewport an exact
-  multiple of the scroll step, keeping every row in place when scrolled. That inset is load-bearing;
-  do not "tidy" it away without replacing the alignment it provides. Worth considering whether the
-  Day/Week/Month tab geometry could be sized so the alignment falls out naturally rather than
-  relying on the 2px trick.
+  boundaries instead of creeping.
+
+  **Corrected 2026-08-01 — this entry previously named the wrong mechanism.** It claimed Stats
+  Day/Week/Month stay aligned because of a 2px top inset on their rows layout, and pointed at that
+  inset as the model to copy. Both halves were wrong. The inset was cosmetic (`a9c3815`, a pass
+  that collapsed `(4,4,4,4)` → `(0,2,0,0)` while halving spacing 4→2) and has been removed with no
+  drift whatsoever. What actually keeps Stats aligned is two things, neither of them a margin:
+  `_STATS_ROW_HEIGHT`-quantized **wheel snapping** in each tab's `wheelEvent` (snap to a row
+  multiple, clamp to `max_aligned`), and a **viewport capped to a whole number of rows**
+  (`_cap_rows_viewport`). Copy those, not a margin.
+
+  Note the trap the Stats work hit twice: constraining the scroll area's height —
+  `setFixedHeight` *or* `setMaximumHeight` — withdraws it from the column's stretch, and the layout
+  then redistributes the freed pixels *around* the block, pushing content down from the top. It
+  only works paired with an explicit `addStretch()` below the scroll area to absorb that slack.
 
 - **[2026-07-31] DESIGN: `ScrollHoverTracker.suspend()` is the coexistence hook for mouse vs.
   keyboard highlighting.** `ui/hover_tracker.py` keeps the hovered row as explicit state
