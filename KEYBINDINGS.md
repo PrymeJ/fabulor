@@ -105,7 +105,8 @@ it has focus. They are not global shortcuts and are not part of `shortcuts.py`.
 
 ## Mouse and wheel
 
-Handled in `MainWindow` (`_on_drag_area_pressed`, `wheelEvent`) and the chapter list.
+Handled in `MainWindow` (`_on_drag_area_pressed`, `wheelEvent`), the chapter list, and — for the
+scrollbar row below — an application-wide event filter (`ui/scrollbar_jump.py`).
 Behavior unchanged by the shortcuts work, though the cover-area volume and speed-button
 wheel now share their ±step logic with the `Up`/`Down` and `Alt`+`Up`/`Down` keys via the
 extracted `_nudge_volume` / `_nudge_speed` methods (one implementation, two entry points).
@@ -120,6 +121,23 @@ extracted `_nudge_volume` / `_nudge_speed` methods (one implementation, two entr
 | Wheel | Chapter-progress slider | Seek within the current chapter (with undo capture). |
 | Left-click | Chapter list row | Jump to that chapter (without forcing playback). |
 | Right-click | Chapter list row | Jump to that chapter and start playing. |
+| Left-click | Scrollbar gutter | Pages toward the click (Qt default, unchanged). |
+| Right-click | Scrollbar gutter | Jumps the handle to the cursor. **Every scrollbar in the app** — library, stats, chapter list, popups, combo-box dropdowns. |
+
+**Scrollbar right-click (added 2026-07-31)** — `ui/scrollbar_jump.py`, an event filter installed
+once on the `QApplication`, not per-widget: scrollbars here come from `QScrollArea`,
+`QListWidget`, `QListView` and `QComboBox` popup views, several of which Qt creates internally
+with no construction site to patch. It replaces the native style's context menu ("Scroll here /
+Top / Bottom / Page up / ...") with that menu's "Scroll here" action performed directly. The menu
+is system-styled, ignores the app's theme, and every entry except "Scroll here" is already
+reachable by wheel, gutter left-click or keyboard.
+
+Suppressing it needs **both** the right-press and `QEvent.ContextMenu` swallowed — the menu rides
+on the latter (`QScrollBar`'s policy is `DefaultContextMenu`), so consuming only the press leaves
+the handle jumping correctly *and* the menu still appearing. The filter claims `ContextMenu` only
+on `QScrollBar`, so the app's own themed Cut/Copy/Paste menu on text fields (`text_context_menu.py`)
+is untouched. `ClickSlider` (transport/chapter/volume sliders) is a custom `QWidget`, not a
+`QScrollBar`, and keeps its own right-click seek.
 
 ---
 

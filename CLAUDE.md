@@ -1180,6 +1180,7 @@ Pure plumbing, no call sites yet. `setup_logging()` (called first thing in `main
 ## Files and Responsibilities
 
 ```
+main.py                       # Entry point (repo ROOT, not inside src/fabulor/) — calls setup_logging() before QApplication
 src/fabulor/
 ├── app.py                    # MainWindow wiring + module-level interface classes (VisualsInterface, PanelInterface, UICallbackInterface, LibraryInterface, PlayerInterface, BrowserInterface, UIInterface, AppInterface)
 ├── player.py                 # MPV wrapper, VT, async seek, gate/ungate
@@ -1218,8 +1219,14 @@ src/fabulor/
     ├── excluded_books.py     # ExcludedBooksSection (toggle line) + ExcludedBooksPopup (MainWindow-level popup, ChapterList's architecture — hover-reveal-eye restore rows)
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
     ├── flow_layout.py        # FlowLayout (heightForWidth implemented)
-    ├── icon_utils.py         # render_logo_placeholder, render_logo_placeholder_bordered — SVG logo placeholder renderers
+    ├── icon_utils.py         # load_themed_icon, load_currentcolor_icon, render_logo_placeholder(_bordered) — icon/SVG renderers
+    ├── cover_placeholder.py  # Cover-art placeholder logo rendering (no-cover books, in the cover label)
+    ├── ui_helpers.py         # _load_svg_pixmap/_load_svg_icon (+ LRU cache) — shared by app.py and main_window_builders
+    ├── main_window_builders.py # build_* functions extracted from MainWindow._build_* — each takes `mw` and assigns widgets onto it
+    ├── transport_bar_blur.py # TransportBarBlurOverlay — live backdrop blur for the mini transport bar behind an open panel
+    ├── visual_area_blur.py   # ClippedBlurEffect — blur for `visual_area`, clipped to the panel-occluded region (sliver stays sharp)
     ├── line_edit_dragfix.py  # DragSafeLineEdit — QLineEdit base for ALL text inputs; suppresses Qt's stray-move drag-select
+    ├── scrollbar_jump.py     # ScrollBarJumpFilter — app-wide right-click-gutter-to-jump; suppresses the native scrollbar context menu
     └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
 ```
 
