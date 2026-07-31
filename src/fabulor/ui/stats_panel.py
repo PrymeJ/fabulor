@@ -577,6 +577,25 @@ class BookDayRow(QWidget):
 
         layout.addLayout(content_block, stretch=1)
 
+        # The row must be the mouse target for its WHOLE rect, not just the
+        # pixels no child happens to cover. Measured before this: BookDayRow
+        # owned 4/52 px at the cover column and 26/52 elsewhere — the rest went
+        # to the labels, none of which has a click handler or its own cursor.
+        # That left bands where a click did nothing and the cursor stayed the
+        # plain arrow: y=0,1 (top margin), y=25,26 (between the title and author
+        # rows) and y=50,51 (bottom margin). Rows stack at setSpacing(0), so
+        # row N's y=50,51 abuts row N+1's y=0,1 and forms a 4px strip that looks
+        # like solid row but is split between two rows — hovering across it
+        # flipped the highlight while the cursor stayed an arrow.
+        #
+        # Safe because every child here is decorative: the cover pixmap and the
+        # four text labels have no mouse handling of their own (audited), so
+        # routing their events to the row changes nothing except which widget
+        # receives them. If a child ever needs its own click behaviour, exclude
+        # it from this loop rather than removing the loop.
+        for _child in self.findChildren(QWidget):
+            _child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
     def _on_cover_loaded(self, book_id, image):
         if image.isNull():
             return
@@ -3226,6 +3245,10 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._day_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._day_rows_layout), self)
+        # The container owns the hand cursor and routes boundary-pixel
+        # clicks to the highlighted row — see _claim_container_input.
+        self._claim_container_input(
+            self._day_rows_widget, self._day_hover)
 
         def _day_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3289,6 +3312,59 @@ class StatsPanel(QWidget):
         widget.setVisible(False)
         layout.insertWidget(layout.count() - 1, widget)
         widget.setVisible(True)
+
+    def _claim_container_input(self, container, tracker):
+        """Let the rows CONTAINER own the hand cursor and route clicks to the
+        highlighted row.
+
+        The last pixel of a flush-stacked widget is not delivered to that widget
+        under real input on this platform — it goes to the parent instead. Proven
+        in a minimal repro (tools/row_hittest_minimal.py): six bare QWidgets, no
+        labels, styling, cursors, margins or scroll area, and with --no-layout
+        they are positioned by setGeometry with no layout engine involved at all.
+        A press on a row's last pixel still reaches the container. The control is
+        --no-spacing-zero: give the rows a real 6px gap and every hit routes
+        correctly, so it is specifically the pixel where one rect ends and the
+        next begins. Synthesized presses at the identical pixel always land
+        correctly, which is why no offscreen test ever caught it.
+
+        So rather than fight delivery, stop depending on it:
+
+        * The container carries the hand cursor. The rows fill it entirely, so
+          anywhere the cursor can be inside the list is over a row — there is no
+          position where a hand would be wrong. This fixes the arrow that used to
+          appear on the boundary pixels.
+
+        * A press that lands on the container is routed to the tracker's
+          `hovered_row` — the row the highlight is actually on, i.e. the one the
+          user is pointing at. An earlier attempt mapped the press y to whichever
+          row's geometry contained it and was reverted: on a boundary pixel that
+          resolves to the row ABOVE, so clicking while highlighting the lower row
+          opened the wrong book. The highlight is the user's intent; geometry is
+          not.
+        """
+        # The hand is applied only while a row is actually highlighted, not
+        # blanket on the container: on a short day the rows widget is taller
+        # than its rows, and a blanket cursor would show a hand over the empty
+        # space below the last one. The tracker already resolves "is the cursor
+        # over a row", so reuse that answer rather than testing geometry twice.
+        container.setMouseTracking(True)
+
+        def on_container_move(event):
+            if isinstance(tracker.hovered_row, BookDayRow):
+                container.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                container.unsetCursor()
+
+        container.mouseMoveEvent = on_container_move
+
+        def on_container_press(event):
+            if event.button() != Qt.MouseButton.LeftButton:
+                return
+            row = tracker.hovered_row
+            if isinstance(row, BookDayRow):
+                row.clicked.emit(row._row_data)
+        container.mousePressEvent = on_container_press
 
     def _refresh_daily(self):
         if self._cached_active_days is None:
@@ -3414,6 +3490,10 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._week_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._week_rows_layout), self)
+        # The container owns the hand cursor and routes boundary-pixel
+        # clicks to the highlighted row — see _claim_container_input.
+        self._claim_container_input(
+            self._week_rows_widget, self._week_hover)
 
         def _week_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3590,6 +3670,10 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._month_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._month_rows_layout), self)
+        # The container owns the hand cursor and routes boundary-pixel
+        # clicks to the highlighted row — see _claim_container_input.
+        self._claim_container_input(
+            self._month_rows_widget, self._month_hover)
 
         def _month_rows_wheel(e):
             bar = scroll.verticalScrollBar()
