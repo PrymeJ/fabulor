@@ -3458,7 +3458,6 @@ class StatsPanel(QWidget):
         self._day_rows_widget.setUpdatesEnabled(True)
         self._day_rows_layout.invalidate()
         self._day_rows_widget.updateGeometry()
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._day_scroll))
 
         # Blank, not "0m", when the day exists only via a playback finish
         # (no qualifying session rows) — the book shows in the Finished strip.
@@ -3474,6 +3473,10 @@ class StatsPanel(QWidget):
         # Cap follows the section's visibility — set together so the two can
         # never disagree. See _cap_rows_viewport.
         self._cap_rows_viewport(self._day_scroll, bool(finished))
+        # Scheduled AFTER the cap: _fixup_scroll_policy measures overflow
+        # against the viewport height, so it has to see the capped one or it
+        # leaves a live handle on a list that has nothing to scroll.
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._day_scroll))
 
     def _build_weekly_tab(self) -> QWidget:
         widget = QWidget()
@@ -3646,7 +3649,6 @@ class StatsPanel(QWidget):
         self._week_rows_widget.setUpdatesEnabled(True)
         self._week_rows_layout.invalidate()
         self._week_rows_widget.updateGeometry()
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._week_scroll))
 
         self._week_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
@@ -3657,6 +3659,8 @@ class StatsPanel(QWidget):
         else:
             self._week_finished_section.hide()
         self._cap_rows_viewport(self._week_scroll, bool(finished))
+        # Scheduled after the cap — see the day tab.
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._week_scroll))
 
     def _build_monthly_tab(self) -> QWidget:
         widget = QWidget()
@@ -3827,7 +3831,6 @@ class StatsPanel(QWidget):
         self._month_rows_widget.setUpdatesEnabled(True)
         self._month_rows_layout.invalidate()
         self._month_rows_widget.updateGeometry()
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._month_scroll))
 
         self._month_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
@@ -3838,6 +3841,8 @@ class StatsPanel(QWidget):
         else:
             self._month_finished_section.hide()
         self._cap_rows_viewport(self._month_scroll, bool(finished))
+        # Scheduled after the cap — see the day tab.
+        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._month_scroll))
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
