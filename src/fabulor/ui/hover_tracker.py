@@ -69,6 +69,22 @@ class ScrollHoverTracker(QObject):
         # panels are unaffected.
         from PySide6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
+        # Mouse tracking on the scrolled widget and the viewport, so pixels that
+        # belong to the CONTAINER rather than to a row still produce a move.
+        #
+        # Without this the highlight goes STALE on those pixels instead of
+        # clearing or moving: _resync only ever runs from an event, so at a
+        # container-owned pixel no row emits anything, nothing recomputes, and
+        # whatever row was resolved last stays lit. Observed live at a row
+        # boundary — the SAME y lit row 0 when approached from above and row 1
+        # when approached from below, which is a stale highlight, not a
+        # position-dependent one. A container-owned pixel exists at every row
+        # boundary (see TODO.md, the one-pixel hit-test seam), so this is
+        # reachable in normal use, not a corner case.
+        content = scroll.widget()
+        if content is not None:
+            content.setMouseTracking(True)
+        scroll.viewport().setMouseTracking(True)
 
     _TRACKED_EVENTS = None  # built lazily; QEvent import is deferred
 
