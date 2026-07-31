@@ -229,6 +229,14 @@ def main():
     app.processEvents()
     report(container, rows)
     synth_sweep(app, container, rows)
+    print("=" * 68)
+    print("THIS RUN PROVED NOTHING. The synthesized sweep passes on every")
+    print("variant, including ones that fail live. Re-run with --show and")
+    print("click along a row boundary:")
+    print()
+    print(f"    python {os.path.basename(__file__)} --show"
+          + (" " + " ".join(f"--{v}" for v in variants) if variants else ""))
+    print("=" * 68)
 
 
 if __name__ == "__main__":
