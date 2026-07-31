@@ -1225,6 +1225,7 @@ src/fabulor/
     ├── main_window_builders.py # build_* functions extracted from MainWindow._build_* — each takes `mw` and assigns widgets onto it
     ├── transport_bar_blur.py # TransportBarBlurOverlay — live backdrop blur for the mini transport bar behind an open panel
     ├── visual_area_blur.py   # ClippedBlurEffect — blur for `visual_area`, clipped to the panel-occluded region (sliver stays sharp)
+    ├── hover_tracker.py      # ScrollHoverTracker — re-resolves a scroll area's hovered row from cursor position (QSS :hover goes stale on scroll); suspend() is the keyboard-coexistence hook
     ├── line_edit_dragfix.py  # DragSafeLineEdit — QLineEdit base for ALL text inputs; suppresses Qt's stray-move drag-select
     ├── scrollbar_jump.py     # ScrollBarJumpFilter — app-wide right-click-gutter-to-jump; suppresses the native scrollbar context menu
     └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields

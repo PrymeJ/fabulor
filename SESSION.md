@@ -1,3 +1,89 @@
+## Session Summary — 2026-07-31 Session 3 — Scrollbar right-click, and three defects behind one hover report
+
+Three pieces of work. The first was clean; the second and third took a long diagnostic arc where
+most of my theories were wrong and Pryme's interjections did the real filtering.
+
+### Scrollbar right-click-to-jump (`1ac70b2`, `21ac097`, `4a94860`)
+
+Right-clicking a scrollbar gutter now jumps the handle there instead of opening the native
+system-styled context menu. An event filter on the `QApplication`, not per-widget: scrollbars here
+come from `QScrollArea`/`QListWidget`/`QListView`/`QComboBox` popups, several created internally by
+Qt with no construction site to patch.
+
+Shipped half-working first. Consuming the mouse press left the menu fully intact, because the menu
+rides on a separate `QEvent.ContextMenu` (`QScrollBar`'s policy is `DefaultContextMenu`). Both must
+be swallowed. `QEvent.ContextMenu` is how every Qt platform plugin routes a native menu, so this
+holds beyond the KDE/openSUSE desktop where it was reported.
+
+Also completed CLAUDE.md's file tree, which was missing six modules (including both blur subsystems,
+despite their having their own rules) and listed `main.py` as if it lived under `src/fabulor/`.
+Verified by diffing the tree against `ls` rather than by eye.
+
+### The hover report: three separate defects
+
+Reported as one symptom — the Stats highlight "drifts, then comes back, fluctuating and blinking"
+with the mouse still, while Library is fine.
+
+**(a) The blur grab was running with blur off.** `StatsPanel._on_tab_changed` called
+`show_for_panel` directly, bypassing the `get_blur_enabled()` gate that
+`PanelManager._apply_transport_bar_blur` respects — so any tab switch re-armed the overlay
+regardless of Panel background mode. Measured with Opaque selected: the real gate logged
+`blur_enabled=False -> skip` while the same window contained 132 grabs and 264 panel hide/show
+cycles. This also explained a loose end from the scrollbar session — Pryme's report that after
+switching away from frosty "the scrollbars acted as if blur was still on... it cleared on another
+switch, or panel close." Exactly right, and exactly this.
+
+**(b) Hover never re-resolved on scroll.** `ui/hover_tracker.py` (`ScrollHoverTracker`) resolves the
+hovered row from cursor position and recomputes when content moves, driving a `[hovered="true"]`
+dynamic property instead of QSS `:hover`. Library is immune structurally: it is a `QListView` with a
+delegate, so hover is model state the view recomputes on scroll and there are no child widgets at
+all. Deliberately leaves the blur alone — Pryme flagged in advance that pausing the grab on every
+scroll would be "another remedy is worse situation," and he was right.
+
+**(c) `BarChartWidget` cursor flicker** (`4c7e3d4`) — the panel-blur hide/show cycle again, third
+bug from that mechanism after the ThemeItem heartbeat and the stiff tassel. `mouseMoveEvent` set
+hover index and cursor together; `leaveEvent` cleared only the index. Pryme identified the
+heartbeat connection from memory and told me to grep the docs for it.
+
+### Still open: one dead pixel per row
+
+A click on the last pixel of a row (row-local y=51 of 52) is delivered to the rows container, so it
+does nothing, and the cursor there is the plain arrow. `childAt()` returns `BookDayRow` for that
+pixel while Qt delivers the press elsewhere — the two disagree on a one-pixel boundary. Tinting
+proved the rows are flush and the pixel is painted by the row, so it is a hit-test/paint mismatch,
+not a layout gap. Mechanism unidentified; recorded in TODO.md with the measurements and the six
+ruled-out causes.
+
+### What I got wrong, and what actually moved this forward
+
+Most of the round-trips were mine:
+
+- I claimed the grab "isn't gated on a blur setting at all" — fabricated, from grepping the wrong
+  file. Pryme's one-word challenge ("Why?") exposed it.
+- I then inferred the backdrop MODE from the presence of grab lines, against Pryme stating plainly
+  which mode was selected, twice. His report was data about the system's real input; my inference
+  was the suspect, and it was wrong both times.
+- I read a probe's silence as evidence three times: once from a probe that only fired on row entry,
+  once from one that deduped, and twice from an app `entr` had silently failed to restart.
+- I revived the blur-grab theory for the scrollbar with the wrong mechanism, and Pryme falsified it
+  with "no book was playing" before my own probe did.
+
+**The most useful contribution was Pryme's, late and worth internalising:** when a bug is about
+*which widget owns which pixel*, colour the widgets first. It answers in one round what a dozen
+positional theories could not, and it is the visual equivalent of the ancestry probe that eventually
+found the answer. He also asked to see every widget in a row audited — cursor, attributes, handlers
+— which is what established that none of the five child labels sets or handles anything, narrowing
+the search to the row's own pixels.
+
+On process, he was explicit that wrong theories are expected and are how culprits get eliminated,
+and that my only real mistake was reading log seconds *before* a stated timestamp as if they were
+part of the test — those are him navigating to the spot, and should be discarded once the marked
+window is identified.
+
+`pytest tests/ -q` — exit 0 throughout. All probes removed.
+
+---
+
 ## Session Summary — 2026-07-31 Session 2 — Stats scrollbars couldn't be dragged (the blur grab, again)
 
 Picked up from `plans/Handoff_260731_stats_scrollbar_drag.md`, which had the symptom precisely

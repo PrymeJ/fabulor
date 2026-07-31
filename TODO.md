@@ -38,7 +38,12 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary proximity
 - [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
 
+### Stats / Tags row interaction
+- [2026-07-31] One dead pixel per row — last pixel of each row refuses clicks and shows the arrow cursor
+- [2026-07-31] Tags list rows drift on scroll — viewport/scroll step not quantized to row height
+
 ### Panel focus / keyboard navigation
+- [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
 - [2026-07-12] Stats Day/Week/Month sub-nav and Tags panel keyboard nav — deferred, larger scope
 - [2026-07-11] History tab scroll has no row-height viewport quantization (blocked on tags-gutter work)
 - [2026-07-11] History tab delete-session animation still pauses near the end (blocked on the above)
@@ -578,6 +583,52 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
   diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
   attempting a fix.
+
+- **[2026-07-31] FIX: one dead pixel per row in Stats Day/Week/Month — clicks ignored, arrow
+  cursor.** A click on the LAST pixel of a row (row-local y=51 of a 52px row) is delivered to the
+  rows container instead of the row, so it does nothing, and the cursor there is the plain arrow
+  rather than the row's hand. Measured four times, perfectly consistent — rows span 2..53, 54..105,
+  106..157, 158..209 and the dead clicks were at y=53/105/157/209:
+
+      at=124,53   childAt=BookDayRow   rows(y,h)=[(2,52),(54,52),(106,52),(158,52)]
+      at=119,105  childAt=BookDayRow
+      at=130,157  childAt=BookDayRow
+      at=115,209  childAt=BookDayRow
+      at=98,326   childAt=None          <- genuinely below all rows, correctly dead
+
+  **`childAt()` returns `BookDayRow` for that pixel while Qt delivers the press to the container** —
+  the two disagree on a one-pixel boundary. Tinting rows and container showed NO gap between rows
+  (flush, and the pixel is painted by the row), so this is a hit-test/paint mismatch, not a layout
+  gap. Mechanism NOT identified. Ruled out along the way: gutters (rows are `setSpacing(0)`), child
+  widgets blocking cursor inheritance (children inherit correctly, verified), the dim effect
+  (archived books only), the blur override (`override=None` throughout), short rows (measured
+  exactly 52px, `gap_above=0`), and an overlay (none exists). Full measurement trail in NOTES.md,
+  2026-07-31. Affects Tags rows equally. Low user impact (one pixel), but it is the visible cause of
+  both the "arrow cursor over a clickable row" and "clicking sometimes does nothing" reports, so it
+  should not be closed as cosmetic.
+
+- **[2026-07-31] FIX: Tags list rows drift on scroll.** Surfaced by the new hover highlight, which
+  made the misalignment obvious — it is a row-drift issue, not a highlight issue. The Tags list
+  needs the same viewport/scroll-step quantization the rest of the app uses, so rows land on exact
+  boundaries instead of creeping. **Stats Day/Week/Month do NOT have this problem**: their rows
+  layout carries a 2px top inset (`setContentsMargins(0, 2, 0, 0)`) that makes the viewport an exact
+  multiple of the scroll step, keeping every row in place when scrolled. That inset is load-bearing;
+  do not "tidy" it away without replacing the alignment it provides. Worth considering whether the
+  Day/Week/Month tab geometry could be sized so the alignment falls out naturally rather than
+  relying on the 2px trick.
+
+- **[2026-07-31] DESIGN: `ScrollHoverTracker.suspend()` is the coexistence hook for mouse vs.
+  keyboard highlighting.** `ui/hover_tracker.py` keeps the hovered row as explicit state
+  (`hovered_row`) rather than leaving it implicit in Qt's styling, and exposes `suspend(bool)` so
+  keyboard navigation can take ownership of the selection without a second highlight rendering.
+  Written for the eventual Stats/Tags keyboard nav (the entry below) — when that lands, route the
+  keyboard cursor through `suspend()` instead of inventing a parallel highlight.
+
+  The same problem already exists in the LIBRARY panel today and is a known gap: with the mouse
+  resting over a row, PageUp/PageDown produce **two** highlights (mouse hover plus keyboard
+  selection), and `Alt+Enter` opens the book under the MOUSE rather than the keyboard-selected one.
+  Moving the pointer outside the window avoids it. Whatever coexistence rule is chosen should be
+  applied to Library and to Stats/Tags together, so the behaviour is uniform.
 
 - **[2026-07-12] DEFERRED (not planned for the current shipping push): Stats Day/Week/Month
   sub-navigation and Tags panel keyboard nav.** Explicitly scoped OUT while implementing Book

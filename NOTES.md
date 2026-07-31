@@ -1,3 +1,107 @@
+## 2026-07-31 — Stats/Tags row hover: three separate defects behind one report, and a one-pixel hit-test seam still open
+
+**Reported as one symptom:** in the Stats Day/Week/Month lists the hover highlight
+"drifts, then comes back, fluctuating and blinking between rows" while the mouse sits still, and
+the Library panel does not do this. It turned out to be three unrelated defects plus a fourth,
+still-unexplained one.
+
+### 1. The blur grab was running with blur OFF — a second, ungated entry point
+
+`PanelManager._apply_transport_bar_blur` gates on `config.get_blur_enabled()` (`mode == "frosty"`),
+so Transparent and Opaque never start the overlay. But `StatsPanel._on_tab_changed` called
+`blur.show_for_panel(self)` **directly**, with no such check — it exists to handle the opaque
+Timeline tab, and its `elif` re-armed the overlay on *every* tab switch regardless of mode.
+
+Measured with Opaque selected: the gate correctly logged `mode='opaque' blur_enabled=False -> skip`,
+while the same 90s window contained **132 grabs and 264 panel hide/show cycles**. The grab hides and
+re-shows the whole panel ~5x/sec, which re-resolves hover under a stationary cursor — the "blinking
+between rows".
+
+This also matched a report from the earlier scrollbar-drag session that had been left unexplained:
+*"I had switched from frosty to opaque, but although the background didn't show blur, the scrollbars
+acted as if blur was still off... it later cleared either on another switch, or panel close."* Same
+cause: the overlay is re-armed by a tab switch and torn down only by a Timeline switch
+(`hide_for_panel`) or a panel close.
+
+**Fix:** add the `get_blur_enabled()` check to that second entry point.
+
+### 2. Hover never re-resolved on scroll (`ScrollHoverTracker`)
+
+Independent of the blur. These panels style rows with QSS `:hover`, which Qt drives from
+movement-generated enter/leave. Scrolling with the cursor still never re-resolves which row is
+underneath, so the highlight stays on the row that was there when the mouse last moved.
+
+The library panel is immune for a structural reason worth recording: it is a `QListView` with a
+model and a **delegate**, so hover is model state (`BookModel.set_hovered`) fed by
+`QListView.entered` and recomputed by the view as content scrolls. There are no child widgets at
+all. Stats/Tags compose real `QWidget` rows, so nothing recomputes.
+
+`ui/hover_tracker.py` resolves the hovered row from cursor position and recomputes on
+`valueChanged` plus the hover event family, driving a `[hovered="true"]` dynamic property instead of
+the `:hover` pseudo-state. Deliberately does NOT touch the blur — no grab is paused, so it avoids
+trading a blinking highlight for a stuttering panel.
+
+Two implementation notes that cost a round each:
+- A plain `QWidget` receives `MouseMove` only while a button is held or with `setMouseTracking(True)`.
+  Neither is true of these rows, so a button-less move produced **no event at all** and the first
+  version highlighted on scroll but not on plain hover. Fixed by watching
+  `HoverEnter`/`HoverMove`/`HoverLeave` with `WA_Hover` applied from inside the tracker.
+- The filter is installed on the `QApplication`, not the viewport: rows are children of the scrolled
+  widget, so a move over a row is delivered to the ROW and a viewport-level filter sees none of them
+  (verified offscreen).
+
+### 3. `BarChartWidget` cursor flicker — the hide/show cycle again
+
+`mouseMoveEvent` sets the hover index and the cursor together; `leaveEvent` cleared only the index.
+A synthetic leave from the grab left the cursor a hand with the index cleared, and with the mouse
+stationary nothing reconciled them. Fixed by dropping the synthetic leave and restoring the cursor
+alongside the index.
+
+`isVisible()` at LEAVE time is the discriminator, and it was verified rather than assumed — this
+file records the same check being **disproven** for `ThemeItem`, but that was `isVisible()` at ENTER
+time. Measured here: 51 leaves `vis=False` at the grab cadence vs 2 genuine `vis=True`.
+
+### 4. STILL OPEN: one dead pixel per row
+
+A click on the **last pixel of a row** (row-local y=51 of a 52px row) does nothing, and the cursor
+there is the plain arrow. Measured four times, perfectly consistent:
+
+    at=124,53   childAt=BookDayRow   rows(y,h)=[(2,52),(54,52),(106,52),(158,52)]
+    at=119,105  childAt=BookDayRow
+    at=130,157  childAt=BookDayRow
+    at=115,209  childAt=BookDayRow
+    at=98,326   childAt=None          <- genuinely below all rows, correctly dead
+
+Rows span 2..53, 54..105, 106..157, 158..209. **`childAt()` returns `BookDayRow` for that pixel while
+Qt delivers the press to the rows container.** The two disagree on a one-pixel boundary.
+
+Tinting the rows and container (blue/green rows, red container) showed **no red between rows** —
+they are flush and the pixel is *painted* by the row. So this is a hit-test/paint mismatch, not a
+layout gap. Mechanism not identified; see TODO.md.
+
+This single seam explains both the arrow cursor and the dead click at that pixel, and it is why the
+highlight and the behaviour disagreed: the hover tracker computes the highlight from geometry, so it
+lights the row correctly while Qt refuses the click.
+
+### Process notes
+
+- **Colour the widgets first.** Pryme's suggestion, made late: when a bug is about *which widget owns
+  which pixel*, tinting the widgets answers it in one round. It would have replaced most of a dozen
+  positional theories here, and it is the visual equivalent of the ancestry probe that eventually
+  found the answer.
+- **A probe that logs only on state change cannot prove absence.** The first cursor probe fired on
+  `enterEvent` only, so it never sampled a stationary cursor; a later one deduped, so a sustained
+  arrow would have logged nothing. Both silences were nearly read as evidence.
+- **Check the app actually restarted before reading a log.** `entr` silently missed edits twice; two
+  captures were read against a binary that predated the probe by minutes.
+- **`window().cursor()` is useless for "what is displayed"** — it returns the top-level widget's own
+  cursor property (always Arrow here), not the platform state.
+- Several rounds were spent inferring the panel-backdrop MODE from the presence of grab lines in the
+  log, against Pryme stating plainly which mode was selected. The gate probe settled it immediately
+  and confirmed his report; the inference had been backwards the whole time.
+
+---
+
 ## 2026-07-31 — Hiding a panel mid-drag destroys `QAbstractSlider`'s drag state: Stats scrollbars couldn't be dragged
 
 **Symptom:** the vertical scrollbar on the Stats panel's Day/Week/Month tabs could not be dragged.
