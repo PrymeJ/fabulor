@@ -99,6 +99,20 @@ The real library used for day-to-day testing has been ~400 books. That is not re
 
 ---
 
+## Debugging discipline
+
+- **Colour widgets first** when a bug is about which widget owns which pixel — faster than positional theories.
+- **Change-only probes can't prove absence.** Log stationary state too, not just transitions.
+- **Verify the app restarted** before trusting a log (`entr` can silently miss edits). Before trusting a capture, confirm
+  the running binary/process postdates the code change.
+- **Single-point checks aren't a survey.** Sample edges/full area, not one representative point.
+- **`window().cursor()` does not tell you what's displayed.** It returns the
+  top-level widget's own cursor property, not the platform's actual visible cursor
+  state. Don't use it as a proxy for "what does the user currently see."
+- **Qt's `QRect.right()`/`.bottom()` are inclusive (last pixel), not the true edge** — documented historical quirk, not a bug. Use `x()+width()`/`y()+height()`. Suspect first for any single-pixel boundary hit-test mismatch.
+
+---
+
 ## Running the app (Claude Code / Bash tool)
 
 ## TEMPORARY: fabulorenv Python is conda-shadowed (2026-07-30)
