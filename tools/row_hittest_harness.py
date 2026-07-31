@@ -229,7 +229,42 @@ def main():
     scroll, container, rows, tracker = build(app, with_tracker=args.tracker)
     print(f"ScrollHoverTracker attached: {tracker is not None}\n")
     if args.show:
-        scroll.setWindowTitle("row hit-test harness — click the seams")
+        # Same live status strip as harness2, so the two windows can be compared
+        # directly by hand. This one is the KNOWN-BROKEN structure: presses in
+        # the row's margins and the inter-label gap should reach the CONTAINER.
+        from PySide6.QtWidgets import QLabel as _QLabel
+        wrapper = QWidget()
+        wrapper.setWindowTitle("BROKEN rows — expect container hits in the bands")
+        outer = QVBoxLayout(wrapper)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(scroll)
+        status = _QLabel("click the top edge, the gap between the two text "
+                         "lines, and the bottom edge of a row")
+        status.setWordWrap(True)
+        status.setMinimumHeight(54)
+        status.setStyleSheet(
+            "background:#111; color:#ddd; padding:6px; font-family:monospace;")
+        outer.addWidget(status)
+
+        def on_row_press(row, event):
+            y = int(event.position().y())
+            status.setStyleSheet(
+                "background:#123; color:#9f9; padding:6px; font-family:monospace;")
+            status.setText(f"row {row.index}  local_y={y}  -> reached the ROW")
+
+        for r in rows:
+            r.mousePressEvent = (lambda e, _r=r: on_row_press(_r, e))
+
+        def on_container_press(event):
+            status.setStyleSheet(
+                "background:#311; color:#f99; padding:6px; font-family:monospace;")
+            status.setText(
+                f"y={int(event.position().y())} -> reached the CONTAINER, not a row")
+        container.mousePressEvent = on_container_press
+
+        wrapper.resize(272, 440)
+        wrapper.show()
         sys.exit(app.exec())
     sweep(container, rows)
     sweep_delivery(app, scroll, container, rows)

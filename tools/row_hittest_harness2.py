@@ -243,7 +243,49 @@ def main():
     scroll, container, rows = build(app)
     report_geometry(container, rows)
     if args.show:
-        scroll.setWindowTitle("clean rows — every pixel should click and show a hand")
+        # Live feedback in the window itself. Watching a terminal while trying
+        # to hold the pointer on a 2px band is not a usable test, and the
+        # offscreen sweep is not trustworthy for this class of bug — it passed
+        # on the KNOWN-BROKEN structure. Every press paints its row-local y into
+        # the status strip; a press that reaches the CONTAINER instead of a row
+        # says so in red, which is exactly the failure being hunted.
+        wrapper = QWidget()
+        wrapper.setWindowTitle("clean rows — click every band, watch the strip below")
+        outer = QVBoxLayout(wrapper)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(scroll)
+
+        status = QLabel("click anywhere in a row — top edge, text, the gap "
+                        "between the two lines, bottom edge")
+        status.setWordWrap(True)
+        status.setStyleSheet(
+            "background:#111; color:#ddd; padding:6px; font-family:monospace;")
+        status.setMinimumHeight(54)
+        outer.addWidget(status)
+
+        def on_row_press(row, event):
+            y = int(event.position().y())
+            band = ("TOP MARGIN" if y <= 1 else
+                    "BOTTOM MARGIN" if y >= ROW_H - 2 else
+                    "INTER-LABEL GAP" if 25 <= y <= 26 else "over a label")
+            status.setStyleSheet(
+                "background:#123; color:#9f9; padding:6px; font-family:monospace;")
+            status.setText(f"row {row.index}  local_y={y}  [{band}]  -> reached the ROW")
+
+        for r in rows:
+            r.mousePressEvent = (lambda e, _r=r: on_row_press(_r, e))
+
+        def on_container_press(event):
+            status.setStyleSheet(
+                "background:#311; color:#f99; padding:6px; font-family:monospace;")
+            status.setText(
+                f"y={int(event.position().y())} -> reached the CONTAINER, not a row "
+                f"(this is the bug)")
+        container.mousePressEvent = on_container_press
+
+        wrapper.resize(WIDTH + 20, 440)
+        wrapper.show()
         sys.exit(app.exec())
     sweep_delivery(app, scroll, rows)
 
