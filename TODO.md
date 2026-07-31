@@ -39,7 +39,8 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
 
 ### Stats / Tags row interaction
-- [2026-07-31] One dead pixel per row — last pixel of each row refuses clicks and shows the arrow cursor
+- [2026-07-31] Stats rows open Book Detail on LEFT click while Library uses RIGHT — right-click is a no-op
+- [2026-07-31] The rows layout's 2px top inset — why it exists, and whether it can go
 - [2026-07-31] Tags list rows drift on scroll — viewport/scroll step not quantized to row height
 
 ### Panel focus / keyboard navigation
@@ -584,28 +585,25 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
   attempting a fix.
 
-- **[2026-07-31] FIX: one dead pixel per row in Stats Day/Week/Month — clicks ignored, arrow
-  cursor.** A click on the LAST pixel of a row (row-local y=51 of a 52px row) is delivered to the
-  rows container instead of the row, so it does nothing, and the cursor there is the plain arrow
-  rather than the row's hand. Measured four times, perfectly consistent — rows span 2..53, 54..105,
-  106..157, 158..209 and the dead clicks were at y=53/105/157/209:
+- **[2026-07-31] DECIDE: Stats rows open Book Detail on LEFT click; the Library uses RIGHT click.**
+  Right-click in the Stats lists is currently a no-op. Both behaviours make sense on their own — the
+  Library row's left click loads the book, so detail had to go elsewhere; a Stats row has only one
+  action, so left click taking it is natural — but the inconsistency is confusing in use. Proposal:
+  make right-click ALSO open the detail panel in Stats, so both buttons work there and the Library's
+  muscle memory transfers. Low risk: `BookDayRow.mousePressEvent` already receives the press and
+  currently ignores anything that is not `LeftButton`, and the container router
+  (`_claim_container_input`) would need the same treatment so boundary pixels behave identically.
 
-      at=124,53   childAt=BookDayRow   rows(y,h)=[(2,52),(54,52),(106,52),(158,52)]
-      at=119,105  childAt=BookDayRow
-      at=130,157  childAt=BookDayRow
-      at=115,209  childAt=BookDayRow
-      at=98,326   childAt=None          <- genuinely below all rows, correctly dead
-
-  **`childAt()` returns `BookDayRow` for that pixel while Qt delivers the press to the container** —
-  the two disagree on a one-pixel boundary. Tinting rows and container showed NO gap between rows
-  (flush, and the pixel is painted by the row), so this is a hit-test/paint mismatch, not a layout
-  gap. Mechanism NOT identified. Ruled out along the way: gutters (rows are `setSpacing(0)`), child
-  widgets blocking cursor inheritance (children inherit correctly, verified), the dim effect
-  (archived books only), the blur override (`override=None` throughout), short rows (measured
-  exactly 52px, `gap_above=0`), and an overlay (none exists). Full measurement trail in NOTES.md,
-  2026-07-31. Affects Tags rows equally. Low user impact (one pixel), but it is the visible cause of
-  both the "arrow cursor over a clickable row" and "clicking sometimes does nothing" reports, so it
-  should not be closed as cosmetic.
+- **[2026-07-31] INVESTIGATE: the rows layout's 2px top inset — why it exists and whether it can go.**
+  `_day/_week/_month_rows_layout.setContentsMargins(0, 2, 0, 0)`. It was believed to keep the
+  viewport an exact multiple of the scroll step so rows stay aligned when scrolled, and CLAUDE.md's
+  DEBT_INVENTORY entry called it load-bearing on that basis. **Removing it live produced no visual
+  shift and no drift at all** — the grid did not move, which contradicts that account. It is also
+  visible: it shows as a 2px band above the first row (see the Week screenshot, above "The Name of
+  the Rose"). Before removing it, dig through SESSION.md/NOTES.md for when and why it was added —
+  the alignment reasoning may have applied to a layout that has since changed, or it may guard a
+  case not exercised by a simple scroll. Ruled out as the cause of the dead boundary pixel (removing
+  it moved the dead pixel WITH the rows, 53→51).
 
 - **[2026-07-31] FIX: Tags list rows drift on scroll.** Surfaced by the new hover highlight, which
   made the misalignment obvious — it is a row-drift issue, not a highlight issue. The Tags list

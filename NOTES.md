@@ -1,3 +1,66 @@
+## 2026-07-31 (later) — The dead row-boundary pixel is Qt's, not ours — RESOLVED
+
+Supersedes the "STILL OPEN: one dead pixel per row" section below, which recorded the symptom with
+the mechanism unidentified and the count wrong (it is one pixel per row boundary, but the earlier
+tally of "always local_y=51" measured where the clicks happened to land, not the defect's extent).
+
+**The defect:** the last pixel of a flush-stacked widget is not delivered to that widget under real
+input on this platform — the parent receives it instead. In the Stats lists that left one dead line
+at every row boundary: no hand cursor, and clicks that did nothing.
+
+**Proven not to be ours.** `tools/row_hittest_minimal.py` reproduces it with six bare `QWidget`s —
+no labels, stylesheets, cursors, margins, or scroll area — and `--no-layout` positions them with
+`setGeometry`, no layout engine involved at all:
+
+    row 0        y=50            <- reaches the row
+    CONTAINER    y=51   (geometry says row 0)
+
+**The control that makes it precise:** `--no-spacing-zero` gives the rows a real 6px gap, and every
+hit routes correctly (container hits appear only at y=110..115, which genuinely IS the gap). So it
+is specifically the pixel where one widget's rect ends and the next begins, not "the last pixel of a
+widget" in general.
+
+**Ruled out by measurement, each with the defect still present:** the container's 2px top inset
+(removed live — the dead pixel moved WITH the rows, 53→51, so it tracks the row rather than any
+absolute y), inter-row gaps (`setSpacing(0)`, `gap_above=0`), row height (exactly 52px), child
+widgets intercepting (made mouse-transparent, no change), child cursors and handlers (none of the
+five labels sets or handles anything), display scaling (100%, DPR 1.0), and the transport-bar blur
+grab (reproduces with blur off).
+
+**Why every offscreen check was blind.** A synthesized press at the identical pixel always reaches
+the row. `childAt()`, `QCursor`, the event's own coordinates and the widget geometry all agree the
+pixel belongs to the row. Only real platform input diverges. Three harnesses were written before
+this was understood, and the first two "passed" on structures already proven broken by hand.
+
+### The fix
+
+The rows container owns the input instead of the rows:
+
+* It carries the hand cursor, applied only while the tracker reports a row is highlighted — a
+  blanket cursor would put a hand over the empty space below the last row on a short day.
+* A press landing on it is routed to `ScrollHoverTracker.hovered_row`: **the row the highlight is
+  on**, i.e. the one being pointed at.
+
+That last distinction is the whole fix. An earlier attempt (`cc4c1c0`, reverted in `65d14d0`) mapped
+the press y to whichever row's geometry contained it — on a boundary pixel that resolves to the row
+ABOVE, so clicking while highlighting the lower row opened the wrong book. **The highlight is the
+user's intent; geometry is not.**
+
+`b6d8c28` (`WA_TransparentForMouseEvents` on row children) is kept although its commit message
+overclaims — it does not fix the boundary pixel. It is load-bearing for what did land: without it
+the row owns only 26 of its 52 pixels, so `hovered_row` would be wrong across half the row's
+interior.
+
+### Two things this corrected about earlier entries
+
+* **The 2px inset is not providing scroll alignment.** Removing it produced no visual shift at all,
+  contradicting the note in DEBT_INVENTORY.md that called it load-bearing for keeping rows aligned.
+  Why it was added, and whether it can go, is still open — see TODO.md.
+* **A single-column sweep is not a survey.** The `childAt` sweep that found "no dead pixels" sampled
+  the container's centre, where the cover label spans y=2..49 and masks the row's own margins.
+
+---
+
 ## 2026-07-31 — Stats/Tags row hover: three separate defects behind one report, and a one-pixel hit-test seam still open
 
 **Reported as one symptom:** in the Stats Day/Week/Month lists the hover highlight

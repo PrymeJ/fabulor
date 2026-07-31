@@ -1,3 +1,67 @@
+## Session Summary — 2026-07-31 Session 4 — The dead row-boundary pixel: not ours
+
+Continues Session 3's hover work. The remaining symptom — one dead line at every Stats row boundary,
+no hand cursor and clicks that did nothing — turned out not to be in this codebase at all.
+
+**The finding.** The last pixel of a flush-stacked widget is delivered to the parent, not the widget,
+under real input. `tools/row_hittest_minimal.py` reproduces it with six bare `QWidget`s, and with
+`--no-layout` they are placed by `setGeometry` with no layout engine involved:
+
+    row 0        y=50
+    CONTAINER    y=51   (geometry says row 0)
+
+The control is `--no-spacing-zero`: give the rows a real 6px gap and every hit routes correctly. So
+it is specifically the pixel where one rect ends and the next begins.
+
+**The fix** (Pryme's design): the rows container owns the hand cursor and routes those presses to
+`ScrollHoverTracker.hovered_row` — the row the HIGHLIGHT is on, not the row geometry resolves. That
+distinction is the whole thing. My earlier attempt mapped the press y to the containing row's
+geometry, which on a boundary pixel is the row ABOVE the highlighted one, so it opened the wrong
+book. Reverted, then re-done his way, and it works.
+
+**What was ruled out, each measured with the defect still present:** the 2px inset, inter-row gaps,
+row height, child widgets, child cursors and handlers, display scaling, the blur grab, and the whole
+row/container structure (a from-scratch harness reproduces it identically).
+
+### The methodological lesson, which is the durable part
+
+Three harnesses were written before the defect was understood, and **the first two passed on
+structures already proven broken by hand.** Synthesized presses reach the row correctly at the exact
+pixel real input loses; `childAt()`, `QCursor`, the event's own coordinates and the geometry all
+agree the pixel belongs to the row. Every offscreen check ever run on this was structurally blind,
+and I twice treated a passing sweep as evidence and pushed an unvalidated change into the app on
+that basis.
+
+Pryme's calibration, stated mid-session, is the right one and worth keeping: *"I completely trust
+your tests when you are testing library search filters... When it is about what is being composited
+on the screen, I take them with a grain of salt and test everything myself."*
+
+Two of his interventions did the decisive work. **Colour the widgets** — when a bug is about which
+widget owns which pixel, tinting answers in one round what a dozen positional theories could not.
+And **build a fresh harness from scratch** rather than keep stripping the app: the broken-vs-clean
+comparison is what produced the 18px-vs-52px ownership number that named the mechanism.
+
+Also corrected: my single-column `childAt` sweep sampled the container's centre, where the cover
+label masks the row's own margins — which is how a 4px dead strip read as one pixel, and why I
+argued "one dead pixel per row" against his correct reading of two.
+
+### Loose ends recorded rather than fixed
+
+* **The 2px inset does not do what the docs said.** Removing it produced no visual shift and no
+  drift, contradicting DEBT_INVENTORY's claim that it keeps the scroll grid aligned. It is also
+  visible as a band above the first row. Why it exists is now an open TODO.
+* **Stats opens Book Detail on left click; the Library uses right click**, and right-click in Stats
+  is a no-op. Proposal recorded to make both buttons work in Stats.
+* **Tags rows share the shape and are deliberately not worked around** — their geometry is due for
+  rework.
+* `a3f5d17` (mouse tracking for stale highlights) and `b6d8c28` (`WA_TransparentForMouseEvents`) both
+  failed to fix what their messages claim. `b6d8c28` is kept anyway and the merge commit says why:
+  without it the row owns 26 of its 52 pixels, so `hovered_row` would be wrong across half the row.
+
+`pytest tests/ -q` — exit 0 throughout. Merged to main via `adaa9dc`.
+
+---
+
 ## Session Summary — 2026-07-31 Session 3 — Scrollbar right-click, and three defects behind one hover report
 
 Three pieces of work. The first was clean; the second and third took a long diagnostic arc where

@@ -1181,6 +1181,9 @@ Pure plumbing, no call sites yet. `setup_logging()` (called first thing in `main
 
 ```
 main.py                       # Entry point (repo ROOT, not inside src/fabulor/) — calls setup_logging() before QApplication
+tools/                        # Diagnostic harnesses, not shipped. row_hittest_minimal.py is the
+                              # reference for the row-boundary pixel Qt delivers to the parent
+                              # (run with --show; its offscreen mode is deliberately blind).
 src/fabulor/
 ├── app.py                    # MainWindow wiring + module-level interface classes (VisualsInterface, PanelInterface, UICallbackInterface, LibraryInterface, PlayerInterface, BrowserInterface, UIInterface, AppInterface)
 ├── player.py                 # MPV wrapper, VT, async seek, gate/ungate
