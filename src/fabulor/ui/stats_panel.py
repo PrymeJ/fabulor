@@ -20,6 +20,7 @@ from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .icon_utils import load_currentcolor_icon
+from .hover_tracker import ScrollHoverTracker
 
 # Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
 # to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
@@ -3184,6 +3185,10 @@ class StatsPanel(QWidget):
         self._day_rows_layout.addStretch()
 
         scroll.setWidget(self._day_rows_widget)
+        # Re-resolve the hovered row when the list scrolls under a still
+        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        self._day_hover = ScrollHoverTracker(
+            scroll, lambda: self._rows_in(self._day_rows_layout), self)
 
         def _day_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3234,6 +3239,14 @@ class StatsPanel(QWidget):
         if self._active_days:
             self._current_day_index = 0
             self._refresh_daily()
+
+    @staticmethod
+    def _rows_in(layout):
+        """Current BookDayRows of a rows-layout, in order. Read live rather than
+        cached: every refresh tears these down and rebuilds them, so a cached
+        list would go stale exactly when the panel repopulates."""
+        return [layout.itemAt(i).widget() for i in range(layout.count())
+                if layout.itemAt(i).widget() is not None]
 
     def _add_row_safely(self, layout, widget):
         widget.setVisible(False)
@@ -3360,6 +3373,10 @@ class StatsPanel(QWidget):
         self._week_rows_layout.addStretch()
 
         scroll.setWidget(self._week_rows_widget)
+        # Re-resolve the hovered row when the list scrolls under a still
+        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        self._week_hover = ScrollHoverTracker(
+            scroll, lambda: self._rows_in(self._week_rows_layout), self)
 
         def _week_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3532,6 +3549,10 @@ class StatsPanel(QWidget):
         self._month_rows_layout.addStretch()
 
         scroll.setWidget(self._month_rows_widget)
+        # Re-resolve the hovered row when the list scrolls under a still
+        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        self._month_hover = ScrollHoverTracker(
+            scroll, lambda: self._rows_in(self._month_rows_layout), self)
 
         def _month_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3648,7 +3669,21 @@ class StatsPanel(QWidget):
         if blur is not None:
             if self.covers_opaquely():
                 blur.hide_for_panel()
-            elif self.isVisible():
+            elif self.isVisible() and self.config.get_blur_enabled():
+                # The blur-enabled check is REQUIRED here, not redundant with the
+                # one guarding PanelManager._apply_transport_bar_blur. This is a
+                # second, independent entry point into show_for_panel, and it used
+                # to re-arm the overlay on EVERY tab switch regardless of the
+                # Panel background mode — so with Transparent or Opaque selected,
+                # switching Stats tabs silently restarted the grab (measured:
+                # 132 grabs / 264 panel hide-show cycles in 90s with blur off).
+                #
+                # That grab hides and re-shows the whole panel ~5x/sec, which is
+                # what made Stats row hover drift and blink under a stationary
+                # cursor, and it clears only on a Timeline switch (hide_for_panel
+                # above) or a panel close — matching the "background isn't blurred
+                # but it still behaves as if blur were on, until I switch again"
+                # report from the scrollbar-drag session.
                 blur.show_for_panel(self)
         if self.tabs.tabText(index) == "Overall":
             self.refresh_overall()

@@ -3991,7 +3991,12 @@ def get_stats_stylesheet(theme_name="default"):
         QLabel#stats_book_time_label_dim {{
             color: rgba({_hex_to_rgb(t['text'])}, 0.70);
         }}
-        QWidget#stats_book_day_row:hover, QWidget#stats_book_day_row_alt:hover {{
+        /* Driven by ScrollHoverTracker's dynamic property, not Qt's :hover
+           pseudo-state — :hover only updates on mouse MOVEMENT, so it goes
+           stale when the list scrolls under a stationary cursor. See
+           ui/hover_tracker.py. */
+        QWidget#stats_book_day_row[hovered="true"],
+        QWidget#stats_book_day_row_alt[hovered="true"] {{
             background-color: rgba({_hex_to_rgb(t['accent'])}, 0.12);
         }}
         QLabel#stats_value_label {{
@@ -4166,13 +4171,14 @@ def get_tags_stylesheet(theme_name="default"):
             margin-top: 10px;
             color: {t['accent_light']};
         }}
+        /* See the stats_book_day_row note above — same tracker, same reason.
+           The resting background was previously a :!hover rule; it is the base
+           rule now, since [hovered="true"] overrides it by specificity. */
         QWidget#tag_list_row {{
             border-radius: 6px;
-        }}
-        QWidget#tag_list_row:!hover {{
             background-color: rgba({_hex_to_rgb(t['bg_deep'])}, 0.6);
         }}
-        QWidget#tag_list_row:hover {{
+        QWidget#tag_list_row[hovered="true"] {{
             background-color: rgba({_hex_to_rgb(t['accent_dark'])}, 0.6);
         }}
         QLabel#tag_list_name {{
@@ -4180,7 +4186,10 @@ def get_tags_stylesheet(theme_name="default"):
             font-size: 14px;
             padding-left: 0px;
         }}
-        QLabel#tag_list_name:hover {{
+        /* Keyed off the ROW's tracked hover, not the label's own :hover. A
+           QLabel has no hover tracking of its own, so the old rule fired only
+           incidentally; as a descendant rule it follows the row exactly. */
+        QWidget#tag_list_row[hovered="true"] QLabel#tag_list_name {{
             color: {t.get('tag_list_text_hover', t['accent_light'])};
             font-size: 13px;
         }}

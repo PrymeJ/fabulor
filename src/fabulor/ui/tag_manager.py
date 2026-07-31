@@ -12,6 +12,7 @@ from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .text_context_menu import ContextIconMenu
 from .line_edit_dragfix import DragSafeLineEdit
+from .hover_tracker import ScrollHoverTracker
 
 MAX_TAG_LENGTH = 20
 
@@ -275,6 +276,14 @@ class TagManagerWidget(QWidget):
         self._tag_list_layout.setSpacing(4)
         self._tag_list_layout.addStretch()
         self._tag_scroll.setWidget(self._tag_list_container)
+        # Re-resolve the hovered row when the list scrolls under a still cursor —
+        # QSS :hover alone goes stale there. See ui/hover_tracker.py.
+        self._row_hover = ScrollHoverTracker(
+            self._tag_scroll,
+            lambda: [self._tag_list_layout.itemAt(i).widget()
+                     for i in range(self._tag_list_layout.count())
+                     if self._tag_list_layout.itemAt(i).widget() is not None],
+            self)
         self._tag_list_container.setSizePolicy(
             QSizePolicy.Policy.Preferred, 
             QSizePolicy.Policy.Maximum
