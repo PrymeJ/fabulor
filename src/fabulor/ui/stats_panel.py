@@ -3284,6 +3284,11 @@ class StatsPanel(QWidget):
         self._day_finished_scroll = FinishedScrollRow(self._assets_dir)
         finished_outer.addWidget(self._day_finished_scroll)
 
+        # Absorbs whatever the capped rows viewport no longer takes, so the
+        # slack lands BELOW the rows instead of being redistributed around the
+        # block. See _cap_rows_viewport for why the cap needs this to exist.
+        outer.addStretch()
+
         outer.addWidget(self._day_finished_section)
         self._day_finished_section.hide()
 
@@ -3321,6 +3326,40 @@ class StatsPanel(QWidget):
         widget.setVisible(False)
         layout.insertWidget(layout.count() - 1, widget)
         widget.setVisible(True)
+
+    # Tallest the rows viewport may grow to when there is no Finished section
+    # below it: exactly 7 rows. Uncapped, the scroll area absorbs the whole
+    # leftover column height, which clears 7 rows plus part of an eighth -- the
+    # partial row at the viewport's bottom edge is what renders clipped. It
+    # scrolls fine; it is only ever cut at the edge.
+    #
+    # With a Finished section present the section already consumes the
+    # remainder and the viewport lands on a clean 6 rows, verified live at 18
+    # rows scrolled top/middle/bottom. That state is left uncapped and alone.
+    _ROWS_VIEWPORT_MAX_ROWS_NO_FINISHED = 7
+
+    def _cap_rows_viewport(self, scroll, finished_visible):
+        """Cap the rows viewport at a whole number of rows.
+
+        Only works PAIRED with the outer layout's trailing addStretch(), added
+        between the scroll area and the Finished section. The scroll area was
+        the column's only stretch participant, so constraining its height at
+        all -- setFixedHeight AND setMaximumHeight, both tried and both
+        reverted -- left the leftover pixels with nowhere to go, and the layout
+        redistributed them around the block, pushing the total label and short
+        lists down from the top. The stretch gives that slack an explicit home
+        below the rows, which is where it belongs visually.
+
+        A stretch never demands space, it only absorbs what is left over, so
+        the exactly-full case (6 rows + Finished section) is unaffected: there
+        is no slack, the stretch contributes 0px, and that layout stays as it
+        is today.
+        """
+        if finished_visible:
+            scroll.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX -- uncapped
+        else:
+            scroll.setMaximumHeight(
+                self._ROWS_VIEWPORT_MAX_ROWS_NO_FINISHED * _STATS_ROW_HEIGHT)
 
     def _claim_container_input(self, container, tracker):
         """Let the rows CONTAINER own the hand cursor and route clicks to the
@@ -3432,6 +3471,9 @@ class StatsPanel(QWidget):
             self._day_finished_section.show()
         else:
             self._day_finished_section.hide()
+        # Cap follows the section's visibility — set together so the two can
+        # never disagree. See _cap_rows_viewport.
+        self._cap_rows_viewport(self._day_scroll, bool(finished))
 
     def _build_weekly_tab(self) -> QWidget:
         widget = QWidget()
@@ -3533,6 +3575,8 @@ class StatsPanel(QWidget):
         self._week_finished_scroll = FinishedScrollRow(self._assets_dir)
         finished_outer.addWidget(self._week_finished_scroll)
 
+        outer.addStretch()  # see the day tab — absorbs the capped viewport's slack
+
         outer.addWidget(self._week_finished_section)
         self._week_finished_section.hide()
 
@@ -3612,6 +3656,7 @@ class StatsPanel(QWidget):
             self._week_finished_section.show()
         else:
             self._week_finished_section.hide()
+        self._cap_rows_viewport(self._week_scroll, bool(finished))
 
     def _build_monthly_tab(self) -> QWidget:
         widget = QWidget()
@@ -3713,6 +3758,8 @@ class StatsPanel(QWidget):
         self._month_finished_scroll = FinishedScrollRow(self._assets_dir)
         finished_outer.addWidget(self._month_finished_scroll)
 
+        outer.addStretch()  # see the day tab — absorbs the capped viewport's slack
+
         outer.addWidget(self._month_finished_section)
         self._month_finished_section.hide()
 
@@ -3790,6 +3837,7 @@ class StatsPanel(QWidget):
             self._month_finished_section.show()
         else:
             self._month_finished_section.hide()
+        self._cap_rows_viewport(self._month_scroll, bool(finished))
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
