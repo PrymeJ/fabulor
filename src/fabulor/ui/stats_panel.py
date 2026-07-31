@@ -640,7 +640,15 @@ class BookDayRow(QWidget):
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        # Both buttons open the book detail. A Stats row has only one action, so
+        # left-click taking it is natural; but the Library reaches detail with a
+        # RIGHT click (its left click loads the book instead), and the mismatch
+        # between the two panels reads as broken rather than as two sensible
+        # local choices. Accepting either here costs nothing and lets Library
+        # muscle memory carry over. Same in FinishedBookThumb and in
+        # _claim_container_input's router, which must agree or right-click would
+        # work everywhere on a row except its boundary pixel.
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
             self.clicked.emit(self._row_data)
 
 
@@ -744,7 +752,8 @@ class FinishedBookThumb(QWidget):
             self._cover_label.setPixmap(pm)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        # Either button opens the detail — see BookDayRow.mousePressEvent.
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
             self.clicked.emit(self._row_data)
 
 
@@ -3359,7 +3368,11 @@ class StatsPanel(QWidget):
         container.mouseMoveEvent = on_container_move
 
         def on_container_press(event):
-            if event.button() != Qt.MouseButton.LeftButton:
+            # Must accept the same buttons BookDayRow does. If this stayed
+            # left-only, right-click would open the detail everywhere on a row
+            # except its boundary pixel — the one pixel that routes here.
+            if event.button() not in (Qt.MouseButton.LeftButton,
+                                      Qt.MouseButton.RightButton):
                 return
             row = tracker.hovered_row
             if isinstance(row, BookDayRow):
