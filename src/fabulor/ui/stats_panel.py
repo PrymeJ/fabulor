@@ -3245,10 +3245,6 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._day_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._day_rows_layout), self)
-        # The container owns the last pixel of every row (see
-        # _install_row_click_fallback) — route those presses to the row.
-        self._install_row_click_fallback(
-            self._day_rows_widget, self._day_rows_layout)
 
         def _day_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3312,49 +3308,6 @@ class StatsPanel(QWidget):
         widget.setVisible(False)
         layout.insertWidget(layout.count() - 1, widget)
         widget.setVisible(True)
-
-    def _install_row_click_fallback(self, container, layout):
-        """Route a press that lands on the rows CONTAINER to the row that owns
-        that y, so no pixel of a visually-contiguous list is dead.
-
-        WHY THIS EXISTS: the last pixel of every row is delivered to the
-        container instead of the row. Measured live in a from-scratch harness
-        with flush 52px rows and mouse-transparent children — so it is neither
-        a layout gap nor a child intercepting the press:
-
-            CONTAINER got y=51 (window y 52, QCursor->container y=51)
-            geometry says row 0; childAt says CleanRow
-
-        Every authority — the event's own y, QCursor, the row's geometry, and
-        childAt() — agrees the pixel belongs to row 0. Real delivery routes it
-        to the container anyway, consistently one pixel past the owning row
-        (window y is always local + 1). A synthesized press at the same pixel
-        reaches the row correctly, which is why every offscreen sweep passed and
-        why this could only ever be found by hand.
-
-        Ruled out first, each by measurement: inter-row gaps (setSpacing(0),
-        gap_above=0), row height (exactly 52px), display scaling (100%, DPR
-        1.0), the transport-bar blur grab (fails with blur off), child cursors
-        and handlers (none of the five labels sets or handles anything), and
-        widget structure (a clean-slate harness reproduces it identically).
-
-        Rather than fight Qt's routing, stop depending on it: the container maps
-        the y back to the row that owns it and calls that row's own handler. The
-        row stays the single source of click behaviour — this only fixes
-        delivery, it does not add a second definition of what a click does.
-        """
-        def on_container_press(event):
-            if event.button() != Qt.MouseButton.LeftButton:
-                return
-            y = int(event.position().y())
-            for i in range(layout.count()):
-                row = layout.itemAt(i).widget()
-                if row is None or not isinstance(row, BookDayRow):
-                    continue
-                if row.y() <= y <= row.y() + row.height() - 1:
-                    row.clicked.emit(row._row_data)
-                    return
-        container.mousePressEvent = on_container_press
 
     def _refresh_daily(self):
         if self._cached_active_days is None:
@@ -3480,10 +3433,6 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._week_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._week_rows_layout), self)
-        # The container owns the last pixel of every row (see
-        # _install_row_click_fallback) — route those presses to the row.
-        self._install_row_click_fallback(
-            self._week_rows_widget, self._week_rows_layout)
 
         def _week_rows_wheel(e):
             bar = scroll.verticalScrollBar()
@@ -3660,10 +3609,6 @@ class StatsPanel(QWidget):
         # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
         self._month_hover = ScrollHoverTracker(
             scroll, lambda: self._rows_in(self._month_rows_layout), self)
-        # The container owns the last pixel of every row (see
-        # _install_row_click_fallback) — route those presses to the row.
-        self._install_row_click_fallback(
-            self._month_rows_widget, self._month_rows_layout)
 
         def _month_rows_wheel(e):
             bar = scroll.verticalScrollBar()
