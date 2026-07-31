@@ -1,3 +1,70 @@
+## Session Summary — 2026-07-31 Session 2 — Stats scrollbars couldn't be dragged (the blur grab, again)
+
+Picked up from `plans/Handoff_260731_stats_scrollbar_drag.md`, which had the symptom precisely
+stated, three already-falsified theories, and one instruction: **measure first, do not add a fourth
+theory.** I added four more anyway before the probes settled it. Recording that honestly, because
+the sequence of what killed each is the useful part.
+
+The bug: Day/Week/Month scrollbars could not be dragged (handle moved "several pixels if any"),
+while wheel and gutter-click worked fine. Root cause: `_grab_and_blur` hides the active panel to
+photograph the window behind it, and **hiding a widget mid-drag destroys `QAbstractSlider`'s
+in-progress drag state** — the bar keeps receiving `MouseMove` and stays `sliderDown=True`, but its
+value never advances.
+
+**What actually found it** was an event filter dumping the scrollbar's raw event stream. Failing
+drags showed a dense `MouseMove` stream — identical in cadence to a working one — interleaved with
+`Hide`/`Show` pairs timestamp-matching `_grab_and_blur` to the millisecond. Working drags had zero
+Hide/Show. That inverted my then-current reading ("moves stop arriving") on the spot.
+
+**The handoff's dismissal of the blur grab was correct, but for the wrong reason.** It ruled the
+grab out because blur was off; in fact the grab runs in all three background modes. I used that to
+revive the theory with the *wrong mechanism* (a stolen mouse grab) — and Pryme falsified it before
+my own probe did, by pointing out that **no book was playing in the earlier repros**, i.e. there was
+almost no grab activity and the bug still reproduced in full. The `mouseGrabber()` probe then
+confirmed it: `None` at every hide, no grab to steal. Right culprit, wrong mechanism, twice over.
+
+**The first fix was worse than the bug and was reverted.** Skipping only the panel-hide restores the
+drag, but the hide *is* the grab — without it the grab photographs the panel itself, the overlay
+composites panel-over-panel, and the panel visibly blanks on every drag with rows restoring one by
+one. Pryme's screenshots: *"Cure worse than the illness."* Worth noting the code comment I wrote for
+that fix asserted a benign visual outcome I had never checked.
+
+**Shipped fix:** suspend the whole refresh while a slider drag is in progress; full-rect re-grab on
+release. Gate sits before `take_dirty_union()` so nothing dirtied during the drag is dropped; a
+100ms watcher detects release (the slider emits no signal this class observes, and the grab that
+would notice is the thing suspended); `_dragging_slider` checks `QAbstractSlider` rather than
+`QScrollBar` so panel `ClickSlider`s are covered too, with an `isVisible()` term so a hidden tab's
+stale `sliderDown` can't suppress grabs forever.
+
+**Accepted cost, raised by Pryme before implementation:** the blur freezes for the drag's duration,
+so the chapter slider on a short chapter and a scrolling title drift out of sync until release.
+Judged acceptable. The real fix he identified — **shrink the Stats grab region to exclude the
+scrollbar area**, since the top part doesn't animate and the animating elements (time labels,
+chapter label/slider) sit outside it, with only the Play button as a genuine edge case (needs EOF
+reached while Stats is open in blur mode, and self-corrects on panel close) — is recorded in
+DEBT_INVENTORY.md at his instruction, explicitly **not** as a TODO item.
+
+Two process notes I want to keep:
+
+- I read a 14-second gap between `sliderPressed` and `sliderMoved` as a "starved event stream" and
+  built a whole mechanism on it. It was Pryme pressing in the wrong tab, walking away, and coming
+  back. A timestamp gap is not a phenomenon until you ask what happened during it.
+- Offscreen harnesses misled me twice here: `mouseGrabber()` is always `None` for synthesized events,
+  so the harness structurally could not answer the grab question; and the harness that *did*
+  reproduce the value-pinning told me nothing about what the screen would look like — which is how
+  the blanking-panel fix shipped. CLAUDE.md's existing warning about harnesses in this area held
+  exactly.
+
+Separately: Pryme called out that I twice framed my own error rate as a reason to pause work
+(*"I'd rather not implement any of these on the same day I've had four wrong mechanisms"*), in a
+fresh window opened specifically so work could continue. Mistakes en route to a working fix are
+normal and expected here; they are not a reason to stop, and CLAUDE.md already says so.
+
+`pytest tests/ -q` — exit 0. All investigation probes removed; `stats_panel.py` is byte-identical to
+its pre-session state.
+
+---
+
 ## Session Summary — 2026-07-31 Session 1 — Library percentage disagreed with the transport bar
 
 Two displays of one number, rounding differently. The transport bar shows

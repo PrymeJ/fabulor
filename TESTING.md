@@ -147,6 +147,24 @@ ever visible in the running app. Do not treat a passing script as coverage here.
 - [ ] Click the bookmark: it swings visibly — not stiff/motionless (regression check for `hideEvent` resetting the kick)
 - [ ] The swing runs at normal speed, not slow motion (it should settle in ~1.4s; noticeably slower means the sway timer is being starved again)
 
+### Slider drags while a panel is blurred — 2026-07-31
+
+The grab hides the active panel, and hiding a widget mid-drag destroys `QAbstractSlider`'s drag
+state. Grabs are now suspended for the length of any slider drag. **All live-only** — the offscreen
+harness could reproduce the value-pinning but said nothing about what the screen looked like, which
+is exactly how the first attempted fix shipped a worse bug.
+
+- [ ] Stats → Week or Month (pick a period with enough rows to overflow), drag the scrollbar handle: it tracks the mouse for the full length of the drag
+- [ ] **Switch tabs, then drag again** — this is the repro that made the original bug appear tab-dependent; it must work on every tab, every time, with no close/reopen needed
+- [ ] Drag with a book **playing** (the grab only ticks when something repaints) — still tracks
+- [ ] All three Panel background modes (Transparent / Frosty glass / Opaque): drag works in each
+- [ ] **Panel must never blank during a drag** — regression check for the reverted first fix, where the grab photographed the panel itself and the rows visibly disappeared and restored one by one
+- [ ] Wheel-scroll and gutter-click still work (one-shot interactions, unaffected by the gate — they kept working even when the drag was broken, which is what made the bug look scrollbar-specific)
+- [ ] On release, the blurred transport strip refreshes to current content — no stale band left behind
+- [ ] **Accepted, not a bug:** during a long drag the blur freezes, so a scrolling title / a chapter slider on a short chapter drift out of sync with the live widget until release. Verify it *resolves on release*; the drift itself is expected (see DEBT_INVENTORY.md)
+- [ ] Transport progress slider (a `ClickSlider` in the main window, not a panel): still drags normally — the gate keys off `QAbstractSlider`, so confirm it didn't catch anything it shouldn't
+- [ ] Start a drag, then close the panel mid-drag: no stuck state, no leftover polling (the drag watcher must not outlive the overlay)
+
 ### Stale-cache regressions (state is correct; only the cached pixmap goes stale)
 - [ ] Remove the last scan location while a panel is open with an active book: no ghost transport buttons left over the quote screen
 - [ ] General tell for this bug class: if closing and reopening the panel fixes the visual, it is a missed repaint, not wrong state — look for a content change that produced no Paint event on a tracked widget

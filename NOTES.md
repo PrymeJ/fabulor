@@ -1,3 +1,109 @@
+## 2026-07-31 — Hiding a panel mid-drag destroys `QAbstractSlider`'s drag state: Stats scrollbars couldn't be dragged
+
+**Symptom:** the vertical scrollbar on the Stats panel's Day/Week/Month tabs could not be dragged.
+The handle moved "several pixels if any." Mouse wheel scrolled correctly; clicking the gutter
+worked. The scroll area itself was fine — only the *drag* failed. It worked on panel open, broke
+after a tab switch, and was restored by either a Panel-background restyle or closing and reopening
+the panel — each restore undone by the next tab switch.
+
+**Root cause.** `_grab_and_blur` (`transport_bar_blur.py`) hides the active panel, grabs
+`main_window`, and re-shows it — every dirty-refresh tick. Hiding a widget mid-drag destroys
+`QAbstractSlider`'s in-progress drag state. The slider keeps receiving `MouseMove` events and
+`isSliderDown()` stays `True`, but its value stays pinned at the press-time value, so the handle
+never moves.
+
+**How it was found — the measurement that mattered.** An event filter on the scrollbar logging its
+raw event stream. Failing drags showed a *dense* `MouseMove` stream (~8ms apart, identical to a
+working drag) interleaved with `Hide`/`Show` pairs that timestamp-matched `_grab_and_blur` calls to
+the millisecond. Working drags contained **zero** Hide/Show. Perfect discriminator across eleven
+labelled attempts:
+
+    14:02:22,220  week Hide       sliderDown=True value=0
+    14:02:22,222  week Show       sliderDown=True value=0
+    14:02:22,443  week MouseMove  sliderDown=True value=0     <- moves arrive
+    ...  (hundreds more, value never advances)
+
+Reproduced in isolation: an identical synthetic drag yields **324** with no hide/show and **0**
+when the panel is hidden on even every third move.
+
+**Why the tab-switch/restyle correlation was a red herring.** Both restore paths happen to
+re-establish the overlay, briefly changing grab cadence. The bug was never about tab state at all —
+it is purely "was a grab in flight during this drag."
+
+### Four wrong mechanisms, and what killed each
+
+Recorded because each was plausible and each died on a specific, cheap check:
+
+1. **`maximum() == 0`** (the handoff's leading theory — a bar with no range has nothing to drag).
+   Killed by the first probe: failing bars read `max=626 pageStep=312 enabled=True inert=False`.
+2. **`_fixup_scroll_policy` disabling the bar.** Killed by the same probe: it takes
+   `EARLY-RETURN needs_bar=True` on every failing sample. Its `unpolish`/`polish` was separately
+   tested and does *not* disturb a live drag (324 either way).
+3. **The `wheelEvent` override snapping the value back.** The row-snapping arithmetic is real, but
+   `wheelEvent` only receives wheel events — a handle drag never enters it. This was reasoned from
+   the code's shape rather than checked, and asserted before being checked.
+4. **The blur grab stealing the scrollbar's mouse grab.** Right culprit, wrong mechanism. Killed by
+   a probe logging `QWidget.mouseGrabber()` around the hide: it was `None` every time, so there was
+   no grab to steal. Also independently falsified by the observation that the bug reproduced fully
+   with **no book playing** — i.e. with almost no grab activity at all.
+
+Two further process notes worth keeping:
+
+- A 14-second gap between a `sliderPressed` and its `sliderMoved` was read as a "starved event
+  stream" and an entire mechanism was built on it. It was simply the user pressing in the wrong tab,
+  walking away, and returning. **A timestamp gap is not a phenomenon until you ask what happened in
+  it.**
+- Offscreen harnesses were actively misleading here, twice. `mouseGrabber()` is always `None` for
+  synthesized events (no implicit grab is created), so the harness could not see the grab question
+  at all; and the harness that *did* reproduce the value-pinning said nothing about what the screen
+  would look like — which is how the first fix shipped a worse bug (below).
+
+### The first fix was worse than the bug — reverted
+
+Skipping only the panel-hide while still performing the grab restores the drag (verified: 324), and
+was reverted the same day. **The hide is not incidental to the grab, it IS the grab.** Without it
+the grab photographs the panel itself, so the overlay composites panel-over-panel and the transport
+region reads as transparent: the panel visibly blanks during every drag and its rows restore one by
+one. The accompanying code comment asserted a benign outcome ("it just photographs the window with
+the panel in place") that was never checked against the screen.
+
+### Shipped fix
+
+Suspend the **whole refresh** while a slider drag is in progress, and force a full-rect re-grab when
+it ends:
+
+- `_dragging_slider(panel)` returns the mid-drag `QAbstractSlider` or `None`. It checks
+  `QAbstractSlider`, not `QScrollBar`, because the defect belongs to the base class's drag handling
+  and applies equally to a panel's `ClickSlider`s. The `isVisible()` term is load-bearing: a slider
+  on a hidden tab can retain a stale `sliderDown` from its own interrupted drag, which would
+  otherwise suppress grabs for the rest of the session.
+- The gate sits in `refresh_dirty` **before** `take_dirty_union()`, so everything dirtied during the
+  drag accumulates untouched instead of being consumed and dropped.
+- `_check_drag_ended` polls at 100ms. A poll is necessary because the slider emits no signal this
+  class observes, and the grab that would otherwise notice is exactly what is suspended.
+- On release it calls `force_refresh_now()` — a **full-rect** re-grab, not a replay of the dirty
+  union. During the suspension the tracker saw no Paint events from the grab's own hide/show cycle,
+  so its union is not a trustworthy record of what changed on screen; only a full pass guarantees no
+  stale region survives.
+- `hide_for_panel` stops the watcher so it cannot outlive the overlay.
+
+**Accepted cost.** The blur freezes for the length of the drag, so elements that animate on their
+own — the chapter slider on a short chapter, a scrolling title — drift out of sync with the live
+widgets underneath until release, when the full-rect pass resolves it completely. Letting a grab
+through periodically to bound the staleness was considered and rejected: each one costs a dropped
+move, trading a clean-but-stale blur for a stuttering drag.
+
+**This is the third bug from the same `hide()`/`show()` cycle**, after the cursor flicker
+(2026-07-21) and the stiff tassel (2026-07-27). The pattern: the panel-hide breaks any *stateful*
+interaction that spans more than one event — a hover's cursor resolution, an animation's kick, a
+slider's drag. A one-shot interaction (wheel notch, gutter click) is unaffected, which is exactly
+why those kept working here and made the bug look scrollbar-specific.
+
+A narrower real fix exists and is recorded in DEBT_INVENTORY.md: shrink the grab region for Stats so
+it excludes the scrollbar area entirely. Not planned.
+
+---
+
 
 ## 2026-07-30 — A `Qt.Popup` context menu counts as "focus left the field", so right-click-to-cut reverted the edit
 
