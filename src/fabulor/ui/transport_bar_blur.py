@@ -98,6 +98,28 @@ _GRAB_FEEDBACK_SUPPRESS_S = 0.05
 # clears on its own timescale (cursor movement) and simply retries until then.
 _DECLINE_REARM_MS = 450
 
+# SLIDER-DRAG GATE (2026-07-31). _grab_and_blur() hides the active panel for the
+# duration of its grab, and hiding a widget mid-drag destroys QAbstractSlider's
+# in-progress drag state: the slider keeps receiving MouseMove events but its
+# value stays pinned at the press-time value, so the handle doesn't move at all.
+# Confirmed live on the Stats Day/Week/Month scrollbars (every failing drag
+# showed a dense MouseMove stream interleaved with Hide/Show pairs
+# timestamp-matched to _grab_and_blur, value never advancing; working drags
+# contained no Hide/Show at all) and reproduced in isolation (an identical
+# synthetic drag yields 324 with no hide/show, 0 when the panel is hidden on
+# even every third move).
+#
+# Skipping only the panel-hide while still grabbing was tried first and REVERTED
+# the same day: the grab then photographs the panel itself, so the overlay
+# composites panel-over-panel and the transport region reads as transparent —
+# the panel visibly blanks and its rows restore one by one on every drag. The
+# hide is not incidental to the grab, it IS the grab. So the whole refresh is
+# what has to yield.
+#
+# _DRAG_WATCH_MS polls for the drag ending (a slider emits no signal this class
+# observes, and the grab that would otherwise notice is the thing suspended).
+_DRAG_WATCH_MS = 100
+
 
 def panel_rect_in_common_space(panel, common_ancestor) -> QRect:
     """`panel`'s TARGET (settled, post-slide-in) geometry, mapped into
@@ -134,6 +156,21 @@ def panel_rect_in_common_space(panel, common_ancestor) -> QRect:
     global_top_left = panel.parentWidget().mapToGlobal(settled_rect_in_main_window.topLeft())
     top_left = common_ancestor.mapFromGlobal(global_top_left)
     return QRect(top_left, panel.size())
+
+
+def _dragging_slider(panel):
+    """The QAbstractSlider inside `panel` that is currently mid-drag, or None.
+
+    Checks QAbstractSlider rather than QScrollBar because the defect this gates
+    against belongs to the base class's drag handling, so it applies equally to
+    a panel's ClickSliders. isVisible() is required: a slider on a hidden tab can
+    retain a stale sliderDown from its own interrupted drag, and without this
+    check that stale flag would suppress grabs for the rest of the session."""
+    from PySide6.QtWidgets import QAbstractSlider
+    for slider in panel.findChildren(QAbstractSlider):
+        if slider.isSliderDown() and slider.isVisible():
+            return slider
+    return None
 
 
 def _blur_pixmap(pixmap: QPixmap, radius: float = _BLUR_RADIUS) -> QPixmap:
@@ -296,6 +333,15 @@ class TransportBarBlurOverlay:
         # _refresh_pending so a declined tick's retry never reads as observed
         # paint activity (see that method's docstring).
         self._rearm_pending = False
+
+        # SLIDER-DRAG STATE (2026-07-31) — see the drag gate in refresh_dirty()
+        # for the root cause. _drag_watch_timer polls for the drag ending,
+        # because a slider emits no signal this class is wired to observe and
+        # the grab that would otherwise notice is exactly what's suspended.
+        self._drag_suspended = False
+        self._drag_watch_timer = QTimer(self.main_window)
+        self._drag_watch_timer.setInterval(_DRAG_WATCH_MS)
+        self._drag_watch_timer.timeout.connect(self._check_drag_ended)
 
         # FEEDBACK-LOOP GUARD (2026-07-20, found live during this same rework's
         # own testing): _grab_and_blur()'s hide()->grab()->show() cycle on
@@ -579,6 +625,23 @@ class TransportBarBlurOverlay:
             self._rearm_after_decline()
             return
 
+        # SLIDER-DRAG GATE — see _DRAG_WATCH_MS's declaration for the root cause
+        # and for why skipping only the panel-hide was tried and reverted.
+        # Checked BEFORE take_dirty_union() so everything dirtied during the drag
+        # accumulates untouched and lands in one composite when the drag ends.
+        # The cost is a blur that goes stale for the length of the drag; the
+        # visible elements that keep moving on their own (the chapter slider on a
+        # short chapter, a scrolling title) drift out of sync with the live
+        # widget underneath until then. That is deliberate: the alternative is
+        # a scrollbar that cannot be dragged at all.
+        if self._active_panel is not None and _dragging_slider(self._active_panel) is not None:
+            if not self._drag_suspended:
+                self._drag_suspended = True
+                self._drag_watch_timer.start()
+                logger.warning(
+                    f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN "
+                    f"reason=slider_drag_gate (suspending grabs until drag ends)")
+            return
         dirty = self._tracker.take_dirty_union()
         if dirty is None:
             logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} EARLY-RETURN reason=no_dirty")
@@ -601,6 +664,27 @@ class TransportBarBlurOverlay:
         painter.end()
         self._overlay.setPixmap(combined)
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
+
+    def _check_drag_ended(self):
+        """Poll while grabs are suspended for a slider drag; resume on release.
+
+        Resumes with a FULL-rect re-grab rather than replaying the accumulated
+        dirty union. During the suspension the tracker saw no Paint events from
+        the grab's own hide/show cycle, so its union reflects only what the app
+        repainted on its own — it is not a reliable record of everything that
+        changed on screen while the blur was frozen. A full pass is the only
+        thing that guarantees no stale region survives, which is the constraint
+        that rules out simply letting the dirty union drain here."""
+        if not self._active or self._active_panel is None:
+            self._drag_watch_timer.stop()
+            self._drag_suspended = False
+            return
+        if _dragging_slider(self._active_panel) is not None:
+            return  # still dragging
+        self._drag_watch_timer.stop()
+        self._drag_suspended = False
+        logger.warning("[TIMER-TRACE] slider drag ended — full-rect refresh, grabs resumed")
+        self.force_refresh_now()
 
     def force_refresh_now(self):
         """ONE-TIME forced full-rect re-grab, for known content-change events
@@ -636,6 +720,10 @@ class TransportBarBlurOverlay:
             f"tick_count_this_session={getattr(self, '_refresh_tick_count', 0)}"
         )
         self._refresh_tick_count = 0
+        # The drag watcher must not outlive the overlay it was polling for —
+        # otherwise it keeps ticking against a panel that is no longer active.
+        self._drag_watch_timer.stop()
+        self._drag_suspended = False
         if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
             self._fade_in_anim.stop()
         self._opacity_effect.setOpacity(1.0)
