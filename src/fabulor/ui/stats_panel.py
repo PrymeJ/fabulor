@@ -3245,7 +3245,7 @@ class StatsPanel(QWidget):
 
         self._day_rows_widget = QWidget()
         self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
-        self._day_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._day_rows_layout.setContentsMargins(0, 0, 0, 0)
         self._day_rows_layout.setSpacing(0)
         self._day_rows_layout.addStretch()
 
@@ -3494,7 +3494,7 @@ class StatsPanel(QWidget):
 
         self._week_rows_widget = QWidget()
         self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
-        self._week_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._week_rows_layout.setContentsMargins(0, 0, 0, 0)
         self._week_rows_layout.setSpacing(0)
         self._week_rows_layout.addStretch()
 
@@ -3674,7 +3674,7 @@ class StatsPanel(QWidget):
 
         self._month_rows_widget = QWidget()
         self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
-        self._month_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._month_rows_layout.setContentsMargins(0, 0, 0, 0)
         self._month_rows_layout.setSpacing(0)
         self._month_rows_layout.addStretch()
 
