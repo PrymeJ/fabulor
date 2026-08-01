@@ -10,6 +10,8 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 ### Right-click / theme-restyle performance
+- [2026-08-01] NEXT: first restyle after launch is 87ms, every later one ~410ms — a deterministic 4.7x step, reproduced across launches; bisect what runs in between (deferred pass / load_book / LibraryPanel.refresh 382 books / cover art)
+- [2026-08-01] Blur on/off and fade 0/750/1500 RULED OUT by a 120-sample matrix — the ~580ms floor is independent of both
 - [2026-08-01] RE-MEASURED at ~700-900ms, ~3x the figure below: `mw.setStyleSheet(base)` ~460ms + settings/speed/sleep panels ~215ms = 95% of it (NOTES.md)
 - [2026-07-29] App-wide performance pass needed — theme restyle measured ~205-265ms per hover/click
 - [2026-07-28] ~250ms full restyles during ordinary interaction — caller not yet identified

@@ -70,6 +70,48 @@ Tags rebuild had correctly `deleteLater()`d was still counted. Draining explicit
 further cycles. **Any future widget-count probe in this codebase must drain deferred deletions before
 counting, or it will invent a leak that is not there.**
 
+### The 4.7x step: first restyle after launch is 87ms, every later one is ~410ms
+
+The sharpest signal in the data, and it reproduces exactly across two launches:
+
+```
+14:21:45  APP START
+14:21:46  base=  87.3ms     <- first restyle after launch
+14:22:07  base= 466.1ms     <- every one after: ~400-460ms, permanently
+
+14:23:57  APP START
+14:23:58  base=  86.4ms
+14:24:08  base= 442.8ms
+```
+
+Deterministic, not noise, and it never returns to the cheap figure for the life of the process.
+Whatever changes between the first and second restyle makes the ROOT `mw.setStyleSheet` ~5x more
+expensive forever.
+
+What runs in that gap (from the same log): `_apply_stylesheets_deferred` (library/stats/book_detail),
+`load_book`, `LibraryPanel.refresh` materialising **382 books**, and `_load_cover_art`. The library
+model is the obvious suspect — the count tiers (630 -> ~240ms, 642 -> ~650ms, 790 -> ~780ms) already
+showed the root call scales with what exists beneath `mw` — but WHICH of those steps is responsible
+has **not** been isolated. Do not assume the library without bisecting it.
+
+### A six-condition matrix ruled out both obvious suspects
+
+Run deliberately (blur x fade duration), 120 samples:
+
+| condition | n | total | base | panels |
+|---|---|---|---|---|
+| blur OFF, fade 0 | 1 | 224ms | 87ms | 116ms |
+| blur OFF, fade 750 | 22 | 586ms | 419ms | 134ms |
+| blur OFF, fade 1500 | 23 | 579ms | 415ms | 136ms |
+| blur ON, fade 1500 | 22 | 574ms | 412ms | 133ms |
+| blur ON, fade 0 | 27 | 575ms | 412ms | 131ms |
+| blur OFF, fade 0 (2) | 25 | 580ms | 416ms | 134ms |
+
+**Neither variable matters.** Blur on vs off, 574 vs 579ms. Fade 0/750/1500, 575/586/579ms. All
+noise. The ~580ms is a floor independent of both — which confirms the "slow even with blur off"
+report and removes fade duration as a candidate too. The single 224ms row is the post-launch cheap
+case above, not a condition effect.
+
 ### Not yet explained
 
 The user reports the sluggishness is intermittent — "doesn't display the same sluggishness all the
