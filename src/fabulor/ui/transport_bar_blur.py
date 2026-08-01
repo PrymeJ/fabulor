@@ -1016,6 +1016,10 @@ class TransportBarBlurOverlay:
         from PySide6.QtWidgets import QApplication
 
         _cursor_override_pushed = False
+        # Initialized OUTSIDE the try: the finally below always iterates it, and it
+        # is only populated on the panel-visible branch — leaving it unbound would
+        # raise NameError out of the finally on every panel-less grab.
+        _mouse_blocked = []
         try:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
             overlay_was_visible = self._overlay.isVisible()
@@ -1027,6 +1031,25 @@ class TransportBarBlurOverlay:
                 if w_under is not None:
                     QApplication.setOverrideCursor(w_under.cursor())
                     _cursor_override_pushed = True
+                # INPUT-LEAK FIX (2026-08-01). Hiding the panel un-covers the
+                # transport widgets for the duration of the grab (~48ms, ~5x/sec
+                # while a panel is open), and Qt hit-tests against what is actually
+                # visible — so a cursor resting over Play/Prev/Next gets a REAL
+                # Enter and the button paints itself hovered, and a click lands on a
+                # widget the user cannot see. Measured live: every such Enter
+                # carried grab_win 0.004-0.049 (a grab in flight) with
+                # panel_vis=False.
+                #
+                # Made mouse-TRANSPARENT rather than hidden: the whole point of the
+                # grab is to photograph these widgets, so hiding them would empty
+                # the very region being blurred. WA_TransparentForMouseEvents leaves
+                # rendering untouched and only stops them being hit-test targets
+                # while the panel that should be covering them is temporarily away.
+                _mouse_blocked = []
+                for _w in self._all_tracked_widgets():
+                    if not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
+                        _w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                        _mouse_blocked.append(_w)
                 self._active_panel.hide()
             grabbed = self.main_window.grab(padded_rect)
             if panel_was_visible:
@@ -1034,6 +1057,11 @@ class TransportBarBlurOverlay:
             if overlay_was_visible:
                 self._overlay.show()
         finally:
+            # Restore before the cursor override is popped, and unconditionally —
+            # leaving a transport button permanently mouse-transparent would make it
+            # unclickable for the rest of the session.
+            for _w in _mouse_blocked:
+                _w.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             if _cursor_override_pushed:
                 QApplication.restoreOverrideCursor()
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
