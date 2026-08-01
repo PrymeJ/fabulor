@@ -1,3 +1,93 @@
+## 2026-08-01 — Theme restyle measured at ~700-900ms, and 95% of it is two `setStyleSheet` calls
+
+Reported live as previews and snapbacks being "a headache to use", and — critically — **slow with
+blur OFF**, which rules out the grab loop that the existing TODO entries point at.
+
+### The numbers
+
+`[RESTYLE-COST]` around every `_apply_stylesheets`, plus the per-step `_mark`/`_steps` breakdown that
+already existed in the method (it was logging at DEBUG, below the level in use; temporarily raised to
+WARNING to read it).
+
+Every hover preview and every snapback:
+
+```
+total=707.7ms  mw.setStyleSheet(base)=463.7ms  title_bar + content_container=20.8ms
+               _reload_button_icons=3.0ms  chapter_list_widget=0.0ms  sidebar=7.1ms
+               _set_chapter_ui_active=1.5ms  settings/speed/sleep panels=211.5ms
+```
+
+| Step | Cost | Share |
+|---|---|---|
+| `mw.setStyleSheet(get_base_stylesheet(...))` | ~460ms | **65%** |
+| settings/speed/sleep panels (one shared `ss_panels`) | ~215ms | **30%** |
+| everything else combined | ~32ms | 5% |
+
+Stable across calls: 694-896ms total, with the same split every time.
+
+### What it is NOT
+
+- **Not stylesheet size.** `get_base_stylesheet` is 4,253 chars / 27 rules; `get_settings_stylesheet`
+  is 8,361 / 48. Parsing that is trivial. The cost is Qt propagating the cascade and re-polishing.
+- **Not tree size varying.** `widget_count` is **642 on every single call** while totals swing
+  694→896ms. Whatever makes it vary, it is not how many widgets exist.
+- **Not the blur grab.** Confirmed by the report (slow with blur off) before measuring.
+- **Not ~250ms.** TODO.md carried that figure. The real cost is roughly **three times** it.
+
+### The mechanism
+
+`mw` is the ROOT widget. `mw.setStyleSheet(...)` makes Qt re-run its style cascade and re-polish
+every one of the 642 descendants, regardless of how few rules the sheet contains. The panels call is
+the same shape one level down.
+
+**This corrects a premise in CLAUDE.md** (the hover-preview confinement rule, ~line 452): that rule
+justifies confining previews to main window / settings panel / title bar on the grounds that walking
+the whole widget tree "would be a real performance cost with the panel tree this app has." The
+measurement shows the confined fast path **is itself that cost** — `mw.setStyleSheet` already
+re-polishes the entire tree. The confinement avoids `_schedule_deferred_restyle` and the panel-level
+sheets, which is real, but it does not avoid the expensive operation. The rule's *behaviour* is still
+correct (previews must not reach the deferred restyle); only its stated performance rationale is
+wrong.
+
+### Widget count is the multiplier — and it is a LAZY BUILD, not a leak
+
+Measured live across one session: the cost tracks `main_window.findChildren(QWidget)` closely.
+
+| widgets | restyle cost |
+|---|---|
+| 630 | ~240-270ms |
+| 642 | ~650-700ms |
+| 790 | ~740-860ms |
+
+It moves in BOTH directions (790 -> 630 later in the same session), so nothing is accumulating
+without bound. The 790 tier is the Tags panel: it builds ~148 widgets lazily on first open and keeps
+them, which is correct behaviour.
+
+**A first attempt to measure this reported "+148 per open/close cycle, linear and unbounded" and was
+WRONG.** The probe called `processEvents()` but never drained `DeferredDelete`, so every widget the
+Tags rebuild had correctly `deleteLater()`d was still counted. Draining explicitly
+(`sendPostedEvents(None, QEvent.Type.DeferredDelete)`) shows +148 once, then completely flat across
+further cycles. **Any future widget-count probe in this codebase must drain deferred deletions before
+counting, or it will invent a leak that is not there.**
+
+### Not yet explained
+
+The user reports the sluggishness is intermittent — "doesn't display the same sluggishness all the
+time." The captured range (694-896ms) does not contain a fast case, so whatever produces a
+*responsive* session was not sampled. Hover-preview fade was set to 1000ms during this capture; a
+restyle landing inside an active fade is an untested candidate for the variance. **Do not assume the
+700ms figure is the whole story until a fast session has been measured too.**
+
+### Where a fix would have to go
+
+Untried, listed so the next attempt does not start from zero: the ~460ms root call is the target, and
+the question is whether the base sheet can be applied to something narrower than `mw`, or whether the
+per-hover apply can be skipped entirely for widgets a preview cannot visibly affect. Both need
+checking against the hover-preview confinement rule, which is behaviourally load-bearing even though
+its performance rationale was wrong.
+
+---
+
 ## 2026-08-01 — Transport buttons paint themselves hovered/pressed under an open panel: the grab's hide/show cycle again (4th instance), mechanism only PARTLY explained
 
 Reported live: with a panel open in Frosty mode, the Play and `<` buttons — fully covered by the

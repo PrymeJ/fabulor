@@ -447,9 +447,14 @@ As of 2026-06-12 a "listened day" is `session (start OR end adjusted-date) OR 'f
 
 ### Hover-preview theme application must never reach `_schedule_deferred_restyle` or any panel-level stylesheet
 Previews are confined to main window, settings panel, and title bar via `get_base_stylesheet` — this
-confinement is deliberate, not an oversight: walking the whole widget tree on every hover tick (the
-same work a genuine theme selection does) would be a real performance cost with the panel tree this
-app has, which is exactly why `get_base_stylesheet`/the fast-pass split exists in the first place. A
+confinement is deliberate, not an oversight: a preview must not also restyle the library/stats/tags/
+book_detail surfaces, which is real work avoided. **The performance rationale previously written here
+was wrong and is corrected (measured 2026-08-01):** it claimed the confinement avoids "walking the
+whole widget tree." It does not. `mw.setStyleSheet(get_base_stylesheet(...))` targets the ROOT widget,
+so Qt re-polishes all ~642 descendants on every hover tick anyway — measured at **~460ms**, with the
+settings/speed/sleep panel sheet adding ~215ms, i.e. ~95% of a ~700-900ms restyle. The fast-pass split
+is narrower work, not cheap work. See NOTES.md 2026-08-01. The confinement itself is still
+load-bearing for the reasons below — only its cost claim was false. A
 preview must never be replayed through the same apply path as a genuine selection — any code that
 drains, resumes, or re-applies a stashed/pending theme-change call must preserve whether that call
 was a hover preview or a real selection, and a hover preview being replayed must stay confined to the
