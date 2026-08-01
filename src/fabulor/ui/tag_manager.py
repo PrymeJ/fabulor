@@ -40,6 +40,22 @@ _TAG_ROWS_VISIBLE = 12
 # _tag_list_height.
 _TAG_ROW_PITCH = _TAG_ROW_HEIGHT + _TAG_ROW_SPACING  # 37
 
+# Two independent horizontal gaps around the scrollbar. They are NOT
+# interchangeable — each moves a different edge:
+#
+#   [ row ]<-- ROW_SCROLLBAR_GAP -->|bar|<-- SCROLLBAR_EDGE_GAP -->| panel edge
+#
+# ROW_SCROLLBAR_GAP is the container's right margin: it shrinks the ROW and
+# leaves the bar where it is. SCROLLBAR_EDGE_GAP is the list layout's right
+# margin: it is the space right OF the bar, and it is what actually moves the
+# bar horizontally. Widening the first to push the bar right does not work; that
+# was tried.
+#
+# Without ROW_SCROLLBAR_GAP the row background runs flush into the bar (measured:
+# row right edge 252, scrollbar x 252).
+_TAG_ROW_SCROLLBAR_GAP = 4
+_TAG_SCROLLBAR_EDGE_GAP = 5
+
 # Rows travelled per wheel notch. Half a viewport, deliberately — NOT matched to
 # Stats (1 row) or the Library (a full page), because each suits how its list is
 # actually read:
@@ -306,7 +322,12 @@ class TagManagerWidget(QWidget):
         self._list_widget = QWidget()
         self._list_widget.setObjectName("tag_manager_list")
         list_layout = QVBoxLayout(self._list_widget)
-        list_layout.setContentsMargins(10, 0, 10, 10)
+        # Right margin 4, not 10: this is the space to the RIGHT of the
+        # scrollbar (between it and the panel edge), and it is what positions the
+        # scrollbar horizontally. Narrowing the row via the container's own right
+        # margin does NOT move the bar — it only shrinks the row and leaves the
+        # bar where it was. Left stays 10; the asymmetry is deliberate.
+        list_layout.setContentsMargins(10, 0, _TAG_SCROLLBAR_EDGE_GAP, 10)
         list_layout.setSpacing(10)
 
         header = QLabel("Tag management")
@@ -321,7 +342,11 @@ class TagManagerWidget(QWidget):
         self._tag_list_container = QWidget()
         self._tag_list_container.setObjectName("tag_list_container")
         self._tag_list_layout = QVBoxLayout(self._tag_list_container)
-        self._tag_list_layout.setContentsMargins(0, 0, 0, 0)
+        # Right margin only: the rows are as wide as the viewport, so without it
+        # a row's background runs flush into the scrollbar. Stats gets the same
+        # separation from its row's own right margin; here the rows fill the
+        # container, so it belongs on the container. 4px to match Stats.
+        self._tag_list_layout.setContentsMargins(0, 0, _TAG_ROW_SCROLLBAR_GAP, 0)
         # 5, not 4 — with the 32px row this gives a 37px pitch, and 12 rows then
         # occupy exactly the viewport (see _tag_list_height).
         self._tag_list_layout.setSpacing(_TAG_ROW_SPACING)
@@ -335,8 +360,17 @@ class TagManagerWidget(QWidget):
                      for i in range(self._tag_list_layout.count())
                      if self._tag_list_layout.itemAt(i).widget() is not None],
             self)
+        # Horizontal Ignored, not Preferred: with Preferred the container claims
+        # its own sizeHint and came out 245px wide inside a 242px viewport
+        # (measured), overhanging by 3px — so a right margin measured from the
+        # container's edge landed 3px further right than intended and the rows
+        # still nearly touched the scrollbar. Ignored holds it to the viewport
+        # width, which is what widgetResizable(True) is for.
+        #
+        # Vertical stays Maximum — that is what lets the container size to its
+        # content height so the scroll range is right.
         self._tag_list_container.setSizePolicy(
-            QSizePolicy.Policy.Preferred, 
+            QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Maximum
         )
         # Exactly 12 rows of content, so the viewport is a whole number of rows

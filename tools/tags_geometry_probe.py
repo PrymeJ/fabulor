@@ -75,12 +75,61 @@ def main():
 
         # Where the scroll area sits inside the panel, i.e. what is above it
         print(f"scroll y within panel  : {scroll.mapTo(tm, scroll.rect().topLeft()).y()}")
+
+        # --- horizontal: row right edge vs scrollbar, compared with Stats ---
+        bar = scroll.verticalScrollBar()
+        print("-" * 62)
+        print("HORIZONTAL (tags)")
+        print(f"  panel width          : {tm.width()}")
+        print(f"  scroll x / width     : {scroll.x()} / {scroll.width()}")
+        print(f"  viewport width       : {scroll.viewport().width()}")
+        print(f"  scrollbar visible    : {bar.isVisible()}  width={bar.width()}")
+        lm = layout.contentsMargins()
+        print(f"  container width      : {container.width()}")
+        print(f"  layout margins (l/r) : {lm.left()} / {lm.right()}")
+        if rows:
+            r = rows[0]
+            rx = r.mapTo(tm, r.rect().topLeft()).x()
+            print(f"  row x / width        : {rx} / {r.width()}")
+            print(f"  row right edge (x)   : {rx + r.width()}")
+            if bar.isVisible():
+                bx = bar.mapTo(tm, bar.rect().topLeft()).x()
+                print(f"  scrollbar x          : {bx}")
+                print(f"  GAP row->scrollbar   : {bx - (rx + r.width())}")
+                print(f"  scrollbar right      : {bx + bar.width()}")
+                print(f"  panel edge - sb right: {tm.width() - (bx + bar.width())}")
+
+        sp = mw.stats_panel
+        ssc = getattr(sp, '_month_scroll', None)
+        if ssc is not None:
+            sbar = ssc.verticalScrollBar()
+            srows = [ssc.widget().layout().itemAt(i).widget()
+                     for i in range(ssc.widget().layout().count())
+                     if ssc.widget().layout().itemAt(i).widget() is not None]
+            print("HORIZONTAL (stats month, for comparison)")
+            print(f"  panel width          : {sp.width()}")
+            print(f"  viewport width       : {ssc.viewport().width()}")
+            print(f"  scrollbar visible    : {sbar.isVisible()}  width={sbar.width()}")
+            if srows and sbar.isVisible():
+                sr = srows[0]
+                srx = sr.mapTo(sp, sr.rect().topLeft()).x()
+                sbx = sbar.mapTo(sp, sbar.rect().topLeft()).x()
+                print(f"  row right edge (x)   : {srx + sr.width()}")
+                print(f"  scrollbar x          : {sbx}")
+                print(f"  GAP row->scrollbar   : {sbx - (srx + sr.width())}")
+                print(f"  panel edge - sb right: {sp.width() - (sbx + sbar.width())}")
         print("=" * 62)
         app.quit()
 
-    # Open Tags through its real flow, then measure once laid out.
-    QTimer.singleShot(600, lambda: mw.panel_manager._open_tags_flow())
-    QTimer.singleShot(2200, report)
+    # Open Stats first (Month tab, for the horizontal comparison), let it
+    # populate, close it, then open Tags and measure. Both through their real
+    # flows -- a panel measured without being opened the way the app opens it
+    # is a different render, which is the whole reason this probe exists.
+    QTimer.singleShot(400, lambda: mw.panel_manager._open_stats_flow())
+    QTimer.singleShot(900, lambda: mw.stats_panel.stats_tabs.setCurrentIndex(4))
+    QTimer.singleShot(1600, lambda: mw.panel_manager.hide_all_panels())
+    QTimer.singleShot(2200, lambda: mw.panel_manager._open_tags_flow())
+    QTimer.singleShot(3600, report)
     app.exec()
 
 
