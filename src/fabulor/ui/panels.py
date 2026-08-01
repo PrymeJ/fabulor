@@ -781,6 +781,86 @@ class PanelManager:
 
             self._clear_visual_area_clip()
 
+    def switch_to_speed_panel(self) -> bool:
+        """Dismiss whatever full panel is open and open Speed once it has closed.
+
+        For the Speed button only. That button sits in the always-on transport
+        chrome and protrudes ~20px past the 90%-width panels into the sliver, so it
+        stays clickable while Stats/Tags/Settings is open — by design, it has looked
+        that way for months. But the click landed on _open_speed_flow's
+        one-overlay gate and was DROPPED: the button styled itself pressed and
+        nothing happened. This restores the pre-df98cef behaviour, where clicking it
+        closed the open panel and opened Speed.
+
+        This is NOT a hole in the one-overlay gate. The gate's policy — drop the
+        second request, never switch or queue — is about two OPENS colliding inside
+        an animation window, which is not legitimate intent. A deliberate click on a
+        visible chrome button is legitimate intent, and it is served the way the
+        gate's own text prescribes: QUEUE the open, then close, then open when the
+        close has finished. Nothing is opened concurrently with a close, so this
+        cannot reproduce the close-slide-fights-open-slide overlap bug that
+        _hide_popups()-then-open caused.
+
+        Dispatches via _start_speed_entry (not _open_speed_flow) once the close
+        lands — the same reason the sidebar handoff does: it is a continuation of an
+        already-granted request, so re-consulting the gate would block it against
+        its own committed state.
+
+        Returns True if a switch was started, False if there was nothing to switch
+        away from (caller should then open normally).
+        """
+        key = self.active_full_panel()
+        if key is None or key not in dict(self._CLOSE_ANIMS):
+            return False
+        if key == "speed":
+            return False  # self-toggle is the caller's job, not a switch
+        anim = getattr(self, dict(self._CLOSE_ANIMS)[key], None)
+        if anim is None:
+            return False
+
+        def _on_closed():
+            try:
+                anim.finished.disconnect(_on_closed)
+            except (TypeError, RuntimeError):
+                pass
+            self._pending_panel_open = None
+            # Re-check: the user may have dismissed or changed things during the
+            # ~300ms close. Only open if nothing else claimed the slot meanwhile.
+            if self.active_full_panel() is None and not self.sidebar_expanded:
+                self._start_speed_entry()
+
+        self._pending_panel_open = "speed"
+        closer = {
+            "library": self._close_library_flow,
+            "settings": self._close_settings_flow,
+            "speed": self._close_speed_flow,
+            "sleep": self._close_sleep_flow,
+            "stats": self._close_stats_flow,
+            "tags": self._close_tags_flow,
+        }[key]
+        closer()
+        # CONNECT AFTER closer(), never before. Qt fires `finished` slots in
+        # connection order, and each _close_*_flow connects its own _on_*_hidden
+        # (which calls .hide()) inside closer(). Connecting first put _on_closed
+        # ahead of that hide, so the re-check below still saw the panel as visible,
+        # active_full_panel() still named it, and the open was skipped every time —
+        # the panel dismissed and Speed never appeared.
+        anim.finished.connect(_on_closed)
+        # If the close did not actually start, nothing will ever emit `finished` —
+        # which would strand _pending_panel_open and wedge is_overlay_open_or_committed
+        # permanently, blocking EVERY panel for the rest of the session. Unwind now
+        # rather than leave that possible. (active_full_panel already excludes a
+        # mid-close panel, so reaching here should mean the close really started;
+        # this is the belt to that braces.)
+        if anim.state() != QAbstractAnimation.State.Running:
+            try:
+                anim.finished.disconnect(_on_closed)
+            except (TypeError, RuntimeError):
+                pass
+            self._pending_panel_open = None
+            return False
+        return True
+
     def _open_speed_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         if self.is_overlay_open_or_committed():

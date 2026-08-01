@@ -2014,6 +2014,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # other panel first — the close-vs-open fight that produced the overlap bug).
         if self.speed_panel.isVisible():
             self.panel_manager._close_speed_flow()
+        elif self.panel_manager.switch_to_speed_panel():
+            # Another full panel was open: it is closing now and Speed opens once
+            # that close lands. The button protrudes past the 90%-width panels, so
+            # it stays clickable while one is open — without this the click hit
+            # _open_speed_flow's one-overlay gate and was silently dropped, leaving
+            # the button styled as pressed with nothing happening.
+            pass
         else:
             self.panel_manager._open_speed_flow()
 
