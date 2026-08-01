@@ -4212,6 +4212,27 @@ def get_tags_stylesheet(theme_name="default"):
         QLabel#tag_dot_colored {{
             padding-top: 0px;
         }}
+        /* List-row dots only — NOT the picker swatches (20x20) or the tag
+           panel's header dot (14x14), which share these object names but sit
+           outside a list row and are correctly positioned.
+
+           Why it needed re-nudging: the dot is a 20px label centred in the row.
+           At the old 31px row height the leftover was an odd 11px so the dot
+           rode a pixel high; at 32px it splits 6/6 evenly and dropped to true
+           centre. Reinstates the knob 5654f57 zeroed when it replaced a blanket
+           -2px with the 14x20 label sizing.
+
+           NOTE the value is NOT a pixel count. Negative padding grows the
+           label's contentsRect UPWARD while the label itself stays put (measured:
+           pad=-8 gives contentsRect y=-8 h=28, label.y unchanged at 6), and the
+           glyph is AlignCenter'd inside that rect — so it moves by HALF the
+           padding, then rounds to whole pixels. Confirmed live: -1px and -2px
+           are visually identical, -8px is plainly high. Do not read -2px as
+           "2px up", and do not expect a 1px change here to do anything. */
+        QWidget#tag_list_row QLabel#tag_dot_neutral,
+        QWidget#tag_list_row QLabel#tag_dot_colored {{
+            padding-top: -2px;
+        }}
         QLineEdit#tag_name_field {{
             background: transparent;
             border: 1px solid transparent;
