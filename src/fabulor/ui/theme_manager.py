@@ -2,7 +2,7 @@ import logging
 import random
 import time
 import warnings
-from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox
+from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect, QPushButton, QComboBox, QWidget
 from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEasingCurve
 from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (
@@ -196,6 +196,10 @@ class ThemeManager(QObject):
         # plans/going-forward-on-this-twinkly-corbato.md). _pending is the coalescing
         # flag; _theme is the last-write-wins theme to apply when the batch runs.
         self._deferred_restyle_pending = False
+        # Settings/speed/sleep sheet a HIDDEN panel missed while _apply_stylesheets
+        # skipped it — applied by apply_pending_panel_sheet() before that panel is
+        # next shown. See that method for why flush_deferred_restyle cannot cover it.
+        self._pending_panel_sheet = None
         self._deferred_restyle_theme = None
 
     def get_current_theme(self) -> dict:
@@ -689,7 +693,12 @@ class ThemeManager(QObject):
         the invisible pass runs once at true startup regardless of cover-theme mode —
         the later same-name no-op guard is then correct to skip re-styling, because
         nothing was actually skipped."""
-        self._apply_stylesheets(theme_name, hover=hover)
+        # force_all_panels: this is the documented COMPLETE first styling a theme
+        # must receive, and it is startup-only — the settings/speed/sleep panels are
+        # all hidden at that moment, so the visibility gate in _apply_stylesheets
+        # would skip every one of them and leave them built with no stylesheet at
+        # all (seen live as the settings panel opening unstyled on some launches).
+        self._apply_stylesheets(theme_name, hover=hover, force_all_panels=True)
         self._mark_theme_applied(theme_name, hover)
         if not hover:
             self._apply_stylesheets_deferred(theme_name)
@@ -1393,7 +1402,7 @@ class ThemeManager(QObject):
         )
         self._apply_stylesheets(self._active_display_theme_internal, hover=self._is_hover_active)
 
-    def _apply_stylesheets(self, theme_name, hover=False):
+    def _apply_stylesheets(self, theme_name, hover=False, force_all_panels=False):
         # TEMP VERIFICATION LOGGING (2026-07-20): marks theme_name as GENUINELY
         # applied — see the no-op guard's [GUARD-MASK-TRACE] logging in
         # _on_theme_changed, which compares against this to distinguish a real
@@ -1523,10 +1532,43 @@ class ThemeManager(QObject):
         # spurious case.
         try:
             self.main_window._spurious_enter_guard_until = time.perf_counter() + _SPURIOUS_ENTER_GUARD_S
+            # Stash FIRST, unconditionally. ThemeManager is constructed (app.py:379)
+            # long before these panels are built (app.py:682), so an early
+            # _apply_stylesheets sees getattr(...) is None for all three. Recording the
+            # sheet only inside the loop meant those calls stashed nothing, and the
+            # panels were later built with no stylesheet at all — reported live as the
+            # settings panel opening unstyled on some launches but not others (a race
+            # against which apply landed first, hence intermittent).
+            self._pending_panel_sheet = ss_panels
             for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
                 w = getattr(mw, attr, None)
-                if w:
-                    w.setStyleSheet(ss_panels)
+                if not w:
+                    continue
+                # HOVER: only restyle a panel that is actually on screen (2026-08-01).
+                # This loop ran unconditionally, so every hover tick re-polished the
+                # subtrees of all three — but the one-overlay gate
+                # (is_any_full_panel_visible) guarantees only ONE of settings/speed/
+                # sleep can be visible at a time, and a theme hover happens on the
+                # Themes tab INSIDE settings_panel, so speed_panel and sleep_panel are
+                # necessarily hidden. Restyling them cost ~2/3 of this step's ~215ms for
+                # something nobody can see, and a hidden panel is restyled on its own
+                # open path anyway.
+                #
+                # Applies to snapback too, not just hover (measured 2026-08-01): a
+                # snapback is hover=False, so gating on hover alone left it restyling
+                # all three every time — 230-252ms, and the user's report was that
+                # SNAPBACK is the worst case. An invisible panel is equally invisible
+                # whichever call is running.
+                #
+                # A skipped panel MUST be caught up before it is next shown. Do not
+                # assume _flush_pending_restyle covers it — checked, and it does not:
+                # _apply_stylesheets_deferred only restyles library_panel and the
+                # stats/book_detail targets, never settings/speed/sleep. The catch-up
+                # is this class's own _pending_panel_sheet, applied by
+                # apply_pending_panel_sheet() from each _start_*_entry.
+                if not force_all_panels and not w.isVisible():
+                    continue  # already stashed above; caught up before it is shown
+                w.setStyleSheet(ss_panels)
         finally:
             self.main_window._spurious_enter_guard_until = time.perf_counter() + _SPURIOUS_ENTER_GUARD_S
         _mark("settings/speed/sleep panels")
@@ -1647,6 +1689,24 @@ class ThemeManager(QObject):
         logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _run_deferred_restyle: "
                      f"proceeding via NATURAL path (flow_anim.finished or no-anim turn)")
         self._flush_deferred_restyle_now()
+
+    def apply_pending_panel_sheet(self, panel):
+        """Catch `panel` up on any settings/speed/sleep stylesheet it missed while
+        hidden. Called from each _start_*_entry BEFORE show().
+
+        _apply_stylesheets skips a hidden settings/speed/sleep panel (measured
+        2026-08-01: restyling all three cost ~215-250ms per hover AND per snapback,
+        for two panels the one-overlay gate guarantees are invisible). That skip is
+        only safe if the panel is caught up before it paints — this is that catch-up.
+
+        Deliberately separate from flush_deferred_restyle: that drains the deferred
+        INVISIBLE-SURFACE batch (library/stats/tags/book_detail) and does not touch
+        these three panels at all, so it cannot serve as the catch-up here. Checked,
+        not assumed.
+        """
+        sheet = getattr(self, '_pending_panel_sheet', None)
+        if sheet and panel is not None:
+            panel.setStyleSheet(sheet)
 
     def flush_deferred_restyle(self):
         """Force the pending batch to run synchronously NOW, bypassing the animation

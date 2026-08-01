@@ -1471,6 +1471,16 @@ class PanelManager:
             logger.debug(f"[STUTTER-TRACE] t={time.perf_counter():.6f} _flush_pending_restyle: "
                          f"CALLED was_pending={_was_pending}")
             tm.flush_deferred_restyle()
+            # Separate catch-up, same pre-show() instant: _apply_stylesheets skips a
+            # HIDDEN settings/speed/sleep panel (see apply_pending_panel_sheet for the
+            # measurement), and flush_deferred_restyle above does NOT cover those three
+            # — it drains the library/stats/tags/book_detail batch only. Without this a
+            # panel hidden across a theme change would open with stale colours.
+            if hasattr(tm, 'apply_pending_panel_sheet'):
+                for _attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+                    _p = getattr(self.main_window, _attr, None)
+                    if _p is not None and not _p.isVisible():
+                        tm.apply_pending_panel_sheet(_p)
 
     def _any_panel_animating(self):
         """Returns True if any sliding panel or blur animation is currently running."""
