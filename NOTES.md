@@ -112,6 +112,27 @@ noise. The ~580ms is a floor independent of both — which confirms the "slow ev
 report and removes fade duration as a candidate too. The single 224ms row is the post-launch cheap
 case above, not a condition effect.
 
+### Historical comparison — the root call has roughly doubled since July
+
+Searched for an earlier baseline (the 7000-widget / delegate-migration era). **The delegate
+migration landed 2026-04-27 (`ce9fbdb`, `29bc670`), which predates every timing in these docs**, so
+there is no pre/post pair for that change. The comparable record is:
+
+| date | `_apply_stylesheets` | `mw.setStyleSheet(base)` |
+|---|---|---|
+| 2026-07-14 | median 318ms, p90 463, max 639 (n=70) | median ~180ms, max 355 |
+| 2026-07-28/29 | ~205-265ms | — |
+| 2026-08-01 | ~580ms | ~410ms |
+
+The 2026-07-14 entry already identified the same call as dominant and described it exactly: "the
+global base stylesheet that repolishes the entire widget tree."
+
+**Caveats against reading this as a clean regression:** the July figure is a median over n=70 mixing
+many app states, while today's is a median over ~120 samples in one post-launch state — not a
+matched comparison. And July's max of 639ms brackets today's numbers, so today may sit inside a
+range July also reached, just more consistently. What is genuinely new is the STEP (87ms -> 410ms at
+a fixed point after launch); no earlier entry describes that shape.
+
 ### Not yet explained
 
 The user reports the sluggishness is intermittent — "doesn't display the same sluggishness all the
