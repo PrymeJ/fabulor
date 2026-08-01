@@ -206,10 +206,19 @@ class VisualsInterface:
         Deliberately separate from set_blur_selection: that one is a visual sync
         called from the settings refresh batch, and a restyle there fires on every
         sync (~250ms each, three per second — it stuttered the panel slide and
-        crashed the app, 2026-07-28)."""
+        crashed the app, 2026-07-28).
+
+        SCOPED, not a full pass (2026-08-02). This used to call apply_full_pass,
+        which rebuilds every stylesheet in the app: measured at ~1040ms per click,
+        so the mode button visibly lagged its own selection by a full second. A
+        backdrop change only moves the panel alpha and sets no colours, so
+        apply_panel_alpha_pass restyles just the five surfaces that actually read
+        panel_opacity_hover — see its docstring for the verification method and for
+        why mw.setStyleSheet(base) (482ms of that 1040ms) is provably redundant
+        here."""
         tm = getattr(self._main, 'theme_manager', None)
         if tm is not None:
-            tm.apply_full_pass(tm.get_active_theme())
+            tm.apply_panel_alpha_pass(tm.get_active_theme())
 
     def set_blur_selection(self, mode):
         """Paint the panel-backdrop button states. Panel backdrop is

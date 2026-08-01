@@ -8,7 +8,7 @@ from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
-    get_stats_stylesheet, THEMES
+    get_stats_stylesheet, get_tags_stylesheet, THEMES
 )
 
 logger = logging.getLogger(__name__)
@@ -707,6 +707,85 @@ class ThemeManager(QObject):
             from ..themes import _resolve_theme
             self.theme_applied.emit(_resolve_theme(theme_name))
             self.update_theme_list_visuals()
+
+    def apply_panel_alpha_pass(self, theme_name):
+        """Restyle ONLY the surfaces whose stylesheet actually reads
+        `panel_opacity_hover` — the panel-backdrop mode's entire effect.
+
+        Backdrop mode (transparent/frosty/opaque) changes one thing: the panel
+        alpha, injected by themes.set_panel_alpha_override into _resolve_theme.
+        It sets no colours. So a mode change does NOT need the full theme pass
+        apply_full_pass runs — which cost a measured ~1040ms per click (2026-08-02),
+        long enough that the button appeared to not respond.
+
+        The five functions below are the complete set of alpha consumers, verified
+        by diffing every get_*_stylesheet's output with the override set to None vs
+        1.0 rather than by reading the call sites:
+
+            get_library_stylesheet   get_settings_stylesheet   get_stats_stylesheet
+            get_tags_stylesheet      get_sidebar_stylesheet
+
+        Equally load-bearing is what is NOT here. get_base_stylesheet,
+        get_player_stylesheet and get_title_bar_stylesheet produce BYTE-IDENTICAL
+        output either way, so restyling them is pure waste on this path — and
+        mw.setStyleSheet(base) alone was 482ms of the 1040ms, re-polishing all ~642
+        descendants to arrive at the same pixels. _reload_button_icons and
+        chapter_list_widget.update_theme are likewise colour-only and excluded.
+
+        If a future theme key becomes backdrop-dependent, re-run that same diff and
+        add its owner here — do NOT widen this back to apply_full_pass.
+
+        Panel visibility is NOT gated here, deliberately: unlike a hover preview
+        (which repeats many times per second), a backdrop change is a single
+        discrete click, and every one of these panels is reachable immediately
+        afterwards. The cost of styling the hidden ones is paid once and removes any
+        need for a catch-up path.
+        """
+        mw = self.main_window
+        _dbg = logger.isEnabledFor(logging.DEBUG)
+        _t0 = time.perf_counter()
+        _steps = []
+        _t = _t0
+
+        def _mark(label):
+            nonlocal _t
+            if _dbg:
+                now = time.perf_counter()
+                _steps.append((label, (now - _t) * 1000))
+                _t = now
+
+        if hasattr(mw, 'sidebar'):
+            mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
+        _mark("sidebar")
+        ss_panels = get_settings_stylesheet(theme_name)
+        _mark("build settings ss")
+        # Mirrors _apply_stylesheets' stash so a panel skipped there is still caught
+        # up correctly; here every panel is styled, so the stash just stays truthful.
+        self._pending_panel_sheet = ss_panels
+        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+            w = getattr(mw, attr, None)
+            if w:
+                w.setStyleSheet(ss_panels)
+                _mark(attr)
+        if hasattr(mw, 'library_panel'):
+            mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
+        _mark("library_panel")
+        ss_stats = get_stats_stylesheet(theme_name)
+        _mark("build stats ss")
+        for attr in ('stats_panel', 'book_detail_panel'):
+            w = getattr(mw, attr, None)
+            if w:
+                w.setStyleSheet(ss_stats)
+                _mark(attr)
+        if hasattr(mw, 'tags_panel'):
+            mw.tags_panel.setStyleSheet(get_tags_stylesheet(theme_name))
+        _mark("tags_panel")
+
+        if _dbg:
+            parts = "  ".join(f"{lbl}={ms:.1f}ms" for lbl, ms in _steps)
+            logger.debug(
+                f"[apply_panel_alpha_pass] total={(time.perf_counter() - _t0) * 1000:.1f}ms  {parts}"
+            )
 
     def _on_theme_changed(self, theme_name, save=True, fade_ms=None, hover=False, user_initiated=True,
                            bypass_panel_open_guard=False):

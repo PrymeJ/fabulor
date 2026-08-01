@@ -162,7 +162,13 @@ class _FakeTM:
     def get_active_theme(self):
         return self._active
 
-    def apply_full_pass(self, theme, hover=False):
+    def apply_panel_alpha_pass(self, theme):
+        # A backdrop change routes through the SCOPED alpha pass, not the full
+        # theme pass (2026-08-02): the mode only moves panel_opacity_hover and
+        # sets no colours, so rebuilding every stylesheet cost ~1040ms per click.
+        # What these tests pin is unchanged and independent of that — which THEME
+        # is handed to the restyle, guarding the 2026-07-28 regression where a
+        # backdrop switch reverted a live cover theme to the pool theme.
         self.applied.append(theme)
 
 
