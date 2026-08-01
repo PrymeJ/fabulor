@@ -16,6 +16,55 @@ from .hover_tracker import ScrollHoverTracker
 
 MAX_TAG_LENGTH = 20
 
+# Tag list row geometry. The viewport has to hold a whole number of rows or the
+# list drifts on scroll and shows partial rows at its edges — measured live at
+# 450px viewport against a 35px pitch, a 30px remainder
+# (tools/tags_geometry_probe.py).
+#
+# N rows have N-1 gaps between them, NOT N: the last row has no trailing gap.
+# So the height is (N * row) + ((N - 1) * spacing), not N * pitch. Getting this
+# wrong is what cut the top and bottom rows on the first attempt — 12 * 37 = 444
+# counts a 12th gap that does not exist, 5px too tall.
+#
+# 12 * 32 + 11 * 5 = 439, leaving 11px of the 450px viewport. The row grew by
+# 1px rather than shrinking to fit 13 rows because 450 / 13 is not an integer,
+# and the nearest exact divisors would need a visibly tighter row. The +1 also
+# fixes badge centring: a 20px badge in a 31px row leaves an odd 11px to split,
+# in a 32px row an even 12px.
+_TAG_ROW_HEIGHT = 32
+_TAG_ROW_SPACING = 5
+_TAG_ROWS_VISIBLE = 12
+# Distance from one row's top to the next's — the correct unit for a SCROLL
+# STEP (every row after the first sits one pitch further down). Deliberately
+# not used for the viewport's total height, which needs one fewer gap; see
+# _tag_list_height.
+_TAG_ROW_PITCH = _TAG_ROW_HEIGHT + _TAG_ROW_SPACING  # 37
+
+# Rows travelled per wheel notch. Half a viewport, deliberately — NOT matched to
+# Stats (1 row) or the Library (a full page), because each suits how its list is
+# actually read:
+#
+#   Stats  — dense rows you READ (cover, title, author, percentages, duration).
+#            One row per notch keeps the row under your eye while the next
+#            arrives; a jump would cost you your place.
+#   Tags   — a name, a dot, a count. You SCAN these looking for one, and
+#            scanning rewards large jumps.
+#   Library— a grid of covers recognised by shape and colour, and it can hold
+#            thousands of books, so a page per flick is the only way to traverse.
+#
+# 12 (a full page) was considered and rejected: it leaves zero overlap, so every
+# row is new after a flick and there is no anchor to re-orient against. 6 keeps
+# half the list on screen. With tags capped at 50 globally (db.add_book_tag)
+# that is ~8 flicks end to end.
+_TAG_SCROLL_ROWS = 6
+
+
+def _tag_list_height(rows: int) -> int:
+    """Exact pixel height of `rows` tag rows — N rows, N-1 gaps."""
+    if rows <= 0:
+        return 0
+    return rows * _TAG_ROW_HEIGHT + (rows - 1) * _TAG_ROW_SPACING
+
 
 class _ClickableLabel(QLabel):
     clicked = Signal()
@@ -273,7 +322,9 @@ class TagManagerWidget(QWidget):
         self._tag_list_container.setObjectName("tag_list_container")
         self._tag_list_layout = QVBoxLayout(self._tag_list_container)
         self._tag_list_layout.setContentsMargins(0, 0, 0, 0)
-        self._tag_list_layout.setSpacing(4)
+        # 5, not 4 — with the 32px row this gives a 37px pitch, and 12 rows then
+        # occupy exactly the viewport (see _tag_list_height).
+        self._tag_list_layout.setSpacing(_TAG_ROW_SPACING)
         self._tag_list_layout.addStretch()
         self._tag_scroll.setWidget(self._tag_list_container)
         # Re-resolve the hovered row when the list scrolls under a still cursor —
@@ -288,7 +339,42 @@ class TagManagerWidget(QWidget):
             QSizePolicy.Policy.Preferred, 
             QSizePolicy.Policy.Maximum
         )
-        list_layout.addWidget(self._tag_scroll)
+        # Exactly 12 rows of content, so the viewport is a whole number of rows
+        # and the list cannot come to rest mid-row. Without it the viewport is
+        # the full 450px leftover — 12 rows plus a 30px sliver of a 13th, which
+        # is what made the rows appear to drift when scrolled.
+        self._tag_scroll.setMaximumHeight(_tag_list_height(_TAG_ROWS_VISIBLE))
+        # Sizing the viewport to whole rows is only half of it: without a
+        # row-sized scroll step the list still comes to rest mid-row, which is
+        # the drift symptom itself. Qt's default singleStep has no relationship
+        # to the pitch. Snap every wheel notch to a multiple of it and clamp to
+        # the last aligned position, mirroring the Stats rows wheelEvent.
+        bar = self._tag_scroll.verticalScrollBar()
+        bar.setSingleStep(_TAG_ROW_PITCH)
+
+        def _tag_rows_wheel(e):
+            notches = -1 if e.angleDelta().y() > 0 else 1
+            target = bar.value() + notches * _TAG_ROW_PITCH * _TAG_SCROLL_ROWS
+            snapped = round(target / _TAG_ROW_PITCH) * _TAG_ROW_PITCH
+            max_aligned = (bar.maximum() // _TAG_ROW_PITCH) * _TAG_ROW_PITCH
+            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
+            e.accept()
+
+        self._tag_scroll.wheelEvent = _tag_rows_wheel
+        # stretch=1 so the scroll area claims surplus height BEFORE the trailing
+        # stretch does. A bare addStretch() carries a stretch factor of 1 too, so
+        # without this the two split the surplus and the viewport settled at
+        # 225px — half of what the cap allows (measured, tools/tags_geometry_probe.py).
+        list_layout.addWidget(self._tag_scroll, stretch=1)
+        # Required PARTNER to the cap above, not decoration. The scroll area was
+        # this column's only expanding member, so capping it alone leaves the
+        # freed pixels with nowhere to go and QVBoxLayout redistributes them
+        # around the block — which would push the header and the first row down
+        # and break the dot alignment between this view and the tag panel. The
+        # stretch gives that remainder an explicit home at the BOTTOM, keeping
+        # the list's top edge exactly where it is today. Same trap, same fix, as
+        # the Stats rows viewport (see stats_panel._cap_rows_viewport).
+        list_layout.addStretch()
         self._stack_layout.addWidget(self._list_widget)
 
         # ── Tag panel view ───────────────────────────────────────────────
@@ -435,7 +521,17 @@ class TagManagerWidget(QWidget):
         # including why this is correctness rather than the arrow-cursor fix.
         row.setAttribute(Qt.WA_Hover, True)
         row.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.setFixedHeight(31)
+        # 32, not 31, for two reasons that happen to want the same pixel.
+        #
+        # Centring: the badge and dot are both 20px tall in a row with zero
+        # top/bottom margins. At 31 the leftover is 11px — odd, so it cannot
+        # split evenly and the badge sits a pixel off centre. At 32 it is 12,
+        # which splits 6/6 exactly.
+        #
+        # Quantization: 32 + 5px spacing gives a 37px pitch, and 37 * 12 = 444
+        # against the 450px viewport — a 6px remainder instead of 35's 30px.
+        # See _quantize_tag_viewport.
+        row.setFixedHeight(_TAG_ROW_HEIGHT)
 
         layout = QHBoxLayout(row)
         layout.setContentsMargins(4, 0, 8, 0)
