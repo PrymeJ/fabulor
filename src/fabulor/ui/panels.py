@@ -6,7 +6,7 @@ import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QApplication
-from PySide6.QtCore import QPoint, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
+from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 
@@ -85,6 +85,12 @@ class PanelManager:
         self.tags_panel = main_window.tags_panel
         self.book_detail_panel: "BookDetailPanel | None" = None
         self.book_detail_panel_animation: QPropertyAnimation | None = None
+        # Which panel Book Detail was opened ON TOP OF, as a string key ('stats' /
+        # 'tags' / 'library' / None). Written in open_book_detail, consumed once in
+        # _resume_blur_after_book_detail. A key, not a widget, so the Library and
+        # no-underlay cases stay explicit rather than silently falling through
+        # generic panel handling.
+        self._book_detail_underlay: str | None = None
         self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
 
         # Settle watch for call_when_panels_settled (see that method). Deliberately
@@ -145,8 +151,138 @@ class PanelManager:
         if self.config.get_blur_enabled():
             self._transport_bar_blur.show_for_panel(panel)
 
+    # Book Detail sits at y=32; the progress slider occupies y=32..56 and the
+    # window is 300x564. See _book_detail_frost_rect.
+    _BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS = 56
+    _BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR = 32
+    _BOOK_DETAIL_FROST_BOTTOM_INSET = 10
+
+    def _book_detail_frost_rect(self) -> QRect:
+        """The region Book Detail's frost should cover, in MAIN_WINDOW coords.
+
+        Differs by what it opened over, because the two cases genuinely look
+        different underneath (confirmed live 2026-08-01):
+
+        - Over STATS (or any 90%-width panel): the player screen behind is
+          already blurred by that panel's own visual_area blur, but the Stats
+          panel ITSELF is sharp — and Stats is most of what is behind Book
+          Detail. So the frost must start under the PROGRESS BAR (y=56) and run
+          to 10px off the bottom, capturing Stats as content to be blurred. The
+          progress bar is excluded because it animates; the bottom 10px is the
+          panel's own padding.
+        - Over LIBRARY: the library is full-width and opaque, so everything from
+          under the TITLE BAR (y=32) down is real content that must be frosted.
+
+        Bare geometry rather than reading widget rects: these are fixed-size
+        chrome (window 300x564 via setFixedSize, title bar 32, progress slider
+        24), and the panel-rect helpers map SETTLED positions, which is not what
+        is wanted for a region defined against the window itself.
+        """
+        mw = self.main_window
+        if self._book_detail_underlay == 'library':
+            top = self._BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR
+            bottom_inset = 0
+        else:
+            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
+            bottom_inset = self._BOOK_DETAIL_FROST_BOTTOM_INSET
+        return QRect(0, top, mw.width(), mw.height() - top - bottom_inset)
+
+    def _apply_transport_bar_blur_full(self, panel):
+        """Frost Book Detail's own backdrop. See
+        TransportBarBlurOverlay.frost_panel_backdrop for why this cannot reuse the
+        shared overlay (Z-order: that overlay is a child of content_container and
+        can never rise above a panel parented to main_window).
+
+        Gated here rather than inside the overlay, matching _apply_transport_bar_blur
+        — one get_blur_enabled() convention across every call site."""
+        if self.config.get_blur_enabled():
+            self._transport_bar_blur.frost_panel_backdrop(
+                panel, self._book_detail_frost_rect())
+
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
+
+    def _suspend_blur_for_book_detail(self):
+        """Tear down the underlying panel's blur when Book Detail opens over it.
+
+        Book Detail is full window width at y=32 and content_container starts at
+        y=56, so it covers the cover art, the transport bar, the carousel AND the
+        underlying panel entirely — nothing the underlay's blur produces can be
+        seen.
+
+        Leaving it running is not merely wasted work. The transport overlay's
+        _active_panel is still the UNDERLYING panel, so _grab_and_blur keeps hiding
+        Stats (not Book Detail) and grabbing main_window — which photographs Book
+        Detail INTO the cached pixmap and composites it back underneath itself.
+        Measured self-sustaining at ~64ms / ~15 grabs per second (NOTES.md,
+        2026-07-27, "grab feedback loop").
+
+        The visual_area half must go too: it is fully occluded, and leaving its
+        1500ms tween running would let _grab_and_blur bake a PARTIALLY blurred
+        visual_area into Book Detail's own grab, then blur that again — a double
+        blur whose strength depends on where the tween happened to be.
+
+        Unconditional on get_blur_enabled(): every call below is a no-op when blur
+        is off (hide_for_panel early-exits on _active=False, setBlurRadius(0) on an
+        already-0 effect is free, _clear_visual_area_clip nulls an already-null
+        clip), and being unconditional means a mid-session backdrop-mode change
+        cannot strand a live blur.
+
+        blur_animation.stop() here emits no `finished` — nothing subscribes to
+        learn about it (see the _settled_watch_timer note in __init__), and it is
+        the same call _start_visual_area_blur already makes.
+
+        Symmetric with _resume_blur_after_book_detail. Deliberately reuses the same
+        teardown calls every _close_*_flow uses — no new blur path.
+        """
+        self._clear_transport_bar_blur()
+        self.blur_animation.stop()
+        self.blur_effect.setBlurRadius(0)
+        self._clear_visual_area_clip()
+
+    def _resume_blur_after_book_detail(self):
+        """Re-establish the underlying panel's blur once Book Detail is fully
+        hidden. Symmetric with _suspend_blur_for_book_detail.
+
+        Runs from _on_book_detail_hidden (AFTER .hide()), never from
+        _close_book_detail_flow: a grab taken while Book Detail is still sliding
+        out would photograph it into the cache, because _active_panel would by then
+        be the underlying panel again and _grab_and_blur only ever hides
+        _active_panel. That is the same corruption this change removes, just moved
+        to the close side.
+
+        The isVisible() re-check is load-bearing, not defensive padding.
+        _on_open_tag_manager_from_detail (app.py) calls hide_all_panels() — closing
+        BOTH Book Detail and Stats — then opens Tags 320ms later; and
+        _on_tag_filter_requested closes Book Detail then opens Library. Without the
+        check those paths would re-blur a panel that is mid-close or already hidden,
+        stranding a frozen overlay over the transport bar with _active_panel
+        pointing at an invisible widget.
+
+        Cache invalidation is free: hide_for_panel already nulls the pixmap and
+        _bounding_rect, and _apply_transport_bar_blur -> show_for_panel takes a
+        mandatory full-rect first pass. A fresh show_for_panel IS the invalidation,
+        so no force_refresh_now() is needed (it would no-op anyway — _active is
+        False at this point).
+
+        Library is deliberately absent from the map: it is full-width and opaque and
+        never had either blur on open (see _apply_visual_area_clip's LIBRARY-PANEL
+        EXCLUSION), so there is nothing to restore for it.
+        """
+        # Consuming read — same shape as take_dirty_union. A stale key must never
+        # survive into the next Book Detail open.
+        key, self._book_detail_underlay = self._book_detail_underlay, None
+        panel = {
+            'stats': self.stats_panel,
+            'tags': self.tags_panel,
+            'settings': self.settings_panel,
+            'speed': self.speed_panel,
+            'sleep': self.sleep_panel,
+        }.get(key)
+        if panel is None or not panel.isVisible():
+            return
+        self._apply_transport_bar_blur(panel)
+        self._start_visual_area_blur(panel)
 
     def _start_visual_area_blur(self, panel):
         """Set the clip and run the visual_area blur-in — called ONLY from a
@@ -1066,6 +1202,11 @@ class PanelManager:
         panel = self.main_window.book_detail_panel
         if panel.isVisible():
             return
+        # Remember what this is opening ON TOP OF, for the blur suspend/resume pair.
+        # Written AFTER the early-return above so a dropped duplicate open can never
+        # clobber a live value. active_full_panel() already excludes mid-close panels
+        # via _is_closing, which is exactly the state we must not "restore" blur to.
+        self._book_detail_underlay = self.active_full_panel()
         self._complete_main_fade()
         # Snapshot of the library's current search text, so tag chips (library context only)
         # can tell whether a given tag is already the active filter and render inert. A
@@ -1079,6 +1220,11 @@ class PanelManager:
 
     def _start_book_detail_entry(self):
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        # Immediately, at open-START: the underlay is about to be fully covered, so
+        # its blur must stop now rather than at slide-finish. This and the blur START
+        # below are two SEPARATE moments and must not be merged — see
+        # _suspend_blur_for_book_detail.
+        self._suspend_blur_for_book_detail()
         panel_w = self.main_window.width()
         book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel.setFixedWidth(panel_w)
@@ -1088,6 +1234,33 @@ class PanelManager:
         self.book_detail_panel.raise_()
         self._claim_panel_focus(self.book_detail_panel)
 
+        def _on_book_detail_slide_finished():
+            try:
+                self.book_detail_panel_animation.finished.disconnect(
+                    _on_book_detail_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            # Book Detail spans BOTH blur regions, so it frosts via the grab overlay
+            # over its whole area rather than visual_area's paint-time effect:
+            # ClippedBlurEffect lives on visual_area, which is inset 10px inside
+            # content_container and does not contain the transport bar at all, so it
+            # structurally CANNOT cover this panel's backdrop. Hence no
+            # _start_visual_area_blur call here — that asymmetry vs. the other five
+            # panels is deliberate, not an omission.
+            self._apply_transport_bar_blur_full(self.book_detail_panel)
+
+        # Blur starts at slide-FINISHED, matching every other panel — see
+        # _start_visual_area_blur's TIMING IS LOAD-BEARING note.
+        #
+        # This connects to `finished` to START an effect, which is what the other
+        # five panels do; it is NOT the pattern the "do not resume a panel-animation
+        # wait via finished" rule forbids (that targets resuming a PREDICATE WAIT,
+        # because stop() emits no finished). Safe here because
+        # book_detail_panel_animation is never stop()ed — _close_book_detail_flow
+        # early-returns on Running rather than stopping it. IF A FUTURE CHANGE ADDS A
+        # stop() (e.g. interrupt-and-reverse close), this frost silently never
+        # appears.
+        self.book_detail_panel_animation.finished.connect(_on_book_detail_slide_finished)
         self.book_detail_panel_animation.setStartValue(QPoint(panel_w, book_detail_panel_y))
         self.book_detail_panel_animation.setEndValue(QPoint(0, book_detail_panel_y))
         self.book_detail_panel_animation.start()
@@ -1101,14 +1274,26 @@ class PanelManager:
         self.book_detail_panel_animation.setEndValue(QPoint(panel_w, book_detail_panel_y))
         self.book_detail_panel_animation.finished.connect(self._on_book_detail_hidden)
         self.book_detail_panel_animation.start()
+        # At close-START, matching _close_stats_flow: the transport bar returns to
+        # live view right away instead of staying frosted through the whole slide-out
+        # (see hide_for_panel's contract). The underlay's blur is deliberately NOT
+        # restored here — see _resume_blur_after_book_detail.
+        self._clear_transport_bar_blur()
+        # The frost is a child of the panel and would otherwise slide out still
+        # showing a stale backdrop through the translucent wash.
+        self._transport_bar_blur.clear_panel_backdrop_frost(self.book_detail_panel)
 
     def _on_book_detail_hidden(self):
         try:
             self.book_detail_panel_animation.finished.disconnect(self._on_book_detail_hidden)
-        except:
+        except (TypeError, RuntimeError):
             pass
         self.book_detail_panel.hide()
         self._release_panel_focus(self.book_detail_panel)
+        # NOTE: focus is released but never handed back to the still-open underlay,
+        # leaving that panel with no focus owner. Known, deliberately out of scope for
+        # this blur change — recorded in DEBT_INVENTORY.md for the Stats keyboard-nav pass.
+        self._resume_blur_after_book_detail()
         self._notify_panel_closed()
 
     def _close_settings_flow(self):

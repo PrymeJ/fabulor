@@ -45,7 +45,7 @@ import logging
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
-from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel
 
 logger = logging.getLogger(__name__)
@@ -493,6 +493,120 @@ class TransportBarBlurOverlay:
             f"blit_ms={(t_blit_done - t_grab_blur_done) * 1000:.2f} "
             f"total_ms={(t_blit_done - t_entry) * 1000:.2f}"
         )
+
+    def frost_panel_backdrop(self, panel, rect_in_main_window: QRect):
+        """Frost the backdrop of a panel that covers the whole content area, by
+        giving THAT PANEL its own blurred-pixmap child. For Book Detail.
+
+        WHY NOT show_for_panel / self._overlay (found live 2026-08-01, with a
+        pixmap dump + a Z-order probe, after a first attempt shipped invisible):
+        self._overlay is parented to content_container, while Book Detail is a
+        child of main_window raised above it. raise_() only reorders a widget
+        among ITS OWN SIBLINGS, so the shared overlay can climb to the top of
+        content_container's 13 children and still sit UNDER Book Detail — the
+        probe logged `same_parent=False`, and the grabbed pixmap was verifiably
+        correct while nothing appeared on screen. The only part of it the user
+        could see was the strip lying outside the panel's own opaque paint.
+        The other five panels are 90% width, so their uncovered remainder hides
+        this; a full-width panel exposes it completely.
+
+        The fix is structural, not a raise_() ordering tweak: the frost is a
+        child of the panel itself, stacked below the panel's content with
+        lower(), so nothing can occlude it and no Z-order reasoning is needed.
+        Deliberately NOT solved by reparenting self._overlay to main_window —
+        that is the documented "pink-wash" trap (see __init__'s parenting note,
+        2026-07-19), and it would perturb the five panels that work today.
+
+        `rect_in_main_window` is the region to frost, in MAIN_WINDOW coordinates
+        — the caller owns it, because the answer differs per source panel (see
+        PanelManager._book_detail_frost_rect).
+
+        _grab_and_blur is reused UNCHANGED, including its hide of
+        self._active_panel (== this panel): the panel BEHIND — Stats/Library —
+        stays visible in the grab and is what shows through the frost. That hide
+        exists only to avoid double-applying THIS panel's own translucent wash
+        (see _grab_and_blur's ROOT CAUSE note); it is a self-exclusion, not a
+        hide-everything.
+
+        No _DirtyRectTracker: a panel covering the content area occludes all 12
+        tracked widgets, so any refresh they could drive is invisible, while
+        _grab_and_blur's own hide/show re-exposes them and re-arms the next grab
+        — the ~64ms self-sustaining loop measured at ~15 grabs/sec (NOTES.md,
+        2026-07-27). The frost is therefore STATIC while the panel is open, an
+        accepted tradeoff (a playing book's remaining-time text can tick
+        underneath and the frost will not follow it).
+        """
+        if rect_in_main_window.isEmpty():
+            logger.warning("[TIMER-TRACE] frost_panel_backdrop SKIP reason=empty_rect")
+            return
+
+        t_entry = time.perf_counter()
+        # _grab_and_blur takes a rect in _common_ancestor (content_container)
+        # space and maps it back to main_window internally. Convert once here so
+        # the caller can think purely in main_window coordinates.
+        top_left_common = self._common_ancestor.mapFromGlobal(
+            self.main_window.mapToGlobal(rect_in_main_window.topLeft()))
+        rect_common = QRect(top_left_common, rect_in_main_window.size())
+
+        # The panel must be hidden for the grab (its own wash must not be
+        # double-applied) — _grab_and_blur does that via _active_panel.
+        prev_active_panel = self._active_panel
+        self._active_panel = panel
+        try:
+            blurred = self._grab_and_blur(rect_common)
+        finally:
+            self._active_panel = prev_active_panel
+
+        # Paint the panel's OWN translucent wash on top of the blurred snapshot,
+        # into the pixmap itself.
+        #
+        # WHY (found live 2026-08-01, second failed attempt): the panel sets
+        # WA_StyledBackground, so its `rgba(bg_main, panel_opacity_hover)` wash is
+        # painted by the PANEL, in its own paint pass, BEFORE any child. A child
+        # can therefore never sit beneath it — frost.lower() only reaches the
+        # bottom of the CHILD stack, which is still above the wash. The result was
+        # an opaque sharp snapshot covering the wash entirely, which read as "the
+        # panel background was removed" and made the foreground HARDER to read
+        # rather than softer — the exact opposite of what a frost is for.
+        #
+        # Compositing the wash into the pixmap makes the frost the finished
+        # backdrop (blurred content + tint), so it is correct wherever it sits in
+        # the child stack.
+        theme = self.main_window.theme_manager.get_current_theme()
+        wash = QColor(theme['bg_main'])
+        wash.setAlphaF(float(theme['panel_opacity_hover']))
+        painter = QPainter(blurred)
+        painter.fillRect(blurred.rect(), wash)
+        painter.end()
+
+        frost = getattr(panel, '_backdrop_frost', None)
+        if frost is None:
+            frost = QLabel(panel)
+            frost.setObjectName("panel_backdrop_frost")
+            frost.setAttribute(Qt.WA_TransparentForMouseEvents)
+            panel._backdrop_frost = frost
+        frost.setPixmap(blurred)
+        # Panel-LOCAL geometry: the frost is a child of the panel, so it is
+        # positioned relative to the panel's own top-left, not the window's.
+        panel_top_left = panel.mapFrom(self.main_window, rect_in_main_window.topLeft())
+        frost.setGeometry(QRect(panel_top_left, rect_in_main_window.size()))
+        # Bottom of the child stack: under all real content, over the (now
+        # redundant, still-painted) wash it already includes.
+        frost.lower()
+        frost.show()
+
+        logger.warning(
+            f"[PERF] frost_panel_backdrop DONE panel={panel.objectName()!r} "
+            f"rect_mw={rect_in_main_window} frost_geom={frost.geometry()} "
+            f"no_tracker=True total_ms={(time.perf_counter() - t_entry) * 1000:.2f}"
+        )
+
+    def clear_panel_backdrop_frost(self, panel):
+        """Drop the frost child installed by frost_panel_backdrop, if any."""
+        frost = getattr(panel, '_backdrop_frost', None)
+        if frost is not None:
+            frost.hide()
+            frost.setPixmap(QPixmap())
 
     def _schedule_refresh(self):
         """Called by _DirtyRectTracker on every real Paint event it observes on a
