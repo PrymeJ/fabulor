@@ -116,6 +116,10 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   pixels *around* the block — content drifts down from the top. Pair any such cap with an explicit
   `addStretch()` where the slack should go. Both variants were tried and reverted before this was
   understood (2026-08-01, Stats rows viewport).
+- **A test that shares the code's assumption cannot falsify it.** Derive the check independently of
+  the thing being checked. A probe written as `viewport % pitch == 0` encoded the same off-by-one as
+  the code (N rows have N−1 gaps, not N) and so reported a perfect fit on a viewport 5px too tall,
+  with rows visibly clipped in the app (2026-08-01, Tags list).
 - **A rationale you inferred is not a rationale that was recorded.** Before treating a documented
   constraint as load-bearing, check whether it traces to a real decision — `git log -S` the line
   and read the commit that introduced it. Twice now a plausible explanation written into the docs
@@ -1289,7 +1293,22 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-01 Session 1 — Stats panel: right-click parity, the 2px inset, the clipped
+*Last updated: 2026-08-01 Session 2 — Tags list geometry. Rows drifted on scroll: the 450px
+viewport held 12.857 rows of a 35px pitch, and nothing set a scroll step at all. Fixed with row
+31→32 / spacing 4→5 (the +1 also makes badge centring exact — a 20px badge in a 31px row leaves an
+odd 11px to split), a viewport capped to 12 rows via `_tag_list_height()` **paired with a trailing
+`addStretch()`** (same trap as Session 1's Stats work), and wheel snapping mirroring the Stats
+rows. Horizontally, the two gaps around the scrollbar are separate levers — the container's right
+margin shrinks the ROW, the list layout's right margin moves the BAR — now named with a diagram
+after repeatedly pulling the wrong one; plus a pre-existing overhang fixed (the container's
+horizontal size policy was `Preferred`, claiming a sizeHint 3px wider than its viewport). Scroll
+step is 6 rows, deliberately unlike Stats (1) and the Library (a page): each matches how its list is
+read. New Debugging-discipline entry on tests that share the code's assumption — the probe's own
+check encoded the same N-vs-N−1 gaps error and endorsed a viewport 5px too tall. NOTES.md records
+why the 50-tag cap is a UI constraint (a real widget per tag, eagerly, every refresh), not a storage
+one. `3f8c24f`, `b5892db`.*
+
+*Previously: 2026-08-01 Session 1 — Stats panel: right-click parity, the 2px inset, the clipped
 8th row. Right-click now opens Book Detail in the Stats lists too (`BookDayRow`,
 `FinishedBookThumb`, and `_claim_container_input`'s boundary-pixel router — all three, or
 right-click works everywhere on a row except its seam); `BarChartWidget` stays left-only since its

@@ -1,3 +1,58 @@
+## Session Summary — 2026-08-01 Session 2 — Tags list geometry
+
+Closes the last of the handoff's three shortlist items. The Tags list drifted on scroll; fixing it
+took four separate changes, because the drift had more than one cause and one of them was a
+pre-existing defect the others exposed.
+
+**Measured first, with a new probe.** `tools/tags_geometry_probe.py` opens the real panel through
+its real flow and prints the geometry Qt actually allocated. It found: 450px viewport against a 35px
+pitch (31px row + 4px spacing) = 12.857 rows, a 30px remainder. Nothing quantized it, and
+`tag_manager.py` had no wheel handler and no scroll step at all — so a notch moved an arbitrary
+distance and the list came to rest mid-row.
+
+**The four changes.**
+
+1. **Row 31→32, spacing 4→5.** Pryme's split, and better than the alternatives: shrinking to fit 13
+   rows needs a non-integer pitch, and the nearest exact divisor (15 rows at 30px) means a visibly
+   tighter 26px row. The +1 also fixes badge centring — a 20px badge in a 31px row leaves an odd
+   11px to split, in a 32px row an even 12.
+2. **Viewport capped to 12 rows**, paired with a trailing `addStretch()`. Same trap as the Stats
+   work earlier today: the scroll area was its column's only stretch participant, so capping it
+   alone would have drifted the whole block down.
+3. **Wheel snapping** to the pitch, clamped to the last aligned position, mirroring Stats.
+4. **Horizontal:** even 4/5px margins either side of the scrollbar, plus a size-policy fix.
+
+**Two errors worth recording, both caught by Pryme rather than by me.**
+
+*N−1 gaps.* I sized the viewport as `12 × 37 = 444`, counting a gap for every row. Twelve rows have
+eleven gaps: `12 × 32 + 11 × 5 = 439`. The top and bottom rows came out clipped. Worse, the probe
+**endorsed the error** — I had written its check as `viewport % pitch == 0`, which encodes the same
+off-by-one, so it reported a perfect fit on a viewport 5px too tall. *A test that shares the code's
+assumption cannot falsify it.* The probe now computes the height independently and prints the
+difference.
+
+*Two gaps, two levers.* Asked for a bigger gap right of the scrollbar, I kept widening the
+container's right margin — which only shrinks the row and leaves the bar where it is. The bar is
+moved by the list layout's right margin. Both constants are now named with a diagram showing which
+edge each one moves.
+
+**The pre-existing defect:** the rows container's horizontal size policy was `Preferred`, so it
+claimed a `sizeHint` 3px wider than the viewport (245 vs 242) and overhung it. That is why a 4px
+margin only produced 1px of gap — it was measured from an edge that was itself 3px too far right.
+`Ignored` holds it to the viewport, which is what `widgetResizable(True)` is for.
+
+**Scroll step is 6 rows, deliberately unlike its neighbours** (Stats 1, Library a page). Not
+inconsistency — each matches how its list is read: Stats rows are dense and get read one at a time;
+tag rows are scanned; the Library is covers recognised at a glance and can hold thousands. A full
+page was rejected for leaving zero overlap and so no anchor to re-orient against.
+
+Also recorded in NOTES.md: the **50-tag global cap is a UI constraint, not a storage one** —
+`_refresh_tag_list` builds a real `QWidget` per tag eagerly on every refresh, so 5000 tags means
+~20,000 widgets per panel open. Raising it needs virtualization and a search box first. Not planned
+work; the entry exists so the reason is on record if tags are ever overhauled.
+
+---
+
 ## Session Summary — 2026-08-01 Session 1 — Stats right-click, the 2px inset, and the clipped 8th row
 
 Three items off the handoff shortlist, smallest first. All three landed; the middle one corrected a

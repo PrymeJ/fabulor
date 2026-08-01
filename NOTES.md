@@ -1,3 +1,43 @@
+## 2026-08-01 — The 50-tag global cap is a UI constraint, not a storage one
+
+Recorded because the reason is not visible from the code that enforces it, and the number looks
+arbitrary until you know what it protects.
+
+`db.add_book_tag` refuses a new tag once `COUNT(DISTINCT tag) >= 50` (plus a separate per-book cap
+of 5, and a 20-char length cap). Nothing about the DB needs that. Tags are rows in `book_tags` with
+a name and colour; 5000 of them cost nothing on disk, and `get_all_tags`'s indexed `GROUP BY`
+returns fine at that size.
+
+**The cost is widget construction, and it is eager.** `TagManagerWidget._refresh_tag_list`
+(`ui/tag_manager.py`) calls `_build_tag_row` for EVERY tag on every refresh, and each row is a real
+`QWidget` — a `QHBoxLayout`, three `QLabel`s (dot, name, count badge), `WA_StyledBackground`,
+`WA_Hover`, and a cursor. Every previous row is `deleteLater()`d first. At 50 tags that is ~200
+widgets built and torn down per open: imperceptible. At 5000 it is ~20,000, on every open of the
+panel.
+
+Note the contrast with the **Library** panel, which does not have this problem: it uses
+`QAbstractListModel` + `BookDelegate`, so it paints only the visible rows and holds no per-book
+widgets at all. The tag list is the eager counterpart of the same job. This is the "design against
+library sizes an order of magnitude beyond what's on hand" rule (CLAUDE.md) applying to a second
+list that was never given the model/delegate treatment.
+
+**What raising the cap would actually take**, in order:
+
+1. **Virtualize the list** — model + delegate, as the Library panel already does. Without this,
+   anything past a few hundred stalls the panel open.
+2. **Add navigation** — a flat alphabetical list is not scrollable at scale (at the current 6-rows-
+   per-notch, 5000 tags is ~800 flicks). Wanted: a search box, and letter keys jumping to the first
+   tag starting with that letter. The chapter list's digit-jump (`ui/chapter_list.py` — buffer plus
+   an 800ms debounce, `by_index`/`by_name`) is the in-app precedent to copy rather than reinvent.
+3. **Then** lift the number.
+
+**Not planned work.** Pryme's position (2026-08-01): 50 stays; 100 would be defensible and is a
+one-line change; 500 is a stretch and 5000 is not wanted. This entry exists so that if the tag
+system is ever overhauled, the reason for the cap is on record and step 1 is not discovered the
+hard way.
+
+---
+
 ## 2026-07-31 (later) — The dead row-boundary pixel is Qt's, not ours — RESOLVED
 
 Supersedes the "STILL OPEN: one dead pixel per row" section below, which recorded the symptom with

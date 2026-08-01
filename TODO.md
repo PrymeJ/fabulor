@@ -38,9 +38,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-12] `_PAUSED_SEEK_UNDERSHOOT_COMP` applied unconditionally, not gated on boundary proximity
 - [2026-07-15] Undo doesn't return to true origin after rapid repeat Next/Prev
 
-### Stats / Tags row interaction
-- [2026-07-31] Tags list rows drift on scroll — viewport/scroll step not quantized to row height
-
 ### Panel focus / keyboard navigation
 - [2026-07-31] ScrollHoverTracker.suspend() is the hook for mouse/keyboard highlight coexistence
 - [2026-07-12] Stats Day/Week/Month sub-nav and Tags panel keyboard nav — deferred, larger scope
@@ -582,25 +579,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   caller; needs live tracing of `_undo_pos` across both Next calls (not just code reading) and a
   diff against how the other, correctly-behaving call sites invoke `save_seek_position`, before
   attempting a fix.
-
-- **[2026-07-31] FIX: Tags list rows drift on scroll.** Surfaced by the new hover highlight, which
-  made the misalignment obvious — it is a row-drift issue, not a highlight issue. The Tags list
-  needs the same viewport/scroll-step quantization the rest of the app uses, so rows land on exact
-  boundaries instead of creeping.
-
-  **Corrected 2026-08-01 — this entry previously named the wrong mechanism.** It claimed Stats
-  Day/Week/Month stay aligned because of a 2px top inset on their rows layout, and pointed at that
-  inset as the model to copy. Both halves were wrong. The inset was cosmetic (`a9c3815`, a pass
-  that collapsed `(4,4,4,4)` → `(0,2,0,0)` while halving spacing 4→2) and has been removed with no
-  drift whatsoever. What actually keeps Stats aligned is two things, neither of them a margin:
-  `_STATS_ROW_HEIGHT`-quantized **wheel snapping** in each tab's `wheelEvent` (snap to a row
-  multiple, clamp to `max_aligned`), and a **viewport capped to a whole number of rows**
-  (`_cap_rows_viewport`). Copy those, not a margin.
-
-  Note the trap the Stats work hit twice: constraining the scroll area's height —
-  `setFixedHeight` *or* `setMaximumHeight` — withdraws it from the column's stretch, and the layout
-  then redistributes the freed pixels *around* the block, pushing content down from the top. It
-  only works paired with an explicit `addStretch()` below the scroll area to absorb that slack.
 
 - **[2026-07-31] DESIGN: `ScrollHoverTracker.suspend()` is the coexistence hook for mouse vs.
   keyboard highlighting.** `ui/hover_tracker.py` keeps the hovered row as explicit state
