@@ -1,3 +1,63 @@
+## 2026-08-01 — Transport buttons paint themselves hovered/pressed under an open panel: the grab's hide/show cycle again (4th instance), mechanism only PARTLY explained
+
+Reported live: with a panel open in Frosty mode, the Play and `<` buttons — fully covered by the
+90%-width panel — highlight on hover and render depressed on click, while doing nothing. Reported
+precisely as *"no op but styles as button depressed."*
+
+**That wording was literally accurate and I misread it for several rounds**, chasing a hit-testing
+bug ("the button is clickable and shouldn't be"). It is not clickable. Nothing is ever clicked.
+
+### What is measured
+
+A `[BTN-ENTER]`/`[BTN-PRESS]` probe on `QApplication`'s event filter, logging cursor travel, blur
+grab state, and panel visibility per event.
+
+**No press is ever delivered.** At the first reported repro (12:38:10) the log contains nothing but
+the 200ms `ui_timer` — no `MouseButtonPress` at all. The button paints; it does not receive input.
+
+**The Enter events are synthetic.** At 12:46:55.420–56.222, five consecutive `Enter` on `next_btn`:
+
+```
+cursor=(248,450) moved_px=0  grab_window_s=0.0486  panel_visible=False   <- x5, ~200ms apart
+```
+
+Cursor frozen, panel hidden, a grab in flight each time. `_grab_and_blur` hides the active panel for
+its grab; Qt re-resolves what is under the cursor, lands on the transport widget beneath, and fires
+`Enter`; the button paints hovered. The panel returns and re-covers it.
+
+### What this does NOT explain — do not treat the above as the whole cause
+
+Pryme reproduces this **with the cursor nowhere near any transport button**. The mechanism above
+requires Qt to land on the button *because the cursor is over it*, so it cannot account for that
+case. Either there is a second path that paints these buttons, or the synthetic-enter story is a
+symptom of something broader. **Unresolved.** Do not write a fix that assumes cursor proximity
+without first reproducing the away-from-buttons case.
+
+A reliable repro exists for the proximity case: hover a transport button *while the panel is
+opening*. That is a convenience, not the boundary of the bug.
+
+### Why this is not a new mechanism
+
+Fourth known bug from `_grab_and_blur`'s `_active_panel.hide()`/`.show()` cycle, after the ThemeItem
+hover heartbeat, the stiff tassel, and the `BarChartWidget` cursor flicker. The cycle's synthetic
+enter/leave behaviour is already documented (CLAUDE.md, the swatch-leave rule). **No new CLAUDE.md
+rule was added** — the mechanism is already recorded there, and the file is at the size where each
+additional DON'T costs more than it saves.
+
+Root cause remains unfixed at source. The open question — whether the panel hide in `_grab_and_blur`
+can be avoided at all — is unchanged from the 2026-07-27 entry below, including that the one
+attempt to remove it was reverted for an undiagnosed hover/snapback regression and must not be
+retried blind.
+
+### Noticed in the same capture, separate item
+
+126+ consecutive `refresh_dirty` ticks declining with `reason=hover_active_gate`, ~15ms apart. The
+overlay re-arm loop spins while a hover is active. Plausibly related to the reported Themes-tab
+sluggishness (snapback freezing, a wait before a panel will dismiss), but **not investigated** and
+not established as the same cause. Existing TODO entries already cover the restyle-cost side.
+
+---
+
 ## 2026-08-01 — The 50-tag global cap is a UI constraint, not a storage one
 
 Recorded because the reason is not visible from the code that enforces it, and the number looks

@@ -18,6 +18,10 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-21] Theme bleeding into the whole main window — verified fixed with blur ON, needs a soak test
 - [2026-07-21] Spurious enterEvent heartbeat fixed; the underlying punch-through flash collision is still open
 
+### Blur grab hide/show side effects
+- [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
+- [2026-08-01] `refresh_dirty` spins 126+ ticks declining on `hover_active_gate` (~15ms apart) — possibly behind the Themes snapback sluggishness, not investigated
+
 ### Book Detail panel blur timing
 - [2026-08-01] NEXT: the OPENING slide — blurred main window is dropped too early, should persist into the slide
 - [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
