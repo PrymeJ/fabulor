@@ -18,6 +18,10 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-21] Theme bleeding into the whole main window — verified fixed with blur ON, needs a soak test
 - [2026-07-21] Spurious enterEvent heartbeat fixed; the underlying punch-through flash collision is still open
 
+### Book Detail panel blur timing
+- [2026-08-01] NEXT: the OPENING slide — blurred main window is dropped too early, should persist into the slide
+- [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
+
 ### Theme color/data
 - [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag

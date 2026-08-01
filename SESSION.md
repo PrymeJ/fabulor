@@ -1,3 +1,75 @@
+## Session Summary — 2026-08-01 Session 4 — Book Detail blur timing (unresolved, three attempts stashed)
+
+Follow-on to Session 3. The frost itself is correct and shipped; this session was entirely about
+*when* it transitions, and it ends unresolved. Nothing new is committed — `868054d` still stands.
+
+**The complaint.** The blur transition and the panel slide are one visual event, and they were
+bracketing it instead of sharing it. Opening: the underlay's blur is torn down at open-START, so
+Stats snaps sharp while Book Detail is still sliding over it — too early. Closing: the blur is
+restored only at close-FINISH, so the backdrop stays sharp through the whole slide-out and then pops
+— too late.
+
+Worth naming: both moments were chosen deliberately in Session 3's plan, with documented reasons —
+"stop the wasted grabs immediately", "never grab while Book Detail is still visible". Those reasons
+were about *grab correctness* and they were allowed to decide *visual timing* too. That is the
+actual mistake, not either individual choice.
+
+### Three attempts, all stashed, none shipped
+
+**1. Snap instead of animate** (`stash@{2}`). Skip the 1500ms build on the return, on the theory that
+a blurred backdrop is what the user already expects to find. Worse, not better: it removes the
+animation but lands the same discontinuity harder. Added `show_for_panel(fade=False)` and
+`_start_visual_area_blur(animate=False)` opt-outs, which are genuinely reusable — the `fade=False`
+one was needed again in attempt 3.
+
+**2. Slide-concurrent cross-fade** (`stash@{1}`). Drive blur radius and frost opacity from the
+slide's own `valueChanged`. Failed twice over: the frost never appeared at all, and the slides went
+janky. The jank has a clear cause — every frame called `setBlurRadius` on a live
+`QGraphicsBlurEffect`, forcing `visual_area` to re-blur on the paint thread. Pryme's standing
+preference for leaving panel slides free of machinery was right, and I overrode it on his permission
+without weighing the cost.
+
+**3. Reveal-scanner** (`stash@{0}`) — Pryme's design, and the best of the three. Grab the blurred
+backdrop once, park it as a static image under Book Detail, and let the slide uncover it. Nothing
+animates; the panel is the only moving part. Three real bugs were found and fixed inside this
+attempt:
+
+- *Almost-blank image.* The wash-compositing step was copied from `frost_panel_backdrop` without
+  asking whether it applied. The frost sits BEHIND a translucent panel and must bake in the wash that
+  panel would paint; the parked image is revealed in the OPEN with nothing over it, so the wash was
+  pure darkening — `panel_opacity_hover` is 0.88-0.93, leaving 7-12% of the content visible. Exactly
+  the reported "faintly I can see something".
+- *Reveal did not scan.* The parked image showed in full immediately and the panel slid off it. Fixed
+  by masking the image to the region the panel has not vacated, so the blur sits BETWEEN the moving
+  panel and the revealed content. Implemented with `setMask` rather than a per-frame pixmap re-slice
+  — the re-slice allocated up to ~584 KB per frame, ~10 MB across a 300ms slide.
+- *Missing buttons, sliced at the mask edge.* The log settled this one: `hide_for_panel` → park grab
+  → `show_for_panel`. The grab ran while the underlay's transport overlay was torn down and its
+  replacement did not yet exist, so the parked image genuinely contained no transport buttons. Fixed
+  by reversing the order (restore blur → drop frost → grab the finished state), and by using a plain
+  `grab()` instead of `_grab_and_blur`, which hides `self._overlay` and would have captured the sharp
+  transport bar and blurred it a second time.
+
+**Where it stands:** the mechanism works and often looks good, but it is intermittent — Pryme:
+*"sometimes it looks nice and smooth, sometimes the buttons come from behind. Not all slides are
+created equally."* Intermittency after the content bug was fixed suggests a race, not geometry.
+Not diagnosed.
+
+### Next session
+
+Pryme's direction: **look at the OPENING slide first.** The blurred main window should stay visible
+longer rather than being dropped the moment Book Detail is invoked. That is the "too early" seam, it
+is untouched by all three attempts, and it may be the more visible of the two.
+
+Note on measurement scope, worth carrying forward: I first measured chapter-slider drift over the
+300ms slide (sub-pixel, negligible) when the number that mattered was drift over *how long Book
+Detail stays open* — ~130px on a 2-minute chapter after 60s. Same quantity, wrong window, opposite
+conclusion. That is what moved the grab from open-time to close-time.
+
+Stashes: `stash@{0}` reveal-scanner, `stash@{1}` slide-concurrent, `stash@{2}` snap-on-return.
+
+---
+
 ## Session Summary — 2026-08-01 Session 3 — Book Detail panel blur
 
 In Frosty glass mode the Book Detail panel rendered translucent over a **sharp** backdrop — visually
