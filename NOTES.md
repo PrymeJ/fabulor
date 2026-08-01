@@ -1,3 +1,157 @@
+## 2026-08-02 — Panel-backdrop mode switch blocked for ~1040ms; scoping the restyle roughly halved it
+
+Reported live: clicking a panel-backdrop mode (Transparent / Frosty glass / Opaque) freezes the app
+for 1-2 seconds, and the button doesn't reflect its own selection until it ends. Reported as true
+**even for Opaque**, which mainly sets the panel alpha to 1.0 — that detail is what pointed away from
+the blur and at the restyle, before any measurement was taken.
+
+### The numbers
+
+A temporary probe around the four steps of `SettingsController._update_panel_backdrop`, 7 clicks:
+
+| mode | TOTAL | config+alpha | blur_visuals | restyle | apply_blur_live |
+|---|---|---|---|---|---|
+| transparent | 1033.4 | 0.0 | 1.7 | **1031.4** | 0.2 |
+| frosty | 1096.6 | 0.0 | 1.8 | **1024.1** | 70.7 |
+| opaque | 1029.8 | 0.0 | 1.8 | **1027.4** | 0.5 |
+| frosty | 1048.8 | 0.0 | 1.8 | **1035.2** | 11.8 |
+| transparent | 1047.6 | 0.0 | 1.8 | **1045.4** | 0.4 |
+| opaque | 1039.2 | 0.0 | 1.8 | **1037.1** | 0.3 |
+| frosty | 1042.2 | 0.0 | 1.8 | **1029.2** | 11.2 |
+
+99% of the click is one call. Opaque costs the same as Frosty (1027/1037 vs 1024/1035/1029),
+confirming the cost is the stylesheet rebuild and is entirely alpha-agnostic. `apply_blur_live` is
+70.7ms on the first Frosty (cold grab) then ~11ms, and sub-1ms for the two non-blur modes. The
+config write is 0.0ms.
+
+Inside it, via the two passes' existing DEBUG instrumentation:
+
+```
+_apply_stylesheets          710.8ms   mw.setStyleSheet(base)=481.9  settings/speed/sleep=200.1
+_apply_stylesheets_deferred 195.6ms   stats+book_detail=169.7  library=25.9
+                            ~125ms   _refresh_panel_visuals + theme_applied fan-out
+```
+
+### The cause
+
+`VisualsInterface.restyle_for_backdrop_change` called `apply_full_pass`, which is the **complete**
+theme pass: the visible pass **plus** the deferred invisible-surface batch, synchronously. Two
+consequences beyond simply being the wrong scope:
+
+- `apply_full_pass` hardcodes `force_all_panels=True`. That flag is documented as startup-only (at
+  startup all three panels are hidden and would otherwise be skipped and left unstyled) — but on a
+  backdrop click it **defeats the panel-skip optimisation added the day before** (`7f5ea40`),
+  costing 200ms to restyle two panels nobody can see.
+- The deferred batch exists precisely so it does **not** run on a synchronous path. Here it did.
+
+So a backdrop click deliberately did *more* work than a theme change does, and did all of it inline.
+
+### Establishing the scope by diffing, not by reading call sites
+
+The fix restyles only what the alpha actually feeds. The scope was established empirically — calling
+every `get_*_stylesheet` twice, with `set_panel_alpha_override(None)` and `(1.0)`, and comparing
+output:
+
+| stylesheet | changes with backdrop mode? |
+|---|---|
+| `get_library_stylesheet` | yes |
+| `get_settings_stylesheet` | yes |
+| `get_stats_stylesheet` | yes |
+| `get_tags_stylesheet` | yes |
+| `get_sidebar_stylesheet` | yes |
+| `get_base_stylesheet` | **no — byte-identical** |
+| `get_player_stylesheet` | **no — byte-identical** |
+| `get_title_bar_stylesheet` | **no — byte-identical** |
+
+This corrected two wrong assumptions **before** they shipped, and neither would have raised:
+
+1. The working assumption (stated to Pryme) was "settings/speed/sleep only." Wrong: the override is
+   injected in `_resolve_theme`, so it reaches **library, stats/book_detail, tags and the sidebar**
+   too. A comment at `themes.py:3013` already said "all eight sites" — the diff confirmed it. Scoping
+   to the guess would have left Library and Tags with a stale alpha until their next theme change.
+2. `get_tags_stylesheet` was **not imported** in `theme_manager.py` — an `AttributeError` on the
+   first click.
+
+The same check also confirmed all five accept the **dict** that `get_active_theme()` returns when a
+cover theme is live, which is the input that caused the 2026-07-28 colour regression on this path.
+
+Dropping `mw.setStyleSheet(base)` — 482ms, 46% of the click — therefore rests on proof that it
+produces identical bytes, not on a judgement that it probably doesn't matter.
+
+### Where the remaining time is: applying, not building
+
+Per-panel DEBUG timing in `apply_panel_alpha_pass` (median of 7):
+
+| step | ms | share |
+|---|---|---|
+| `settings_panel` | 134 | 34% |
+| `stats_panel` | 105 | 27% |
+| `book_detail_panel` | 45 | 12% |
+| `speed_panel` | 36 | 9% |
+| `tags_panel` | 21 | 5% |
+| `sleep_panel` | 19 | 5% |
+| `library_panel` | 20 | 5% |
+| `sidebar` | 6 | 2% |
+| **building the stylesheet strings** | **0.1** | **~0%** |
+
+**Building is free; applying is everything.** All of it is Qt re-polishing widget subtrees, so
+caching or memoising theme dicts would not help — the cost is proportional to how many widgets each
+panel holds, which is why `settings_panel` (the theme-pool grid) and `stats_panel` (the heatmap and
+streak grids) dominate. Same conclusion as the 2026-08-01 entry below, reached independently.
+
+### A prediction that was wrong, and the run-to-run drift
+
+The base call was 46% of the measured cost, so the scoped pass was predicted to land near ~200ms.
+It came in at ~545ms: real savings, but the five panel stylesheets are *themselves* expensive, and
+the cost had been over-attributed to the single largest line.
+
+Then, on identical code, a later run measured **~390ms** for the same clicks. That is the same
+instability as the 87ms→410ms step recorded in the 2026-08-01 entry — now seen in a second,
+independent measurement, which makes it a property of this path rather than noise. **Any
+before/after figure here is only meaningful within one run.** Same-run: ~1040 → ~555ms.
+
+### Why hidden panels are still styled (and what skipping would take)
+
+`apply_panel_alpha_pass` deliberately styles all panels regardless of visibility. Skipping the
+hidden ones would take the click to roughly ~140ms, since only `settings_panel` is visible when the
+control is clicked. Deliberately not done in this pass. Pryme's reasoning, recorded because it is
+the design constraint for whoever picks it up:
+
+- The failure path is: switch mode → Esc → press a panel key before its stylesheet has been applied
+  lazily. With the skip, the click blocks only for `settings_panel` (~134ms) and the thread is then
+  free, so the keypresses arrive on an **unblocked** thread — the deferred apply is what they race,
+  not the restyle.
+- It therefore needs a guard: **defer a panel open while a stylesheet is pending for that panel.**
+  Imperceptible for every panel except Stats, where 100-200ms is "perceptible but acceptable" and
+  longer "would feel like something is broken."
+- These numbers are one machine. Computer speed, library size and **Stats size are all factors** —
+  Stats has unbounded books in the Day/Week/Month tabs and their period pages, and has had no perf
+  refactor. Its 105ms is not a fixed cost and could be much worse elsewhere.
+- A fallback that opens the panel anyway on timeout trades a stall for a race, on a path where a
+  half-applied stylesheet is a visible defect.
+
+Conclusion: **Stats needs its own refactor before its cost is treated as fixed**, and the safest
+option meanwhile is paying the full cost on the click — defensible as long as it stays under ~500ms,
+which is exactly the variable that differs per machine.
+
+One further trap for the lazy-apply version: the natural "apply the rest on an idle timer"
+implementation must be gated like `_preload_paused()`, or a ~105ms synchronous restyle landing
+mid-slide reintroduces the stutter the 2026-07-28 comment in `set_blur_selection` already records
+("~250ms each, three per second — it stuttered the panel slide and crashed the app").
+
+### Test
+
+`tests/test_panel_backdrop.py`'s `_FakeTM` stubbed `apply_full_pass`; two tests failed with
+`AttributeError` on the rename — the fixture was updated to stub `apply_panel_alpha_pass`. What
+those tests pin is unchanged and orthogonal: **which theme** reaches the restyle, guarding the
+2026-07-28 regression where a backdrop switch reverted a live cover theme to the pool theme. Note
+the failure mode this had: a fake stubbing a method the code no longer calls would pass silently if
+the rename were made without running the suite. 451 passed.
+
+`149c647`.
+
+---
+
 ## 2026-08-01 — Theme restyle measured at ~700-900ms, and 95% of it is two `setStyleSheet` calls
 
 Reported live as previews and snapbacks being "a headache to use", and — critically — **slow with

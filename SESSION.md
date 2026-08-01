@@ -1,3 +1,53 @@
+## Session Summary — 2026-08-02 Session 1 — Panel-backdrop switch: ~1040ms → ~555ms by scoping the restyle
+
+Reported live: clicking a panel-backdrop mode freezes the app for 1-2 seconds, the button not even
+reflecting its own selection until it ends — **including Opaque**, which mainly sets the panel alpha
+to 1.0. That last detail is what pointed at the restyle rather than the blur before anything was
+measured, and it held up: Opaque and Frosty cost the same to within a few ms.
+
+**The cause.** `restyle_for_backdrop_change` called `apply_full_pass` — the *complete* theme pass
+(visible **plus** the deferred invisible-surface batch, synchronously). It also hardcodes
+`force_all_panels=True`, documented as startup-only, which defeated the previous day's panel-skip
+(`7f5ea40`) and spent 200ms restyling two invisible panels. A backdrop click was doing strictly
+more work than a theme change, all of it inline: 99% of the 1040ms was that single call.
+
+**The fix, scoped by diffing rather than by reading call sites.** A backdrop change moves one thing
+— `panel_opacity_hover` — and sets no colours, so `apply_panel_alpha_pass` restyles only the
+surfaces that read it. Which surfaces those are was established by calling every `get_*_stylesheet`
+twice, with the override at `None` and `1.0`, and comparing output. That caught **two wrong
+assumptions before they shipped, neither of which would have raised**: the working assumption of
+"settings/speed/sleep only" was wrong (the override goes through `_resolve_theme`, so it reaches
+library, stats/book_detail, tags and the sidebar — Library and Tags would have held a stale alpha
+until their next theme change), and `get_tags_stylesheet` was never imported in `theme_manager.py`,
+an `AttributeError` on the first click. The same check confirmed all five accept the **dict**
+`get_active_theme()` returns under a live cover theme — the input behind the 2026-07-28 colour
+regression on this exact path. Dropping `mw.setStyleSheet(base)` (482ms, 46% of the click) rests on
+proof of byte-identical output, not on a judgement that it probably doesn't matter.
+
+**Two corrections worth keeping.** The base call being the largest line led to a prediction of
+~200ms for the scoped pass; it measured ~545ms, because the five panel stylesheets are themselves
+expensive — the cost had been over-attributed to one line. And a claimed "2.7×" was wrong: it
+compared across two runs, when the same clicks on identical code measured ~555ms and later ~390ms.
+That drift matches the 87ms→410ms step found on 2026-08-01, making it a second independent sighting
+and a property of this path. Only same-run comparisons mean anything here: ~1040 → ~555ms.
+
+Per-panel timing (kept, DEBUG-gated) shows building the stylesheet strings costs **0.1ms** and
+everything else is Qt re-polishing subtrees — so caching theme dicts cannot help; cost tracks widget
+count, which is why `settings_panel` (theme-pool grid, 134ms) and `stats_panel` (heatmap/streak
+grids, 105ms) dominate.
+
+**Deliberately not done.** Skipping hidden panels would reach ~140ms but needs a guard deferring a
+panel open while that panel's stylesheet is pending, and Pryme's constraint is recorded in full in
+NOTES.md/DEBT_INVENTORY.md: the numbers are one machine, Stats is unbounded and un-refactored, so
+its 105ms is not a fixed cost. Stats' own refactor comes first.
+
+`tests/test_panel_backdrop.py`'s fake stubbed `apply_full_pass` and failed on the rename — updated;
+what it pins (which theme reaches the restyle) is unchanged. Note the near-miss: a fake stubbing a
+method the code no longer calls passes silently unless the suite is actually run. 451 passed.
+`149c647`.
+
+---
+
 ## Session Summary — 2026-08-01 Session 4 — Book Detail blur timing (unresolved, three attempts stashed)
 
 Follow-on to Session 3. The frost itself is correct and shipped; this session was entirely about

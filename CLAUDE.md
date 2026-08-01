@@ -1343,7 +1343,24 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-01 Session 3 — Book Detail panel blur. In Frosty glass mode the panel
+*Last updated: 2026-08-02 Session 1 — Panel-backdrop switch measured at ~1040ms per click and
+roughly halved. `restyle_for_backdrop_change` called `apply_full_pass` — the complete theme pass,
+visible **plus** deferred batch, synchronously — and that hardcodes `force_all_panels=True`, which
+is documented as startup-only and defeated the previous day's panel-skip. A backdrop change moves
+only `panel_opacity_hover` and sets no colours, so `apply_panel_alpha_pass` now restyles just the
+five surfaces that read it. **The scope was established by diffing every `get_*_stylesheet`'s output
+with the alpha override at `None` vs `1.0`, not by reading call sites** — which caught two wrong
+assumptions that would not have raised: "settings/speed/sleep only" was wrong (the override goes
+through `_resolve_theme`, so it also reaches library/stats/tags/sidebar), and `get_tags_stylesheet`
+was never imported. Dropping `mw.setStyleSheet(base)` (482ms, 46%) rests on proof of byte-identical
+output. **No new DO-NOT rule** — the transferable lessons are in NOTES.md: building stylesheet
+strings is 0.1ms while applying them is everything (so caching theme dicts cannot help), and this
+path's cost drifts run-to-run on identical code (~555 then ~390ms), a second sighting of the
+2026-08-01 87ms→410ms step — treat any before/after figure here as valid only within one run.
+Skipping hidden panels (~140ms) is deferred behind a Stats perf refactor and needs a deferred-open
+guard; see DEBT_INVENTORY.md. `149c647`.*
+
+*Previously: 2026-08-01 Session 3 — Book Detail panel blur. In Frosty glass mode the panel
 rendered translucent over a **sharp** backdrop, indistinguishable from Transparent, while the
 transport overlay kept grabbing a region the panel fully occludes (its `_active_panel` was still the
 UNDERLYING panel, so `_grab_and_blur` hid Stats but not Book Detail — photographing Book Detail into
