@@ -116,6 +116,21 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   pixels *around* the block — content drifts down from the top. Pair any such cap with an explicit
   `addStretch()` where the slack should go. Both variants were tried and reverted before this was
   understood (2026-08-01, Stats rows viewport).
+- **Pre-screen visual changes before handing them over — but never in place of Pryme's eyes.** Two
+  things are sound and were wrongly talked out of once (2026-08-01): reading geometry off the
+  RUNNING app (`tools/tags_geometry_probe.py` — open the panel through its real flow, print what Qt
+  allocated), and diffing screenshots of the real app numerically (`PIL.ImageChops.difference` for
+  "did anything move", scanning for row boundaries for "is the pitch still N"). Both are arithmetic
+  on real composited output. What is NOT sound is an offscreen *reconstruction* of a layout — that
+  is a different render and has returned confidently wrong numbers here. Don't collapse the two into
+  "I can't measure this panel." Pre-screening catches the obviously-broken version; whether it LOOKS
+  right is still Pryme's call, every time.
+- **If two code paths must agree on a measurement, make one of them call the other.** Text elided to
+  one width and painted into another differs silently — it just looks like the font is wrong, or
+  like a stray clip. `ChapterItemDelegate.paint` and `ChapterList.populate` each derived the title's
+  width from raw margins and disagreed by 9-10px for a long time; both now call
+  `_title_draw_width()` (2026-08-01). Same shape as the `_row_content_width`/`_list_author_layout`
+  rules for the library rows.
 - **A test that shares the code's assumption cannot falsify it.** Derive the check independently of
   the thing being checked. A probe written as `viewport % pitch == 0` encoded the same off-by-one as
   the code (N rows have N−1 gaps, not N) and so reported a perfect fit on a viewport 5px too tall,
@@ -1306,7 +1321,13 @@ step is 6 rows, deliberately unlike Stats (1) and the Library (a page): each mat
 read. New Debugging-discipline entry on tests that share the code's assumption — the probe's own
 check encoded the same N-vs-N−1 gaps error and endorsed a viewport 5px too tall. NOTES.md records
 why the 50-tag cap is a UI constraint (a real widget per tag, eagerly, every refresh), not a storage
-one. `3f8c24f`, `b5892db`.*
+one. Folded into the same session: the **chapter popup's** time and title columns each sat 1px
+inside the main window's equivalents (each now has its own inset a pixel tighter than `H_MARGIN`,
+which itself stays 10 — lowering it would move the time column's already-correct left edge), and
+fixing the title's inset surfaced a long-standing clip: `populate()` elided against one margin while
+the delegate painted into a rect inset on both, making every elided title 9px wider than the space
+it was drawn into. `_title_draw_width()` is now the single source for both. `3f8c24f`, `b5892db`,
+`ac439f6`.*
 
 *Previously: 2026-08-01 Session 1 — Stats panel: right-click parity, the 2px inset, the clipped
 8th row. Right-click now opens Book Detail in the Stats lists too (`BookDayRow`,

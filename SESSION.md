@@ -51,6 +51,27 @@ Also recorded in NOTES.md: the **50-tag global cap is a UI constraint, not a sto
 ~20,000 widgets per panel open. Raising it needs virtualization and a search box first. Not planned
 work; the entry exists so the reason is on record if tags are ever overhauled.
 
+**Folded in at the end of the session — chapter popup column alignment (`ac439f6`).** Unrelated to
+the Tags work, small enough not to earn its own entry. The popup's time and title labels each sat
+1px inside where the main window's equivalents do. Each got its own inset a pixel tighter than
+`H_MARGIN`; `H_MARGIN` itself stays 10, because lowering it would also move the time column's LEFT
+edge, which was already correct — two separate constants for what looks like one correction.
+
+Moving the title's inset then surfaced a **long-standing clipping bug**: `populate()` elided against
+`w - TIME_LABEL_WIDTH - H_MARGIN` (one margin) while the delegate painted into a rect inset on BOTH
+sides, so every elided title was 9px wider than the space it was drawn into and lost its last
+characters. It had been there all along at 10px; the 1px shift just changed which character it ate.
+Both now call `_title_draw_width()`, so the width a title is elided to is exactly the width it is
+painted into (verified numerically: title ends at x=224, time column starts at x=224, on a 292px
+row). Pryme then took `TIME_LABEL_WIDTH` 58→54 to return the room the corrected elision had claimed
+— the right lever, since it does not re-open the gap between the two calculations.
+
+Worth noting as method: the clipping was **predicted before it was seen**. The mismatch was spotted
+while reading `populate()` during the alignment fix, flagged as "if you ever see a title eliding a
+character early, line 168 is the cause, not the delegate", and deliberately left alone as
+out-of-scope — then it appeared exactly there. Saying which line will break, before it breaks, is
+worth more than fixing it silently.
+
 ---
 
 ## Session Summary — 2026-08-01 Session 1 — Stats right-click, the 2px inset, and the clipped 8th row
