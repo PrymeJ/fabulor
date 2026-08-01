@@ -515,6 +515,36 @@ The `_panel_open` half still uses `_panel_guard_timer`, correctly: it ends when 
 panel, not on a clock, so there is no signal to subscribe to and 700ms is a re-check cadence rather
 than an overshoot.
 
+### A blur overlay can only cover what shares its parent — `raise_()` does NOT cross parents, and a panel's own QSS wash always paints under its children
+Two Qt facts, one shared consequence: an overlay meant to sit *behind translucent content* must be a
+child of the widget it is frosting, and the wash must be composited into its pixmap. Both halves were
+learned by shipping the wrong thing first (2026-08-01, Book Detail frost).
+
+**`raise_()` only reorders a widget among its OWN siblings.** `TransportBarBlurOverlay._overlay` is a
+child of `content_container`; every full panel is a child of `main_window`, raised above it. So the
+shared overlay can climb to the top of `content_container`'s children and *still* sit under any
+panel — `raise_()` cannot lift it across that boundary. The first Book Detail attempt shipped
+completely invisible this way: the log showed 37 correct calls, the right rect, a non-null pixmap and
+a completed grab, and nothing on screen. It works for Settings/Speed/Sleep/Stats/Tags **only because
+they are 90% width** — the uncovered remainder is the part you actually see. A full-width panel
+exposes it totally. `frost_panel_backdrop` therefore parents the frost to the PANEL
+(`panel._backdrop_frost`), which makes stacking correct by construction. Do NOT "fix" a future case
+by reparenting the shared overlay to `main_window` — that is the documented 2026-07-19 pink-wash
+trap, and it would perturb five panels that work today.
+
+**A panel with `WA_StyledBackground` paints its wash BEFORE any child**, so no child can sit beneath
+it. `frost.lower()` reaches only the bottom of the *child* stack — still above the wash. The second
+attempt did exactly that and covered the `rgba(bg_main, panel_opacity_hover)` wash with an opaque
+snapshot, which read as "the panel's background was removed" and made the foreground **harder** to
+read — the precise opposite of a frost's purpose. The fix is to paint the wash INTO the frost pixmap
+(`QPainter.fillRect` with the live theme's `bg_main` at `panel_opacity_hover`), so the frost is the
+finished backdrop and its position in the child stack stops mattering.
+
+**Diagnostic that settled both**, worth reaching for before theorising: dump the raw grab, the
+blurred result, and a post-paint window grab, and log `same_parent` / the overlay's sibling index. A
+correct pixmap that never appears is a compositing problem, not a grab problem — that one check
+eliminated every grab-timing theory at once.
+
 ### DO NOT make any panel-dismiss path depend on a *stashed* snapback to restore the active theme
 `_close_settings_flow` (`panels.py`) must call `_on_theme_unhovered()` — which issues a **fresh**
 snapback — *before* `snap_theme_forward()`; `hide_all_panels` and `handle_drag_area_right_click`
@@ -1308,7 +1338,26 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-01 Session 2 — Tags list geometry. Rows drifted on scroll: the 450px
+*Last updated: 2026-08-01 Session 3 — Book Detail panel blur. In Frosty glass mode the panel
+rendered translucent over a **sharp** backdrop, indistinguishable from Transparent, while the
+transport overlay kept grabbing a region the panel fully occludes (its `_active_panel` was still the
+UNDERLYING panel, so `_grab_and_blur` hid Stats but not Book Detail — photographing Book Detail into
+the cached pixmap and compositing it back underneath itself). Two premises in the brief were wrong
+and checking them changed the fix: opening Details issued **no** grab at all (the waste is a
+continuing loop, not a one-shot), and the dismiss path only *looked* correct because nothing was ever
+torn down. **Three failed attempts**, each cheap to have checked: reusing the shared overlay shipped
+invisible (`raise_()` does not cross parents — 37 correct calls, right rect, non-null pixmap, nothing
+on screen); a panel-owned child with `lower()` covered the panel's own QSS wash and made the
+foreground harder to read; and the first grab region was the wrong shape (over Stats the player
+behind is already blurred but *Stats itself is sharp*, and Stats is most of what is behind the
+panel). Shipped: the frost is a child of the panel with the wash composited into its pixmap, and the
+region is per-source — under the progress bar to 10px off the bottom over Stats, under the title bar
+to the bottom over Library. No dirty tracker, so the frost is static and the grab loop is gone. New
+rule above on the two Qt facts (`raise_()` parent boundary, `WA_StyledBackground` paint order) and
+the pixmap-dump diagnostic that settled them. Focus hand-back to the underlay is a real pre-existing
+bug, deliberately out of scope, recorded in DEBT_INVENTORY.md. `1b61312`.*
+
+*Previously: 2026-08-01 Session 2 — Tags list geometry. Rows drifted on scroll: the 450px
 viewport held 12.857 rows of a 35px pitch, and nothing set a scroll step at all. Fixed with row
 31→32 / spacing 4→5 (the +1 also makes badge centring exact — a 20px badge in a 31px row leaves an
 odd 11px to split), a viewport capped to 12 rows via `_tag_list_height()` **paired with a trailing

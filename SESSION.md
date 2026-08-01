@@ -1,3 +1,84 @@
+## Session Summary — 2026-08-01 Session 3 — Book Detail panel blur
+
+In Frosty glass mode the Book Detail panel rendered translucent over a **sharp** backdrop — visually
+identical to Transparent mode, so the setting was lying about which mode was active. At the same
+time the transport-bar overlay kept grabbing a region Book Detail fully occludes.
+
+**Two premises in the brief turned out to be wrong**, and checking them changed the fix.
+
+*"Opening Details triggers a wasted grab for the Stats/Library layer."* It does not —
+`_start_book_detail_entry` issued no grab at all. The waste is a *continuing* loop: the overlay stays
+`_active` with `_active_panel` still pointing at the underlying panel, so transport repaints drive
+`_grab_and_blur`, which hides Stats but **not** Book Detail — photographing Book Detail into the
+cached pixmap and compositing it back underneath itself.
+
+*"The dismiss path already works today; don't rebuild it."* It only looks that way because nothing
+was torn down. The cached pixmap can hold Book Detail and is never invalidated, and focus is
+released to nobody.
+
+Geometry was checked rather than inferred from the screenshots: `content_container` starts at y=56
+(32px title bar + 24px progress slider), Book Detail sits at y=32 full width. It covers everything
+but the title bar, so the grab is **fully** wasted, not partially.
+
+### Three failed attempts, and what each one taught
+
+**1. Reuse the shared overlay (`show_for_panel_full_area`).** Shipped invisible. The log said the
+code ran 37 times with the right rect and a non-null pixmap — and nothing appeared on screen.
+
+The discriminator was a temporary dump: the raw grab, the blurred result, and a post-paint window
+grab, plus a Z-order probe. The blurred pixmap was **verifiably correct** (Stats content, properly
+blurred, 300×508), which killed every grab-timing theory outright. The probe printed
+`same_parent=False`: the shared overlay is a child of `content_container`, Book Detail is a child of
+`main_window` raised above it, and **`raise_()` only reorders a widget among its own siblings**. The
+overlay climbed to index 12 of `content_container`'s 13 children and still sat under the panel. The
+other five panels are 90% width, so their uncovered remainder hides this; a full-width panel exposes
+it completely.
+
+**2. Panel-owned child with `frost.lower()`.** Made the foreground *harder* to read — Pryme's report
+was "did you remove the panel's own background?" Effectively yes. The panel sets
+`WA_StyledBackground`, so **it paints its own wash before any child**; `lower()` only reaches the
+bottom of the *child* stack, which is still above the wash. An opaque snapshot then covered the wash
+entirely. Fixed by compositing the wash (`bg_main` at `panel_opacity_hover`, read live from the
+theme) **into the frost pixmap**, making the frost the finished backdrop.
+
+**3. The grab region.** First cut used the panel rect clipped to `content_container`. Wrong shape:
+over Stats the player screen behind is already blurred by Stats' own visual_area blur, but *Stats
+itself is sharp* — and Stats is most of what is behind Book Detail. The region is now per-source:
+over Stats from under the progress bar (excluded, it animates) to 10px off the bottom; over Library
+from under the title bar to the bottom.
+
+### What shipped
+
+Book Detail owns its frost as its own child, so stacking is correct by construction and no Z-order
+reasoning is needed. Deliberately **not** solved by reparenting the shared overlay to `main_window`
+— that is the documented 2026-07-19 pink-wash trap, and it would perturb five working panels.
+`_grab_and_blur` is reused unchanged, including its hide of `_active_panel`: that hide is a
+*self-exclusion* against double-applying the panel's own wash, so the panel behind correctly stays
+visible in the grab and is what shows through the frost. No dirty tracker is installed — that is what
+removes the wasted loop; the frost is static while the panel is open, accepted deliberately.
+
+### Process notes
+
+**I was wrong four times in a row, and the pattern is worth recording.** I called the fix working
+from a misread screenshot order; asserted Z-order from parent widgets before testing it; accepted a
+correction about the gutter blur without checking it (the rects said Pryme was right, but I agreed
+before knowing that); and wrote a comment claiming `lower()` put the frost "above the wash," which
+described the outcome I wanted rather than the mechanism. Pryme's challenge — *"you are just
+accepting and repeating what I say… have you even understood the task?"* — was fair, and the fix
+each time was the same: a log line, a rect, or a dumped pixmap was one command away.
+
+**Two environment traps.** An `entr -r` dev-loop had respawned the app in the same second as the
+last write, so the running process was racing the edit — the binary's start time had to be checked
+against the file mtime before any log was trusted. And `[PERF]`/`[TIMER-TRACE]` go to
+`platformdirs.user_log_dir`, not stdout: `/tmp/fabulor_run.log` was empty, which would have read as
+"no grabs happening" — the opposite of the truth.
+
+Focus hand-back to the underlay is a real pre-existing bug (`_release_panel_focus` grants focus to
+nobody, leaving the still-open panel with no owner). Deliberately out of scope; recorded in
+DEBT_INVENTORY.md for the Stats keyboard-nav pass. `1b61312`.
+
+---
+
 ## Session Summary — 2026-08-01 Session 2 — Tags list geometry
 
 Closes the last of the handoff's three shortlist items. The Tags list drifted on scroll; fixing it

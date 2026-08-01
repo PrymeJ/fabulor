@@ -169,6 +169,38 @@ is exactly how the first attempted fix shipped a worse bug.
 - [ ] Remove the last scan location while a panel is open with an active book: no ghost transport buttons left over the quote screen
 - [ ] General tell for this bug class: if closing and reopening the panel fixes the visual, it is a missed repaint, not wrong state — look for a content change that produced no Paint event on a tracked widget
 
+### Book Detail panel backdrop — 2026-08-01
+
+Book Detail is the only panel that opens ON TOP of another one, and the only one that owns its frost
+as its own child (the shared overlay is a child of `content_container` and can never rise above a
+panel parented to `main_window` — that attempt shipped completely invisible). **Live-only**: the
+first failed attempt logged a correct rect, a non-null pixmap and a completed grab while showing
+nothing on screen, so a green log proves the grab ran, never that anything is visible.
+
+Do all of these with **Panel background = Frosty glass**.
+
+- [ ] Stats → click a book row → Book Detail: the backdrop is visibly **frosted**, not sharp. Compare against Transparent mode — if the two look the same, the fix has regressed to the original bug
+- [ ] The frost makes the panel's own text **easier** to read, not harder. A sharp, high-contrast image showing through (especially one that looks like the panel's background was removed) means the wash is no longer composited into the frost pixmap
+- [ ] Over Stats: the frosted region starts under the **progress bar** and stops ~10px off the bottom — the progress bar itself stays live and unfrosted
+- [ ] Library → right-click a book → Book Detail: frosted from under the **title bar** to the bottom (the library is opaque and full-width, so there is more to cover than in the Stats case)
+- [ ] No visible offset: the frost must not sit shifted against what is behind it. Check at a hard edge — the Stats panel's right border is the easiest tell
+- [ ] Open Book Detail over Stats' **Timeline** tab (the one opaque tab): the frost shows the blurred heatmap, not a blank or skipped grab
+- [ ] Close Book Detail: Stats returns sharp and correctly re-blurred behind, with no Book Detail ghost baked into the transport-bar blur
+- [ ] Book Detail → tag chip → Tag Manager, and → tag filter → Library: neither leaves a frozen blurred band over the transport bar (these paths close two panels at once)
+- [ ] Transparent and Opaque modes: no frost appears at all in either
+- [ ] Static-frost check (accepted behaviour, not a bug): open Book Detail over Library while a book is playing — the remaining-time text underneath does not update through the frost. It should read as deliberate, not broken
+
+**Perf tell.** While Book Detail is open there should be exactly ONE `_grab_and_blur` and ZERO
+`refresh_dirty` composites (it installs no dirty tracker). Count in the log — the window is between
+`frost_panel_backdrop DONE` and the next `hide_for_panel ENTRY`:
+```
+grep -c "_grab_and_blur" ~/.local/state/fabulor/log/fabulor.log
+grep -c "DIRTY-TRACE"    ~/.local/state/fabulor/log/fabulor.log
+```
+A non-zero DIRTY-TRACE count in that window means the tracker is back and the ~64ms grab loop is
+running again — **the absence of visible stutter does not rule this out**, a ~3ms grab is entirely
+capable of running invisibly.
+
 ## Finish-book status banner (revert/dismiss)
 
 - [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
