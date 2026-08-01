@@ -2,7 +2,7 @@
 import logging
 import time
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate, QStyle, QGraphicsOpacityEffect, QPushButton
-from PySide6.QtCore import Qt, Signal, QSize, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QRect, QPropertyAnimation, QEasingCurve, QTimer
 from PySide6.QtGui import QMouseEvent, QKeyEvent, QColor
 from mpv import ShutdownError
 
@@ -10,8 +10,30 @@ logger = logging.getLogger(__name__)
 
 ROW_HEIGHT = 24
 VISIBLE_ROWS = 5
-TIME_LABEL_WIDTH = 58
+TIME_LABEL_WIDTH = 54
 H_MARGIN = 10
+# Both columns sit 1px inside where the main window's labels do, so each gets its
+# own inset 1px tighter than H_MARGIN: the time moves RIGHT, the title moves LEFT.
+#
+# H_MARGIN itself stays 10 on purpose. Lowering it would move both edges of both
+# rects — including the time column's LEFT edge, which is already correct — so
+# the two corrections are separate values even though both happen to be -1.
+TIME_RIGHT_MARGIN = H_MARGIN - 1
+TITLE_LEFT_MARGIN = H_MARGIN - 1
+
+
+def _title_draw_width(row_width: int) -> int:
+    """Width actually available to the chapter title, for BOTH the elision and
+    the paint rect.
+
+    These were computed separately and disagreed: populate() elided against
+    `w - TIME_LABEL_WIDTH - H_MARGIN` (one margin) while the delegate drew into
+    a rect inset on BOTH sides, so the elided string was ~9-10px wider than the
+    space it was painted into and got clipped on the right. Long-standing, and
+    surfaced when the title's left inset moved 1px. One function now, called
+    from both places, so they cannot drift apart again.
+    """
+    return row_width - TITLE_LEFT_MARGIN - TIME_LABEL_WIDTH - H_MARGIN
 
 FADE_IN_MS = 450
 FADE_OUT_MS = 300
@@ -48,12 +70,17 @@ class ChapterItemDelegate(QStyledItemDelegate):
 
         r = option.rect
         title = index.data(ROLE_CHAP_TITLE) or ""
-        title_rect = r.adjusted(H_MARGIN, 0, -(TIME_LABEL_WIDTH + H_MARGIN), 0)
+        # Sized from _title_draw_width, the same function populate() elides
+        # against, so the rect the title is PAINTED into is exactly the width it
+        # was ELIDED to. Do not re-derive either from raw margins.
+        title_rect = QRect(r.x() + TITLE_LEFT_MARGIN, r.y(),
+                           _title_draw_width(r.width()), r.height())
         painter.setPen(self._color_text)
         painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, title)
 
         duration = index.data(ROLE_CHAP_DURATION) or ""
-        time_rect = r.adjusted(r.width() - TIME_LABEL_WIDTH - H_MARGIN, 0, -H_MARGIN, 0)
+        time_rect = r.adjusted(r.width() - TIME_LABEL_WIDTH - H_MARGIN, 0,
+                               -TIME_RIGHT_MARGIN, 0)
         painter.setPen(self._color_time)
         painter.drawText(time_rect, Qt.AlignRight | Qt.AlignVCenter, duration)
 
@@ -155,7 +182,7 @@ class ChapterList(QListWidget):
             chapters = self.player.chapter_list or []
             effective_speed = speed if speed and speed > 0 else 1.0
             w = self.width()
-            name_width = w - TIME_LABEL_WIDTH - H_MARGIN
+            name_width = _title_draw_width(w)
 
             for i, chap in enumerate(chapters):
                 title = chap.get('title') or f"Chapter {i+1}"
