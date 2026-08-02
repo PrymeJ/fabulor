@@ -68,11 +68,38 @@ no-op an identical string:
 |---|---|---|---|
 | full base sheet, 27 rules | 768.5ms | 634.8 | 828.3 |
 | **ONE rule** (`QWidget#mainwindow` only) | **850.2ms** | 799.0 | 919.1 |
-| **empty string** | **8.2ms** | 2.4 | 723.2 |
+| ~~empty string~~ | ~~8.2ms~~ | ~~2.4~~ | ~~723.2~~ |
 
-**One rule costs the same as twenty-seven** (marginally more — noise). Any non-empty stylesheet on
-the root triggers the full-tree re-polish; an empty one short-circuits it. The cost is not parsing,
-not matching, not the sheet's scope. It is the act of setting a non-empty sheet on the root widget.
+**One rule costs the same as twenty-seven** (marginally more — noise). The cost is not parsing, not
+matching, not the sheet's scope.
+
+**CORRECTION — the empty-string row above is WRONG and was a measurement error** (caught the same
+session, before any code was written against it). That test set `""` repeatedly, so after the first
+call the sheet was *already* empty and four of five iterations were pure no-ops; the median reported
+those, and the single real clear was the `max=723.2ms` that was dismissed in the first draft of this
+entry as "unexplained instability". It was the only honest number in the row. **The lesson is the
+one CLAUDE.md already states — a change-only probe cannot measure a steady state; alternate the
+input, and treat an outlier as data before calling it noise.**
+
+Re-measured correctly, alternating full ↔ truly empty and timing each direction:
+
+| transition | median | raw |
+|---|---|---|
+| `""` → full sheet | 604.2ms | 530 538 558 604 634 644 |
+| full sheet → `""` | **543.2ms** | 523 531 535 543 576 720 |
+
+**Clearing is as expensive as setting.** There is no fast path.
+
+Also measured: **Qt does NOT no-op an identical sheet string** — re-setting the very same sheet
+costs 546.8ms.
+
+### The corrected conclusion
+
+In this app, **any call to `mw.setStyleSheet()` costs ~550ms regardless of its argument** — full
+sheet, one rule, identical string, or empty string. The cost is the call itself against a 632-widget
+deep tree. This is stronger and worse than the first draft's claim: it cannot be avoided by
+narrowing the sheet, by splitting it, or by emptying it. Only by not calling it, or by making the
+tree shallower.
 
 *(Offscreen run — the full sheet measures ~450ms live vs 768ms here. The RATIO between the three
 conditions is the result; do not quote the absolute numbers as live costs.)*
@@ -146,16 +173,17 @@ ownership is not threatened by anything in this analysis.**
 
 ### Options still on the table
 
-- **E. Skip the root `setStyleSheet` when the generated string is unchanged.** Most promising thing
-  the rule-count test surfaced: the empty-sheet row proves Qt short-circuits *something*, and a
-  no-op guard on an identical string would be free and provably safe. **Unverified:** how often a
-  preview/snapback actually produces a *different* base sheet. If every preview changes it, this
-  dies. Check first, cheaply.
-- **F. Take `QWidget#mainwindow`'s background out of QSS** (palette or `paintEvent`), so the root
-  sheet can be empty and the ~8ms path becomes reachable. Directly attacks the one thing the
-  measurement says matters. Larger change; interacts with `_set_bg_suppressed` and the theme
-  `bg_image`, which is QSS-driven (see the CLAUDE.md rule on `suppress_bg_image` — a child override
-  provably does not work, so this needs care).
+- **E. Skip the root `setStyleSheet` when the generated string is unchanged. THE ONLY SURVIVING
+  NON-STRUCTURAL OPTION.** Qt does not do this itself (measured: re-setting an identical sheet costs
+  546.8ms), so a guard in our own code is worth the full ~550ms on every redundant apply.
+  **Scope is limited and known:** all 12 themes sampled produce 12 DISTINCT base sheets, so a
+  preview to a different theme always changes the string and E does nothing for the hover itself.
+  It only helps *repeat applies of the same theme* — `complete_main_fade`'s fallback, the drain
+  sites, and any path that re-applies the active theme. Worth doing, but do not expect it to fix
+  the preview/snapback cost.
+- **F. Take `QWidget#mainwindow`'s background out of QSS so the root sheet can be empty. DEAD.**
+  Rested entirely on the erroneous 8.2ms empty-sheet row above. Clearing the sheet costs 543ms —
+  there is no fast path to reach, so emptying the root buys nothing. Do not attempt.
 - **B. Reduce tree depth.** Now better supported than before — depth is the multiplier — but it is a
   structural refactor of panels built over months. The 630/642/790 tiers suggest the expensive
   nesting sits in the panels one would least want to disturb. **Connects to the Stats refactor**:
@@ -169,11 +197,14 @@ ownership is not threatened by anything in this analysis.**
 
 ### Still unexplained
 
-The run-to-run instability, now seen a fourth time: the empty-sheet condition above has
-`min=2.4ms` but `max=723.2ms` across five iterations. Same code, same sheet, same process. This is
-the same phenomenon as the 87ms→410ms post-launch step (2026-08-01) and the 555→390ms drift
-(2026-08-02, backdrop). **Any before/after measurement on this path is only meaningful within one
-run**, and no fix should be accepted on a cross-run comparison.
+The run-to-run instability. **Note that the empty-sheet `min=2.4 / max=723.2` spread was NOT an
+instance of it** — that was the measurement error described above (no-op repeats vs. one real
+clear), and citing it here in the first draft was reaching for a known-unexplained phenomenon to
+explain away an outlier that had a concrete cause. The genuine instances remain the 87ms→410ms
+post-launch step (2026-08-01) and the 555→390ms drift (2026-08-02, backdrop), plus the spread
+inside the corrected tables above (530-644ms for identical work). **Any before/after measurement on
+this path is only meaningful within one run**, and no fix should be accepted on a cross-run
+comparison.
 
 ---
 

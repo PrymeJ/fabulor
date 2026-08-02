@@ -456,12 +456,15 @@ settings/speed/sleep panel sheet adding ~215ms, i.e. ~95% of a ~700-900ms restyl
 is narrower work, not cheap work. See NOTES.md 2026-08-01. The confinement itself is still
 load-bearing for the reasons below — only its cost claim was false.
 
-**Sharpened 2026-08-02, and this kills the obvious fix:** the cost is not the sheet's SCOPE at all.
-Measured against the real `MainWindow` (632 descendants), a **single** `QWidget#mainwindow` rule
-costs the same as the full 27-rule sheet (850 vs 768ms median) while an EMPTY sheet costs 8ms — so
-the trigger is setting any non-empty stylesheet on the ROOT, regardless of content. Splitting the
-base sheet across the nine widgets its rules actually target (all of them depth 1-2 under `mw`)
-therefore saves **nothing**; do not attempt it. The multiplier is tree DEPTH, not widget count
+**Sharpened 2026-08-02, and this kills every content-based fix:** the cost is not the sheet's SCOPE
+and not its CONTENT. Measured against the real `MainWindow` (632 descendants), **any**
+`mw.setStyleSheet()` call costs ~550ms regardless of argument — the full 27-rule sheet (768ms), a
+**single** `QWidget#mainwindow` rule (850ms), an **identical** re-set of the current sheet (547ms),
+and an **empty** string (543ms) are all the same. Qt does not no-op an identical sheet, and clearing
+is as expensive as setting. So: splitting the base sheet across the nine widgets its rules actually
+target (all depth 1-2 under `mw`) saves **nothing**, and neither does emptying the root sheet by
+moving the main-window background out of QSS — both were measured and are dead. Only *not calling
+it*, or a shallower tree, helps. The multiplier is tree DEPTH, not widget count
 (600 widgets flat = 11.9ms, the same 600 nested = 123.3ms, non-linear). Note also that
 `_apply_stylesheets` has **no `hover` gate on any of its work** — a preview and a snapback do
 identical work — so a design of the form "preview styles only the visible elements, revert reverts
