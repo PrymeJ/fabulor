@@ -16,22 +16,39 @@ Six agents independently audited non-overlapping line ranges (1–425, 426–895
 1174–1386, 1385–1630, 1630–1874) against the six required categories, cross-checking NOTES.md,
 SESSION.md, TODO.md, and DEBT_INVENTORY.md for narrative preservation, and spot-checking specific
 claims against the live codebase. Findings below are organized by category across the whole file;
-line ranges are cited per finding. Two of the most consequential findings (a fabricated commit
-hash, and a stale streak-grid theme-key SUPERSEDED case) were independently re-verified by the
-synthesizing pass via direct `git log`/`grep` before inclusion.
+line ranges are cited per finding.
+
+**Status: categories 3, 4, 5, and 6 have since been actioned** (see the "Actioned" note at the
+end of each relevant section) — category 4's mechanical fixes and category 5's relocations are
+applied to CLAUDE.md/TODO.md; category 3 was reviewed and accepted as-is (no edits, per explicit
+direction); category 6 required no action by definition. Categories 1 and 2 remain as originally
+filed pending separate decisions (see "Escalated"), except where an escalated item was
+independently resolved by direct edits to CLAUDE.md after this report was first written — noted
+inline where that happened.
+
+**Correction to the original STALE §4e finding:** it labeled `352b72f` a "fabricated commit
+hash" based on `git log --all --oneline | grep 352b72f` returning nothing. Re-verified during the
+action pass via `git cat-file -e`/`git show`: the commit is real
+(`352b72f3dcdb35f3b2416da33bc5fe0f848a51b6`, "fix: align 3-per-row margins with Square, widen
+toolbar-to-grid gap," 2026-07-10) and its content matches exactly what CLAUDE.md cites it for.
+It is reachable via reflog (`refs/heads/main@{214}`) but **not reachable from current `main`** —
+`git log --all` only walks reachable history, which is why the original grep produced a false
+negative. The citation in CLAUDE.md was left as-is (it's accurate); the branch-history gap that
+produced an unreachable-but-real commit is a separate, standalone question tracked at the end of
+this report, outside the scope of the CLAUDE.md content audit.
 
 ---
 
 ## Summary table
 
-| Category | Count | Notes |
-|---|---|---|
-| 1. SUPERSEDED | 2 | One clean/marked (no defect), one genuine defect (line 1874) |
-| 2. NARRATIVE VS. CONCLUSION | ~24 entries flagged | All traced to NOTES.md/SESSION.md except 2 novel lessons stranded changelog-only |
-| 3. DUPLICATION | 9 clusters | All appear to be the deliberate rule↔reference-doc split, not accidental drift |
-| 4. STALE | 11 confirmed mismatches, 3 unverifiable | Includes 1 fabricated commit hash, 1 miscited hash, 1 factually-outdated performance claim |
-| 5. SCOPE CREEP | 2 | Both minor, both in the old changelog tail |
-| 6. LOAD-BEARING, KEEP AS-IS | ~35 entries | Majority of "Critical Architecture Rules" and all of "What's Built" |
+| Category | Count | Status | Notes |
+|---|---|---|---|
+| 1. SUPERSEDED | 2 | Both resolved independently, outside this report | One clean/marked (no defect), one genuine defect (line 1874, now carries an inline correction note) |
+| 2. NARRATIVE VS. CONCLUSION | ~24 entries flagged | Not actioned (no compression applied) | All traced to NOTES.md/SESSION.md except 2 novel lessons stranded changelog-only |
+| 3. DUPLICATION | 9 clusters | **Reviewed and accepted as-is — no edits** | All appear to be the deliberate rule↔reference-doc split, not accidental drift |
+| 4. STALE | 10 confirmed mismatches (**all fixed**), 1 finding corrected/retracted, 3 unverifiable | **Actioned** | Includes 1 miscited hash (fixed), 1 factually-outdated performance claim (resolved independently), 1 hash finding that was itself wrong and has been corrected in this report |
+| 5. SCOPE CREEP | 2 | **Both actioned** — relocated to TODO.md | Both were in the old changelog tail |
+| 6. LOAD-BEARING, KEEP AS-IS | ~35 entries | No action required (by definition) | Majority of "Critical Architecture Rules" and all of "What's Built" |
 
 **Estimated line reduction if all category-2 compressions were applied:** roughly **520–580
 lines**, concentrated almost entirely in the changelog block (lines 1387–1874, currently 488
@@ -234,6 +251,10 @@ the opposite failure of over-accretion: content that's too thin/buried rather th
 
 ## 3. DUPLICATION
 
+**Status: reviewed and accepted as-is — no edits made, per explicit direction.** All 9 clusters
+below were judged deliberate rule↔reference-doc splits rather than accidental drift; the decision
+was to close this category without merging or collapsing any of them.
+
 All clusters found appear to be the file's own deliberate split between "Critical Architecture
 Rules" (rule + rationale) and "What's Built" (compressed factual reference), or between a standing
 rule and its origin-story changelog entry — not accidental copy-paste drift. Reporting per
@@ -288,61 +309,87 @@ Also filed under SUPERSEDED §1b. The quoted "~215ms" panel cost predates a visi
 to `_apply_stylesheets` (`theme_manager.py:1622-1650`) the same day (2026-08-01) that the code's
 own comment says cuts it to roughly ⅓ for the common case. No corresponding NOTES.md update found.
 
-**4b. Line 903 (and 1137) — `COVER_AREA_HEIGHT` location.**
+**4b. Line 903 (and 1137) — `COVER_AREA_HEIGHT` location.** ✅ **Actioned.**
 Claimed "a module-level constant in `app.py`." Actual: `src/fabulor/ui/ui_helpers.py:25`;
 `app.py` only imports it. The move predates even the "What's Built" section's stated audit date
 (2026-06-13) — commit `3f29a66` moved it out of `app.py` on 2026-06-05 — meaning this claim was
 already wrong when written and has stayed wrong through every later edit. No part of CLAUDE.md
 currently states its real location correctly (the file tree at line 1348 doesn't mention this
-constant either).
+constant either). Fixed: CLAUDE.md now reads "a module-level constant in `ui/ui_helpers.py`,
+imported into `app.py`".
 
-**4c. Lines 507, 528 — `_pending_fade_call` line number and variable name.**
+**4c. Lines 507, 528 — `_pending_fade_call` line number and variable name.** ✅ **Actioned.**
 Claimed: `` `theme_manager.py`, ~line 768 ``, referencing a variable `_hover_interrupts_hover`.
 Actual: the branch is at **line 995**, and the guard variable in code is
 **`_hover_may_interrupt`**, not `_hover_interrupts_hover`. Two-part staleness: wrong line number
 and a renamed identifier no longer matching the quoted name. (The `pending[3]` tuple-index claim
-at line 528 does still check out positionally against the documented 6-tuple order.)
+at line 528 does still check out positionally against the documented 6-tuple order — left
+untouched.) Fixed: citation now reads `theme_manager.py:995` with the correct variable name.
 
-**4d. Line 1650 — miscited commit hash for the QComboBox delegate fix.**
+**4d. Line 1650 — miscited commit hash for the QComboBox delegate fix.** ✅ **Actioned.**
 `f6388d2` is cited as one of three commits implementing `_ComboItemDelegate`/`_ThemedComboBox`.
 Its actual commit message is *"fix: return keyboard focus to book list after dropdown popup
 closes"* — a real but unrelated fix. The two commits that actually implement the delegate/arrow
 paint work are `3e8c241` and `8515605` (both independently confirmed via `git log`), already
-cited alongside the wrong one.
+cited alongside the wrong one. Fixed: `f6388d2` removed from the implementation-commits list and
+re-cited with a one-clause note identifying what it actually is, so the reference isn't silently
+dropped.
 
-**4e. Line 1608 — fabricated commit hash.**
-`352b72f`, cited for the 2026-07-10 Session 5 grid-geometry entry, **does not exist anywhere in
-git history** — confirmed independently via `git log --all --oneline | grep 352b72f` (zero
-results). The likely-correct commits for that session's actual work (per NOTES.md 7196 and the
-neighboring changelog entry) are `3e929b4`, `f0c0f62`, `ef4b826`, and possibly `253547c`/`63b2deb`,
-some already correctly cited in the *adjacent* 2026-07-10 Session 1 entry. This is the single
-highest-priority STALE finding — a factually wrong citation in a document whose own stated purpose
-is to be authoritative.
+**4e. Line 1608 — commit hash re-investigated; NOT fabricated, correcting this finding.**
+Original finding claimed `352b72f` "does not exist anywhere in git history," based on
+`git log --all --oneline | grep 352b72f` returning nothing. **This was wrong.** Re-verified during
+the action pass via `git cat-file -e 352b72f` (resolves to a real commit object) and
+`git show 352b72f`: the commit is genuine
+(`352b72f3dcdb35f3b2416da33bc5fe0f848a51b6`, "fix: align 3-per-row margins with Square, widen
+toolbar-to-grid gap," 2026-07-10 09:28:27), and its content is exactly what CLAUDE.md cites it
+for (the 3-per-row remainder-push margin work described in the same changelog entry). It shows up
+in `git reflog --all` (`refs/heads/main@{214}`), confirming it really was on `main` at one point —
+but `git merge-base --is-ancestor 352b72f HEAD` returns false: it is **not reachable from current
+`main`**. `git log --all` only walks commits reachable from live refs, which is why the original
+search produced a false negative on a genuine, unreachable-but-real commit rather than catching an
+actual fabrication. **No change made to the CLAUDE.md citation** — it was accurate as written, per
+explicit direction not to touch it. **Separate finding, tracked independently of this doc audit:**
+something (a rebase, reset, or force-push) removed `352b72f` from `main`'s reachable history after
+it landed — worth investigating as its own question, unrelated to CLAUDE.md's content, since the
+same operation could have similarly orphaned other commits.
 
-**4f. Line 1874 — stale streak-grid theme key names.** Already covered fully under SUPERSEDED
-§1c; repeated here only for completeness since it is simultaneously a staleness and a supersession
-defect.
+**4f. Line 1874 — stale streak-grid theme key names.** ✅ **Actioned independently, outside this
+audit pass.** Already covered fully under SUPERSEDED §1c. CLAUDE.md line 1874's changelog entry
+now carries an inline correction note (added directly, not via this report's compression
+proposals) pointing out the old key names were replaced 2026-06-18 — see CLAUDE.md ~1797-1798.
 
 **4g. Line 1293 — five `day_start_hour` inline-duplication line-number citations, all stale.**
+✅ **Actioned.**
 Claimed: `db.py:784`, `db.py:1031`, `app.py:320`, `stats_panel.py:2615`, `stats_panel.py:2628`.
 Actual (verified via grep against current HEAD): `db.py:864`, `db.py:1119`, `app.py:430`,
 `stats_panel.py:4007`, `stats_panel.py:4033`. All five have drifted; the underlying claim (five
-near-identical inline copies, no shared helper) still appears structurally true.
+near-identical inline copies, no shared helper) still appears structurally true. Fixed: all five
+line numbers updated in place.
 
 **4h. Lines 358–359 — two stale code-location citations in the `_logical_pos`/VT-restore FIXED
-entry.**
+entry.** ✅ **Actioned.**
 Claimed: `` `_on_vt_file_switched` (app.py:1430-1442) ``, `` `_on_end_file`'s ERROR branch
-(player.py:620-645) ``. Actual: `_on_vt_file_switched` is now at `app.py:1703`; `_on_end_file` is
-now at `player.py:708-737`. Both re-verified as content-accurate (the described guard logic
-matches what's at the new locations) — only the line numbers are wrong.
+(player.py:620-645) ``. Actual: `_on_vt_file_switched` is now at `app.py:1703` (the `_seek_target
+is None` gate itself at `app.py:1728`); `_on_end_file` is now at `player.py:708` (the reset block
+at `player.py:727-734`). Both re-verified as content-accurate (the described guard logic matches
+what's at the new locations) — only the line numbers were wrong. Fixed: citations now use the
+precise current locations rather than reproducing the old span width.
 
-**4i. Lines 172–190 — "TEMPORARY" conda-shadow section: live-tested and CONFIRMED still accurate**,
-not stale, with one minor discrepancy: the doc says "pytest fails collection on 8 files"; a live
-test today found 7. Low-stakes — likely drift from a test file being added/removed since the
-2026-07-30 date on this section, or the original count including one file that no longer imports
-`mpv`. The section has now been open ~3 days as of HEAD with its root fix explicitly marked "not
-yet done" — not a doc defect, but worth noting given it's aging inside a section literally titled
-TEMPORARY.
+**4i. Lines 172–190 — "TEMPORARY" conda-shadow section.** ✅ **Actioned — and this turned out to
+be more than a citation staleness.**
+Live-tested during the action pass, two findings: (1) the doc said "pytest fails collection on 8
+files"; a live test found **7** — minor, likely drift from a test file being added/removed since
+the 2026-07-30 date on this section. (2) More significant: the documented
+`LD_PRELOAD=/usr/lib64/libstdc++.so.6 pytest tests/ -q` workaround, run exactly as written in a
+fresh (unactivated) shell, **does not work** — it fails on an unrelated `libcaca.so.0`/`_nc_curscr`
+symbol error instead of the GLIBCXX error this section exists to fix, because it silently depends
+on `fabulorenv/bin/activate` having already been sourced in that shell (which sets the
+`LD_LIBRARY_PATH` shim documented elsewhere in this file, under "Running the app"). The `python
+main.py` line right above it already did this correctly; the `pytest` line did not. Verified the
+fix works in a genuinely fresh shell (`bash -c 'source fabulorenv/bin/activate && LD_PRELOAD=...
+pytest tests/ -q'`) before committing it. Fixed: file count corrected to 7; both workaround
+commands now explicitly chain `source fabulorenv/bin/activate &&` first, with a note explaining
+why `LD_PRELOAD` alone is insufficient.
 
 ### Confirmed accurate (no action needed — listed to show what was checked and passed)
 - Window fixed size 300×564 (`app.py:643`).
@@ -386,12 +433,24 @@ TEMPORARY.
 
 ## 5. SCOPE CREEP
 
-1. **Line 1682** — "Remaining letters (T onward) still pending" (2026-07-07 Session 3, per-theme
-   library color pass). An open TODO sentence embedded in a changelog entry rather than recorded in
-   TODO.md. Not checked against TODO.md for a matching entry — flagged for a follow-up look.
-2. **Lines 1636–1639** — "Deferred by the user ('Later'): 2-per-row still doesn't fully fill
-   available whitespace... do not reuse this session's 469px measurement as a baseline." Same
-   pattern — a deferred-work note sitting in a changelog entry instead of TODO.md.
+**Status: both items actioned.** Checked TODO.md/TODO_ARCHIVE.md for existing matching entries
+first (per the original caveat that this wasn't done) — neither item had one; both were genuinely
+missing, not just misfiled duplicates.
+
+1. **Line 1682 — ✅ Actioned.** "Remaining letters (T onward) still pending" (2026-07-07 Session 3,
+   per-theme library color pass). An open TODO sentence embedded in a changelog entry rather than
+   recorded in TODO.md. Fixed: added `- [2026-07-07] Per-theme library color pass only covers A–S
+   alphabetically (...) — letters T onward still need the same tuning pass (\`ae4441c\`)` under
+   TODO.md's "Theme color/data" section (an existing, related-but-broader entry there — "Remove
+   theme inheritance from The Color Purple" — did not already cover this specific, narrower fact).
+   CLAUDE.md's changelog sentence trimmed to "Remaining letters (T onward) tracked in TODO.md."
+2. **Lines 1636–1639 — ✅ Actioned.** "Deferred by the user ('Later'): 2-per-row still doesn't fully
+   fill available whitespace... do not reuse this session's 469px measurement as a baseline." Same
+   pattern — a deferred-work note sitting in a changelog entry instead of TODO.md. Fixed: added an
+   entry under TODO.md's "Misc UI polish" section preserving the specific warning about the stale
+   469px baseline (dated 2026-07-10, matching the session it came from — `d74ebee`). CLAUDE.md's
+   changelog sentence trimmed to "Remaining 2-per-row whitespace tightening deferred by the user
+   ('Later') — tracked in TODO.md."
 
 **Not scope creep** (checked and ruled out): the "Pending / Known Debt" section itself (lines
 1285–1297) is NOT scope creep — `DEBT_INVENTORY.md` explicitly names CLAUDE.md's "Pending / Known
@@ -416,6 +475,9 @@ retracted claim quietly vanish.)
 ---
 
 ## 6. GENUINELY LOAD-BEARING, KEEP AS-IS
+
+**Status: no action required by definition.** This category is the "leave alone" list — every
+entry below was confirmed to need no edits during the action pass; none were touched.
 
 A large majority of "Critical Architecture Rules" and effectively all of "What's Built" earned
 this verdict. Listing explicitly per instructions, grouped by section:
@@ -480,18 +542,41 @@ hand" (96–98) is a single dense paragraph with zero narrative fat.
 
 ## Escalated / needs a decision (per task instructions, not resolved here)
 
-1. **SUPERSEDED §1b (line 479)** — the hover-preview cost figure is contradicted by a same-day
-   code change with no corresponding doc update found. This isn't a case where "prefer the later
-   entry" resolves it cleanly — the later "authority" is uncommented code, not competing prose.
-   Needs a decision: re-measure and update the figure, or add an explicit note about the
-   visibility gate's effect on the common case.
-2. **SUPERSEDED §1c (line 1874)** — confirmed genuine (theme keys don't exist in current
-   `themes.py`), but resolving it requires deciding whether to fix the old changelog entry in
-   place or treat it as evidence for archiving the pre-2026-07-13 changelog tail generally (per
-   the structural observation in §2's changelog discussion). Not resolved here per the task's
-   explicit instruction not to pick a side on ambiguous supersession.
+**Both items below have since been resolved independently, by direct edits to CLAUDE.md outside
+this report's own action pass.** Left in place as a record of what was originally escalated and
+how it closed.
+
+1. **SUPERSEDED §1b (line 479) — ✅ Resolved independently.** The hover-preview cost figure was
+   contradicted by a same-day code change with no corresponding doc update found at the time this
+   was written. CLAUDE.md's text has since been rewritten with a proper panel-open-state-dependent
+   breakdown (~430-440ms with no panel/Themes-tab open vs ~590-620ms while open, re-measured
+   2026-08-02), replacing the flat "~215ms" claim this finding was about. Confirmed via direct read
+   of the current file — the stale claim is gone.
+2. **SUPERSEDED §1c (line 1874) — ✅ Resolved independently.** Confirmed genuine (theme keys don't
+   exist in current `themes.py`). Rather than being rewritten, the old changelog entry at line 1874
+   now carries an inline correction note (visible at CLAUDE.md ~1797-1798) pointing out the old key
+   names were replaced 2026-06-18, referencing the entry that supersedes it — preserving the
+   original entry's text (per the file's "correct, don't silently delete" convention already
+   established elsewhere in this document) while making the contradiction visible to a reader
+   instead of leaving it silent.
 
 (A third item, "two divergent DEBT_INVENTORY.md files," was listed here in the first draft and
-has been retracted — see §5's correction note. `review/Snapshot_260612_debt_inventory.md` self-declares as a
-frozen 2026-06-12 snapshot and names the root file as the live index; there was nothing to
-decide.)
+has been retracted — see §5's correction note. `review/Snapshot_260612_debt_inventory.md`
+self-declares as a frozen 2026-06-12 snapshot and names the root file as the live index; there was
+nothing to decide. The file has since also been renamed away from `DEBT_INVENTORY.md` to
+`Snapshot_260612_debt_inventory.md` specifically to prevent the name collision that caused this
+mis-finding in the first place, per a separate `review/` naming-convention pass — see
+`review/README.md`.)
+
+---
+
+## Follow-up: `352b72f` branch-history gap (identified during the action pass, not part of the
+original audit)
+
+While re-verifying STALE §4e, discovered that commit `352b72f3dcdb35f3b2416da33bc5fe0f848a51b6`
+is real, content-accurate, and visible in `git reflog --all` as having once been on `main`
+(`refs/heads/main@{214}`), but is **not reachable from current `main`**
+(`git merge-base --is-ancestor 352b72f HEAD` → false). This means some history-rewriting operation
+(rebase, reset, or force-push) removed it — and potentially other commits — from `main`'s
+reachable history after it landed. This is unrelated to CLAUDE.md's content and is tracked here
+only as a pointer; investigating it is a separate task from this document audit.

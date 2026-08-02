@@ -33,6 +33,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
 
 ### Theme color/data
+- [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
 - [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
 - [2026-07-21] "Cover art based theme": hover-preview and right-click-to-activate from any mode
@@ -67,6 +68,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-06-23] Clicking the muted icon should restore volume — to what value, undecided
 
 ### Misc UI polish
+- [2026-07-10] Library 2-per-row grid still doesn't fully fill available whitespace — cell size and gaps can likely tighten further (deferred by the user as "Later"); do not reuse the 469px vertical-space measurement from `d74ebee`'s session as a baseline, it predates that session's 9px top-push
 - [2026-07-30] In-app help section — the home for all reference material, incl. search operators
 - [2026-07-03] Excluding the currently-playing book behaves differently for M4B vs VT — design decision
 - [2026-07-01] Book Detail slide-in feels less smooth from Library than from Stats — unconfirmed
