@@ -11059,3 +11059,118 @@ The condition `state["mode"] == "empty" or not state["has_indexed_books"]` conta
 ### `_showing_placeholder` must be cleared on every path that hides the cover, not just the has-cover path
 
 `_load_cover_art("")` hid `cover_art_label` but never reset `_showing_placeholder`, so a `_panel_guard_timer`-deferred `_reload_button_icons` (fired later, after a panel animation that was in flight at removal time finished) would see the stale `True` flag and unconditionally repaint the logo placeholder back onto the hidden label — the intermittent "logo cover survives location removal" bug. Verified via a forced race (toggle `panel_manager._any_panel_animating()` to `True` around `_on_book_removed()`, then flip it back and fire the single-shot guard timer once) rather than relying on wall-clock UI timing; see git log for the fix commit. Any boolean UI-state flag with more than one "clear" call site is a candidate for this same class of bug if one of those call sites is ever missed.
+
+---
+
+## CLAUDE.md changelog tail, extracted 2026-08-02 (pre-2026-07-13 entries)
+
+The entries below were originally the tail of CLAUDE.md's "Previously:" changelog. Per the
+2026-08-02 CLAUDE.md file-health audit (`review/Review_260802_CLAUDEMD.md`, category 2 —
+"narrative vs. conclusion"), changelog narrative for work older than the 2026-07-13
+reorganization belongs here rather than in CLAUDE.md, which is meant to answer "where are we
+now?" rather than serve as a running history. Moved verbatim, no content changed. The final entry
+(2026-06-13, "What's Built" audit) was corrected in place before extraction — see CLAUDE.md's
+current pointer note for why (it referenced `streak_longest_fill`/`streak_finished_dot`, theme
+keys that were replaced by `streak_grid_outline`/`streak_grid_dot` per the 2026-06-18 entry
+immediately below it in the original file, and which do not exist in current `themes.py`).
+
+*Previously: 2026-06-27 Session 3 — is_missing flag fixes the Excluded Books ping-pong; arrow
+moved out of the toggle label. mark_books_missing/_mark_book_missing used to write is_excluded=1
+for a book confirmed gone from disk — indistinguishable from a real user-trash, and the popup's
+eye-click restore (set_book_excluded(path, False)) would put a file-less book back in the library,
+which got re-flagged missing the next time the user tried to load it (infinite loop). Added a new,
+independent is_missing column: self-heals on upsert (the opposite of is_excluded's stickiness),
+fenced into every visibility query alongside is_deleted/is_excluded (get_visible_book_count,
+get_all_books, has_books_with_progress, has_finished_books, get_finished_book_data,
+get_all_cover_paths, get_visible_book_paths_under — found via a failing test when the first pass
+only fixed get_excluded_books), folded into the existing _is_archived/is_archived checks in
+stats_panel.py/book_detail_panel.py/tag_manager.py (no new icon — explicitly deferred, no
+gravestone.svg asset exists yet). Separately, ExcludedBooksSection's always-visible ▼/▲ arrow was
+split into its own inert QLabel (no click handler at all) shown only while the popup is open,
+centered between the header and the now-arrow-less, still-right-aligned count label — matching
+ChapterList's precedent where the arrow is pure state, never a second click target. New CLAUDE.md
+rule consolidated three flags' semantics in one place (was two, now corrected for three).*
+
+*Previously: 2026-06-27 Session 2 — Excluded Books list rebuilt as a MainWindow-level popup.
+The inline collapsible-section design described below (one-line rows expanding inside the Library
+tab's own layout) never worked — five distinct attempts to grow it within the settings panel's
+fixed 500px box all failed (drift, flicker, or rendered nothing; full history in NOTES.md/SESSION.md
+2026-06-27 Session 2). Rebuilt as `ExcludedBooksPopup`, parented directly to `MainWindow` and copying
+`ChapterList`'s architecture exactly (opacity fade only, no size animation, `show()`/`raise_()`/
+`setGeometry()` from the click handler) — see the two new CLAUDE.md rules above. `ExcludedBooksSection`
+is now only the toggle line; the list itself is the popup. Two new CLAUDE.md rules added (don't
+expand a settings-tab widget inline; don't trust headless scripts for this bug class).*
+
+*Previously: 2026-06-27 Session 1 — Excluded Books restore UI + sticky exclusion + reparse lock fix.
+Made `is_excluded` sticky through force rescans (both upserts now `CASE WHEN books.is_excluded`,
+reversing the old "rescan resets both flags" behavior) and added a collapsible **Excluded Books**
+section to the Library settings tab (`ui/excluded_books.py`, `db.get_excluded_books`) as the new
+restore path — compact one-line rows with a hover-reveal eye (copies `_HistoryRow`'s slide anim,
+`eye.svg`), restoring via `set_book_excluded(path, False)`. Restored the Naming pattern UI
+(repositioned after Manage folders, folder box halved) and fixed a real `reparse_library` data-loss
+bug — it was the one write path that ignored `title_locked`/`author_locked` and clobbered locked
+metadata library-wide on a naming-pattern click; now CASE-WHEN-guarded. Four CLAUDE.md flag-reset
+references corrected; two new rules (sticky `is_excluded`, `reparse_library` lock guard). Tests:
+`test_excluded_books.py`, `test_reparse_library.py`. (Earlier this period: 2026-06-26 force-rescan
+missing-book detection + unload-on-missing, already documented above.)*
+
+*Previously: 2026-06-24 Session 1 — fixed library grid cover thumbnails crumbling at small sizes.
+Two real bugs landed in `scanner.py` (cover-discovery only matched exact filenames, missing 98% of
+available external covers; bilinear+low-quality-JPEG thumbnail resampling capped at 226×344). Both
+alone made no visible in-app difference — the actual bottleneck was a second, paint-time bilinear
+downscale in `BookDelegate._draw_cover`. Fixed with a per-(book_id, cell-size) pre-scaled pixmap
+cache (`_sized_cover_cache`/`_get_sized_cover` in `library.py`) so paint time is a near-1:1 blit, the
+resize itself done via PIL LANCZOS + a tuned `UnsharpMask` pass to recover contrast LANCZOS trades
+away versus bilinear's edge overshoot. Added one new CLAUDE.md rule (scale-mode + sharpen-strength
+traps in `_get_sized_cover`/`_lanczos_scale`). Full writeup, including two corrected
+premature-success claims, in NOTES.md.*
+
+*Previously: 2026-06-19 Session 4 — split `bookmark_body`/`bookmark_icon`/`tassel_cord`/
+`tassel_head`/`tassel_fringe` into independently overridable theme keys (GROUP 9, themes.py), with
+the fallback chain: `tassel_cord`/`tassel_head` → `tassel_fringe` → `accent_light`;
+`bookmark_body`/`bookmark_icon` keep their original derivations as fallbacks (accent desaturated
+35% / accent_dark→bg_main). Fixed a `tassel_fringe` fallback bug (was reading
+`slider_overall_fill` instead of `accent_light`) found while wiring this up. Separately, fixed a
+real streak-count bug — but the first attempt at it was wrong and reverted. A user testing
+`day_start_hour` found the streak grid and streak number disagreeing. First diagnosis (wrong):
+assumed the grid was the bug, made it start-date only to match `get_streaks`/Day tab. User caught
+this — a session genuinely spanning the day_start_hour boundary SHOULD light two grid cells
+(that's correct, matches reality); the actual bug was that `get_streaks` (the streak count/label)
+only credited the session's start-date, never its end-date, so the number undercounted relative to
+the cells. Reverted the grid change; fixed `get_streaks` instead to union session end-dates into
+its day-set, mirroring `build_streak_grid_cache`'s three sources (start, end, finished) exactly.
+`get_active_periods` (Day/Week/Month nav) deliberately stays start-only — full session-splitting
+for Day/Week/Month was scoped out as too large a change for this. Added one new CLAUDE.md rule.*
+
+*Previously: 2026-06-19 Session 3 — added a decorative dangling tassel to `TasselOverlay` (cord
+looping vertically into a bound head, fanning into a fringe; idle micro-sway + decaying activation
+kick). Went through three live correction rounds against the running app: a "pendulum with a
+circle" first draft was rebuilt into a real tassel anatomy; a cursor/click-region mismatch (hand
+cursor over dead space) was fixed via a shared `_in_hit_region()`; the cord's Bezier was corrected
+twice (bulge, then approach angle) to read as a draped loop landing vertically in the head rather
+than a straight or diagonal line. Geometry invariants (`_tab_rect`, 7px peek, slide targets)
+verified numerically at every round via headless offscreen-Qt scripts. Added one new CLAUDE.md
+rule (cursor/click region must share one source of truth).*
+
+*Previously: 2026-06-19 Session 2 — fixed a percentage-label tween oscillation (truncate-vs-round mismatch
+against the live tracker, not a timing race — see CLAUDE.md rule above and NOTES.md); fixed a
+Timeline tassel click hang (caller didn't check `TasselOverlay.is_busy` before independently
+triggering its own side effect — see CLAUDE.md rule above); added a streak-grid catch-up reveal that
+dims the newest changed day-cells and pops them in one-by-one in lockstep with the counter's leg-2
+tick (leg 2 is now a discrete per-day step timer, not a continuous tween); removed the
+`_DEBUG_STREAK_*_OVERRIDE` test hooks. Added two new rules above.*
+
+*Previously: 2026-06-18 — Timeline tab visual rework: `StreakGrid` longest-run fill/border roles
+swapped (derived tint fill, accent border; `streak_grid_outline`/`streak_grid_dot` replace the old
+`streak_longest_fill`/`streak_finished_dot` theme key names); grid reveal/conceal transition is now
+`_grid_cell_anim` style `"pop"` (scale + alpha, not plain fade) shared by `HourlyHeatmap`/`StreakGrid`;
+top/gutter label cascades reworked to per-label opacity with true mirrored enter/exit (fixed a
+clamping bug that silently broke the exit direction — see CLAUDE.md rule above and NOTES.md); tassel
+icon swap deferred until fully retreated, recolored, and `calendar.svg` replaced with `fire.svg`;
+added an animated, two-leg, restart-persisted streak counter with a dedicated panel-reopen
+catch-up path. Added three new rules above (label-cascade window asymmetry, streak-previous
+persistence, panel-reopen catch-up exception).*
+
+*Previously: 2026-06-13 (Session 3) — chapter-seek precision rework: split the overloaded `_CHAPTER_BOUNDARY_EPSILON` into three measured constants (`_CHAPTER_WALK_TOLERANCE` 0.5, `_EMBEDDED_CHAPTER_SEEK_OFFSET` −0.09, `_PAUSED_SEEK_UNDERSHOOT_COMP` 0.37); revised all chapter-nav rules; removed the embedded-M4B native-click exception (embedded chapter-list clicks now route through `Player.activate_chapter_index` → `seek_async`, fixing the chapter-UI freeze). Corrected the disproven "~0.25s short" rationale (mpv overshoots ~0.09s playing, undershoots ~0.37s paused).*
+
+*Previously: 2026-06-13 — replaced the stale "Implemented Features (complete)" section with a full "What's Built" audit (5-agent factual sweep over app.py, player.py, session_recorder.py, config.py, db.py, scanner.py, cover_manager.py, library_controller.py, and all ui/ panels). Corrections vs. the old section as of that date: cover preview is 208×266 (not 205×270); `write_session`/`write_book_event` still dual-write `book_path` + `book_id` (the old section claimed `book_path` was no longer written). At the time, StreakGrid longest-run used a derived `_longest_fill` color with `streak_longest_fill`/`streak_finished_dot` per-theme overrides — superseded 2026-06-18 (see the entry above): those keys were replaced by `streak_grid_outline`/`streak_grid_dot`, which is what the current code and CLAUDE.md's standing rule both use. Added previously-undocumented subsystems: app-shell UI states/wiring, carousel, controls/widgets, audio controls, icon utils, context menu, panels, full DB query inventory, scanner internals, cover manager, config key map, checkpoint recovery.*
