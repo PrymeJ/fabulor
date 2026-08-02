@@ -733,6 +733,11 @@ def build_themes_tab(mw):
     # leaveEvent anywhere in this hierarchy; themes_tab and pool_container wirings were
     # deliberately removed when swatch_box was introduced).
     swatch_box.leaveEvent = lambda _: mw.theme_manager._on_themes_tab_left(swatch_box)
+    # Stored so ThemeManager._check_swatch_still_hovered (the swatch-leave jitter
+    # backstop, see review/Design_260803_swatch_leave_jitter_backstop.md) can read it on
+    # its own timer tick without a second leaveEvent wiring — this is a plain attribute
+    # assignment, not new behavior, matching cover_pool_btn/theme_widgets above.
+    mw.theme_manager.swatch_box = swatch_box
     pool_layout.addWidget(swatch_box)
     pool_layout.addSpacing(10)
 

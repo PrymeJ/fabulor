@@ -66,6 +66,15 @@ _HOVER_DEBOUNCE_MS    = 80        # coalesce rapid hover sweeps into one preview
 # far more than 2px, so this cannot swallow one. Do NOT widen without re-checking that a
 # slow, deliberate mouse-out still registers.
 _MOUSE_JITTER_PX      = 2
+# Backstop for a leaveEvent's own boundary-crossing case falling inside the jitter above
+# (see review/Design_260803_swatch_leave_jitter_backstop.md — a genuine departure whose
+# reported leave position happens to land within _MOUSE_JITTER_PX of the recorded enter,
+# not from the cursor failing to move, but from a swatch sitting near swatch_box's own
+# edge). Armed only while a hover preview is genuinely applied (see _mark_theme_applied);
+# ticks a periodic ABSOLUTE cursor-vs-rect containment check, structurally different from
+# both 2026-07-28 failed redesigns (neither compares two time-adjacent samples against
+# each other — see the design doc for why that distinction is what makes this safe).
+_SWATCH_LEAVE_BACKSTOP_MS = 500
 
 
 
@@ -122,6 +131,7 @@ class ThemeManager(QObject):
         self.cover_art_mode_widgets = {} # mode -> QPushButton
         self.pool_container = None # QWidget hidden when exclusive mode is active
         self.cover_pool_btn = None # ThemeItem for cover art entry in the pool first row
+        self.swatch_box = None # QWidget — the sole hover-active region; read by _check_swatch_still_hovered
         self._packed_themes_cache = None
         self._packed_themes_limit = None
         self._active_display_theme_internal = self._current_theme_name
@@ -162,6 +172,15 @@ class ThemeManager(QObject):
         # _on_theme_hovered; never updated on a leave and never consumed. Both of those
         # variants were tried and both broke (see _on_themes_tab_left's docstring).
         self._last_swatch_pos = None
+
+        # Swatch-leave jitter backstop (2026-08-03) — see _SWATCH_LEAVE_BACKSTOP_MS above
+        # and review/Design_260803_swatch_leave_jitter_backstop.md. Armed/disarmed only in
+        # _mark_theme_applied (the sole writer of _is_hover_active) on its False<->True
+        # transitions — never started/stopped from any other site, so its lifetime is
+        # always exactly "a hover preview is genuinely showing," nothing broader.
+        self._swatch_leave_backstop_timer = QTimer(self)
+        self._swatch_leave_backstop_timer.setInterval(_SWATCH_LEAVE_BACKSTOP_MS)
+        self._swatch_leave_backstop_timer.timeout.connect(self._check_swatch_still_hovered)
 
         self._save_on_fade = False
         self._fade_in_flight = False
@@ -660,9 +679,21 @@ class ThemeManager(QObject):
         _on_theme_changed's pre-fade-overlay early branch and directly from
         app.py). Do NOT add a fifth inline assignment anywhere else — route any
         new real-apply path through this method instead, at the point its own
-        paint call has genuinely completed."""
+        paint call has genuinely completed.
+
+        Also the sole arm/disarm point for _swatch_leave_backstop_timer (2026-08-03):
+        being the sole writer of _is_hover_active makes this the one place that can see
+        every False->True and True->False transition, regardless of which of the four
+        call sites above triggered it — a hover ending via a genuine leave, this
+        backstop's own correction, a Settings-panel dismiss, or a rotation/selection
+        that happens to land while hover=True is being cleared, all arrive here."""
+        was_hover_active = self._is_hover_active
         self._active_display_theme_internal = theme_name
         self._is_hover_active = hover
+        if hover and not was_hover_active:
+            self._swatch_leave_backstop_timer.start()
+        elif not hover and was_hover_active:
+            self._swatch_leave_backstop_timer.stop()
 
     def apply_full_pass(self, theme_name, hover=False):
         """Apply BOTH the fast visible-surface pass and the deferred invisible-surface
@@ -2091,6 +2122,59 @@ class ThemeManager(QObject):
             f"(last enter {((seen.x(), seen.y()) if seen is not None else None)}) -> snapback"
         )
         self._on_theme_unhovered()
+
+    def _check_swatch_still_hovered(self):
+        """_swatch_leave_backstop_timer's tick — see review/Design_260803_swatch_leave_jitter_backstop.md.
+
+        Backstop for the DWELL case of the 2026-08-02 jitter-suppression bug: a genuine
+        leaveEvent whose reported position happened to land within _MOUSE_JITTER_PX of
+        the recorded enter (a real boundary crossing, not a stationary cursor — see the
+        design doc), silently suppressed by _on_themes_tab_left's secondary guard, with
+        no further event to correct it. This timer only runs while _is_hover_active is
+        True (armed/disarmed in _mark_theme_applied), so the common case — Settings
+        closed, or open but nothing hovered — never reaches this method at all.
+
+        Deliberately NOT a redesign of _on_themes_tab_left's jitter guard: this asks a
+        different question by a different mechanism. It compares the CURRENT absolute
+        cursor position against swatch_box's rect, once per tick — never a delta between
+        two time-adjacent samples. That is what keeps it clear of both 2026-07-28
+        regressions (consumed-reference and rolling-reference-vs-previous-leave): there is
+        no reference to consume, and no pair of close-in-time samples to compare, because
+        there is only ever one absolute containment check per tick.
+
+        The same containment check as the hidden-widget branch's SWATCH-LEAVE-SUSPECT
+        probe above (tab_widget.mapFromGlobal / rect().contains) — reused here instead of
+        duplicated, since both ask the identical question."""
+        _tick_t0 = time.perf_counter()
+        swatch_box = getattr(self, 'swatch_box', None)
+        if swatch_box is None:
+            return
+        try:
+            visible = swatch_box.isVisible()
+            if visible:
+                local = swatch_box.mapFromGlobal(QCursor.pos())
+                outside = not swatch_box.rect().contains(local)
+            else:
+                outside = False
+        except Exception:
+            outside = False
+            visible = False
+        # COST LOG (2026-08-03, permanent — not temporary verification logging like the
+        # TRACE lines above). This timer is armed for the entire duration any single
+        # swatch stays hovered, which given deliberate slow hovering/comparing can be
+        # several seconds fairly often — so its own tick cost is logged unconditionally,
+        # every tick, from the day this shipped, rather than added later if it's ever
+        # found to not be negligible. Do NOT downgrade to DEBUG or remove.
+        _tick_ms = (time.perf_counter() - _tick_t0) * 1000
+        logger.warning(
+            f"[SWATCH-BACKSTOP-COST] tick={_tick_ms:.3f}ms visible={visible} outside={outside}"
+        )
+        if visible and outside:
+            logger.warning(
+                "[SWATCH-BACKSTOP-FIRED] periodic check caught a leave the jitter guard "
+                "missed — cursor outside swatch_box while a hover preview is still active"
+            )
+            self._on_theme_unhovered()
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""
