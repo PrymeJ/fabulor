@@ -1,0 +1,73 @@
+batch_timestamp,trial_num,delay_ms,swatch_count,dwell_ms,stylesheet_ok,pixel_ok,checks_agree,applies_this_trial,fade_finished_count,mechanism,actual_rgb,expected_rgb,internal_active_theme,internal_fade_overlay_visible
+2026-08-02T22:00:49.634831,1,0,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:00:52.968327,2,0,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:00:54.481909,3,0,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:00:58.580126,4,0,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:00.182681,5,0,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:05.880775,6,0,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:07.482072,7,50,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:10.879476,8,50,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:12.474427,9,50,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:16.574041,10,50,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:18.179233,11,50,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:23.873294,12,50,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:25.475891,13,100,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:28.873688,14,100,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:30.576597,15,100,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:34.773119,16,100,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:36.473445,17,100,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:42.186546,18,100,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:43.788100,19,150,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:47.174275,20,150,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:48.872805,21,150,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:53.173810,22,150,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:01:54.958735,23,150,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:00.773786,24,150,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:02.471421,25,180,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:05.973138,26,180,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:07.674728,27,180,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:11.973649,28,180,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:13.773946,29,180,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:19.574126,30,180,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:21.274419,31,250,1,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:24.774497,32,250,1,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:26.575524,33,250,2,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:30.873324,34,250,2,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:32.774171,35,250,4,40,True,False,False,0,0,NEITHER,"(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:02:38.769396,36,250,4,120,True,False,False,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(75, 55, 83)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:07.120637,1,0,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:10.381017,2,0,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:11.881912,3,0,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:15.878853,4,0,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:17.560542,5,0,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:23.180120,6,0,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:24.686324,7,50,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:27.980907,8,50,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:29.575253,9,50,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:33.581177,10,50,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:35.176182,11,50,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:40.775317,12,50,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:42.373608,13,100,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:45.672244,14,100,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:47.274635,15,100,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:51.473984,16,100,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:53.174069,17,100,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:05:58.774149,18,100,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:00.374955,19,150,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:03.766257,20,150,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:05.461416,21,150,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:09.673152,22,150,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:11.468308,23,150,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:17.273582,24,150,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:18.974202,25,180,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:22.374035,26,180,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:24.074367,27,180,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:28.273710,28,180,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:30.076157,29,180,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:35.774161,30,180,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:37.474305,31,250,1,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:40.982511,32,250,1,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:42.773822,33,250,2,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:46.983436,34,250,2,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:48.780174,35,250,4,40,True,True,True,0,0,NEITHER,"(32, 4, 37)","(32, 4, 37)",Alzabo,False
+2026-08-02T22:06:54.482141,36,250,4,120,True,True,True,1,0,"ONE_APPLY (fade-path OR fallback, not both)","(32, 4, 37)","(32, 4, 37)",Alzabo,False
