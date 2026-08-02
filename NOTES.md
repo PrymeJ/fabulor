@@ -93,6 +93,59 @@ Re-measured correctly, alternating full ↔ truly empty and timing each directio
 Also measured: **Qt does NOT no-op an identical sheet string** — re-setting the very same sheet
 costs 546.8ms.
 
+#### The 720ms flyer in that table is the FIRST CALL, not jitter (checked, 2026-08-02)
+
+Flagged in review as "the same shape that burned us last time." It is not — but only a re-run
+settles that, so here it is. Twelve iterations, each asserting the sheet's state before and after so
+every one is a **verified genuine transition** (`all genuine transitions: True`), reported in
+CHRONOLOGICAL order rather than sorted:
+
+```
+clears in order:  667  583  550  533  536  535     <- monotonic decay to a ~535 plateau
+sets   in order:  592  565  568  562  580  582     <- flat from the start
+```
+
+The flyer is **iteration 0**, and sorting the earlier table hid that. A cold first call costs
+~25% more and settles within about two iterations; every later clear is within ±2%. So: no
+repeat-on-already-transitioned-state contamination (that was the ORIGINAL probe's bug and it is
+genuinely absent here), and the correct steady-state figure is **~535ms for a clear**, not the
+543ms median first recorded. Only the first call in a process is affected — which is a
+first-call-in-process effect worth knowing about, but distinct from the unexplained run-to-run
+drift noted at the end of this entry.
+
+#### These are OFFSCREEN numbers; live is ~25% lower
+
+The offscreen caveat carries forward to every corrected figure above. Against the real running app
+tonight, 120 samples of `mw.setStyleSheet(base)` from `_apply_stylesheets`' own DEBUG breakdown:
+
+| | n | min | median | p90 | max |
+|---|---|---|---|---|---|
+| **LIVE** | 120 | 86.0 | **436.1ms** | 514.0 | 628.4 |
+| offscreen harness | — | — | ~535-580ms | — | — |
+
+**Quote ~436ms as the live cost.** The offscreen harness runs ~25% high, so the 543/604/547
+figures above are correct *relative to each other* (which is what kills options A and F) but
+overstate the absolute cost by roughly a quarter.
+
+#### Cost tracks VISIBILITY, not live widget count
+
+Tested by showing and then re-hiding the four heavy panels, warming past the cold first call in
+each phase:
+
+| phase | descendant QWidgets | median |
+|---|---|---|
+| baseline, all panels closed | 632 | 526.9ms |
+| stats + tags + library + detail SHOWN | 632 | **643.4ms** |
+| the same four hidden again | 632 | 515.7ms |
+
+Two things follow. (1) **Widget count does not move** — the subtrees are already built and
+show/hide does not create or destroy them, consistent with the 2026-08-01 lazy-build finding — so
+this run cannot test count-scaling and does not claim to. (2) **Visibility costs ~22% at identical
+count, reproducibly** (up on show, back down on hide). This does not contradict the depth finding;
+it refines it: Qt does measurably more work re-polishing widgets that are actually mapped. It also
+rules out "transient content is inflating the number" — the number moves with what is on screen,
+not with what exists.
+
 ### The corrected conclusion
 
 In this app, **any call to `mw.setStyleSheet()` costs ~550ms regardless of its argument** — full
@@ -173,14 +226,17 @@ ownership is not threatened by anything in this analysis.**
 
 ### Options still on the table
 
-- **E. Skip the root `setStyleSheet` when the generated string is unchanged. THE ONLY SURVIVING
-  NON-STRUCTURAL OPTION.** Qt does not do this itself (measured: re-setting an identical sheet costs
-  546.8ms), so a guard in our own code is worth the full ~550ms on every redundant apply.
-  **Scope is limited and known:** all 12 themes sampled produce 12 DISTINCT base sheets, so a
-  preview to a different theme always changes the string and E does nothing for the hover itself.
-  It only helps *repeat applies of the same theme* — `complete_main_fade`'s fallback, the drain
-  sites, and any path that re-applies the active theme. Worth doing, but do not expect it to fix
-  the preview/snapback cost.
+- **E. Skip the root `setStyleSheet` when the generated string is unchanged. NOT WORTH BUILDING —
+  measured 2026-08-02, in answer to "how hot are those sites actually?"** Qt does not no-op an
+  identical sheet itself (546.8ms to re-set the same one), so the mechanism would work. The problem
+  is frequency. From tonight's real session log: **120** `_apply_stylesheets` calls total, of which
+  the sites E would guard fired **1** (`complete_main_fade` fallback) and **4** (`snap_theme_forward`
+  drains). Meanwhile the EXISTING no-op guard in `_on_theme_changed` already caught **44** redundant
+  same-theme calls at zero cost — E's premise is already implemented upstream and is catching an
+  order of magnitude more than E would add. Combined with the fact that all 12 sampled themes
+  produce 12 DISTINCT base sheets (so a preview to a different theme always changes the string and E
+  can never help a hover), E is worth ~436ms × ~1-5 per session. **Not worth the implementation risk
+  while the blur branch is open.**
 - **F. Take `QWidget#mainwindow`'s background out of QSS so the root sheet can be empty. DEAD.**
   Rested entirely on the erroneous 8.2ms empty-sheet row above. Clearing the sheet costs 543ms —
   there is no fast path to reach, so emptying the root buys nothing. Do not attempt.
