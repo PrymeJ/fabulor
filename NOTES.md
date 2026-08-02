@@ -1,3 +1,182 @@
+## 2026-08-02 — The root-restyle cost is caused by SETTING A STYLESHEET ON THE ROOT AT ALL, not by what is in it — and the tree's DEPTH is the multiplier. Investigation only, nothing changed
+
+Started from a live report about the settings-panel dismiss and ended by disproving the explanation
+this file has carried since 2026-08-01. **No code was changed. All probes were reverted.** Read the
+"What was disproven" section before acting on anything here.
+
+### The presenting symptom
+
+Preview a theme, then click the right-hand gutter to dismiss the panel. It "briefly freezes, then
+the panel jumps with the reverted correct colors" — the snapback and the dismiss happening as one
+blocking event instead of a transition.
+
+Confirmed by trace, and the split is total:
+
+| dismiss | blocked before slide starts |
+|---|---|
+| with a preview showing | **584.5 / 630.1 / 606.2 ms** |
+| no preview (or already reverted) | **1.5 / 1.2 / 1.2 ms** |
+
+A ~500× difference. The freeze is entirely preview-conditional — **not** a general settings-dismiss
+cost, which contradicts the prediction made before measuring.
+
+### Why it blocks, precisely
+
+`_close_settings_flow` (`panels.py`) runs both theme calls **synchronously before**
+`settings_panel_animation.start()`. Measured inside that block:
+
+```
+unhover=0.2ms   snap_forward=606.0ms   -> slide STARTED 606.3ms after click
+```
+
+`_on_theme_unhovered` is ~0.2ms because `_on_theme_changed` takes the `_fade_running` branch and
+**stashes** rather than applies. `snap_theme_forward` then drains that stash with `fade_ms=0` and
+pays the whole restyle synchronously. **One restyle blocks the click, not two.**
+
+Two further facts about this path:
+
+- **The 200ms snapback fade never renders a frame.** `_on_theme_unhovered` sets up a 375/200ms fade
+  (grab, mask, `start()`), and `snap_theme_forward` calls `_fade_anim.stop()` one statement later.
+  So "wait for the snapback to finish before closing" — the obvious fix — is *already* what happens;
+  there is no visible transition being cut short. The colours are final when the slide begins.
+- **A `QTimer` fallback cannot help here.** The wait is a synchronous main-thread block: while
+  `snap_theme_forward` runs, no timer fires and nothing paints. A timeout-and-proceed guard only
+  works against an *asynchronous* wait. This was proposed and is recorded as non-viable.
+- The deferred batch (~260-300ms) is armed by `singleShot(0)`, so it lands ~270ms **after** the
+  slide starts — a second stall, mid-animation, competing with the 200ms slide.
+
+### Preview and revert do IDENTICAL work
+
+`_apply_stylesheets` has **no `hover` gate on any of its work**. The only `if not hover:` in the
+method guards a debug marker. Measured in one session:
+
+| call | total | `mw.setStyleSheet(base)` | settings/speed/sleep |
+|---|---|---|---|
+| preview (`hover=True`) | 614-662ms | ~450ms | ~140ms |
+| revert (`hover=False`) | 565ms | ~402ms | ~139ms |
+
+This matters because the natural design — *preview styles only the visible elements; revert reverts
+only those* — cannot be built on top of the current code: **the preview already touches everything
+the revert does.** Step 1 of that model is not true today.
+
+### THE FINDING: rule count is irrelevant; touching the root is what costs
+
+Run against the real `MainWindow` (632 descendant `QWidget`s), alternating the sheet so Qt cannot
+no-op an identical string:
+
+| sheet set on `mw` | median | min | max |
+|---|---|---|---|
+| full base sheet, 27 rules | 768.5ms | 634.8 | 828.3 |
+| **ONE rule** (`QWidget#mainwindow` only) | **850.2ms** | 799.0 | 919.1 |
+| **empty string** | **8.2ms** | 2.4 | 723.2 |
+
+**One rule costs the same as twenty-seven** (marginally more — noise). Any non-empty stylesheet on
+the root triggers the full-tree re-polish; an empty one short-circuits it. The cost is not parsing,
+not matching, not the sheet's scope. It is the act of setting a non-empty sheet on the root widget.
+
+*(Offscreen run — the full sheet measures ~450ms live vs 768ms here. The RATIO between the three
+conditions is the result; do not quote the absolute numbers as live costs.)*
+
+### DEPTH, not widget count, is the multiplier
+
+Synthetic harness, equal widget counts, flat vs. deeply-nested:
+
+| tree | cost |
+|---|---|
+| flat 300 | 7.4ms |
+| deep 300 | 35.0ms |
+| flat 600 | 11.9ms |
+| **deep 600** | **123.3ms** |
+
+Over 10× at identical count, and non-linear in depth (300→600 costs 3.5×). Qt re-resolves each
+widget against its full ancestor chain, so cost scales roughly with *count × depth*.
+
+This explains two things that never added up:
+
+- **Why 642 plain widgets cost 24ms in a harness but ~450ms in the app** (~19×). Not the count — the
+  nesting.
+- **Why the 2026-08-01 tiers jump 630→~240ms but 642→~650ms.** Those 12 widgets are not 2% more
+  work; they are deep additions, and everything under them re-resolves through a longer chain.
+- **Why it "feels close to the old 7000-widget sluggishness"** (Pryme's observation, which is
+  consistent with the data): that era paid breadth on a shallower tree; today's ~632 widgets are
+  nested much deeper. The 2026-04-22 per-component split (`be80b4d`) reduced sheet SIZE, not tree
+  DEPTH — and the base sheet has only grown 3495→5533 chars since, so size was never the driver.
+
+### Where the nine target widgets actually live
+
+All 27 rules target just 9 widgets, and **every one is depth 1 or 2, directly under `mw`**:
+
+```
+overall_progress      1   mainwindow
+percentage_label      2   overall_progress < mainwindow
+chapter_dropdown      1   mainwindow
+chapter_expand_btn    1   mainwindow
+status_banner         1   mainwindow
+eof_revert_btn        2   status_banner < mainwindow
+eof_close_btn         2   status_banner < mainwindow
+cancel_scan_btn       2   status_banner < mainwindow
+undo_overlay          1   mainwindow
+```
+
+The remaining ~623 descendants are re-polished to prove they match nothing.
+
+Two parenting worries raised in advance turned out **not** to apply: `ChapterList` sets
+`Qt.Widget` window flags and is an ordinary depth-1 child of `mw` despite being a "popup"; and
+`excluded_books_popup` is parented to `library_tab`, so it is outside this sheet's scope entirely and
+is styled by `get_settings_stylesheet`. **No reparenting would be needed, so keyboard focus
+ownership is not threatened by anything in this analysis.**
+
+### What was DISPROVEN (read this before acting)
+
+1. **"The confinement is correctly designed but applied at the wrong point."** Stated twice during
+   this investigation and **wrong**. There is no application point on `mw` that avoids the cost —
+   one rule costs the same as all of them, and `QWidget#mainwindow` genuinely must be set on `mw`.
+   The sheet's scope was never the problem.
+2. **Option A — split the base sheet across the nine target widgets.** Killed by the rule-count
+   test. Splitting saves nothing, because the cost is not per-rule.
+3. **"The freeze is a general settings-dismiss cost."** Predicted before measuring; the data shows
+   1.2ms without a preview.
+4. **"Wait for the snapback, with a timer fallback."** The snapback fade never renders, and the wait
+   is synchronous, so no timer can preempt it.
+5. **"The ~600ms is defensive overkill from the containment work."** Checked against the history
+   (~15 commits, 2026-07-20..22). The containment fixes (`933f7f2`, `57a7dd0`, `4700b31`) changed
+   *timing and state* — `_mark_theme_applied`, discarding hover-flagged stashes, `_fade_is_selection`
+   — none widened the restyle's scope. The full apply is the ordinary default path, not a defensive
+   addition. **But the underlying instinct was right for a different reason** (see the finding above).
+
+### Options still on the table
+
+- **E. Skip the root `setStyleSheet` when the generated string is unchanged.** Most promising thing
+  the rule-count test surfaced: the empty-sheet row proves Qt short-circuits *something*, and a
+  no-op guard on an identical string would be free and provably safe. **Unverified:** how often a
+  preview/snapback actually produces a *different* base sheet. If every preview changes it, this
+  dies. Check first, cheaply.
+- **F. Take `QWidget#mainwindow`'s background out of QSS** (palette or `paintEvent`), so the root
+  sheet can be empty and the ~8ms path becomes reachable. Directly attacks the one thing the
+  measurement says matters. Larger change; interacts with `_set_bg_suppressed` and the theme
+  `bg_image`, which is QSS-driven (see the CLAUDE.md rule on `suppress_bg_image` — a child override
+  provably does not work, so this needs care).
+- **B. Reduce tree depth.** Now better supported than before — depth is the multiplier — but it is a
+  structural refactor of panels built over months. The 630/642/790 tiers suggest the expensive
+  nesting sits in the panels one would least want to disturb. **Connects to the Stats refactor**:
+  Stats is a deep subtree under `mw`, so reducing its nesting would make every restyle cheaper.
+- **C. Add a real `hover` gate to `_apply_stylesheets`.** Cheap-looking and history warns against it:
+  `5cfe3a3` §2 records a narrowing of exactly this kind reverted as a regression — it broke hover
+  preview on the Themes tab, the very panel being looked at.
+- **D. Do nothing.** Rejected by Pryme for previews and snapback ("sluggish and annoying... snapback
+  and panel dismiss, that looks real bad"), which is the correct call given previews pay this cost
+  on every hover.
+
+### Still unexplained
+
+The run-to-run instability, now seen a fourth time: the empty-sheet condition above has
+`min=2.4ms` but `max=723.2ms` across five iterations. Same code, same sheet, same process. This is
+the same phenomenon as the 87ms→410ms post-launch step (2026-08-01) and the 555→390ms drift
+(2026-08-02, backdrop). **Any before/after measurement on this path is only meaningful within one
+run**, and no fix should be accepted on a cross-run comparison.
+
+---
+
 ## 2026-08-02 — Panel-backdrop mode switch blocked for ~1040ms; scoping the restyle roughly halved it
 
 Reported live: clicking a panel-backdrop mode (Transparent / Frosty glass / Opaque) freezes the app

@@ -10,6 +10,9 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 ### Right-click / theme-restyle performance
+- [2026-08-02] **ROOT CAUSE FOUND:** setting ANY non-empty sheet on `mw` costs ~450-850ms (1 rule == 27 rules; empty == 8ms); DEPTH is the multiplier, not widget count. Two live options: **(E)** skip the root call when the generated string is unchanged — cheapest, verify first how often a preview actually changes it; **(F)** move `QWidget#mainwindow`'s background out of QSS so the root sheet can be empty. See NOTES.md 2026-08-02
+- [2026-08-02] Settings dismiss with a preview showing blocks ~600ms before the slide starts (vs ~1.2ms without) — same root call; a timer-fallback fix is NON-VIABLE (the wait is synchronous; the snapback fade never renders a frame)
+- [2026-08-02] Reducing Stats' tree depth would make EVERY restyle cheaper — fold this into the Stats perf refactor rather than treating it as separate work
 - [2026-08-01] NEXT: first restyle after launch is 87ms, every later one ~410ms — a deterministic 4.7x step, reproduced across launches; bisect what runs in between (deferred pass / load_book / LibraryPanel.refresh 382 books / cover art)
 - [2026-08-01] Blur on/off and fade 0/750/1500 RULED OUT by a 120-sample matrix — the ~580ms floor is independent of both
 - [2026-08-01] RE-MEASURED at ~700-900ms, ~3x the figure below: `mw.setStyleSheet(base)` ~460ms + settings/speed/sleep panels ~215ms = 95% of it (NOTES.md)

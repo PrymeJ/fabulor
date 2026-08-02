@@ -454,7 +454,19 @@ whole widget tree." It does not. `mw.setStyleSheet(get_base_stylesheet(...))` ta
 so Qt re-polishes all ~642 descendants on every hover tick anyway — measured at **~460ms**, with the
 settings/speed/sleep panel sheet adding ~215ms, i.e. ~95% of a ~700-900ms restyle. The fast-pass split
 is narrower work, not cheap work. See NOTES.md 2026-08-01. The confinement itself is still
-load-bearing for the reasons below — only its cost claim was false. A
+load-bearing for the reasons below — only its cost claim was false.
+
+**Sharpened 2026-08-02, and this kills the obvious fix:** the cost is not the sheet's SCOPE at all.
+Measured against the real `MainWindow` (632 descendants), a **single** `QWidget#mainwindow` rule
+costs the same as the full 27-rule sheet (850 vs 768ms median) while an EMPTY sheet costs 8ms — so
+the trigger is setting any non-empty stylesheet on the ROOT, regardless of content. Splitting the
+base sheet across the nine widgets its rules actually target (all of them depth 1-2 under `mw`)
+therefore saves **nothing**; do not attempt it. The multiplier is tree DEPTH, not widget count
+(600 widgets flat = 11.9ms, the same 600 nested = 123.3ms, non-linear). Note also that
+`_apply_stylesheets` has **no `hover` gate on any of its work** — a preview and a snapback do
+identical work — so a design of the form "preview styles only the visible elements, revert reverts
+only those" cannot be built on the current code without first adding that gate, which
+`5cfe3a3` §2 records being reverted once as a regression. See NOTES.md 2026-08-02. A
 preview must never be replayed through the same apply path as a genuine selection — any code that
 drains, resumes, or re-applies a stashed/pending theme-change call must preserve whether that call
 was a hover preview or a real selection, and a hover preview being replayed must stay confined to the
