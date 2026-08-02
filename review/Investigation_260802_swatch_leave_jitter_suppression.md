@@ -101,6 +101,35 @@ investigation cannot reproduce this bug because it drives `_on_theme_unhovered()
 than through the real `swatch_box.leaveEvent` → `_on_themes_tab_left` → jitter-check → (maybe)
 `_on_theme_unhovered()` chain.
 
+## Second, independent repro (same session, ~14 minutes later) — confirms the pattern
+
+Pryme reproduced it again deliberately: hovered `Fire and Blood` (active theme `Rivendell` this
+time — confirmed against the screenshot, swatch underlined), "edged it slowly" toward the gutter,
+held there, then dismissed. Log (`23:42:4x`-`23:43:2x` window):
+
+- **23:42:47,854** — `ThemeItem.leaveEvent theme_name='Fire and Blood' pos=(255, 249)` and, same
+  millisecond, `[SWATCH-LEAVE] suppressed leave — visible but cursor unmoved (2px <= 2) at
+  (255, 249)`. Same mechanism as the first repro: reported leave position within the jitter
+  tolerance of the last recorded enter, genuine departure swallowed.
+- **Nothing else touches the theme system for the next ~33 seconds** — no further hover, no
+  `_on_theme_unhovered`, no snapback fade, confirmed by grepping the full window for every
+  theme-related trace line between 23:42:48,241 and 23:43:21,268 and finding zero.
+- **23:43:21,268** — a **direct, non-hover** `_on_theme_changed(theme_name='Rivendell', hover=False,
+  bypass_panel_open_guard=True, fade_in_flight=False)` fires — not preceded by any
+  `_on_theme_unhovered()` call or `[SWATCH-LEAVE] genuine leave` line. This is the dismiss action
+  itself forcing the theme back.
+- **23:43:22,570** — `transport_bar_blur`'s `hide_for_panel ENTRY active_panel='settings_panel'`
+  confirms the Settings panel genuinely began closing ~1.3s after that theme-change call started
+  (consistent with the ~600-700ms synchronous restyle pipeline measured throughout this session
+  delaying the panel-close sequence, same effect as the "second, unrelated finding" above).
+
+This is the "fallback fires" Pryme described: the correct theme (`Rivendell`) IS eventually shown,
+but via a direct forced re-apply triggered by the dismiss action, not via the snapback fade that
+should have run the instant the cursor left `Fire and Blood`. Two independent repros, two different
+swatch/active-theme pairs (`Fire and Blood`→`Goldfinch` and `Fire and Blood`→`Rivendell`), same exact
+suppression signature (`leaveEvent` position identical or within 2px of the recorded enter position,
+same millisecond as the suppression log line) — this is a repeatable mechanism, not a one-off fluke.
+
 ## Why no harness reproduced this
 
 Every batch of the `snapback_dismiss_harness.py` sweep calls `tm._on_theme_unhovered()` directly
