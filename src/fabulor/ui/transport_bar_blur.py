@@ -702,7 +702,7 @@ class TransportBarBlurOverlay:
             return
 
         # HOVER GATE (2026-07-20 — theme-bleed Mechanism B / audit Path D,
-        # review/Audit_260720_theme_reach.md): a hover-preview restyle rewrites
+        # review/Review_260720_theme_reach.md): a hover-preview restyle rewrites
         # content_container's stylesheet, which forces Qt to repaint every
         # tracked transport-bar widget (they inherit content_container's QSS),
         # which fires a real Paint event, which this tracker correctly sees as

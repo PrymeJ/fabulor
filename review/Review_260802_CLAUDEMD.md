@@ -401,8 +401,8 @@ sub-bullets are narrative-shaped rather than one-liner-shaped (see NARRATIVE §2
 
 **Correction (this finding was wrong as originally filed):** the first draft of this report
 flagged "two divergent `DEBT_INVENTORY.md` files" (`./DEBT_INVENTORY.md` and
-`./review/DEBT_INVENTORY.md`) as an ambiguity affecting confidence in cross-references. That was
-filed without reading `review/DEBT_INVENTORY.md`'s own header, which resolves the question
+`./review/Snapshot_260612_debt_inventory.md`) as an ambiguity affecting confidence in cross-references. That was
+filed without reading `review/Snapshot_260612_debt_inventory.md`'s own header, which resolves the question
 directly — its second line states: *"**STALE — frozen snapshot, not the current debt index.**
 This file is part of the 2026-06-12 `review/Review_260612_1–8.md` audit batch and was
 deliberately left untouched after that date (see SESSION.md, 2026-07-01 Session 3). The live,
@@ -492,6 +492,6 @@ hand" (96–98) is a single dense paragraph with zero narrative fat.
    explicit instruction not to pick a side on ambiguous supersession.
 
 (A third item, "two divergent DEBT_INVENTORY.md files," was listed here in the first draft and
-has been retracted — see §5's correction note. `review/DEBT_INVENTORY.md` self-declares as a
+has been retracted — see §5's correction note. `review/Snapshot_260612_debt_inventory.md` self-declares as a
 frozen 2026-06-12 snapshot and names the root file as the live index; there was nothing to
 decide.)

@@ -225,7 +225,7 @@ order these entries had in TODO.md before the split (2026-07-30).
   same-name no-op guard and never reached the deferred pass, leaving
   library/settings/speed/sleep/stats/book_detail panels unstyled for the session. Fixed via a
   shared `apply_full_pass()` helper, called once at startup. Live-verified (log evidence in
-  `review/Notes_260717_theming_current_state.md`): panels show correctly styled on first open after a cold
+  `review/Snapshot_260717_theming_state.md`): panels show correctly styled on first open after a cold
   launch with cover-theme Off. A SECOND, unrelated regression was found and fixed in the same
   commit — theme hover preview no longer reaching settings/speed/sleep panels (introduced by the
   same night's earlier deferred-restyle narrowing, which had moved that styling into a

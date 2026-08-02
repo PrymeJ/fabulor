@@ -1802,7 +1802,7 @@ different approach: instead of continuing to hunt individual spurious-trigger so
 time, a read-only audit was run first (`Explore` subagent, no code changes) to map the FULL set of
 code paths by which hover/preview theme state could reach `content_container`/`main_window`, so a
 structural fix could be scoped correctly before touching anything. Full audit deliverable:
-`review/Audit_260720_theme_reach.md`.
+`review/Review_260720_theme_reach.md`.
 
 **Audit result:** confirmed the widget ownership tree (unambiguous), found one real bypass of
 CLAUDE.md's invariant #4 (`_apply_stylesheets` as sole dispatcher) — `MainWindow._set_bg_suppressed`
@@ -2832,7 +2832,7 @@ verification method as Part 1. 1224 → 1204 lines.
 one-off implementation spec for the Cover Management panel, shipped over two months ago and
 fully documented in CLAUDE.md's "What's Built") moved into `review/`, alongside the other
 historical one-off audit/spec artifacts already living there. Also added a stale-snapshot header
-to `review/DEBT_INVENTORY.md` (a frozen 2026-06-12 review-batch artifact, distinct from the
+to `review/Snapshot_260612_debt_inventory.md` (a frozen 2026-06-12 review-batch artifact, distinct from the
 actively-maintained root `DEBT_INVENTORY.md`) pointing at the real file, so a bare "add this to
 DEBT_INVENTORY.md" instruction can't land in the wrong one. `CLAUDE_CHAT_INDEX.md` was
 considered and left at root — still being actively appended to, same living-log role as
@@ -4819,7 +4819,7 @@ surfaces during normal use with `FABULOR_LOG_LEVEL=DEBUG` already on.
 kept the original symptom description, explicitly flagged the mitigation claim as checked-and-wrong
 with the git evidence, replaced the disproven race theory with the disproof and the two new
 candidates, and recorded the instrumentation. `DEBT_INVENTORY.md`'s one-line summary updated to
-match. `review/DEBT_INVENTORY.md` deliberately left untouched — it's a dated snapshot from the
+match. `review/Snapshot_260612_debt_inventory.md` deliberately left untouched — it's a dated snapshot from the
 2026-06-12 review batch, not a doc meant to be retroactively edited.
 
 ### Follow-up

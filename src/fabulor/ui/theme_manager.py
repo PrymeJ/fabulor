@@ -221,7 +221,7 @@ class ThemeManager(QObject):
         the one confirmed cross-file read of the old (pre-rename) bare
         _active_display_theme field (app.py's _set_bg_suppressed), which read
         it directly with no hover check and could paint content_container with
-        a previewed theme. See review/Audit_260720_theme_reach.md."""
+        a previewed theme. See review/Review_260720_theme_reach.md."""
         if self._is_hover_active:
             if self._cover_theme_active and self._cover_theme is not None:
                 return self._cover_theme
