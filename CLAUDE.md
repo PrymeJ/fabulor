@@ -141,6 +141,30 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   was later cited as established fact and constrained real work: the Stats 2px inset (2026-08-01)
   was documented as scroll-step alignment, was actually a leftover from a cosmetic margin pass, and
   described a mechanism (`setSingleStep`) the file never calls.
+- **Report timings in CHRONOLOGICAL order, and only sort once you know the samples are
+  interchangeable.** Sorting to take a median is correct for i.i.d. samples and actively destroys
+  the evidence otherwise — any time the FIRST sample may differ in kind (cold cache, first call in
+  a process, first paint, an empty cache being filled), sorting hides exactly the structure you
+  need. Two distinct instances in one night (2026-08-02): a sorted median reported an empty-sheet
+  restyle at 8.2ms when four of five iterations were no-ops and the lone real measurement was the
+  "outlier" at 723ms; and a sorted clear-cost table hid a clean monotonic decay
+  (667→583→550→533→536→535) that immediately identified a first-call-in-process effect. Print the
+  sequence, look at it, THEN aggregate. Related to the change-only-probe rule above — both are
+  cases of an aggregate concealing a state the probe never separated.
+- **Measure an existing guard's hit rate before proposing a new one.** Adding a redundant-work guard
+  is only worth it if the redundancy is actually frequent, and the codebase may already be catching
+  it. Instrument what is there first: a proposed no-op guard on the root restyle (2026-08-02) was
+  written up as the "only surviving option" before anyone counted, and counting killed it — the
+  proposed sites fired 1 and 4 times in a real session while the EXISTING no-op guard in
+  `_on_theme_changed` had silently caught 44 of 120 calls at zero cost. Nobody had that number until
+  it was asked for. Hit-rate counters on existing guards are cheap and turn "this seems redundant"
+  into a decision.
+- **An offscreen harness reads ~25% HIGH for widget-tree/restyle timings on this app** (quantified
+  2026-08-02: `mw.setStyleSheet` medians ~535-580ms offscreen vs **436ms** live over 120 real
+  samples). Offscreen results remain useful for RATIOS between conditions — that is what killed
+  three separate restyle fix proposals — but never quote an offscreen number as the live cost, and
+  label every offscreen figure as such at the point it is written down, not once in a caveat further
+  up the page.
 
 ---
 

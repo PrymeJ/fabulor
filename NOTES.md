@@ -50,7 +50,7 @@ Two further facts about this path:
 `_apply_stylesheets` has **no `hover` gate on any of its work**. The only `if not hover:` in the
 method guards a debug marker. Measured in one session:
 
-| call | total | `mw.setStyleSheet(base)` | settings/speed/sleep |
+| call (LIVE — from the running app's own DEBUG breakdown) | total | `mw.setStyleSheet(base)` | settings/speed/sleep |
 |---|---|---|---|
 | preview (`hover=True`) | 614-662ms | ~450ms | ~140ms |
 | revert (`hover=False`) | 565ms | ~402ms | ~139ms |
@@ -64,7 +64,11 @@ the revert does.** Step 1 of that model is not true today.
 Run against the real `MainWindow` (632 descendant `QWidget`s), alternating the sheet so Qt cannot
 no-op an identical string:
 
-| sheet set on `mw` | median | min | max |
+**All figures in this table and the next are OFFSCREEN** (`QT_QPA_PLATFORM=offscreen`), which runs
+**~25% high** — see the live/offscreen section below. They are quoted because their RATIO to each
+other is the result; divide by ~1.25 for a live equivalent.
+
+| sheet set on `mw` (OFFSCREEN) | median | min | max |
 |---|---|---|---|
 | full base sheet, 27 rules | 768.5ms | 634.8 | 828.3 |
 | **ONE rule** (`QWidget#mainwindow` only) | **850.2ms** | 799.0 | 919.1 |
@@ -83,15 +87,15 @@ input, and treat an outlier as data before calling it noise.**
 
 Re-measured correctly, alternating full ↔ truly empty and timing each direction:
 
-| transition | median | raw |
+| transition (OFFSCREEN) | median | raw |
 |---|---|---|
 | `""` → full sheet | 604.2ms | 530 538 558 604 634 644 |
 | full sheet → `""` | **543.2ms** | 523 531 535 543 576 720 |
 
 **Clearing is as expensive as setting.** There is no fast path.
 
-Also measured: **Qt does NOT no-op an identical sheet string** — re-setting the very same sheet
-costs 546.8ms.
+Also measured (OFFSCREEN): **Qt does NOT no-op an identical sheet string** — re-setting the very
+same sheet costs 546.8ms.
 
 #### The 720ms flyer in that table is the FIRST CALL, not jitter (checked, 2026-08-02)
 
@@ -127,10 +131,11 @@ tonight, 120 samples of `mw.setStyleSheet(base)` from `_apply_stylesheets`' own 
 figures above are correct *relative to each other* (which is what kills options A and F) but
 overstate the absolute cost by roughly a quarter.
 
-#### Cost tracks VISIBILITY, not live widget count
+#### FINDING: polish cost depends on which widgets are VISIBLE, not on how many exist
 
-Tested by showing and then re-hiding the four heavy panels, warming past the cold first call in
-each phase:
+Not merely a ruled-out theory — a positive, actionable result, and the one that most directly
+shapes the Stats refactor. Tested by showing and then re-hiding the four heavy panels, warming past
+the cold first call in each phase (OFFSCREEN figures):
 
 | phase | descendant QWidgets | median |
 |---|---|---|
@@ -138,21 +143,30 @@ each phase:
 | stats + tags + library + detail SHOWN | 632 | **643.4ms** |
 | the same four hidden again | 632 | 515.7ms |
 
-Two things follow. (1) **Widget count does not move** — the subtrees are already built and
-show/hide does not create or destroy them, consistent with the 2026-08-01 lazy-build finding — so
-this run cannot test count-scaling and does not claim to. (2) **Visibility costs ~22% at identical
-count, reproducibly** (up on show, back down on hide). This does not contradict the depth finding;
-it refines it: Qt does measurably more work re-polishing widgets that are actually mapped. It also
-rules out "transient content is inflating the number" — the number moves with what is on screen,
-not with what exists.
+**~22% swing at an identical widget count, and it reverses cleanly** (up on show, back down on
+hide). Qt's polish cost depends on which widgets are actually in the visible/paintable path, not
+just how many are in the tree.
+
+Two consequences:
+
+- **This run cannot test count-scaling and does not claim to.** Widget count is 632 in all three
+  phases because the subtrees are already built — show/hide neither creates nor destroys them,
+  consistent with the 2026-08-01 lazy-build finding.
+- **For the Stats refactor, collapsing VISIBILITY is a lever in its own right, alongside reducing
+  nesting depth.** Fewer widgets simultaneously mapped is worth real time even if the tree keeps the
+  same shape and the same total widget count. Whatever the Stats rework does about depth, it should
+  also ask how many of its widgets need to be visible at once.
+
+It also disposes of "transient content is inflating the number": the number moves with what is on
+screen, not with what exists.
 
 ### The corrected conclusion
 
-In this app, **any call to `mw.setStyleSheet()` costs ~550ms regardless of its argument** — full
-sheet, one rule, identical string, or empty string. The cost is the call itself against a 632-widget
-deep tree. This is stronger and worse than the first draft's claim: it cannot be avoided by
-narrowing the sheet, by splitting it, or by emptying it. Only by not calling it, or by making the
-tree shallower.
+In this app, **any call to `mw.setStyleSheet()` costs ~436ms LIVE** (~535-580ms offscreen)
+**regardless of its argument** — full sheet, one rule, identical string, or empty string. The cost
+is the call itself against a 632-widget deep tree. This is stronger and worse than the first
+draft's claim: it cannot be avoided by narrowing the sheet, by splitting it, or by emptying it.
+Only by not calling it, by making the tree shallower, or by having fewer widgets visible at once.
 
 *(Offscreen run — the full sheet measures ~450ms live vs 768ms here. The RATIO between the three
 conditions is the result; do not quote the absolute numbers as live costs.)*
@@ -250,6 +264,19 @@ ownership is not threatened by anything in this analysis.**
 - **D. Do nothing.** Rejected by Pryme for previews and snapback ("sluggish and annoying... snapback
   and panel dismiss, that looks real bad"), which is the correct call given previews pay this cost
   on every hover.
+
+### The best result of the session is a negative one: the existing guard was already doing the job
+
+Nobody had this number until it was asked for. In one real session, `_on_theme_changed`'s **existing**
+no-op guard caught **44 of 120** `_apply_stylesheets` calls at zero cost — while the sites a NEW
+guard (option E) would have covered fired **1** and **4** times. The system already had an order of
+magnitude more redundant-apply protection than anyone knew, and E was proposed and written up as
+"the only surviving option" before anyone counted.
+
+The general lesson is now in CLAUDE.md's Debugging discipline: **instrument an existing guard's hit
+rate before proposing a new one.** Had that counter existed, E would have been ruled out before the
+writeup rather than after — and the same counter is the cheapest way to tell whether any future
+"this looks redundant" is worth acting on.
 
 ### Still unexplained
 
