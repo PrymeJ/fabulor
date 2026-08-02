@@ -124,17 +124,46 @@ defect. Rows from `2026-08-02T22:05:07` onward are the corrected, trustworthy ba
 
 ---
 
+## Batch 2 results: identical shape, 0/36 failures, `BOTH` still never observed
+
+Re-run of the same 36-trial sweep, same corrected harness, no code changes between batches.
+Result: **0/36 failures, 0 disagreements**, and `mechanism` again split cleanly into `NEITHER`
+(dwell=40ms, 18/18) / `ONE_APPLY` (dwell=120ms, 18/18) across every delay bucket and swatch-count.
+`BOTH` did not occur in this batch either — 72 trials total across two batches, zero reproductions.
+
+### This is now a reportable gap, not just an inconclusive first batch
+
+`_SNAPBACK_FADE_MS = 200` (theme_manager.py:58) is the fade duration the hover-revert path uses.
+The harness's `delay_ms=0` bucket dismisses immediately after `_on_theme_unhovered()` returns — the
+condition that should be *most* likely to catch the 200ms fade still in flight when `.stop()` runs
+inside the dismiss chain, which is the fallback's actual precondition
+(`_fade_overlay.isVisible()` still `True` at that instant). That this bucket *also* never produced
+`BOTH`, across two full runs, means the harness's wall-clock delay model does not reliably line up
+with the fade's real internal state at the moment `.stop()` is called — plausible causes include
+Qt animation start latency, event-loop scheduling jitter between `pump()`'s `QEventLoop` and the
+real animation's own `QTimer`-driven ticks, or the fade genuinely completing faster under this
+harness's synthetic drive than the delay buckets assume. None of these has been checked yet; this
+is flagged as the specific next question, not resolved here.
+
+The 10/12 real-session reproduction rate stands — it was observed via organic (non-harness-driven)
+usage and timestamped log cross-referencing, not invalidated by this sweep's failure to reproduce it.
+The gap is in this harness's ability to hit the same precondition on demand, not in whether the bug
+is real.
+
 ## What this investigation is NOT
 
 Not a fix for the `snap_theme_forward` fallback double-apply. Not a claim that the double-apply
 bug doesn't exist — it's precisely traced to source and reproduced 10/12 times in a real session log
-before this harness existed; this batch simply didn't hit it under its specific sweep parameters.
-Not a complete sweep — batches are intentionally spaced across sessions to sample timing-sensitive
-behavior broadly; this is one of several planned.
+before this harness existed; two full sweeps (72 trials) simply didn't hit it under either batch's
+timing parameters. Not a complete sweep — batches are intentionally spaced across sessions to sample
+timing-sensitive behavior broadly.
 
 ## Next step
 
-A second batch, per standing instruction: **hold for explicit signal before running it.** Consider
-narrowing the sweep toward conditions closer to the fallback's actual trigger window (e.g. delays
-timed against the fade's own duration constants rather than fixed round numbers) since batch 1's
-fixed buckets didn't reproduce `BOTH` at all.
+Per standing instruction: **hold for explicit signal before running further batches.** The open
+question is no longer "does more sweeping reproduce it" in the same shape — two identical-shaped
+batches already say no. Worth considering before a third batch: instrumenting `_fade_anim.state()`
+(or `_fade_overlay.isVisible()` itself) at the exact moment `hide_all_panels()` is called, rather
+than inferring fade-in-flight status from wall-clock delay — that would confirm or rule out the
+"harness delay doesn't track real fade state" hypothesis directly instead of guessing at new delay
+buckets.
