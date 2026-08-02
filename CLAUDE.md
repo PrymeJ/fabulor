@@ -165,6 +165,31 @@ The real library used for day-to-day testing has been ~400 books. That is not re
   three separate restyle fix proposals — but never quote an offscreen number as the live cost, and
   label every offscreen figure as such at the point it is written down, not once in a caveat further
   up the page.
+- **An offscreen harness can also be blind to correctness, not just biased on timing — those are two
+  separate risks.** The rule above is about MAGNITUDE (offscreen numbers read high). A different
+  failure showed up 2026-07-27 chasing a `visual_area` blur-clip bug: an offscreen harness returned
+  byte-identical output for a bug that was plainly visible live — it could not see the
+  compositing/paint-order defect at all, not just mismeasure its cost. Do not treat "offscreen
+  matches" as evidence a paint/compositing bug is fixed; only a live check settles that class of
+  claim. Also from that investigation: take the reported symptom literally rather than reinterpreting
+  it to fit the current theory (the actual word "thicker" ruled out every reveal-based explanation a
+  theory-first read would have kept alive), and verify the baseline before attributing a symptom to
+  your own change — three unrelated pre-existing bugs were found this way (a 10-day-old regression,
+  ghost transport buttons, non-blurring carousel thumbnails) that a "must be my change" assumption
+  would have missed.
+- **Establish a scope by diffing actual output against a baseline, not by reading call sites.**
+  Scoping the 2026-08-02 panel-backdrop-alpha restyle fix by reading which widgets *look* like they
+  read `panel_opacity_hover` would have missed two real cases: the override reaches
+  library/stats/tags/sidebar too (it flows through `_resolve_theme`, not a hardcoded list), and
+  `get_tags_stylesheet` was never even imported at the call site that was meant to invoke it. Diffing
+  every `get_*_stylesheet`'s actual output with the override at `None` vs. its real value caught both;
+  reading the call sites would not have.
+- **Before spending effort on a new fix, check whether an existing measurement harness can just
+  falsify the plausible-sounding claim behind it.** Three separate 2026-07-28 theme-hover fix
+  proposals were killed this way, each in minutes, by pointing an already-built measurement harness
+  at the specific claim motivating it ("a blur tween can't hitch a restyle," "a hover restyle is
+  cheaper," "the hitch would be hidden") rather than trusting the claim and building the fix first.
+  All three would otherwise have shipped.
 
 ---
 
@@ -924,6 +949,8 @@ The theme `bg_image` is painted by `content_container`'s `QWidget#visual_area { 
 ### DO NOT verify a settings-panel/tab visual layout bug with headless test scripts alone
 For this exact class of bug (widgets inside a settings tab not sizing/showing correctly), every headless Python verification attempt — `processEvents()` loops, manual `QPropertyAnimation.setCurrentTime()`, synthetic `QMouseEvent` delivery, even instantiating `MainWindow()` without actually opening the settings panel through its real animated entry path or switching to the real active tab — reported "looks correct" at some point, including for an attempt that rendered nothing at all in the live app. The gap between a script reporting correct geometry/`isVisible()`/stylesheet state and what the real, live, actually-opened app shows was real and repeated, not a one-off fluke. For any settings-panel/tab layout or paint bug: do not trust headless assertions as a substitute for the user checking the live app. Make the change, ask them to check, and treat their report as ground truth over any script's output. (Same underlying lesson as the "user sees the rendered pixels" rule at the top of this section — this is that lesson applied to a widget class where even careful headless verification kept giving false confidence.)
 
+**Scope note (2026-07-11):** this distrust is specific to the settings-panel/tab layout/paint bug class above, not a blanket "never trust headless tests" rule. Headless traces were the correct tool, and caught real bugs, for the Qt-KEYBOARD-FOCUS class of bug (the transport-shortcuts/focus-ownership investigation, see the "Keyboard focus ownership" rule) — two of those traces did give false signals, but from test-harness bugs, not from this same headless-vs-live gap, and were re-verified rather than distrusted wholesale. Check which class a new bug belongs to before deciding whether headless verification is trustworthy for it.
+
 ### DO NOT trust `QComboBox` popup pseudo-state QSS (`::item:hover`/`::item:selected`) or `::down-arrow` on this app's target desktop — paint them manually instead
 Confirmed on the primary dev desktop (KDE Plasma, Wayland, Fusion style — `QApplication.style().objectName() == "fusion"`, no `QT_QPA_PLATFORMTHEME` set), and reproduced in complete isolation outside the app: `QComboBox QAbstractItemView::item:hover` / `::item:selected` QSS rules do **not** reach the popup's paint at all (a rule swapped to glaring red produced zero visual change, ruling out a color/subtlety problem). The SAME desktop also ignores `QComboBox::down-arrow`'s `image: none` + border-triangle QSS trick — the native style paints its own arrow glyph there regardless. Fix for both, in `library.py`: `_ComboItemDelegate` (installed via `combo.view().setItemDelegate(...)`) paints popup item hover/selection backgrounds directly instead of relying on native pseudo-state painting; `_ThemedComboBox` (a `QComboBox` subclass, used in place of a plain `QComboBox()` for `sort_combo`/`style_combo`) overrides `paintEvent` to call `super().paintEvent()` first (background/border/text via the style still work fine — only the popup-item and arrow pseudo-states are broken) then paints its own triangle over just the arrow sub-control's rect. **Do not fill the arrow rect edge-to-edge** — `subControlRect(SC_ComboBoxArrow)` spans the FULL control height including the rounded top/bottom-right corners; a flat fill there squares off those corners — see the `corner_clearance` inset in `_ThemedComboBox.paintEvent`. Do not attempt a QSS-only re-fix for either of these without re-confirming on the affected desktop first — this is a known-failed approach (this exact area was attempted and abandoned once before, undocumented at the time). See SESSION.md, 2026-07-09 Session 1, for the diagnostic trail (including the isolation/screenshot tests) and NOTES.md for the writeup.
 
@@ -1411,116 +1438,12 @@ roughly halved. `restyle_for_backdrop_change` called `apply_full_pass` — the c
 visible **plus** deferred batch, synchronously — and that hardcodes `force_all_panels=True`, which
 is documented as startup-only and defeated the previous day's panel-skip. A backdrop change moves
 only `panel_opacity_hover` and sets no colours, so `apply_panel_alpha_pass` now restyles just the
-five surfaces that read it. **The scope was established by diffing every `get_*_stylesheet`'s output
-with the alpha override at `None` vs `1.0`, not by reading call sites** — which caught two wrong
-assumptions that would not have raised: "settings/speed/sleep only" was wrong (the override goes
-through `_resolve_theme`, so it also reaches library/stats/tags/sidebar), and `get_tags_stylesheet`
-was never imported. Dropping `mw.setStyleSheet(base)` (482ms, 46%) rests on proof of byte-identical
-output. **No new DO-NOT rule** — the transferable lessons are in NOTES.md: building stylesheet
-strings is 0.1ms while applying them is everything (so caching theme dicts cannot help), and this
-path's cost drifts run-to-run on identical code (~555 then ~390ms), a second sighting of the
-2026-08-01 87ms→410ms step — treat any before/after figure here as valid only within one run.
-Skipping hidden panels (~140ms) is deferred behind a Stats perf refactor and needs a deferred-open
-guard; see DEBT_INVENTORY.md. `149c647`.*
-
-*Previously: 2026-08-01 Session 3 — Book Detail panel blur. In Frosty glass mode the panel
-rendered translucent over a **sharp** backdrop, indistinguishable from Transparent, while the
-transport overlay kept grabbing a region the panel fully occludes (its `_active_panel` was still the
-UNDERLYING panel, so `_grab_and_blur` hid Stats but not Book Detail — photographing Book Detail into
-the cached pixmap and compositing it back underneath itself). Two premises in the brief were wrong
-and checking them changed the fix: opening Details issued **no** grab at all (the waste is a
-continuing loop, not a one-shot), and the dismiss path only *looked* correct because nothing was ever
-torn down. **Three failed attempts**, each cheap to have checked: reusing the shared overlay shipped
-invisible (`raise_()` does not cross parents — 37 correct calls, right rect, non-null pixmap, nothing
-on screen); a panel-owned child with `lower()` covered the panel's own QSS wash and made the
-foreground harder to read; and the first grab region was the wrong shape (over Stats the player
-behind is already blurred but *Stats itself is sharp*, and Stats is most of what is behind the
-panel). Shipped: the frost is a child of the panel with the wash composited into its pixmap, and the
-region is per-source — under the progress bar to 10px off the bottom over Stats, under the title bar
-to the bottom over Library. No dirty tracker, so the frost is static and the grab loop is gone. New
-rule above on the two Qt facts (`raise_()` parent boundary, `WA_StyledBackground` paint order) and
-the pixmap-dump diagnostic that settled them. Focus hand-back to the underlay is a real pre-existing
-bug, deliberately out of scope, recorded in DEBT_INVENTORY.md. `1b61312`.*
-
-*Previously: 2026-08-01 Session 2 — Tags list geometry. Rows drifted on scroll: the 450px
-viewport held 12.857 rows of a 35px pitch, and nothing set a scroll step at all. Fixed with row
-31→32 / spacing 4→5 (the +1 also makes badge centring exact — a 20px badge in a 31px row leaves an
-odd 11px to split), a viewport capped to 12 rows via `_tag_list_height()` **paired with a trailing
-`addStretch()`** (same trap as Session 1's Stats work), and wheel snapping mirroring the Stats
-rows. Horizontally, the two gaps around the scrollbar are separate levers — the container's right
-margin shrinks the ROW, the list layout's right margin moves the BAR — now named with a diagram
-after repeatedly pulling the wrong one; plus a pre-existing overhang fixed (the container's
-horizontal size policy was `Preferred`, claiming a sizeHint 3px wider than its viewport). Scroll
-step is 6 rows, deliberately unlike Stats (1) and the Library (a page): each matches how its list is
-read. New Debugging-discipline entry on tests that share the code's assumption — the probe's own
-check encoded the same N-vs-N−1 gaps error and endorsed a viewport 5px too tall. NOTES.md records
-why the 50-tag cap is a UI constraint (a real widget per tag, eagerly, every refresh), not a storage
-one. Folded into the same session: the **chapter popup's** time and title columns each sat 1px
-inside the main window's equivalents (each now has its own inset a pixel tighter than `H_MARGIN`,
-which itself stays 10 — lowering it would move the time column's already-correct left edge), and
-fixing the title's inset surfaced a long-standing clip: `populate()` elided against one margin while
-the delegate painted into a rect inset on both, making every elided title 9px wider than the space
-it was drawn into. `_title_draw_width()` is now the single source for both. `3f8c24f`, `b5892db`,
-`ac439f6`.*
-
-*Previously: 2026-08-01 Session 1 — Stats panel: right-click parity, the 2px inset, the clipped
-8th row. Right-click now opens Book Detail in the Stats lists too (`BookDayRow`,
-`FinishedBookThumb`, and `_claim_container_input`'s boundary-pixel router — all three, or
-right-click works everywhere on a row except its seam); `BarChartWidget` stays left-only since its
-click navigates to a date, not a book. The rows layout's 2px top inset was removed: it was
-documented as scroll-step alignment and load-bearing, but that rationale had been **inferred the
-previous session and written down as fact** — `DEBT_INVENTORY.md` never contained it, the inset
-traces to `a9c3815` (a cosmetic pass halving spacing 4→2), and the mechanism it described does not
-exist (`setSingleStep` is never called in `stats_panel.py`). Real alignment comes from the
-row-quantized wheel snapping. The clipped 8th row (no-Finished-section case only) is fixed by
-`_cap_rows_viewport` + a paired `addStretch()`; **two attempts failed first** because constraining
-the scroll area's height at all withdraws it from its column's stretch and drifts the whole block
-down — new Debugging-discipline entries cover both that trap and the inferred-rationale one.
-`899284e`, `64e2be6`, `ed29384`, `b2042f2`.*
-
-*Previously: 2026-07-30 Session 4 — library search operators. Added `@name` (author only) and
-`=NNNN` (exact year), each resolving a demonstrated collision with the bare search's
-title-OR-author-OR-narrator matching, not filling out a scheme: `james baldwin` returns both a
-biography's title and a novel's author, `1984` returns both a title and a year. Click-to-filter
-emits these forms so the benefit arrives passively; **narrator deliberately stays bare** — a
-narrator operator was considered and rejected as too rare to earn one, and the resulting asymmetry
-was accepted explicitly. Fixed a latent bug found while implementing: negative (BCE) years never
-worked in the filter, because both bare `<`/`>` branches tested `str.isdigit()` (False for
-`"-500"`), so the DB could store years the search could not express — the same `isdigit()` defect
-fixed in the Year *field* earlier the same day, with `_classify_filter` carrying the matching gap
-and misfiling `=1984`/negative years under the *text* persistence toggle. `_YearFilterValidator`
-caps year expressions at 4 digits per number as a pure grammar that never consults the library —
-the same reasoning that keeps year filters from ever reddening (`<50` vs. a half-typed `<500` is
-undecidable from input alone, and a library-aware rule makes one keystroke behave differently per
-user). No new DO-NOT rule; the load-bearing constraints (branch order, `_classify_filter` parity)
-are recorded in the Library Panel search bullet. Discoverability deferred to the planned in-app
-help section — a search-field tooltip was built and removed, and Settings > Library measured and
-rejected, both on live/measured evidence recorded in TODO.md so neither is re-attempted.
-`tests/test_search_filters.py` (91 tests, incl. one pinning branch order); suite 400 passed.
-`456796c`, `6f82141`.*
-
-*Previously: 2026-07-30 Sessions 1-3. Sessions 1-2 hunted a long-standing,
-unreproducible "clicking blank space filters another book's author" report to its root: `editorEvent`
-checked the event *type* but never the *button*, so a right-click over metadata text armed a
-click-to-filter target that right-click never consumes, and it fired on the next unrelated
-left-click (`90bb36a`). Four root causes were proposed and falsified first — the sharpest lesson is
-Pryme's: **don't ask the app whether the click was real, when the app's false belief that a click
-happened IS the bug**; the only discriminating measurements were ones the app doesn't author
-(`QCursor.pos()`, `event.spontaneous()`). A new CLAUDE.md rule covers the related failure of
-treating a user's report of what they DID as a competing theory rather than as data. Session 3
-fixed three separate text-input defects all first reported as one "strange behaviour": Cut via the
-context-menu icon silently reverting the edit (a `Qt.Popup` reads as focus-left-the-field, and the
-menu was missing from both panels' `safe` allowlists); Qt turning a stationary click into a
-drag-select, which truncated double-clicked words and made a following Cut lose data (fixed app-wide
-by `DragSafeLineEdit`, distance **and** dwell — distance alone was tried and was insufficient); and
-the caret jumping to Title regardless of which field was clicked. Emptying a field then exposed two
-latent bugs — no way back into edit mode with nothing rendered (fixed with read-only placeholders),
-and a `None` title crashing the library filter *between* `beginResetModel`/`endResetModel`, which
-stranded the model and broke the panel for the rest of the session (`8678d68`). Four new rules
-above (DragSafeLineEdit, popup allowlists, `finally`-guaranteed `endResetModel`, plus the Session-2
-report-is-data rule). `tests/test_cover_theme_pending.py` deleted — it had never passed, being
-written against three names that never existed in `app.py`; suite is now 309 passed / 0 failed, the
-first clean run in weeks.*
+five surfaces that read it (scope found by diffing stylesheet output — see the Debugging discipline
+bullet above). **No new DO-NOT rule** — the transferable lessons (stylesheet strings are
+free to build, applying is everything; this path's cost drifts run-to-run on identical code) are in
+NOTES.md/the Debugging discipline section above; treat any before/after figure here as valid only
+within one run. Skipping hidden panels (~140ms) is deferred behind a Stats perf refactor and needs a
+deferred-open guard; see DEBT_INVENTORY.md. `149c647`.*
 
 *Previously: 2026-07-28 — theme hover/preview reliability, across two sessions. Session 1 fixed
 three bugs (a hover during a snapback fade was stashed then discarded so no preview ever appeared;
@@ -1532,10 +1455,8 @@ first hover after opening Settings: a 700ms retry polling against a 1500ms blur-
 `PanelManager.call_when_panels_settled` (predicate re-check, NOT a `finished` subscription — see
 the new rule above), then the remaining ~1.1s closed by shortening the blur-in to 400ms scoped to
 the Themes tab. New rule added covering both halves of the guard. The transferable lesson across
-both sessions is in NOTES.md: three separate approaches were killed by pointing an existing
-measurement harness at a claim that merely looked plausible ("a blur tween can't hitch a restyle",
-"a hover restyle is cheaper", "the hitch would be hidden") — each was checkable in minutes and each
-would otherwise have shipped.*
+both sessions (measure a plausible-sounding claim before building around it) is now a Debugging
+discipline bullet above.*
 
 *Previously: 2026-07-27 — `visual_area` blur clipped to the panel-occluded region, so the ~30px
 sliver beside an open panel stays sharp (`ClippedBlurEffect`, `ui/visual_area_blur.py`). Shipped on
@@ -1550,253 +1471,31 @@ reparented in, so it got its own effect); and the tassel staying stiff on click 
 (`hideEvent` was resetting the kick, which the blur grab's ~64ms hide/show then wiped). Ended by
 skipping the transport grab under the deliberately-opaque Timeline tab — measured at ~15 grabs/sec ×
 ~4.4ms of invisible work, which was delaying the tassel's 33ms timer to 22.8fps. **No new DO-NOT rule**
-— the transferable lessons are process-shaped and live in NOTES.md: take the reported symptom
-literally rather than reinterpreting it to fit the current theory ("thicker" ruled out every
-reveal-based explanation), verify the baseline before attributing a symptom to your change, and treat
-offscreen harnesses as unable to see compositing/paint-order defects in this area (they returned
-byte-identical output for a bug that was plainly visible live). TESTING.md gained a live-only
+— the transferable lessons (take the reported symptom literally, verify the baseline before
+attributing a symptom to your own change, offscreen harnesses can be blind to compositing/paint-order
+defects entirely) are now Debugging discipline bullets above. TESTING.md gained a live-only
 "Panel blur" section. The ~64ms grab feedback loop is untouched and is the next piece of work.*
 
-*Previously: 2026-07-11 Session 4 — Book Detail Panel keyboard shortcuts, extending the
-focus-ownership invariant from Session 3 into a panel with far more clickable-then-hideable
-widgets than any panel tested so far. Left/Right cycles Stats/History/Tags/Cover; top-level
-F/Del-x/k arm the same finished-toggle/remove/lock actions their buttons already call;
-History gets Up/Down row selection + Del/Space/Enter; Cover gets Up/Down through covers and a
-`+` add-slot (first attempt gave `+` real Qt focus to reuse its `:hover` QSS — reverted live
-when it broke Left/Right tab-cycling; fixed instead with a `kbdSelected` dynamic QSS property,
-keeping the panel as sole real-focus-holder). Four live-found bugs fixed in this same arc, two
-of which generalized the Session 3 invariant rather than being one-offs: (1) three more
-widget-deletion-strands-focus sites beyond the ones Session 3 fixed (tag-chip remove button,
-History row trash button, bulk-delete button disabling itself) — fixed individually AND with a
-new general safety net, `_ensure_panel_owns_focus()`, checked on every keypress so future sites
-self-heal; (2) `Up`/`Down` while editing a metadata field fired History row-selection instead
-of cycling fields — a single-line QLineEdit has no native Up/Down handling, so the keys
-propagated to the panel's dispatch exactly like the Session 3 Up/Down-in-a-field bug, just
-inside one panel's own local dispatch instead of the global one; (3) the modal file-picker's
-Escape was intercepted by the panel's QApplication-wide eventFilter before the dialog's own
-native cancel ever ran — reported by the user as "backwards from expected," which correctly
-overrode an initial (wrong) assessment that it was normal modal-dialog behavior; fixed with an
-`activeModalWidget()` guard, a genuinely new gotcha this invariant hadn't covered before. Two
-new CLAUDE.md paragraphs added to the existing "Keyboard focus ownership" rule (both the full
-and condensed copies) for the widget-deletion generalization and the modal-dialog exception —
-no new standalone rule, since both extend rather than replace Session 3's invariant. One design
-question (whether Cover's tab-local key overrides should be "consistent" by removing top-level
-actions from History/Tags) was raised and explicitly kept as-is: the asymmetry is the SAME
-tab-local-wins pattern History's own Del/Space/Enter already use uncontroversially, not a
-special case. `pytest tests/ -q` — 174 tests (`tests/test_book_detail_panel_keys.py` extended,
-`tests/test_cover_panel_nav.py` added). Full trace-by-trace root-cause writeup in NOTES.md.*
-
-*Previously: 2026-07-11 Session 3 — main-window transport keyboard shortcuts + the keyboard
-focus-ownership invariant. Added Space/volume/speed/skip/chapter/mute/undo as global shortcuts
-(`shortcuts.py` gained real Shift/Ctrl/Alt modifier support — a bare-key binding now matches only
-an unmodified press, so Ctrl+T no longer rotates the theme), each calling the exact method its
-on-screen button/wheel already uses (`_nudge_volume`/`_nudge_speed` extracted so the wheel and the
-new keys share one implementation). This surfaced three related keyboard-focus bugs, all traced
-live before any fix (per the project's live-trace-first norm) and fixed as one invariant rather
-than three patches: (1) always-on chrome widgets (speed button, sidebar triggers, sleep label,
-undo overlay, status/no-book buttons) accepted keyboard focus, so `Space`/arrows landed on them
-instead of the dispatcher — swept to `Qt.NoFocus`, mirroring the transport buttons' existing
-treatment; (2) panels that grab focus on open (Library, ChapterList) never released it
-symmetrically on close (`hide()` on a still-focused widget silently re-grants it focus — confirmed
-by direct trace, not assumed — so `clearFocus()` must run AFTER `hide()`, never before); (3)
-Settings/Speed/Sleep/Stats/Tags/BookDetail never claimed focus on open at all, so a panel opened
-over an already-focused one (Book Detail from Library is the one reachable case,
-`open_book_detail` being intentionally ungated) left the panel underneath's widget bleeding
-keys through. Fixed via one invariant, both halves required together: `PanelManager
-._claim_panel_focus`/`_release_panel_focus` (ownership, called from every panel's open/close
-flow) + `MainWindow._focus_allows_global_shortcuts()` (dispatch, gates `keyPressEvent` on
-`focusWidget()` being `None`/`MainWindow`). Three new CLAUDE.md rules (keyboard focus ownership,
-the NoFocus-sweep dependency, don't skip the helpers on a new panel). `KEYBINDINGS.md` updated
-with the transport-key table and the invariant explained inline. Two new test files/extensions
-(`tests/test_shortcuts.py` extended, `tests/test_transport_shortcuts.py` added) — see TESTING.md
-for the live-verification checklist this session's Qt-focus-specific bugs required (headless
-traces caught real bugs here, unlike the settings-panel-layout class of bug documented earlier —
-see NOTES.md for why headless traces were trustworthy this time but two of the traces still gave
-false signals from test-harness bugs, not code bugs, and had to be re-verified).*
-
-*Previously: 2026-07-10 Session 5 — Grid-view-mode geometry, final pass. All five library view
-modes (1-per-row, 2-per-row, 3-per-row, Square, List) now have clean, drift-free scroll
-boundaries with no stray gaps. List got the same 1px top/bottom drift fix Square had (remainder
-absorbed into a top viewport margin). 3-per-row was aligned to Square (same 3-column shape,
-same margins) — the width fix was clean, but copying Square's exact remainder-push margin
-mechanism was tried twice and reverted twice (produced a ~50px gap, since 3-per-row's much
-taller row leaves a far bigger leftover than Square's near-exact fit); shipped as a flat
-eyeballed 2px push instead. 2-per-row's cover was grown 118×180 → 128×195 alongside its cell
-height and top-push, solved as one system (not one variable at a time, which had stalled through
-several rounds) — `2×237+3=477` exactly, no 3rd-row sliver, near-flush top gutter. No new
-DO-NOT rule; the two transferable lessons (remainder-push margins only work invisibly when the
-leftover is small; a delegate's cover-draw size and its cell height are independently sized code
-paths that must be changed together) are in NOTES.md "Grid-mode geometry, final pass," not
-elevated to app-wide rules. `06ab86b`, `ef4b826`, `352b72f`, `f0c0f62`, `3e929b4`.*
-
-*Previously: 2026-07-10 Session 2 — Library sort-field + view-mode keyboard shortcuts. While
-the book list has focus (not the search field), `t/a/r/d/y/p/f` drive the sort dropdown and `1`–`5`
-the view-mode dropdown, mirroring the two mouse-only controls. Added to the existing `_list_key`
-monkeypatch (not a second key path); decision logic split into `_apply_sort_shortcut`/
-`_apply_view_mode_shortcut` (unit-tested via `tests/test_library_shortcuts.py`, 14 cases) and every
-path reuses an existing dropdown handler (`_on_sort_changed`/`_toggle_sort_direction`/
-`_on_view_mode_changed`) — no duplicated sort/view logic. Active sort field's letter toggles
-direction; inactive switches at the field's fixed default; `p`/`f` silent no-op when Progress/
-Finished absent; active view digit is a no-op. Every branch consumes the key (no type-ahead / no
-bubble-up) and carries its own `isAutoRepeat()` guard. No new DO-NOT rule — preserves existing
-behavior and reuses existing handlers rather than resolving a hard-won bug. See the new
-"Sort/view-mode keyboard shortcuts" bullet under Library Panel and `KEYBINDINGS.md`. `c3bedce`.*
-
-*Previously: 2026-07-10 Session 1 — 2-per-row grid cover enlargement (113×172 → 118×180, cell
-140×226 → 145×234), continuing the Square-mode geometry work onto a second view mode. Introduced
-**column-aware margins** (`BookDelegate._TWO_PER_ROW_LEFT_MARGIN`), the first per-column (not just
-per-mode) margin in this codebase — needed because a uniform per-cell margin can only ever produce
-a middle gap that's double the outer margin, and the user wanted the middle gap SMALLER. Two new
-DO-NOT rules added above: (1) don't size a fixed-width IconMode cell with zero slack against the
-nominal viewport width — `QListView.frameWidth()` (1px, both sides) silently collapsed the grid to
-1 column when a cell size summed exactly to 292px; fixed via `cell_w=145` against the frame-
-adjusted 290px. (2) don't use a uniform per-cell margin when a mode needs a middle gap smaller
-than its outer margins — use the column-aware pattern instead. Also reused the Square-mode
-"boundary-margin swap" (top=0/bottom=8) to kill a vertical sliver, then applied a **flat, eyeballed
-9px** top viewport margin per explicit user request (not derived from cell/viewport arithmetic —
-the user was explicit that further precision here was not wanted and that prior precise
-calculations in this same task had already proven wrong live). `d74ebee`. 
-
-*Previously: 2026-07-09 Session 1 — Library panel keyboard navigation, plus three follow-up
-fixes surfaced by live-testing it. Arrow-key row/column selection, Enter/Space to play,
-Alt+Enter to open detail, Tab toggle exclusive to search-field↔list, and a `_prefix` (title-
-starts-with) search syntax — see the "Keyboard navigation" bullets under Library Panel above
-and `fe4f0f9`. Two new DO-NOT rules from what live-testing found afterward, both added above:
-(1) `QComboBox` popup `::item:hover`/`::item:selected` and `::down-arrow` QSS are silently
-ignored on the primary dev desktop (KDE Plasma/Wayland/Fusion) — confirmed via a glaring-red
-QSS swap that produced zero visual change, and reproduced in total isolation outside the app;
-fixed with a custom `_ComboItemDelegate` (popup item paint) and `_ThemedComboBox` (arrow paint,
-`3e8c241`/`8515605` — includes a corner-squaring regression caught and fixed live in
-the same pass; `f6388d2`, same session, is an unrelated keyboard-focus-return fix, not part of
-this one). The user confirmed this specific styling gap had already been attempted and
-abandoned once before, roughly 3 months prior, undocumented at the time — do not re-attempt a
-QSS-only fix without re-confirming on the affected desktop first. (2) `open_book_detail` now
-drops any request while the panel is already visible, regardless of book — Alt+Enter on an
-already-open book was re-triggering the slide-in animation every press, and arrow-navigating to
-a DIFFERENT book while detail was open could hijack the visible panel onto it (`c521c39`). No
-automated test coverage added for any of this — it's Qt widget/focus/paint-driven, not a pure
-state machine like the seek logic `tests/` already covers; verification was entirely live,
-including two rounds of screenshot-based isolation testing for the QComboBox desktop quirk (see
-NOTES.md for the full diagnostic trail). `KEYBINDINGS.md` gained a new Library section
-correcting its previous "library is mouse-only, not a planned gap" note, now stale.*
-
-*Previously: 2026-07-08 Session 1 — `G`/`P`/`A`/`S`/`Z` shortcuts open Tags/Playback/Stats/
-Settings/Sleep, mirroring `L`'s exact shape: open-only (no toggle-closed branch), the same
-`COOLDOWN_DROP` (500ms) guard, and gated on `is_overlay_open_or_committed()` before delegating
-to each panel's `_open_*_flow`. Each handler's availability check mirrors that panel's real
-mouse-reachability: `G`/`A`/`S` (Tags/Stats/Settings — never hidden by `_set_interface_visible`)
-gate on `db.get_book_count() > 0`, matching the sidebar's own right-click-open guard; `P`/`Z`
-(Playback/Sleep) gate on their trigger button's `isHidden()`, since those buttons are already
-hidden whenever no book is loaded. `tests/test_shortcuts.py` extended to cover the five new
-bindings plus a no-duplicate-keys check across the whole table. `KEYBINDINGS.md`'s main-window
-table and planned-keys note updated to mark all five implemented. No new DO-NOT rule — mirrors
-`L`'s already-established shape exactly. (`634eef5`.)*
-
-*Previously: 2026-07-07 Session 3 — per-theme library color pass, alphabetically through the
-letter S (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/
-`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/
-`_fill`/`library_input_bg`/`_text`). Several themes gained these keys for the first time (were
-previously falling through to "The Color Purple" inheritance or a generic fallback); others had
-existing hover-alpha values corrected (several were tuned down from very high values like 0.5
-toward the more typical 0.1–0.25 band). Pure data/tuning pass — no code or architecture change,
-no new DO-NOT rule. Remaining letters (T onward) tracked in TODO.md. (`ae4441c`.)*
-
-*Previously: 2026-07-06 (Session 3) — extracted global key handling into `shortcuts.py`
-(`ShortcutDispatcher`) and added the `L` → open-library shortcut. `MainWindow.keyPressEvent`
-was a hand-written C/T/Q if/elif chain with T's spam-guard as loose `_theme_rotate_cooldown`/
-`_theme_rotate_pending` attrs; it's now a one-line delegate to a data-driven dispatcher — an
-`Action` enum, a `DEFAULT_BINDINGS` table (passed as a constructor arg so a future Config-backed
-source can swap it wholesale — persistence NOT built this task), and a declarative per-binding
-`GuardKind` (`NONE` / `COOLDOWN_COALESCE` = T's exact leading-then-coalesced-trailing behavior /
-`COOLDOWN_DROP` = L's drop-repeats-during-slide). The dispatcher decides bind-ness + guard ONLY;
-each action's app-state gating (C's clickability, Q's no-book state, L's panel/empty checks) stays
-in its handler. New `L` is open-only (no-op when the library/any full panel is open or in the empty
-state; sidebar-open uses the existing `_open_library_flow` queued flow), so `PanelManager` gained
-`is_any_full_panel_visible()` (everything `is_any_panel_visible` checks minus the sidebar; the
-latter now delegates to it — single panel list). Explicitly OUT of scope and untouched: `ChapterList`
-keys, the four widget-scoped `Escape` handlers, all wheel input, and Q's eventual fate (migrated
-as-is with its testing-only comment). New `KEYBINDINGS.md` is the full human-reference input map
-(global keys, chapter-list keys, text-field Escapes, mouse/wheel, and the explicit note that the
-library view has no keyboard nav). `tests/test_shortcuts.py` pins the three guard behaviors. No new
-DO-NOT rule — the migration preserves behavior exactly rather than resolving a hard-won bug. The
-audit that preceded this (full pre-migration key inventory) is `review/Review_260706_1.md`.
-Follow-up (same session): added a per-binding `Binding.allow_autorepeat` (default False) — fixes a
-confirmed live bug where holding `C` re-toggled the chapter dropdown every autorepeat tick
-(flicker/fade-restart); `handle_key_event` drops a held-key repeat (returns False, falls through
-like an unbound key) unless the binding opts in. Deliberately per-binding, NOT dispatcher-wide, so
-the future hold-to-repeat keys sketched in `KEYBINDINGS.md` (skip/seek/volume) can enable it without
-a today-introduced regression. All four current bindings keep the default (none should repeat).
-The autorepeat fix later moved to `ChapterList.keyPressEvent` too (its own C/Escape close branch was
-the real machine-gun source once the focused list stole the held-C repeats — 163 repeats reached the
-list vs 2 the dispatcher; see SESSION.md). Second follow-up (same session): fixed a pre-existing
-panel-overlap concurrency bug the `L` shortcut surfaced — added `is_overlay_open_or_committed()` and
-gated every overlay-open path so only one opens at a time (new DO-NOT rule above; analysis in
-`review/Review_260706_2.md`, gate test `tests/test_panel_exclusion.py`).*
-
-*Previously: 2026-07-06 — List-mode author click-to-filter (segmented) + a scrollbar-space fix.
-Author click-to-filter now works in List mode too (commit `799bcf9`), reusing the grid mechanism:
-`_list_author_layout` is the single source of truth both `_paint_list_row` (draw) and
-`_list_author_segment_at` (hit-test) call, so click always matches what's drawn — the extraction was
-verified byte-identical to the prior render before the hit-test was added. Separately (`9c20f40`),
-List rows now lay out against a stable width (`_row_content_width` = view width − scrollbar extent)
-so right-aligned author/time don't shift when filtering toggles the scrollbar. **1-per-row's
-time/progress got the same fix (`9f8b06f`) via the generalized `_row_content_width`/`_row_stable_right`.**
-New DO-NOT rule ("DO NOT lay out a library row from the live viewport width"). One accepted
-limitation in DEBT_INVENTORY.md: the first segment of an elided multi-author is unreachable when
-hover-expanded (inherent invade geometry). Also earlier this
-session (`d37507c`): List title/author now measured in their real draw fonts (14px bold / 13px
-regular), fixing near-miss title overflow; three follow-up attempts at the separate title↔author
-visual-gap issue were reverted (full arc in SESSION.md/NOTES.md, both 2026-07-06).*
-
-*Previously: 2026-07-05 — click-to-filter on author/narrator/year added to the library grid
-(1-per-row/2-per-row only; commits `5f637dc`..`a7271a5`, see SESSION.md for the full per-commit
-narrative and NOTES.md for three bugs worth remembering the shape of). Two "What's Built" lines
-under Library Panel. Fixed per-field-type row slots replace the old redistribute-to-fill layout in
-`_paint_one_per_row` (a missing field now leaves its row blank instead of letting adjacent fields
-shift) — chosen partly to keep hit-zone height a per-view-mode constant rather than a per-book
-variable, given how much effort other timing-sensitive bugs in this project (chapter oscillation,
-sidebar re-arm) have already cost. Same-day follow-up work (`6847330`/`f778828`/`a7271a5`) extended
-toggle-off into a full revert-to-explicit-text mechanism reachable from every angle (re-click, tag
-click, library reopen, left-click into the field) and added a Book Detail Panel tag-chip inert
-state when its tag is already the active filter (`panels.py:open_book_detail` snapshots the
-library's search text through `load_book`'s new `active_search_text` param — no prior plumbing
-existed for `BookDetailPanel` to read it). One new DO-NOT rule: every direct `search_field.setText`
-must go through the `_programmatic_search_update` guard or `clear_tag_filter_if_active()` — two
-different pre-existing unguarded call sites silently broke the revert mechanism the same day it was
-introduced, hitting the identical bug shape twice (NOTES.md).*
-
-*Previously: 2026-07-04 Session 1 — idle preloader now warms `_sized_cover_cache` off-thread to
-kill the library slide-in stall (first-time LANCZOS-in-`paint()` was the cause). Split `_lanczos_scale`
-into a thread-safe `_lanczos_qimage(QImage→QImage)` + a main-thread `QPixmap` tail; `CoverLoaderWorker`
-gained a sized mode emitting `sized_cover_loaded(book_id, dev_w, dev_h, QImage)`; new
-`BookDelegate.cover_cell_size()` keys the preloader identically to `_get_sized_cover` (verified all
-five modes); new `panel_manager.is_any_panel_animating()` + `_preload_paused()` gate; removed the 4s
-app-start preload timer (armed once after startup, runs only after 5s idle); `PRELOAD_BATCH_SIZE`
-3→4. Separately, scroll position is now preserved across view-mode switches by capturing the topmost
-book's `_filtered` index (via the extracted `_first_visible_row()`) and `scrollTo(PositionAtTop)`
-after — replacing the raw-pixel-`value()` carry that landed on a different book per mode. New DO-NOT
-rule (worker-thread/DPR/keying invariants); "What's Built" cover-loading + `_sized_cover_cache`
-descriptions updated; existing `_lanczos_scale` UnsharpMask rule repointed to `_lanczos_qimage`.
-Session 2 (theme-hover restyle perf, `_load_svg_pixmap` LRU, redundant-`on_theme_changed` removal —
-by Fable 5) added no new DO-NOT rules; writeups in NOTES.md + SESSION.md. Cost/warming-time table and
-the first-page-per-mode future idea recorded in NOTES.md.*
-
-*Previously: 2026-07-01 Session 2 — logging infrastructure added (plumbing only). New
-`logger_setup.py`: `setup_logging()` configures the `fabulor` root logger once (rotating file
-handler, 2 MB × 3, at `platformdirs.user_log_dir("fabulor")`; level from `FABULOR_LOG_LEVEL`,
-default WARNING; file sink only, no console handler), called first thing in `main.py`. Startup
-message logged at WARNING (not INFO) so it lands at the default level. Silent module-level
-`logger` instances added to `player.py`/`app.py`/`ui/theme_manager.py` — no call sites yet, those
-land incrementally. New "Logging" subsystem entry under What's Built; `logger_setup.py` added to
-the file tree. No new DO-NOT rule (pure additive plumbing, no hard-won bug). Windows-port note
-recorded in NOTES.md: log dir uses the one-arg `user_log_dir("fabulor")` form vs the two-arg
-`user_data_dir("fabulor", "fabulor")` used elsewhere.*
+*Previously: 2026-07-11 Session 3 — main-window transport keyboard shortcuts, which surfaced the
+three related keyboard-focus bugs behind the standing "Keyboard focus ownership" rule above (see
+that rule for the invariant itself). `shortcuts.py` gained real Shift/Ctrl/Alt modifier support in
+the same session (a bare-key binding now matches only an unmodified press, so Ctrl+T no longer
+rotates the theme). `KEYBINDINGS.md` updated with the transport-key table.
+(`tests/test_shortcuts.py`, `tests/test_transport_shortcuts.py`.) The headless-vs-live trust
+distinction this session established is now folded into the settings-panel headless rule's scope
+note above. Full trace-by-trace writeup: NOTES.md.*
 
 *Changelog entries older than 2026-07-13 (2026-06-13 through 2026-06-27 Session 3) were moved to
 NOTES.md 2026-08-02 — see "CLAUDE.md changelog tail, extracted 2026-08-02" there for the full
 entries verbatim, per the 2026-08-02 file-health audit (`review/Review_260802_CLAUDEMD.md`,
-category 2). One correction was made before extraction: the oldest entry (2026-06-13, the "What's
-Built" audit) referenced `streak_longest_fill`/`streak_finished_dot` as current fact; those theme
-keys were replaced by `streak_grid_outline`/`streak_grid_dot` on 2026-06-18 (the entry immediately
-following it at the time) and do not exist in current `themes.py` — the NOTES.md copy reflects the
-correction.*
+category 2). One correction was made before that extraction: the oldest entry (2026-06-13, the
+"What's Built" audit) referenced `streak_longest_fill`/`streak_finished_dot` as current fact;
+those theme keys were replaced by `streak_grid_outline`/`streak_grid_dot` on 2026-06-18 (the entry
+immediately following it at the time) and do not exist in current `themes.py` — the NOTES.md copy
+reflects the correction. A second pass the same day moved a further 17 entries (2026-07-01 through
+2026-08-01) — see "CLAUDE.md changelog tail, extracted 2026-08-02 (second pass...)" immediately
+below the first extraction in NOTES.md. Every entry moved in either pass had already had its
+load-bearing rule or lesson promoted into a standing CLAUDE.md rule or Debugging discipline
+bullet before being moved; nothing here was deleted, only relocated to where the file's own
+Conventions section says session narrative belongs.*
+
