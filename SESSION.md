@@ -1,3 +1,92 @@
+## Session Summary — 2026-08-02/03 — `investigate/restyle-cost-depth-and-narrowing`: depth/narrowing dead ends, a retracted root cause, and a real bug found and fixed
+
+New branch, two investigations that led nowhere on their own terms, one root-cause claim made and
+then explicitly retracted mid-session, and — via a live repro Pryme supplied that no harness could
+reach — a real bug found, designed against its area's own history of two prior regressions, and
+shipped.
+
+**Part 1 (depth provenance).** The restyle-cost work from the day before found cost tracks tree
+depth in a synthetic harness. Checked whether the real app's tree had gotten deeper over the last
+two months via `git worktree` at four checkpoints straddling the StreakGrid commit. **Flat at 11
+everywhere.** Widget count grew modestly (606→632), depth didn't move at all. No narrative forced
+onto this: the investigation states plainly it cannot explain why the cost feels worse now than
+remembered, only that tree-depth growth isn't why.
+
+**Part 2 (narrowing, disproven twice over).** Pryme's own proposal — apply only the base sheet on
+hover-out/snapback instead of the full pipeline — was live-tested. Disproven on cost (534.5ms median,
+statistically indistinguishable from the ~615ms full pipeline; the base sheet already IS ~95% of the
+cost) AND found to cause a real "Frankenstein" visual bug when tried: Sleep/Speed's hand-rolled
+per-button color ramps (a previously undocumented architectural wart — two independent
+implementations of the same bypass, invisible to every `themes.py` stylesheet function) went stale,
+and the transport buttons' hover rule never repainted. Full 6-mechanism theme-coloring inventory
+built to trace it. Patch fully reverted before the next investigation began.
+
+**The double-fire root cause — claimed, then retracted.** Live testing of the reverted patch
+surfaced a reproducible "double-fire" symptom on gutter-dismiss-while-hovering. Root-caused (at the
+time) to `snap_theme_forward`'s `_fade_overlay.isVisible()` fallback never being cleared by `.stop()`
+(which emits no `finished`). Built an independently-verified harness per a detailed spec (pixel +
+stylesheet ground truth only, never internal flags; observational mechanism tracing via a second
+signal slot and a wrapped `_apply_stylesheets`). Batch 1 found and fixed a bug in the harness itself
+first — the pixel sample point `(15,15)` landed on a title-bar glyph, not `bg_main`, causing a
+uniform 100% false-fail across all 36 trials; live pixel-grid dumping found the one bad point in a
+40-point grid. Corrected batches 1 and 2 (72 trials): 0 failures, but the claimed mechanism
+(`mechanism=BOTH`) never fired even once, including at `delay=0ms` which should have most favored
+it. Batch 3 redesigned around that gap — dropped the delay axis (proven not to reach the mechanism;
+`_close_settings_flow` calls `_on_theme_unhovered()`/`snap_theme_forward()` synchronously, no
+event-loop gap for a delay to land in) and instead snapshotted `_fade_anim.state()`/
+`_fade_overlay.isVisible()` directly plus traced each apply's real caller. **Result: the claimed
+fallback branch never fired in any trial.** The actual mechanism was `snap_theme_forward`'s
+stash-drain path — a second `_on_theme_unhovered()` call (the harness's own trial structure calling
+it twice) correctly stashed, then correctly drained, landing at `theme_manager.py:1180`. That's
+working-as-designed, not a bug. Retracted explicitly rather than left standing, per the CLAUDE.md
+rule this branch's own history argues for.
+
+**The real bug — found because a harness structurally couldn't reach it.** Pryme reproduced a
+genuine snapback failure twice, live, by hand: hover a swatch, edge slowly into the gutter, wait,
+dismiss. Log correlation (both repros, ~14 minutes apart, different swatch/theme pairs) found the
+same signature both times: `ThemeItem.leaveEvent` and `swatch_box.leaveEvent` firing in the same
+millisecond at a position within `_MOUSE_JITTER_PX` (2px) of the recorded enter — not a stationary
+cursor, but a genuine departure whose short boundary-crossing distance happened to fall inside the
+tolerance. `_on_theme_unhovered()` never ran; the stuck preview showed for 7s and ~34s respectively,
+self-correcting only when the eventual dismiss forced a direct re-apply. Confirmed structurally
+(not just by re-testing) independent of blur/panel-backdrop mode — the branch that misfired never
+reads that state at all. No harness could have found this: every batch of the double-fire harness
+called `_on_theme_unhovered()` directly, bypassing the exact layer that failed.
+
+**Design before build, per explicit task.** Required first step: read and restate, precisely, both
+2026-07-28 regressions this exact guard has already survived (a consumed-reference design that fired
+~70 spurious snapbacks in 5s; a rolling-reference design that killed the 80ms debounce ~15x/sec
+during real cursor motion) — both shared one root error (inferring genuineness from a cursor delta
+between two time-adjacent samples instead of trusting Qt's own visibility signal). The design's
+biggest finding: the task's "dismiss must not trust prior hover state" requirement was **already
+satisfied** by existing code (`_close_settings_flow`'s unconditional `_on_theme_unhovered()` call,
+confirmed correcting the theme in both repro logs) — only the dwell-time window needed new
+machinery. Proposed a periodic timer-driven backstop doing an ABSOLUTE cursor-vs-rect containment
+check (never a delta between two samples), which is what keeps it clear of both historical failure
+modes structurally, not by chance.
+
+**Shipped (`1a82c11`).** `_swatch_leave_backstop_timer`, 500ms repeating `QTimer`, armed/disarmed
+only inside `_mark_theme_applied` (the sole writer of `_is_hover_active`) on its transitions — so it
+only ever runs while a preview is genuinely showing. Its tick reuses the exact containment check the
+hidden-widget branch's own `SWATCH-LEAVE-SUSPECT` probe already does, and calls the existing
+`_on_theme_unhovered()` if it catches a leave the jitter guard missed. Per Pryme's explicit
+requirement — "negligible" has been wrong before on this exact codebase, most recently the whole
+`_apply_stylesheets`-cost saga — every tick logs its own cost unconditionally and permanently
+(`[SWATCH-BACKSTOP-COST]`), not added later if it's ever found not-negligible. `swatch_box` stored as
+a plain attribute on `ThemeManager` (matching the existing `cover_pool_btn`/`theme_widgets` pattern)
+so the tick can read it without a second `leaveEvent` wiring anywhere in the Themes tab hierarchy —
+the standing rule against that stays intact. Full suite green (`pytest tests/ -q`). Live-verified by
+Pryme.
+
+Five new `review/` documents this arc:
+`Investigation_260802_restyle_cost_depth_and_narrowing.md`,
+`Investigation_260802_double_fire_reentrancy.md`,
+`Investigation_260802_swatch_leave_jitter_suppression.md`,
+`Design_260803_swatch_leave_jitter_backstop.md`, plus the harness itself
+(`tools/snapback_dismiss_harness.py`) and its results CSVs kept in `review/`.
+
+---
+
 ## Session Summary — 2026-08-02 Session 1 — Panel-backdrop switch: ~1040ms → ~555ms by scoping the restyle
 
 Reported live: clicking a panel-backdrop mode freezes the app for 1-2 seconds, the button not even

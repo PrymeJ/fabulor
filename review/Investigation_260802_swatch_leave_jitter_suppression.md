@@ -155,16 +155,22 @@ doesn't depend on a single event being correctly classified — are not evaluate
 attempt MUST re-read that CLAUDE.md rule's full history first: this exact area has broken twice
 before via plausible-seeming cursor-delta redesigns, both live-confirmed regressions.
 
-## Next step
+## Next step — FIXED (2026-08-03, `1a82c11`)
 
-Not yet started. Options worth weighing before touching this code, per the standing branch
-discipline (investigate first, fix only when asked): (a) a periodic timer-based re-check of cursor
-position vs. `swatch_box`'s bounds, independent of whether a `leaveEvent` fired at all, as a
-belt-and-suspenders backstop; (b) widen the jitter check's reference to also consider whether the
-CURRENT cursor position (not just the reported leave position) is outside `swatch_box`'s rect,
-which the hidden-widget branch already does (`SWATCH-LEAVE-SUSPECT`, lines 2062-2073) but the
-visible-widget jitter branch does not. Both need to be checked against the two previously-failed
-redesigns' exact failure modes before being attempted live.
+Designed first (`review/Design_260803_swatch_leave_jitter_backstop.md`), then implemented: option
+(a) from the original list below, a periodic timer-based re-check of absolute cursor position vs.
+`swatch_box`'s bounds, independent of whether a `leaveEvent` fired at all. The design doc found that
+the "dismiss must not trust prior hover state" half of the problem was already solved by existing
+code (`_close_settings_flow`'s unconditional `_on_theme_unhovered()` call) — only the DWELL window
+needed new machinery. Live-verified working by Pryme. See the design doc and CLAUDE.md's own rule
+(added alongside this fix) for the full mechanism and cost analysis.
+
+Original options considered before the design pass: (a) a periodic timer-based re-check of cursor
+position vs. `swatch_box`'s bounds — the one shipped; (b) widen the jitter check's reference to also
+consider whether the CURRENT cursor position (not just the reported leave position) is outside
+`swatch_box`'s rect, which the hidden-widget branch already does (`SWATCH-LEAVE-SUSPECT`, lines
+2062-2073) but the visible-widget jitter branch does not — not pursued, since (a) achieves the same
+outcome without touching the jitter guard's own logic at all.
 
 ## Confirmed independent of panel-backdrop mode / blur (2026-08-03)
 

@@ -1,8 +1,12 @@
 # Design: backstop for the swatch-boundary snapback-suppression bug
 
 **Date:** 2026-08-03  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:**
-Design only. No source files touched. Written per Pryme's explicit task: design a fix for the bug
-documented in `review/Investigation_260802_swatch_leave_jitter_suppression.md`, do not implement it.
+**IMPLEMENTED and live-verified (`1a82c11`).** Originally written as a design-only document per
+Pryme's explicit task (no source changes); the design below was then approved and built as-is,
+including the mandatory per-tick cost log Pryme required before agreeing to implement (see the
+"Cost analysis" section below and CLAUDE.md's own rule on this fix for the shipped log line name).
+Left in place as the design record — nothing below was changed after implementation except this
+status line and the "Open items" section at the bottom.
 
 ---
 
@@ -277,15 +281,19 @@ showed) — never twice for the same correction.
 - Any narrowing of `_MOUSE_JITTER_PX` or the jitter comparison's logic, per the task's explicit
   instruction and the "why 2026-08-02 doesn't justify touching it" reasoning above.
 
-**Open items for Pryme to react to before implementation, if this direction is approved:**
-- The proposed 500ms interval is a starting guess, not a measured value — happy to test a couple of
-  values live once built, or take a different number now if preferred.
-- Where exactly `swatch_box` should be looked up from inside `ThemeManager` for the timer tick
-  (a stored reference captured once at Themes-tab construction time, vs. a fresh attribute-chain
-  lookup on each tick) is an implementation detail not resolved here — both are cheap; the design
-  doesn't require picking one yet.
-- Whether the timer should also stop when the Themes tab itself is switched away from (leaving
-  Settings open but on a different tab) — `_on_themes_tab_left`'s own hover-active-region rule
-  already reverts on leaving `swatch_box`, which includes switching tabs, so this may already be
-  covered by the existing leave-then-backstop interaction without special-casing it; worth
-  confirming live rather than designing in a special case preemptively.
+**Open items — resolved at implementation time:**
+- **Interval:** shipped at the proposed 500ms, untouched. Not re-tuned against live data; if the
+  cost log (below) ever shows a reason to, that's a separate, future change.
+- **`swatch_box` lookup:** shipped as a stored reference — `mw.theme_manager.swatch_box`, assigned
+  once in `main_window_builders.py.build_themes_tab` (a plain attribute assignment alongside the
+  existing `cover_pool_btn`/`theme_widgets` pattern, not a fresh lookup chain per tick).
+- **Tab-switch-away case:** not specially cased. `_on_themes_tab_left`'s existing hover-active-region
+  behavior (leaving `swatch_box`, which switching tabs does) already reverts the preview through the
+  normal path, disarming the backstop timer via `_mark_theme_applied`'s transition detection — no
+  separate handling needed, as anticipated above.
+- **The cost-log requirement (added during review, before Pryme agreed to implement):** every tick
+  logs unconditionally, permanently — not just while investigating whether the timer's idle cost
+  matters. Pryme's stated reasoning: "negligible" has been wrong before on this exact codebase (the
+  `_apply_stylesheets` cost saga started from a similar assumption), and this timer can stay armed
+  for several seconds during deliberate slow hovering — a real, not hypothetical, usage pattern for
+  this app. See `[SWATCH-BACKSTOP-COST]` in `theme_manager.py._check_swatch_still_hovered`.
