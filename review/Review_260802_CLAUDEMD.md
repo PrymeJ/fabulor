@@ -399,13 +399,19 @@ Debt" section as its own source of truth, with DEBT_INVENTORY.md deliberately th
 section is correctly located per that file's own stated design, even though its VT-open-issues
 sub-bullets are narrative-shaped rather than one-liner-shaped (see NARRATIVE §2 instead).
 
-**Adjacent hygiene finding, outside CLAUDE.md itself but discovered while checking the above:**
-there are **two divergent `DEBT_INVENTORY.md` files** — `./DEBT_INVENTORY.md` (97 lines, header:
-"PROBABLY NOT ALL ITEMS UP-TO-DATE AND SHOULD NOT BE TAKEN AS GROUND TRUTH; NEEDS REVISION") and
-`./review/DEBT_INVENTORY.md` (100 lines, header: "Consolidated"). They diverge starting at line 3.
-It's ambiguous which one CLAUDE.md's various DEBT_INVENTORY.md cross-references are meant to
-target, and one self-declares itself unreliable. Not a CLAUDE.md content defect, but flagged since
-it affects confidence in cross-references made throughout this audit.
+**Correction (this finding was wrong as originally filed):** the first draft of this report
+flagged "two divergent `DEBT_INVENTORY.md` files" (`./DEBT_INVENTORY.md` and
+`./review/DEBT_INVENTORY.md`) as an ambiguity affecting confidence in cross-references. That was
+filed without reading `review/DEBT_INVENTORY.md`'s own header, which resolves the question
+directly — its second line states: *"**STALE — frozen snapshot, not the current debt index.**
+This file is part of the 2026-06-12 `review/Review_260612_1–8.md` audit batch and was
+deliberately left untouched after that date (see SESSION.md, 2026-07-01 Session 3). The live,
+actively-maintained debt index is..."* (pointing at the root `./DEBT_INVENTORY.md`). There is no
+real ambiguity: the root file is canonical and current; the `review/` copy is an intentional,
+self-declared historical snapshot, not accidental drift. Retracted — not a finding. (The
+synthesizing pass should have opened both files and read past line 1 before writing this up;
+noting the correction rather than silently removing it, per the standing rule against letting a
+retracted claim quietly vanish.)
 
 ---
 
@@ -484,6 +490,8 @@ hand" (96–98) is a single dense paragraph with zero narrative fat.
    place or treat it as evidence for archiving the pre-2026-07-13 changelog tail generally (per
    the structural observation in §2's changelog discussion). Not resolved here per the task's
    explicit instruction not to pick a side on ambiguous supersession.
-3. **The two divergent `DEBT_INVENTORY.md` files** (§5) — affects the reliability of every
-   DEBT_INVENTORY.md cross-reference in CLAUDE.md; needs a decision on which is canonical (or
-   whether to merge/delete one), independent of this audit.
+
+(A third item, "two divergent DEBT_INVENTORY.md files," was listed here in the first draft and
+has been retracted — see §5's correction note. `review/DEBT_INVENTORY.md` self-declares as a
+frozen 2026-06-12 snapshot and names the root file as the live index; there was nothing to
+decide.)
