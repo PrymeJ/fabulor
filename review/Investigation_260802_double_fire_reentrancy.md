@@ -158,12 +158,94 @@ before this harness existed; two full sweeps (72 trials) simply didn't hit it un
 timing parameters. Not a complete sweep — batches are intentionally spaced across sessions to sample
 timing-sensitive behavior broadly.
 
+## Batch 3 (redesigned): the root cause claimed earlier in this document is WRONG — retracted here
+
+**Retraction, per the standing rule on correcting a claim explicitly rather than letting it stand:**
+the root-cause section above says the double-apply comes from `snap_theme_forward`'s
+`_fade_overlay.isVisible()` fallback (lines 444-448 of `theme_manager.py`), never cleared because
+`.stop()` emits no `finished`. **That mechanism was never observed to fire, in any batch, and is not
+what batch 3 found.** The claim was built on a plausible reading of a code comment (line 346's
+"the settings-close snap-back starts a real 750ms fade") without tracing the actual call stack that
+produces the extra apply — exactly the kind of unchecked inference CLAUDE.md's methodology section
+warns against, and it went unnoticed for two full batches because those batches' verdicts (pixel +
+stylesheet) were correct regardless of which internal mechanism produced them.
+
+### Redesign and what it changed
+
+Batches 1-2 swept a wall-clock delay between `_on_theme_unhovered()` and `hide_all_panels()`. That
+delay cannot matter: `_close_settings_flow` (panels.py:1379) calls `_on_theme_unhovered()` and
+`snap_theme_forward()` back-to-back with no event-loop turn between them, regardless of how long the
+harness waited beforehand — confirmed by re-reading `snap_theme_forward`'s own comment ("this method
+runs immediately after `_on_theme_unhovered()`, in the same call stack with no intervening
+event-loop turn"). The delay axis was dropped. In its place, the harness now snapshots
+`_fade_anim.state()`, `_fade_overlay.isVisible()`, and `_fade_in_flight` directly at two checkpoints
+— immediately after `_on_theme_unhovered()` returns, and immediately after `hide_all_panels()`
+returns — plus records each `_apply_stylesheets` call's real caller via `traceback.extract_stack()`,
+rather than only counting calls.
+
+### What batch 3 (6 trials, swatch-count × dwell-bucket only) actually found
+
+- **6/6 pass on both ground-truth checks.** Same clean result as batches 1-2.
+- **dwell=40ms (3 trials):** no preview ever applied (no-op guard, as expected) → 0 applies, nothing
+  to snap back from.
+- **dwell=120ms (3 trials, the real exercise):** exactly 1 `_apply_stylesheets` call in all 3, and
+  the state snapshots plus the call's own traceback settle the mechanism precisely:
+  1. `_on_theme_unhovered()` (called directly by the harness) starts the real 200ms snapback fade —
+     confirmed by the snapshot immediately after it: `fade_state=Running, overlay_visible=True`.
+  2. `hide_all_panels()` → `_close_settings_flow()` calls `_on_theme_unhovered()` a **second time**
+     (the harness's own call chain re-invokes the same method `_close_settings_flow` calls). With a
+     fade genuinely `_fade_running`, this second call hits the `elif _fade_running and not
+     _hover_may_interrupt:` branch (theme_manager.py:989) and **stashes itself into
+     `_pending_fade_call`** — it does not apply anything itself.
+  3. `_close_settings_flow` then calls `snap_theme_forward()`, which stops the running animation
+     (clearing `_fade_in_flight`, confirmed by the post-checkpoint snapshot: `fade_state=Stopped`),
+     finds `_pending_fade_call is not None`, and **drains it** via the stash-drain branch
+     (theme_manager.py:402-432) — a full re-call to `_on_theme_changed(..., fade_ms=0, ...)`.
+  4. That re-call, with `fade_ms=0`, takes the plain synchronous branch (theme_manager.py:1176-1181)
+     and calls `_apply_stylesheets` at **line 1180** — confirmed directly via the wrapped call's own
+     recorded caller (`caller=_on_theme_changed:1180`) in all 3 dwell=120ms trials, and independently
+     corroborated by exactly 3 `[SNAP-DRAIN-TRACE] snap_theme_forward DRAINING pending_fade_call`
+     log lines appearing in the raw session log — matching the 3 trials exactly.
+
+**The `_fade_overlay.isVisible()` fallback branch (line 444) never fired in any observed trial.**
+Its own precondition (`isVisible()` still `True` when `snap_theme_forward` checks it) was never
+actually tested by this harness, because the stash-drain branch (which runs earlier in
+`snap_theme_forward`, at line 402, before the `isVisible()` check at line 444) already produced a
+result and the method's flow does not prevent both from firing in principle — but in every observed
+trial, the stash was present, so the drain always ran, and no evidence exists here about what the
+`isVisible()` fallback does independently of it.
+
+### What this means for the original "root cause"
+
+The **symptom** (a redundant, cost-only second `_apply_stylesheets` call on gutter-dismiss-while-hovering)
+is still real and still consistent with the 10/12 organic-session log observation reported earlier.
+What was wrong is the **named mechanism**. The actual mechanism, confirmed by direct observation in
+this batch: a **second, harness-internal call to `_on_theme_unhovered()`** (from
+`_close_settings_flow`'s own call to it, arriving while the first, harness-driven call's fade is
+still running) gets correctly stashed, then correctly drained by `snap_theme_forward` — which is
+**exactly the intended, working behavior** documented in
+`review/Investigation_260720_snap_drain_deferred_gap.md` (the stash-drain mechanism was built and
+shipped specifically to fix a prior bug where a stashed call was NOT drained and left a stale theme
+showing). In other words: **this harness's own trial structure (`_on_theme_unhovered()` called
+directly, then `hide_all_panels()` which calls it again) manufactures the exact stash/drain sequence
+that Fabulor's real single-click dismiss path was built to handle correctly** — and it does handle
+it correctly, landing on the right final theme every time (confirmed by both ground-truth checks,
+6/6).
+
+**Open question, now correctly scoped:** does a REAL user's single gutter click ever produce this
+same stash — i.e. does `PanelManager._close_settings_flow`'s own first `_on_theme_unhovered()` call
+(not a harness-injected second one) ever land while an independent fade is already running from some
+other trigger (e.g. an auto-rotation, or a hover that hadn't yet settled)? That is a materially
+different question from what this harness's trial structure tests, and it has not been answered by
+any batch so far. The 10/12 organic-log observation may reflect this real single-call case, the
+harness's double-call artifact (if the organic session also happened to call
+`_on_theme_unhovered()` twice in close succession, e.g. via a rapid re-hover), or something else
+entirely — not yet distinguished.
+
 ## Next step
 
-Per standing instruction: **hold for explicit signal before running further batches.** The open
-question is no longer "does more sweeping reproduce it" in the same shape — two identical-shaped
-batches already say no. Worth considering before a third batch: instrumenting `_fade_anim.state()`
-(or `_fade_overlay.isVisible()` itself) at the exact moment `hide_all_panels()` is called, rather
-than inferring fade-in-flight status from wall-clock delay — that would confirm or rule out the
-"harness delay doesn't track real fade state" hypothesis directly instead of guessing at new delay
-buckets.
+Per standing instruction: hold for explicit signal. If a fourth batch is run, it should test the
+SINGLE-call case directly (hover once, dismiss once, no harness-injected second
+`_on_theme_unhovered()` call) to determine whether the stash/drain sequence — now confirmed to be
+the real mechanism, not the `isVisible()` fallback — can arise from ordinary single-click usage, or
+only from a double-call pattern this harness's own structure introduced.
