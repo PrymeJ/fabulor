@@ -10,6 +10,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ## Summary index
 
 ### Right-click / theme-restyle performance
+- [2026-08-02] Theme-apply ordering/deferral proposed for book-switch flow stutter (cover-theme on) — directional (A→B stutters, B→A doesn't), root cause not instrumented yet
 - [2026-08-02] **ROOT CAUSE FOUND:** ANY `mw.setStyleSheet()` call costs **~436ms live** (offscreen harness reads ~25% high) regardless of argument — full sheet, 1 rule, identical string, and EMPTY string all measure the same; Qt does not no-op an identical sheet and clearing is not cheaper. Cost tracks VISIBILITY (~22% higher with the four heavy panels shown, at identical widget count), and DEPTH is the multiplier. **(A), (E) and (F) are all now dead** — splitting the sheet saves nothing, emptying the root saves nothing (the 8ms figure was a measurement error), and E's guard sites fire only 1-5×/session while the existing no-op guard already catches 44. **Only depth reduction remains → Stats refactor.** See NOTES.md 2026-08-02
 - [2026-08-02] Settings dismiss with a preview showing blocks ~600ms before the slide starts (vs ~1.2ms without) — same root call; a timer-fallback fix is NON-VIABLE (the wait is synchronous; the snapback fade never renders a frame)
 - [2026-08-02] Stats refactor has TWO restyle levers, not one: reduce nesting DEPTH **and** reduce how many widgets are VISIBLE at once (~22% swing on its own, measured at identical widget count). Fold both into the Stats perf refactor rather than treating them as separate work
@@ -85,6 +86,41 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
+
+- **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
+  Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
+  the reverse (B→A) does not. Root cause not yet instrumented — likely tied to `_apply_stylesheets`
+  paying its full ~640ms pipeline (see 2026-08-02 narrowing report) synchronously during/near the
+  flow animation window, but the directional asymmetry is unexplained and must be captured before
+  any fix is attempted.
+
+  **Proposed design (not yet built, needs instrumentation first):** reframe from "skip invisible
+  work" (dirty-flag idea, rejected — on a book-switch everything genuinely needs repainting
+  eventually, so nothing is actually skippable) to **ordering/deferral** — apply what's visible
+  now, queue what isn't, drain the queue once the flow animation completes.
+  - **Immediate tier** (runs synchronously, feeds the flow animation / visible chrome): step 1
+    (`mw.setStyleSheet(base)`), title/content, icons, sidebar/chapter-UI if visible, library_panel
+    if visible. Matches the report's existing "visible surfaces" ~278ms bucket.
+  - **Deferred tier** (queued, not skipped): settings/speed/sleep panels, stats/book_detail
+    panels, the TAIL (`_refresh_panel_visuals`, `theme_applied.emit`,
+    `update_theme_list_visuals`). Drains once flow-animation-complete fires — there is already a
+    completion signal for this, since it's the same event that was colliding with theme
+    application before the 2026-07-2x flow-animation fixes.
+  - **Panel-open-during-drain interrupt case** — two options, decide by measurement not guess:
+    (a) defer the panel open until the queue drains (simplest, but adds latency to a
+    user-initiated action — usually the thing to protect most), or (b) jump the queue: apply just
+    that panel's slice immediately out of order, open it, resume draining the rest (more
+    responsive, more moving parts). Pryme's instinct is (a) will rarely if ever be perceptible —
+    build (a) first, measure, only build (b) if the wait is shown to be noticeable.
+
+  **Before building anything:** instrument to explain the A→B vs B→A asymmetry specifically —
+  worth checking whether it correlates with which theme is already applied vs. being applied (i.e.
+  whether cost differs between "restyle to theme already partially warm" vs "cold"), since that
+  could either explain the direction or turn out unrelated. Do not assume the ordering/deferral
+  design fixes the directional bug until the asymmetry itself is understood — it may be a separate,
+  compounding issue.
+
+  Not scheduled — instrumentation-first per standing methodology, own session.
 
 - **[2026-07-29] App-wide performance pass needed; theme restyle cost is one confirmed contributor.**
   While instrumenting the right-click investigation above, a WARNING-level probe
