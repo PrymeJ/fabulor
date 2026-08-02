@@ -2211,7 +2211,7 @@ THEMES = {
         "slider_chapter_fill":           "#F0BC6C",
         "slider_vol_bg":                 "#543F2C",
         "slider_vol_fill":               "#E4A859",
-        "dropdown_curr_chap":            "#F0BC6C",
+        "dropdown_curr_chap":            "#9E7C47",
         "sidebar_text":                  "#F0BC6C",
         "sidebar_text_hover":            "#F3DCB9",
         "sidebar_opacity":               0.81,
@@ -4213,8 +4213,7 @@ def get_tags_stylesheet(theme_name="default"):
             padding-top: 0px;
         }}
         /* List-row dots only — NOT the picker swatches (20x20) or the tag
-           panel's header dot (14x14), which share these object names but sit
-           outside a list row and are correctly positioned.
+           panel's header row and are correctly positioned.
 
            Why it needed re-nudging: the dot is a 20px label centred in the row.
            At the old 31px row height the leftover was an odd 11px so the dot
