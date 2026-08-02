@@ -278,6 +278,38 @@ rate before proposing a new one.** Had that counter existed, E would have been r
 writeup rather than after — and the same counter is the cheapest way to tell whether any future
 "this looks redundant" is worth acting on.
 
+### See also: `Audit_ThemeReach_260720.md` — still-current call-site inventory (its BUGS are closed)
+
+A read-only audit from 2026-07-20 that nothing in the docs referenced, so it was invisible unless
+opened by chance — which is how it came to be forgotten. Recording the pointer here so the next
+person hits it.
+
+**Its two new findings are FIXED and should not be re-investigated.** Path A (`_set_bg_suppressed`
+reading the raw `_active_display_theme` with no hover check) and Path D (`_grab_and_blur` baking a
+hover-tinted frame into the blur pixmap) were both closed by `0439c76` — the field was privatized
+behind `get_active_theme()`, and `refresh_dirty` gained a hover gate.
+
+**What is still current and useful is §1: the complete inventory of every `setStyleSheet()` call
+site that reaches `main_window`/`content_container`**, with triggers, plus an explicit list of the
+repo-wide calls that are OUT of scope and why. Re-verified 2026-08-02 against current code and it
+still holds structurally — there is exactly **one** writer to the root
+(`theme_manager.py:1525`, the dispatcher) and **two** to `content_container` (the dispatcher at
+:1532, plus the one deliberate bypass below). Two additions since July: `apply_panel_alpha_pass`
+(a new dispatcher path, 2026-08-02) and `tags_panel` moved into the fast pass.
+
+**One consequence for the performance work specifically:** `MainWindow._set_bg_suppressed`
+(`app.py:1502`) is a *live, deliberate* bypass of the dispatcher — now hover-safe, but it calls
+`content_container.setStyleSheet()` directly on every book-load and empty-state transition, on a
+call graph with no coupling to ThemeManager. **Tonight's measurements never counted it**, because
+they only instrumented `_apply_stylesheets` call sites. It is likely cheap (the
+`title_bar + content_container` step measures ~20ms) but it is an uninstrumented restyle firing on
+a hot path, and it should be measured rather than assumed before the Stats session treats the
+per-call inventory as complete.
+
+Methodological note for that session: §1's approach — inventory every call site, classify by
+target, state explicitly what is excluded and why — is a better starting point than the partial
+grep-built picture this entry's investigation began from.
+
 ### Still unexplained
 
 The run-to-run instability. **Note that the empty-sheet `min=2.4 / max=723.2` spread was NOT an
