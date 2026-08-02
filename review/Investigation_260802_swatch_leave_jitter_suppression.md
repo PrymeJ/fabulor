@@ -165,3 +165,24 @@ CURRENT cursor position (not just the reported leave position) is outside `swatc
 which the hidden-widget branch already does (`SWATCH-LEAVE-SUSPECT`, lines 2062-2073) but the
 visible-widget jitter branch does not. Both need to be checked against the two previously-failed
 redesigns' exact failure modes before being attempted live.
+
+## Confirmed independent of panel-backdrop mode / blur (2026-08-03)
+
+Pryme reproduced the same escape-to-gutter symptom under both Frosty glass and Transparent
+panel-backdrop modes, then asked whether the transport-bar blur's grab/hide cycle could be
+disturbing the hover/hover-out/preview mechanism differently under each mode — worth checking
+given CLAUDE.md's own history of blur/theme-hover interactions elsewhere in this codebase.
+
+It doesn't apply here, and not just by testing — the code structurally rules it out.
+`_on_themes_tab_left`'s `if not visible:` branch (`theme_manager.py:2049-2079`) is the ONLY place
+this method consults widget visibility/hidden-by-blur-grab state at all — that branch handles
+the OTHER known failure mode (a synthetic leave from the blur grab's hide/show cycle, guarded by
+`isVisible()` and, when suspicious, by the `SWATCH-LEAVE-SUSPECT` position check). **Both
+confirmed repros hit the sibling branch instead** — the `visible=True` jitter check at lines
+2080-2088 — which never reads blur state, panel-backdrop mode, or anything about the transport
+bar at all. It is a pure two-cursor-position comparison (last recorded enter vs. reported leave).
+Since the mechanism that actually failed doesn't consult blur/backdrop state in either direction,
+there is no code-level reason for backdrop mode to change its behavior — consistent with Pryme's
+live observation that the escape reproduced identically in both modes. No further log
+correlation needed for this question; it's a structural ruling-out, not a coincidence needing
+more samples.
