@@ -5,6 +5,13 @@ the day it was written, and nothing here is authoritative about how the app work
 maintained documents are all at the repo root: `CLAUDE.md`, `NOTES.md`, `SESSION.md`, `TODO.md`,
 `DEBT_INVENTORY.md`, `TESTING.md`, `KEYBINDINGS.md`.
 
+**Start at [`INDEX.md`](INDEX.md)** — one line per document with its actual finding, not just its
+title. Read it before starting any perf/theme/panel investigation.
+`Report_260715_apply_stylesheets_avoidable_work.md` sat here for two weeks answering almost the
+exact question a later session re-investigated from scratch, because nothing summarized what it
+found. **Update `INDEX.md` in the same commit that adds a new file here** — an index that drifts out
+of sync is worse than no index, because it reads as complete.
+
 ## Naming
 
     Type_YYMMDD_topic.md

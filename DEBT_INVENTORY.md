@@ -109,19 +109,14 @@ That `review/` already held three closely-related July perf reports
 2026-08-02 restyle question) is the cost of the misfiling: the 2026-08-02 investigation rebuilt a
 partial call-site picture from greps without knowing they existed.
 
-All entries below are **diagnosis-era documents describing bugs that have since been fixed**; the
-value left in them is methodology and inventory, not open findings. Do not re-investigate their bugs
-without first checking the fix commits named.
-
-| file | what it is | status |
-|---|---|---|
-| `review/Review_260720_theme_reach.md` | **§1 is a complete inventory of every `setStyleSheet()` call site reaching `main_window`/`content_container`**, with triggers and an explicit out-of-scope list | Bugs (Paths A, D) FIXED by `0439c76`. **§1 re-verified 2026-08-02 and still current** — best starting point for the Stats perf session |
-| `review/Report_260720_theme_bleed_pass1.md` | Theme-bleed containment, Pass 1 (state-read containment) | Superseded by the shipped fixes; NOTES.md 2026-07-20/21 is the durable record |
-| `review/Investigation_260720_noop_guard_masks_stashed_apply.md` | The guard-masking diagnosis (theme stuck unapplied 75+ s) | FIXED by `933f7f2` (`_mark_theme_applied`) |
-| `review/Investigation_260720_snap_drain_deferred_gap.md` | `snap_theme_forward`'s drain missing the deferred-pass surfaces | FIXED — the drain now re-calls `_on_theme_changed` with `fade_ms=0` |
-| `review/Investigation_260720_fade_orphan_race.md` | `_pending_fade_call` orphan-then-late-resume race | Addressed across `c8fd7f6` / `8243959` / `4700b31`; see the CLAUDE.md stash-tuple rule |
-| `review/Investigation_260721_hover_interrupts_hover.md` | Hover-on-hover interrupt behaviour | FIXED by `e27d47c` / `57a7dd0` |
-| `review/Snapshot_260717_theming_state.md` | Snapshot of the theming/animation pipeline as of `5cfe3a3` | **Point-in-time snapshot, now stale** — the fast/deferred split and the panel-visibility gate have both changed since; read CLAUDE.md + NOTES.md 2026-08-01/02 for current behaviour |
+All seven are **diagnosis-era documents describing bugs that have since been fixed**; the value left
+in them is methodology and inventory, not open findings. Do not re-investigate their bugs without
+first checking the fix commits — **see `review/INDEX.md` for the one-line finding and status of each
+(and of every other document in `review/`)**; not duplicated here to avoid the two summaries
+drifting apart, the same risk CLAUDE.md already flags for `upsert_book`/`upsert_books_batch`. The one
+exception worth a standing pointer: `review/Review_260720_theme_reach.md` §1 (the
+`setStyleSheet`-reach inventory) is still current and re-verified as of 2026-08-02 — best starting
+point for the Stats perf session.
 
 (`CLAUDE_CHAT_INDEX.md` is a different thing — an index of architecture *chat windows*, not of these
 files.)
