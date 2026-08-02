@@ -46,7 +46,7 @@ theme's stylesheet **never applied at all**, for the rest of the session, with n
 7. **Confirmed via full-log grep: `_flush_deferred_restyle_now: ENTRY theme='Anomander'` never
    appears anywhere in the entire session's log.** The deferred pass (Stats/Library/Book-Detail's
    own `setStyleSheet`, the `theme_applied` signal driving Tags/Sleep/Speed's per-button colors —
-   see the sibling investigation, `Investigation_SnapDrainDeferredGap_260720.md`, for the full list
+   see the sibling investigation, `review/Investigation_260720_snap_drain_deferred_gap.md`, for the full list
    of what depends on this) was never scheduled or run for `Anomander`, at any point.
 
 ## The mechanism, stated plainly

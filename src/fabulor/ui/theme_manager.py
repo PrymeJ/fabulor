@@ -221,7 +221,7 @@ class ThemeManager(QObject):
         the one confirmed cross-file read of the old (pre-rename) bare
         _active_display_theme field (app.py's _set_bg_suppressed), which read
         it directly with no hover check and could paint content_container with
-        a previewed theme. See Audit_ThemeReach_260720.md."""
+        a previewed theme. See review/Audit_260720_theme_reach.md."""
         if self._is_hover_active:
             if self._cover_theme_active and self._cover_theme is not None:
                 return self._cover_theme
@@ -257,7 +257,7 @@ class ThemeManager(QObject):
     def _on_fade_finished(self):
         # TEMP VERIFICATION LOGGING (2026-07-20): this method previously had ZERO
         # logging of its own, which is why the no-op-guard-masks-stashed-apply
-        # investigation (Investigation_NoOpGuardMasksStashedApply_260720.md)
+        # investigation (review/Investigation_260720_noop_guard_masks_stashed_apply.md)
         # could not confirm whether THIS is the drain path that hits the guard.
         # Remove once confirmed.
         logger.warning(
@@ -370,7 +370,7 @@ class ThemeManager(QObject):
         # drain left Stats/Tags/Library/Sleep's preset buttons showing the PREVIOUS
         # theme indefinitely — not a hover-preview bleed, a plain stale-theme bug,
         # reproducible on pre-blur code too. See
-        # Investigation_SnapDrainDeferredGap_260720.md for the full trace.
+        # review/Investigation_260720_snap_drain_deferred_gap.md for the full trace.
         #
         # Forcing fade_ms=0 gets back the same "instant, no new animation" behavior
         # the original fix needed (theme_manager.py's fade_ms==0 branch applies
@@ -648,7 +648,7 @@ class ThemeManager(QObject):
         theme_name/hover, the guard matched and silently skipped the real apply —
         confirmed live to strand a theme's stylesheet unapplied for 75+ seconds,
         across Library/Stats/Tags/Book-Detail and Sleep/Speed's per-button colors.
-        See Investigation_NoOpGuardMasksStashedApply_260720.md for the original
+        See review/Investigation_260720_noop_guard_masks_stashed_apply.md for the original
         diagnosis and the plan file's audit for the full write/read-site trace
         that confirmed no code path depends on the old (pre-apply) write timing.
 
@@ -821,7 +821,7 @@ class ThemeManager(QObject):
             # the no-op-guard-masks-stashed-apply bug (theme_name was only ever
             # assigned to _active_display_theme_internal by a call that got
             # stashed and never reached _apply_stylesheets) — see
-            # Investigation_NoOpGuardMasksStashedApply_260720.md. Remove once
+            # review/Investigation_260720_noop_guard_masks_stashed_apply.md. Remove once
             # confirmed/fixed.
             _ever_applied = getattr(self, '_theme_ever_applied', None)
             _suspect_masked_stash = (_ever_applied != theme_name)

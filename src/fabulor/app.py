@@ -1497,7 +1497,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # direct read could paint content_container with a theme the user was
         # only hovering, not the actual active one. get_active_theme() resolves
         # against hover state so this can never happen. See
-        # Audit_ThemeReach_260720.md (Mechanism A / Pass 1).
+        # review/Audit_260720_theme_reach.md (Mechanism A / Pass 1).
         theme_name = self.theme_manager.get_active_theme()
         self.content_container.setStyleSheet(
             get_player_stylesheet(theme_name, suppress_bg_image=suppressed)

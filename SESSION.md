@@ -1688,7 +1688,7 @@ Plan-first, per the night's established pattern: the user's own investigation pr
 scoped what to trace (the debounce's independence from the stash logic, whether the two theme-A/B
 combinations were already handled differently) and what NOT to do (touch the debounce, touch the
 drain-time discard logic, implement anything yet). The investigation
-(`Investigation_HoverInterruptsHover_260721.md`) confirmed the 80ms debounce (not 90, as the user
+(`review/Investigation_260721_hover_interrupts_hover.md`) confirmed the 80ms debounce (not 90, as the user
 had estimated) is fully upstream and irrelevant to the fix; found a second real hover-entry path
 (the cover-pool button, undebounced by design) that needed covering in verification; and confirmed,
 by tracing rather than assuming, that hover-interrupts-hover and hover-interrupts-genuine-selection
@@ -1802,7 +1802,7 @@ different approach: instead of continuing to hunt individual spurious-trigger so
 time, a read-only audit was run first (`Explore` subagent, no code changes) to map the FULL set of
 code paths by which hover/preview theme state could reach `content_container`/`main_window`, so a
 structural fix could be scoped correctly before touching anything. Full audit deliverable:
-`Audit_ThemeReach_260720.md`.
+`review/Audit_260720_theme_reach.md`.
 
 **Audit result:** confirmed the widget ownership tree (unambiguous), found one real bypass of
 CLAUDE.md's invariant #4 (`_apply_stylesheets` as sole dispatcher) — `MainWindow._set_bg_suppressed`

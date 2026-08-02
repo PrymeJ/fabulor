@@ -278,7 +278,7 @@ rate before proposing a new one.** Had that counter existed, E would have been r
 writeup rather than after — and the same counter is the cheapest way to tell whether any future
 "this looks redundant" is worth acting on.
 
-### See also: `Audit_ThemeReach_260720.md` — still-current call-site inventory (its BUGS are closed)
+### See also: `review/Audit_260720_theme_reach.md` — still-current call-site inventory (its BUGS are closed)
 
 A read-only audit from 2026-07-20 that nothing in the docs referenced, so it was invisible unless
 opened by chance — which is how it came to be forgotten. Recording the pointer here so the next
@@ -3817,7 +3817,7 @@ attempt, so the user was left looking at A's stale colors while deliberately hov
 for the whole 80-90ms+ debounce window and beyond, with no preview appearing until some unrelated
 event happened to drain the stash. Described directly as "annoying, confusing."
 
-**Investigation, before any fix (`Investigation_HoverInterruptsHover_260721.md`):** confirmed the
+**Investigation, before any fix (`review/Investigation_260721_hover_interrupts_hover.md`):** confirmed the
 80ms debounce (`_HOVER_DEBOUNCE_MS`, exactly 80, not 90) is a single global timer, fully upstream of
 `_on_theme_changed`, with zero further role once a hover call exists — untouched by this fix. Found
 TWO real entry points that produce a genuine `hover=True` call: the debounced swatch-sweep path
@@ -3980,7 +3980,7 @@ been investigated across multiple sessions via direct trigger-hunting (see the `
 entries elsewhere in this file) with partial, unverified fixes. Rather than continue hunting
 triggers one at a time, a read-only audit (`Agent` tool, `Explore` subagent) was run first to map
 every code path by which preview/hover theme state could reach those two widgets, before any fix
-was attempted — full detail in `Audit_ThemeReach_260720.md` (not reproduced here; this entry covers
+was attempted — full detail in `review/Audit_260720_theme_reach.md` (not reproduced here; this entry covers
 what was actually implemented from it).
 
 **Audit findings (summary):** the audit inventoried every `setStyleSheet()` call site on
@@ -5367,7 +5367,7 @@ invisible-surface pass — so ANY later startup call into `_on_theme_changed` wi
 name (which `clear_cover_theme()` always uses, reached both by the no-cover case AND the
 cover-mode-Off case) hits the no-op guard and never reaches the deferred pass. Cover presence
 doesn't change this at all. Fixed via a shared `apply_full_pass()` helper called from `_setup_ui`.
-Full corrected picture, live-verified: `NOTES_THEMING_CURRENT_STATE.md`. A second, unrelated
+Full corrected picture, live-verified: `review/Notes_260717_theming_current_state.md`. A second, unrelated
 regression (hover preview no longer reaching settings/speed/sleep panels, introduced by the SAME
 night's earlier deferred-restyle narrowing, not by this fix) was also found and fixed — also
 documented there.

@@ -1,7 +1,7 @@
 # Theme-Bleed Containment — Pass 1 (State-Read Containment, Mechanism A)
 **Branch:** `blur-composited-overlay`  **Date:** 2026-07-20
 
-Scope: implement the state-read containment fix identified in `Audit_ThemeReach_260720.md` as
+Scope: implement the state-read containment fix identified in `review/Audit_260720_theme_reach.md` as
 "Path A" — `MainWindow._set_bg_suppressed`'s direct, hover-unaware read of
 `theme_manager._active_display_theme`. Out of scope (per instructions, not attempted): the
 `_grab_and_blur()` pixel-capture bypass (Mechanism B) and re-verifying `complete_main_fade`'s
@@ -85,7 +85,7 @@ src/fabulor/ui/library.py:2100        — a comment, not code: "...that never eq
 
 No other occurrences anywhere in `*.py`. The audit's claim that `_set_bg_suppressed` was the only
 cross-file reader is confirmed correct — the rename did not surface anything the audit missed. (A
-grep across `*.md` also turned up mentions in `NOTES_THEMING_CURRENT_STATE.md`, `NOTES.md`,
+grep across `*.md` also turned up mentions in `review/Notes_260717_theming_current_state.md`, `NOTES.md`,
 `SESSION.md`, `CLAUDE.md`, and a `plans/` doc — all historical prose, not code; left as-is, since
 docs are out of scope for this pass.)
 
@@ -116,7 +116,7 @@ it from outside the class).
 
 Per the audit and per NOTES.md, this fallback path is a **separate, already-partially-mitigated,
 still-unverified** contributor to the theme-bleed bug (the "Path B" in
-`Audit_ThemeReach_260720.md` / the fade-orphan theory from an earlier session): if
+`review/Audit_260720_theme_reach.md` / the fade-orphan theory from an earlier session): if
 `_active_display_theme_internal` is still holding a hover-preview theme name at the moment a panel
 opens mid-fade with no call stashed in `_pending_fade_call`, this fallback reapplies that stale
 hover value through the fast synchronous path (which includes `main_window`/`content_container`).
