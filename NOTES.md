@@ -1,3 +1,28 @@
+## 2026-08-03 — Depth confirmed flat at 11 since 06-03. Not a growing variable — do not re-litigate without new evidence
+
+Two independent passes now (2026-08-02 and 2026-08-03, the second run fresh from scratch per
+explicit instruction not to trust the first) measured the real app's widget-tree depth from `mw` at
+five points spanning the full 2-month window this codebase's history covers: `645f460` (06-03),
+`5ba3816` and `6002e4d` (06-11, straddling the StreakGrid commit — the single largest
+insertion-count commit in the whole window at 474 lines), `be208c0` (06-27, the Excluded Books
+popup rebuild), and current HEAD. **Depth is 11 at every one of the five points, no exceptions.**
+Widget count grew modestly and explainably (606→632) via commits confirmed NOT to add nesting —
+`StreakGrid`/`TasselOverlay`/`TransportBarBlurOverlay` are each a single custom-painted `QWidget`
+subclass, not a composed tree; `ExcludedBooksPopup` lands inside `library_tab`'s pre-existing chain
+and builds its row widgets lazily on open.
+
+Full detail, named commits, and the reasoning for why this is orthogonal to (not competing with) the
+separately-measured visibility-cost effect: `review/Investigation_260803_depth_provenance_reverified.md`
+(and its 2026-08-02 predecessor, `review/Investigation_260802_restyle_cost_depth_and_narrowing.md`).
+
+**If this question comes up again** — "has the tree gotten deeper, is that why cost feels worse" —
+the answer is settled: no, checked twice, independently. Re-investigating from scratch a third time
+needs a specific new reason (a commit landing that's suspected to add real nesting, not just widget
+count) — not a general recurring doubt. `tools/depth_probe.py` is the standing instrument if a
+future checkpoint needs adding to this same table.
+
+---
+
 ## 2026-08-02 — The root-restyle cost is caused by SETTING A STYLESHEET ON THE ROOT AT ALL, not by what is in it — and the tree's DEPTH is the multiplier. Investigation only, nothing changed
 
 Started from a live report about the settings-panel dismiss and ended by disproving the explanation
