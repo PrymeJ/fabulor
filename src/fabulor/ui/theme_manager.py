@@ -223,6 +223,48 @@ class ThemeManager(QObject):
         self._pending_panel_sheet = None
         self._deferred_restyle_theme = None
 
+    def get_displayed_theme(self):
+        """Live-computed answer to 'what theme should be shown right now', re-derived
+        from scratch on every call. Returns a raw theme name (str) or a cover-derived
+        theme (dict) — same return shape get_active_theme() has always returned.
+
+        No stored hover-active flag is read or written here. The three facts below are
+        read fresh from Qt/the OS on every call; if any is false, there is no live
+        preview and the answer is simply the real active theme (or the live cover
+        theme, if one is active) — there is no 'stuck' state to reach, because there
+        is no state.
+
+        STEP 1 OF MIGRATION (see review/Design_260804_hover_state_computed_read_path.md):
+        this method is currently UNUSED. It exists to be verified against the existing
+        stored-state behavior via a shadow/log-only check (step 2) before anything is
+        redirected to depend on it. Do not wire this into get_active_theme()/
+        get_current_theme() or any other call site until that verification step has
+        landed and been observed across real usage.
+        """
+        settings_panel = getattr(self.main_window, 'settings_panel', None)
+        tabs = getattr(self.main_window, 'tabs', None)
+        swatch_box = getattr(self, 'swatch_box', None)
+
+        if (settings_panel is not None and settings_panel.isVisible()
+                and tabs is not None and tabs.currentIndex() == 0
+                and swatch_box is not None and swatch_box.isVisible()):
+            local = swatch_box.mapFromGlobal(QCursor.pos())
+            if swatch_box.rect().contains(local):
+                target = swatch_box.childAt(local)
+                if isinstance(target, ThemeItem):
+                    if target is self.cover_pool_btn:
+                        if self._cover_theme_active and self._cover_theme is not None:
+                            return self._cover_theme
+                        # cover-pool entry hovered but no cover theme exists -- falls
+                        # through to the real active theme below, same as today's
+                        # _on_cover_pool_btn_hovered early-return when _cover_theme is None
+                    else:
+                        return target.theme_name
+
+        if self._cover_theme_active and self._cover_theme is not None:
+            return self._cover_theme
+        return self._current_theme_name
+
     def get_current_theme(self) -> dict:
         """Resolved-dict form of the currently displayed theme. Hover-safe by
         construction (2026-08-03, confinement-gap fix) — resolves through
