@@ -37,6 +37,18 @@ class _FakeTimer:
         self.running = False
 
 
+class _FakeMainWindow:
+    """Stand-in exposing exactly what clear_stale_hover_state's repaint call
+    touches: _refresh_panel_visuals, the bound entry point
+    SettingsController.sync_all_settings_visuals uses in the real app."""
+
+    def __init__(self):
+        self.refresh_calls = []
+
+    def _refresh_panel_visuals(self, theme_name):
+        self.refresh_calls.append(theme_name)
+
+
 class _FakeTM:
     """Minimal stand-in exposing exactly what get_current_theme()/get_active_theme()/
     _mark_theme_applied()/clear_stale_hover_state() touch. get_active_theme and
@@ -56,6 +68,7 @@ class _FakeTM:
         self._cover_theme_active = cover_theme_active
         self._cover_theme = cover_theme
         self._swatch_leave_backstop_timer = _FakeTimer()
+        self.main_window = _FakeMainWindow()
 
 
 def _get_current_theme(fake):
@@ -118,6 +131,21 @@ def test_clear_stale_hover_state_corrects_fields_and_stops_backstop_timer():
     assert fake._swatch_leave_backstop_timer.running is False
 
 
+def test_clear_stale_hover_state_repaints_sleep_speed_ramps_when_correcting():
+    # 2026-08-03, live-reported regression in the FIRST version of this fix:
+    # bookkeeping alone does not repaint Sleep/Speed's preset-ramp buttons --
+    # they only redraw on their own state-change methods or the theme-apply
+    # TAIL, neither of which a plain field correction triggers. Confirms the
+    # fix now also re-triggers that TAIL (main_window._refresh_panel_visuals)
+    # so an already-painted-wrong ramp gets corrected, not just future reads.
+    fake = _FakeTM(active_display_theme_internal=HOVER, current_theme_name=ACTIVE,
+                   is_hover_active=True)
+
+    _clear_stale_hover_state(fake)
+
+    assert fake.main_window.refresh_calls == [ACTIVE]
+
+
 def test_clear_stale_hover_state_is_a_no_op_when_hover_is_not_active():
     fake = _FakeTM(active_display_theme_internal=ACTIVE, current_theme_name=ACTIVE,
                    is_hover_active=False)
@@ -126,5 +154,6 @@ def test_clear_stale_hover_state_is_a_no_op_when_hover_is_not_active():
     _clear_stale_hover_state(fake)
 
     assert fake._is_hover_active is False
+    assert fake.main_window.refresh_calls == []  # no-op means no repaint either
     assert fake._active_display_theme_internal == ACTIVE
     assert fake._swatch_leave_backstop_timer.running is False

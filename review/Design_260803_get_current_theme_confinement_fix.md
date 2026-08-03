@@ -1,8 +1,20 @@
 # Design (implemented): close the `get_current_theme()` confinement gap
 
 **Date:** 2026-08-03  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:**
-Implemented and verified — full `pytest tests/ -q` at 440/440 passing (435 baseline + 5 new), all
-7 confirmed runtime call sites individually spot-checked live and confirmed corrected.
+Implemented and verified, INCLUDING a same-day correction — full `pytest tests/ -q` at 441/441
+passing (435 baseline + 6 new), all 7 confirmed runtime call sites individually spot-checked live
+and confirmed corrected.
+
+**Correction (same day, live-reported):** the first version of this fix only corrected the
+`ThemeManager` bookkeeping fields (`_is_hover_active`/`_active_display_theme_internal`) in
+`clear_stale_hover_state()`. Live testing after committing found Sleep and Speed's preset-ramp
+buttons STILL showing the abandoned hover theme's colors, because `_apply_preset_ramp_colors`
+(`sleep_timer.py`/`speed_controls.py`) is only re-run by its own panel's state-change methods or
+the theme-apply TAIL — a plain bookkeeping fix never triggers a repaint of buttons already painted
+wrong. Fixed by having `clear_stale_hover_state()` also call `main_window._refresh_panel_visuals`
+(the same TAIL entry point `_mark_theme_applied`'s sibling call sites already use) so the ramps are
+explicitly repainted with the now-correct `get_current_theme()` output, not just left to be read
+correctly next time. See "Correction" section below for the full trace and verification.
 
 ## Context
 
@@ -140,10 +152,78 @@ instead.
 ## Files changed
 
 - `src/fabulor/ui/theme_manager.py` — `get_current_theme()` redefined; new
-  `clear_stale_hover_state()`.
+  `clear_stale_hover_state()` (corrected same-day, see below).
 - `src/fabulor/ui/panels.py` — one new call in `_on_settings_hidden`.
-- `tests/test_get_current_theme_hover_safety.py` — new, 5 tests.
+- `tests/test_get_current_theme_hover_safety.py` — new, 6 tests.
 
 No changes to any of the 7 runtime call sites, `get_active_theme()` itself, `_mark_theme_applied`,
 `_check_swatch_still_hovered`, the three `_pending_fade_call` drain sites, `check_cursor_on_settle`,
 or `_panels_settled_waiters`/`coalesce_key`.
+
+---
+
+## Correction: `clear_stale_hover_state()` needed to also repaint, not just correct bookkeeping
+
+**Live-reported the same evening**: "Preview bled out. At least it was contained to the main
+window, I haven't seen the colors of the previewed theme in other panels." — screenshots showed
+Sleep's and Speed's preset-duration/speed button grids painted in the abandoned hover theme's
+colors, confirmed against `fabulor.log` (the running session, started 22:21:43, after the first
+version of this fix was committed at 22:17:30).
+
+### Trace
+
+Log evidence, `_on_fade_finished ENTRY ... _active_display_theme_internal='Dorian Grey'
+_is_hover_active=True` followed by 20+ `complete_main_fade ENTRY ... EARLY-RETURN (no fade in
+flight)` calls over the following ~90 seconds, none of which ever reach
+`clear_stale_hover_state()` because Settings never actually closes in that window — the user
+navigated directly to Sleep/Speed via sidebar buttons instead. Also found, independently: a
+`[SWATCH-LEAVE-SUSPECT]` warning fired with the cursor genuinely OUTSIDE `swatch_box`
+(`local=(440, 165)` against `rect=(0, 0, 240, 285)`) while the widget was hidden — the exact
+falsification case that probe exists to catch, meaning a real mouse-out got misclassified as a
+blur-grab synthetic and suppressed. **This is a separate, deeper bug in the hidden-vs-synthetic
+leave classification itself** (not touched by this fix) and is recorded here for a future session,
+not fixed in this pass — per this project's own standing rule, a non-zero
+`SWATCH-LEAVE-SUSPECT` count falsifies the "leave-while-hidden is always synthetic" premise and
+should not be patched around without investigating why.
+
+Independent of that classification bug, the FIX ITSELF had a real gap: `clear_stale_hover_state()`
+corrected `_is_hover_active`/`_active_display_theme_internal` but assumed (wrongly) that "every
+OTHER surface these fields gate ... was already last painted with `_current_theme_name`." Traced
+directly: `_apply_preset_ramp_colors` (`sleep_timer.py:165`, `speed_controls.py:247`) is called
+ONLY from (a) that panel's own state-change methods, or (b) the theme-apply TAIL
+(`main_window._refresh_panel_visuals`, itself gated to non-hover applies). If it last ran DURING
+the abandoned hover — which it can, since `_apply_preset_ramp_colors` itself is not hover-gated and
+is called on every real theme-apply including hover previews per `update_panel_styling`'s own
+docstring — the ramp stays painted with the hover theme's colors indefinitely; correcting the
+bookkeeping alone never triggers a repaint, because nothing else reads those two fields to decide
+whether to repaint.
+
+### Fix
+
+`clear_stale_hover_state()` now also calls `main_window._refresh_panel_visuals(self._current_theme_name)`
+after correcting the bookkeeping — the same entry point (`SettingsController.sync_all_settings_visuals`)
+the theme-apply TAIL already uses, not a new call path. This re-reads the now-hover-safe
+`get_current_theme()` fresh and repaints the ramp with the correct colors regardless of what was
+drawn during the stuck window.
+
+### Verification
+
+- New test `test_clear_stale_hover_state_repaints_sleep_speed_ramps_when_correcting` (6th test in
+  `test_get_current_theme_hover_safety.py`) — pins that `clear_stale_hover_state()` calls
+  `main_window._refresh_panel_visuals` with the active theme name when it corrects a stuck hover,
+  and does NOT call it when hover isn't active (no-op case).
+- Live, minimal, isolated repro (not the first, over-complicated script, which had an unrelated
+  string-format comparison bug in the TEST itself — caught and corrected before trusting the
+  result): paint Sleep's ramp buttons with the active theme via the real
+  `_apply_preset_ramp_colors()`, then directly with the hover theme (recreating the pre-fix stuck
+  paint), force the bookkeeping stuck, call `clear_stale_hover_state()`, confirm the button
+  stylesheet is restored byte-for-byte to the active theme's — confirmed `True`.
+- Full suite: 441/441 passing (435 original baseline + 6 tests in the new file).
+
+### What remains open
+
+The `[SWATCH-LEAVE-SUSPECT]` finding (a genuine mouse-out misclassified as synthetic while hidden)
+is a distinct, unfixed bug — flagged for a future investigation, not addressed here. This
+correction only ensures that WHEN hover state does get stuck (for any reason, including that one),
+`clear_stale_hover_state()` fully repairs both the bookkeeping and every surface it's responsible
+for, rather than assuming those surfaces were already correct.

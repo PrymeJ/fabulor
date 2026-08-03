@@ -724,23 +724,46 @@ class ThemeManager(QObject):
         get_active_theme() call keeps returning the abandoned hover theme. No-op if
         hover isn't actually active.
 
-        This is a DELIBERATE, narrow exception to _mark_theme_applied's own "only
-        call immediately after _apply_stylesheets has genuinely run" rule: no new
-        paint happens here. It is safe specifically because Settings is already
-        hidden by the time this runs (called from PanelManager._on_settings_hidden)
-        — nothing on screen needs correcting, only the BOOKKEEPING fields, which
-        must stop claiming an abandoned preview is still "active" now that there is
-        no swatch left to preview it. Every OTHER surface these fields gate
-        (Library, Sleep/Speed panels, the backdrop frost, etc.) was already last
-        painted with _current_theme_name by its own real, non-hover apply, before
-        the hover ever started — this call brings the bookkeeping back in line
-        with what is already true on screen, not ahead of it. Does not touch
-        _fade_anim/_pending_fade_call — if a fade or stash is genuinely in flight,
-        the existing drain/discard mechanisms (the July 21/22 confinement fix) own
-        that, unchanged; this method only ever runs after Settings has fully
-        settled into hidden, by which point _fade_in_flight is guaranteed False."""
+        CORRECTED (2026-08-03, live-reported): the original version of this method
+        assumed "every OTHER surface these fields gate was already last painted
+        with _current_theme_name ... this call brings the bookkeeping back in line
+        with what is already true on screen." That assumption was WRONG for
+        Sleep/Speed's preset-ramp buttons specifically — confirmed live via
+        screenshots showing both panels' buttons still painted in the abandoned
+        hover theme's colors well after this method had already corrected the
+        bookkeeping fields. Root cause: `_apply_preset_ramp_colors` (sleep_timer.py/
+        speed_controls.py) is NOT re-run by a plain bookkeeping fix — it only runs
+        from the theme-apply TAIL (`_refresh_panel_visuals`, itself gated to
+        non-hover applies) or from that panel's OWN state-change methods
+        (set_sleep_timer/disable_sleep_timer/set_sleep_fade, or their Speed
+        equivalents). Opening a panel does not call it either. So if it last ran
+        DURING the abandoned hover (painting the hover theme's ramp), it stays
+        painted that way indefinitely — fixing the bookkeeping alone never
+        triggers a repaint, since nothing else reads _is_hover_active/
+        _active_display_theme_internal to decide whether to repaint.
+
+        Fix: after correcting the bookkeeping, explicitly re-trigger both ramps via
+        the SAME entry point the theme-apply TAIL already uses
+        (main_window._refresh_panel_visuals, bound to
+        SettingsController.sync_all_settings_visuals in settings_controller.py) —
+        not a new call path. This re-reads get_current_theme() (now hover-safe)
+        fresh, so the ramp is repainted with the correct active-theme colors
+        regardless of what was drawn during the stuck window. Every other surface
+        `sync_all_settings_visuals` touches (fade-button property sync, blur/
+        pattern/hover-fade visuals, etc.) is either idempotent or already correct,
+        so calling the whole method rather than hand-picking the two ramp calls is
+        deliberate — it is the established, already-tested "resync everything"
+        entry point for exactly this situation, not a new one.
+
+        Does not touch _fade_anim/_pending_fade_call — if a fade or stash is
+        genuinely in flight, the existing drain/discard mechanisms (the July 21/22
+        confinement fix) own that, unchanged; this method only ever runs after
+        Settings has fully settled into hidden, by which point _fade_in_flight is
+        guaranteed False."""
         if self._is_hover_active:
             self._mark_theme_applied(self._current_theme_name, False)
+            if hasattr(self.main_window, '_refresh_panel_visuals'):
+                self.main_window._refresh_panel_visuals(self._current_theme_name)
 
     def apply_full_pass(self, theme_name, hover=False):
         """Apply BOTH the fast visible-surface pass and the deferred invisible-surface
