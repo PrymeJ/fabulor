@@ -109,6 +109,10 @@ class PanelManager:
         self._settled_watch_timer.setInterval(_SETTLE_POLL_MS)
         self._settled_watch_timer.timeout.connect(self._on_settled_watch_tick)
         self._settled_watch_armed = False
+        # List of (coalesce_key, callback) tuples. coalesce_key is None for an
+        # ordinary, always-appended waiter; a non-None key replaces any existing
+        # waiter with the same key IN PLACE instead of appending a second entry —
+        # see call_when_panels_settled's coalesce_key parameter.
         self._panels_settled_waiters: list = []
         # Deferred sidebar state for clicks arriving mid-slide — see _toggle_sidebar.
         # _sidebar_pending_target is the desired FINAL state (absolute), not a queued
@@ -764,6 +768,22 @@ class PanelManager:
             # visual_area blur starts HERE (not at panel-open) so it matches the
             # transport bar's timing — see _start_visual_area_blur.
             self._start_visual_area_blur(self.settings_panel)
+            # Settle-triggered cursor check (2026-08-03) — see
+            # review/Investigation_260803_settings_open_hover_preview_inconsistency.md
+            # and the design doc that followed it. Queued via call_when_panels_settled
+            # (NOT this slide-finished signal directly) because the blur-in tween just
+            # started above and _any_panel_animating() is still True here — the check
+            # must wait for the SAME fully-settled instant _on_theme_changed's own
+            # animation guard waits for, or a genuine preview it triggers would just
+            # get deferred and replayed anyway. Own coalesce_key, distinct from
+            # "theme_change", so it can never be silently replaced by (or replace) a
+            # queued theme-change re-call.
+            tm = getattr(self.main_window, 'theme_manager', None)
+            if tm:
+                self.call_when_panels_settled(
+                    tm.check_cursor_on_settle,
+                    coalesce_key="themes_cursor_settle_check"
+                )
 
         self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
         self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
@@ -1418,6 +1438,15 @@ class PanelManager:
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
         self._notify_panel_closed()
+        # Confinement-gap fix (2026-08-03) — settings_panel.hide() above is the
+        # SOLE hide() call site for this panel anywhere in the codebase (confirmed
+        # by grep), so this is the one funnel every Settings-close path reaches
+        # regardless of trigger (Esc, dismiss click, hide_all_panels, opening a
+        # different panel). Correct any hover state a synthetic-leave suppression
+        # left stuck — see ThemeManager.clear_stale_hover_state's docstring.
+        tm = getattr(self.main_window, 'theme_manager', None)
+        if tm:
+            tm.clear_stale_hover_state()
 
     def _on_sidebar_hidden(self):
         logger.debug(
@@ -1498,10 +1527,27 @@ class PanelManager:
             animations.append(self.book_detail_panel_animation)
         return any(anim.state() == QAbstractAnimation.State.Running for anim in animations)
 
-    def call_when_panels_settled(self, callback):
+    def call_when_panels_settled(self, callback, coalesce_key=None):
         """Invoke `callback` once nothing in `_any_panel_animating()` is running.
         Synchronous and immediate when nothing is running — the panel-side analogue
         of ClickSlider.when_animations_done (ui/controls.py).
+
+        `coalesce_key` (added 2026-08-03, snapback-stuck-theme fix): when given a
+        non-None key, this call REPLACES any already-queued waiter with the same
+        key in place, instead of appending a second entry. Without this, a burst of
+        calls that all arrive while `_any_panel_animating()` is True (e.g. a theme
+        hover immediately followed by an unhover, both issued before the settings
+        panel's own open animation finishes) queue as independent FIFO entries and
+        replay in ISSUE order rather than INTENT order — so an earlier hover-preview
+        call can resume and apply AFTER a later unhover-snapback call, leaving the
+        theme stuck on the hover preview. Confirmed live (see
+        review/Investigation_260803_fallback_necessity.md and the snapback fix design
+        that superseded its "fallback is load-bearing" attribution): the existing
+        `snap_theme_forward` fallback does NOT catch this — it guards on
+        `_fade_overlay.isVisible()`, which is False throughout this mechanism, since
+        no `_fade_anim` ever starts. Only `ThemeManager` passes a key today
+        (`"theme_change"`); every other caller passes None and keeps today's
+        append-only FIFO behavior unchanged.
 
         WHY THIS EXISTS (2026-07-28). `ThemeManager._on_theme_changed`'s animation
         guard used to defer via a flat 700ms retry timer (`_PANEL_ANIM_GUARD_MS`).
@@ -1535,8 +1581,37 @@ class PanelManager:
         if not self._any_panel_animating():
             callback()
             return
-        self._panels_settled_waiters.append(callback)
+        if coalesce_key is not None:
+            for i, (key, _cb) in enumerate(self._panels_settled_waiters):
+                if key == coalesce_key:
+                    self._panels_settled_waiters[i] = (coalesce_key, callback)
+                    self._arm_settled_watch()
+                    return
+        self._panels_settled_waiters.append((coalesce_key, callback))
         self._arm_settled_watch()
+
+    def has_settled_waiter(self, coalesce_key):
+        """True if a waiter with this coalesce_key is currently queued in
+        `_panels_settled_waiters` (added 2026-08-03, snapback-stuck-theme fix).
+
+        Needed because `_on_theme_changed`'s early no-op guard (theme_manager.py, near
+        its top) compares the requested `theme_name`/`hover` against
+        `_active_display_theme_internal`/`_is_hover_active` — values that are ONLY
+        updated by `_mark_theme_applied`, called from inside the branch that actually
+        ran `_apply_stylesheets`. A call deferred into this queue (e.g. a hover preview
+        issued while `_any_panel_animating()` is True) has NOT reached that point yet —
+        `_active_display_theme_internal` still reflects whatever was active BEFORE the
+        deferred call, not the deferred call's own target. If a second call for a
+        DIFFERENT theme/hover-state (e.g. the unhover snapback, reverting to the
+        original active theme) arrives while that first call is still queued, it can
+        coincidentally match the still-stale `_active_display_theme_internal` and get
+        silently swallowed by the no-op guard — dropping the snapback entirely and
+        leaving the queued preview to apply, unopposed, once it resumes. The guard must
+        skip itself whenever this returns True for the "theme_change" key, since
+        `_active_display_theme_internal` cannot be trusted as ground truth while a
+        same-key call is still in flight through this queue.
+        """
+        return any(key == coalesce_key for key, _cb in self._panels_settled_waiters)
 
     def _arm_settled_watch(self):
         """Arm the settle tick if it is not already armed.
@@ -1570,7 +1645,7 @@ class PanelManager:
             f"t={time.perf_counter():.6f} [settle-watch] panels settled, "
             f"draining {len(waiters)} waiter(s)"
         )
-        for cb in waiters:
+        for _key, cb in waiters:
             cb()
 
     def is_any_full_panel_visible(self):

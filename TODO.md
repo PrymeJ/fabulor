@@ -235,6 +235,13 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   repeatedly with a panel open and a book playing. If it no longer occurs across a long session,
   close on that basis; if it recurs, the remaining suspects are other no-Paint-event content
   changes (the `6eebc31` hidden-widget class), not the gate path.
+  **NOTE (2026-08-03):** a SIBLING no-op-guard failure mode was found and fixed the same day (see
+  `review/Report_260803_snapback_stuck_theme_fix.md`) — the guard also fires wrongly when a theme
+  call is deferred via `PanelManager.call_when_panels_settled` (panel-open/blur-animation window),
+  not just when `refresh_dirty`'s hover gate declines a tick. That fix (`has_settled_waiter`) does
+  NOT cover the gate-decline case described in this entry — they are different triggers of the same
+  underlying guard weakness (`_active_display_theme_internal` trusted as ground truth when it
+  shouldn't be). Do not treat this entry as resolved by that fix.
 
 - **[2026-07-21] "Hovered theme bleeds into the whole live main window" — VERIFIED FIXED with blur
   ON, not yet soak-tested.** The `theme_manager.py`, `complete_main_fade()` fix (previously

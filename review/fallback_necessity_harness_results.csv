@@ -143,3 +143,291 @@ batch_timestamp,trial_num,hover_theme,delay_ms,stylesheet_ok,pixel_ok,checks_agr
 2026-08-03T05:54:59.161489,142,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07993000326678157
 2026-08-03T05:55:02.473451,143,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09698598296381533
 2026-08-03T05:55:05.873320,144,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.04820400499738753
+2026-08-03T15:42:16.902338,1,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08193901157937944
+2026-08-03T15:42:19.640452,2,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.10796598508022726
+2026-08-03T15:42:22.360290,3,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.1766640052665025
+2026-08-03T15:42:25.091746,4,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0897530117072165
+2026-08-03T15:42:29.581312,5,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.19367100321687758
+2026-08-03T15:42:31.449675,6,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.10664999717846513
+2026-08-03T15:42:34.196577,7,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.09148698882199824
+2026-08-03T15:42:37.126852,8,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.13359100557863712
+2026-08-03T15:42:39.888925,9,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.10385899804532528
+2026-08-03T15:42:42.754893,10,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],1.0317190026398748
+2026-08-03T15:42:45.624952,11,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.06800799746997654
+2026-08-03T15:42:48.535873,12,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.14556400128640234
+2026-08-03T15:42:51.304865,13,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.3255199990235269
+2026-08-03T15:42:53.953307,14,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.1798739831428975
+2026-08-03T15:42:56.723532,15,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.06818401743657887
+2026-08-03T15:42:59.503514,16,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08024901035241783
+2026-08-03T15:43:02.149918,17,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.11625699698925018
+2026-08-03T15:43:04.732047,18,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07620299584232271
+2026-08-03T15:43:07.318108,19,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0874419929459691
+2026-08-03T15:43:09.918115,20,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08003701805137098
+2026-08-03T15:43:12.486105,21,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.049026013584807515
+2026-08-03T15:43:15.112649,22,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04669700865633786
+2026-08-03T15:43:17.686715,23,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07243800791911781
+2026-08-03T15:43:20.254100,24,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07714299135841429
+2026-08-03T15:43:22.855468,25,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07519798236899078
+2026-08-03T15:43:25.451652,26,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.17017099889926612
+2026-08-03T15:43:27.978091,27,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.13868501991964877
+2026-08-03T15:43:30.567868,28,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.06612300057895482
+2026-08-03T15:43:33.145125,29,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.1614909851923585
+2026-08-03T15:43:35.733854,30,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.11869799345731735
+2026-08-03T15:43:38.483827,31,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.09056800627149642
+2026-08-03T15:43:41.069378,32,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07816599099896848
+2026-08-03T15:43:43.671710,33,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07108200225047767
+2026-08-03T15:43:46.253797,34,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07841497426852584
+2026-08-03T15:43:48.866681,35,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08456999785266817
+2026-08-03T15:43:51.550662,36,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07905298843979836
+2026-08-03T15:43:54.163945,37,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.06414702511392534
+2026-08-03T15:43:56.756784,38,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04854300641454756
+2026-08-03T15:43:59.424764,39,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05551200592890382
+2026-08-03T15:44:02.132800,40,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0722419936209917
+2026-08-03T15:44:04.797582,41,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.10352101526223123
+2026-08-03T15:44:07.422001,42,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05274300929158926
+2026-08-03T15:44:09.999375,43,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.056406977819278836
+2026-08-03T15:44:12.644482,44,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05395500920712948
+2026-08-03T15:44:15.274786,45,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07227901369333267
+2026-08-03T15:44:17.932628,46,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.12925697956234217
+2026-08-03T15:44:20.561888,47,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07550200098194182
+2026-08-03T15:44:23.215761,48,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05477201193571091
+2026-08-03T15:44:25.810082,49,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04911998985335231
+2026-08-03T15:44:28.412196,50,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.047918991185724735
+2026-08-03T15:44:31.081425,51,Slow Regard,50,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.1028090191539377
+2026-08-03T15:44:33.771693,52,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07860700134187937
+2026-08-03T15:44:36.411413,53,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05117498221807182
+2026-08-03T15:44:39.027073,54,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04853500286117196
+2026-08-03T15:44:41.657487,55,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.050336995627731085
+2026-08-03T15:44:44.344415,56,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07787300273776054
+2026-08-03T15:44:46.995493,57,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.1343010226264596
+2026-08-03T15:44:49.692787,58,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08188799256458879
+2026-08-03T15:44:52.328155,59,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08545999298803508
+2026-08-03T15:44:54.969519,60,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08279201574623585
+2026-08-03T15:44:57.646088,61,Rose Code,80,False,True,False,"(33, 4, 38)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.058528996305540204
+2026-08-03T15:45:00.359080,62,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07698501576669514
+2026-08-03T15:45:03.155917,63,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07056299364194274
+2026-08-03T15:45:05.802935,64,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.049138994654640555
+2026-08-03T15:45:08.482875,65,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05310901906341314
+2026-08-03T15:45:11.159818,66,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0723899865988642
+2026-08-03T15:45:13.800386,67,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0694699992891401
+2026-08-03T15:45:16.487831,68,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04504100070334971
+2026-08-03T15:45:19.153373,69,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07298699347302318
+2026-08-03T15:45:21.837664,70,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.09908099309541285
+2026-08-03T15:45:24.561745,71,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07105598342604935
+2026-08-03T15:45:27.257451,72,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07678999099880457
+2026-08-03T15:45:31.584345,73,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.13277100515551865
+2026-08-03T15:45:33.432905,74,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.06194898742251098
+2026-08-03T15:45:36.346583,75,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.046671018935739994
+2026-08-03T15:45:39.011487,76,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05325098754838109
+2026-08-03T15:45:41.748915,77,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.077681994298473
+2026-08-03T15:45:45.973214,78,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.06477299029938877
+2026-08-03T15:45:47.886005,79,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07047300459817052
+2026-08-03T15:45:52.272740,80,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.04561801324598491
+2026-08-03T15:45:55.673215,81,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.11926499428227544
+2026-08-03T15:45:57.762649,82,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.12499900185503066
+2026-08-03T15:46:00.457534,83,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04839300527237356
+2026-08-03T15:46:03.412402,84,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07616300717927516
+2026-08-03T15:46:07.575651,85,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.079515011748299
+2026-08-03T15:46:09.408220,86,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07515298784710467
+2026-08-03T15:46:12.067741,87,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.10790201486088336
+2026-08-03T15:46:15.004880,88,Slow Regard,110,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07986600394360721
+2026-08-03T15:46:17.971623,89,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.08237900328822434
+2026-08-03T15:46:20.674455,90,Slow Regard,110,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07560601807199419
+2026-08-03T15:46:24.975476,91,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.12122999760322273
+2026-08-03T15:46:27.096992,92,Blindsight,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.04689799970947206
+2026-08-03T15:46:31.373453,93,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.12036401312798262
+2026-08-03T15:46:33.493167,94,Blindsight,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.07041799835860729
+2026-08-03T15:46:37.774595,95,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.11288598761893809
+2026-08-03T15:46:41.273725,96,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.06243900861591101
+2026-08-03T15:46:44.773573,97,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.09776800288818777
+2026-08-03T15:46:48.174728,98,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.06387301255017519
+2026-08-03T15:46:51.775347,99,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.11933999485336244
+2026-08-03T15:46:53.827182,100,Rose Code,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.09327297448180616
+2026-08-03T15:46:56.699022,101,Rose Code,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.05026301369071007
+2026-08-03T15:47:00.779159,102,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0906409986782819
+2026-08-03T15:47:04.175123,103,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0731009931769222
+2026-08-03T15:47:05.972494,104,Slow Regard,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.049969006795436144
+2026-08-03T15:47:10.074822,105,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.05524701555259526
+2026-08-03T15:47:13.374010,106,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07278600241988897
+2026-08-03T15:47:16.674557,107,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0755589862819761
+2026-08-03T15:47:19.972639,108,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.047043984523043036
+2026-08-03T15:47:23.276660,109,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.1350090024061501
+2026-08-03T15:47:26.672668,110,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.10474701412022114
+2026-08-03T15:47:29.973223,111,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.10697700781747699
+2026-08-03T15:47:33.276353,112,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07129498408176005
+2026-08-03T15:47:36.673212,113,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07224400178529322
+2026-08-03T15:47:40.073544,114,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.11604101746343076
+2026-08-03T15:47:43.372290,115,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07340600132010877
+2026-08-03T15:47:46.760703,116,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.09266901179216802
+2026-08-03T15:47:50.073240,117,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0913440017029643
+2026-08-03T15:47:53.373519,118,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07500199717469513
+2026-08-03T15:47:56.672548,119,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0889719813130796
+2026-08-03T15:47:59.973781,120,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0962530029937625
+2026-08-03T15:48:02.030863,121,Slow Regard,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0894100230652839
+2026-08-03T15:48:06.076105,122,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07862501661293209
+2026-08-03T15:48:09.379765,123,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.09304698323830962
+2026-08-03T15:48:11.455916,124,Slow Regard,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1378'],0.0934000127017498
+2026-08-03T15:48:15.575366,125,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.08628499926999211
+2026-08-03T15:48:18.872744,126,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07476299651898444
+2026-08-03T15:48:22.259126,127,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07293000817298889
+2026-08-03T15:48:25.574772,128,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.08204998448491096
+2026-08-03T15:48:28.877854,129,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.14558099792338908
+2026-08-03T15:48:32.182370,130,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.15136197907850146
+2026-08-03T15:48:35.573342,131,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07774902042001486
+2026-08-03T15:48:38.885026,132,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.06988301174715161
+2026-08-03T15:48:42.272724,133,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.10733399540185928
+2026-08-03T15:48:45.574461,134,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07260599522851408
+2026-08-03T15:48:48.874737,135,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.13780099106952548
+2026-08-03T15:48:52.257840,136,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.09767498704604805
+2026-08-03T15:48:55.575560,137,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07564999395981431
+2026-08-03T15:48:58.872261,138,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.09189598495140672
+2026-08-03T15:49:02.177378,139,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.078804005170241
+2026-08-03T15:49:05.480682,140,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.047856010496616364
+2026-08-03T15:49:08.783936,141,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07856599404476583
+2026-08-03T15:49:12.173505,142,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.0472069950774312
+2026-08-03T15:49:15.478758,143,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.08255499415099621
+2026-08-03T15:49:18.963168,144,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1237'],0.07166402065195143
+2026-08-03T16:02:40.171958,1,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09591100388206542
+2026-08-03T16:02:41.778807,2,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14880899107083678
+2026-08-03T16:02:43.481611,3,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1044890086632222
+2026-08-03T16:02:45.282999,4,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14990498311817646
+2026-08-03T16:02:46.979590,5,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14713601558469236
+2026-08-03T16:02:48.670745,6,Blindsight,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.15849099145270884
+2026-08-03T16:02:50.379774,7,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13030300033278763
+2026-08-03T16:02:51.985674,8,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07265701424330473
+2026-08-03T16:02:53.663867,9,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09491201490163803
+2026-08-03T16:02:55.368444,10,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13628799933940172
+2026-08-03T16:02:57.074712,11,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07040600758045912
+2026-08-03T16:02:58.772853,12,Rose Code,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10021202615462244
+2026-08-03T16:03:00.375615,13,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1260779972653836
+2026-08-03T16:03:01.973336,14,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.21321699023246765
+2026-08-03T16:03:03.657828,15,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09494999540038407
+2026-08-03T16:03:05.281596,16,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13914998271502554
+2026-08-03T16:03:06.975935,17,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.17674599075689912
+2026-08-03T16:03:08.576650,18,Slow Regard,0,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07329098298214376
+2026-08-03T16:03:10.273566,19,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1386849908158183
+2026-08-03T16:03:11.958425,20,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10196902439929545
+2026-08-03T16:03:13.583455,21,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14320100308395922
+2026-08-03T16:03:15.264914,22,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.06976700387895107
+2026-08-03T16:03:16.979354,23,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10676501551643014
+2026-08-03T16:03:18.674100,24,Blindsight,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13983598910272121
+2026-08-03T16:03:20.364678,25,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10015800944529474
+2026-08-03T16:03:22.063155,26,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.16266899183392525
+2026-08-03T16:03:23.772825,27,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10256801033392549
+2026-08-03T16:03:25.464590,28,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1969809818547219
+2026-08-03T16:03:27.172965,29,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14736500452272594
+2026-08-03T16:03:28.873241,30,Rose Code,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0895189878065139
+2026-08-03T16:03:30.566100,31,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.19369201618246734
+2026-08-03T16:03:32.177590,32,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10815999121405184
+2026-08-03T16:03:33.873340,33,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12313699699006975
+2026-08-03T16:03:35.573943,34,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07062099757604301
+2026-08-03T16:03:37.274182,35,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1622099953237921
+2026-08-03T16:03:38.973031,36,Slow Regard,20,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10408798698335886
+2026-08-03T16:03:40.674708,37,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.08294300641864538
+2026-08-03T16:03:42.372926,38,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.11724000796675682
+2026-08-03T16:03:44.067155,39,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.11872898903675377
+2026-08-03T16:03:45.772409,40,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13238401152193546
+2026-08-03T16:03:47.474530,41,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07313399692066014
+2026-08-03T16:03:49.173849,42,Blindsight,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.18196599557995796
+2026-08-03T16:03:50.873091,43,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.19674497889354825
+2026-08-03T16:03:52.579575,44,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07162100519053638
+2026-08-03T16:03:54.273776,45,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1268330088350922
+2026-08-03T16:03:55.972361,46,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10676900274120271
+2026-08-03T16:03:57.673212,47,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12264499673619866
+2026-08-03T16:03:59.374519,48,Rose Code,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.22811201051808894
+2026-08-03T16:04:01.074399,49,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.156185997184366
+2026-08-03T16:04:02.777896,50,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12981501640751958
+2026-08-03T16:04:04.473663,51,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.15608101966790855
+2026-08-03T16:04:06.172897,52,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10036598541773856
+2026-08-03T16:04:07.873348,53,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07166899740695953
+2026-08-03T16:04:09.573682,54,Slow Regard,50,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1353090046904981
+2026-08-03T16:04:11.273557,55,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.08955600787885487
+2026-08-03T16:04:13.075674,56,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.08487701416015625
+2026-08-03T16:04:14.773588,57,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1163800188805908
+2026-08-03T16:04:16.474121,58,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10287101031281054
+2026-08-03T16:04:18.173253,59,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1558199874125421
+2026-08-03T16:04:19.873622,60,Blindsight,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13991602463647723
+2026-08-03T16:04:23.370778,61,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.08860399248078465
+2026-08-03T16:04:25.075514,62,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.11059700045734644
+2026-08-03T16:04:26.873541,63,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0715500209480524
+2026-08-03T16:04:30.359621,64,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.08292199345305562
+2026-08-03T16:04:32.075069,65,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.16770398360677063
+2026-08-03T16:04:33.875410,66,Rose Code,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0990779954008758
+2026-08-03T16:04:35.662270,67,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10412902338430285
+2026-08-03T16:04:37.372645,68,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.19026201334781945
+2026-08-03T16:04:39.074239,69,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09541198960505426
+2026-08-03T16:04:40.873003,70,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10501599172130227
+2026-08-03T16:04:42.573900,71,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07906401879154146
+2026-08-03T16:04:44.272986,72,Slow Regard,80,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13006199151277542
+2026-08-03T16:04:46.075626,73,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1070809958036989
+2026-08-03T16:04:47.873139,74,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1361070026177913
+2026-08-03T16:04:49.673304,75,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12436698307283223
+2026-08-03T16:04:51.373286,76,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10950100841000676
+2026-08-03T16:04:53.074680,77,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10093397577293217
+2026-08-03T16:04:54.867677,78,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.15344901476055384
+2026-08-03T16:04:58.273294,79,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.11719900066964328
+2026-08-03T16:05:01.674380,80,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.1024870143737644
+2026-08-03T16:05:03.473478,81,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0997569877654314
+2026-08-03T16:05:05.173346,82,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10383201879449189
+2026-08-03T16:05:06.872796,83,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10334700345993042
+2026-08-03T16:05:08.673737,84,Rose Code,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1062920200638473
+2026-08-03T16:05:10.473582,85,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0725110003259033
+2026-08-03T16:05:12.172757,86,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12070900993421674
+2026-08-03T16:05:15.571954,87,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.13151997700333595
+2026-08-03T16:05:17.275410,88,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0761070114094764
+2026-08-03T16:05:19.058347,89,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09560500620864332
+2026-08-03T16:05:20.787037,90,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12808298924937844
+2026-08-03T16:05:24.174111,91,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.16440599574707448
+2026-08-03T16:05:27.573643,92,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.07210599142126739
+2026-08-03T16:05:29.361566,93,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13331699301488698
+2026-08-03T16:05:31.167427,94,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09539799066260457
+2026-08-03T16:05:34.574585,95,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.14394198660738766
+2026-08-03T16:05:38.073919,96,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.2913060015998781
+2026-08-03T16:05:39.881675,97,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10785399354062974
+2026-08-03T16:05:41.673408,98,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1477129990234971
+2026-08-03T16:05:43.469379,99,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.2317720209248364
+2026-08-03T16:05:46.964238,100,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.13363698963075876
+2026-08-03T16:05:50.377559,101,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.1677249965723604
+2026-08-03T16:05:52.172469,102,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.06736101931892335
+2026-08-03T16:05:53.974570,103,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13107599806971848
+2026-08-03T16:05:57.374209,104,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.08556200191378593
+2026-08-03T16:06:00.773839,105,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.10448100510984659
+2026-08-03T16:06:02.557620,106,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07222502608783543
+2026-08-03T16:06:05.973786,107,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.0976960000116378
+2026-08-03T16:06:09.369860,108,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.14535000082105398
+2026-08-03T16:06:11.173895,109,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1011899730656296
+2026-08-03T16:06:12.973419,110,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10140499216504395
+2026-08-03T16:06:14.772662,111,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1230380148626864
+2026-08-03T16:06:16.572930,112,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.0910729868337512
+2026-08-03T16:06:18.373093,113,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12500898446887732
+2026-08-03T16:06:20.174112,114,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07263000588864088
+2026-08-03T16:06:21.973211,115,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09533701813779771
+2026-08-03T16:06:23.773191,116,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.06994101568125188
+2026-08-03T16:06:25.573952,117,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.08092401549220085
+2026-08-03T16:06:27.372923,118,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13630601461045444
+2026-08-03T16:06:29.173262,119,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.128422980196774
+2026-08-03T16:06:30.972954,120,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.19610498566180468
+2026-08-03T16:06:32.772801,121,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.13589099398814142
+2026-08-03T16:06:34.573452,122,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12295102351345122
+2026-08-03T16:06:36.373203,123,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09581298218108714
+2026-08-03T16:06:38.172864,124,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.15193098806776106
+2026-08-03T16:06:39.973348,125,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07481002830900252
+2026-08-03T16:06:43.374139,126,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,2,2,0,"['_on_theme_changed:1238', 'snap_theme_forward:466']",0.128237996250391
+2026-08-03T16:06:45.273700,127,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.07084498065523803
+2026-08-03T16:06:47.170860,128,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10028798715211451
+2026-08-03T16:06:49.074536,129,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.08365701069124043
+2026-08-03T16:06:50.973806,130,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10234801447950304
+2026-08-03T16:06:52.873438,131,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10685299639590085
+2026-08-03T16:06:54.772446,132,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.2102490107063204
+2026-08-03T16:06:56.671339,133,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14300498878583312
+2026-08-03T16:06:58.573349,134,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.11858402285724878
+2026-08-03T16:07:00.473154,135,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.12177700409665704
+2026-08-03T16:07:02.373163,136,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.213877996429801
+2026-08-03T16:07:04.273321,137,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09608000982552767
+2026-08-03T16:07:06.172541,138,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1078670029528439
+2026-08-03T16:07:08.074186,139,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.14444097178056836
+2026-08-03T16:07:09.984157,140,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.09796701488085091
+2026-08-03T16:07:11.873406,141,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.11945198639295995
+2026-08-03T16:07:13.772869,142,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.16440899344161153
+2026-08-03T16:07:15.672775,143,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.1133869809564203
+2026-08-03T16:07:17.573448,144,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,0,0,[],0.10337799903936684

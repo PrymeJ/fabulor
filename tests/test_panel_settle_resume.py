@@ -198,12 +198,56 @@ def test_callback_requeueing_during_drain_is_not_lost_or_double_run():
         animating[0] = True                       # something started again
         pm.call_when_panels_settled(lambda: calls.append("second"))
 
-    pm._panels_settled_waiters = [requeue]
+    pm._panels_settled_waiters = [(None, requeue)]
     pm._settled_watch_armed = True
     pm._on_settled_watch_tick()
 
     assert calls == ["first"]                     # second is queued, not run in this drain
     assert len(pm._panels_settled_waiters) == 1
+
+
+# --- Group D: coalesce_key (2026-08-03, snapback-stuck-theme fix) -----------
+#
+# The bug: a hover-preview call and a later unhover-snapback call, both issued
+# while _any_panel_animating() is True, used to queue as two independent FIFO
+# waiters and replay in ISSUE order — so the earlier hover's call could apply
+# AFTER the later unhover's, leaving the theme stuck on the hover preview.
+# coalesce_key makes a later call REPLACE an earlier one with the same key,
+# in place, so only the most recent intent ever survives to run.
+
+def test_coalesce_key_replaces_earlier_waiter_with_same_key_in_place():
+    pm = _make_pm([True])
+    ran = []
+    pm.call_when_panels_settled(lambda: ran.append("first"), coalesce_key="theme_change")
+    pm.call_when_panels_settled(lambda: ran.append("second"), coalesce_key="theme_change")
+    assert len(pm._panels_settled_waiters) == 1     # not 2 — the second replaced the first
+    pm._any_panel_animating = lambda: False
+    pm._on_settled_watch_tick()
+    assert ran == ["second"]                        # only the later call's intent survives
+
+
+def test_coalesce_key_does_not_disturb_a_different_keys_waiter():
+    pm = _make_pm([True])
+    ran = []
+    pm.call_when_panels_settled(lambda: ran.append("other"), coalesce_key="other_key")
+    pm.call_when_panels_settled(lambda: ran.append("theme_1"), coalesce_key="theme_change")
+    pm.call_when_panels_settled(lambda: ran.append("theme_2"), coalesce_key="theme_change")
+    assert len(pm._panels_settled_waiters) == 2     # "other_key" entry + one coalesced theme entry
+    pm._any_panel_animating = lambda: False
+    pm._on_settled_watch_tick()
+    assert ran == ["other", "theme_2"]              # order vs. the other key preserved
+
+
+def test_coalesce_key_none_keeps_todays_append_only_fifo_behavior():
+    # Every non-ThemeManager caller passes no coalesce_key and must be unaffected.
+    pm = _make_pm([True])
+    ran = []
+    for i in range(3):
+        pm.call_when_panels_settled(lambda i=i: ran.append(i))
+    assert len(pm._panels_settled_waiters) == 3
+    pm._any_panel_animating = lambda: False
+    pm._on_settled_watch_tick()
+    assert ran == [0, 1, 2]
 
 
 # --- Group B: the _on_theme_changed branch split ---------------------------
@@ -220,8 +264,11 @@ class _RecordingPM:
     def is_any_full_panel_visible(self):
         return self._full_panel_visible
 
-    def call_when_panels_settled(self, cb):
+    def call_when_panels_settled(self, cb, coalesce_key=None):
         self.settled_callbacks.append(cb)
+
+    def has_settled_waiter(self, coalesce_key):
+        return False
 
 
 class _RecordingGuardTimer:

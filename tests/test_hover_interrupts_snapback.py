@@ -67,6 +67,9 @@ class _FakePanelManager:
     def is_any_full_panel_visible(self):
         return False
 
+    def has_settled_waiter(self, coalesce_key):
+        return False
+
 
 class _FakeConfig:
     def get_theme_fade_duration(self):
