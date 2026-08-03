@@ -755,12 +755,35 @@ class ThemeManager(QObject):
         deliberate — it is the established, already-tested "resync everything"
         entry point for exactly this situation, not a new one.
 
+        SECOND CORRECTION (same day, verified by direct check before shipping this
+        time, not assumed): the fix above still did not repaint the MAIN WINDOW
+        itself. `mw.setStyleSheet(...)` — the actual base paint every other surface
+        derives its "is this fixed" impression from — is set only inside
+        `_apply_stylesheets`, which this method never called. Verified directly:
+        forcing the exact stuck sequence (paint the hover theme's base sheet onto
+        `main_window`, then call this method) left `mw.styleSheet()` unchanged,
+        still equal to the hover theme's sheet, confirming the gap rather than
+        assuming it was already covered by the ramp fix. Fixed by calling
+        `_apply_stylesheets(self._current_theme_name, hover=False)` BEFORE
+        `_mark_theme_applied`, mirroring `snap_theme_forward`'s own fallback shape
+        exactly (`_apply_stylesheets(...)` immediately followed by
+        `_refresh_panel_visuals(...)`) rather than inventing a new order. This
+        repaints `mw`/`title_bar`/`content_container`/`chapter_list_widget`/
+        `sidebar`/settings-speed-sleep-panel-level QSS (everything
+        `_apply_stylesheets`'s fast path touches) with the correct active theme,
+        regardless of what was left painted during the stuck window. It does NOT
+        call `_schedule_deferred_restyle` a second time unnecessarily — hover=False
+        means this call's own internal `if not hover:` branch schedules it, exactly
+        as any other genuine non-hover apply would, so Library/Stats/Tags/Book-
+        Detail are covered too, not just the fast-path surfaces.
+
         Does not touch _fade_anim/_pending_fade_call — if a fade or stash is
         genuinely in flight, the existing drain/discard mechanisms (the July 21/22
         confinement fix) own that, unchanged; this method only ever runs after
         Settings has fully settled into hidden, by which point _fade_in_flight is
         guaranteed False."""
         if self._is_hover_active:
+            self._apply_stylesheets(self._current_theme_name, hover=False)
             self._mark_theme_applied(self._current_theme_name, False)
             if hasattr(self.main_window, '_refresh_panel_visuals'):
                 self.main_window._refresh_panel_visuals(self._current_theme_name)

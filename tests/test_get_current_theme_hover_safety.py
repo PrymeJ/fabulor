@@ -69,6 +69,13 @@ class _FakeTM:
         self._cover_theme = cover_theme
         self._swatch_leave_backstop_timer = _FakeTimer()
         self.main_window = _FakeMainWindow()
+        self.apply_stylesheets_calls = []
+
+    def _apply_stylesheets(self, theme_name, hover=False, force_all_panels=False):
+        # Stand-in for the real (heavy, Qt-widget-touching) _apply_stylesheets --
+        # this test is about clear_stale_hover_state's OWN call sequence/logic,
+        # not about re-verifying _apply_stylesheets itself.
+        self.apply_stylesheets_calls.append((theme_name, hover))
 
 
 def _get_current_theme(fake):
@@ -146,6 +153,21 @@ def test_clear_stale_hover_state_repaints_sleep_speed_ramps_when_correcting():
     assert fake.main_window.refresh_calls == [ACTIVE]
 
 
+def test_clear_stale_hover_state_repaints_the_main_window_when_correcting():
+    # 2026-08-03, SECOND live-reported regression: the ramp fix above still left
+    # mw.setStyleSheet(...) itself uncorrected, since that only happens inside
+    # _apply_stylesheets, which the first fix never called. Confirms the second
+    # correction actually calls it, with the real active theme and hover=False
+    # (so its own internal `if not hover:` branch also schedules the deferred
+    # Library/Stats/Tags/Book-Detail restyle, not just the fast-path surfaces).
+    fake = _FakeTM(active_display_theme_internal=HOVER, current_theme_name=ACTIVE,
+                   is_hover_active=True)
+
+    _clear_stale_hover_state(fake)
+
+    assert fake.apply_stylesheets_calls == [(ACTIVE, False)]
+
+
 def test_clear_stale_hover_state_is_a_no_op_when_hover_is_not_active():
     fake = _FakeTM(active_display_theme_internal=ACTIVE, current_theme_name=ACTIVE,
                    is_hover_active=False)
@@ -155,5 +177,6 @@ def test_clear_stale_hover_state_is_a_no_op_when_hover_is_not_active():
 
     assert fake._is_hover_active is False
     assert fake.main_window.refresh_calls == []  # no-op means no repaint either
+    assert fake.apply_stylesheets_calls == []  # no-op means no main-window repaint either
     assert fake._active_display_theme_internal == ACTIVE
     assert fake._swatch_leave_backstop_timer.running is False
