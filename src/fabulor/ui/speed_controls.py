@@ -244,7 +244,30 @@ class SpeedControlsPanel(QWidget):
     def _validate_smart_rewind_settings(self, finalize=False):
         self.update_visuals()
 
-    def update_visuals(self, theme_name=None):
+    def _apply_preset_ramp_colors(self):
+        """Per-sibling positional color ramp across the 12 speed-preset buttons.
+
+        This is the ONLY part of this panel's coloring that cannot be expressed as
+        static QSS: each button's blend ratio depends on its INDEX among its
+        siblings (`preset_ramp_rgb(t, i, count)`), not on any fixed selector a
+        stylesheet rule could target. Every other button in this panel — all of
+        def_speed_buttons/step_buttons/undo_buttons/skip_buttons/long_skip_buttons/
+        smart_wait_buttons/smart_dur_buttons — is fully theme-aware via
+        get_speed_stylesheet()/get_panel_base_stylesheet() with zero contribution
+        from this class. Confirmed by direct measurement, not assumption:
+        review/Investigation_260803_c4c5_dispatcher_isolation.md (2026-08-03,
+        `23ff3e8`) temporarily disabled this whole panel's dispatcher-bypass call
+        and found every OTHER button repainted correctly on a real theme change;
+        only these buttons went dark.
+
+        Called on every theme change (via the ThemeManager TAIL, see app.py's
+        PanelInterface.update_speed_panel_visuals) AND on every speed/step/undo/
+        skip/smart-rewind state change via update_visuals() — the ramp itself
+        doesn't depend on selection state, so re-running it on a state change is
+        harmless, but a theme change never needs update_visuals()'s property-sync
+        half (no selection changed), which is why the two are split into separate
+        methods rather than one call always doing both.
+        """
         t = self.theme_manager.get_current_theme()
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 
@@ -270,6 +293,26 @@ class SpeedControlsPanel(QWidget):
                 f"QPushButton:hover {{ background-color: rgb({hover_c.red()}, {hover_c.green()}, {hover_c.blue()}); }}"
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
             )
+
+    def update_visuals(self, theme_name=None):
+        """Full sync: the ramp (see _apply_preset_ramp_colors) plus every
+        pattern_button group's selected Qt PROPERTY. Their base colors are pure
+        dispatcher QSS (get_speed_stylesheet's pattern_button rules) — this
+        method's job for them is only to mark which one is currently selected and
+        force Qt to repolish, since a property change alone doesn't repaint.
+        Called from every state-change site in this class (_update_def_speed_mode/
+        _update_step_mode/_update_undo_mode/_update_skip_mode/
+        _update_long_skip_mode/_validate_smart_rewind_settings); NOT called from
+        the theme-apply path (see app.py's PanelInterface.update_speed_panel_visuals,
+        which calls _apply_preset_ramp_colors alone — a theme change never changes
+        which preset is selected, so the property-sync half here would be
+        redundant work on that path).
+
+        theme_name is accepted but unused (matches update_speed_panel_visuals'
+        call signature); the current theme is always read fresh via
+        theme_manager.get_current_theme() regardless of what's passed. Pre-existing,
+        not touched here — out of scope for this cleanup."""
+        self._apply_preset_ramp_colors()
 
         def sync_btn(group, current):
             for val, btn in group.items():

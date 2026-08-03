@@ -306,9 +306,17 @@ class PanelInterface:
     def validate_speed_panel_settings(self):
         if self._speed: self._speed._validate_smart_rewind_settings(finalize=True)
     def update_speed_panel_visuals(self, theme_name=None):
-        if self._speed: self._speed.update_visuals(theme_name)
+        # Theme-apply path only, via sync_all_settings_visuals -> here. Calls the
+        # narrow ramp-only method, not the full update_visuals() -- a theme change
+        # never changes which preset/step/undo/etc. is selected, so update_visuals()'s
+        # property-sync half would be redundant work here. See
+        # _apply_preset_ramp_colors' docstring and
+        # review/Investigation_260803_c4c5_dispatcher_isolation.md.
+        if self._speed: self._speed._apply_preset_ramp_colors()
     def update_sleep_panel_visuals(self):
-        if self._sleep: self._sleep.update_panel_styling()
+        # Theme-apply path only -- see update_speed_panel_visuals' comment above,
+        # same reasoning applies to Sleep's _apply_preset_ramp_colors.
+        if self._sleep: self._sleep._apply_preset_ramp_colors()
     def update_audio_panel_visuals(self):
         if self._audio: self._audio.update_visuals()
     def apply_blur_live(self, enabled):

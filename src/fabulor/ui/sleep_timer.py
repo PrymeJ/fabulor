@@ -162,10 +162,31 @@ class SleepTimerPanel(QWidget):
             self.config.set_sleep_fade_duration(seconds)
         self.update_panel_styling()
 
-    def update_panel_styling(self):
+    def _apply_preset_ramp_colors(self):
+        """Per-sibling positional color ramp across the 14 duration-preset buttons.
+
+        This is the ONLY part of this panel's coloring that cannot be expressed as
+        static QSS: each button's blend ratio depends on its INDEX among its
+        siblings (`preset_ramp_rgb(t, i, count)`), not on any fixed selector a
+        stylesheet rule could target. Everything else in this panel — end_chap_btn,
+        set_custom_btn, the fade buttons' base colors, disable_sleep_btn — is fully
+        theme-aware via get_sleep_stylesheet()/get_panel_base_stylesheet() with zero
+        contribution from this class. Confirmed by direct measurement, not
+        assumption: review/Investigation_260803_c4c5_dispatcher_isolation.md
+        (2026-08-03, `23ff3e8`) temporarily disabled this whole panel's dispatcher-
+        bypass call and found every OTHER button repainted correctly on a real
+        theme change; only these buttons went dark.
+
+        Called on every theme change (via the ThemeManager TAIL, see app.py's
+        PanelInterface.update_sleep_panel_visuals) AND on every fade/timer state
+        change via update_panel_styling() — the ramp itself doesn't depend on
+        selection state, so re-running it on a state change is harmless, but a
+        theme change never needs update_panel_styling()'s property-sync half
+        (selection didn't change), which is why the two are split into separate
+        methods rather than one call always doing both.
+        """
         t = self.theme_manager.get_current_theme()
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
-        default_fade = self.config.get_sleep_fade_duration()
 
         for i, btn in enumerate(self._sleep_presets_buttons):
             # OPAQUE ramp (2026-07-28). This used to set an ALPHA ramp (75..255) on
@@ -190,13 +211,29 @@ class SleepTimerPanel(QWidget):
                 f"QPushButton:pressed {{ background-color: rgb({pressed_c.red()}, {pressed_c.green()}, {pressed_c.blue()}); }}"
             )
 
+    def update_panel_styling(self):
+        """Full sync: the ramp (see _apply_preset_ramp_colors) plus the fade
+        buttons' selected/is_default Qt PROPERTIES. The fade buttons' base colors
+        are pure dispatcher QSS (get_sleep_stylesheet's pattern_button rules) —
+        this method's job for them is only to set which one is currently
+        selected/default and force Qt to repolish, since a property change alone
+        doesn't repaint. Called from every state-change site in this class
+        (set_sleep_timer/disable_sleep_timer/set_sleep_fade); NOT called from the
+        theme-apply path (see app.py's PanelInterface.update_sleep_panel_visuals,
+        which calls _apply_preset_ramp_colors alone — a theme change never changes
+        which fade option is selected, so the property-sync half here would be
+        redundant work on that path)."""
+        default_fade = self.config.get_sleep_fade_duration()
+
+        self._apply_preset_ramp_colors()
+
         for i, (seconds, btn) in enumerate(self._sleep_fade_btns.items()):
             is_active = (seconds == self._current_sleep_fade)
             is_default = (seconds == default_fade)
 
             btn.setProperty("selected", "true" if is_active else "false")
             btn.setProperty("is_default", "true" if is_default else "false")
-            
+
             # Trigger style refresh for property changes
             btn.style().unpolish(btn)
             btn.style().polish(btn)
