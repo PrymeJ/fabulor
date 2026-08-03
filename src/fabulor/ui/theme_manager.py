@@ -299,12 +299,40 @@ class ThemeManager(QObject):
         the one confirmed cross-file read of the old (pre-rename) bare
         _active_display_theme field (app.py's _set_bg_suppressed), which read
         it directly with no hover check and could paint content_container with
-        a previewed theme. See review/Review_260720_theme_reach.md."""
+        a previewed theme. See review/Review_260720_theme_reach.md.
+
+        SHADOW-CHECK (step 2 of the migration, see
+        review/Design_260804_hover_state_computed_read_path.md): computes
+        get_displayed_theme()'s answer and logs a WARNING if it disagrees with
+        what this method is about to return, but does NOT change what is
+        returned — pure observer, not a gate. This measures, across real
+        usage, whether the new live-computed answer agrees with this method's
+        stored-state answer before step 3 redirects anything to depend on it.
+        Remove once that verification period is complete and step 3 lands."""
         if self._is_hover_active:
             if self._cover_theme_active and self._cover_theme is not None:
-                return self._cover_theme
-            return self._current_theme_name
-        return self._active_display_theme_internal or self._current_theme_name
+                _old_result = self._cover_theme
+            else:
+                _old_result = self._current_theme_name
+        else:
+            _old_result = self._active_display_theme_internal or self._current_theme_name
+
+        _new_result = self.get_displayed_theme()
+        if _old_result != _new_result:
+            settings_panel = getattr(self.main_window, 'settings_panel', None)
+            tabs = getattr(self.main_window, 'tabs', None)
+            logger.warning(
+                f"[SHADOW-CHECK] get_active_theme() DISAGREEMENT: "
+                f"old_path={_old_result!r} new_path={_new_result!r} "
+                f"_is_hover_active={self._is_hover_active!r} "
+                f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
+                f"_current_theme_name={getattr(self, '_current_theme_name', None)!r} "
+                f"_cover_theme_active={getattr(self, '_cover_theme_active', None)!r} "
+                f"settings_panel.isVisible()={settings_panel.isVisible() if settings_panel else None!r} "
+                f"tabs.currentIndex()={tabs.currentIndex() if tabs else None!r}"
+            )
+
+        return _old_result
     
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)

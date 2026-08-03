@@ -55,7 +55,16 @@ class _FakeTM:
     _mark_theme_applied are bound to the REAL unbound ThemeManager methods (not
     re-faked) since they are the exact production code get_current_theme() and
     clear_stale_hover_state() call through -- this test is about THOSE two methods'
-    own logic, not about re-verifying their dependencies."""
+    own logic, not about re-verifying their dependencies.
+
+    get_displayed_theme is faked here (2026-08-04, step 2 of the hover-state
+    migration): get_active_theme() now shadow-checks against it, but this test
+    file is about get_active_theme()/get_current_theme()'s OWN pre-existing
+    logic, not get_displayed_theme()'s (that has its own dedicated test file).
+    Standing up real Qt widgets (settings_panel/tabs/swatch_box) here would
+    test the wrong thing -- the fake simply mirrors whatever the old path is
+    about to compute, so the shadow check always agrees and never distracts
+    from what this file actually verifies."""
 
     get_active_theme = ThemeManager.get_active_theme
     _mark_theme_applied = ThemeManager._mark_theme_applied
@@ -70,6 +79,16 @@ class _FakeTM:
         self._swatch_leave_backstop_timer = _FakeTimer()
         self.main_window = _FakeMainWindow()
         self.apply_stylesheets_calls = []
+
+    def get_displayed_theme(self):
+        # Mirror exactly what get_active_theme()'s OLD path computes, so the
+        # shadow check added in get_active_theme() always agrees in this test
+        # file and never logs a spurious [SHADOW-CHECK] warning during tests.
+        if self._is_hover_active:
+            if self._cover_theme_active and self._cover_theme is not None:
+                return self._cover_theme
+            return self._current_theme_name
+        return self._active_display_theme_internal or self._current_theme_name
 
     def _apply_stylesheets(self, theme_name, hover=False, force_all_panels=False):
         # Stand-in for the real (heavy, Qt-widget-touching) _apply_stylesheets --
