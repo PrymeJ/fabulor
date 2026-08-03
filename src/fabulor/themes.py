@@ -3514,19 +3514,25 @@ def get_library_stylesheet(theme_name="default"):
     """
 
 
-def get_settings_stylesheet(theme_name="default"):
+def get_panel_base_stylesheet(theme_name="default"):
     """
-    Rules for settings_panel, speed_panel, and sleep_panel (all share this
-    stylesheet). Contains tab widget styling, theme/pattern buttons, folder list,
-    and panel backgrounds.
+    Rules genuinely shared, identically, by settings_panel, speed_panel, AND
+    sleep_panel — panel chrome/background, generic label/button treatment, and
+    the generic scrollbar rules. Every one of these selectors was verified
+    against actual object-name usage in main_window_builders.py (settings_panel),
+    speed_controls.py, and sleep_timer.py before being placed here — see
+    review/ for the 2026-08-03 classification pass. get_settings_stylesheet,
+    get_speed_stylesheet, and get_sleep_stylesheet each return this base plus
+    their own panel-specific rules (Shape A: flat string concatenation, not a
+    QSS cascade — see the classification doc for why Shape B was rejected).
+
+    Do NOT add a rule here unless it is confirmed used identically by all
+    three panels' own widgets, not merely "not obviously wrong" for one of
+    them — the split's whole point is to stop three panels silently trading
+    rules through one shared function.
     """
     t = _resolve_theme(theme_name)
-    text_rgb = _hex_to_rgb(t['text'])
     accent_style = _get_gradient_style(t, "accent", t['accent'])
-    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
-    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
-    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
-    panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
 
     return f"""
         QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
@@ -3543,10 +3549,6 @@ def get_settings_stylesheet(theme_name="default"):
             margin-top: 10px;
             color: {t['accent_light']};
         }}
-        QLabel#theme_hint {{
-            font-size: 12px;
-            color: {t['accent']};
-        }}
         QPushButton {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
@@ -3559,6 +3561,75 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         QPushButton:pressed {{
             background-color: {t['accent_dark']};
+        }}
+        QPushButton#pattern_button {{
+            background: transparent;
+            color: {t.get('settings_theme_names_dimmed', t['accent_dark'])};
+            border: 1px solid {t['accent_dark']};
+            font-size: 11px;
+            padding: 4px;
+        }}
+        QPushButton#pattern_button[selected="true"] {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#pattern_button[is_default="true"] {{
+            border: 2px solid {t['accent_light']};
+        }}
+        QPushButton#pattern_button:hover {{
+            border: 1px solid {t['accent']};
+        }}
+        QPushButton#pattern_button[is_default="true"]:hover {{
+            border: 2px solid {t['accent_light']};
+        }}
+        QScrollBar:vertical {{
+            width: 8px;
+            background: {t['bg_deep']};
+            border: none;
+            margin: 0px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {t['accent']};
+            min-height: 20px;
+            border-radius: 4px;
+        }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+        QScrollBar::add-page:vertical,
+        QScrollBar::sub-page:vertical {{
+            background: none;
+        }}
+    """
+
+
+def get_settings_stylesheet(theme_name="default"):
+    """
+    settings_panel-specific rules only: base (get_panel_base_stylesheet) plus
+    tab widget styling, theme/pattern buttons, folder list, combo/line-edit
+    inputs, and the Audio tab's reset button/balance slider. None of these
+    selectors matched a widget outside settings_panel's own build code
+    (main_window_builders.py: build_settings_panel + its Audio/Library tabs)
+    as of the 2026-08-03 classification pass.
+
+    QComboBox/QScrollArea/QWidget#theme_selector_container are dead code as of
+    that same pass — no QComboBox or QScrollArea is constructed anywhere in
+    settings_panel, speed_panel, or sleep_panel today. Left in place
+    (unverified further, no live effect either way) — see TODO.md.
+    """
+    t = _resolve_theme(theme_name)
+    text_rgb = _hex_to_rgb(t['text'])
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+    tab_hover_bg = t.get('settings_tab_hover_bg', t['accent'])
+    tab_hover_opacity = t.get('settings_tab_hover_opacity', 0.85)
+    tab_hover_text = t.get('settings_tab_hover_text', t['text'])
+    panel_dimmed_color = t.get('settings_theme_names_dimmed', t['accent_dark'])
+
+    return get_panel_base_stylesheet(theme_name) + f"""
+        QLabel#theme_hint {{
+            font-size: 12px;
+            color: {t['accent']};
         }}
         QComboBox {{
             background-color: {t['bg_dropdown']};
@@ -3592,16 +3663,6 @@ def get_settings_stylesheet(theme_name="default"):
         }}
         QComboBox QAbstractItemView::item {{
             min-height: 22px;
-        }}
-        QLineEdit {{
-            background-color: {t['bg_dropdown']};
-            color: {t['text']};
-            selection-background-color: {t['accent']};
-            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-            font-size: 12px;
-            border: 1px solid {t['accent']};
-            border-radius: 4px;
-            padding: 2px;
         }}
         QTabWidget::pane {{
             border-top: 1px solid {t['accent_dark']};
@@ -3700,26 +3761,6 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
-        QPushButton#pattern_button {{
-            background: transparent;
-            color: {panel_dimmed_color};
-            border: 1px solid {t['accent_dark']};
-            font-size: 11px;
-            padding: 4px;
-        }}
-        QPushButton#pattern_button[selected="true"] {{
-            background: {t['accent']};
-            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
-        }}
-        QPushButton#pattern_button[is_default="true"] {{
-            border: 2px solid {t['accent_light']};
-        }}
-        QPushButton#pattern_button:hover {{
-            border: 1px solid {t['accent']};
-        }}
-        QPushButton#pattern_button[is_default="true"]:hover {{
-            border: 2px solid {t['accent_light']};
-        }}
         QPushButton#library_add_folder_btn, QPushButton#library_remove_folder_btn,
         QPushButton#library_rescan_btn {{
             background: transparent;
@@ -3741,7 +3782,7 @@ def get_settings_stylesheet(theme_name="default"):
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-weight: bold;
         }}
-        #disable_sleep_btn, #reset_audio_btn {{
+        #reset_audio_btn {{
             background: {accent_style};
             color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
             font-size: 14px;
@@ -3752,7 +3793,6 @@ def get_settings_stylesheet(theme_name="default"):
             qproperty-bg_color: "{t['slider_chapter_bg']}";
             qproperty-fill_color: "{t['slider_chapter_fill']}";
         }}
-        QScrollBar:vertical,
         QComboBox QAbstractItemView QScrollBar:vertical,
         QListWidget#settings_folder_list QScrollBar:vertical {{
             width: 8px;
@@ -3765,24 +3805,73 @@ def get_settings_stylesheet(theme_name="default"):
             background: transparent;
             margin: 0px;
         }}
-        QScrollBar::handle:vertical,
         QComboBox QAbstractItemView QScrollBar::handle:vertical,
         QListWidget#settings_folder_list QScrollBar::handle:vertical {{
             background: {t['accent']};
             min-height: 20px;
             border-radius: 4px;
         }}
-        QScrollBar::add-line:vertical,
-        QScrollBar::sub-line:vertical,
         QComboBox QAbstractItemView QScrollBar::add-line:vertical,
         QComboBox QAbstractItemView QScrollBar::sub-line:vertical {{
             height: 0px;
         }}
-        QScrollBar::add-page:vertical,
-        QScrollBar::sub-page:vertical,
         QComboBox QAbstractItemView QScrollBar::add-page:vertical,
         QComboBox QAbstractItemView QScrollBar::sub-page:vertical {{
             background: none;
+        }}
+    """
+
+
+def get_speed_stylesheet(theme_name="default"):
+    """
+    speed_panel-specific rules only: base (get_panel_base_stylesheet) plus...
+    nothing. As of the 2026-08-03 classification pass, speed_panel has ZERO
+    rules beyond the shared base — every selector speed_controls.py's own
+    widgets need (pattern_button, settings_header, the panel chrome itself) is
+    already in get_panel_base_stylesheet. Observed and flagged, not
+    compensated for: this is not a bug or an oversight in the split, it is
+    what the original combined function's rules actually covered for this
+    panel. Whether Speed should eventually get its own distinct visual
+    treatment is a design question for later, not something this split
+    should manufacture a rule to address.
+    """
+    return get_panel_base_stylesheet(theme_name)
+
+
+def get_sleep_stylesheet(theme_name="default"):
+    """
+    sleep_panel-specific rules only: base (get_panel_base_stylesheet) plus the
+    custom-duration QLineEdit input and the disable-sleep-timer button.
+
+    #disable_sleep_btn and #reset_audio_btn (settings' Audio tab) used to
+    share one combined QSS rule despite belonging to different panels —
+    split apart here rather than unified, per Pryme's explicit instruction:
+    the app has several visually different "reset/destructive action" button
+    styles (this one, Delete-listening-history, Tag deletion, Reset-all-stats)
+    with no single intentional system behind them. Unifying them is tracked
+    as its own future TODO.md item, not something to solve inside this
+    structural split.
+    """
+    t = _resolve_theme(theme_name)
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+
+    return get_panel_base_stylesheet(theme_name) + f"""
+        QLineEdit {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-size: 12px;
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 2px;
+        }}
+        #disable_sleep_btn {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-size: 14px;
+            padding: 10px;
+            margin-top: 10px;
         }}
     """
 

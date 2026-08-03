@@ -7,7 +7,8 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QTimer, Signal, QObject, QEas
 from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
-    get_library_stylesheet, get_settings_stylesheet, get_sidebar_stylesheet,
+    get_library_stylesheet, get_settings_stylesheet, get_speed_stylesheet,
+    get_sleep_stylesheet, get_sidebar_stylesheet,
     get_stats_stylesheet, get_tags_stylesheet, THEMES
 )
 
@@ -756,6 +757,13 @@ class ThemeManager(QObject):
             get_library_stylesheet   get_settings_stylesheet   get_stats_stylesheet
             get_tags_stylesheet      get_sidebar_stylesheet
 
+        (2026-08-03: get_settings_stylesheet was split into get_panel_base_stylesheet
+        + get_settings_stylesheet/get_speed_stylesheet/get_sleep_stylesheet. The
+        panel_opacity_hover rule lives in the shared base, read by all three panel
+        functions — so calling any of the three still reaches it; the code below
+        calls all three explicitly rather than relying on one name to cover all
+        three panels, unlike before the split.)
+
         Equally load-bearing is what is NOT here. get_base_stylesheet,
         get_player_stylesheet and get_title_bar_stylesheet produce BYTE-IDENTICAL
         output either way, so restyling them is pure waste on this path — and
@@ -788,15 +796,19 @@ class ThemeManager(QObject):
         if hasattr(mw, 'sidebar'):
             mw.sidebar.setStyleSheet(get_sidebar_stylesheet(theme_name))
         _mark("sidebar")
-        ss_panels = get_settings_stylesheet(theme_name)
-        _mark("build settings ss")
+        panel_sheets = {
+            'settings_panel': get_settings_stylesheet(theme_name),
+            'speed_panel': get_speed_stylesheet(theme_name),
+            'sleep_panel': get_sleep_stylesheet(theme_name),
+        }
+        _mark("build settings/speed/sleep ss")
         # Mirrors _apply_stylesheets' stash so a panel skipped there is still caught
         # up correctly; here every panel is styled, so the stash just stays truthful.
-        self._pending_panel_sheet = ss_panels
-        for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+        self._pending_panel_sheet = dict(panel_sheets)
+        for attr, sheet in panel_sheets.items():
             w = getattr(mw, attr, None)
             if w:
-                w.setStyleSheet(ss_panels)
+                w.setStyleSheet(sheet)
                 _mark(attr)
         if hasattr(mw, 'library_panel'):
             mw.library_panel.setStyleSheet(get_library_stylesheet(theme_name))
@@ -1611,7 +1623,17 @@ class ThemeManager(QObject):
         # always-not-hover deferred method silently added a hover-skip that never
         # existed, breaking the Themes tab's own hover preview. Moved back here to
         # restore the original, intentional behavior.
-        ss_panels = get_settings_stylesheet(theme_name)
+        # All three built unconditionally, even though the loop below skips the two
+        # invisible panels' setStyleSheet() call (hover always has exactly one of the
+        # three visible, per the one-overlay gate). Building the two unused strings
+        # costs ~0.1ms each (string construction is negligible next to the ~200-600ms
+        # setStyleSheet()/Qt-repolish cost this same file documents elsewhere) — not
+        # worth lazy-building at the expense of this dict's simplicity.
+        panel_sheets = {
+            'settings_panel': get_settings_stylesheet(theme_name),
+            'speed_panel': get_speed_stylesheet(theme_name),
+            'sleep_panel': get_sleep_stylesheet(theme_name),
+        }
         # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; see
         # NOTES.md for the full confirmed mechanism). settings_panel
         # .setStyleSheet() below forces Qt to re-run its style/geometry cascade
@@ -1649,8 +1671,8 @@ class ThemeManager(QObject):
             # panels were later built with no stylesheet at all — reported live as the
             # settings panel opening unstyled on some launches but not others (a race
             # against which apply landed first, hence intermittent).
-            self._pending_panel_sheet = ss_panels
-            for attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+            self._pending_panel_sheet = dict(panel_sheets)
+            for attr, sheet in panel_sheets.items():
                 w = getattr(mw, attr, None)
                 if not w:
                     continue
@@ -1678,7 +1700,7 @@ class ThemeManager(QObject):
                 # apply_pending_panel_sheet() from each _start_*_entry.
                 if not force_all_panels and not w.isVisible():
                     continue  # already stashed above; caught up before it is shown
-                w.setStyleSheet(ss_panels)
+                w.setStyleSheet(sheet)
         finally:
             self.main_window._spurious_enter_guard_until = time.perf_counter() + _SPURIOUS_ENTER_GUARD_S
         _mark("settings/speed/sleep panels")
@@ -1813,9 +1835,21 @@ class ThemeManager(QObject):
         INVISIBLE-SURFACE batch (library/stats/tags/book_detail) and does not touch
         these three panels at all, so it cannot serve as the catch-up here. Checked,
         not assumed.
+
+        _pending_panel_sheet is a dict keyed by objectName (2026-08-03, the
+        settings/speed/sleep stylesheet split — each panel now gets its own
+        function's output, not one shared string). Keyed by `panel.objectName()`
+        rather than by caller-supplied attribute name, since callers pass the
+        widget itself, not its MainWindow attribute name — and objectName() is
+        exactly 'settings_panel'/'speed_panel'/'sleep_panel', verified against
+        main_window_builders.py/speed_controls.py/sleep_timer.py's own
+        setObjectName calls.
         """
-        sheet = getattr(self, '_pending_panel_sheet', None)
-        if sheet and panel is not None:
+        pending = getattr(self, '_pending_panel_sheet', None)
+        if not pending or panel is None:
+            return
+        sheet = pending.get(panel.objectName())
+        if sheet:
             panel.setStyleSheet(sheet)
 
     def flush_deferred_restyle(self):

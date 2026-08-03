@@ -933,6 +933,30 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   was right about Regime A and blind to Regime B; its "the trace found nothing, not a live-forced
   test showed nothing" caveat is what prompted the measurement that split them.*
 
+- **Reset/destructive-button style unification.** Surfaced while splitting the shared
+  Settings/Speed/Sleep stylesheet (2026-08-03): `disable_sleep_btn` and
+  `reset_audio_btn` currently share one combined QSS rule despite belonging to
+  different panels, and there are other similarly-purposed buttons across the app
+  (Delete listening history, Tag management, Reset all stats) using a visually
+  different, transparent-background style — no unified "reset/destructive action"
+  button system exists; it's accreted inconsistently rather than intentionally
+  varied. Pryme's proposed direction: define two main styles for this button
+  category, then deliberately choose which one each use case gets during a future
+  theme pass, checked app-wide — rather than continuing to add one-off variants.
+  Not urgent; low visual/functional impact today. Do during a dedicated theme/style
+  pass, not piecemeal.
+
+- **Dead-code cleanup: `QComboBox`/`QScrollArea`/`theme_selector_container` rules in
+  settings stylesheet.** Surfaced during the same stylesheet-split investigation.
+  These selectors (`QComboBox` and all sub-selectors, `QScrollArea`,
+  `QWidget#theme_selector_container`, `QScrollArea QWidget#qt_scrollarea_viewport`)
+  don't match any widget currently constructed in Settings, Speed, or Sleep — no
+  `QComboBox` or `QScrollArea` is built anywhere in these three panels today. Left
+  in place (bucketed as settings-specific, no-op either way) during the split rather
+  than investigated. Needs its own pass to confirm they're genuinely dead (not
+  matching something constructed dynamically or in a code path not checked) and, if
+  so, remove them. Not urgent — no live effect either way.
+
 ## In Progress
 
 (none)
