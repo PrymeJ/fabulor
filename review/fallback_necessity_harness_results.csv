@@ -1,0 +1,145 @@
+batch_timestamp,trial_num,hover_theme,delay_ms,stylesheet_ok,pixel_ok,checks_agree,actual_rgb,expected_rgb,fade_state_at_unhover,overlay_visible_at_unhover,fade_state_before_dismiss,overlay_visible_before_dismiss,fade_state_after_dismiss_call,overlay_visible_after_dismiss_call,fade_was_running_before_dismiss,applies_in_dismiss_window,applies_total_after_delay,fade_finished_count,dismiss_window_callers,unhover_call_duration_ms
+2026-08-03T05:48:03.149112,1,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1516820047982037
+2026-08-03T05:48:05.898702,2,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07247901521623135
+2026-08-03T05:48:08.563204,3,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1216770033352077
+2026-08-03T05:48:11.212932,4,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.32616598764434457
+2026-08-03T05:48:13.907393,5,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.36404302227310836
+2026-08-03T05:48:16.556492,6,Blindsight,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08211401291191578
+2026-08-03T05:48:19.316037,7,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10997001663781703
+2026-08-03T05:48:21.964366,8,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10014799772761762
+2026-08-03T05:48:24.623046,9,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.260547996731475
+2026-08-03T05:48:27.316699,10,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10004799696616828
+2026-08-03T05:48:29.992947,11,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.15190098201856017
+2026-08-03T05:48:32.702729,12,Rose Code,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07747000199742615
+2026-08-03T05:48:35.394666,13,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.11889799498021603
+2026-08-03T05:48:38.185460,14,Slow Regard,0,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.21107401698827744
+2026-08-03T05:48:40.848172,15,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.11440299567766488
+2026-08-03T05:48:43.539782,16,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1389319950249046
+2026-08-03T05:48:46.167033,17,Slow Regard,0,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06417999975383282
+2026-08-03T05:48:49.075190,18,Slow Regard,0,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.11772298603318632
+2026-08-03T05:48:51.741510,19,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08179401629604399
+2026-08-03T05:48:54.429459,20,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07369997911155224
+2026-08-03T05:48:57.149281,21,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10968701099045575
+2026-08-03T05:48:59.925673,22,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05070798215456307
+2026-08-03T05:49:02.626420,23,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06751000182703137
+2026-08-03T05:49:05.402134,24,Blindsight,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.115458999061957
+2026-08-03T05:49:08.218536,25,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07472900324501097
+2026-08-03T05:49:10.908713,26,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1507110137026757
+2026-08-03T05:49:13.627254,27,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07600800017826259
+2026-08-03T05:49:16.395171,28,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08112099021673203
+2026-08-03T05:49:19.118669,29,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08862200775183737
+2026-08-03T05:49:21.775705,30,Rose Code,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07438100874423981
+2026-08-03T05:49:24.440531,31,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08184500620700419
+2026-08-03T05:49:27.155286,32,Slow Regard,20,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.053987023420631886
+2026-08-03T05:49:29.886278,33,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1500080106779933
+2026-08-03T05:49:32.620482,34,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07254097727127373
+2026-08-03T05:49:35.295869,35,Slow Regard,20,False,True,False,"(33, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10656198719516397
+2026-08-03T05:49:38.079953,36,Slow Regard,20,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05832701572217047
+2026-08-03T05:49:40.847724,37,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08350500138476491
+2026-08-03T05:49:43.578115,38,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.12432099902071059
+2026-08-03T05:49:46.311801,39,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07211801130324602
+2026-08-03T05:49:49.006045,40,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.04570800228975713
+2026-08-03T05:49:51.750905,41,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05761999636888504
+2026-08-03T05:49:54.479592,42,Blindsight,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07695099338889122
+2026-08-03T05:49:57.247478,43,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06855998071841896
+2026-08-03T05:49:59.969489,44,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0882960157468915
+2026-08-03T05:50:02.593906,45,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0652250018902123
+2026-08-03T05:50:05.257471,46,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.04604001878760755
+2026-08-03T05:50:07.969200,47,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.13353701797313988
+2026-08-03T05:50:10.695833,48,Rose Code,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08432602044194937
+2026-08-03T05:50:13.367236,49,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07750300574116409
+2026-08-03T05:50:15.959634,50,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07724898750893772
+2026-08-03T05:50:18.638937,51,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1397250161971897
+2026-08-03T05:50:21.200442,52,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07002000347711146
+2026-08-03T05:50:23.761778,53,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.12420600978657603
+2026-08-03T05:50:26.466469,54,Slow Regard,50,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07799800368957222
+2026-08-03T05:50:29.232007,55,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05056898226030171
+2026-08-03T05:50:31.833376,56,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06690400186926126
+2026-08-03T05:50:34.443764,57,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.04747198545373976
+2026-08-03T05:50:37.092068,58,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10700398706831038
+2026-08-03T05:50:39.834624,59,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.17389599815942347
+2026-08-03T05:50:42.606585,60,Blindsight,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.13582801329903305
+2026-08-03T05:50:45.245322,61,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07273099618032575
+2026-08-03T05:50:47.868606,62,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06527398363687098
+2026-08-03T05:50:50.559385,63,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0775430235080421
+2026-08-03T05:50:53.266351,64,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08164398605003953
+2026-08-03T05:50:55.846563,65,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07167499279603362
+2026-08-03T05:50:58.762880,66,Rose Code,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.088928994955495
+2026-08-03T05:51:01.400650,67,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.04530302248895168
+2026-08-03T05:51:04.139046,68,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06426300387829542
+2026-08-03T05:51:06.889078,69,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0471319945063442
+2026-08-03T05:51:09.572206,70,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07669901242479682
+2026-08-03T05:51:12.174737,71,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.10319298598915339
+2026-08-03T05:51:14.863196,72,Slow Regard,80,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07296900730580091
+2026-08-03T05:51:17.651239,73,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08095300290733576
+2026-08-03T05:51:21.873829,74,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.1180059916805476
+2026-08-03T05:51:25.472944,75,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09383598808199167
+2026-08-03T05:51:27.349636,76,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.09489399963058531
+2026-08-03T05:51:30.030497,77,Blindsight,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.04707102198153734
+2026-08-03T05:51:34.473446,78,Blindsight,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.1670449855737388
+2026-08-03T05:51:36.409147,79,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.14612500672228634
+2026-08-03T05:51:39.012895,80,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1140400127042085
+2026-08-03T05:51:41.720641,81,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05248401430435479
+2026-08-03T05:51:44.477397,82,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0785189913585782
+2026-08-03T05:51:47.360083,83,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.1582730037625879
+2026-08-03T05:51:50.028812,84,Rose Code,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06387699977494776
+2026-08-03T05:51:53.045685,85,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07447399548254907
+2026-08-03T05:51:55.712392,86,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0700149976182729
+2026-08-03T05:51:58.487358,87,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.06893300451338291
+2026-08-03T05:52:01.256958,88,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08543001604266465
+2026-08-03T05:52:05.661784,89,Slow Regard,110,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09246799163520336
+2026-08-03T05:52:07.543153,90,Slow Regard,110,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07192100747488439
+2026-08-03T05:52:10.518949,91,Blindsight,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08550699567422271
+2026-08-03T05:52:14.873603,92,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.10723999002948403
+2026-08-03T05:52:18.273353,93,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.11026801075786352
+2026-08-03T05:52:21.673328,94,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08008399163372815
+2026-08-03T05:52:23.724675,95,Blindsight,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08991599315777421
+2026-08-03T05:52:27.873029,96,Blindsight,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.05607501952908933
+2026-08-03T05:52:31.273338,97,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07929900311864913
+2026-08-03T05:52:33.375219,98,Rose Code,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08187300409190357
+2026-08-03T05:52:36.270595,99,Rose Code,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.09390499326400459
+2026-08-03T05:52:40.275123,100,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.046550994738936424
+2026-08-03T05:52:43.667576,101,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07587499567307532
+2026-08-03T05:52:47.075261,102,Rose Code,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07723900489509106
+2026-08-03T05:52:50.467600,103,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.04721799632534385
+2026-08-03T05:52:53.773501,104,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.049856986152008176
+2026-08-03T05:52:57.076433,105,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.05652601248584688
+2026-08-03T05:53:00.473499,106,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07510898285545409
+2026-08-03T05:53:03.858221,107,Slow Regard,140,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.0822950096335262
+2026-08-03T05:53:05.929737,108,Slow Regard,140,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.0727199949324131
+2026-08-03T05:53:10.073543,109,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.1390590041410178
+2026-08-03T05:53:12.156749,110,Blindsight,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.09057900751940906
+2026-08-03T05:53:16.272867,111,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08654399425722659
+2026-08-03T05:53:19.683692,112,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07735399412922561
+2026-08-03T05:53:22.973290,113,Blindsight,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08694201824255288
+2026-08-03T05:53:25.069120,114,Blindsight,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05835600313730538
+2026-08-03T05:53:29.174860,115,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08020701352506876
+2026-08-03T05:53:32.573312,116,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.10550301522016525
+2026-08-03T05:53:34.644885,117,Rose Code,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.08852299652062356
+2026-08-03T05:53:38.773088,118,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07442198693752289
+2026-08-03T05:53:40.850779,119,Rose Code,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.07034299778752029
+2026-08-03T05:53:44.975130,120,Rose Code,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.06146598025225103
+2026-08-03T05:53:47.095986,121,Slow Regard,170,False,True,False,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Stopped,False,Stopped,False,False,0,1,0,['_do_fade_with_slider_animation:1382'],0.05757101462222636
+2026-08-03T05:53:51.272476,122,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09560101898387074
+2026-08-03T05:53:54.574818,123,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09438101551495492
+2026-08-03T05:53:57.970275,124,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07523898966610432
+2026-08-03T05:54:01.372145,125,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08052799967117608
+2026-08-03T05:54:04.773896,126,Slow Regard,170,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.04697099211625755
+2026-08-03T05:54:08.157818,127,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.11991700739599764
+2026-08-03T05:54:11.473037,128,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07898799958638847
+2026-08-03T05:54:14.879658,129,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.12789299944415689
+2026-08-03T05:54:18.272929,130,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08837701170705259
+2026-08-03T05:54:21.866164,131,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07801799802109599
+2026-08-03T05:54:25.273312,132,Blindsight,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09844399755820632
+2026-08-03T05:54:28.673096,133,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07555700722150505
+2026-08-03T05:54:31.975710,134,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.11279000318609178
+2026-08-03T05:54:35.373985,135,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.14798800111748278
+2026-08-03T05:54:38.766453,136,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.08371402509510517
+2026-08-03T05:54:42.176341,137,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09453899110667408
+2026-08-03T05:54:45.574117,138,Rose Code,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.06450200453400612
+2026-08-03T05:54:48.973549,139,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.13806199422106147
+2026-08-03T05:54:52.372719,140,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.04679898847825825
+2026-08-03T05:54:55.773256,141,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.057137018302455544
+2026-08-03T05:54:59.161489,142,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.07993000326678157
+2026-08-03T05:55:02.473451,143,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.09698598296381533
+2026-08-03T05:55:05.873320,144,Slow Regard,250,True,True,True,"(32, 4, 37)","(32, 4, 37)",Stopped,False,Running,True,Stopped,False,True,1,1,0,['_on_theme_changed:1241'],0.04820400499738753

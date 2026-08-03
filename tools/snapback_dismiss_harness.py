@@ -11,21 +11,35 @@ controlled whether the 200ms snapback fade was still in flight when
 snap_theme_forward's _fade_overlay.isVisible() fallback checked it. That theory
 was wrong: _close_settings_flow (panels.py:1379) calls _on_theme_unhovered() and
 snap_theme_forward() back-to-back, SYNCHRONOUSLY, with no event-loop turn between
-them (snap_theme_forward's own comment: "this method runs immediately after
-_on_theme_unhovered(), in the same call stack with no intervening event-loop
-turn"). The wall-clock delay before hide_all_panels() therefore never changes
-the gap between those two calls — it was sweeping a variable that doesn't
-control the race. 72 trials across two batches correctly found nothing, because
-there was nothing there to find with that variable.
+them. The wall-clock delay before hide_all_panels() therefore never changes the
+gap between THOSE two calls — it was sweeping a variable that doesn't control
+that particular race. 72 trials across two batches correctly found nothing,
+because there was nothing there to find with that variable. Batch 3 dropped the
+delay axis and instead snapshotted _fade_anim.state()/_fade_overlay.isVisible()
+directly, which found the real batch-3 mechanism: a SECOND _on_theme_unhovered()
+call (this harness's own trial structure at the time) getting stashed then
+drained by snap_theme_forward — a different, already-understood, working-as-
+designed mechanism (see review/Investigation_260802_double_fire_reentrancy.md).
 
-This batch instead directly SNAPSHOTS the real state the fallback branch reads —
-_fade_anim.state() and _fade_overlay.isVisible() — at the instants that matter
-(immediately after _on_theme_unhovered() returns, and immediately after
-snap_theme_forward() returns), rather than inferring them from wall-clock delay.
-This answers "did the fallback's precondition actually hold" as an observed fact
-per trial instead of a guess. The swatch-count/dwell-bucket axes are kept
-(they exercise different real code paths: the no-op guard vs. a real fade start);
-the delay axis is dropped, since it doesn't reach the mechanism under test.
+REDESIGN 2 (2026-08-03, fallback-necessity investigation): the delay axis is
+reintroduced, but placed correctly this time. The earlier delay attempts put the
+wait INSIDE the do_trial call between _on_theme_unhovered() and hide_all_panels()
+-- which cannot matter, per the structural fact above (those two calls in
+_close_settings_flow are adjacent with no gap to widen). The REAL scenario this
+batch targets is different: a genuine leave-triggered hover-out starts the real
+200ms snapback fade (via _on_themes_tab_left -> _on_theme_unhovered(), the
+SWATCH-LEAVE path, not the dismiss path), and the user's dismiss CLICK arrives
+some time later, while that fade may STILL be running. The delay that actually
+controls whether the fade is mid-flight is the one BETWEEN the hover-out and the
+dismiss call -- inserted here as a real pump() between tm._on_theme_unhovered()
+(simulating the genuine leave) and mw.panel_manager.hide_all_panels() (the
+dismiss). This is a structurally different placement from both earlier delay
+attempts, chosen because it is the only point in the real call sequence where a
+gap can exist at all.
+
+Buckets concentrate inside the 200ms fade window specifically (20/50/80/110/
+140/170ms), per the task's request to catch the fade genuinely still running at
+dismiss time, plus 0ms and 250ms as before/after-window controls.
 
 METHODOLOGY (do not weaken any of these without updating this docstring):
 
@@ -46,21 +60,17 @@ METHODOLOGY (do not weaken any of these without updating this docstring):
    attached to the real `_fade_anim` (Qt supports multiple slots per signal; this
    does not alter the connection the app itself relies on) to observe whether the
    snapback fade's own completion signal fired. `_apply_stylesheets` is wrapped
-   (call-through, not replaced) to count real invocations per trial. Two
-   `_apply_stylesheets` calls in one trial means both the synchronous fade-start
-   path AND snap_theme_forward's `_fade_overlay.isVisible()` fallback ran; one
-   call means the fallback did not fire. NEW this batch: direct snapshots of
-   `_fade_anim.state()` and `_fade_overlay.isVisible()` at the two checkpoints
-   named above, logged per trial, so "did the fallback's own precondition hold"
-   is answered directly rather than inferred from apply-count alone.
+   (call-through, not replaced) to count real invocations per trial, with each
+   call's real caller captured via traceback so a fallback-triggered apply can be
+   distinguished from the normal fade-start apply by WHERE it was called from,
+   not just how many times.
 
-3. THE REAL SIGNAL PATH IS USED THROUGHOUT. Hover is driven via the real
-   `_on_theme_hovered` entry point and the real 80ms debounce QTimer (not a direct
-   call to `_fire_pending_hover` — the timer is allowed to fire on its own), and
-   dismissal is driven via the real `hide_all_panels()` -> `_close_settings_flow()`
-   call chain. `_on_theme_changed` is never bypassed. Bypassing it previously
-   produced a misleading "double-fire" false lead (see
-   review/Investigation_260802_restyle_cost_depth_and_narrowing.md).
+3. THE REAL SIGNAL PATH IS USED THROUGHOUT. Hover-out is driven via the real
+   `_on_theme_unhovered()` entry point (the same one a genuine swatch leaveEvent
+   calls via _on_themes_tab_left), and dismissal is driven via the real
+   `hide_all_panels()` -> `_close_settings_flow()` call chain. `_on_theme_changed`
+   is never bypassed. Bypassing it previously produced a misleading "double-fire"
+   false lead (see review/Investigation_260802_restyle_cost_depth_and_narrowing.md).
 
 Run live, on-screen — QT_QPA_PLATFORM must NOT be set to offscreen. This is a
 compositing/timing bug class; see CLAUDE.md's "Pre-screen visual changes... but
@@ -71,9 +81,8 @@ Usage:
     source fabulorenv/bin/activate
     LD_PRELOAD=/usr/lib64/libstdc++.so.6 python tools/snapback_dismiss_harness.py
 
-Runs ONE batch (all swatch-count x dwell-time combinations, one trial each) and
-exits. Does NOT loop — per Pryme's instruction, batches are meant to be spaced
-across sessions. Re-invoke manually for the next batch.
+Runs ONE batch (all delay-bucket x theme combinations, one trial each) and
+exits. Does NOT loop. Re-invoke manually for the next batch.
 """
 import sys
 import os
@@ -94,33 +103,27 @@ app = QApplication.instance() or QApplication([])
 from fabulor.app import MainWindow
 from fabulor import themes
 
-# Two FLAT (non-gradient) themes, confirmed via THEMES dict inspection (2026-08-02):
-# gradient themes make single-pixel sampling ambiguous near stop boundaries, so the
-# test deliberately picks themes with no gradient_bg_start/gradient_bg_end key.
+# Themes swept this batch: multiple FLAT (non-gradient) themes, confirmed via
+# THEMES dict inspection, so pixel sampling stays unambiguous across all of them.
 ACTIVE_THEME = "Alzabo"
-HOVER_THEME = "Blindsight"
+SWEEP_HOVER_THEMES = ["Blindsight", "Rose Code", "Slow Regard"]
+for _n in [ACTIVE_THEME] + SWEEP_HOVER_THEMES:
+    assert "gradient_bg_start" not in themes.THEMES[_n], f"{_n} is a gradient theme"
 
-assert "gradient_bg_start" not in themes.THEMES[ACTIVE_THEME]
-assert "gradient_bg_start" not in themes.THEMES[HOVER_THEME]
-
-_HOVER_DEBOUNCE_MS = 80  # mirrors theme_manager._HOVER_DEBOUNCE_MS; kept independent
-                          # on purpose so a future change to the real constant doesn't
-                          # silently change what this harness believes it's testing
+_HOVER_DEBOUNCE_MS = 80
+_SNAPBACK_FADE_MS = 200  # mirrors theme_manager._SNAPBACK_FADE_MS
 
 
 def pump(ms):
     """Run the real Qt event loop for `ms` milliseconds — NOT time.sleep(), which
     would starve the event loop and prevent the real QTimers (hover debounce, fade
-    animation) from ever firing. This is what makes hover/fade/dismiss run through
-    their REAL asynchronous machinery instead of being faked."""
+    animation) from ever firing."""
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
     loop.exec()
 
 
 def expected_rgb_for(theme_name):
-    """The known flat background colour a FLAT theme's mainwindow paints, per
-    get_base_stylesheet's own main_bg_style resolution for the no-gradient case."""
     t = themes._resolve_theme(theme_name)
     hexcolor = t['bg_main'].lstrip('#')
     return tuple(int(hexcolor[i:i+2], 16) for i in (0, 2, 4))
@@ -130,13 +133,20 @@ def main():
     mw = MainWindow()
     mw.show()
     app.processEvents()
-    pump(300)  # let startup settle (idle preload timers, initial paint) before trials
+    pump(300)
+    # Extra settle margin before trial 1: MainWindow() construction can leave panel-
+    # animation-adjacent state (blur grab warmup, idle-preload scheduling) still
+    # settling for longer than 300ms on a cold start, which was observed (2026-08-03)
+    # to make trial 1 specifically retry its first hover 2-3 times via
+    # complete_main_fade's any_panel_animating resume before the panel actually
+    # became visible -- a real cold-start variance, not a bug in the mechanism under
+    # test. Extra margin here, once, costs nothing (paid before any trial is timed).
+    pump(1000)
 
     tm = mw.theme_manager
 
-    # ---- Instrumentation: observational only, no behaviour change ----
-    apply_call_log = []          # list of dicts per real _apply_stylesheets call
-    fade_finished_log = []       # list of perf_counter() timestamps
+    apply_call_log = []
+    fade_finished_log = []
 
     _real_apply = tm._apply_stylesheets
 
@@ -157,14 +167,9 @@ def main():
     def _on_fade_finished_observer():
         fade_finished_log.append(time.perf_counter())
 
-    # Second slot on the REAL signal — does not touch the app's own connection to
-    # _on_fade_finished (theme_manager.py:243). Qt supports multiple slots per signal.
     tm._fade_anim.finished.connect(_on_fade_finished_observer)
 
     def reset_to_active():
-        """Set the fixture's baseline WITHOUT bypassing the real apply path: routes
-        through _on_theme_changed like a genuine non-hover apply would, then waits
-        for it to fully settle before starting the next trial."""
         apply_call_log.clear()
         fade_finished_log.clear()
         tm._current_theme_name = ACTIVE_THEME
@@ -178,224 +183,179 @@ def main():
         if not pm.settings_panel.isVisible():
             pm._open_settings_flow()
             app.processEvents()
-            pump(400)  # let the slide-in + blur (if enabled) fully settle
+            pump(400)
 
-    def hover_swatch(theme_name, dwell_ms):
-        """Real path: _on_theme_hovered arms the debounce timer; we pump for dwell_ms
-        so the REAL QTimer decides whether to fire _fire_pending_hover (>=80ms) or
-        get superseded by the next hover in the sequence (<80ms)."""
-        tm._on_theme_hovered(theme_name)
-        pump(dwell_ms)
-
-    def snapshot_fade_state(label):
-        """Direct observation of the exact state snap_theme_forward's fallback
-        branch reads (_fade_anim.state(), _fade_overlay.isVisible()), plus the
-        themes_tab_active inputs that decide which of the three fade-start
-        branches in _on_theme_changed actually ran. Printed and returned, never
-        used to compute the pass/fail verdict — verdict stays pixel+stylesheet
-        only (see METHODOLOGY item 1)."""
+    def snapshot_fade_state():
         state = tm._fade_anim.state()
         _state_names = {
             QAbstractAnimation.State.Stopped: "Stopped",
             QAbstractAnimation.State.Paused: "Paused",
             QAbstractAnimation.State.Running: "Running",
         }
-        state_name = _state_names.get(state, str(state))
-        overlay_visible = tm._fade_overlay.isVisible() if hasattr(tm, "_fade_overlay") else None
-        tabs = getattr(mw, "tabs", None)
-        settings_visible = mw.settings_panel.isVisible() if hasattr(mw, "settings_panel") else None
-        tab_index = tabs.currentIndex() if tabs is not None else None
-        themes_tab_active = (tabs is not None and tab_index == 0 and settings_visible)
-        rec = {
-            "label": label,
-            "fade_anim_state": state_name,
-            "fade_overlay_visible": overlay_visible,
+        return {
+            "fade_anim_state": _state_names.get(state, str(state)),
+            "fade_overlay_visible": tm._fade_overlay.isVisible() if hasattr(tm, "_fade_overlay") else None,
             "fade_in_flight": getattr(tm, "_fade_in_flight", None),
-            "themes_tab_active": themes_tab_active,
-            "tab_index": tab_index,
-            "settings_panel_visible": settings_visible,
         }
-        return rec
 
-    def do_trial(swatch_count, dwell_ms):
+    def do_trial(hover_theme, delay_ms):
         reset_to_active()
         open_settings_panel()
 
-        # Hover `swatch_count` distinct themes in sequence, each dwelling `dwell_ms`.
-        # The last one hovered is HOVER_THEME so the harness's expectations are fixed;
-        # earlier ones are drawn from other flat themes so a real multi-swatch sweep
-        # is exercised, not just a repeat of the same name.
-        flat_themes = [n for n, t in themes.THEMES.items()
-                       if "gradient_bg_start" not in t and n not in (ACTIVE_THEME, HOVER_THEME)]
-        sequence = (flat_themes[:max(0, swatch_count - 1)] + [HOVER_THEME])[-swatch_count:]
-        for name in sequence:
-            hover_swatch(name, dwell_ms)
+        # Real hover: enter one swatch, wait past the 80ms debounce so a genuine
+        # preview actually applies and starts nothing yet (hover fade, not the
+        # snapback fade) -- confirmed via apply_call_log below, not assumed.
+        tm._on_theme_hovered(hover_theme)
+        pump(_HOVER_DEBOUNCE_MS + 20)  # past the 80ms debounce; preview fade now starting
 
-        # Whether the LAST hover actually fired a real preview apply depends on the
-        # real debounce timer (dwell_ms vs _HOVER_DEBOUNCE_MS) — this is observed,
-        # not asserted, via apply_call_log below.
+        # Preview fade duration is config.get_theme_fade_duration() * 0.5 -- NOT a
+        # hardcoded 375ms. Found live (2026-08-03): this machine's PERSISTED
+        # QSettings value is 1500ms (not the code's 750ms default), making the real
+        # preview fade 750ms, not 375ms -- a hardcoded pump(500) silently left the
+        # preview running every single trial, so hover-out's _on_theme_changed call
+        # collided with an IN-FLIGHT PREVIEW fade (stashed via the _fade_running
+        # guard, drained later by snap_theme_forward's UNRELATED stash-drain path)
+        # instead of cleanly starting a fresh snapback fade against a settled
+        # preview -- a completely different, already-understood mechanism (see
+        # review/Investigation_260802_double_fire_reentrancy.md), not the one this
+        # harness targets. Read the REAL live value and poll for actual settle
+        # instead of guessing a fixed wait, so this can't silently drift again if
+        # the persisted config changes.
+        real_preview_fade_ms = int(tm.config.get_theme_fade_duration() * 0.5)
+        settle_deadline_ms = real_preview_fade_ms + 400  # generous margin
+        waited_ms = 0
+        while waited_ms < settle_deadline_ms:
+            pump(50)
+            waited_ms += 50
+            if snapshot_fade_state()["fade_anim_state"] == "Stopped":
+                break
+        _preview_settled = snapshot_fade_state()
+        if _preview_settled["fade_anim_state"] != "Stopped":
+            print(f"  !!! preview fade (real duration {real_preview_fade_ms}ms) not "
+                  f"settled after {waited_ms}ms wait: {_preview_settled}")
+
+        pre_unhover_apply_count = len(apply_call_log)
+
+        # Real hover-out (the genuine-leave path, same call _on_themes_tab_left
+        # makes) -- this is what starts the real 200ms SNAPBACK fade.
+        _t_unhover_call_start = time.perf_counter()
+        tm._on_theme_unhovered()
+        _t_unhover_call_end = time.perf_counter()
+        snap_at_unhover = snapshot_fade_state()
+        post_unhover_apply_count = len(apply_call_log)
+
+        # THE DELAY THAT ACTUALLY MATTERS: real wall-clock wait, via the real Qt
+        # event loop, between the genuine hover-out (fade start) and the dismiss
+        # click -- landing inside, at, or past the 200ms fade window depending on
+        # the bucket. This is the gap _close_settings_flow's own two adjacent
+        # calls structurally cannot have; this harness creates it by inserting the
+        # dismiss LATER, exactly as a real user's separately-timed leave-then-click
+        # gesture would.
+        pump(delay_ms)
+        snap_before_dismiss = snapshot_fade_state()
         pre_dismiss_apply_count = len(apply_call_log)
 
-        # Real hover-out path. This is the call that starts the 200ms snapback fade
-        # (fade_ms=_SNAPBACK_FADE_MS, hover=False) IF a preview was actually applied
-        # (i.e. dwell_ms cleared the debounce) — the no-op guard at the top of
-        # _on_theme_changed returns before starting anything if the active theme +
-        # hover flag already match, which is the dwell=40ms case.
-        tm._on_theme_unhovered()
-        snap_after_unhover = snapshot_fade_state("immediately after _on_theme_unhovered()")
-        apply_count_after_unhover = len(apply_call_log)
-
-        # Real dismiss path: hide_all_panels() -> _close_settings_flow(), same call
-        # chain _on_drag_area_pressed uses (that method's own book-count/mouse-event
-        # wrapper is not under test here). _close_settings_flow calls
-        # _on_theme_unhovered() then snap_theme_forward() itself, synchronously — so
-        # calling hide_all_panels() here re-invokes _on_theme_unhovered() a SECOND
-        # time (harmless: idempotent no-op on an already-unhovered state) before
-        # snap_theme_forward() runs for real inside the same call. No event-loop
-        # turn is inserted here on purpose — that mirrors the real click path, where
-        # nothing runs between hover-out and the click that dismisses the panel.
+        # Real dismiss path.
         mw.panel_manager.hide_all_panels()
-        snap_after_dismiss_call = snapshot_fade_state("immediately after hide_all_panels() returns")
-        apply_count_after_dismiss_call = len(apply_call_log)
+        snap_after_dismiss_call = snapshot_fade_state()
+        post_dismiss_apply_count = len(apply_call_log)
         app.processEvents()
 
-        # Let the panel slide-out animation and any pending fade/fallback fully
-        # settle before sampling ground truth. 700ms covers the 200/375/750ms fade
-        # variants plus the ~300ms slide with margin.
         pump(700)
         app.processEvents()
 
-        post_dismiss_apply_count = len(apply_call_log)
+        final_apply_count = len(apply_call_log)
         fade_finished_during_trial = len(fade_finished_log)
-        applies_this_trial_records = apply_call_log[pre_dismiss_apply_count:post_dismiss_apply_count]
+        dismiss_window_records = apply_call_log[pre_dismiss_apply_count:final_apply_count]
 
         # ---- Ground truth check A: live stylesheet string ----
         expected_sheet = themes.get_base_stylesheet(ACTIVE_THEME)
         live_sheet = mw.styleSheet()
         stylesheet_ok = (live_sheet == expected_sheet)
+        if not stylesheet_ok:
+            # Find where the two strings first diverge, for direct diagnosis.
+            _min_len = min(len(live_sheet), len(expected_sheet))
+            _diverge_at = next((i for i in range(_min_len) if live_sheet[i] != expected_sheet[i]), _min_len)
+            print(f"    [stylesheet diff] live_len={len(live_sheet)} expected_len={len(expected_sheet)} "
+                  f"first_diverge_at={_diverge_at}\n"
+                  f"    live[...]={live_sheet[max(0,_diverge_at-40):_diverge_at+80]!r}\n"
+                  f"    expected[...]={expected_sheet[max(0,_diverge_at-40):_diverge_at+80]!r}\n"
+                  f"    internal _active_display_theme_internal={getattr(tm, '_active_display_theme_internal', None)!r}")
 
         # ---- Ground truth check B: actual rendered pixel ----
-        # Sample the mainwindow's own bg_main background, away from any child
-        # widget. (15, 15) was tried first and rejected: live pixel-grid dumping
-        # (2026-08-02) showed it lands on a title-bar control glyph, reading
-        # (75, 55, 83) on EVERY Alzabo trial regardless of correctness — a
-        # constant false failure, not a real one. (15, 400) is confirmed clean
-        # against a 40-point grid covering the full window (title bar, content
-        # container, and every corner) for both Alzabo and Blindsight.
         pix = mw.grab()
         img = pix.toImage()
         sample_x, sample_y = 15, 400
         px_color = img.pixelColor(sample_x, sample_y)
         actual_rgb = (px_color.red(), px_color.green(), px_color.blue())
         expected_rgb = expected_rgb_for(ACTIVE_THEME)
-        # Allow a small tolerance for anti-aliasing at the rounded corner.
         pixel_ok = all(abs(a - e) <= 4 for a, e in zip(actual_rgb, expected_rgb))
 
-        # ---- Mechanism classification ----
-        applies_this_trial = post_dismiss_apply_count - pre_dismiss_apply_count
-        fallback_relevant_fades = fade_finished_during_trial
-        if applies_this_trial == 0:
-            mechanism = "NEITHER"
-        elif applies_this_trial == 1:
-            mechanism = "ONE_APPLY (fade-path OR fallback, not both)"
-        elif applies_this_trial >= 2:
-            mechanism = f"BOTH ({applies_this_trial} applies)"
-        else:
-            mechanism = "UNKNOWN"
+        applies_in_dismiss_window = post_dismiss_apply_count - pre_dismiss_apply_count
+        applies_total_after_delay = final_apply_count - pre_dismiss_apply_count
 
         return {
-            "swatch_count": swatch_count,
-            "dwell_ms": dwell_ms,
+            "hover_theme": hover_theme,
+            "delay_ms": delay_ms,
             "stylesheet_ok": stylesheet_ok,
             "pixel_ok": pixel_ok,
             "checks_agree": (stylesheet_ok == pixel_ok),
-            "applies_this_trial": applies_this_trial,
-            "fade_finished_count": fallback_relevant_fades,
-            "mechanism": mechanism,
             "actual_rgb": actual_rgb,
             "expected_rgb": expected_rgb,
-            "internal_active_theme": getattr(tm, "_active_display_theme_internal", None),
-            "internal_fade_overlay_visible": tm._fade_overlay.isVisible() if hasattr(tm, "_fade_overlay") else None,
-            # NEW this batch — direct state snapshots, mechanism instrumentation only:
-            "snap_after_unhover_fade_state": snap_after_unhover["fade_anim_state"],
-            "snap_after_unhover_overlay_visible": snap_after_unhover["fade_overlay_visible"],
-            "snap_after_unhover_fade_in_flight": snap_after_unhover["fade_in_flight"],
-            "snap_after_unhover_themes_tab_active": snap_after_unhover["themes_tab_active"],
-            "snap_after_unhover_tab_index": snap_after_unhover["tab_index"],
-            "snap_after_unhover_settings_visible": snap_after_unhover["settings_panel_visible"],
-            "snap_after_dismiss_fade_state": snap_after_dismiss_call["fade_anim_state"],
-            "snap_after_dismiss_overlay_visible": snap_after_dismiss_call["fade_overlay_visible"],
-            "snap_after_dismiss_fade_in_flight": snap_after_dismiss_call["fade_in_flight"],
-            "applies_this_trial_records": applies_this_trial_records,
-            "applies_count_after_unhover": apply_count_after_unhover - pre_dismiss_apply_count,
-            "applies_count_after_dismiss_call": apply_count_after_dismiss_call - pre_dismiss_apply_count,
+            "fade_state_at_unhover": snap_at_unhover["fade_anim_state"],
+            "overlay_visible_at_unhover": snap_at_unhover["fade_overlay_visible"],
+            "fade_state_before_dismiss": snap_before_dismiss["fade_anim_state"],
+            "overlay_visible_before_dismiss": snap_before_dismiss["fade_overlay_visible"],
+            "fade_state_after_dismiss_call": snap_after_dismiss_call["fade_anim_state"],
+            "overlay_visible_after_dismiss_call": snap_after_dismiss_call["fade_overlay_visible"],
+            "fade_was_running_before_dismiss": snap_before_dismiss["fade_anim_state"] == "Running",
+            "applies_in_dismiss_window": applies_in_dismiss_window,
+            "applies_total_after_delay": applies_total_after_delay,
+            "fade_finished_count": fade_finished_during_trial,
+            "dismiss_window_callers": [rec.get("caller") for rec in dismiss_window_records],
+            "unhover_call_duration_ms": (_t_unhover_call_end - _t_unhover_call_start) * 1000,
         }
 
-    # ---- Sweep definition (redesigned batch 3) ----
-    # Delay axis dropped — see the module docstring's REDESIGN note: _close_settings_flow
-    # calls _on_theme_unhovered() then snap_theme_forward() synchronously with no
-    # event-loop turn between them, so a wall-clock delay BEFORE hide_all_panels()
-    # never changes the gap the fallback race actually depends on. Swatch-count and
-    # dwell-bucket are kept — they exercise genuinely different code paths (whether
-    # a preview was actually applied before hover-out, via the real 80ms debounce).
-    swatch_counts = [1, 2, 4]
-    dwell_buckets_ms = [40, 120]  # below and above the 80ms debounce
+    # ---- Sweep definition: concentrated inside the 200ms fade window ----
+    delay_buckets_ms = [0, 20, 50, 80, 110, 140, 170, 250]
+    trials_per_bucket = 6  # x3 themes x8 buckets = 144 trials total, meaningful per-bucket N
 
     results = []
     trial_num = 0
-    total_trials = len(swatch_counts) * len(dwell_buckets_ms)
+    total_trials = len(delay_buckets_ms) * len(SWEEP_HOVER_THEMES) * trials_per_bucket
     print(f"Running ONE batch: {total_trials} trials "
-          f"({len(swatch_counts)} swatch-counts x {len(dwell_buckets_ms)} dwell buckets). "
-          f"Live, on-screen. No auto-repeat. (delay axis dropped this batch — see docstring)")
+          f"({len(delay_buckets_ms)} delay buckets x {len(SWEEP_HOVER_THEMES)} themes x "
+          f"{trials_per_bucket} repeats). Live, on-screen. No auto-repeat.")
 
-    for swatch_count, dwell_ms in itertools.product(swatch_counts, dwell_buckets_ms):
+    for delay_ms, hover_theme, _rep in itertools.product(
+            delay_buckets_ms, SWEEP_HOVER_THEMES, range(trials_per_bucket)):
         trial_num += 1
-        r = do_trial(swatch_count, dwell_ms)
+        r = do_trial(hover_theme, delay_ms)
         r["trial_num"] = trial_num
         r["batch_timestamp"] = datetime.now().isoformat()
         results.append(r)
+        ok = r["stylesheet_ok"] and r["pixel_ok"]
         print(
-            f"[{trial_num:3d}/{total_trials}] swatches={swatch_count} "
-            f"dwell={dwell_ms:3d}ms  stylesheet={'OK' if r['stylesheet_ok'] else 'FAIL'}  "
+            f"[{trial_num:3d}/{total_trials}] delay={delay_ms:4d}ms theme={hover_theme:12s} "
+            f"stylesheet={'OK' if r['stylesheet_ok'] else 'FAIL'}  "
             f"pixel={'OK' if r['pixel_ok'] else 'FAIL'}  "
-            f"agree={r['checks_agree']}  mechanism={r['mechanism']}  "
-            f"actual_rgb={r['actual_rgb']} expected_rgb={r['expected_rgb']}\n"
-            f"          [after unhover] fade_state={r['snap_after_unhover_fade_state']} "
-            f"overlay_visible={r['snap_after_unhover_overlay_visible']} "
-            f"fade_in_flight={r['snap_after_unhover_fade_in_flight']} "
-            f"themes_tab_active={r['snap_after_unhover_themes_tab_active']} "
-            f"(tab_index={r['snap_after_unhover_tab_index']}, "
-            f"settings_visible={r['snap_after_unhover_settings_visible']})\n"
-            f"          [after dismiss call] fade_state={r['snap_after_dismiss_fade_state']} "
-            f"overlay_visible={r['snap_after_dismiss_overlay_visible']} "
-            f"fade_in_flight={r['snap_after_dismiss_fade_in_flight']}\n"
-            f"          [apply_stylesheets calls this trial's dismiss window] "
-            + (", ".join(f"theme={rec['theme_name']!r} hover={rec['hover']} "
-                         f"caller={rec.get('caller')}"
-                         for rec in r["applies_this_trial_records"]) or "(none)")
-            + f"\n          [apply count: right after _on_theme_unhovered()="
-            f"{r['applies_count_after_unhover']}, right after hide_all_panels() returns="
-            f"{r['applies_count_after_dismiss_call']}]"
+            f"fade_running_before_dismiss={r['fade_was_running_before_dismiss']}  "
+            f"applies_in_dismiss_window={r['applies_in_dismiss_window']}  "
+            f"unhover_call_ms={r['unhover_call_duration_ms']:.1f}  "
+            f"{'OK' if ok else '*** MISMATCH ***'}"
         )
 
-    # ---- Write results, append (never overwrite) so multi-session batches accumulate ----
-    # NEW FILE this batch, deliberately NOT appended to snapback_dismiss_harness_results.csv:
-    # this redesign drops the delay_ms column and adds the state-snapshot columns, so the
-    # column set no longer matches that file's existing header (written by batches 1-2).
-    # Appending mismatched columns under an old header would silently corrupt it. If a
-    # future batch keeps this same redesigned schema, resume appending to THIS file instead.
     out_path = os.path.join(os.path.dirname(__file__), "..", "review",
-                             "snapback_dismiss_harness_results_batch3_redesign.csv")
+                             "fallback_necessity_harness_results.csv")
     file_exists = os.path.exists(out_path)
-    fieldnames = ["batch_timestamp", "trial_num", "swatch_count", "dwell_ms",
-                  "stylesheet_ok", "pixel_ok", "checks_agree", "applies_this_trial",
-                  "fade_finished_count", "mechanism", "actual_rgb", "expected_rgb",
-                  "internal_active_theme", "internal_fade_overlay_visible",
-                  "snap_after_unhover_fade_state", "snap_after_unhover_overlay_visible",
-                  "snap_after_unhover_fade_in_flight", "snap_after_unhover_themes_tab_active",
-                  "snap_after_unhover_tab_index", "snap_after_unhover_settings_visible",
-                  "snap_after_dismiss_fade_state", "snap_after_dismiss_overlay_visible",
-                  "snap_after_dismiss_fade_in_flight"]
+    fieldnames = ["batch_timestamp", "trial_num", "hover_theme", "delay_ms",
+                  "stylesheet_ok", "pixel_ok", "checks_agree", "actual_rgb", "expected_rgb",
+                  "fade_state_at_unhover", "overlay_visible_at_unhover",
+                  "fade_state_before_dismiss", "overlay_visible_before_dismiss",
+                  "fade_state_after_dismiss_call", "overlay_visible_after_dismiss_call",
+                  "fade_was_running_before_dismiss", "applies_in_dismiss_window",
+                  "applies_total_after_delay", "fade_finished_count", "dismiss_window_callers",
+                  "unhover_call_duration_ms"]
     with open(out_path, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
@@ -409,54 +369,29 @@ def main():
     fails = [r for r in results if not r["stylesheet_ok"] or not r["pixel_ok"]]
     print(f"Trials with ANY check failing: {len(fails)}")
     disagreements = [r for r in results if not r["checks_agree"]]
-    print(f"Trials where the two independent checks DISAGREED with each other: {len(disagreements)}")
+    print(f"Trials where the two independent checks DISAGREED: {len(disagreements)}")
     if disagreements:
-        print("  -> THIS IS A FINDING, not resolved by this harness. Reported as-is:")
         for r in disagreements:
-            print(f"     trial {r['trial_num']}: stylesheet_ok={r['stylesheet_ok']} "
-                  f"pixel_ok={r['pixel_ok']} mechanism={r['mechanism']}")
+            print(f"  trial {r['trial_num']}: stylesheet_ok={r['stylesheet_ok']} pixel_ok={r['pixel_ok']}")
 
-    print("\n-- Fail rate by swatch-count --")
-    for sc in swatch_counts:
-        bucket = [r for r in results if r["swatch_count"] == sc]
+    print("\n-- Per-delay-bucket table --")
+    print(f"{'delay_ms':>9} {'trials':>7} {'mismatches':>11} {'rate':>7} {'fade_running_before_dismiss (n)':>32}")
+    for delay_ms in delay_buckets_ms:
+        bucket = [r for r in results if r["delay_ms"] == delay_ms]
         bfails = [r for r in bucket if not r["stylesheet_ok"] or not r["pixel_ok"]]
-        print(f"  swatches={sc}: {len(bfails)}/{len(bucket)} failed")
+        running_count = sum(1 for r in bucket if r["fade_was_running_before_dismiss"])
+        rate = (len(bfails) / len(bucket) * 100) if bucket else 0.0
+        print(f"{delay_ms:>9} {len(bucket):>7} {len(bfails):>11} {rate:>6.1f}% {running_count:>32}")
 
-    print("\n-- Fail rate by dwell bucket (relative to 80ms debounce) --")
-    for dw in dwell_buckets_ms:
-        bucket = [r for r in results if r["dwell_ms"] == dw]
-        bfails = [r for r in bucket if not r["stylesheet_ok"] or not r["pixel_ok"]]
-        rel = "below" if dw < _HOVER_DEBOUNCE_MS else "above"
-        print(f"  dwell={dw:3d}ms ({rel} 80ms debounce): {len(bfails)}/{len(bucket)} failed")
-
-    print("\n-- On FAILED trials, which mechanism(s) ran, and what did the state snapshots show? --")
+    print("\n-- Mismatches: mechanism attribution --")
     for r in fails:
-        print(f"  trial {r['trial_num']} (swatches={r['swatch_count']} "
-              f"dwell={r['dwell_ms']}ms): mechanism={r['mechanism']} "
-              f"fade_finished_count={r['fade_finished_count']}\n"
-              f"      after-unhover: fade_state={r['snap_after_unhover_fade_state']} "
-              f"overlay_visible={r['snap_after_unhover_overlay_visible']} "
-              f"themes_tab_active={r['snap_after_unhover_themes_tab_active']}\n"
-              f"      after-dismiss-call: fade_state={r['snap_after_dismiss_fade_state']} "
-              f"overlay_visible={r['snap_after_dismiss_overlay_visible']}")
+        print(f"  trial {r['trial_num']} (delay={r['delay_ms']}ms theme={r['hover_theme']}): "
+              f"fade_state_before_dismiss={r['fade_state_before_dismiss']} "
+              f"overlay_visible_before_dismiss={r['overlay_visible_before_dismiss']} "
+              f"applies_in_dismiss_window={r['applies_in_dismiss_window']} "
+              f"callers={r['dismiss_window_callers']}")
     if not fails:
-        print("  (no failures this batch)")
-
-    print("\n-- Fallback precondition check, EVERY trial (not just failures) --")
-    print("  Does _fade_overlay.isVisible() ever read True at either checkpoint?")
-    any_overlay_true = [r for r in results
-                         if r["snap_after_unhover_overlay_visible"] or r["snap_after_dismiss_overlay_visible"]]
-    print(f"  Trials where overlay_visible was True at some checkpoint: {len(any_overlay_true)}/{len(results)}")
-    if not any_overlay_true:
-        print("  -> If this is 0/N, the fallback's own precondition never held in this "
-              "harness at all, on EITHER checkpoint — that is itself the answer to why "
-              "mechanism=BOTH never appeared in batches 1-2, independent of any delay value.")
-    for r in results:
-        print(f"    trial {r['trial_num']} (swatches={r['swatch_count']} dwell={r['dwell_ms']}ms): "
-              f"after_unhover.overlay_visible={r['snap_after_unhover_overlay_visible']} "
-              f"fade_state={r['snap_after_unhover_fade_state']}  |  "
-              f"after_dismiss.overlay_visible={r['snap_after_dismiss_overlay_visible']} "
-              f"fade_state={r['snap_after_dismiss_fade_state']}")
+        print("  (no mismatches this batch)")
 
     print(f"\nResults appended to {out_path}")
     print("Batch complete. Re-invoke manually for the next batch — no auto-loop.")
