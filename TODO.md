@@ -957,6 +957,28 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   matching something constructed dynamically or in a code path not checked) and, if
   so, remove them. Not urgent — no live effect either way.
 
+- **`af command error` printed to the terminal when clicking Audio-tab settings**
+  (2026-08-03, reported live by Pryme while testing the theme/stylesheet work — NOT
+  caused by it). Clicking norm/voice-boost/mono/channel-swap toggles, dragging the
+  balance slider, or hitting Reset in the Audio tab can print
+  `af command error: ('Error running mpv command', -12, (...))` to the console.
+  `-12` is `mpv.py`'s own `MPV_ERROR_COMMAND` (confirmed directly from the binding's
+  error-code table) — a genuine mpv-level failure of the `af clr`/`af add` calls in
+  `Player.apply_audio_processing` (`player.py`), caught and printed there, not a
+  crash. **Confirmed NOT a regression from the theme/stylesheet-split branch work**:
+  diffed both `player.py`'s `apply_audio_processing` and `audio_controls.py` against
+  `main` via a throwaway `git worktree` — byte-identical on both files, zero diff.
+  Also confirmed NOT related to the documented libcaca/GLIBCXX venv issue (CLAUDE.md)
+  — that failure mode is an `OSError` at `import mpv` time when the venv isn't
+  activated (reproduced directly for comparison) and would prevent the app from
+  starting at all, not surface as a caught runtime error from an already-running mpv
+  instance. Root cause of the actual `af` command failure itself not investigated —
+  `apply_audio_processing` is inside the MPV-initialization code CLAUDE.md protects
+  (`DO NOT modify, refactor, or touch any code related to MPV initialization under
+  any circumstances`), so this needs its own explicitly-scoped session, not a
+  piecemeal touch. Pryme was not certain how long this has been happening — treat as
+  a pre-existing latent issue, not a new one, until investigated further.
+
 ## In Progress
 
 (none)
