@@ -972,12 +972,28 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   — that failure mode is an `OSError` at `import mpv` time when the venv isn't
   activated (reproduced directly for comparison) and would prevent the app from
   starting at all, not surface as a caught runtime error from an already-running mpv
-  instance. Root cause of the actual `af` command failure itself not investigated —
-  `apply_audio_processing` is inside the MPV-initialization code CLAUDE.md protects
-  (`DO NOT modify, refactor, or touch any code related to MPV initialization under
-  any circumstances`), so this needs its own explicitly-scoped session, not a
-  piecemeal touch. Pryme was not certain how long this has been happening — treat as
-  a pre-existing latent issue, not a new one, until investigated further.
+  instance.
+
+  **Narrowed by Pryme (2026-08-03, same day):** Speech compression (norm) and Voice
+  boost work with no error. **Mono, Channel swap, and Balance — the bottom three
+  options — throw the error, and per Pryme those three have ALREADY been no-op**
+  (not producing an audible effect) independent of the console error. Reading
+  `apply_audio_processing`'s filter list confirms a structural split matching this
+  exactly: norm (`dynaudnorm`) and voice_boost (`equalizer=...` x3) are independent
+  `filters.append(...)` calls with no shared state; mono/swap/balance all funnel
+  through ONE `elif` chain building a single `pan=...` filter string
+  (`if mono: ... elif swap or balance != 0.0: ...`) — the three broken options are
+  exactly the three sharing this one code path, and the two working options are
+  exactly the two that don't touch it. Strongly suggests the `pan=` filter string
+  itself is malformed/rejected by mpv, not a general `af` pipeline problem — but NOT
+  yet confirmed by reading mpv's own error detail or testing the exact string
+  in isolation. Root cause of the actual `af` command failure itself not
+  investigated further — `apply_audio_processing` is inside the MPV-initialization
+  code CLAUDE.md protects (`DO NOT modify, refactor, or touch any code related to
+  MPV initialization under any circumstances`), so this needs its own
+  explicitly-scoped session, not a piecemeal touch. Pryme was not certain how long
+  this has been happening — treat as a pre-existing latent issue, not a new one,
+  until investigated further.
 
 ## In Progress
 
