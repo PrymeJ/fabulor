@@ -59,7 +59,7 @@ def _theme_distance(name_a: str, name_b: str) -> float:
 _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
-_HOVER_DEBOUNCE_MS    = 80        # coalesce rapid hover sweeps into one preview restyle
+_HOVER_DEBOUNCE_MS    = 150        # coalesce rapid hover sweeps into one preview restyle
 # Cursor movement at or below this (Chebyshev distance, px) counts as "unmoved" when
 # deciding whether a swatch_box leaveEvent was a real mouse-out or a blur-grab synthetic
 # (see _on_themes_tab_left). Sized for sub-pixel/±1px OS-level mouse-reporting jitter,
@@ -77,7 +77,6 @@ _MOUSE_JITTER_PX      = 2
 # both 2026-07-28 failed redesigns (neither compares two time-adjacent samples against
 # each other — see the design doc for why that distinction is what makes this safe).
 _SWATCH_LEAVE_BACKSTOP_MS = 500
-
 
 
 class ThemeComboBox(QComboBox):
@@ -287,52 +286,39 @@ class ThemeManager(QObject):
 
     def get_active_theme(self):
         """Sole sanctioned way for code outside theme_manager.py to read the
-        current theme. Resolved against hover state — NEVER returns a
-        hover-preview-only value to an external caller. While a hover preview
-        is live (_is_hover_active), returns the last non-preview active theme
-        (_current_theme_name, or the live cover theme if one is active)
-        instead of the hovered theme name. Return type matches
-        _active_display_theme_internal's own type: a str theme name, or a
-        dict (a cover-derived theme) when a cover theme is active.
+        current theme. Hover-safe by construction — NEVER returns a
+        hover-preview-only value to an external caller unless a preview is
+        genuinely showing on screen right now, in which case it correctly
+        returns that (see get_displayed_theme()'s docstring: this is the
+        deliberate, intended behavior change of the 2026-08-04 redesign, not
+        a regression of the older hover-concealment contract). Return type
+        matches get_displayed_theme()'s: a str theme name, or a dict
+        (a cover-derived theme) when a cover theme is active.
 
-        Added 2026-07-20 (theme-bleed audit, Mechanism A / Pass 1) to close
-        the one confirmed cross-file read of the old (pre-rename) bare
-        _active_display_theme field (app.py's _set_bg_suppressed), which read
-        it directly with no hover check and could paint content_container with
-        a previewed theme. See review/Review_260720_theme_reach.md.
+        REDIRECTED (2026-08-04, step 4 of the migration — see
+        review/Design_260804_hover_state_computed_read_path.md §6/§9/§10):
+        previously resolved against stored fields (_is_hover_active /
+        _active_display_theme_internal), which could go stale whenever a
+        swatch leaveEvent was misclassified (see the design doc's Context
+        section for the three distinct misclassification mechanisms found
+        the same night this redesign was scoped). Now delegates directly to
+        get_displayed_theme(), which re-derives the answer from live Qt/OS
+        state on every call instead of trusting stored bookkeeping — there is
+        no stale value to reach, because there is no stored state to read.
 
-        SHADOW-CHECK (step 2 of the migration, see
-        review/Design_260804_hover_state_computed_read_path.md): computes
-        get_displayed_theme()'s answer and logs a WARNING if it disagrees with
-        what this method is about to return, but does NOT change what is
-        returned — pure observer, not a gate. This measures, across real
-        usage, whether the new live-computed answer agrees with this method's
-        stored-state answer before step 3 redirects anything to depend on it.
-        Remove once that verification period is complete and step 3 lands."""
-        if self._is_hover_active:
-            if self._cover_theme_active and self._cover_theme is not None:
-                _old_result = self._cover_theme
-            else:
-                _old_result = self._current_theme_name
-        else:
-            _old_result = self._active_display_theme_internal or self._current_theme_name
-
-        _new_result = self.get_displayed_theme()
-        if _old_result != _new_result:
-            settings_panel = getattr(self.main_window, 'settings_panel', None)
-            tabs = getattr(self.main_window, 'tabs', None)
-            logger.warning(
-                f"[SHADOW-CHECK] get_active_theme() DISAGREEMENT: "
-                f"old_path={_old_result!r} new_path={_new_result!r} "
-                f"_is_hover_active={self._is_hover_active!r} "
-                f"_active_display_theme_internal={getattr(self, '_active_display_theme_internal', None)!r} "
-                f"_current_theme_name={getattr(self, '_current_theme_name', None)!r} "
-                f"_cover_theme_active={getattr(self, '_cover_theme_active', None)!r} "
-                f"settings_panel.isVisible()={settings_panel.isVisible() if settings_panel else None!r} "
-                f"tabs.currentIndex()={tabs.currentIndex() if tabs else None!r}"
-            )
-
-        return _old_result
+        Migration history: added 2026-07-20 (theme-bleed audit, Mechanism A /
+        Pass 1) to close the one confirmed cross-file read of the old
+        (pre-rename) bare _active_display_theme field (app.py's
+        _set_bg_suppressed), which read it directly with no hover check at
+        all. See review/Review_260720_theme_reach.md. Verified via a
+        shadow/log-only comparison (step 2, now removed) across multiple real
+        sessions — every disagreement between the old stored-state path and
+        this live-computed one traced to one of five understood mechanisms
+        (see the design doc §7-§7e), none of them a defect in this method;
+        no sixth mechanism ever appeared despite substantial call volume
+        (a temporary resting-hover probe, also now removed, pushed this past
+        400+ calls in a single session with zero unexplained disagreements)."""
+        return self.get_displayed_theme()
     
     def initialize_fade_overlay(self):
         self._fade_overlay = QLabel(self.main_window)
