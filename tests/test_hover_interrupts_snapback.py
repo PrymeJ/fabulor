@@ -108,6 +108,7 @@ def _make_tm(*, fade_in_flight=False, is_hover_active=False,
     tm._fade_in_flight = fade_in_flight
     tm._is_hover_active = is_hover_active
     tm._selection_in_progress = False
+    tm._snapback_in_progress = False
     tm._pending_fade_call = pending
     tm._active_display_theme_internal = "Active"
     tm._fade_anim = _FakeAnim(running=anim_running)
@@ -175,9 +176,36 @@ def test_hover_interrupts_a_rotation_fade():
 
 
 def test_non_hover_call_still_stashes_during_any_fade():
-    # Only `hover` matters now: a snapback, selection, or rotation arriving mid-fade
-    # stashes and replays via the drain sites exactly as before.
+    # An ORDINARY non-hover call (rotation/idle-timer) — NOT marked as a snapback
+    # (_snapback_in_progress stays False, _make_tm's default) — still stashes and
+    # replays via the drain sites exactly as before. Only hover, selection, and (as
+    # of 2026-08-04) snapback calls interrupt; a plain rotation is none of those.
     tm = _make_tm(fade_in_flight=True, anim_running=True)
+    assert _branch(tm, "Wasp Factory", hover=False) == 'stashed'
+
+
+# --- Corrected snapback-timing spec (2026-08-04) ---------------------------
+# See review/Design_260804_snapback_timing.md. A genuine hover-out
+# (_on_theme_unhovered) must cut short the ORIGINAL preview's own fade
+# immediately and start the 200ms snapback right away, rather than waiting for
+# the preview's own (possibly up-to-1500ms) fade duration to finish first.
+
+def test_snapback_interrupts_an_in_flight_preview_fade():
+    # THE CORE FIX. Hovering theme A starts a real preview fade; hovering out
+    # BEFORE that fade settles must not wait for it — the snapback (marked via
+    # _snapback_in_progress, set by _on_theme_unhovered around its own
+    # _on_theme_changed call) must interrupt immediately.
+    tm = _make_tm(fade_in_flight=True, is_hover_active=True, anim_running=True)
+    tm._snapback_in_progress = True
+    assert _branch(tm, "Active", hover=False) == 'fellthrough'
+
+
+def test_ordinary_non_hover_call_unaffected_by_snapback_marker_when_false():
+    # Regression guard: _snapback_in_progress defaulting to False (the ordinary
+    # state outside _on_theme_unhovered's own call) must not accidentally let
+    # every non-hover call interrupt — only genuinely marked snapbacks do.
+    tm = _make_tm(fade_in_flight=True, anim_running=True)
+    assert tm._snapback_in_progress is False
     assert _branch(tm, "Wasp Factory", hover=False) == 'stashed'
 
 
