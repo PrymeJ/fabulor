@@ -123,3 +123,15 @@ The temporary probes added earlier the same day (`[LIBRARY-THEME-WRITE]`, `[COMB
 `[PANEL-SHEET-STASH]`/`[PANEL-SHEET-CATCHUP]`) remain in place as an independent, live cross-check —
 useful for confirming the ordinary case still looks right, but per the reasoning above, not a
 substitute for the synthetic tests for the hover-confinement claim itself.
+
+## Follow-up the same day: this fix did not close the whole gap
+
+This fix corrects WHO calls `get_current_theme()`/`get_displayed_theme()` and from where. It does
+NOT prevent `_apply_stylesheets`'s own `_pending_panel_sheet` stash from being written with a hover
+theme for `speed_panel`/`sleep_panel` — that stash is populated from the `theme_name` ARGUMENT
+`_apply_stylesheets` is called with directly, not from any `get_committed_theme()`/`get_current_
+theme()` call, so this fix's redirect has no effect on it. A separate, later fix the same day
+(NOTES.md "The actual root cause") excludes `speed_panel`/`sleep_panel` from that call entirely when
+`hover=True` — see that entry and `tests/test_hover_excludes_speed_sleep.py`. Both fixes are real and
+both were needed: this one closed the consumer-side leak (Library/search/ramp-color-function reads),
+the later one closed the write-side leak (the panel-background stash itself).

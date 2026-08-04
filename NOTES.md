@@ -60,21 +60,102 @@ WHAT it returns when called. The same staleness-on-open bug would exist against 
 `get_active_theme()` implementation too, since neither version changes when these methods get
 invoked — this predates and is independent of that redesign.
 
-### Not yet fixed — root cause is clear and now confirmed general, the shape of the fix is not yet decided with Pryme
+### SUPERSEDED — the catch-up-call fix proposed below was never built, and Pryme correctly rejected the whole category of fix
 
-Most direct fix: give each of the three `_start_*_entry` flows (`panels.py`) an explicit call to
-catch up its panel's OWN mechanism-2 state, mirroring what `_flush_pending_restyle()` already does
-for mechanism 1 — `library_panel.update_progress_bar_theme()` for Library,
-`speed_panel._apply_preset_ramp_colors()` for Speed, `sleep_panel._apply_preset_ramp_colors()` for
-Sleep. Not implemented pending confirmation, given how much
-has already gone into today's investigation and Pryme's stated fatigue with testing cycles — this
-should be verified live once built, not assumed correct from the trace alone (per this file's own
-standing "user's eyes are ground truth" rule).
+**Retracting the "most direct fix" below, explicitly, rather than leaving it standing.** Pryme
+rejected this class of fix on principle: a catch-up call corrects the symptom (a panel opens showing
+a stale value) without asking why the value was ever wrong in the first place — the same objection
+already made twice earlier the same day about `clear_stale_hover_state` and about redirecting
+consumers to `get_committed_theme()`. See the entry below this one
+("the actual root cause") for what was actually built instead — `_apply_stylesheets` now excludes
+`speed_panel`/`sleep_panel` from its `panel_sheets` dict entirely when `hover=True`, so their stash
+can never be written with a hover value to begin with. No catch-up call was added anywhere.
+
+The mechanism-1/mechanism-2 analysis above (two independent theme-consumption paths per panel) is
+still accurate background, and `get_committed_theme()` (added the same day, see the write-path-
+confinement entry) did correctly fix Library's and the ramp functions' OWN read source. What this
+entry's proposed fix missed is WHY the stash (mechanism 1) itself could still go stale for 90+
+seconds even after that: `_apply_stylesheets` was unconditionally rewriting `_pending_panel_sheet`
+for all three panels on every hover tick, using a bare dict replace — see the entry below for the
+full trace.
 
 The three temporary probes remain in place (`library.py`: `[COMBO-ARROW-PAINT]` in `_ThemedComboBox.
 paintEvent`, `[LIBRARY-THEME-WRITE]` in `_resolve_theme_colors`; `theme_manager.py`: `[PANEL-SHEET-
-STASH]`/`[PANEL-SHEET-CATCHUP]` in `_apply_stylesheets`/`apply_pending_panel_sheet`) — useful for
-confirming any fix attempt, not yet removed.
+STASH]`/`[PANEL-SHEET-CATCHUP]` in `_apply_stylesheets`/`apply_pending_panel_sheet`) — these are what
+actually caught the real mechanism below; not yet removed.
+
+---
+
+## 2026-08-04 — The actual root cause: `_apply_stylesheets` had no reason to touch Speed/Sleep during a hover at all, and didn't stop to ask why it did
+
+**Three days, three designs, and the actual defect was neither of the first two's subject.** The
+`get_displayed_theme()` redesign fixed WHAT a read returns; the write-path-confinement fix
+(`get_committed_theme()`) fixed WHO calls that read and from where; **this fix removes a call that
+should never have existed in the first place.** Pryme's own framing, verbatim: "Style whatever the
+fuck is visible, stay off from other panels. `get_base_stylesheet` was created just for that."
+
+### The confirmed live trace that found it
+
+Pryme reported (2026-08-04, ~19:34): active theme Highgarden, hovered "Midnight Children," closed
+the panel almost immediately (a genuine leaveEvent within ~300ms of the hover debounce firing).
+Log-correlated exactly:
+
+- `19:34:05,474` — hover debounce fires, `_on_theme_changed('Midnight Children', hover=True, ...)`.
+- `19:34:05,762` — `ThemeItem.leaveEvent ... vis=False`, immediately followed by
+  `[SWATCH-LEAVE-SUSPECT] suppressed a leave while hidden, but the cursor is OUTSIDE swatch_box —
+  this may be a real mouse-out that was eaten.` — a REAL leaveEvent (Pryme closing the panel),
+  misclassified as a blur-grab synthetic by `_on_themes_tab_left`'s hidden-widget branch, and
+  suppressed. The probe correctly DETECTED this exact case; it only ever logs, never corrects.
+- `_is_hover_active` never clears. It stays `True` for the next **90+ seconds** — through Library
+  opens, sidebar toggles, everything — until an unrelated event eventually forces a fresh
+  `hover=False` apply (`19:35:37`).
+- `19:34:06,536` — `[PANEL-SHEET-STASH] wrote theme_name='Midnight Children' hover=True` —
+  `_pending_panel_sheet` (the catch-up Speed/Sleep read the next time either opens) gets
+  overwritten with the hovered theme's sheet, **after** the leave should have ended the hover.
+  Confirmed: no `_apply_preset_ramp_colors`/deferred-restyle TAIL fire happened during this window
+  (so the RAMP buttons, already fixed by the write-path-confinement commit, were not re-contaminated
+  this time) — but the PANEL BACKGROUND/CHROME stash was, via a completely different, untouched
+  mechanism. This is why Pryme could report "Sleep still hovered theme other than the ramped grid" —
+  two different bugs, fixed on two different days, in the same panel.
+
+### Why Library/Stats/Tags were "always correct" and Speed/Sleep weren't — not a coincidence, a structural asymmetry
+
+Not because their code is cleverer. Library reads `get_committed_theme()` fresh on every open (fixed
+the same day, prior entry) — since `_current_theme_name` itself is never touched by hover, Library is
+correct regardless of whether `_is_hover_active` is stuck. Stats/Tags/Book Detail get their theme via
+the `theme_applied` **signal**, fed the already-scheduled, confinement-clean `theme_name` argument —
+also structurally immune to a stuck hover flag. Speed/Sleep's PANEL BACKGROUND, before this fix, had
+no such immunity: `_pending_panel_sheet` was written unconditionally by `_apply_stylesheets` on every
+call, hover or not, keyed only on whatever `theme_name` that specific call happened to carry — so a
+stuck `_is_hover_active` (from the suppressed-leave bug above, or any future variant of the same
+leaveEvent-classification class) directly poisoned it, with no gate in between.
+
+### The fix — omission, not correction
+
+`_apply_stylesheets`'s `panel_sheets` dict (theme_manager.py) now excludes `speed_panel`/
+`sleep_panel` entirely when `hover=True` — not visibility-checked, not corrected after the fact,
+simply never built or referenced for those two keys during a hover. Settings is the only panel with
+any reason to be touched by a hover call, full stop — the same reasoning that already made Stats/
+Tags/Book Detail correct (they're never called during a hover either, just via a different path).
+The stash write changed from a bare `dict(panel_sheets)` replace to `dict.update(...)`, since a hover
+now legitimately produces a `panel_sheets` with only one key — a bare replace would have DELETED
+Speed/Sleep's existing, correct stash entries on every hover tick, which is a worse bug than the one
+being fixed (see `tests/test_hover_excludes_speed_sleep.py` for the regression guard on this
+specific point).
+
+Confirmed self-contained: the diff touches only `_apply_stylesheets`'s `panel_sheets` construction
+and its stash write. `_on_themes_tab_left`'s leaveEvent misclassification, `[SWATCH-LEAVE-SUSPECT]`'s
+detect-but-don't-correct gap, the three-drain-site confinement guard, and `get_committed_theme()`
+were all deliberately left untouched — this fix makes the leaveEvent bug's blast radius on Speed/
+Sleep's panel background moot by construction (there is nothing left for a stuck hover flag to
+poison), rather than fixing the leaveEvent classification itself, which remains open, logged, and
+unfixed (Pryme's explicit instruction: not in scope for this task).
+
+Verified via 3 new synthetic tests (`tests/test_hover_excludes_speed_sleep.py`, using a real headless
+`QApplication`/`ThemeManager`/`QWidget`s rather than fakes, since the bug lived in exactly how the
+real method builds its own stash dict): a hover with a different theme than the last committed apply
+leaves Speed/Sleep's stash and live stylesheet byte-for-byte unchanged; a non-hover apply still
+correctly updates all three. Full suite: 453/453 (450 baseline + 3 new), matching baseline.
 
 ---
 
