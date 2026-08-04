@@ -1812,13 +1812,11 @@ class ThemeManager(QObject):
         if hasattr(mw, '_set_chapter_ui_active'):
             mw._set_chapter_ui_active(mw._chapter_ui_active)
         _mark("_set_chapter_ui_active")
-        # settings_panel/speed_panel/sleep_panel (+ excluded-books, which lives on the
-        # settings panel) stay on the FAST path unconditionally, same reasoning as
-        # chapter_list_widget above: the Themes tab IS settings_panel, so a hover
-        # preview that skips it silently defeats the whole point of hovering (the
-        # preview never shows on the very panel the user is looking at). This must
-        # run on every hover, not just non-hover — do NOT move it into
-        # _apply_stylesheets_deferred (which is not-hover-gated) again.
+        # settings_panel stays on the FAST path unconditionally: the Themes tab IS
+        # settings_panel, so a hover preview that skips it silently defeats the whole
+        # point of hovering (the preview never shows on the very panel the user is
+        # looking at). This must run on every hover, not just non-hover — do NOT move
+        # it into _apply_stylesheets_deferred (which is not-hover-gated) again.
         #
         # REGRESSION (found 2026-07-18, live-reported): the RANK-1 deferred-restyle
         # narrowing moved this whole block into _apply_stylesheets_deferred alongside
@@ -1829,17 +1827,44 @@ class ThemeManager(QObject):
         # always-not-hover deferred method silently added a hover-skip that never
         # existed, breaking the Themes tab's own hover preview. Moved back here to
         # restore the original, intentional behavior.
-        # All three built unconditionally, even though the loop below skips the two
-        # invisible panels' setStyleSheet() call (hover always has exactly one of the
-        # three visible, per the one-overlay gate). Building the two unused strings
-        # costs ~0.1ms each (string construction is negligible next to the ~200-600ms
-        # setStyleSheet()/Qt-repolish cost this same file documents elsewhere) — not
-        # worth lazy-building at the expense of this dict's simplicity.
-        panel_sheets = {
-            'settings_panel': get_settings_stylesheet(theme_name),
-            'speed_panel': get_speed_stylesheet(theme_name),
-            'sleep_panel': get_sleep_stylesheet(theme_name),
-        }
+        #
+        # HOVER EXCLUDES speed_panel/sleep_panel ENTIRELY (2026-08-04, write-path
+        # confinement follow-up — see review/Design_260804_write_path_confinement.md
+        # and NOTES.md 2026-08-04 "the actual root cause"). Settings' Themes tab is
+        # the ONLY panel ever visible during a hover — confirmed live, repeatedly, no
+        # exceptions (also now a standing CLAUDE.md rule). The live-paint loop below
+        # already skipped a hidden panel's setStyleSheet() call, but until this fix
+        # `self._pending_panel_sheet` (the stash consumed by `apply_pending_panel_
+        # sheet()` the next time Speed/Sleep opens) was still built and overwritten
+        # from `get_speed_stylesheet(theme_name)`/`get_sleep_stylesheet(theme_name)`
+        # on EVERY hover tick, with no hover gate on the stash itself — so a
+        # genuinely-suppressed unhover (e.g. a real leaveEvent misclassified as a
+        # blur-grab synthetic by `_on_themes_tab_left`'s hidden-widget branch, logged
+        # but not corrected by `[SWATCH-LEAVE-SUSPECT]`) left Speed/Sleep's NEXT
+        # open painted with whatever theme was last hovered, sometimes for 90+
+        # seconds until an unrelated event forced a fresh hover=False apply.
+        # Confirmed live 2026-08-04: `_current_theme_name`/`_active_display_theme_
+        # internal` mismatched for over a minute after exactly this leaveEvent
+        # misclassification, and `[PANEL-SHEET-STASH]` kept re-writing `speed_panel`/
+        # `sleep_panel`'s entries with the stuck hover theme the whole time. This is
+        # not a timing bug or a stale-cache bug — Speed/Sleep simply had no reason to
+        # be part of this call at all when hover=True, the same way Stats/Tags/Book
+        # Detail already aren't (they're never called during a hover in the first
+        # place, via the `theme_applied` signal path instead). Do NOT reintroduce a
+        # visibility check or any other after-the-fact guard here — the fix is
+        # omission, not correction: when hover=True, speed_panel/sleep_panel are not
+        # in `panel_sheets` at all, so neither the live-paint loop nor the stash below
+        # can ever touch them with a hover value, by construction.
+        if hover:
+            panel_sheets = {
+                'settings_panel': get_settings_stylesheet(theme_name),
+            }
+        else:
+            panel_sheets = {
+                'settings_panel': get_settings_stylesheet(theme_name),
+                'speed_panel': get_speed_stylesheet(theme_name),
+                'sleep_panel': get_sleep_stylesheet(theme_name),
+            }
         # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; see
         # NOTES.md for the full confirmed mechanism). settings_panel
         # .setStyleSheet() below forces Qt to re-run its style/geometry cascade
@@ -1877,7 +1902,19 @@ class ThemeManager(QObject):
             # panels were later built with no stylesheet at all — reported live as the
             # settings panel opening unstyled on some launches but not others (a race
             # against which apply landed first, hence intermittent).
-            self._pending_panel_sheet = dict(panel_sheets)
+            #
+            # MERGE, not replace, when hover=True (2026-08-04, same fix as above):
+            # panel_sheets only has 'settings_panel' during a hover, since speed_panel/
+            # sleep_panel are deliberately excluded from it entirely now. A bare
+            # `dict(panel_sheets)` here would WIPE OUT speed_panel/sleep_panel's
+            # existing, correct (committed-theme) stash entries on every single hover
+            # tick, leaving them with NOTHING to apply the next time either panel
+            # opens — the exact "panel opens unstyled" regression the comment above
+            # already documents, reintroduced via a different path. update() preserves
+            # whatever was already stashed for the two keys this call never touches.
+            if self._pending_panel_sheet is None:
+                self._pending_panel_sheet = {}
+            self._pending_panel_sheet.update(panel_sheets)
             logger.warning(
                 f"[PANEL-SHEET-STASH] wrote theme_name={theme_name!r} hover={hover} "
                 f"_is_hover_active={getattr(self, '_is_hover_active', None)!r} "
