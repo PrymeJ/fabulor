@@ -54,18 +54,6 @@ _BLUR_OUT_MS = 500
 # reads, so ~90 wakeups across a blur-in is negligible.
 _SETTLE_POLL_MS = 16
 
-# Additional pause after a genuine hover-out snapback visibly settles, before the
-# Settings-dismiss/tab-switch action it was blocking actually proceeds (2026-08-04,
-# corrected snapback-timing spec — see review/Design_260804_snapback_timing.md).
-# Makes the revert read as its own perceptible step ("revert, THEN close/switch")
-# rather than the dismiss/switch's first frame landing in the same tick the fade
-# completes. Starting value per Pryme's own stated range (100-200ms) — tune by
-# live feel, not fixed by measurement; this is a UX-feel constant, not a
-# correctness one. ONLY paid when a genuine snapback fade actually ran — see each
-# call site's own _fade_in_flight check, which the ordinary no-hover dismiss/
-# switch skips entirely.
-_SNAPBACK_SETTLE_GAP_MS = 150
-
 class PanelManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -1409,72 +1397,10 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _close_settings_flow(self):
-        """Slides the settings panel back out.
-
-        BLOCKS on the hover-out snapback visibly settling before the slide starts
-        (2026-08-04, corrected snapback-timing spec — see
-        review/Design_260804_snapback_timing.md). Previously called
-        `_on_theme_unhovered()`/`snap_theme_forward()` synchronously and proceeded
-        immediately — correct ordering in CODE (the calls happen first), but not a
-        guarantee the revert had visibly PAINTED before the panel started sliding:
-        a genuine hover-out that arrived while the original preview's own fade was
-        still running used to get STASHED behind it (see `_on_theme_changed`'s
-        `_hover_may_interrupt` — snapbacks now interrupt, fixed the same day), so
-        `_on_theme_unhovered()` returning did not mean the theme had actually
-        reverted yet. `call_when_theme_settled` makes this exact, not assumed:
-        the rest of this method (previously its entire body from the popup-collapse
-        line down) only runs once no theme fade is genuinely in flight — which
-        fires IMMEDIATELY, with zero added delay, for the ordinary case where
-        nothing was hovered (the snapback's own no-op guard means `_fade_in_flight`
-        is never set).
-
-        RE-ENTRANCY GUARD (`_settings_close_pending`): a second Esc/gutter-click
-        while the first call is still waiting on `call_when_theme_settled` must
-        NOT re-issue `_on_theme_unhovered()`/`snap_theme_forward()` a second time.
-        `active_full_panel()` still reports "settings" as open throughout the
-        settle-wait (the slide animation genuinely hasn't started yet, so
-        `_is_closing("settings")` is correctly False), so a spammed dismiss WILL
-        re-enter this method without this guard — verification item 11 in the
-        corrected-timing task. The guard is a plain no-op on re-entry, not a
-        queue: the one in-flight close is already going to finish and hide the
-        panel; a second request while it's pending adds nothing."""
-        if getattr(self, '_settings_close_pending', False):
-            return
-        tm = getattr(self.main_window, 'theme_manager', None)
-        if tm:
-            self._settings_close_pending = True
-            tm._on_theme_unhovered()
-            tm.snap_theme_forward()
-            # A settle gap only makes sense — and should only cost anything — when
-            # a fade was GENUINELY started by the calls above (a real hover-out).
-            # Check _fade_in_flight HERE, before call_when_theme_settled's own
-            # immediate-vs-deferred branch runs, so the ordinary no-hover dismiss
-            # (the overwhelming majority of dismisses) proceeds with truly zero
-            # added delay rather than a gap that happens to be scheduled for 0ms.
-            _was_fading = bool(getattr(tm, '_fade_in_flight', False))
-            if _was_fading:
-                tm.call_when_theme_settled(self._finish_close_settings_flow_with_gap)
-            else:
-                self._close_settings_flow_after_settle_gap()
-        else:
-            self._close_settings_flow_after_settle_gap()
-
-    def _finish_close_settings_flow_with_gap(self):
-        """Reached only when a genuine hover-out snapback was actually settled
-        (see _close_settings_flow's docstring). A small additional settle gap runs
-        first so the revert is perceptible as its own step before the panel starts
-        moving, rather than the slide's first frame landing in the same tick the
-        fade completes."""
-        QTimer.singleShot(_SNAPBACK_SETTLE_GAP_MS, self._close_settings_flow_after_settle_gap)
-
-    def _close_settings_flow_after_settle_gap(self):
-        # Clear the re-entrancy guard from _close_settings_flow HERE, unconditionally
-        # (both the early-return-if-already-running path below and the normal path) —
-        # once this method runs, either the slide is about to start (after which
-        # _is_closing("settings") takes over as the correct re-entrancy signal) or it
-        # was already running (an unrelated stale race, not this guard's concern).
-        # Stranding this True would permanently block every future Settings dismiss.
-        self._settings_close_pending = False
+        """Slides the settings panel back out."""
+        if hasattr(self.main_window, 'theme_manager'):
+            self.main_window.theme_manager._on_theme_unhovered()
+            self.main_window.theme_manager.snap_theme_forward()
         # Hide and collapse the excluded-books list explicitly on close —
         # belt-and-suspenders (reload() on the next open also collapses it),
         # and avoids it lingering visible for a frame while the panel starts

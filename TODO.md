@@ -35,7 +35,7 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
 
 ### Theme color/data
-- [2026-08-04] Settle a Themes-tab hover-preview snapback BEFORE a Settings tab switch — Esc/gutter-dismiss half DONE the same day (`review/Design_260804_snapback_timing.md`); tab-switch needs its own event-filter mechanism, deferred as a separate follow-up.
+- [2026-08-04] Settle a Themes-tab hover-preview snapback BEFORE leaving the Themes tab context (tab switch within Settings OR Settings-panel dismiss) — see full entry under Pending. Deferred until AFTER the `get_displayed_theme()` redesign lands.
 - [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
 - [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
@@ -89,47 +89,31 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Pending
 
-- **[2026-08-04] Verify: does loading a book from Library trigger a theme-apply even when cover-art-
-  based theming is OFF?** Observed by Pryme while re-confirming the `_apply_stylesheets` hover-
-  exclusion fix (see NOTES.md "The actual root cause," same day): with a stuck hover left over from a
-  deliberately-forced repro (Esc before the preview settled), loading a book from Library "restored"
-  the correct Fire and Blood colors across all panels. On its face this looks like confirmation the
-  fix works — but Pryme flagged it as ALSO suspicious in its own right: **a book load should have no
-  relationship to theme state at all unless cover-art-based theming is active**, since a book's cover
-  is only relevant to theming under that mode. If book load is unconditionally touching theme
-  regardless of that setting, there is an undocumented coupling somewhere in the load path (candidate
-  call sites: `_apply_main_cover`/`apply_cover_theme`/`clear_cover_theme`, `app.py` — not yet traced).
-  Explicitly scoped OUT of this note: `_set_bg_suppressed`'s no-book-state theme touch is NOT the
-  question here — that one is confirmed legitimate and expected (background-image themes need
-  special handling in the no-book state, and the stylesheet-apply cost there is negligible; no-book-
-  state's behavior stays exactly as it is). **This entry is about the BOOK-LOAD path specifically**
-  (loading a book from Library while a book was already active/no book was active), not the no-book-
-  state transition. Needs its own trace before any conclusion — do not assume it's the same mechanism
-  as the no-book-state case just because both happened to "restore" colors in the same test session.
-
-- **[2026-08-04] Settle a Themes-tab hover-preview snapback BEFORE a Settings-internal TAB SWITCH
-  (Look/Library/Audio/Controls) — the Esc/gutter-dismiss half of this is DONE, this entry is now
-  scoped to tab-switch only.** Original symptom (Pryme, confirmed live): hovering a swatch while
-  the active theme is something else, then clicking a different Settings tab before the preview had
-  settled, let the preview's colors follow into the new tab and only snap back afterward.
-  **Esc/gutter-dismiss fixed the same day** — see `review/Design_260804_snapback_timing.md`:
-  `_on_theme_unhovered()`'s snapback now INTERRUPTS an in-flight preview fade immediately instead of
-  stashing behind it (`_snapback_in_progress`, mirrors `_selection_in_progress`'s existing pattern),
-  and `PanelManager._close_settings_flow` now blocks the panel slide via
-  `ThemeManager.call_when_theme_settled` (mirrors `PanelManager.call_when_panels_settled`'s
-  predicate-driven, not `finished`-signal-driven, shape) until the snapback has visibly settled, plus
-  a small `_SNAPBACK_SETTLE_GAP_MS` (150ms, tune by feel) pause — paid ONLY when a genuine hover-out
-  actually happened; the ordinary no-hover dismiss proceeds with zero added delay. Verified via 12 new
-  synthetic tests (`test_hover_interrupts_snapback.py`, `test_theme_settle_resume.py`,
-  `test_close_settings_flow_blocks_on_snapback.py`) plus a live smoke test; suite 465/465.
-  **Remaining scope: tab-switch specifically.** Investigated the same day and confirmed structurally
-  different from dismiss — `main_window.tabs.currentChanged` is the only connection point, but Qt's
-  `QTabWidget` has no pre-change signal to block from (`currentChanged` fires AFTER the tab has
-  already switched), so genuinely blocking the switch needs a NEW mechanism (an event filter on the
-  tab bar intercepting the click before Qt processes it) rather than reusing the dismiss fix's
-  call-then-wait shape. Pryme's explicit call: confirm the dismiss fix is clean and verified on its
-  own first, treat the tab-bar-interception mechanism as its own separate follow-up — do not
-  implement until that decision is revisited.
+- **[2026-08-04] Settle a Themes-tab hover-preview snapback BEFORE leaving the Themes tab context —
+  applies to both a Settings-panel dismiss AND a tab switch within Settings (Look/Library/Audio/
+  Controls).** Confirmed live by Pryme (not a bug — snapback itself works correctly, this is a
+  sequencing/scope complaint): with hover time deliberately set long (1500ms) to make the window
+  visible, hovering a swatch (e.g. "Eyes of Ibad," blue) while the active theme is something else
+  (e.g. "Fire and Blood," red/black), then clicking a DIFFERENT Settings tab (e.g. Library) before
+  the hover-preview has settled/reverted, lets the preview's colors follow into the new tab and only
+  snap back to the real active theme afterward — visible, unwanted bleed-through of a duration
+  exactly as long as whatever's left of the hover's fade/settle window at the moment of the click.
+  Pryme's stated intent: "Themes is for previewing and settling themes. Not Audio, not Controls and
+  not the main window after I closed Settings" — a hover preview's colors should be visible ONLY
+  while genuinely hovering AND on the Themes tab; the instant either condition ends (tab switch OR
+  panel dismiss), the revert-to-active-theme snapback should be already complete, not merely
+  triggered, before the transition itself proceeds. Same root shape as Pryme's own pre-existing,
+  independently-planned follow-up for the panel-CLOSE case ("settle snapback before calling the panel
+  close" — mentioned as an already-intended next task, not new). **Scope: settle-before-transition for
+  BOTH triggers (tab switch within Settings, and Settings-panel dismiss) — likely the same underlying
+  fix (force/await the snapback's completion at the point of leaving the Themes tab context) applied
+  at two call sites (the tab-change handler, and whatever already calls `_on_theme_unhovered()` at
+  panel-dismiss time — see `PanelManager._close_settings_flow`).** Explicitly deferred: do NOT
+  implement now — this is a follow-up to be scheduled AFTER the in-progress
+  `get_displayed_theme()`/hover-state-computed-read-path redesign
+  (`review/Design_260804_hover_state_computed_read_path.md`) is fully landed. Not yet instrumented,
+  not yet designed in detail — this entry only records the confirmed symptom and Pryme's stated
+  intent, not a solution.
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
