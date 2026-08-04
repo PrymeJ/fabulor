@@ -1,3 +1,109 @@
+## Session Summary — 2026-08-04 — `investigate/restyle-cost-depth-and-narrowing`: hover-state read path redesigned and staged in, live-verified across five distinct disagreement mechanisms
+
+Follows directly from the prior session's `1a82c11` backstop fix and the same-day
+`get_current_theme()` confinement patches (`95eae22`, `3aba9b2`, `5150f30`). Those three fixes each
+patched the same underlying defect reactively — `_is_hover_active`/`_active_display_theme_internal`
+are stored fields whose correctness depends on a `leaveEvent` being correctly classified, and that
+exit contract had already failed via three distinct mechanisms in one evening. Pryme rejected a
+fourth reactive patch outright ("The whole thing is wrong. The solution is not trying to revert the
+damage, it is to prevent the damage from happening") and directed a structural redesign instead.
+
+**Design (`review/Design_260804_hover_state_computed_read_path.md`).** Replace "is hover active, and
+what theme" as stored state with a question re-asked from scratch on every read (`get_displayed_theme()`):
+is Settings visible, is the Themes tab current, is the cursor over a specific swatch right now — three
+live Qt/OS facts that cannot go stale because nothing is cached. Scope confirmed cleanly separable
+from the fade/animation-triggering pipeline: the one place `_is_hover_active`/`_active_display_theme_
+internal` are read *inside* `_on_theme_changed` is a write-side dedup check, not an external "what
+should a reader see" query, so the two stored fields stay exactly as-is for the fade pipeline's own
+bookkeeping while every external reader gets redirected to the new method. All 9 real runtime call
+sites (2 more than the prior session's audit found, both already routed through the "sanctioned"
+accessor) audited and confirmed correct with zero call-site changes needed.
+
+**Staged rollout, four steps, each independently verified before the next was authorized** — Pryme's
+explicit requirement, citing this exact branch's own track record of reactive changes that only got
+caught live rather than verified in advance:
+
+1. **Add `get_displayed_theme()`, purely additive** (`0abe9ac`) — nothing calls it yet.
+2. **Shadow-check only**: `get_active_theme()`'s existing body gets a log-only comparison against
+   `get_displayed_theme()`'s answer, without changing what's returned (`52ec0fd`). Extended same day
+   with a running call/disagreement counter + periodic summary, and a `[SHADOW-CHECK]`-filtered
+   stdout mirror (a `StreamHandler` on `theme_manager.py`'s own child logger, not the app's
+   file-only root logger) so disagreements were visible live without tailing the log file.
+3. **Live verification across real sessions**, spanning hours and multiple distinct testing
+   patterns (plain hovering, right-click selection + hover, Exclusive/with-pool cover-theme toggling
+   under active theme rotation with blur on). A **resting-hover probe** (`_resting_hover_probe_timer`,
+   700ms, temporary) was added mid-session after discovering none of the 9 real call sites poll on
+   any timer — a quiet resting hover produced literally zero `get_active_theme()` calls, so silence
+   there was never evidence of agreement, only evidence the question was never asked. The probe alone
+   pushed one session past 400 calls with a full, decomposed accounting of every disagreement.
+4. **Redirect** (`5630cf0`, marked wip pending Pryme's continued testing): `get_active_theme()` now
+   returns `self.get_displayed_theme()` directly. All shadow-check/probe scaffolding removed in the
+   same change. `get_current_theme()` needed no edit — its existing one-line delegation inherits the
+   new behavior automatically. `check_cursor_on_settle`, `clear_stale_hover_state`, and the three
+   fade-pipeline-internal mechanisms (`_is_hover_active`, `_active_display_theme_internal`,
+   `_check_swatch_still_hovered`) were explicitly NOT touched — their deletion/disposition remains a
+   separate, later step per the design's own sequencing.
+
+**Five distinct disagreement mechanisms found and precisely diagnosed during step 3**, not lumped
+together despite superficially similar log shapes — see the design doc §7-§7e for full detail:
+an Esc-dismiss ordering race (state reverts before the panel widgets report themselves as closing);
+a debounce-vs-instantaneous-read mismatch during cursor sweeps AND right-click selections (the
+80/150ms hover debounce hasn't committed, while the new read has no debounce at all); the OLD code's
+own deliberate hover-concealment contract (`_is_hover_active` branch always hides the preview from
+external callers — not a defect, this is the exact behavior the redesign exists to retire); and a
+genuinely new, pre-existing correctness gap — `get_active_theme()`'s non-hover branch never checked
+`_cover_theme_active` at all, so a cover-theme apply stashed behind an in-flight fade could return a
+stale theme name for up to 750ms, to every one of the 9 call sites, independent of hovering.
+
+**Two of my own conclusions were wrong mid-session and corrected on the record rather than silently
+fixed** — both caught by Pryme, not self-caught:
+- The original call-site audit claimed a "book-load while hovering" scenario was the single most
+  important case to verify. Pryme corrected this directly: Library and Settings/Themes can never be
+  open simultaneously (`PanelManager.is_overlay_open_or_committed()`'s one-overlay-at-a-time gate),
+  so the scenario is structurally impossible, not merely rare — dropped from the verification
+  checklist entirely.
+- Trying to explain why `[SWATCH-LEAVE-SUSPECT]` couldn't be deliberately reproduced despite several
+  minutes of trying, I first floated (wrongly) that the underlying hide/show mechanism might have
+  been removed — retracted on further reading (it's still there, `transport_bar_blur.py:941-942`).
+  My second explanation ("faster tick cadence makes the hidden window shorter, harder to land in")
+  was also wrong — Pryme pointed out this conflates tick FREQUENCY with per-tick hidden-window
+  DURATION, two different quantities. Checked precisely: the ~48ms hidden-duration figure is a
+  quiet-playback steady-state baseline from the code's own comments; the bursty ~15-20ms-apart
+  samples pulled from an active-interaction window happened because `refresh_dirty` is coalesced off
+  real Qt Paint events, not polled at any fixed rate — there is no "refresh rate" to lower, but
+  whether that many distinct dirty events during active interaction each genuinely need their own
+  grab-and-blur is a real, separate, still-open question, recorded for whoever next touches
+  `transport_bar_blur.py`'s dirty-tracking granularity.
+
+**Step 4 landed and was confirmed live by a real, unstaged occurrence of the original bug** —
+Pryme reported seeing "Sunspear" in the main window while "Eyes of Ibad" was the actual active theme
+during ordinary post-deploy use, reverting later. Log correlation confirmed this happened under the
+NEW code (app instance running since before the episode), with `_active_display_theme_internal`
+genuinely stuck for ~9 seconds (a real, live instance of the pre-existing leave-misclassification bug
+this whole redesign targets — caught and corrected by the pre-existing, untouched
+`_check_swatch_still_hovered` backstop) while `get_displayed_theme()`'s geometry guard — confirmed by
+direct code reading against the exact `[SWATCH-BACKSTOP-COST]` visibility/position samples logged
+during the episode — never had a path to return the stale value to any external caller throughout.
+Pryme confirmed live that the visible correction happened well before the bookkeeping settled,
+consistent with the paint tracking the backstop's correction rather than the stale field.
+
+**One related, explicitly out-of-scope UX issue surfaced and deferred to TODO.md, not fixed**: Pryme
+wants a Themes-tab hover preview's colors confined strictly to "while genuinely hovering AND on the
+Themes tab" — settling the snapback to the real active theme BEFORE switching to another Settings tab
+or dismissing the panel, not after (the transition should never visibly carry the preview color with
+it, even briefly). Scoped as a follow-up for after this redesign fully lands, likely one fix (force/
+await the snapback's completion at the point of leaving the Themes-tab context) applied at two call
+sites (a Settings-internal tab-change handler, and `PanelManager._close_settings_flow`'s existing
+`_on_theme_unhovered()` call).
+
+**Full suite green throughout** — 442/442 at every one of the four steps, matching baseline exactly,
+no regressions introduced at any stage. `check_cursor_on_settle`/`clear_stale_hover_state` deletion
+and any further live testing (item 7 of the design's own verification checklist — confirming ordinary
+Themes-tab preview UX is unchanged) remain open, explicitly deferred to a later session at Pryme's
+own pace.
+
+---
+
 ## Session Summary — 2026-08-02/03 — `investigate/restyle-cost-depth-and-narrowing`: depth/narrowing dead ends, a retracted root cause, and a real bug found and fixed
 
 New branch, two investigations that led nowhere on their own terms, one root-cause claim made and
