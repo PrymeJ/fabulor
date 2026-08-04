@@ -1,3 +1,83 @@
+## 2026-08-04 — Structural bug: at least THREE panels (Library, Speed, Sleep) cache theme-derived widget state that their own open flow never refreshes — root-caused via temporary probes, not fixed yet
+
+**Pre-existing bug, unrelated to `get_active_theme()`/`get_displayed_theme()`.** Found while
+investigating a live report (Pryme, real session, not staged): with "Fire and Blood" active and
+"Cerulean Sea" hovered on the Themes tab, opening Library showed Cerulean Sea's colors throughout —
+rows, covers, title/author/narrator/year, elapsed/total/remaining time, percentage, progress bar,
+AND both combo-box arrows (`sort_combo`/`style_combo`). Pryme also separately reported: "Playback
+grid buttons have Fire and Blood colors, the rest of the panel Cerulean Sea. Sleep totally Cerulean
+Sea." **My first pass wrote this up as a Library-only bug and was wrong to do so — Pryme caught
+this** ("Why did you only focus on the library when some other panels were wrong too?"). Re-checked
+against Speed/Sleep's own entry-flow code and the diagnosis generalizes cleanly: this is ONE
+structural bug, present in at least three panels, not a Library-specific one.
+
+### The general shape, confirmed via temporary probes (`[LIBRARY-THEME-WRITE]`/`[COMBO-ARROW-PAINT]`
+in `library.py`; `[PANEL-SHEET-STASH]`/`[PANEL-SHEET-CATCHUP]` in `theme_manager.py`) plus direct
+reading of all three panels' entry-flow code in `panels.py`
+
+Every affected panel has TWO independent theme-consumption paths that are refreshed by two
+DIFFERENT, unsynchronized mechanisms:
+
+1. **The panel's own QSS chrome/background** — driven by `_apply_stylesheets`'s `panel_sheets` dict,
+   which is either applied live (if the panel is visible) or stashed into `_pending_panel_sheet` (if
+   hidden). Each panel's `_start_*_entry` flow (`_start_library_entry`, `_start_speed_entry`,
+   `_start_sleep_entry`, all in `panels.py`) correctly calls `_flush_pending_restyle()` before
+   `show()`, which drains this stash via `apply_pending_panel_sheet()` — **this half is correct**,
+   confirmed live: `[PANEL-SHEET-CATCHUP]` fired with `'Fire and Blood'` for all three panels in the
+   captured window, at the moment each was opened.
+2. **Theme-derived per-widget state cached OUTSIDE that stylesheet mechanism** — `LibraryPanel.
+   _current_theme` (read by `_ThemedComboBox.paintEvent` for both combo arrows, and by
+   `BookDelegate` for every row/cover/text color) and Speed/Sleep's preset-ramp button colors (each
+   button's OWN per-instance `setStyleSheet()`, set by `_apply_preset_ramp_colors()` — see the
+   2026-08-04 hover-state redesign's own NOTES.md entry, §7e/step-4, for why this method exists
+   outside normal QSS at all). **Neither of these is refreshed by ANY `_start_*_entry` flow.** Both
+   are written ONLY by the deferred-restyle TAIL (`_apply_stylesheets_deferred` → `update_progress_
+   bar_theme()` for Library; `_refresh_panel_visuals` → `update_speed_panel_visuals`/`update_sleep_
+   panel_visuals` → `_apply_preset_ramp_colors()` for Speed/Sleep) — an event tied to unrelated
+   theme-change activity elsewhere in the app, with NO relationship to when the panel is opened.
+
+So a panel can open with its OWN background/chrome correctly caught up (mechanism 1, working) while
+its rows/covers/combo-arrows (Library) or its preset-ramp buttons (Speed/Sleep) still show whatever
+theme happened to be cached the last time the unrelated TAIL fired (mechanism 2, missing a catch-up
+entirely) — explaining exactly Pryme's report: Speed's grid buttons stale, "the rest of the panel"
+(the QSS-driven chrome) correct; Sleep "totally" stale because Sleep's whole visible surface, besides
+its own panel background, is preset-ramp buttons.
+
+**Confirmed live for Library specifically** (the same mechanism, just with concrete numbers): the
+TAIL fired at `17:13:05/09/15`, each time correctly writing whatever was active/hovered at that
+instant, then NOTHING until `17:14:33` (triggered by an unrelated book switch) — **78 seconds** of
+staleness. Library opened at `17:13:31,656`; `style_combo` painted at `17:13:31,991` with
+`accent='#5AACCC'` (Cerulean Sea, written 16s earlier); the correct `'Fire and Blood'` write didn't
+land until `17:13:32,245` — 250ms AFTER the panel had already opened and painted. Nothing forces a
+second repaint once that correction lands, so the stale color just sits there.
+
+**This is a genuinely separate bug from the `get_active_theme()`/`get_displayed_theme()` redesign
+documented in `review/Design_260804_hover_state_computed_read_path.md`.** Both `_resolve_theme_
+colors()` and `_apply_preset_ramp_colors()` do call `theme_manager.get_current_theme()`, which does
+now resolve through the redirected `get_displayed_theme()` — but the defect here is about WHEN that
+call happens (tied to an unrelated deferred-restyle event, never to a panel's own open flow), not
+WHAT it returns when called. The same staleness-on-open bug would exist against the OLD
+`get_active_theme()` implementation too, since neither version changes when these methods get
+invoked — this predates and is independent of that redesign.
+
+### Not yet fixed — root cause is clear and now confirmed general, the shape of the fix is not yet decided with Pryme
+
+Most direct fix: give each of the three `_start_*_entry` flows (`panels.py`) an explicit call to
+catch up its panel's OWN mechanism-2 state, mirroring what `_flush_pending_restyle()` already does
+for mechanism 1 — `library_panel.update_progress_bar_theme()` for Library,
+`speed_panel._apply_preset_ramp_colors()` for Speed, `sleep_panel._apply_preset_ramp_colors()` for
+Sleep. Not implemented pending confirmation, given how much
+has already gone into today's investigation and Pryme's stated fatigue with testing cycles — this
+should be verified live once built, not assumed correct from the trace alone (per this file's own
+standing "user's eyes are ground truth" rule).
+
+The three temporary probes remain in place (`library.py`: `[COMBO-ARROW-PAINT]` in `_ThemedComboBox.
+paintEvent`, `[LIBRARY-THEME-WRITE]` in `_resolve_theme_colors`; `theme_manager.py`: `[PANEL-SHEET-
+STASH]`/`[PANEL-SHEET-CATCHUP]` in `_apply_stylesheets`/`apply_pending_panel_sheet`) — useful for
+confirming any fix attempt, not yet removed.
+
+---
+
 ## 2026-08-04 — `get_active_theme()` redirected to a live-computed read (`get_displayed_theme()`); five disagreement mechanisms found and diagnosed; one genuinely new pre-existing bug found along the way
 
 Full design and every finding's complete detail: `review/Design_260804_hover_state_computed_read_path.md`
