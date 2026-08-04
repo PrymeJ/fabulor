@@ -2,6 +2,7 @@
 import logging
 import random
 import re
+import time
 from collections import namedtuple
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QGridLayout, QFrame, QPushButton, QHBoxLayout, QComboBox, QLineEdit, QProgressBar, QStyledItemDelegate, QListView, QStyleOptionViewItem, QStyle, QStyleOptionComboBox,
@@ -361,6 +362,15 @@ class _ThemedComboBox(QComboBox):
         theme = self._panel._current_theme or {}
         accent = theme.get('accent', '#ffffff')
         input_bg = theme.get('library_input_bg', theme.get('bg_dropdown', '#1e1e1e'))
+        # TEMPORARY (2026-08-04) — tracing a reported divergence between sort_combo's
+        # and style_combo's arrow colors (both read the SAME self._panel._current_theme,
+        # so a mismatch would mean their paintEvents ran at different times relative to
+        # a _current_theme update, not that they read different data). Remove once
+        # confirmed/fixed. See _resolve_theme_colors's matching probe below.
+        logger.warning(
+            f"[COMBO-ARROW-PAINT] combo={self.objectName() or id(self)!r} "
+            f"accent={accent!r} t={time.perf_counter():.6f}"
+        )
         opt = QStyleOptionComboBox()
         self.initStyleOption(opt)
         arrow_rect = self.style().subControlRect(
@@ -477,9 +487,41 @@ class LibraryPanel(QFrame):
     # ── Theme ────────────────────────────────────────────────────────────────
 
     def _resolve_theme_colors(self):
+        # Reads get_committed_theme() (2026-08-04, write-path confinement fix —
+        # see review/Design_260804_write_path_confinement.md), NOT
+        # get_current_theme()/get_active_theme()/get_displayed_theme(). Library
+        # is invisible during any hover (Settings and Library are mutually
+        # exclusive panels — see CLAUDE.md), so it must never be able to
+        # observe one: this method's three callers (update_progress_bar_theme,
+        # _on_view_mode_changed, refresh) are all ordinary UI events with no
+        # relationship to a theme change, and the confinement-clean deferred-
+        # restyle TAIL that drives update_progress_bar_theme only ever fires
+        # with hover=False anyway (_schedule_deferred_restyle is gated `if not
+        # hover` at its sole call site) — so no caller here ever legitimately
+        # needs the hover-inclusive answer.
         main_win = self.parent() if hasattr(self.parent(), 'theme_manager') else self.window()
         if main_win and hasattr(main_win, 'theme_manager'):
-            self._current_theme = main_win.theme_manager.get_current_theme()
+            from ..themes import _resolve_theme
+            self._current_theme = _resolve_theme(main_win.theme_manager.get_committed_theme())
+            # TEMPORARY (2026-08-04) — tracing a reported divergence where Library's
+            # grid/placeholder/row colors and the two combo-box arrows (see
+            # [COMBO-ARROW-PAINT] in _ThemedComboBox.paintEvent above) showed
+            # different, stale themes at once. This logs every WRITE to
+            # self._current_theme; the paint probe logs every READ. Comparing
+            # timestamps across both should show whether a paint ran against a
+            # theme that was already stale by the time it painted, or whether the
+            # write itself was already wrong (e.g. mid-hover-sweep). Remove once
+            # confirmed/fixed.
+            t = self._current_theme or {}
+            logger.warning(
+                f"[LIBRARY-THEME-WRITE] accent={t.get('accent')!r} "
+                f"library_input_bg={t.get('library_input_bg')!r} "
+                f"library_row_one={t.get('library_row_one')!r} "
+                f"library_row_two={t.get('library_row_two')!r} "
+                f"library_slider_fill={t.get('library_slider_fill')!r} "
+                f"library_grid_bg={t.get('library_grid_bg')!r} "
+                f"t={time.perf_counter():.6f}"
+            )
 
     def update_progress_bar_theme(self) -> None:
         self._resolve_theme_colors()
@@ -889,6 +931,8 @@ class LibraryPanel(QFrame):
         self.top_bar_layout.setSpacing(3)
 
         self.sort_combo = _ThemedComboBox(self)
+        self.sort_combo.setObjectName("sort_combo")  # TEMPORARY (2026-08-04): so
+        # [COMBO-ARROW-PAINT] can tell this apart from style_combo in the log.
         self.sort_combo.setFixedWidth(65)
         self.sort_combo.setFixedHeight(30)
         self._init_sort_combo(self.config.get_library_sort_key())
@@ -904,6 +948,8 @@ class LibraryPanel(QFrame):
         self.sort_dir_btn.clicked.connect(self._toggle_sort_direction)
 
         self.style_combo = _ThemedComboBox(self)
+        self.style_combo.setObjectName("style_combo")  # TEMPORARY (2026-08-04): see
+        # sort_combo's matching setObjectName above.
         for key, options in VIEW_MODES:
             self.style_combo.addItem(random.choice(options), key)
         self.style_combo.setFixedWidth(94)
@@ -1551,9 +1597,18 @@ class LibraryPanel(QFrame):
         no_match = self._book_model.filter_empty
         incomplete = _is_incomplete_year_filter(self.search_field.text().lower().strip())
         if no_match and not incomplete:
+            # get_committed_theme(), not get_current_theme() — typing in the
+            # search field is an ordinary UI event unrelated to a theme
+            # change, and Library is invisible during any hover. See
+            # _resolve_theme_colors's matching comment and
+            # review/Design_260804_write_path_confinement.md.
             main_win = self.parent()
             tm = getattr(main_win, 'theme_manager', None)
-            theme = tm.get_current_theme() if tm else {}
+            if tm:
+                from ..themes import _resolve_theme
+                theme = _resolve_theme(tm.get_committed_theme())
+            else:
+                theme = {}
             text_color = theme.get('search_error_text', '#ffaaaa')
             self.search_field.setStyleSheet(
                 f"background-color: rgba(120, 0, 0, 0.6); color: {text_color};"

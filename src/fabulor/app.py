@@ -872,7 +872,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.excluded_books_popup.set_expanded(False)
         self.excluded_books_section.set_expanded(False)
-        theme = self.theme_manager.get_current_theme()
+        # get_committed_theme() (2026-08-04, write-path confinement fix — see
+        # review/Design_260804_write_path_confinement.md), NOT
+        # get_current_theme(). This popup lives on Settings' Library tab,
+        # invisible whenever the Themes tab (the only place a hover can be
+        # live) is the one showing — mutually exclusive tabs within the same
+        # panel, same reasoning as the cross-panel exclusion in CLAUDE.md.
+        theme = self.theme_manager.get_committed_theme()
+        theme = _resolve_theme(theme)
         self.excluded_books_section.set_theme(theme)
         self.excluded_books_popup.set_theme(theme)
         books = self.db.get_excluded_books()

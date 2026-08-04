@@ -264,6 +264,37 @@ class ThemeManager(QObject):
             return self._cover_theme
         return self._current_theme_name
 
+    def get_committed_theme(self) -> str:
+        """The theme committed by a deliberate right-click / rotation / future
+        Enter-equivalent — NEVER touched by hover. Distinct from
+        get_displayed_theme()/get_active_theme()/get_current_theme(), which
+        are hover-INCLUSIVE (they answer "what is genuinely painted right
+        now," live preview included) — this answers "what did the user
+        actually choose," full stop.
+
+        Added 2026-08-04 (write-path confinement fix — see
+        review/Design_260804_write_path_confinement.md) after live testing
+        found several consumers (Library's view-mode/search/refresh paths,
+        Speed/Sleep's preset-ramp color functions, the Excluded Books popup)
+        calling get_current_theme() directly from ordinary UI events that
+        have nothing to do with a theme change — panels that are invisible
+        during any hover (Settings and Library/Speed/Sleep/Stats/Tags are
+        mutually exclusive; see CLAUDE.md) were baking a live-hover value
+        into their own cached state anyway, with nothing to ever correct it
+        except an unrelated later theme-apply cycle. The fix is not to catch
+        and correct that after the fact — it is for these consumers to never
+        be able to observe a hover in the first place. `_current_theme_name`
+        already is, and always was, exactly this value: confirmed by direct
+        trace of every write site (theme_manager.py:__init__, _do_rotate,
+        toggle_theme_selection, _on_theme_right_clicked — all deliberate
+        commit actions, never a hover path) and by _mark_theme_applied's own
+        docstring, which confirms it is the SOLE writer of
+        _active_display_theme_internal/_is_hover_active and never touches
+        this field. This method adds no new state — it only names the
+        existing field so callers stop reaching for get_current_theme() by
+        habit when what they actually need is the committed value."""
+        return self._current_theme_name
+
     def get_current_theme(self) -> dict:
         """Resolved-dict form of the currently displayed theme. Hover-safe by
         construction (2026-08-03, confinement-gap fix) — resolves through
@@ -1847,6 +1878,11 @@ class ThemeManager(QObject):
             # settings panel opening unstyled on some launches but not others (a race
             # against which apply landed first, hence intermittent).
             self._pending_panel_sheet = dict(panel_sheets)
+            logger.warning(
+                f"[PANEL-SHEET-STASH] wrote theme_name={theme_name!r} hover={hover} "
+                f"_is_hover_active={getattr(self, '_is_hover_active', None)!r} "
+                f"_current_theme_name={getattr(self, '_current_theme_name', None)!r}"
+            )
             for attr, sheet in panel_sheets.items():
                 w = getattr(mw, attr, None)
                 if not w:
@@ -2025,6 +2061,11 @@ class ThemeManager(QObject):
             return
         sheet = pending.get(panel.objectName())
         if sheet:
+            logger.warning(
+                f"[PANEL-SHEET-CATCHUP] applying stash to panel={panel.objectName()!r} "
+                f"_current_theme_name={getattr(self, '_current_theme_name', None)!r} "
+                f"_is_hover_active={getattr(self, '_is_hover_active', None)!r}"
+            )
             panel.setStyleSheet(sheet)
 
     def flush_deferred_restyle(self):

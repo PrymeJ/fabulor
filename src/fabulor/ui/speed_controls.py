@@ -267,8 +267,22 @@ class SpeedControlsPanel(QWidget):
         harmless, but a theme change never needs update_visuals()'s property-sync
         half (no selection changed), which is why the two are split into separate
         methods rather than one call always doing both.
+
+        Reads get_committed_theme() (2026-08-04, write-path confinement fix —
+        see review/Design_260804_write_path_confinement.md), NOT
+        get_current_theme(). update_visuals()'s six state-change callers
+        (_update_def_speed_mode/_update_step_mode/_update_undo_mode/
+        _update_skip_mode/_update_long_skip_mode/_validate_smart_rewind_settings)
+        are ordinary button clicks with no relationship to a theme change, and
+        the Speed panel is invisible during any hover (Settings and Speed are
+        mutually exclusive panels — see CLAUDE.md). The TAIL caller
+        (update_speed_panel_visuals) loses nothing by this change: it only
+        ever fires with hover=False (_schedule_deferred_restyle is gated `if
+        not hover` at its sole call site), so it never legitimately needed the
+        hover-inclusive answer either.
         """
-        t = self.theme_manager.get_current_theme()
+        from ..themes import _resolve_theme
+        t = _resolve_theme(self.theme_manager.get_committed_theme())
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 
         for i, btn in enumerate(self._speed_grid_buttons):
@@ -309,9 +323,10 @@ class SpeedControlsPanel(QWidget):
         redundant work on that path).
 
         theme_name is accepted but unused (matches update_speed_panel_visuals'
-        call signature); the current theme is always read fresh via
-        theme_manager.get_current_theme() regardless of what's passed. Pre-existing,
-        not touched here — out of scope for this cleanup."""
+        call signature); _apply_preset_ramp_colors always reads the COMMITTED
+        theme itself (theme_manager.get_committed_theme(), not
+        get_current_theme() — see that method's docstring, 2026-08-04 write-
+        path confinement fix) regardless of what's passed here."""
         self._apply_preset_ramp_colors()
 
         def sync_btn(group, current):

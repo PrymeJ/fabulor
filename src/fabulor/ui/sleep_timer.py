@@ -184,8 +184,20 @@ class SleepTimerPanel(QWidget):
         theme change never needs update_panel_styling()'s property-sync half
         (selection didn't change), which is why the two are split into separate
         methods rather than one call always doing both.
+
+        Reads get_committed_theme() (2026-08-04, write-path confinement fix —
+        see review/Design_260804_write_path_confinement.md), NOT
+        get_current_theme(). update_panel_styling()'s three state-change
+        callers (set_sleep_timer/disable_sleep_timer/set_sleep_fade) are
+        ordinary button clicks with no relationship to a theme change, and the
+        Sleep panel is invisible during any hover (Settings and Sleep are
+        mutually exclusive panels — see CLAUDE.md). The TAIL caller
+        (update_sleep_panel_visuals) loses nothing by this change: it only
+        ever fires with hover=False, so it never legitimately needed the
+        hover-inclusive answer either.
         """
-        t = self.theme_manager.get_current_theme()
+        from ..themes import _resolve_theme
+        t = _resolve_theme(self.theme_manager.get_committed_theme())
         btn_text = t.get('button_text', t.get('text_on_light_bg', t['text']))
 
         for i, btn in enumerate(self._sleep_presets_buttons):
