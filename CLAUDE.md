@@ -105,6 +105,15 @@ The real library used for day-to-day testing has been ~400 books. That is not re
 - **Change-only probes can't prove absence.** Log stationary state too, not just transitions.
 - **Verify the app restarted** before trusting a log (`entr` can silently miss edits). Before trusting a capture, confirm
   the running binary/process postdates the code change.
+- **A branch switch that resets the working tree to an older branch's files is not data loss** — it
+  only changes which branch's files sit on disk right now. Before saying or implying anything is
+  gone, run `git branch --show-current` and `git log --oneline`/`git reflog` and report what they
+  actually show. If a task requires branching off `main` while unrelated work sits ahead on another
+  branch (e.g. `git checkout main -- .` to reset the tree before creating a fresh investigation
+  branch), say so plainly before doing it — the app will look and behave like the older branch until
+  switched back, and that is expected, not a symptom of anything broken. (2026-08-05: this exact
+  sequence briefly read as "30+ commits gone" mid-session; nothing was lost, confirmed via reflog —
+  see SESSION.md.)
 - **Single-point checks aren't a survey.** Sample edges/full area, not one representative point.
 - **`window().cursor()` does not tell you what's displayed.** It returns the
   top-level widget's own cursor property, not the platform's actual visible cursor

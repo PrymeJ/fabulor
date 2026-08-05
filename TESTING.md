@@ -165,6 +165,24 @@ is exactly how the first attempted fix shipped a worse bug.
 - [ ] Transport progress slider (a `ClickSlider` in the main window, not a panel): still drags normally — the gate keys off `QAbstractSlider`, so confirm it didn't catch anything it shouldn't
 - [ ] Start a drag, then close the panel mid-drag: no stuck state, no leftover polling (the drag watcher must not outlive the overlay)
 
+### Declined-tick re-arm (hover / hover-out / gutter click / tab click after hovering / Change now) — 2026-08-05
+
+`refresh_dirty`'s hover-active and post-restyle-cooldown gates decline a tick without consuming its
+dirty union, on the assumption a later real paint will pick it up — which fails specifically when
+the eventual snapback is a genuine no-op (the hovered theme never diverged from what's already
+applied) and produces no Paint event of its own. `_rearm_after_decline`/`_fire_rearm` retry a
+declined tick on a delay instead of waiting on a paint that may never come. Fixed 2026-07-27
+(`ac87e0a`), live-verified 2026-08-05 (`tools/blur_rearm_live_probe.py` — see NOTES.md). **All
+live-only**, same as the rest of this section.
+
+- [ ] Open Settings with a panel blurred, hover a theme swatch different from the committed one, hold the hover a few seconds: the blurred transport bar keeps refreshing (no visible freeze on an old frame)
+- [ ] Un-hover (move off the swatch) back to the committed theme without ever selecting anything: the blurred transport bar is NOT left showing stale colors — it should match the live (committed) theme within about half a second
+- [ ] Hover a swatch, then click the right-hand gutter to dismiss the panel while still hovering: no stale blurred frame left over on the way out, and the transport bar looks correct once the panel is gone
+- [ ] Hover a swatch, then click a DIFFERENT Settings tab (not Themes) while the hover is still active: the blurred transport bar does not freeze on the hovered theme's colors — it settles to whatever theme is actually committed
+- [ ] Hover a swatch, then click "Change now": the blurred transport bar updates to the newly-committed theme, not stuck on the pre-click hover preview
+- [ ] Repeat the hover/un-hover cycle several times in a row (rapid re-hover before the previous one settles): no permanently frozen blur at the end of the sequence
+- [ ] **Diagnostic if a stale/frozen blurred frame ever reappears:** grep the log for `refresh_dirty tick=` lines — a long run of `EARLY-RETURN reason=hover_active_gate` or `reason=cooldown_gate` with no eventual `COMPOSITED` afterward means the re-arm regressed; it should always eventually land a `COMPOSITED` once the hover ends and the cooldown clears.
+
 ### Stale-cache regressions (state is correct; only the cached pixmap goes stale)
 - [ ] Remove the last scan location while a panel is open with an active book: no ghost transport buttons left over the quote screen
 - [ ] General tell for this bug class: if closing and reopening the panel fixes the visual, it is a missed repaint, not wrong state — look for a content change that produced no Paint event on a tracked widget
