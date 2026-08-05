@@ -1230,6 +1230,19 @@ class StatsRowDelegate(QStyledItemDelegate):
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation,
             )
+            # KeepAspectRatioByExpanding guarantees `scaled` is >= COVER_SIZE
+            # in both dimensions with one dimension larger — a crop, not a
+            # square result. BookDayRow's QLabel.setPixmap crops this for
+            # free because the label's own fixed 48x48 bounds clip whatever
+            # overflows. drawPixmap(QRect, QPixmap) has no such free clip —
+            # it STRETCHES source to the destination rect, which squashes
+            # the deliberately-oversized dimension back down instead of
+            # cropping it. Draw at native (scaled) size, centered, and let
+            # setClipRect do the cropping instead — mirrors what the QLabel
+            # does implicitly. (Found live 2026-08-05: portrait covers were
+            # rendering squashed-to-square in the Day-tab delegate.)
+            draw_x = cover_rect.x() - (scaled.width() - cover_rect.width()) // 2
+            draw_y = cover_rect.y() - (scaled.height() - cover_rect.height()) // 2
             # BookDayRow dims the cover via a QGraphicsOpacityEffect(0.4) on
             # top of the grayscale conversion (_apply_cover/setGraphicsEffect,
             # stats_panel.py). Mirror both here: grayscale already applied in
@@ -1238,7 +1251,7 @@ class StatsRowDelegate(QStyledItemDelegate):
             painter.setClipRect(cover_rect)
             if is_archived:
                 painter.setOpacity(0.4)
-            painter.drawPixmap(cover_rect, scaled)
+            painter.drawPixmap(draw_x, draw_y, scaled)
             painter.restore()
         else:
             ph = self._placeholder_pixmap(is_archived)
@@ -1256,12 +1269,27 @@ class StatsRowDelegate(QStyledItemDelegate):
 
         clock_font = QFont(title_font)
 
+        # Row heights come from real font metrics, not a mechanical 50/50
+        # split of content_h — the reference widget (BookDayRow) never fixes
+        # a row height either: content_block is a QVBoxLayout(spacing=2) of
+        # two QHBoxLayouts, each sized to its own QLabel sizeHint(), so the
+        # two-line block's real height is line_h*2 + 2, which is shorter than
+        # content_h and gets centered by the layout's AlignVCenter. Splitting
+        # content_h in half instead (the original approach here) left dead
+        # space inside each half, which is what read as "looser" than the
+        # widget's row spacing. (Found live 2026-08-05, matched against a
+        # side-by-side screenshot of Day vs. Week.)
+        line_h = painter.fontMetrics().height()
+        row_spacing = 2  # matches content_block.setSpacing(2) in BookDayRow
+        block_h = line_h * 2 + row_spacing
+        block_y = content_y + max(0, (content_h - block_h) // 2)
+
         # Row 0: title (left, elided, fixed width budget) + clock time (right).
         title_w = min(_STATS_TITLE_WIDTH, max(0, content_w - self.SPACING - self.CLOCK_W))
         clock_w = self.CLOCK_W
-        row0_h = content_h // 2
-        title_rect = QRect(content_x, content_y, title_w, row0_h)
-        clock_rect = QRect(content_x + content_w - clock_w, content_y, clock_w, row0_h)
+        row0_h = line_h
+        title_rect = QRect(content_x, block_y, title_w, row0_h)
+        clock_rect = QRect(content_x + content_w - clock_w, block_y, clock_w, row0_h)
 
         painter.setFont(title_font)
         painter.setPen(self._color_finished if is_finished else self._color_text)
@@ -1279,8 +1307,8 @@ class StatsRowDelegate(QStyledItemDelegate):
         author_font = QFont(title_font)
         author_w = min(_STATS_AUTHOR_WIDTH, max(0, content_w - self.SPACING - self.PROG_W))
         prog_w = self.PROG_W
-        row1_y = content_y + row0_h
-        row1_h = content_h - row0_h
+        row1_y = block_y + row0_h + row_spacing
+        row1_h = line_h
         author_rect = QRect(content_x, row1_y, author_w, row1_h)
         prog_rect = QRect(content_x + content_w - prog_w, row1_y, prog_w, row1_h)
 
