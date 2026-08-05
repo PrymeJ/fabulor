@@ -1,23 +1,27 @@
 #!/usr/bin/env python
 """Live check: does switching Settings tabs (Themes -> Look/Library/Audio/Controls)
 while hovering a Themes-tab swatch correctly and promptly revert to the committed
-theme, now that the dismiss-settle predicate fix has shipped (review/Design_260805_
-snapback_timing_v2.md) — or does it still need a dedicated tab-bar
-click-interception mechanism?
+theme?
 
-RESULT (2026-08-05, 5/5 trials, both immediate and paused switches): STILL BROKEN.
-Hovering, then switching tabs, leaves _is_hover_active stuck True and the main
-window's chrome on the hovered theme for the full 2s observation window, every
-trial. Root cause confirmed via signal-chain instrumentation (not inferred):
-neither _on_themes_tab_left nor _on_theme_unhovered is ever called at all —
-Qt does not deliver a leaveEvent to swatch_box when QTabWidget.setCurrentIndex()
-hides its containing tab, so the mechanism the dismiss-settle fix improved is never
-even entered on this path. This confirms the tab-bar click-interception mechanism
-(intercept the click, run the snapback, then call setCurrentIndex once settled)
-is still needed — not implemented here, investigation only.
+Drives a REAL synthetic mouse press on the tab bar widget (via app.sendEvent, the
+same delivery path a genuine click takes — see test_scrollbar_jump.py's _press
+helper for the established pattern in this codebase), not tabs.setCurrentIndex()
+directly. This matters: the 2026-08-05 fix (_ThemesTabBarInterceptor,
+ui/panels.py) intercepts QEvent.Type.MouseButtonPress on the tab bar specifically
+-- calling setCurrentIndex() bypasses that interception entirely and would show
+the fix as broken/absent regardless of whether it actually works.
 
-Re-run this after any future tab-switch fix lands to confirm it actually closes
-the gap.
+HISTORY:
+- 2026-08-05, first run (setCurrentIndex() driven): STILL BROKEN. Hovering, then
+  switching tabs, left _is_hover_active stuck True and the main window's chrome on
+  the hovered theme for the full 2s observation window, every trial (5/5).
+  Root cause confirmed via signal-chain instrumentation: neither
+  _on_themes_tab_left nor _on_theme_unhovered was ever called at all -- Qt does
+  not deliver a leaveEvent to swatch_box when a tab is hidden, so the dismiss-
+  settle mechanism was never entered on this path.
+- 2026-08-05, second run (this version, real synthetic press, after
+  _ThemesTabBarInterceptor landed): see the printed VERDICT for the current
+  result -- re-run this any time the interception logic changes.
 
 Run live, on-screen — QT_QPA_PLATFORM must NOT be offscreen.
 
@@ -33,7 +37,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 os.environ.setdefault("FABULOR_LOG_LEVEL", "WARNING")
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QTimer, QEventLoop
+from PySide6.QtCore import QTimer, QEventLoop, QPointF, QPoint, Qt
+from PySide6.QtGui import QMouseEvent
 
 app = QApplication.instance() or QApplication([])
 
@@ -60,6 +65,26 @@ def pump_until(predicate, timeout_ms, step_ms=10):
     return False, waited
 
 
+def click_tab(app, tab_bar, index):
+    """Send a real MouseButtonPress (then Release) to tab_bar at `index`'s tab
+    rect center -- exactly what a genuine click delivers, so the installed
+    _ThemesTabBarInterceptor event filter sees it for real, not simulated by
+    calling application logic directly."""
+    rect = tab_bar.tabRect(index)
+    center = rect.center()
+    global_pos = tab_bar.mapToGlobal(center)
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, QPointF(center),
+        QPointF(global_pos), Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier)
+    app.sendEvent(tab_bar, press)
+    release = QMouseEvent(
+        QMouseEvent.Type.MouseButtonRelease, QPointF(center),
+        QPointF(global_pos), Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier)
+    app.sendEvent(tab_bar, release)
+
+
 def main():
     mw = MainWindow()
     mw.show()
@@ -68,6 +93,7 @@ def main():
 
     tm = mw.theme_manager
     pm = mw.panel_manager
+    tab_bar = mw.tabs.tabBar()
 
     def reset_to_active():
         tm._cover_theme_active = False
@@ -85,13 +111,12 @@ def main():
             pump(400)
         pump_until(lambda: not pm._any_panel_animating(), timeout_ms=3000, step_ms=20)
 
-    # Instrument the real leaveEvent/on_themes_tab_left call chain to see WHY,
-    # not just THAT, tab-switch fails to revert.
-    leave_log = []
+    # Instrument the real leaveEvent/unhover/interceptor call chain.
+    call_log = []
     _real_on_themes_tab_left = tm._on_themes_tab_left
 
     def _instrumented_on_themes_tab_left(tab_widget):
-        leave_log.append(("_on_themes_tab_left called", time.perf_counter()))
+        call_log.append("_on_themes_tab_left")
         return _real_on_themes_tab_left(tab_widget)
 
     tm._on_themes_tab_left = _instrumented_on_themes_tab_left
@@ -99,44 +124,64 @@ def main():
     _real_on_theme_unhovered = tm._on_theme_unhovered
 
     def _instrumented_on_theme_unhovered():
-        leave_log.append(("_on_theme_unhovered called", time.perf_counter()))
+        call_log.append("_on_theme_unhovered")
         return _real_on_theme_unhovered()
 
     tm._on_theme_unhovered = _instrumented_on_theme_unhovered
+
+    interceptor = pm._themes_tab_bar_interceptor
+    _real_filter = interceptor.eventFilter
+
+    def _instrumented_filter(obj, event):
+        result = _real_filter(obj, event)
+        if event.type().name == "MouseButtonPress" and obj is tab_bar:
+            call_log.append(f"interceptor(consumed={result})")
+        return result
+
+    interceptor.eventFilter = _instrumented_filter
+
+    # ================================================================
+    # PART A: with a genuine hover active — must be intercepted
+    # ================================================================
+    print("=" * 70)
+    print("PART A: hover active, then click a different tab (real synthetic press)")
+    print("=" * 70)
 
     N_TRIALS = 5
     results = []
 
     for trial in range(1, N_TRIALS + 1):
-        leave_log.clear()
+        call_log.clear()
         reset_to_active()
         open_settings_and_settle()
         assert mw.tabs.currentIndex() == 0
         assert mw.settings_panel.isVisible()
 
-        # Hover a swatch via the real signal path (mirrors a genuine enterEvent).
         tm._on_theme_hovered(HOVER_THEME)
         pump(200)  # past the hover debounce, preview genuinely applied
-
         hover_engaged = (tm._is_hover_active and tm._active_display_theme_internal == HOVER_THEME)
 
-        # Switch tabs WITHOUT closing Settings and WITHOUT the hover ending naturally
-        # first -- the exact scenario in question. Try both an immediate switch and,
-        # on alternating trials, a short pause first to probe any timing edge.
         if trial % 2 == 0:
-            pump(50)  # deliberately test a short pause before switching
-        t_switch = time.perf_counter()
-        mw.tabs.setCurrentIndex(1)  # Library tab (or whichever is index 1)
+            pump(50)  # deliberately test a short pause before clicking
+
+        # Real synthetic click on the Look tab (index 1).
+        t_click = time.perf_counter()
+        click_tab(app, tab_bar, 1)
         app.processEvents()
 
-        # Watch for up to 2s: does the displayed/committed state correctly and
-        # promptly revert?
-        settled, waited_ms = pump_until(
-            lambda: (not tm._is_hover_active
-                     and tm._active_display_theme_internal == tm.get_committed_theme()),
-            timeout_ms=2000, step_ms=10
+        index_immediately_after_click = mw.tabs.currentIndex()
+
+        # Watch: does it eventually land on the clicked tab, with the theme
+        # correctly settled first?
+        landed, waited_ms = pump_until(
+            lambda: mw.tabs.currentIndex() == 1, timeout_ms=3000, step_ms=10
         )
-        revert_duration_ms = (time.perf_counter() - t_switch) * 1000
+        switch_duration_ms = (time.perf_counter() - t_click) * 1000
+
+        final_hover_active = tm._is_hover_active
+        final_displayed = tm._active_display_theme_internal
+        final_committed = tm.get_committed_theme()
+        reverted_to_committed = (not final_hover_active and final_displayed == final_committed)
 
         live_sheet = mw.styleSheet()
         expected_sheet = themes.get_base_stylesheet(ACTIVE_THEME)
@@ -145,34 +190,86 @@ def main():
         results.append({
             "trial": trial,
             "hover_engaged": hover_engaged,
-            "reverted": settled,
-            "revert_duration_ms": revert_duration_ms if settled else None,
-            "chrome_correct_after_wait": chrome_correct,
-            "final_is_hover_active": tm._is_hover_active,
-            "final_displayed": tm._active_display_theme_internal,
+            "was_intercepted": index_immediately_after_click == 0,  # still on Themes tab right after click
+            "landed_on_target_tab": landed,
+            "switch_duration_ms": switch_duration_ms if landed else None,
+            "reverted_to_committed": reverted_to_committed,
+            "chrome_correct": chrome_correct,
         })
-        print(f"  trial {trial} ({'paused' if trial % 2 == 0 else 'immediate'} switch): "
-              f"hover_engaged={hover_engaged}  reverted={settled} "
-              f"({revert_duration_ms:.1f}ms)  chrome_correct={chrome_correct}  "
-              f"final _is_hover_active={tm._is_hover_active}  "
-              f"leave_log={[e[0] for e in leave_log]}")
+        print(f"  trial {trial} ({'paused' if trial % 2 == 0 else 'immediate'} click): "
+              f"hover_engaged={hover_engaged}  "
+              f"intercepted(stayed on tab 0 right after click)={index_immediately_after_click == 0}  "
+              f"landed_on_tab1={landed} ({switch_duration_ms:.1f}ms)  "
+              f"reverted={reverted_to_committed}  chrome_correct={chrome_correct}  "
+              f"call_log={call_log}")
 
-        # Switch back to Themes tab before next trial.
         mw.tabs.setCurrentIndex(0)
         app.processEvents()
         pump(50)
 
-    print("\n=== SUMMARY ===")
-    all_hover_engaged = all(r["hover_engaged"] for r in results)
-    all_reverted = all(r["reverted"] for r in results)
-    all_chrome_correct = all(r["chrome_correct_after_wait"] for r in results)
-    print(f"Hover genuinely engaged before switch, every trial: {all_hover_engaged}")
-    print(f"Reverted to committed state after tab switch, every trial: {all_reverted}")
-    print(f"Chrome (main window stylesheet) correct after wait, every trial: {all_chrome_correct}")
-    if all_reverted:
-        durations = [r["revert_duration_ms"] for r in results]
-        print(f"Revert durations (ms): {durations}")
-    print(f"\nVERDICT: {'TAB-SWITCH ALREADY WORKS CORRECTLY' if (all_hover_engaged and all_reverted and all_chrome_correct) else 'TAB-SWITCH STILL BROKEN'}")
+    print("\n-- Part A summary --")
+    a_hover_engaged = all(r["hover_engaged"] for r in results)
+    a_intercepted = all(r["was_intercepted"] for r in results)
+    a_landed = all(r["landed_on_target_tab"] for r in results)
+    a_reverted = all(r["reverted_to_committed"] for r in results)
+    a_chrome = all(r["chrome_correct"] for r in results)
+    print(f"Hover engaged every trial: {a_hover_engaged}")
+    print(f"Click intercepted (didn't switch immediately) every trial: {a_intercepted}")
+    print(f"Eventually landed on clicked tab every trial: {a_landed}")
+    print(f"Reverted to committed theme every trial: {a_reverted}")
+    print(f"Chrome correct every trial: {a_chrome}")
+    part_a_pass = a_hover_engaged and a_intercepted and a_landed and a_reverted and a_chrome
+    print(f"PART A VERDICT: {'PASS' if part_a_pass else 'FAIL'}")
+
+    # ================================================================
+    # PART B: no hover active — must pass through completely unaffected
+    # ================================================================
+    print("\n" + "=" * 70)
+    print("PART B: no hover active, click a different tab — must be instant, unaffected")
+    print("=" * 70)
+
+    b_results = []
+    for trial in range(1, N_TRIALS + 1):
+        call_log.clear()
+        reset_to_active()
+        open_settings_and_settle()
+        assert mw.tabs.currentIndex() == 0
+        assert not tm._is_hover_active
+
+        t_click = time.perf_counter()
+        click_tab(app, tab_bar, 1)
+        app.processEvents()
+        index_right_after = mw.tabs.currentIndex()
+        switch_duration_ms = (time.perf_counter() - t_click) * 1000
+
+        instant_switch = (index_right_after == 1)
+        interceptor_did_nothing = all("consumed=True" not in c for c in call_log)
+
+        b_results.append({
+            "trial": trial,
+            "instant_switch": instant_switch,
+            "switch_duration_ms": switch_duration_ms,
+            "interceptor_passthrough": interceptor_did_nothing,
+        })
+        print(f"  trial {trial}: instant_switch={instant_switch} "
+              f"({switch_duration_ms:.2f}ms)  interceptor_passthrough={interceptor_did_nothing}  "
+              f"call_log={call_log}")
+
+        mw.tabs.setCurrentIndex(0)
+        app.processEvents()
+        pump(50)
+
+    print("\n-- Part B summary --")
+    b_instant = all(r["instant_switch"] for r in b_results)
+    b_passthrough = all(r["interceptor_passthrough"] for r in b_results)
+    print(f"Instant switch (no interception) every trial: {b_instant}")
+    print(f"Interceptor was a pure pass-through every trial: {b_passthrough}")
+    part_b_pass = b_instant and b_passthrough
+    print(f"PART B VERDICT: {'PASS' if part_b_pass else 'FAIL'}")
+
+    print("\n" + "=" * 70)
+    print(f"OVERALL: {'PASS' if (part_a_pass and part_b_pass) else 'FAIL'}")
+    print("=" * 70)
 
     mw.close()
 

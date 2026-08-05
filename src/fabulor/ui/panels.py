@@ -6,7 +6,7 @@ import pstats
 import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QApplication
-from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt
+from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 
@@ -64,6 +64,68 @@ _SETTLE_POLL_MS = 16
 # paid when a genuine snapback fade actually ran — see _close_settings_flow's own
 # _fade_in_flight check, which the ordinary no-hover dismiss skips entirely.
 _SNAPBACK_SETTLE_GAP_MS = 150
+
+
+class _ThemesTabBarInterceptor(QObject):
+    """Event filter installed on Settings' tab bar (`mw.tabs.tabBar()`) — intercepts a
+    click on a DIFFERENT tab while a theme hover preview is genuinely active, and
+    defers the actual switch until the hover has visibly reverted to the committed
+    theme (2026-08-05, tab-switch snapback interception).
+
+    WHY an event filter and not `currentChanged`: `QTabWidget.currentChanged` fires
+    AFTER the tab has already switched — there is no Qt "veto this change" signal.
+    The switch itself happens inside `QTabBar.mousePressEvent`, on PRESS (not
+    release), so this filter must intercept `QEvent.Type.MouseButtonPress` and
+    return `True` to consume it before that handler ever runs — anything later
+    (release, `currentChanged`) is too late and would show the new tab's
+    stale-colored content for at least one frame before a correction could catch up.
+
+    WHY `_is_hover_active`, not a live cursor-geometry check: `get_displayed_theme()`
+    computes its answer from `QCursor.pos()` AT CALL TIME — by the time this filter
+    runs, the cursor has already moved from the swatch to the tab bar, so a
+    geometry-based check would always (wrongly) report "no hover in progress" and
+    do nothing. `_is_hover_active` means "the last APPLIED theme was a preview" (sole
+    writer `_mark_theme_applied`), NOT "the cursor is over a swatch right now" — this
+    is exactly the condition that needs correcting, and it is the SAME field
+    `ThemeManager._theme_genuinely_settled_on_committed()` already requires to be
+    `False` for "settled" (see theme_manager.py) — reused here, not reinvented.
+
+    Reuses the EXACT mechanism Esc/gutter-dismiss already uses and has verified
+    live: `_on_theme_unhovered()` (interrupts any in-flight fade and starts the
+    real snapback) + `ThemeManager.call_when_theme_settled()` (the identity-checked
+    predicate wait, not a bare `not _fade_in_flight` check — see
+    `_theme_genuinely_settled_on_committed`'s own docstring for why that
+    distinction is load-bearing). No second, parallel wait mechanism is introduced."""
+
+    def __init__(self, panel_manager):
+        super().__init__(panel_manager.main_window)
+        self._pm = panel_manager
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return False
+        mw = self._pm.main_window
+        tabs = getattr(mw, 'tabs', None)
+        tm = getattr(mw, 'theme_manager', None)
+        if tabs is None or tm is None:
+            return False
+        tab_bar = tabs.tabBar()
+        if obj is not tab_bar:
+            return False
+        clicked_index = tab_bar.tabAt(event.position().toPoint())
+        if clicked_index < 0 or clicked_index == tabs.currentIndex():
+            return False  # not a tab, or re-clicking the already-active tab
+        # THE COMMON CASE — no hover active. Let the event pass through completely
+        # unmodified: zero behavior change, zero added cost, identical to today.
+        if not tm._is_hover_active:
+            return False
+        # A preview is genuinely the last-painted state. Consume the click (Qt
+        # never sees it, so the tab does not switch yet), revert via the exact
+        # mechanism the dismiss fix already verified, then switch once settled.
+        tm._on_theme_unhovered()
+        tm.call_when_theme_settled(lambda idx=clicked_index: tabs.setCurrentIndex(idx))
+        return True
+
 
 class PanelManager:
     def __init__(self, main_window):
@@ -156,6 +218,15 @@ class PanelManager:
         main_window.tabs.currentChanged.connect(
             lambda _index: self._transport_bar_blur.force_refresh_now()
         )
+
+        # Tab-switch snapback interception (2026-08-05) — see
+        # _ThemesTabBarInterceptor's own docstring for the full mechanism and why
+        # an event filter is required (no Qt "veto this tab change" signal exists).
+        # Installed once, permanently, on the tab bar itself — safe to leave wired
+        # regardless of which panel is open, since it only ever acts on presses
+        # delivered to `mw.tabs.tabBar()` specifically.
+        self._themes_tab_bar_interceptor = _ThemesTabBarInterceptor(self)
+        main_window.tabs.tabBar().installEventFilter(self._themes_tab_bar_interceptor)
 
     def _apply_transport_bar_blur(self, panel):
         # Clip to `panel`'s own geometry — nothing renders blurred outside what
