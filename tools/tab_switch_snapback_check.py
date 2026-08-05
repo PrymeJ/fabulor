@@ -19,9 +19,15 @@ HISTORY:
   _on_themes_tab_left nor _on_theme_unhovered was ever called at all -- Qt does
   not deliver a leaveEvent to swatch_box when a tab is hidden, so the dismiss-
   settle mechanism was never entered on this path.
-- 2026-08-05, second run (this version, real synthetic press, after
-  _ThemesTabBarInterceptor landed): see the printed VERDICT for the current
-  result -- re-run this any time the interception logic changes.
+- 2026-08-05, second run (real synthetic press, _ThemesTabBarInterceptor v1,
+  gated on _is_hover_active): Part A (hover) and Part B (no hover) both PASS.
+- 2026-08-05, third run (Part C added, "Change now" case): FAILED as reported
+  live by Pryme -- "Change now" is a genuine SELECTION, not a hover, so
+  _is_hover_active stays False for its entire fade and every tab click during
+  it passed straight through, unblocked. Fixed by widening the interceptor's
+  gate to `_theme_genuinely_settled_on_committed()` (also checks
+  `_fade_in_flight`, which DOES stay True for a selection's own fade). Part C
+  now PASSes too -- see the printed VERDICT for the current result.
 
 Run live, on-screen — QT_QPA_PLATFORM must NOT be offscreen.
 
@@ -267,8 +273,103 @@ def main():
     part_b_pass = b_instant and b_passthrough
     print(f"PART B VERDICT: {'PASS' if part_b_pass else 'FAIL'}")
 
+    # ================================================================
+    # PART C: "Change now" (a genuine selection, not a hover) then rapid
+    # multi-tab clicks WHILE its own fade is still visually in flight
+    # ================================================================
+    # Live-reported by Pryme (2026-08-05): "Doesn't work for the Change now
+    # button. It continues to fade and during that time I can switch multiple
+    # tabs." The first version of this fix gated on _is_hover_active alone,
+    # which stays False for a genuine selection's own fade -- fixed by gating on
+    # _theme_genuinely_settled_on_committed() instead (also checks
+    # _fade_in_flight). This part reproduces the EXACT reported sequence: click
+    # Change now, then click SEVERAL different tabs in quick succession while
+    # its fade is still running, and confirm every one of those clicks is
+    # deferred until settled -- not just the first.
     print("\n" + "=" * 70)
-    print(f"OVERALL: {'PASS' if (part_a_pass and part_b_pass) else 'FAIL'}")
+    print('PART C: "Change now" clicked, then rapid multi-tab clicks during its own fade')
+    print("=" * 70)
+
+    change_now_btn = mw.change_now_btn
+
+    c_results = []
+    for trial in range(1, N_TRIALS + 1):
+        call_log.clear()
+        reset_to_active()
+        open_settings_and_settle()
+        assert mw.tabs.currentIndex() == 0
+
+        pre_committed = tm.get_committed_theme()
+        change_now_btn.click()
+        app.processEvents()
+        post_committed = tm.get_committed_theme()
+        fade_in_flight_right_after_click = tm._fade_in_flight
+
+        # Rapid multi-tab clicking WHILE the fade is still running -- the exact
+        # reported sequence. Click tab 1, then 2, then 3, then 4, back to back,
+        # with no wait between them.
+        indices_clicked = [1, 2, 3, 4]
+        for idx in indices_clicked:
+            click_tab(app, tab_bar, idx)
+            app.processEvents()
+
+        index_immediately_after_clicks = mw.tabs.currentIndex()
+        was_intercepted_throughout = (index_immediately_after_clicks == 0)
+
+        # Let everything resolve, then confirm it lands on the LAST tab clicked
+        # (4) -- each queued switch overwrites the pending one via
+        # call_when_theme_settled's own waiter-append behavior; only the final
+        # intent should win, matching what a real rapid-multi-click user expects.
+        settled, waited_ms = pump_until(
+            lambda: mw.tabs.currentIndex() != 0, timeout_ms=3000, step_ms=10
+        )
+        pump(300)
+
+        final_committed = tm.get_committed_theme()
+        final_fade_in_flight = tm._fade_in_flight
+        final_tab_index = mw.tabs.currentIndex()
+        live_sheet = mw.styleSheet()
+        expected_sheet = (themes.get_base_stylesheet(final_committed)
+                           if isinstance(final_committed, str) else None)
+        chrome_matches_committed = (expected_sheet is not None and live_sheet == expected_sheet)
+
+        c_results.append({
+            "trial": trial,
+            "theme_changed_by_click": pre_committed != post_committed,
+            "fade_in_flight_right_after_click": fade_in_flight_right_after_click,
+            "was_intercepted_throughout": was_intercepted_throughout,
+            "final_tab_index": final_tab_index,
+            "final_fade_in_flight": final_fade_in_flight,
+            "chrome_matches_committed": chrome_matches_committed,
+        })
+        print(f"  trial {trial}: theme_changed={pre_committed != post_committed} "
+              f"({pre_committed!r} -> {post_committed!r})  "
+              f"fade_in_flight_after_click={fade_in_flight_right_after_click}  "
+              f"stayed_on_tab0_during_rapid_clicks={was_intercepted_throughout}  "
+              f"final_tab_index={final_tab_index}  "
+              f"final_fade_in_flight={final_fade_in_flight}  "
+              f"chrome_matches_committed={chrome_matches_committed}")
+
+        mw.tabs.setCurrentIndex(0)
+        app.processEvents()
+        pump(50)
+
+    print("\n-- Part C summary --")
+    c_theme_changed = all(r["theme_changed_by_click"] for r in c_results)
+    c_fade_was_flight = all(r["fade_in_flight_right_after_click"] for r in c_results)
+    c_intercepted = all(r["was_intercepted_throughout"] for r in c_results)
+    c_settled = all(not r["final_fade_in_flight"] for r in c_results)
+    c_chrome = all(r["chrome_matches_committed"] for r in c_results)
+    print(f'"Change now" genuinely changed the theme every trial: {c_theme_changed}')
+    print(f"Fade genuinely in flight right after the click every trial: {c_fade_was_flight}")
+    print(f"ALL rapid multi-tab clicks deferred (stayed on tab 0) every trial: {c_intercepted}")
+    print(f"Fade genuinely settled by the end every trial: {c_settled}")
+    print(f"Chrome matches committed theme every trial: {c_chrome}")
+    part_c_pass = c_theme_changed and c_fade_was_flight and c_intercepted and c_settled and c_chrome
+    print(f"PART C VERDICT: {'PASS' if part_c_pass else 'FAIL'}")
+
+    print("\n" + "=" * 70)
+    print(f"OVERALL: {'PASS' if (part_a_pass and part_b_pass and part_c_pass) else 'FAIL'}")
     print("=" * 70)
 
     mw.close()

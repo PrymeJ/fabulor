@@ -68,9 +68,9 @@ _SNAPBACK_SETTLE_GAP_MS = 150
 
 class _ThemesTabBarInterceptor(QObject):
     """Event filter installed on Settings' tab bar (`mw.tabs.tabBar()`) — intercepts a
-    click on a DIFFERENT tab while a theme hover preview is genuinely active, and
-    defers the actual switch until the hover has visibly reverted to the committed
-    theme (2026-08-05, tab-switch snapback interception).
+    click on a DIFFERENT tab while the theme has not genuinely settled onto the
+    committed value, and defers the actual switch until it has
+    (2026-08-05, tab-switch snapback interception).
 
     WHY an event filter and not `currentChanged`: `QTabWidget.currentChanged` fires
     AFTER the tab has already switched — there is no Qt "veto this change" signal.
@@ -80,22 +80,47 @@ class _ThemesTabBarInterceptor(QObject):
     (release, `currentChanged`) is too late and would show the new tab's
     stale-colored content for at least one frame before a correction could catch up.
 
-    WHY `_is_hover_active`, not a live cursor-geometry check: `get_displayed_theme()`
-    computes its answer from `QCursor.pos()` AT CALL TIME — by the time this filter
-    runs, the cursor has already moved from the swatch to the tab bar, so a
-    geometry-based check would always (wrongly) report "no hover in progress" and
-    do nothing. `_is_hover_active` means "the last APPLIED theme was a preview" (sole
-    writer `_mark_theme_applied`), NOT "the cursor is over a swatch right now" — this
-    is exactly the condition that needs correcting, and it is the SAME field
-    `ThemeManager._theme_genuinely_settled_on_committed()` already requires to be
-    `False` for "settled" (see theme_manager.py) — reused here, not reinvented.
+    WHY `_theme_genuinely_settled_on_committed()`, not `_is_hover_active` alone
+    (CORRECTED 2026-08-05, live-reported by Pryme: "Doesn't work for the Change now
+    button. It continues to fade and during that time I can switch multiple tabs."):
+    the first version of this filter gated on `_is_hover_active`, which is only
+    ever `True` while the last APPLIED theme was a HOVER preview. Clicking
+    "Change now" is a genuine SELECTION, not a hover — `_do_rotate` calls
+    `_on_theme_changed(chosen, ..., user_initiated=True)` with `hover` defaulting
+    `False`, so `_is_hover_active` stays `False` for the entire duration of its
+    fade. `_mark_theme_applied` (which sets `_active_display_theme_internal` to
+    match the new committed theme) runs BEFORE `_fade_anim.start()` in the
+    themes-tab-overlay branch, so the committed-theme identity check alone would
+    already read "settled" while the fade is still visually animating —
+    `_fade_in_flight` is what actually stays `True` for the fade's full visual
+    duration. `_theme_genuinely_settled_on_committed()` already checks all three
+    (`not _fade_in_flight`, the committed-identity match, `not _is_hover_active`)
+    together, so switching to it fixes the selection case for free without
+    weakening the hover case at all — a hover mid-fade already fails this
+    predicate too (`_is_hover_active=True`), exactly as before.
+
+    WHY NOT a live cursor-geometry check for the hover case specifically:
+    `get_displayed_theme()` computes its answer from `QCursor.pos()` AT CALL TIME
+    — by the time this filter runs, the cursor has already moved from the swatch
+    to the tab bar, so a geometry-based check would always (wrongly) report "no
+    hover in progress" and do nothing.
 
     Reuses the EXACT mechanism Esc/gutter-dismiss already uses and has verified
     live: `_on_theme_unhovered()` (interrupts any in-flight fade and starts the
-    real snapback) + `ThemeManager.call_when_theme_settled()` (the identity-checked
-    predicate wait, not a bare `not _fade_in_flight` check — see
-    `_theme_genuinely_settled_on_committed`'s own docstring for why that
-    distinction is load-bearing). No second, parallel wait mechanism is introduced."""
+    real snapback — a no-op for a genuine selection's own fade, since that fade
+    is not a hover preview to revert; see below) + `ThemeManager.
+    call_when_theme_settled()` (the identity-checked predicate wait). No second,
+    parallel wait mechanism is introduced.
+
+    NOTE on the selection case specifically: `_on_theme_unhovered()` only starts a
+    NEW snapback fade if `_cover_theme_active`/`_current_theme_name` differs from
+    what's currently painted — for "Change now"'s own fade (already painting the
+    correct, newly-committed theme), calling it is a harmless no-op call into
+    `_on_theme_changed` that the no-op guard short-circuits immediately;
+    `call_when_theme_settled` then simply waits for "Change now"'s OWN
+    already-running fade to finish naturally, which is exactly the desired
+    behavior — no new fade is started, the existing one is just allowed to
+    complete before the tab switches."""
 
     def __init__(self, panel_manager):
         super().__init__(panel_manager.main_window)
@@ -115,13 +140,19 @@ class _ThemesTabBarInterceptor(QObject):
         clicked_index = tab_bar.tabAt(event.position().toPoint())
         if clicked_index < 0 or clicked_index == tabs.currentIndex():
             return False  # not a tab, or re-clicking the already-active tab
-        # THE COMMON CASE — no hover active. Let the event pass through completely
-        # unmodified: zero behavior change, zero added cost, identical to today.
-        if not tm._is_hover_active:
+        # THE COMMON CASE — theme already genuinely settled on the committed value
+        # (covers both "nothing was ever previewed/changed" and "a previous
+        # preview/selection already fully settled"). Let the event pass through
+        # completely unmodified: zero behavior change, zero added cost, identical
+        # to today.
+        if tm._theme_genuinely_settled_on_committed():
             return False
-        # A preview is genuinely the last-painted state. Consume the click (Qt
-        # never sees it, so the tab does not switch yet), revert via the exact
-        # mechanism the dismiss fix already verified, then switch once settled.
+        # Either a hover preview is genuinely the last-painted state, OR a genuine
+        # selection's own fade (e.g. "Change now") is still visually in flight.
+        # Consume the click (Qt never sees it, so the tab does not switch yet),
+        # revert any hover via the exact mechanism the dismiss fix already
+        # verified (a no-op for the selection case — see class docstring), then
+        # switch once settled.
         tm._on_theme_unhovered()
         tm.call_when_theme_settled(lambda idx=clicked_index: tabs.setCurrentIndex(idx))
         return True
