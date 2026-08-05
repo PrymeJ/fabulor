@@ -1,4 +1,4 @@
-## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2), migration cleanup, tab-switch interception implemented
+## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2), migration cleanup, tab-switch interception implemented, SWATCH-LEAVE-SUSPECT corrected
 
 Follows directly from Session 1 below (the `get_displayed_theme()` hover-state read-path redesign).
 That redesign fixed WHAT `get_active_theme()` returns; this session found and fixed WHO calls it,
@@ -122,6 +122,26 @@ stays a safe no-op against a selection's own fade via the pre-existing no-op gua
 (Change now, then 4 rapid tab clicks during its fade): 5/5 × 3 runs, every click deferred, lands on
 the last-clicked tab once settled. This closes out the tab-switch scope entirely; both triggers are
 implemented and verified, with no remaining open item in TODO.md.
+
+**SWATCH-LEAVE-SUSPECT corrected (`17d46e2`)** — a gap open since 2026-08-03, closed the same day
+Pryme asked whether it was still active. Checked directly rather than answered from memory: still
+firing, 150 times in the current log, with real 62s-277s stuck windows measured from actual gaps
+between a hit and its next (accidental) correction. `_on_themes_tab_left`'s hidden-widget branch
+already correctly DETECTED a real mouse-out misclassified as a blur-grab synthetic — it just logged
+and returned. Design confirmed this was never a deliberate conservative choice: the branch shipped
+on the stated premise "a real mouse-out never arrives while hidden," and the SUSPECT log was a
+falsification probe for that premise, not a partial fix. The premise broke on 2026-08-03 (already on
+record in TODO.md); the follow-up investigation that entry called for had simply never happened.
+Confirmed no false-positive risk — unlike the sibling jitter guard (a position-delta inference with
+two documented regressions), this check is a direct geometric fact, cursor-vs-rect. Fix: one line,
+`self._on_theme_unhovered()`, added to the existing branch — reuses the same call three other
+contexts already make, no new mechanism. Verification found and fixed a real gap: two existing tests
+claiming to pin this exact branch had a fake widget with no real geometry, so they were passing via
+an unrelated exception fallback the whole time, never actually exercising the condition. Live-verified
+via a stubbed-cursor harness (never moves the real OS pointer): 5×3 runs for both the corrected case
+(~10ms) and the untouched genuinely-synthetic case. Both other same-day mechanisms re-confirmed
+unaffected. Suite 479→482. Removed the now-resolved TODO.md entries for this and its
+`hover_active_gate`-sluggishness twin.
 
 ---
 

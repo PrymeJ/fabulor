@@ -1,3 +1,71 @@
+## 2026-08-05 (later still, same day) — SWATCH-LEAVE-SUSPECT corrected: a gap open since 2026-08-03 finally closed
+
+Direct continuation of the tab-switch entry below. Pryme asked whether SWATCH-LEAVE-SUSPECT was
+still an active issue. Checked directly rather than answering from memory: `grep -c
+"SWATCH-LEAVE-SUSPECT"` against the current session log returned 150, with the most recent hit
+only minutes old — genuinely still firing. Traced several hits' actual gap to the next correction
+and found real, live evidence of the cost: 62s, 80s, 106s, 125s, and 277s stuck windows within
+single running sessions, where `_is_hover_active` stayed `True` with nothing to correct it until an
+unrelated theme change happened to fire, starving `transport_bar_blur`'s `hover_active_gate` for
+the entire window.
+
+This was not a new discovery — re-checking TODO.md found the exact finding already on record from
+**2026-08-03**: *"`[SWATCH-LEAVE-SUSPECT]` fired live, for real... this falsifies
+`_on_themes_tab_left`'s 'leave-while-hidden is always synthetic' premise... needs its own
+investigation into why a real leave can fire while hidden."* That investigation had never actually
+happened; the entry sat open for two days. Today's log analysis was that overdue follow-up, not new
+ground.
+
+**Design** (`review/Design_260805_swatch_leave_suspect_correction.md`), asked for and delivered
+before any code changed, per Pryme's explicit instruction. Traced why this was detect-only in the
+first place: it was never a deliberate conservative choice made with a future fix in mind — the
+branch was built and shipped on the stated premise "a real mouse-out never arrives while hidden"
+(measured, at the time, 0/12 counterexamples). `SWATCH-LEAVE-SUSPECT` was added specifically as a
+falsification probe for that premise, with its own comment saying "do NOT patch around it, bring
+the lines back" if it ever fired — the instruction was to notice the premise breaking, not to
+pre-build a correction for a case believed not to exist. The premise broke on 2026-08-03; the
+correction step was simply never done.
+
+On false-positive risk (the design's own required check before recommending "always correct"):
+none exists, and not because of a large enough sample — the check is not an inference at all. Unlike
+the sibling jitter guard (infers intent from a position *delta*, with two documented false-positive
+regressions on record), this condition is a direct geometric fact: is the cursor, right now,
+outside `swatch_box`'s rect. If it is, there is no live hover to protect, independent of why the
+widget happens to be hidden at that moment.
+
+**Implementation**: exactly the one line the design specified — `self._on_theme_unhovered()`,
+added to the existing `if outside:` branch, immediately after the warning log already there.
+Confirmed `_on_theme_unhovered()` has no call-context preconditions before relying on that: it's
+already called from three other contexts today (the genuine-leave branch two lines below this one,
+the periodic backstop timer, and the unconditional dismiss call) — this is a fourth caller of the
+same kind, not a new mechanism.
+
+**A real test gap was found and fixed during verification, not glossed over.** Two existing tests
+claimed to pin exactly this hidden-branch behavior, but their `_FakeWidget` had no
+`mapFromGlobal`/`rect()` methods at all — so the geometry read always raised `AttributeError`,
+silently caught by the pre-existing `except Exception: outside = False` fallback, regardless of
+whatever cursor position the test claimed to be testing. Both tests had been passing for the wrong
+reason since they were written. Fixed by giving the fake real `QRect`/`QPoint`-based geometry
+matching `swatch_box`'s actual live dimensions, and added three new tests: the SUSPECT condition
+correctly firing a correction, a boundary case just past the rect's edge, and confirmation the
+exception fallback still fails to the safe side.
+
+**Live verification**, via a new harness (`tools/swatch_leave_suspect_correction_check.py`) using a
+stubbed `QCursor.pos()` — deliberately never moving the real OS mouse pointer, since that would be
+a live, visible side effect on whatever session might be running — against otherwise real,
+live `swatch_box` geometry: 5 trials × 3 full runs for both the corrected case (resolves in ~10ms,
+bounded only by the harness's own polling) and the genuinely-synthetic case (fully untouched, exactly
+as before). Cross-checked against one of today's own real stuck-window samples (a genuine hit at
+03:15:15 whose gap lasted 277.5 seconds) — under this fix, that exact geometry now triggers
+correction at the instant it's detected, collapsing what was a multi-minute window to effectively
+zero. Re-ran both of today's other verification suites (Esc/gutter dismiss, tab-switch interception)
+in full — identical results to every prior run, no interaction effects.
+
+Removed the now-resolved SWATCH-LEAVE-SUSPECT and related `hover_active_gate`-sluggishness entries
+from TODO.md — both were the same root cause, now closed.
+
+---
+
 ## 2026-08-05 (later still, same day) — Tab-switch snapback interception implemented, corrected once for the "Change now" case
 
 Direct continuation of the migration-cleanup entry below. With both tab-switch triggers confirmed

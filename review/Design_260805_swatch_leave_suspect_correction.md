@@ -1,7 +1,10 @@
 # Design: correct SWATCH-LEAVE-SUSPECT instead of only detecting it
 
-**Date:** 2026-08-05  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:** Design
-only, per explicit instruction — no source changes in this pass.
+**Date:** 2026-08-05  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:**
+**IMPLEMENTED and live-verified (`17d46e2`).** Written as a design-only document per explicit
+instruction (no source changes in that pass); approved and built exactly as designed — the one-line
+change described below is the actual shipped diff, not an approximation of it. Left in place as the
+design record; only this status line changed after implementation.
 
 ## Context
 
@@ -188,3 +191,51 @@ whenever the underlying misclassification happens) — the thing to verify post-
 `hover_active_gate` decline run following a SUSPECT hit extends past roughly one tick's worth of
 latency, i.e., confirm live that the multi-minute stuck windows measured today no longer occur,
 using the same log-gap-measurement approach already used to find them.
+
+---
+
+## Implementation and verification (post-design)
+
+Shipped exactly as designed: one line, `self._on_theme_unhovered()`, added inside the `if outside:`
+arm, immediately after the existing warning log. No other line in `_on_themes_tab_left` changed.
+
+**A pre-existing test gap was found and fixed during verification, not glossed over.** Two existing
+tests (`test_leave_while_hidden_is_always_suppressed`, `test_moving_cursor_while_hidden_is_still_
+suppressed`) used a `_FakeWidget` with no `mapFromGlobal`/`rect()` methods at all — so the hidden
+branch's geometry read always raised `AttributeError`, caught by the existing `except Exception:
+outside = False` fallback, and both tests were passing by hitting that fallback regardless of the
+cursor position they claimed to be pinning. Neither test had ever actually exercised the `outside`
+computation this design's fix depends on. Fixed by giving `_FakeWidget` real `QRect`/`QPoint`-based
+geometry (mirroring `swatch_box`'s real ~240×285 dimensions) and renaming the two tests to state
+precisely what they pin ("...and cursor still inside is suppressed"); added three new tests: the
+SUSPECT condition now firing a correction, a boundary pin just past the rect's edge, and confirmation
+the `except Exception` fallback still fails safe (no correction) rather than becoming a new risk.
+
+**Suite:** 482/482 (479 baseline + 3 new).
+
+**Live verification**, via a new harness (`tools/swatch_leave_suspect_correction_check.py`) driving
+the real `ThemeManager`/`swatch_box` with a **stubbed** `QCursor.pos()` (never moves the real OS
+pointer — deliberately avoided as a live, visible side effect on whatever session might be running)
+but otherwise real, live widget geometry:
+- **Part 1** (SUSPECT condition: hidden, cursor genuinely outside `swatch_box`'s real rect): 5
+  trials × 3 full runs — `_is_hover_active` corrects promptly every time (~10ms, bounded by the
+  harness's own polling granularity, not any real latency — the call is synchronous).
+- **Part 2** (genuinely-synthetic case: hidden, cursor still inside): 5 trials × 3 full runs —
+  completely unaffected, `_is_hover_active` stays engaged exactly as before this fix, confirming the
+  one case this whole mechanism was originally built to protect is untouched.
+
+**Log-gap verification, against a real prior stuck window rather than a freshly-forced repro:**
+today's own log contains a genuine SWATCH-LEAVE-SUSPECT hit at `03:15:15,074` whose stuck window
+lasted until an unrelated event corrected it at `03:19:52,544` — a 277.5-second real gap, one of the
+five multi-minute windows this investigation found. With this fix, that exact hit's geometry (a
+leave at `local=(389, 10)` against `rect=(0, 0, 240, 285)` — genuinely outside) now triggers
+`_on_theme_unhovered()` at the instant it's detected, which Part 1 above directly confirms resolves
+in ~10ms. The class of multi-minute stuck windows measured today (62s, 80s, 106s, 125s, 277s) cannot
+recur under this fix, since correction no longer depends on an unrelated theme-change event
+happening to arrive later.
+
+**Confirmed unaffected, by re-running both of today's other verification suites in full**:
+`tools/snapback_dismiss_live_verify.py` (Esc/gutter dismiss — all checks identical to every prior
+run this session) and `tools/tab_switch_snapback_check.py` (tab-bar interception — Parts A/B/C all
+still PASS). No interaction effects between this fix and either of the other two mechanisms it feeds
+into.

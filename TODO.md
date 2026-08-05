@@ -27,8 +27,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ### Blur grab hide/show side effects
 - [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
-- [2026-08-01] `refresh_dirty` spins 126+ ticks declining on `hover_active_gate` (~15ms apart) — possibly behind the Themes snapback sluggishness, not investigated
-- [2026-08-03] **`[SWATCH-LEAVE-SUSPECT]` fired live, for real** (found while investigating the `get_current_theme()` confinement fix): a genuine mouse-out (`local=(440, 165)` clearly outside `swatch_box`'s `rect=(0, 0, 240, 285)`) was misclassified as a blur-grab synthetic leave because it fired while the widget was hidden — this falsifies `_on_themes_tab_left`'s "leave-while-hidden is always synthetic" premise, which the probe exists specifically to catch. This is the root trigger behind the hover-preview-stuck bug `Design_260803_get_current_theme_confinement_fix.md` treats as its precondition, not something that fix addresses — needs its own investigation into why a real leave can fire while hidden
 
 ### Book Detail panel blur timing
 - [2026-08-01] NEXT: the OPENING slide — blurred main window is dropped too early, should persist into the slide
