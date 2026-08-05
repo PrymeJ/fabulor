@@ -8,11 +8,12 @@ from datetime import date
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication
+    QGridLayout, QSpinBox, QScrollArea, QPushButton, QApplication,
+    QListView, QStyledItemDelegate, QStyle,
 )
 from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
-    QPropertyAnimation, QEasingCurve,
+    QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex,
 )
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent
 from PySide6.QtWidgets import QAbstractScrollArea
@@ -992,6 +993,377 @@ def _grid_cell_anim(progress: float, row: int, col: int, n_rows: int, n_cols: in
     if style == "pop":
         return alpha, alpha
     return alpha, 1.0
+
+
+# ── StatsRowModel / StatsRowDelegate ────────────────────────────────────────
+# Lazy, delegate-painted replacement for the per-row BookDayRow widget
+# construction, Day tab only (proof of concept). See
+# review/Spec_260805_stats_lazy_delegate.md for the full design rationale.
+# Week/Month keep BookDayRow entirely — this pair is additive, not a rip-out.
+
+ROLE_ROW_DATA = Qt.UserRole + 0
+ROLE_IS_FINISHED = Qt.UserRole + 1
+ROLE_IS_ARCHIVED = Qt.UserRole + 2
+
+
+class StatsRowModel(QAbstractListModel):
+    """Flat list model over one period's book rows (Day/Week/Month-shaped dicts).
+
+    Parameterized by nothing period-specific — the three DB calls
+    (get_daily_book_breakdown / get_books_listened_in_period /
+    get_finished_in_period) all return identically-shaped row dicts (confirmed
+    against db.py), so one model class serves all three periods. Only Day
+    actually uses this in this pass; Week/Month are unmigrated.
+
+    A dumb data holder: does not own or duplicate _period_rows_signature or
+    the *_built_sig cache — that stays exactly where it is in StatsPanel. The
+    caller decides whether to call set_rows at all.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows: list[dict] = []
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        if parent.isValid():
+            return 0
+        return len(self._rows)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid() or not (0 <= index.row() < len(self._rows)):
+            return None
+        row = self._rows[index.row()]
+        if role == ROLE_ROW_DATA:
+            return row
+        if role == ROLE_IS_FINISHED:
+            return bool(row.get("is_finished", 0))
+        if role == ROLE_IS_ARCHIVED:
+            # Mirrors BookDayRow.__init__'s _is_archived derivation exactly
+            # (stats_panel.py, BookDayRow) — a book is archived if its path is
+            # missing (location removed), explicitly excluded, or confirmed
+            # missing from disk.
+            return (row.get("book_path") is None or
+                    bool(row.get("is_deleted", 0)) or
+                    bool(row.get("is_excluded", 0)) or
+                    bool(row.get("is_missing", 0)))
+        if role == Qt.DisplayRole:
+            return row.get("book_title", "Unknown")
+        return None
+
+    def set_rows(self, rows: list[dict]) -> None:
+        """Entry point called by _refresh_daily in place of the old
+        BookDayRow construction loop. `finished` (the Finished-strip rows)
+        is NOT passed here — that list stays entirely on the existing
+        FinishedScrollRow path, untouched by this migration."""
+        self.beginResetModel()
+        try:
+            self._rows = list(rows)
+        finally:
+            self.endResetModel()
+
+    def row_data_at(self, row: int) -> dict | None:
+        if 0 <= row < len(self._rows):
+            return self._rows[row]
+        return None
+
+    def index_for_book_id(self, book_id) -> QModelIndex:
+        """Linear scan is fine at Stats' row counts (a handful to low tens of
+        rows per period) — no need to optimize this."""
+        for i, row in enumerate(self._rows):
+            if row.get("book_id") == book_id:
+                return self.index(i, 0)
+        return QModelIndex()
+
+
+class StatsRowDelegate(QStyledItemDelegate):
+    """Hand-painted single-row layout replacing BookDayRow's nested
+    QHBoxLayout/QVBoxLayout widget construction — the ~70% of per-row cost
+    measurement attributed to generic Qt widget/layout construction rather
+    than pixmap decode (see the design doc's Context section).
+
+    NOT a BookDelegate subclass — BookDelegate hardcodes BookModel's role
+    contract and Library-only view-mode paint dispatch/editorEvent logic that
+    doesn't transfer to a single uniform Stats row (confirmed by reading
+    BookDelegate directly, per the design doc's own conclusion).
+
+    Layout constants mirror BookDayRow's exactly (stats_panel.py) so the
+    Day tab is visually identical pre/post-migration: 48x48 cover, 4/2/4/2
+    margins, 6px spacing, title+clock on row 0, author+progress on row 1.
+    """
+
+    ROW_HEIGHT = _STATS_ROW_HEIGHT  # 52 — cover(48) + top/bottom margin(2+2)
+    COVER_SIZE = 48
+    MARGIN_H = 4
+    MARGIN_V = 2
+    SPACING = 6
+    CLOCK_W = 50
+    PROG_W = 98
+
+    def __init__(self, theme: dict, placeholder_color: str = "#888888", parent=None):
+        super().__init__(parent)
+        self._placeholder_color = placeholder_color
+        self._hovered_row = -1
+        self._apply_theme(theme)
+        # book_id -> QPixmap placeholder cache, mirrors BookDayRow's per-instance
+        # render (render_logo_placeholder_bordered is not internally cached).
+        self._placeholder_pixmap_cache: dict = {}
+        self._archived_placeholder_pixmap = None
+        # book_id -> grayscale-converted QPixmap, for archived rows. Measured
+        # live (Step 4 re-measurement): without this cache, to_grayscale()
+        # (a QImage format conversion + a QPainter composite pass, see
+        # cover_loader.py) ran on EVERY paint() for an archived row — one
+        # book ("Heart of Darkness", is_missing=1) painted at ~10ms vs ~1.3-
+        # 2.5ms for its non-archived neighbors, every single repaint.
+        # BookDayRow never had this cost because _apply_cover converts ONCE
+        # at cover-LOAD time and caches the result pixmap in the QLabel;
+        # this cache restores that same one-time-conversion property for the
+        # delegate. Invalidated per-book_id by _day_on_cover_loaded /
+        # _day_refresh_cover_for_path (StatsPanel) whenever _cover_cache
+        # itself is written for that book_id — never grows stale.
+        self._grayscale_cache: dict = {}
+
+    def _apply_theme(self, theme: dict) -> None:
+        def qc(hex_str, alpha=255):
+            h = hex_str.lstrip('#')
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+            return QColor(r, g, b, alpha)
+
+        # QLabel { color: t['text'] } is the blanket rule every BookDayRow
+        # label except stats_book_title_finished/stats_book_time_label_dim
+        # inherits (get_stats_stylesheet, themes.py) — no per-objectName
+        # override exists for stats_book_title/stats_book_author/
+        # stats_time_label/stats_book_time_label. Confirmed by reading
+        # get_stats_stylesheet directly rather than assuming a dedicated rule.
+        self._color_text = qc(theme.get('text', '#ffffff'))
+        self._color_finished = qc(theme.get('stats_finished_title',
+            theme.get('accent_light', theme.get('accent_dark', '#BA7BBA'))))
+        self._color_dim = qc(theme.get('text', '#ffffff'), int(255 * 0.70))
+        # Hover fill: rgba(accent, 0.12) via the [hovered="true"] dynamic
+        # property rule (themes.py) — NOT Qt's :hover pseudo-state (see
+        # ScrollHoverTracker's docstring on why widget rows needed that
+        # workaround; a real QListView doesn't).
+        self._hover_color = qc(theme.get('accent', '#ffffff'), int(255 * 0.12))
+        self._placeholder_pixmap_cache = {}
+        self._archived_placeholder_pixmap = None
+
+    def set_placeholder_color(self, color: str) -> None:
+        if color == self._placeholder_color:
+            return
+        self._placeholder_color = color
+        self._placeholder_pixmap_cache = {}
+
+    def set_hovered_row(self, row: int) -> None:
+        self._hovered_row = row
+
+    # ── Sizing ───────────────────────────────────────────────────────────────
+
+    def sizeHint(self, option, index):
+        return QSize(option.rect.width() if option.rect.width() > 0 else 200, self.ROW_HEIGHT)
+
+    # ── Cover sourcing ───────────────────────────────────────────────────────
+    # Reuses _cover_cache (library.py module-level singleton) and
+    # CoverLoaderWorker in raw mode exactly as BookDayRow does — no new
+    # loading mechanism. Dispatch-on-miss lives on the view (needs access to
+    # the model for the dataChanged emit); this method only reads the cache.
+
+    def _cover_pixmap(self, book_id, is_archived: bool):
+        pm = _cover_cache.get(book_id)
+        if pm is None:
+            return None
+        if not is_archived:
+            return pm
+        cached_gray = self._grayscale_cache.get(book_id)
+        if cached_gray is not None:
+            return cached_gray
+        gray = to_grayscale(pm)
+        self._grayscale_cache[book_id] = gray
+        return gray
+
+    def invalidate_cover(self, book_id) -> None:
+        """Drop any cached grayscale conversion for book_id — call whenever
+        _cover_cache[book_id] itself is replaced, so a stale grayscale
+        pixmap can never survive a real cover change."""
+        self._grayscale_cache.pop(book_id, None)
+
+    def _placeholder_pixmap(self, is_archived: bool):
+        if is_archived:
+            if self._archived_placeholder_pixmap is None:
+                self._archived_placeholder_pixmap = _render_svg_placeholder_bordered(
+                    _ARCHIVED_PLACEHOLDER_COLOR, 34, self.COVER_SIZE, self.COVER_SIZE, offset_y=1)
+            return self._archived_placeholder_pixmap
+        cached = self._placeholder_pixmap_cache.get(self._placeholder_color)
+        if cached is None:
+            cached = _render_svg_placeholder_bordered(
+                self._placeholder_color, 34, self.COVER_SIZE, self.COVER_SIZE, offset_y=1)
+            self._placeholder_pixmap_cache[self._placeholder_color] = cached
+        return cached
+
+    # ── Paint ────────────────────────────────────────────────────────────────
+
+    def paint(self, painter: QPainter, option, index: QModelIndex):
+        row = index.data(ROLE_ROW_DATA)
+        if row is None:
+            return
+        is_finished = index.data(ROLE_IS_FINISHED)
+        is_archived = index.data(ROLE_IS_ARCHIVED)
+
+        painter.save()
+        painter.setClipRect(option.rect)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        r = option.rect
+
+        if index.row() == self._hovered_row:
+            painter.fillRect(r, self._hover_color)
+
+        # Cover thumbnail — vertically centered within the row (BookDayRow's
+        # QHBoxLayout AlignVCenter default), left margin MARGIN_H.
+        cover_x = r.x() + self.MARGIN_H
+        cover_y = r.y() + (r.height() - self.COVER_SIZE) // 2
+        cover_rect = QRect(cover_x, cover_y, self.COVER_SIZE, self.COVER_SIZE)
+
+        book_id = row.get("book_id")
+        pm = self._cover_pixmap(book_id, is_archived)
+        if pm is not None:
+            scaled = pm.scaled(
+                self.COVER_SIZE, self.COVER_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            # BookDayRow dims the cover via a QGraphicsOpacityEffect(0.4) on
+            # top of the grayscale conversion (_apply_cover/setGraphicsEffect,
+            # stats_panel.py). Mirror both here: grayscale already applied in
+            # _cover_pixmap, opacity applied at draw time.
+            painter.save()
+            painter.setClipRect(cover_rect)
+            if is_archived:
+                painter.setOpacity(0.4)
+            painter.drawPixmap(cover_rect, scaled)
+            painter.restore()
+        else:
+            ph = self._placeholder_pixmap(is_archived)
+            painter.drawPixmap(cover_rect, ph)
+
+        # Content block starts after cover + spacing.
+        content_x = cover_rect.right() + 1 + self.SPACING
+        content_w = r.right() - content_x - self.MARGIN_H
+        content_h = r.height() - 2 * self.MARGIN_V
+        content_y = r.y() + self.MARGIN_V
+
+        title_font = QFont(option.font)
+        title_font.setPointSize(max(1, title_font.pointSize() - 2))
+        title_font.setBold(False)
+
+        clock_font = QFont(title_font)
+
+        # Row 0: title (left, elided, fixed width budget) + clock time (right).
+        title_w = min(_STATS_TITLE_WIDTH, max(0, content_w - self.SPACING - self.CLOCK_W))
+        clock_w = self.CLOCK_W
+        row0_h = content_h // 2
+        title_rect = QRect(content_x, content_y, title_w, row0_h)
+        clock_rect = QRect(content_x + content_w - clock_w, content_y, clock_w, row0_h)
+
+        painter.setFont(title_font)
+        painter.setPen(self._color_finished if is_finished else self._color_text)
+        title_text = row.get("book_title", "Unknown")
+        elided_title = painter.fontMetrics().elidedText(title_text, Qt.TextElideMode.ElideRight, title_rect.width())
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_title)
+
+        clock_seconds = row.get("clock_seconds") or 0.0
+        painter.setFont(clock_font)
+        painter.setPen(self._color_text)
+        painter.drawText(clock_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                          StatsPanel._format_duration(clock_seconds))
+
+        # Row 1: author (left, elided) + progress delta (right).
+        author_font = QFont(title_font)
+        author_w = min(_STATS_AUTHOR_WIDTH, max(0, content_w - self.SPACING - self.PROG_W))
+        prog_w = self.PROG_W
+        row1_y = content_y + row0_h
+        row1_h = content_h - row0_h
+        author_rect = QRect(content_x, row1_y, author_w, row1_h)
+        prog_rect = QRect(content_x + content_w - prog_w, row1_y, prog_w, row1_h)
+
+        painter.setFont(author_font)
+        painter.setPen(self._color_text)
+        author_text = row.get("book_author", "")
+        elided_author = painter.fontMetrics().elidedText(author_text, Qt.TextElideMode.ElideRight, author_rect.width())
+        painter.drawText(author_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_author)
+
+        duration = row.get("book_duration")
+        pos_start = row.get("period_position_start")
+        pos_end = row.get("period_position_end")
+        if duration and duration > 0 and pos_start is not None and pos_end is not None:
+            pct_start = min(100.0, pos_start / duration * 100)
+            pct_end = min(100.0, pos_end / duration * 100)
+            delta = pct_end - pct_start
+
+            def fmt_pct(v):
+                return f"{v:.0f}%" if round(v, 1) % 1 == 0 else f"{v:.1f}%"
+
+            delta_str = f"+{fmt_pct(delta)}" if delta >= 0 else fmt_pct(delta)
+            prog_text = f"{fmt_pct(pct_start)} · {fmt_pct(pct_end)} | {delta_str}"
+            painter.setFont(author_font)
+            painter.setPen(self._color_dim if delta < 0 else self._color_text)
+            painter.drawText(prog_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, prog_text)
+
+        painter.restore()
+
+
+class StatsRowListView(QListView):
+    """QListView configured for StatsRowModel/StatsRowDelegate rows.
+
+    Left- AND right-click both trigger `row_clicked` — mirrors BookDayRow's
+    mousePressEvent exactly (both buttons open Book Detail; Stats has only
+    one action per row, unlike Library where right-click is reserved for a
+    context menu). Handled directly in mousePressEvent rather than through
+    editorEvent/QListView.clicked (which by default only reacts to left-click
+    selection) — this is the "right-click parity is not free" risk the design
+    doc flags in §5, resolved the simplest way BookDayRow itself already
+    resolves it.
+    """
+    row_clicked = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setUniformItemSizes(True)
+        self.setViewMode(QListView.ViewMode.ListMode)
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setSelectionMode(QListView.SelectionMode.NoSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # BookDayRow was never focusable either
+        self.setFrameShape(QListView.Shape.NoFrame)
+        self.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.viewport().setMouseTracking(True)
+        self.entered.connect(self._on_entered)
+
+    def _on_entered(self, index: QModelIndex):
+        delegate = self.itemDelegate()
+        if delegate is not None:
+            prev = delegate._hovered_row
+            delegate.set_hovered_row(index.row())
+            if prev != index.row():
+                self.viewport().update()
+
+    def leaveEvent(self, event):
+        delegate = self.itemDelegate()
+        if delegate is not None and delegate._hovered_row != -1:
+            delegate.set_hovered_row(-1)
+            self.viewport().update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
+            index = self.indexAt(event.pos())
+            if index.isValid():
+                row_data = index.data(ROLE_ROW_DATA)
+                if row_data is not None:
+                    self.row_clicked.emit(row_data)
+                    return
+        super().mousePressEvent(event)
 
 
 class HourlyHeatmap(QWidget):
@@ -2871,9 +3243,18 @@ class StatsPanel(QWidget):
                 scroll_row.set_arrow_colors(arrow_overlay_rgb, arrow_text_rgb)
                 for widget in self._iter_finished_thumbs(scroll_row):
                     widget.update_placeholder_color(color)
-        for tab_name in ("Day", "Week", "Month"):
+        for tab_name in ("Week", "Month"):
             for widget in self._iter_day_rows(tab_name):
                 widget.update_placeholder_color(color)
+        # Day tab: StatsRowDelegate (not BookDayRow widgets) — re-derive its
+        # theme colors and repaint. set_placeholder_color separately covers
+        # the placeholder-pixmap cache (mirrors update_placeholder_color's
+        # own color-changed check).
+        if hasattr(self, '_day_delegate'):
+            self._day_delegate._apply_theme(theme)
+            self._day_delegate.set_placeholder_color(color)
+            if hasattr(self, '_day_list_view'):
+                self._day_list_view.viewport().update()
 
     def _make_settings_icon(self, theme: dict) -> QIcon:
         color = QColor(theme.get("text", "#ffffff"))
@@ -3248,45 +3629,47 @@ class StatsPanel(QWidget):
         self._day_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(self._day_total_label)
 
-        # Scrollable book rows
-        scroll = QScrollArea()
-        scroll.setObjectName("stats_scroll_area")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Always-on policy reserves a constant-width gutter regardless of row
-        # count -- see _fixup_scroll_policy, which only toggles the handle's
-        # visibility/usability, never the policy, so viewport width (and every
-        # row's right-aligned content) never shifts between refreshes.
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._day_scroll = scroll
-
-        self._day_rows_widget = QWidget()
-        self._day_rows_layout = QVBoxLayout(self._day_rows_widget)
-        self._day_rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._day_rows_layout.setSpacing(0)
-        self._day_rows_layout.addStretch()
-
-        scroll.setWidget(self._day_rows_widget)
-        # Re-resolve the hovered row when the list scrolls under a still
-        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
-        self._day_hover = ScrollHoverTracker(
-            scroll, lambda: self._rows_in(self._day_rows_layout), self)
-        # The container owns the hand cursor and routes boundary-pixel
-        # clicks to the highlighted row — see _claim_container_input.
-        self._claim_container_input(
-            self._day_rows_widget, self._day_hover)
+        # Scrollable book rows — StatsRowModel/StatsRowDelegate/StatsRowListView,
+        # Day tab only (proof of concept; Week/Month keep the BookDayRow/
+        # QScrollArea construction below unchanged). A real QListView has its
+        # own viewport/scrollbar and native indexAt hit-testing, so neither
+        # ScrollHoverTracker (stale-:hover-on-scroll workaround) nor
+        # _claim_container_input (flush-sibling-widget boundary-pixel Qt bug
+        # workaround) has anything to attach to here — both are specific to
+        # the widget-per-row architecture Week/Month still use. See Step 0 of
+        # the migration report for why neither applies.
+        # No theme dict is available yet at panel-construction time (StatsPanel
+        # doesn't store one — theming arrives later via on_theme_changed(theme),
+        # same as _accent_color's own "#9B59B6" placeholder default above).
+        # The delegate's real colors land on the first on_theme_changed call,
+        # exactly like every other themed widget in this panel.
+        self._day_model = StatsRowModel(self)
+        self._day_delegate = StatsRowDelegate({}, self._placeholder_color, self)
+        self._day_list_view = StatsRowListView()
+        self._day_list_view.setObjectName("stats_scroll_area")
+        self._day_list_view.setModel(self._day_model)
+        self._day_list_view.setItemDelegate(self._day_delegate)
+        self._day_list_view.row_clicked.connect(self._on_book_row_clicked)
+        # Cover-load-on-miss: mirrors BookDayRow's per-row dispatch, but the
+        # completion write-back targets the model (dataChanged) instead of a
+        # widget repaint. See _day_ensure_covers_loaded, called from the
+        # delegate's paint miss path via a post-paint scan (Qt disallows
+        # starting work mid-paint) — actually wired from _refresh_daily/
+        # dataChanged instead; see _day_on_cover_loaded.
+        self._day_cover_pending: set = set()
+        self._day_scroll = self._day_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
         def _day_rows_wheel(e):
-            bar = scroll.verticalScrollBar()
+            bar = self._day_list_view.verticalScrollBar()
             notches = -1 if e.angleDelta().y() > 0 else 1
             target = bar.value() + notches * _STATS_ROW_HEIGHT
             snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
             max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
             bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
             e.accept()
-        scroll.wheelEvent = _day_rows_wheel
+        self._day_list_view.wheelEvent = _day_rows_wheel
 
-        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(self._day_list_view, stretch=1)
 
         self._day_finished_section = QWidget()
         self._day_finished_section.setObjectName("stats_finished_section")
@@ -3343,6 +3726,34 @@ class StatsPanel(QWidget):
         widget.setVisible(False)
         layout.insertWidget(layout.count() - 1, widget)
         widget.setVisible(True)
+
+    def _day_fixup_scroll_policy(self) -> None:
+        """QListView equivalent of _fixup_scroll_policy for the Day tab.
+
+        Same purpose, same QSS-property mechanism (policy stays
+        ScrollBarAlwaysOn always; only the handle's inert/enabled state
+        toggles) — but QListView has no .widget()/.sizeHint()-of-content the
+        way QScrollArea does. Content height for a uniform-item-size list is
+        simply rowCount() * ROW_HEIGHT, which is the direct QListView
+        equivalent of what _fixup_scroll_policy reads off the QScrollArea's
+        content widget. The cap/addStretch mechanism itself (_cap_rows_viewport,
+        the outer layout) is untouched — only this one height computation
+        differs from the QScrollArea version, per the design doc's §4 flag
+        that this pairing needed explicit re-verification against the live
+        app for a QListView, not an assumption that it carries over unchanged.
+        """
+        view = self._day_list_view
+        model = self._day_model
+        content_h = model.rowCount() * _STATS_ROW_HEIGHT
+        overflow = content_h - view.viewport().height()
+        bar = view.verticalScrollBar()
+        needs_bar = overflow >= _STATS_ROW_HEIGHT
+        if bar.property("inert") == (not needs_bar):
+            return
+        bar.setProperty("inert", not needs_bar)
+        bar.setEnabled(needs_bar)
+        bar.style().unpolish(bar)
+        bar.style().polish(bar)
 
     # Tallest the rows viewport may grow to when there is no Finished section
     # below it: exactly 7 rows. Uncapped, the scroll area absorbs the whole
@@ -3441,10 +3852,7 @@ class StatsPanel(QWidget):
                 'day', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_days = self._cached_active_days
         if not self._active_days:
-            while self._day_rows_layout.count() > 1:
-                item = self._day_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+            self._day_model.set_rows([])
             self._day_built_period = None
             self._day_built_sig = None
             self._day_label.setText("No activity yet")
@@ -3472,30 +3880,22 @@ class StatsPanel(QWidget):
 
         # Rebuild-avoidance guard: revisiting the SAME period (tab switch back,
         # prev-then-next, wheel scroll back) with an unchanged content
-        # signature skips the deleteLater()+rebuild cycle entirely. A genuine
-        # data change (new/deleted session, re-finish, cover swap, soft-delete
-        # flag flip) always changes the signature and still triggers a full
-        # rebuild below. See _period_rows_signature.
+        # signature skips the model reset entirely. A genuine data change
+        # (new/deleted session, re-finish, cover swap, soft-delete flag flip)
+        # always changes the signature and still triggers set_rows below.
+        # Guard itself is unchanged from before this migration — only what
+        # the branches DO changed (was: skip/run the widget-construction
+        # loop; now: skip/run set_rows). See _period_rows_signature.
         sig = self._period_rows_signature(rows, finished)
         if date_str == self._day_built_period and sig == self._day_built_sig:
             # Total label/finished-section visibility/cap are cheap functions
             # of the same rows/finished already fetched above, so recompute
             # them unconditionally (see the shared tail below) rather than
-            # early-returning — only the widget rebuild is skipped.
+            # early-returning — only the model reset is skipped.
             pass
         else:
-            while self._day_rows_layout.count() > 1:
-                item = self._day_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            self._day_rows_widget.setUpdatesEnabled(False)
-            for i, row in enumerate(rows):
-                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-                book_row.clicked.connect(self._on_book_row_clicked)
-                self._add_row_safely(self._day_rows_layout, book_row)
-            self._day_rows_widget.setUpdatesEnabled(True)
-            self._day_rows_layout.invalidate()
-            self._day_rows_widget.updateGeometry()
+            self._day_model.set_rows(rows)
+            self._day_ensure_covers_loaded(rows)
             self._day_built_period = date_str
             self._day_built_sig = sig
 
@@ -3515,10 +3915,10 @@ class StatsPanel(QWidget):
         # Cap follows the section's visibility — set together so the two can
         # never disagree. See _cap_rows_viewport.
         self._cap_rows_viewport(self._day_scroll, bool(finished))
-        # Scheduled AFTER the cap: _fixup_scroll_policy measures overflow
+        # Scheduled AFTER the cap: _day_fixup_scroll_policy measures overflow
         # against the viewport height, so it has to see the capped one or it
         # leaves a live handle on a list that has nothing to scroll.
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._day_scroll))
+        QTimer.singleShot(0, self._day_fixup_scroll_policy)
 
     def _build_weekly_tab(self) -> QWidget:
         widget = QWidget()
@@ -4209,10 +4609,86 @@ class StatsPanel(QWidget):
         for widget in self._iter_day_rows(current_tab):
             if widget._row_data.get("book_path") == book_path:
                 widget.refresh_cover(cover_path)
+        if current_tab == "Day" and hasattr(self, '_day_model'):
+            self._day_refresh_cover_for_path(book_path, cover_path)
+
+    def _day_refresh_cover_for_path(self, book_path: str, cover_path: str) -> None:
+        """Day-tab equivalent of BookDayRow.refresh_cover, retargeted at the
+        model instead of a widget repaint — same _cover_cache evict +
+        CoverLoaderWorker dispatch, dataChanged instead of setPixmap."""
+        for row in self._day_model._rows:
+            if row.get("book_path") != book_path:
+                continue
+            book_id = row.get("book_id")
+            if not book_id:
+                continue
+            if book_id in _cover_cache:
+                del _cover_cache[book_id]
+            if hasattr(self, '_day_delegate'):
+                self._day_delegate.invalidate_cover(book_id)
+            row["active_cover_path"] = cover_path
+            if cover_path and os.path.exists(cover_path):
+                self._day_dispatch_cover_load(book_id, book_path, cover_path, cover_path)
+            else:
+                idx = self._day_model.index_for_book_id(book_id)
+                if idx.isValid():
+                    self._day_model.dataChanged.emit(idx, idx)
+            if hasattr(self, '_day_list_view'):
+                self._day_list_view.viewport().update()
+
+    def _day_dispatch_cover_load(self, book_id, book_path: str, cover_path, active_cover_path) -> None:
+        """Raw-mode CoverLoaderWorker dispatch, identical to BookDayRow's own
+        (duck-typed book_data object, cover_loaded signal, QThreadPool) — the
+        only mechanical change is that completion writes to _cover_cache and
+        emits dataChanged on the model instead of calling setPixmap on a
+        per-row QLabel. Not touching _sized_cover_cache/LANCZOS — out of
+        scope per the design doc."""
+        if book_id in getattr(self, '_day_cover_pending', ()):
+            return
+        self._day_cover_pending.add(book_id)
+        worker = CoverLoaderWorker(
+            type('_SD', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
+            active_cover_path=active_cover_path,
+        )
+        worker.signals.cover_loaded.connect(
+            self._day_on_cover_loaded, Qt.ConnectionType.QueuedConnection
+        )
+        QThreadPool.globalInstance().start(worker)
+
+    def _day_on_cover_loaded(self, book_id: int, image: QImage) -> None:
+        self._day_cover_pending.discard(book_id)
+        if image.isNull():
+            return
+        _cover_cache[book_id] = QPixmap.fromImage(image)
+        if hasattr(self, '_day_delegate'):
+            self._day_delegate.invalidate_cover(book_id)
+        if not hasattr(self, '_day_model'):
+            return
+        idx = self._day_model.index_for_book_id(book_id)
+        if idx.isValid():
+            self._day_model.dataChanged.emit(idx, idx)
+            if hasattr(self, '_day_list_view'):
+                self._day_list_view.viewport().update()
+
+    def _day_ensure_covers_loaded(self, rows: list[dict]) -> None:
+        """Dispatch a raw CoverLoaderWorker for every row not already in
+        _cover_cache — called once after set_rows() rebuilds the Day model,
+        mirroring what BookDayRow.__init__ used to do per-row at construction
+        time."""
+        for row in rows:
+            book_id = row.get("book_id")
+            book_path = row.get("book_path")
+            cover_path = row.get("cover_path")
+            active_cover_path = row.get("active_cover_path")
+            load_path = active_cover_path or cover_path
+            if not (book_id and book_path and load_path and os.path.exists(load_path)):
+                continue
+            if book_id in _cover_cache:
+                continue
+            self._day_dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
 
     def _iter_day_rows(self, tab_name: str):
         layout_map = {
-            "Day": self._day_rows_layout,
             "Week": getattr(self, '_week_rows_layout', None),
             "Month": getattr(self, '_month_rows_layout', None),
         }
