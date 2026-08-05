@@ -883,82 +883,6 @@ class ThemeManager(QObject):
         elif not hover and was_hover_active:
             self._swatch_leave_backstop_timer.stop()
 
-    def clear_stale_hover_state(self):
-        """Force _is_hover_active/_active_display_theme_internal back to the real
-        active theme whenever Settings becomes hidden, regardless of how the close
-        happened. Correctness backstop (2026-08-03, confinement-gap fix) for the
-        case where a hover completes and the swatch's leaveEvent is then classified
-        as a blur-grab synthetic (fires while the widget is hidden by a panel
-        transition, e.g. opening Stats/Library while still hovering) rather than a
-        genuine mouse-out — in that case _on_theme_unhovered() never runs and this
-        state is left stuck indefinitely, so a LATER get_current_theme()/
-        get_active_theme() call keeps returning the abandoned hover theme. No-op if
-        hover isn't actually active.
-
-        CORRECTED (2026-08-03, live-reported): the original version of this method
-        assumed "every OTHER surface these fields gate was already last painted
-        with _current_theme_name ... this call brings the bookkeeping back in line
-        with what is already true on screen." That assumption was WRONG for
-        Sleep/Speed's preset-ramp buttons specifically — confirmed live via
-        screenshots showing both panels' buttons still painted in the abandoned
-        hover theme's colors well after this method had already corrected the
-        bookkeeping fields. Root cause: `_apply_preset_ramp_colors` (sleep_timer.py/
-        speed_controls.py) is NOT re-run by a plain bookkeeping fix — it only runs
-        from the theme-apply TAIL (`_refresh_panel_visuals`, itself gated to
-        non-hover applies) or from that panel's OWN state-change methods
-        (set_sleep_timer/disable_sleep_timer/set_sleep_fade, or their Speed
-        equivalents). Opening a panel does not call it either. So if it last ran
-        DURING the abandoned hover (painting the hover theme's ramp), it stays
-        painted that way indefinitely — fixing the bookkeeping alone never
-        triggers a repaint, since nothing else reads _is_hover_active/
-        _active_display_theme_internal to decide whether to repaint.
-
-        Fix: after correcting the bookkeeping, explicitly re-trigger both ramps via
-        the SAME entry point the theme-apply TAIL already uses
-        (main_window._refresh_panel_visuals, bound to
-        SettingsController.sync_all_settings_visuals in settings_controller.py) —
-        not a new call path. This re-reads get_current_theme() (now hover-safe)
-        fresh, so the ramp is repainted with the correct active-theme colors
-        regardless of what was drawn during the stuck window. Every other surface
-        `sync_all_settings_visuals` touches (fade-button property sync, blur/
-        pattern/hover-fade visuals, etc.) is either idempotent or already correct,
-        so calling the whole method rather than hand-picking the two ramp calls is
-        deliberate — it is the established, already-tested "resync everything"
-        entry point for exactly this situation, not a new one.
-
-        SECOND CORRECTION (same day, verified by direct check before shipping this
-        time, not assumed): the fix above still did not repaint the MAIN WINDOW
-        itself. `mw.setStyleSheet(...)` — the actual base paint every other surface
-        derives its "is this fixed" impression from — is set only inside
-        `_apply_stylesheets`, which this method never called. Verified directly:
-        forcing the exact stuck sequence (paint the hover theme's base sheet onto
-        `main_window`, then call this method) left `mw.styleSheet()` unchanged,
-        still equal to the hover theme's sheet, confirming the gap rather than
-        assuming it was already covered by the ramp fix. Fixed by calling
-        `_apply_stylesheets(self._current_theme_name, hover=False)` BEFORE
-        `_mark_theme_applied`, mirroring `snap_theme_forward`'s own fallback shape
-        exactly (`_apply_stylesheets(...)` immediately followed by
-        `_refresh_panel_visuals(...)`) rather than inventing a new order. This
-        repaints `mw`/`title_bar`/`content_container`/`chapter_list_widget`/
-        `sidebar`/settings-speed-sleep-panel-level QSS (everything
-        `_apply_stylesheets`'s fast path touches) with the correct active theme,
-        regardless of what was left painted during the stuck window. It does NOT
-        call `_schedule_deferred_restyle` a second time unnecessarily — hover=False
-        means this call's own internal `if not hover:` branch schedules it, exactly
-        as any other genuine non-hover apply would, so Library/Stats/Tags/Book-
-        Detail are covered too, not just the fast-path surfaces.
-
-        Does not touch _fade_anim/_pending_fade_call — if a fade or stash is
-        genuinely in flight, the existing drain/discard mechanisms (the July 21/22
-        confinement fix) own that, unchanged; this method only ever runs after
-        Settings has fully settled into hidden, by which point _fade_in_flight is
-        guaranteed False."""
-        if self._is_hover_active:
-            self._apply_stylesheets(self._current_theme_name, hover=False)
-            self._mark_theme_applied(self._current_theme_name, False)
-            if hasattr(self.main_window, '_refresh_panel_visuals'):
-                self.main_window._refresh_panel_visuals(self._current_theme_name)
-
     def apply_full_pass(self, theme_name, hover=False):
         """Apply BOTH the fast visible-surface pass and the deferred invisible-surface
         batch, synchronously, in one call. This is the complete "first styling" a theme
@@ -2715,39 +2639,6 @@ class ThemeManager(QObject):
                 "missed — cursor outside swatch_box while a hover preview is still active"
             )
             self._on_theme_unhovered()
-
-    def check_cursor_on_settle(self):
-        """One-shot check, run once the Settings panel has genuinely finished settling
-        (queued via PanelManager.call_when_panels_settled from _on_settings_slide_finished).
-        If the cursor is already resting over a swatch at that instant, triggers that
-        swatch's normal hover-preview path exactly as a real enterEvent would have —
-        closing the gap where Qt does not guarantee redelivering Enter when a widget
-        becomes hoverable under an already-stationary cursor. See
-        review/Investigation_260803_settings_open_hover_preview_inconsistency.md.
-
-        Deliberately NOT a periodic check — this fires exactly once per settle, and
-        does nothing if the panel is no longer visible/on the Themes tab by the time
-        it runs (the panel may have been closed again before settling; the queue's own
-        predicate recheck naturally delays this method until whatever full stop the
-        animation reaches, and by then the panel's own visibility answers whether
-        there is anything left to do — same shape as _check_swatch_still_hovered's own
-        visibility-first check, but that method is a RECURRING backstop for a hover
-        ENDING; this is a ONE-SHOT trigger for a hover STARTING. Do not merge them."""
-        swatch_box = getattr(self, 'swatch_box', None)
-        if swatch_box is None or not swatch_box.isVisible():
-            return  # panel closed again before settling, or Themes tab never built
-        tabs = getattr(self.main_window, 'tabs', None)
-        settings_panel = getattr(self.main_window, 'settings_panel', None)
-        if (tabs is None or tabs.currentIndex() != 0
-                or settings_panel is None or not settings_panel.isVisible()):
-            return  # not on the Themes tab, or Settings itself no longer open
-        local = swatch_box.mapFromGlobal(QCursor.pos())
-        if not swatch_box.rect().contains(local):
-            return  # cursor not over swatch_box at all
-        target = swatch_box.childAt(local)
-        if target is None or not isinstance(target, ThemeItem):
-            return  # over swatch_box but in the gap/padding between swatches
-        target.hovered.emit(target.theme_name)
 
     def update_theme_list_visuals(self):
         """Dim unselected themes and highlight selected ones."""

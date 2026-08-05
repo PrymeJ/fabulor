@@ -1,4 +1,4 @@
-"""get_current_theme()/clear_stale_hover_state hover-confinement fix (pure, headless).
+"""get_current_theme()/get_active_theme() hover-confinement (pure, headless).
 
 2026-08-03 confinement-gap fix: get_current_theme() previously read
 _active_display_theme_internal directly with no hover check, so it could return a
@@ -15,10 +15,20 @@ inconsistency.md and the design doc that followed it.
 Fix: get_current_theme() now resolves through get_active_theme() (the existing,
 already-hover-safe accessor built 2026-07-20 for the same class of bug, see
 review/Review_260720_theme_reach.md) instead of reading the raw internal field.
-clear_stale_hover_state() additionally corrects the underlying bookkeeping
-(_is_hover_active/_active_display_theme_internal) whenever Settings becomes hidden,
-regardless of how the close happened, via PanelManager._on_settings_hidden — the sole
-settings_panel.hide() call site anywhere in the codebase (confirmed by grep).
+
+`clear_stale_hover_state()` — a same-day bookkeeping-correction backstop for this exact
+gap — was DELETED 2026-08-05 (step 6 of review/Design_260804_hover_state_computed_read_
+path.md), once `get_displayed_theme()` made it structurally unreachable: that method
+never reads `_is_hover_active`/`_active_display_theme_internal` at all, so there is no
+longer any stored value for a "clear the stale value" method to correct. Re-confirmed
+safe against current code (not just the original design's snapshot) before deletion —
+see review/Design_260805_snapback_timing_v2.md's step 2 for the full re-verification,
+including that the Esc/gutter-dismiss path is self-healing regardless of whether
+`[SWATCH-LEAVE-SUSPECT]`'s still-open gap fires, since `_close_settings_flow`
+unconditionally calls `_on_theme_unhovered()` before `_on_settings_hidden` can ever run.
+Its own tests were removed in the same change; this file now covers only
+`get_current_theme()`/`get_active_theme()`'s own hover-safety, which is unaffected by
+that deletion.
 """
 import pytest
 
@@ -26,36 +36,12 @@ from fabulor.ui.theme_manager import ThemeManager
 from fabulor import themes
 
 
-class _FakeTimer:
-    def __init__(self):
-        self.running = False
-
-    def start(self):
-        self.running = True
-
-    def stop(self):
-        self.running = False
-
-
-class _FakeMainWindow:
-    """Stand-in exposing exactly what clear_stale_hover_state's repaint call
-    touches: _refresh_panel_visuals, the bound entry point
-    SettingsController.sync_all_settings_visuals uses in the real app."""
-
-    def __init__(self):
-        self.refresh_calls = []
-
-    def _refresh_panel_visuals(self, theme_name):
-        self.refresh_calls.append(theme_name)
-
-
 class _FakeTM:
-    """Minimal stand-in exposing exactly what get_current_theme()/get_active_theme()/
-    _mark_theme_applied()/clear_stale_hover_state() touch. get_active_theme and
-    _mark_theme_applied are bound to the REAL unbound ThemeManager methods (not
-    re-faked) since they are the exact production code get_current_theme() and
-    clear_stale_hover_state() call through -- this test is about THOSE two methods'
-    own logic, not about re-verifying their dependencies.
+    """Minimal stand-in exposing exactly what get_current_theme()/get_active_theme()
+    touch. get_active_theme is bound to the REAL unbound ThemeManager method (not
+    re-faked) since it is the exact production code get_current_theme() calls through
+    -- this test is about THAT method's own logic, not about re-verifying its
+    dependencies.
 
     get_displayed_theme is faked here (2026-08-04, step 2 of the hover-state
     migration): get_active_theme() now shadow-checks against it, but this test
@@ -67,7 +53,6 @@ class _FakeTM:
     from what this file actually verifies."""
 
     get_active_theme = ThemeManager.get_active_theme
-    _mark_theme_applied = ThemeManager._mark_theme_applied
 
     def __init__(self, active_display_theme_internal, current_theme_name,
                  is_hover_active, cover_theme_active=False, cover_theme=None):
@@ -76,9 +61,6 @@ class _FakeTM:
         self._is_hover_active = is_hover_active
         self._cover_theme_active = cover_theme_active
         self._cover_theme = cover_theme
-        self._swatch_leave_backstop_timer = _FakeTimer()
-        self.main_window = _FakeMainWindow()
-        self.apply_stylesheets_calls = []
 
     def get_displayed_theme(self):
         # Mirror exactly what get_active_theme()'s OLD path computes, so the
@@ -90,12 +72,6 @@ class _FakeTM:
             return self._current_theme_name
         return self._active_display_theme_internal or self._current_theme_name
 
-    def _apply_stylesheets(self, theme_name, hover=False, force_all_panels=False):
-        # Stand-in for the real (heavy, Qt-widget-touching) _apply_stylesheets --
-        # this test is about clear_stale_hover_state's OWN call sequence/logic,
-        # not about re-verifying _apply_stylesheets itself.
-        self.apply_stylesheets_calls.append((theme_name, hover))
-
 
 def _get_current_theme(fake):
     return ThemeManager.get_current_theme(fake)
@@ -103,10 +79,6 @@ def _get_current_theme(fake):
 
 def _get_active_theme(fake):
     return ThemeManager.get_active_theme(fake)
-
-
-def _clear_stale_hover_state(fake):
-    return ThemeManager.clear_stale_hover_state(fake)
 
 
 ACTIVE = "Fire and Blood"
@@ -143,59 +115,3 @@ def test_get_current_theme_respects_live_cover_theme_while_hovering():
                    is_hover_active=True, cover_theme_active=True, cover_theme=cover_dict)
     result = _get_current_theme(fake)
     assert result["bg_main"] == "#123456"
-
-
-def test_clear_stale_hover_state_corrects_fields_and_stops_backstop_timer():
-    fake = _FakeTM(active_display_theme_internal=HOVER, current_theme_name=ACTIVE,
-                   is_hover_active=True)
-    fake._swatch_leave_backstop_timer.running = True  # armed, as _mark_theme_applied would have
-
-    _clear_stale_hover_state(fake)
-
-    assert fake._is_hover_active is False
-    assert fake._active_display_theme_internal == ACTIVE
-    assert fake._swatch_leave_backstop_timer.running is False
-
-
-def test_clear_stale_hover_state_repaints_sleep_speed_ramps_when_correcting():
-    # 2026-08-03, live-reported regression in the FIRST version of this fix:
-    # bookkeeping alone does not repaint Sleep/Speed's preset-ramp buttons --
-    # they only redraw on their own state-change methods or the theme-apply
-    # TAIL, neither of which a plain field correction triggers. Confirms the
-    # fix now also re-triggers that TAIL (main_window._refresh_panel_visuals)
-    # so an already-painted-wrong ramp gets corrected, not just future reads.
-    fake = _FakeTM(active_display_theme_internal=HOVER, current_theme_name=ACTIVE,
-                   is_hover_active=True)
-
-    _clear_stale_hover_state(fake)
-
-    assert fake.main_window.refresh_calls == [ACTIVE]
-
-
-def test_clear_stale_hover_state_repaints_the_main_window_when_correcting():
-    # 2026-08-03, SECOND live-reported regression: the ramp fix above still left
-    # mw.setStyleSheet(...) itself uncorrected, since that only happens inside
-    # _apply_stylesheets, which the first fix never called. Confirms the second
-    # correction actually calls it, with the real active theme and hover=False
-    # (so its own internal `if not hover:` branch also schedules the deferred
-    # Library/Stats/Tags/Book-Detail restyle, not just the fast-path surfaces).
-    fake = _FakeTM(active_display_theme_internal=HOVER, current_theme_name=ACTIVE,
-                   is_hover_active=True)
-
-    _clear_stale_hover_state(fake)
-
-    assert fake.apply_stylesheets_calls == [(ACTIVE, False)]
-
-
-def test_clear_stale_hover_state_is_a_no_op_when_hover_is_not_active():
-    fake = _FakeTM(active_display_theme_internal=ACTIVE, current_theme_name=ACTIVE,
-                   is_hover_active=False)
-    fake._swatch_leave_backstop_timer.running = False
-
-    _clear_stale_hover_state(fake)
-
-    assert fake._is_hover_active is False
-    assert fake.main_window.refresh_calls == []  # no-op means no repaint either
-    assert fake.apply_stylesheets_calls == []  # no-op means no main-window repaint either
-    assert fake._active_display_theme_internal == ACTIVE
-    assert fake._swatch_leave_backstop_timer.running is False

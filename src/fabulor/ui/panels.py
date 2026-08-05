@@ -779,22 +779,6 @@ class PanelManager:
             # visual_area blur starts HERE (not at panel-open) so it matches the
             # transport bar's timing — see _start_visual_area_blur.
             self._start_visual_area_blur(self.settings_panel)
-            # Settle-triggered cursor check (2026-08-03) — see
-            # review/Investigation_260803_settings_open_hover_preview_inconsistency.md
-            # and the design doc that followed it. Queued via call_when_panels_settled
-            # (NOT this slide-finished signal directly) because the blur-in tween just
-            # started above and _any_panel_animating() is still True here — the check
-            # must wait for the SAME fully-settled instant _on_theme_changed's own
-            # animation guard waits for, or a genuine preview it triggers would just
-            # get deferred and replayed anyway. Own coalesce_key, distinct from
-            # "theme_change", so it can never be silently replaced by (or replace) a
-            # queued theme-change re-call.
-            tm = getattr(self.main_window, 'theme_manager', None)
-            if tm:
-                self.call_when_panels_settled(
-                    tm.check_cursor_on_settle,
-                    coalesce_key="themes_cursor_settle_check"
-                )
 
         self.settings_panel_animation.valueChanged.connect(_log_settings_slide_frame)
         self.settings_panel_animation.finished.connect(_on_settings_slide_finished)
@@ -1544,15 +1528,6 @@ class PanelManager:
         self.settings_panel.hide()
         self._release_panel_focus(self.settings_panel)
         self._notify_panel_closed()
-        # Confinement-gap fix (2026-08-03) — settings_panel.hide() above is the
-        # SOLE hide() call site for this panel anywhere in the codebase (confirmed
-        # by grep), so this is the one funnel every Settings-close path reaches
-        # regardless of trigger (Esc, dismiss click, hide_all_panels, opening a
-        # different panel). Correct any hover state a synthetic-leave suppression
-        # left stuck — see ThemeManager.clear_stale_hover_state's docstring.
-        tm = getattr(self.main_window, 'theme_manager', None)
-        if tm:
-            tm.clear_stale_hover_state()
 
     def _on_sidebar_hidden(self):
         logger.debug(
