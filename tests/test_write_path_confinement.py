@@ -40,10 +40,13 @@ class _FakeTM:
 
     get_committed_theme = ThemeManager.get_committed_theme
 
-    def __init__(self, current_theme_name, is_hover_active=False, active_display_theme_internal=None):
+    def __init__(self, current_theme_name, is_hover_active=False, active_display_theme_internal=None,
+                 cover_theme_active=False, cover_theme=None):
         self._current_theme_name = current_theme_name
         self._is_hover_active = is_hover_active
         self._active_display_theme_internal = active_display_theme_internal
+        self._cover_theme_active = cover_theme_active
+        self._cover_theme = cover_theme
 
 
 def _hovering_fake_tm():
@@ -67,6 +70,59 @@ def test_get_committed_theme_ignores_a_live_hover():
 def test_get_committed_theme_matches_current_theme_name_when_not_hovering():
     tm = _FakeTM(current_theme_name=COMMITTED, is_hover_active=False)
     assert tm.get_committed_theme() == COMMITTED
+
+
+# ── Cover-art theme mode (2026-08-05, live-reported: cover-art modes blocking/
+# mistiming Esc/gutter-dismiss) ─────────────────────────────────────────────
+
+def test_get_committed_theme_returns_the_cover_theme_dict_when_cover_art_active():
+    # THE FIX. _on_theme_unhovered() targets self._cover_theme (a dict) whenever
+    # self._cover_theme_active is True, exactly mirroring get_displayed_theme()'s
+    # own existing check. get_committed_theme() must return the SAME value, or a
+    # dict-vs-string comparison downstream (ThemeManager.
+    # _theme_genuinely_settled_on_committed) can never see a genuine settle in
+    # cover-art mode.
+    cover_dict = {"bg_main": "#151F24", "accent": "#4A8FBA"}
+    tm = _FakeTM(
+        current_theme_name=COMMITTED,  # the underlying pool theme name, irrelevant here
+        is_hover_active=False,
+        cover_theme_active=True,
+        cover_theme=cover_dict,
+    )
+    result = tm.get_committed_theme()
+    assert result is cover_dict
+    assert result != COMMITTED  # confirms this is NOT falling back to the bare string
+
+
+def test_get_committed_theme_falls_back_to_current_theme_name_when_cover_theme_active_but_none():
+    # Edge case named in get_displayed_theme()'s own equivalent check: _cover_theme_active
+    # can theoretically be True with _cover_theme not yet populated (e.g. mid-transition).
+    # Must fall back to the plain committed string, not return None.
+    tm = _FakeTM(
+        current_theme_name=COMMITTED,
+        is_hover_active=False,
+        cover_theme_active=True,
+        cover_theme=None,
+    )
+    assert tm.get_committed_theme() == COMMITTED
+
+
+def test_get_committed_theme_ignores_a_live_hover_even_in_cover_art_mode():
+    # The hover-confinement guarantee must hold in BOTH modes: a hover currently
+    # displaying something else (a swatch preview, say) must never leak into
+    # get_committed_theme()'s answer, whether the underlying committed state is
+    # a plain theme name or a cover-art dict.
+    cover_dict = {"bg_main": "#151F24", "accent": "#4A8FBA"}
+    tm = _FakeTM(
+        current_theme_name=COMMITTED,
+        is_hover_active=True,
+        active_display_theme_internal=HOVER,  # a hovered swatch, unrelated to cover art
+        cover_theme_active=True,
+        cover_theme=cover_dict,
+    )
+    result = tm.get_committed_theme()
+    assert result is cover_dict
+    assert result != HOVER
 
 
 # ── LibraryPanel._resolve_theme_colors ──────────────────────────────────────────────────────────

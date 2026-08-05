@@ -60,6 +60,25 @@ _THEME_SWITCH_FADE_MS = 750       # fade duration for non-hover theme switches
 _SNAPBACK_FADE_MS     = 200       # fade duration when reverting a hover preview
 _PANEL_ANIM_GUARD_MS  = 700       # delay before retrying a theme change mid-panel-animation
 _HOVER_DEBOUNCE_MS    = 150        # coalesce rapid hover sweeps into one preview restyle
+# Re-check cadence for call_when_theme_settled's settle watch (2026-08-05, corrected
+# snapback-timing spec v2 — see review/Design_260805_snapback_timing_v2.md). Same
+# value/reasoning as panels.py's _SETTLE_POLL_MS: predicate-driven, not a bare
+# `finished` subscription, because QPropertyAnimation.stop() does not reliably emit
+# `finished` on this codebase's own documented history.
+_THEME_SETTLE_POLL_MS = 16
+# Hard ceiling on call_when_theme_settled's wait, past which it force-settles via
+# snap_theme_forward() rather than waiting indefinitely. This is a TERMINATION
+# GUARANTEE, not a UX tuning constant — it exists solely so a fade that genuinely
+# never completes (Qt drops the animation's finished/tick delivery for some reason,
+# a future bug reintroduces a stranded _fade_in_flight, etc.) cannot hang a dismiss
+# forever. Sized generously above the worst-case OBSERVED normal settle time, not
+# tuned by feel: review/Investigation_260804_animation_latency.md measured
+# animation-start latency (dominated by _apply_stylesheets) at up to ~810ms live,
+# plus the 200ms snapback fade itself = ~1010ms worst-case normal settle. 2000ms is
+# roughly double that — far enough above the normal path that it will never
+# false-trigger on legitimate slow hardware/contention, but still short enough that
+# a genuinely stuck fade doesn't leave a dismiss looking unresponsive for long.
+_THEME_SETTLE_TIMEOUT_MS = 2000
 # Cursor movement at or below this (Chebyshev distance, px) counts as "unmoved" when
 # deciding whether a swatch_box leaveEvent was a real mouse-out or a blur-grab synthetic
 # (see _on_themes_tab_left). Sized for sub-pixel/±1px OS-level mouse-reporting jitter,
@@ -186,6 +205,22 @@ class ThemeManager(QObject):
         self._save_on_fade = False
         self._fade_in_flight = False
 
+        # Settle-watch for call_when_theme_settled (2026-08-05, corrected snapback-
+        # timing spec v2 — see review/Design_260805_snapback_timing_v2.md). Mirrors
+        # PanelManager.call_when_panels_settled's shape: predicate-driven (re-checks
+        # _fade_in_flight every tick), never restarts a running timer (deadline is
+        # absolute, not retriggerable), immediate synchronous call when nothing is
+        # in flight. `_theme_settled_deadline` tracks when the CURRENT wait must give
+        # up and force-settle via snap_theme_forward() — see
+        # _on_theme_settled_watch_tick's termination-guarantee branch.
+        self._theme_settled_watch_timer = QTimer(self)
+        self._theme_settled_watch_timer.setSingleShot(True)
+        self._theme_settled_watch_timer.setInterval(_THEME_SETTLE_POLL_MS)
+        self._theme_settled_watch_timer.timeout.connect(self._on_theme_settled_watch_tick)
+        self._theme_settled_watch_armed = False
+        self._theme_settled_waiters: list = []
+        self._theme_settled_deadline = None
+
         # SELECTION MARKER (2026-07-28). True only for the duration of a deliberate
         # user selection's _on_theme_changed call. A snapback is indistinguishable from
         # a click by (user_initiated, hover) alone — both are (True, False) — so the
@@ -195,6 +230,21 @@ class ThemeManager(QObject):
         # each applied ~340ms late against the previous click's theme, which reads
         # exactly as "my clicks are missing".
         self._selection_in_progress = False
+
+        # SNAPBACK MARKER (2026-08-05, corrected snapback-timing spec v2 — see
+        # review/Design_260805_snapback_timing_v2.md). Same shape as
+        # _selection_in_progress above: a snapback (_on_theme_unhovered's
+        # _on_theme_changed call) is a hover=False call and is not otherwise
+        # distinguishable from an ordinary rotation/idle-timer change, so hovering
+        # out while the ORIGINAL preview's own fade was still running (up to the
+        # user's configured hover-fade duration, as long as 1500ms) would get
+        # STASHED behind that fade instead of cutting it short immediately — a
+        # dismiss (Esc/gutter-click) triggered during that window could then close
+        # before the theme had actually reverted. Marked only for the duration of
+        # _on_theme_unhovered()'s own _on_theme_changed call, so only a GENUINE
+        # hover-out interrupts — an ordinary rotation/idle-timer theme change must
+        # still stash exactly as before.
+        self._snapback_in_progress = False
 
 
 
@@ -264,7 +314,7 @@ class ThemeManager(QObject):
             return self._cover_theme
         return self._current_theme_name
 
-    def get_committed_theme(self) -> str:
+    def get_committed_theme(self):
         """The theme committed by a deliberate right-click / rotation / future
         Enter-equivalent — NEVER touched by hover. Distinct from
         get_displayed_theme()/get_active_theme()/get_current_theme(), which
@@ -283,16 +333,50 @@ class ThemeManager(QObject):
         into their own cached state anyway, with nothing to ever correct it
         except an unrelated later theme-apply cycle. The fix is not to catch
         and correct that after the fact — it is for these consumers to never
-        be able to observe a hover in the first place. `_current_theme_name`
-        already is, and always was, exactly this value: confirmed by direct
-        trace of every write site (theme_manager.py:__init__, _do_rotate,
-        toggle_theme_selection, _on_theme_right_clicked — all deliberate
-        commit actions, never a hover path) and by _mark_theme_applied's own
-        docstring, which confirms it is the SOLE writer of
-        _active_display_theme_internal/_is_hover_active and never touches
-        this field. This method adds no new state — it only names the
-        existing field so callers stop reaching for get_current_theme() by
-        habit when what they actually need is the committed value."""
+        be able to observe a hover in the first place.
+
+        CORRECTED (2026-08-05, live-reported by Pryme: cover-art theme modes
+        blocking/mistiming Esc/gutter-dismiss). This method used to return
+        `self._current_theme_name` unconditionally — correct for the plain
+        no-cover-art case, but WRONG whenever cover-art theme mode is active:
+        `_on_theme_unhovered()` (this class, ~line 2489) targets
+        `self._cover_theme` — a dict, not `_current_theme_name` — whenever
+        `self._cover_theme_active` is True, exactly mirroring
+        `get_displayed_theme()`'s own existing `_cover_theme_active` check a
+        few lines above this method. `_current_theme_name` bare is correct
+        ONLY in the non-cover-art case; it is still, and always was, never
+        touched by hover in EITHER case (confirmed by direct trace of every
+        write site: theme_manager.py:__init__, _do_rotate,
+        toggle_theme_selection, _on_theme_right_clicked, apply_cover_theme's
+        `_cover_theme`/`_cover_theme_active` writes — all deliberate commit
+        actions, never a hover path). Returning the bare string while cover-art
+        mode was active meant ThemeManager.call_when_theme_settled's own
+        settled-predicate (`_active_display_theme_internal ==
+        get_committed_theme()`) compared a dict against a string and could
+        never see a genuine settle via that path — live-confirmed to only
+        "work" by accident, via a DIFFERENT, older no-op guard in
+        `_on_theme_changed` coincidentally matching first; without that
+        accidental match, the dismiss would silently fall through to
+        `call_when_theme_settled`'s 2000ms termination-guarantee timeout
+        instead of closing promptly.
+
+        `_mark_theme_applied`'s own docstring confirms it is the SOLE writer
+        of `_active_display_theme_internal`/`_is_hover_active` and never
+        touches either `_current_theme_name` or the cover-theme fields — this
+        method still adds no new state, it only resolves to the SAME value
+        `_on_theme_unhovered()` itself targets, in both modes.
+
+        Consequence for callers, named explicitly rather than left implicit:
+        all five current call sites (`library.py` x2, `sleep_timer.py`,
+        `speed_controls.py`, `app.py`'s `_reload_excluded_books`) route this
+        return value straight into `themes._resolve_theme()` before doing
+        anything else with it, and that function already has an explicit
+        `isinstance(theme_name, dict)` branch (it must — `get_displayed_theme()`
+        already returns cover-theme dicts whenever a hover happens to be live
+        in cover-art mode) — confirmed by direct read of every site, not
+        assumed, before this change was made. None of them break."""
+        if self._cover_theme_active and self._cover_theme is not None:
+            return self._cover_theme
         return self._current_theme_name
 
     def get_current_theme(self) -> dict:
@@ -1094,6 +1178,10 @@ class ThemeManager(QObject):
         # True only while a deliberate user SELECTION (click / right-click) is being
         # applied — marked at its source, see _selection_in_progress's declaration.
         _is_selection = bool(getattr(self, '_selection_in_progress', False))
+        # True only while _on_theme_unhovered()'s own _on_theme_changed call is in
+        # progress — marked at its source, see _snapback_in_progress's declaration
+        # (2026-08-05, corrected snapback-timing spec v2).
+        _is_snapback = bool(getattr(self, '_snapback_in_progress', False))
         # HOVER-INTERRUPT PREDICATE. A genuine hover ALWAYS interrupts whatever fade is
         # running. Computed here so the GUARD/BLEED-TRACE log lines correctly report
         # "interrupting" instead of the misleading "stashing" when this call is about to
@@ -1145,11 +1233,22 @@ class ThemeManager(QObject):
         # user intent, and it makes the preview fade it would queue behind obsolete by
         # definition. `user_initiated and not hover` is exactly the click/right-click
         # paths (_on_theme_right_clicked, toggle_theme_selection,
-        # _on_cover_pool_btn_right_clicked); rotations pass user_initiated=False and a
-        # snapback passes hover=False with user_initiated defaulting True but is
-        # excluded by _snapback_in_progress having been removed — see the branch
-        # below, which still stashes every non-interrupting call exactly as before.
-        _hover_may_interrupt = bool(hover or _is_selection)
+        # _on_cover_pool_btn_right_clicked).
+        #
+        # A SNAPBACK also interrupts (2026-08-05, corrected snapback-timing spec v2
+        # — see review/Design_260805_snapback_timing_v2.md; same fix as the
+        # 2026-08-04 attempt reverted earlier this session, this half of it was
+        # correct). Hovering out while the ORIGINAL preview's own fade was still
+        # running (up to the user's configured hover-fade duration, as long as
+        # 1500ms) would otherwise get STASHED behind that fade instead of cutting
+        # it short immediately, so a dismiss (Esc/gutter-click) triggered during
+        # that window could close before the theme had actually reverted.
+        # `_snapback_in_progress` is marked ONLY for the duration of
+        # `_on_theme_unhovered()`'s own call, so an ordinary rotation/idle-timer
+        # theme change (hover=False, not a snapback) still stashes exactly as
+        # before — this does not widen interruption to every non-hover call, only
+        # to the one that represents a genuine hover ending.
+        _hover_may_interrupt = bool(hover or _is_selection or _is_snapback)
         logger.debug(
             f"t={time.perf_counter():.6f} [_on_theme_changed GUARD] "
             f"any_panel_animating={_any_animating} panel_open={_panel_open} "
@@ -1293,9 +1392,14 @@ class ThemeManager(QObject):
             # and then discard it at drain time, leaving the user staring at A's stale
             # colors while deliberately hovering B.
             #
-            # What still reaches the stash below: any NON-hover call arriving mid-fade
-            # (a snapback, a genuine selection, a rotation). Those stash and replay via
-            # the drain sites exactly as before — unchanged by any of this.
+            # What still reaches the stash below: any non-interrupting call arriving
+            # mid-fade — as of 2026-08-05, that's ONLY a rotation/idle-timer theme
+            # change (hover=False, not a selection, not a snapback). Selections
+            # (_is_selection) and snapbacks (_is_snapback) both now interrupt too,
+            # for the same reason: each represents a moment the user has already
+            # moved past whatever fade is running, so waiting for it to finish
+            # first produces a visible lag between the user's action and the theme
+            # actually changing.
             #
             # 6-tuple as of 2026-07-22 (was a 5-tuple: theme_name, save, fade_ms, hover,
             # user_initiated). bypass_panel_open_guard is now carried through too — see
@@ -2259,6 +2363,146 @@ class ThemeManager(QObject):
         fade = int(self.config.get_theme_fade_duration() * 0.5)
         self._on_theme_changed(theme_name, save=False, fade_ms=fade, hover=True)
 
+    def _theme_genuinely_settled_on_committed(self):
+        """True only when the last thing that actually painted was the COMMITTED
+        theme (`get_committed_theme()`), applied as a non-hover call, with no fade
+        currently running. This is deliberately NOT just `not _fade_in_flight` —
+        see call_when_theme_settled's docstring for the live-reproduced bug this
+        distinction fixes (2026-08-05, "hover arrives mid-dismiss-wait").
+
+        `get_committed_theme()` returns `self._current_theme_name` directly (see
+        its own docstring) — confirmed the same field, not a different
+        similarly-named one, before building this predicate on top of it; this
+        session's own history includes more than one bug caused by exactly that
+        kind of naming mix-up, so the check was done explicitly rather than
+        assumed.
+
+        `_active_display_theme_internal`/`_is_hover_active` are written together,
+        ONLY by `_mark_theme_applied`, immediately after a genuine `_apply_
+        stylesheets` call for `(theme_name, hover)` — never before, never
+        speculatively (see that method's own docstring). So this predicate is
+        true exactly when: no animation is currently running, AND the most
+        recent real paint was the committed theme, AND that paint was not itself
+        a hover preview (ruling out the edge case where a hover happens to land
+        on the same theme name as the committed one)."""
+        return (
+            not self._fade_in_flight
+            and self._active_display_theme_internal == self.get_committed_theme()
+            and not self._is_hover_active
+        )
+
+    def call_when_theme_settled(self, callback):
+        """Invoke `callback` once the theme has genuinely settled back onto the
+        COMMITTED theme (see `_theme_genuinely_settled_on_committed`) — NOT merely
+        once no fade (`_fade_in_flight`) happens to be running. Synchronous and
+        immediate when already settled. Mirrors PanelManager.
+        call_when_panels_settled (2026-08-05, corrected snapback-timing spec v2 —
+        see review/Design_260805_snapback_timing_v2.md) — see that method's own
+        docstring for the full "predicate re-check, not a bare `finished`
+        subscription" reasoning, which applies identically here: `_fade_anim.
+        stop()` (called whenever a newer call interrupts an in-flight fade — see
+        `_hover_may_interrupt` in `_on_theme_changed`) does not emit `finished`,
+        so a signal-based resume would be silently dropped exactly when a fast
+        dismiss-during-hover-out sequence stops one fade to start the snapback's
+        own.
+
+        Used by Esc/gutter-dismiss (`PanelManager._close_settings_flow`) to block
+        its own action until a genuine hover-out's snapback has visibly finished,
+        not just until `_on_theme_unhovered()` returns — returning only means the
+        call was ISSUED (a new 200ms fade started), not that it has painted yet.
+
+        CORRECTED (2026-08-05, live-reproduced by Pryme: "The Eyrie hovered,
+        falls to main screen, corrects after"): the original v2 predicate here
+        was bare `not self._fade_in_flight`, which cannot distinguish "the
+        snapback I'm waiting for has settled" from "some UNRELATED later hover's
+        own preview fade happened to finish while I was still waiting." Sequence
+        that reproduced it: Esc pressed while hovering theme A -> the snapback to
+        the committed theme starts a real fade -> BEFORE that fade settles, the
+        cursor is still over the Themes tab (the panel hasn't started closing
+        yet) and genuinely hovers theme B -> B's hover interrupts A's
+        in-flight snapback fade (correct, per `_hover_may_interrupt` — a genuine
+        hover always interrupts) and starts its OWN fade -> B's fade settles on
+        its own 200-375ms schedule -> the bare `not _fade_in_flight` check reads
+        this as "settled" and closes the panel, which is caught showing theme B
+        for one frame before `_on_settings_hidden`'s `clear_stale_hover_state()`
+        corrects it back to the committed theme a moment later — exactly the
+        "falls to main screen, corrects after" symptom, live-confirmed via
+        [CLOSE-SETTINGS-TRACE]/[BLEED-TRACE] logs (a genuine `_on_theme_changed`
+        call for the hovered theme, `hover=True`, landing between the dismiss's
+        own `_on_theme_unhovered()` call and its settle firing). Fixed by
+        requiring the settled theme to actually BE the committed one — a hover on
+        any OTHER theme leaves `_active_display_theme_internal` pointing at that
+        hovered theme, so the tick correctly keeps waiting through it instead of
+        firing early.
+
+        TERMINATION GUARANTEE (2026-08-05, corrected v2 — the reverted 2026-08-04
+        attempt had no bound here): if the theme has not genuinely settled on the
+        committed value within `_THEME_SETTLE_TIMEOUT_MS`, force-settle via
+        `snap_theme_forward()` rather than waiting indefinitely. This exists so a
+        fade (or a sequence of them, e.g. repeated hovering during the wait) that
+        genuinely never lets the committed theme settle cannot hang a dismiss
+        forever — see `_THEME_SETTLE_TIMEOUT_MS`'s own declaration for how the
+        2000ms figure was chosen. This is the ONLY job `snap_theme_forward()`
+        still does for this call site; it must NOT be called unconditionally up
+        front the way the reverted attempt's predecessor code did — that
+        force-stops the very animation this method exists to wait for and watch,
+        producing an unanimated ~700-810ms freeze followed by an instant color
+        jump instead of a visible revert."""
+        if self._theme_genuinely_settled_on_committed():
+            callback()
+            return
+        self._theme_settled_deadline = time.perf_counter() + (_THEME_SETTLE_TIMEOUT_MS / 1000.0)
+        self._theme_settled_waiters.append(callback)
+        self._arm_theme_settled_watch()
+
+    def _arm_theme_settled_watch(self):
+        """Arm the settle tick if it is not already armed. Never restarts a running
+        timer — see call_when_theme_settled's docstring / PanelManager.
+        _arm_settled_watch's identical reasoning for why this matters."""
+        if self._theme_settled_watch_armed:
+            return
+        self._theme_settled_watch_armed = True
+        self._theme_settled_watch_timer.start()
+
+    def _on_theme_settled_watch_tick(self):
+        if not self._theme_genuinely_settled_on_committed():
+            if (self._theme_settled_deadline is not None
+                    and time.perf_counter() >= self._theme_settled_deadline):
+                # TERMINATION GUARANTEE fired — see call_when_theme_settled's
+                # docstring. The theme genuinely has not settled on the committed
+                # value within the generous timeout; force it, same as the
+                # pre-2026-08-04 dismiss flow always did, rather than leaving
+                # waiters (a dismiss) hanging.
+                logger.warning(
+                    "[THEME-SETTLE-TIMEOUT] theme did not settle on the committed "
+                    f"value within {_THEME_SETTLE_TIMEOUT_MS}ms — forcing via "
+                    "snap_theme_forward()"
+                )
+                self.snap_theme_forward()
+                # snap_theme_forward() clears _fade_in_flight and re-applies the
+                # committed theme unconditionally, so falling through to the
+                # settled branch below is correct here — re-check rather than
+                # assume, in case a stash it drained somehow started a NEW fade
+                # synchronously (it does not today, but this keeps the predicate
+                # authoritative rather than hand-waved).
+                if not self._theme_genuinely_settled_on_committed():
+                    self._theme_settled_watch_armed = False
+                    self._arm_theme_settled_watch()
+                    return
+            else:
+                self._theme_settled_watch_armed = False
+                self._arm_theme_settled_watch()
+                return
+        self._theme_settled_watch_armed = False
+        self._theme_settled_deadline = None
+        # Swap BEFORE invoking: a callback may synchronously trigger another theme
+        # change that re-enters call_when_theme_settled, and that new waiter must
+        # land in a fresh list rather than one being iterated (mirrors
+        # PanelManager._on_settled_watch_tick's identical swap-before-invoke).
+        waiters, self._theme_settled_waiters = self._theme_settled_waiters, []
+        for cb in waiters:
+            cb()
+
     def _on_theme_unhovered(self):
         # Cancel any hover preview still queued by the debounce so a stale name
         # can't fire its restyle after the cursor has already left the tab.
@@ -2269,12 +2513,21 @@ class ThemeManager(QObject):
         # debounce to this path.
         self._hover_debounce_timer.stop()
         self._pending_hover_theme = None
-        if self._cover_theme_active and self._cover_theme:
-            self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS,
-                                    hover=False, bypass_panel_open_guard=True)
-        else:
-            self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
-                                    hover=False, bypass_panel_open_guard=True)
+        # Mark this as a genuine snapback so it INTERRUPTS an in-flight preview fade
+        # rather than stashing behind it (see _snapback_in_progress's declaration and
+        # _hover_may_interrupt's computation in _on_theme_changed). try/finally so an
+        # exception in the apply cannot strand the flag — mirrors _on_theme_right_
+        # clicked's _selection_in_progress pattern exactly.
+        self._snapback_in_progress = True
+        try:
+            if self._cover_theme_active and self._cover_theme:
+                self._on_theme_changed(self._cover_theme, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                        hover=False, bypass_panel_open_guard=True)
+            else:
+                self._on_theme_changed(self._current_theme_name, save=False, fade_ms=_SNAPBACK_FADE_MS,
+                                        hover=False, bypass_panel_open_guard=True)
+        finally:
+            self._snapback_in_progress = False
 
     def _on_themes_tab_left(self, tab_widget):
         """`swatch_box`'s leaveEvent handler (wired in main_window_builders.py as a bare

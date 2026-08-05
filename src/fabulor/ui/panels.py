@@ -54,6 +54,17 @@ _BLUR_OUT_MS = 500
 # reads, so ~90 wakeups across a blur-in is negligible.
 _SETTLE_POLL_MS = 16
 
+# Additional pause after a genuine hover-out snapback visibly settles, before the
+# Settings-dismiss action it was blocking actually proceeds (2026-08-05, corrected
+# snapback-timing spec v2 — see review/Design_260805_snapback_timing_v2.md).
+# Makes the revert read as its own perceptible step ("revert, THEN close") rather
+# than the dismiss's first frame landing in the same tick the fade completes.
+# Starting value per Pryme's own stated range (100-200ms) — tune by live feel, not
+# fixed by measurement; this is a UX-feel constant, not a correctness one. ONLY
+# paid when a genuine snapback fade actually ran — see _close_settings_flow's own
+# _fade_in_flight check, which the ordinary no-hover dismiss skips entirely.
+_SNAPBACK_SETTLE_GAP_MS = 150
+
 class PanelManager:
     def __init__(self, main_window):
         self.main_window = main_window
@@ -1397,10 +1408,105 @@ class PanelManager:
         self._notify_panel_closed()
 
     def _close_settings_flow(self):
-        """Slides the settings panel back out."""
-        if hasattr(self.main_window, 'theme_manager'):
-            self.main_window.theme_manager._on_theme_unhovered()
-            self.main_window.theme_manager.snap_theme_forward()
+        """Slides the settings panel back out.
+
+        BLOCKS on the hover-out snapback visibly settling before the slide starts
+        (2026-08-05, corrected snapback-timing spec v2 — see
+        review/Design_260805_snapback_timing_v2.md — this SUPERSEDES a same-day
+        earlier attempt, 2abeab5, reverted the same session). The earlier attempt
+        called `_on_theme_unhovered()` then `snap_theme_forward()` synchronously,
+        back-to-back, exactly as the pre-fix code below did — `snap_theme_forward()`
+        immediately `.stop()`s whatever fade `_on_theme_unhovered()` just started
+        and force-applies it INSTANTLY (`fade_ms=0`), so by the time
+        `call_when_theme_settled` was reached, `_fade_in_flight` was already False
+        and the wait branch was never entered at all. The visible result was not a
+        blocked event loop (the wait mechanism itself is a non-blocking
+        `QTimer`-based re-check, same shape as `PanelManager.
+        call_when_panels_settled`, and never stalls painting) — it was that
+        `_apply_stylesheets`'s own ~700-810ms synchronous cost
+        (review/Investigation_260804_animation_latency.md) ran with NO animation
+        on screen at all, which reads as a freeze, followed by the sudden correct
+        colors the instant it finishes, which reads as a jump.
+
+        The fix: do NOT call `snap_theme_forward()` up front. `_on_theme_unhovered()`
+        alone already starts the correct, real, animated 200ms snapback fade
+        (confirmed instant-interrupt of any preceding preview fade via
+        `_snapback_in_progress` — see `_hover_may_interrupt` in `_on_theme_changed`).
+        This method waits for THAT fade to genuinely settle via
+        `call_when_theme_settled` before proceeding — during the wait, Qt's event
+        loop keeps running normally, so the fade overlay stays visible and the
+        200ms fade visibly plays once `_apply_stylesheets` completes underneath it.
+        `snap_theme_forward()` is still reachable, but only as
+        `call_when_theme_settled`'s own internal termination guarantee (a
+        generous, 2000ms bound) for the abnormal case where a fade genuinely never
+        settles — see that method's docstring. It must never be called
+        unconditionally from this method again.
+
+        RE-ENTRANCY GUARD (`_settings_close_pending`): a second Esc/gutter-click
+        while the first call is still waiting on `call_when_theme_settled` must
+        NOT re-issue `_on_theme_unhovered()` a second time. `active_full_panel()`
+        still reports "settings" as open throughout the settle-wait (the slide
+        animation genuinely hasn't started yet, so `_is_closing("settings")` is
+        correctly False), so a spammed dismiss WILL re-enter this method without
+        this guard. The guard is a plain no-op on re-entry, not a queue: the one
+        in-flight close is already going to finish and hide the panel; a second
+        request while it's pending adds nothing."""
+        if getattr(self, '_settings_close_pending', False):
+            logger.warning("[CLOSE-SETTINGS-TRACE] _close_settings_flow: EARLY-RETURN, "
+                            "already pending (re-entrancy guard)")
+            return
+        tm = getattr(self.main_window, 'theme_manager', None)
+        logger.warning(
+            f"[CLOSE-SETTINGS-TRACE] _close_settings_flow ENTRY has_tm={tm is not None} "
+            f"_is_hover_active={getattr(tm, '_is_hover_active', None)} "
+            f"_fade_in_flight_BEFORE={getattr(tm, '_fade_in_flight', None)} "
+            f"settings_visible={self.settings_panel.isVisible()} "
+            f"themes_tab_active={self.main_window.tabs.currentIndex() == 0 if hasattr(self.main_window, 'tabs') else None}"
+        )
+        if tm:
+            self._settings_close_pending = True
+            tm._on_theme_unhovered()
+            # A settle gap only makes sense — and should only cost anything — when
+            # a fade was GENUINELY started by the call above (a real hover-out).
+            # Check _fade_in_flight HERE, before call_when_theme_settled's own
+            # immediate-vs-deferred branch runs, so the ordinary no-hover dismiss
+            # (the overwhelming majority of dismisses) proceeds with truly zero
+            # added delay rather than a gap that happens to be scheduled for 0ms.
+            _was_fading = bool(getattr(tm, '_fade_in_flight', False))
+            logger.warning(
+                f"[CLOSE-SETTINGS-TRACE] after _on_theme_unhovered(): "
+                f"_fade_in_flight_AFTER={_was_fading} "
+                f"_is_hover_active={getattr(tm, '_is_hover_active', None)} "
+                f"_active_display_theme_internal={getattr(tm, '_active_display_theme_internal', None)!r}"
+            )
+            if _was_fading:
+                logger.warning("[CLOSE-SETTINGS-TRACE] waiting via call_when_theme_settled")
+                tm.call_when_theme_settled(self._finish_close_settings_flow_with_gap)
+            else:
+                logger.warning("[CLOSE-SETTINGS-TRACE] no fade started — proceeding immediately")
+                self._close_settings_flow_after_settle_gap()
+        else:
+            self._close_settings_flow_after_settle_gap()
+
+    def _finish_close_settings_flow_with_gap(self):
+        """Reached only when a genuine hover-out snapback was actually settled
+        (see _close_settings_flow's docstring). A small additional settle gap runs
+        first so the revert is perceptible as its own step before the panel starts
+        moving, rather than the slide's first frame landing in the same tick the
+        fade completes."""
+        logger.warning("[CLOSE-SETTINGS-TRACE] settled — starting settle gap timer")
+        QTimer.singleShot(_SNAPBACK_SETTLE_GAP_MS, self._close_settings_flow_after_settle_gap)
+
+    def _close_settings_flow_after_settle_gap(self):
+        logger.warning("[CLOSE-SETTINGS-TRACE] _close_settings_flow_after_settle_gap: "
+                        "starting slide-out animation now")
+        # Clear the re-entrancy guard from _close_settings_flow HERE, unconditionally
+        # (both the early-return-if-already-running path below and the normal path) —
+        # once this method runs, either the slide is about to start (after which
+        # _is_closing("settings") takes over as the correct re-entrancy signal) or it
+        # was already running (an unrelated stale race, not this guard's concern).
+        # Stranding this True would permanently block every future Settings dismiss.
+        self._settings_close_pending = False
         # Hide and collapse the excluded-books list explicitly on close —
         # belt-and-suspenders (reload() on the next open also collapses it),
         # and avoids it lingering visible for a frame while the panel starts
