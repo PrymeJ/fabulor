@@ -1,3 +1,90 @@
+## 2026-08-05 — Transport-bar blur audit: grab scope/cadence re-confirmed, declined-tick re-arm live-verified. Investigation only, nothing changed
+
+Requested directly: re-verify three prior findings on the transport-bar blur mechanism
+(`transport_bar_blur.py`) against current code rather than trusting the record, and resolve one
+long-standing open question (whether a tick declined by `refresh_dirty`'s hover/cooldown gates
+re-arms itself). Same night's earlier, unrelated finding — that the theme-fade overlay's
+`mw.grab()` captures the whole window despite never revealing the gutter through its mask — raised
+the concern that this adjacent mechanism might have drifted the same way. It has not.
+
+### Grab scope — confirmed unchanged, no drift
+
+`_grab_and_blur` (`transport_bar_blur.py:1054`) still calls `self.main_window.grab(padded_rect)`,
+where `padded_rect` is the dirty/bounding rect plus a small blur-radius margin — never a full-window
+grab. This is the opposite shape from the theme-fade overlay's `mw.grab()` (no rect argument at
+all, captures everything, masking happens only at paint time on an already-full capture). The two
+mechanisms share a class name pattern (`grab()` on `main_window`) but not a design — this one was
+scoped correctly from the start and still is.
+
+### Refresh cadence — fully event-driven, matches July, no regression found
+
+`_REFRESH_INTERVAL_MS` no longer exists as a live constant — only in a historical comment
+describing the pre-2026-07-20 polling design it replaced. Confirmed still event-driven via
+`_DirtyRectTracker`'s `QEvent.Paint` filter + `_schedule_refresh`'s coalescing `QTimer.singleShot(0,
+...)`, exactly as the July design intended.
+
+This was checked in response to "firing too much to my liking" — measured over a real ~12-minute
+session (04:12–04:24, `fabulor.log.1`, 32 panel-opens) rather than assumed either way:
+
+| | value |
+|---|---|
+| total `_grab_and_blur` calls | 590 |
+| mean cost | 14.15ms |
+| median cost | 14.95ms |
+| p90 | 18.77ms |
+| max | 72.46ms (first call in process — chronological, not sorted away; matches this project's documented first-call-elevated pattern) |
+| total time spent grabbing+blurring | 8.35s over the ~12 minutes |
+
+This re-confirms July's per-call cost figures. Grab *volume* (590 over 32 opens, ~18/open) reflects
+organic repaint activity (marquees, sliders, transport buttons), not a runaway loop. The
+"firing too much" impression is not explained by grab count or per-call cost — if it recurs, it is
+not this mechanism; the still-open general-responsiveness thread in TODO.md's theme-bleed entry is
+the more likely home for it.
+
+### The declined-tick re-arm gap — now live-verified, not just unit-pinned
+
+`ac87e0a` (2026-07-27) added `_rearm_after_decline()`/`_fire_rearm()` to fix a real gap:
+`refresh_dirty`'s hover-active and post-restyle-cooldown gates declined a tick without consuming its
+dirty union, on the assumption "the next real paint picks it up" — which fails specifically when
+the hover preview being declined never diverged from the committed theme, so the eventual snapback
+hits `_on_theme_changed`'s no-op guard, never calls `_apply_stylesheets`, produces no Paint event,
+and the stranded union is never retried. The fix shipped with 7 passing unit tests
+(`tests/test_blur_decline_rearm.py`) but its own commit message says plainly: "Static-traced and
+unit-pinned, not live-verified — offscreen harnesses cannot see compositing defects in this area."
+That gap — a real mechanism, verified only in isolation — is what tonight closes.
+
+**Method**: a real, non-offscreen `MainWindow`, built and shown the same way
+`tools/tags_geometry_probe.py` already does (per this file's standing rule that a real widget tree
+after a real `show()` is trustworthy where an offscreen reconstruction is not), driven by a script
+(`tools/blur_rearm_live_probe.py`, kept as a diagnostic tool, not wired into any test suite) through
+the exact stranding sequence: open Settings → hover a theme different from the committed one, long
+enough for the preview to genuinely apply → un-hover back to the already-committed theme, so the
+snapback is a genuine no-op duplicate.
+
+**Result**: this produced far more stress than the script itself explicitly drove. The hover alone
+generated real, organic repaint activity on the tracked transport widgets, which `refresh_dirty`
+declined **25 consecutive times** via the hover gate. The un-hover's snapback then genuinely fired
+(`_on_fade_finished` ran with a real pending call — contradicting my own assumption mid-script that
+it would hit the no-op guard immediately), which put the post-restyle cooldown in effect, producing
+**13 more consecutive declines** via the cooldown gate. That's **38 consecutive declined ticks** in
+one real run — a substantially harder test than the unit suite's synthetic single-decline cases. The
+coalesced re-arm retry kept firing through all 38 and landed a successful `COMPOSITED` refresh the
+moment both gates cleared. The overlay never froze.
+
+This is stronger evidence than the unit tests alone provide, because the decline streak and its
+length were not scripted — they emerged from real Qt repaint behavior during a real hover, which is
+exactly the class of thing this project's standing rule says offscreen/synthetic testing cannot be
+trusted to produce or observe. Closed in TODO_ARCHIVE.md as fixed-and-live-verified, distinct from
+merely fixed-and-unit-pinned, which was the actual, real gap tonight closes.
+
+### What this does not resolve
+
+The still-open "general responsiveness slow" complaint (TODO.md, filed 2026-07-28 near the
+theme-bleed fix) is not explained by anything found here — this mechanism's grab volume and cost
+both look healthy. If it recurs, look elsewhere.
+
+---
+
 ## 2026-08-02 — The root-restyle cost is caused by SETTING A STYLESHEET ON THE ROOT AT ALL, not by what is in it — and the tree's DEPTH is the multiplier. Investigation only, nothing changed
 
 Started from a live report about the settings-panel dismiss and ended by disproving the explanation

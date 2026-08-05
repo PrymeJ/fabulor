@@ -1,3 +1,44 @@
+## Session Summary — 2026-08-05 — Transport-bar blur audit: grab scope/cadence re-confirmed, declined-tick re-arm live-verified
+
+Requested directly: re-verify three prior findings on the transport-bar blur mechanism against
+current code, and resolve the one long-standing open question — whether a tick declined by
+`refresh_dirty`'s hover/cooldown gates re-arms itself. Investigation only; the one code artifact
+kept is `tools/blur_rearm_live_probe.py`, a diagnostic script, not a fix.
+
+**Grab scope**: confirmed unchanged since July — `_grab_and_blur` still calls
+`self.main_window.grab(padded_rect)`, a rect-scoped grab, never a full-window one. This matters
+because the SAME night, in an unrelated mechanism (the theme-fade overlay), `mw.grab()` was found
+capturing the whole window despite its mask never revealing the gutter — a real, confirmed drift in
+that adjacent code. This mechanism has not drifted the same way.
+
+**Refresh cadence**: confirmed still fully event-driven (`_REFRESH_INTERVAL_MS` is gone as a live
+constant, survives only in a historical comment). Measured over a real ~12-minute session with 32
+panel-opens: 590 grabs, mean 14.15ms, median 14.95ms, p90 18.77ms — matching July's per-call cost
+with no evidence behind the "firing too much" impression.
+
+**The re-arm gap — now live-verified, not just unit-pinned.** `ac87e0a` (2026-07-27) fixed a real
+gap (a declined tick's dirty union stranding forever when the eventual snapback hits
+`_on_theme_changed`'s no-op guard and never repaints) but its own commit message flagged it as
+"static-traced and unit-pinned, not live-verified." A scripted real-`MainWindow` repro (open
+Settings → hover an uncommitted theme → un-hover back to the committed one) organically produced
+**38 consecutive declined ticks** — 25 via the hover gate, then 13 via the cooldown gate once the
+snapback's own restyle genuinely fired — far more than the script itself drove. The re-arm retried
+through all 38 and landed a clean `COMPOSITED` refresh once both gates cleared. Closed in
+TODO_ARCHIVE.md as fixed-and-live-verified.
+
+**Process note, for the record**: mid-session, checking out a fresh investigation branch off `main`
+(as instructed, since this mechanism lives on `main` while the theme-hover fixes live on
+`investigate/restyle-cost-depth-and-narrowing`) and resetting the working tree to `main`'s files
+briefly left ~3 days of committed, unpushed work looking absent from the working directory. Nothing
+was lost — every commit was intact on its branch the whole time (confirmed via reflog) — but it
+was a real scare, worth recording so a future session recognizes the same shape immediately: if the
+app suddenly looks old and files look reverted, check `git branch --show-current` and `git log
+--oneline` before assuming data loss. A branch switch is not a revert.
+
+Full write-up: NOTES.md, 2026-08-05.
+
+---
+
 ## Session Summary — 2026-08-02 Session 1 — Panel-backdrop switch: ~1040ms → ~555ms by scoping the restyle
 
 Reported live: clicking a panel-backdrop mode freezes the app for 1-2 seconds, the button not even

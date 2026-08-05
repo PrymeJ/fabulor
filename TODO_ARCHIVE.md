@@ -63,6 +63,58 @@ order these entries had in TODO.md before the split (2026-07-30).
   themes, produced no missed sidebar toggles at all. Both put to bed unless they recur; the DEBUG
   regression detector above is how (a) would be spotted again.
 
+- **[2026-07-20] CLOSED (fixed 2026-07-27, live-verified 2026-08-05):
+  `refresh_dirty`'s cooldown/hover gates don't re-arm a declined tick.** Both declining gates
+  (hover-active, post-restyle cooldown) returned without scheduling any retry, on the documented
+  reasoning that "the next real paint picks it up" — the dirty union is deliberately not consumed, so
+  a later paint would find it.
+  **Why that reasoning did not hold** (static trace, `theme_manager.py`): the hover gate's own
+  docstring argued hover-end self-corrects because `_on_theme_unhovered`'s snapback restyle repaints
+  the tracked widgets. But the snapback is `_on_theme_changed(..., hover=False)`, and that method's
+  no-op guard (`_active_display_theme_internal == theme_name and _is_hover_active == hover`) returns
+  early **without calling `_apply_stylesheets`** whenever the requested pair is already the applied
+  one — exactly the state after a hover preview was DECLINED here instead of painted: the live theme
+  never moved, `_mark_theme_applied` was never reached for the hovered theme, so the snapback is a
+  genuine duplicate → guard fires → no restyle → no Paint event → the stranded union is never
+  retried. Overlay would hold stale content indefinitely while the app kept running.
+  **Fix (`ac87e0a`, 2026-07-27):** `_rearm_after_decline()` / `_fire_rearm()`
+  (`transport_bar_blur.py`) — a delayed (`_DECLINE_REARM_MS = 450`, sized above
+  `_POST_RESTYLE_COOLDOWN_S` so one retry normally clears the cooldown outright rather than
+  spinning) coalescing retry, armed by both declining gates only. Deliberately on its own
+  `_rearm_pending` flag, not routed through `_schedule_refresh` — that is the tracker's real-paint
+  entry point, and a declined tick must not masquerade as observed paint. A no-dirty tick is not a
+  decline and does not re-arm. Cleared in `hide_for_panel`. Pinned by
+  `tests/test_blur_decline_rearm.py` (7 tests) — but at the time of that commit, only static-traced
+  and unit-pinned, explicitly **not** live-verified (the commit message says so directly): per this
+  area's standing rule, offscreen harnesses cannot see compositing defects here, so the actual
+  stale-overlay symptom needed a live confirmation the unit tests alone could not provide.
+  **Live-verified 2026-08-05** (`tools/blur_rearm_live_probe.py`, a real non-offscreen `MainWindow`
+  driven by a script, kept in `tools/` as a diagnostic): opened Settings, hovered a theme different
+  from the committed one, then un-hovered back to the already-committed theme — the exact
+  no-op-snapback stranding path this fix targets. This organically produced **38 consecutive
+  declined ticks** (25 via the hover gate, then 13 via the cooldown gate once the snapback's own
+  restyle triggered it) — real repaint pressure from the hover itself, well beyond anything the
+  script explicitly drove. The coalesced re-arm retry kept firing through all 38 declines and landed
+  a successful `COMPOSITED` refresh once both gates cleared. The overlay never froze. This closes the
+  entry as fixed AND live-confirmed, not merely unit-pinned — the gap the original fix left open.
+  **Also closes** the related "[2026-07-20] blur overlay's refresh timer permanently stops firing"
+  entry below it in the old TODO.md, whose UPDATE 2026-07-27 (b) had already traced this exact
+  mechanism as the likely cause without ever reproducing the original screenshot; this live
+  reproduction is the confirmation that update was waiting on.
+
+- **[2026-08-05] Transport-bar blur grab volume/cost re-confirmed against July's numbers, no
+  regression found.** Investigated in response to a report that the blur "fires too much." Grab
+  scope (`self.main_window.grab(padded_rect)`, never a full-window grab) confirmed unchanged from
+  July — no drift, unlike the unrelated `mw.grab()` full-window capture found the same night in the
+  theme-fade overlay (a different mechanism entirely; see NOTES.md 2026-08-05). Refresh cadence
+  confirmed still fully event-driven (`_REFRESH_INTERVAL_MS` no longer exists as a live constant,
+  only in a historical comment). Measured over a real ~12-minute session with 32 panel-opens: 590
+  total grabs, mean 14.15ms, median 14.95ms, p90 18.77ms, max 72.46ms (first call in process,
+  matching this project's documented first-call-elevated pattern) — in line with July's per-call
+  cost figures, no evidence of a runaway loop or increased firing rate. The "fires too much"
+  complaint is not explained by grab volume or per-call cost; if it recurs, look elsewhere (possibly
+  the same general-responsiveness thread flagged in the still-open theme-bleed entry in TODO.md).
+
 - **[2026-07-28] CLOSED (live-verified): sidebar right-clicks discarded mid-slide** (`f0dbc99`,
   `911b4c5`). The re-entrancy guard silently dropped 5 of 25 clicks (20%) arriving inside the 300ms
   slide. The first fix — queueing the toggle — was worse: each replay started a new slide that
