@@ -1,4 +1,91 @@
-## Session Summary — 2026-08-04 — `investigate/restyle-cost-depth-and-narrowing`: hover-state read path redesigned and staged in, live-verified across five distinct disagreement mechanisms
+## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2)
+
+Follows directly from Session 1 below (the `get_displayed_theme()` hover-state read-path redesign).
+That redesign fixed WHAT `get_active_theme()` returns; this session found and fixed WHO calls it,
+measured what a fix in this area is actually allowed to assume about Qt's timing, and landed a
+corrected version of a same-day fix that had to be reverted once.
+
+**Write-path confinement (`7c4682f`).** Live testing after Session 1 found the leak was never about
+`get_active_theme()`'s own logic — several consumers (`LibraryPanel`'s view-mode/search/refresh
+paths, Speed/Sleep's preset-ramp color functions, the Excluded Books popup) called
+`get_current_theme()` directly from ordinary UI events with no relationship to a theme change,
+baking a live hover into panels structurally invisible during any hover (confirmed live: up to 78s
+of staleness). Pryme rejected a catch-up-call fix and named the real invariant: "Anything invisible
+has no business calling anything to get a new color... The active theme never changes unless there
+is a deliberate right-click." Traced `_current_theme_name` and confirmed it already was exactly that
+value (written only by 4 deliberate-commit sites, never a hover path) — added `get_committed_theme()`
+as a thin accessor and redirected six leak sites to it. Verification was necessarily
+synthetic (Settings and every other panel are mutually exclusive by construction — a new CLAUDE.md
+rule records this) via 8 new tests forcing the hover fields directly.
+
+**The actual root cause (`f2cfa6d`).** Confinement alone didn't close the loop — Speed/Sleep's PANEL
+BACKGROUND kept leaking. Traced to `_apply_stylesheets` having no reason to touch `speed_panel`/
+`sleep_panel` during a hover at all, and doing so anyway: `panel_sheets` unconditionally built all
+three panel stylesheets regardless of hover state, and the `_pending_panel_sheet` stash
+unconditionally overwrote Speed/Sleep's entries with the hovered theme's colors. Pryme, after three
+days on this: *"It should have been checked and confirmed that the new design doesn't style the
+wrong panels since it was the main goal of the design in the first place."* Fixed by omitting
+`speed_panel`/`sleep_panel` from `panel_sheets` entirely when `hover=True` (matching Stats/Tags'
+existing structural immunity), with the stash write changed from a bare replace to `dict.update()` —
+a bare replace would have deleted Speed/Sleep's existing correct entries outright. 3 new tests
+against a real headless `QApplication`; suite 453/453.
+
+**First corrected-timing attempt, reverted (`2abeab5`/`9650a1f` → `0396f5b`).** Implemented Esc/
+gutter-dismiss blocking on the snapback settling via `ThemeManager.call_when_theme_settled`
+(`QTimer`-based predicate re-check, mirroring `PanelManager.call_when_panels_settled`). Pryme
+reported it visibly froze the UI for ~700-800ms then jumped, instead of showing a smooth revert —
+the opposite of the intent. Reverted (`git diff` against the pre-fix commit confirmed empty) rather
+than patched in place, per Pryme's explicit instruction that any further sequencing fix needed real
+latency numbers first.
+
+**Animation latency, measured live before retrying (`6392ebb`,
+`review/Investigation_260804_animation_latency.md`).** Built `tools/animation_latency_probe.py`
+against a live, on-screen `MainWindow`. Found and fixed two of the harness's own bugs before
+trusting any number: `QGraphicsOpacityEffect.draw` patched at the class level conflated the fade
+overlay with unrelated widgets' effects (a false ~900ms "stray paint" reading); triggering right
+after opening Settings raced the panel's own 1500ms blur-in, a different already-documented
+mechanism (a false ~950ms "start latency" that was actually leftover blur-in settle time). Results,
+once clean: interrupt-clear is genuinely instant (0.0ms, 5/5 trials) — `.stop()` clears the fade
+overlay immediately. Animation-start costs a constant ~680-810ms regardless of configured duration
+(0/200/1500ms all land in the same band) — traced to `_apply_stylesheets` running synchronously
+before `_fade_anim.start()`, the same already-documented restyle cost this branch has been measuring
+all along, now showing up as perceived animation lag. No sequencing fix proposed in that pass —
+measurement and root-cause only, per explicit scope.
+
+**Corrected snapback timing, take 2 — three bugs, three fixes, one day
+(`review/Design_260805_snapback_timing_v2.md`, full detail in NOTES.md 2026-08-05).** (1) The
+reverted attempt's freeze-then-jump was traced to `_close_settings_flow` calling
+`snap_theme_forward()` right after `_on_theme_unhovered()` — force-stopping and instantly
+re-applying the very fade the dismiss was meant to wait for. Fixed by dropping that unconditional
+call; its one real job (preventing a hang if a fade never settles) survives as a 2000ms
+termination-guarantee timeout. (2) Live-reproduced by Pryme twice — my first diagnosis of the Camorr
+case (a `[SWATCH-LEAVE-SUSPECT]` leaveEvent misclassification) was wrong, and Pryme corrected it
+directly: *"Mouse doesn't leave the swatch. I press Esc."* New `[CLOSE-SETTINGS-TRACE]` logging
+found the real mechanism: a genuine hover arriving while the dismiss's own snapback was still fading
+correctly interrupts it and starts its own fade, which then settles on its own schedule — the bare
+`not _fade_in_flight` settle check mistook that for the dismiss's snapback finishing. Fixed via
+`_theme_genuinely_settled_on_committed()`, requiring the displayed theme to equal
+`get_committed_theme()` with `_is_hover_active` False; locked in as a permanent regression test, not
+just a live check, per Pryme's ask. (3) Cover-art theme modes were found to block/mistime dismissal
+— `get_committed_theme()` never checked `_cover_theme_active`, so the new predicate compared a dict
+against a string in cover-art mode and could only ever "settle" by accident, via an unrelated older
+guard. Fixed by widening `get_committed_theme()` to mirror `get_displayed_theme()`'s own existing
+cover-theme check, after confirming all five real call sites already handle a dict return safely.
+Verified: 477/477 unit tests, plus live runs via a new harness
+(`tools/snapback_dismiss_live_verify.py`) — 5x dismiss-mid-preview, 3x termination-guarantee, 15x
+deliberate mid-wait-hover injection, 3x both cover-art modes — with one harness isolation bug (this
+machine's real, persisted `cover_art_theme_mode` leaking into unrelated tests) found and fixed
+mid-verification.
+
+Every fix this session was preceded by an explicit trace of the reported symptom's actual mechanism
+before any code changed — three separate live corrections from Pryme (the write-path invariant, the
+`_apply_stylesheets` root cause, and the Esc-not-leaveEvent trigger) each redirected the work away
+from a plausible-but-wrong theory toward the real one, and each is recorded above rather than
+smoothed over.
+
+---
+
+## Session Summary — 2026-08-04 Session 1 — `investigate/restyle-cost-depth-and-narrowing`: hover-state read path redesigned and staged in, live-verified across five distinct disagreement mechanisms
 
 Follows directly from the prior session's `1a82c11` backstop fix and the same-day
 `get_current_theme()` confinement patches (`95eae22`, `3aba9b2`, `5150f30`). Those three fixes each

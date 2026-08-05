@@ -1,3 +1,105 @@
+## 2026-08-05 — Corrected snapback timing, take 2: three live-reported bugs, three root causes, one fix landed for each
+
+Full design writeup: `review/Design_260805_snapback_timing_v2.md`. This entry is the narrative;
+that document has the mechanism-level detail.
+
+**Starting point:** the prior session's Esc/gutter-dismiss "wait for the snapback to settle" fix
+(`2abeab5`/`9650a1f`, 2026-08-04) had already been reverted (`0396f5b`) because it visibly froze
+then jumped instead of showing a smooth revert. Pryme's diagnosis going in: the wait mechanism
+itself was probably stalling the event loop, and that had to be measured before trying again —
+`review/Investigation_260804_animation_latency.md` confirmed interrupt-clear is instant (0.0ms) but
+animation-start genuinely costs ~680-810ms regardless of configured duration, an unavoidable,
+already-documented `_apply_stylesheets` cost.
+
+**Bug 1 — the wait mechanism was never the problem; the call right before it was.** Reading the
+reverted diff (not re-guessing) showed `_close_settings_flow` called `_on_theme_unhovered()` then
+`snap_theme_forward()` back-to-back, synchronously. `snap_theme_forward()` immediately stops
+whatever fade `_on_theme_unhovered()` just started and force-applies it INSTANTLY — so the "wait for
+settle" branch was structurally never entered; `_fade_in_flight` was already `False` by the time it
+was checked. The freeze-then-jump was `_apply_stylesheets`'s own cost running with no animation
+visible at all. Fixed by dropping the unconditional `snap_theme_forward()` call — checked first
+that doing so wouldn't reopen the bug that call was originally protecting against (a fade that
+never settles, hanging the dismiss forever); that job survives as `call_when_theme_settled`'s own
+2000ms termination-guarantee timeout, roughly double the ~1010ms worst-case measured normal settle.
+
+**Bug 2 — live-reproduced by Pryme, and my first diagnosis of it was wrong.** Pryme reported: "After
+2:34:45 The Eyrie hovered, falls to main screen, corrects at 2:34:50" (and, earlier, a similar
+Camorr/Turquoise-Days pattern). I initially traced the Camorr case to `[SWATCH-LEAVE-SUSPECT]` — a
+genuine leaveEvent being misclassified as a blur-grab synthetic and suppressed. Pryme corrected this
+directly and plainly: *"I doubt that SWATCH-LEAVE-SUSPECT is the culprit here. Mouse doesn't leave
+the swatch. I press Esc."* That correction is what CLAUDE.md's own standing rule calls "a report
+about what Pryme did is data, not a competing theory" — the right next move was a lookup, not
+continuing to defend the inference. Added `[CLOSE-SETTINGS-TRACE]` logging directly at
+`_close_settings_flow`'s own call sites (rather than continuing to infer from unrelated log lines)
+and re-traced The Eyrie event with it live. Found the real mechanism: Esc pressed while hovering
+theme A starts a real snapback fade toward the committed theme; BEFORE that fade settles, the
+cursor — still over the still-open Themes tab — genuinely hovers theme B, which correctly interrupts
+A's fade (a genuine hover always interrupts, per `_hover_may_interrupt`) and starts its own; B's
+fade then settles on ITS schedule, and the settle predicate (bare `not _fade_in_flight`) mistook
+that for the dismiss's own snapback having finished, closing the panel showing B for one frame
+before an unrelated later correction fixed it. Fixed via `_theme_genuinely_settled_on_committed()`,
+requiring the displayed theme to actually equal `get_committed_theme()` with `_is_hover_active`
+False — a hover on any other theme (or even the same name) now correctly fails this and keeps the
+wait alive. Before building on `get_committed_theme()`, confirmed explicitly (per Pryme's
+instruction, given this session's history of naming mix-ups) that it returns the identical
+`_current_theme_name` field, not a similarly-named lookalike. Locked in as a permanent regression
+test (`test_call_when_theme_settled_waits_through_a_hover_that_interrupts_the_snapback`), not just a
+live check, per Pryme's explicit ask.
+
+**Bug 3 — cover-art theme mode, found by Pryme asking a pointed question rather than reporting a
+symptom.** "Can you check if the mute icon needs to be added to the base_stylesheet?" led nowhere
+(the icon is already correctly theme-driven — see the mute-icon tangent below), but the SAME
+question about cover-art theme modes blocking dismissal led somewhere real. Traced
+`_on_theme_unhovered()`'s cover-art branch: it targets `self._cover_theme` (a dict) whenever
+`self._cover_theme_active` is `True`, exactly mirroring `get_displayed_theme()`'s own existing
+check — but `get_committed_theme()` never checked `_cover_theme_active` at all, always returning the
+bare `_current_theme_name` string. So Bug 2's fixed predicate compared a dict against a string in
+cover-art mode, which can never be `True` via its intended path. Confirmed via direct log trace that
+the dismiss had only been working by accident, via a completely different, older no-op guard in
+`_on_theme_changed` coincidentally matching first — without that accident, the dismiss would have
+silently ridden the 2000ms timeout instead of closing promptly. Before widening
+`get_committed_theme()`'s return type, checked all five real call sites (`library.py` x2,
+`sleep_timer.py`, `speed_controls.py`, `app.py`'s `_reload_excluded_books`) for any bare-string
+assumption — all five route through `themes._resolve_theme()` first, which already has an
+`isinstance(theme_name, dict)` branch (confirmed necessary: `get_displayed_theme()` already returns
+cover-theme dicts to these same call shapes whenever a hover happens to be live in cover-art mode).
+None break. Fixed by widening `get_committed_theme()` to check `_cover_theme_active`/`_cover_theme`
+first, mirroring `get_displayed_theme()`'s existing shape.
+
+**A tangent worth recording for the pattern, not the code:** asked whether the mute icon needed
+adding to the base stylesheet, since it "usually didn't change color other than in Razorgirl" during
+this session's testing. Traced `_reload_button_icons` and confirmed the icon is already correctly
+theme-driven (every theme defines a distinct `slider_vol_fill`, called on every `_apply_stylesheets`
+pass, no caching bug) — my working theory was that the icon was rarely visible (it only shows at
+volume 0) and Razorgirl's neon cyan happened to be the one color saturated enough to stand out.
+Pryme's actual explanation, given directly rather than left for me to re-derive: a stray `m`
+keypress meant for something else Pryme was typing had landed on the live-verification harness's own
+separate `MainWindow` window by ordinary focus accident, muting it for the whole session — so the
+icon was visible on literally every test, not rarely. No code change was needed; recorded here
+because it's the same "trust the report, verify the mechanism, don't re-litigate" shape as Bug 2's
+correction, just lower stakes.
+
+**Verification.** 477/477 unit tests (9 new/changed across `test_theme_settle_resume.py`,
+`test_write_path_confinement.py`, `test_close_settings_flow_blocks_on_snapback.py`,
+`test_hover_interrupts_snapback.py`). Live, via a new harness
+(`tools/snapback_dismiss_live_verify.py`) driving the real `ThemeManager`/`PanelManager` against an
+on-screen `MainWindow`: 5x dismiss-mid-1500ms-preview (real paint frames confirmed, event loop's own
+heartbeat gaps attributed to `_apply_stylesheets`'s already-known cost, not a new stall), 3x
+termination-guarantee fallback, 15x deliberate mid-wait-hover injection (Bug 2, 15/15 correct across
+3 runs), 3x both cover-art modes (Bug 3, both close in ~335-340ms, well under the 2000ms fallback).
+One harness bug found and fixed mid-verification: `MainWindow()` construction reads this machine's
+REAL, persisted `cover_art_theme_mode`, which was genuinely left active from earlier testing and
+silently made the plain-theme tests (1-7) exercise the cover-art path instead — itself a useful
+confirming data point that Bug 3 was reachable via ordinary state, not a contrived one.
+
+Settings-internal tab-switch (the other half of the original combined TODO entry) remains
+unimplemented and is structurally different — `QTabWidget.currentChanged` fires after the tab has
+already switched, with no pre-change signal to veto from, so genuinely blocking it needs a tab-bar
+click-interception event filter, not a reuse of this fix's shape. Deferred as its own follow-up per
+Pryme's explicit call to keep the two independently verifiable.
+
+---
+
 ## 2026-08-04 — Structural bug: at least THREE panels (Library, Speed, Sleep) cache theme-derived widget state that their own open flow never refreshes — root-caused via temporary probes, not fixed yet
 
 **Pre-existing bug, unrelated to `get_active_theme()`/`get_displayed_theme()`.** Found while
