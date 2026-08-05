@@ -1,4 +1,4 @@
-## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2), migration cleanup, tab-switch scoped
+## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2), migration cleanup, tab-switch interception implemented
 
 Follows directly from Session 1 below (the `get_displayed_theme()` hover-state read-path redesign).
 That redesign fixed WHAT `get_active_theme()` returns; this session found and fixed WHO calls it,
@@ -95,7 +95,7 @@ unconditionally produces a genuine settle (via today's fixed predicate, in both 
 timeout-fallback paths) before this method could ever run — so it was never actually providing that
 backstop. Both deletions verified one at a time (477→477→473) plus an unchanged live spot-check.
 
-**Tab-switch investigated live (not implemented) — confirmed broken via two distinct triggers.**
+**Tab-switch investigated live — confirmed broken via two distinct triggers, then implemented.**
 Trigger 1, hover-then-switch: 5/5 trials never revert; signal-chain instrumentation confirmed Qt
 never delivers a `leaveEvent` to `swatch_box` on a tab switch at all, so the dismiss fix's own
 mechanism is never entered. Trigger 2, raised by Pryme after seeing trigger 1's result: "Change
@@ -103,9 +103,25 @@ now" (a genuine selection) immediately followed by a tab switch. Checked live ra
 identical to trigger 1 — it isn't: the committed theme and fade state all resolve correctly on
 their own, but `_fade_overlay` is parented to `main_window`, not the Themes tab, so it keeps
 animating onto whatever tab is now showing instead of stopping where it started. Pryme's own
-framing when this was stated back: *"Exactly. I prefer the fade finishes where it starts."* Both
-triggers need the same tab-bar click-interception event filter; neither implemented, both recorded
-in TODO.md for that future work.
+framing when this was stated back: *"Exactly. I prefer the fade finishes where it starts."*
+
+**Implemented (`7ca4033`, `fa6cbd9`): `_ThemesTabBarInterceptor`**, an event filter on `mw.tabs.
+tabBar()` intercepting `MouseButtonPress` before Qt's own tab-switch handler runs — the only point
+early enough to avoid showing even one frame of the wrong tab's content. First version gated on
+`_is_hover_active` alone, live-verified correct for trigger 1 (5/5 × 3 runs, both timings) and
+committed as WIP. Pryme then reported it live: *"Doesn't work for the Change now button. It
+continues to fade and during that time I can switch multiple tabs."* Root cause: a selection's own
+fade never sets `_is_hover_active=True`, and — the sharper detail — `_mark_theme_applied` sets the
+displayed-theme identity to match the committed value BEFORE the fade even starts, so an
+identity-only check would have missed it too; `_fade_in_flight` is the field that actually stays
+`True` for the fade's visual duration. Fixed by widening the gate to `ThemeManager.
+_theme_genuinely_settled_on_committed()` — the exact predicate the dismiss fix already uses —
+closing the selection case without weakening the hover case. Confirmed `_on_theme_unhovered()`
+stays a safe no-op against a selection's own fade via the pre-existing no-op guard in
+`_on_theme_changed`. Live-verified via a new Part C reproducing the exact reported sequence
+(Change now, then 4 rapid tab clicks during its fade): 5/5 × 3 runs, every click deferred, lands on
+the last-clicked tab once settled. This closes out the tab-switch scope entirely; both triggers are
+implemented and verified, with no remaining open item in TODO.md.
 
 ---
 

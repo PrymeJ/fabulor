@@ -1,3 +1,53 @@
+## 2026-08-05 (later still, same day) — Tab-switch snapback interception implemented, corrected once for the "Change now" case
+
+Direct continuation of the migration-cleanup entry below. With both tab-switch triggers confirmed
+broken, implemented the approved fix: `_ThemesTabBarInterceptor` (`ui/panels.py`), an event filter
+installed on `mw.tabs.tabBar()` intercepting `QEvent.Type.MouseButtonPress` — the switch itself
+happens inside `QTabBar.mousePressEvent`, on press, so anything later (release, `currentChanged`)
+would already show a frame of the wrong tab's content. On a press targeting a different, not-yet-
+settled tab, the click is consumed and deferred via the exact mechanism the Esc/gutter dismiss fix
+already uses: `_on_theme_unhovered()` + `ThemeManager.call_when_theme_settled()`.
+
+**First version, gated on `_is_hover_active` — worked for trigger 1, silently missed trigger 2.**
+Live-verified clean for the hover case: 5/5 trials × 3 runs (both immediate and paused clicks) —
+the click is intercepted, the theme reverts, the tab lands correctly, chrome matches committed. The
+no-hover pass-through case was also confirmed 5/5 × 3 runs at ~40-55ms, indistinguishable from
+unmodified Qt tab-switching. Committed as WIP at Pryme's request before continuing.
+
+Pryme then reported live: *"Doesn't work for the Change now button. It continues to fade and
+during that time I can switch multiple tabs."* Traced precisely rather than guessed: "Change now"
+(`_do_rotate`) is a genuine SELECTION, not a hover — it applies with `hover=False`, so
+`_is_hover_active` stays `False` for the ENTIRE duration of its own fade, and my first version's
+gate had nothing to catch it on. Worse, an identity-only check (comparing `_active_display_theme_
+internal` to the committed theme) would ALSO have missed it: `_mark_theme_applied` sets that field
+to match the new committed theme BEFORE `_fade_anim.start()` even runs in the themes-tab-overlay
+branch, so the identity already matches while the fade is still visually animating.
+`_fade_in_flight` is the one field that genuinely stays `True` for the fade's full visual duration
+— exactly what `ThemeManager._theme_genuinely_settled_on_committed()` already checks, alongside the
+identity match and the hover flag, as one combined predicate. Widened the interceptor's gate to
+that predicate instead of the bare flag — this closes the selection case without weakening the
+hover case at all, since a hover mid-fade already fails the same predicate (`_is_hover_active=True`).
+
+Confirmed, not assumed, that calling `_on_theme_unhovered()` during a selection's own fade is a
+safe no-op: it calls `_on_theme_changed(self._current_theme_name, hover=False, ...)`, and since
+`_current_theme_name`/`_active_display_theme_internal` already match (both set before the fade
+started), `_on_theme_changed`'s own pre-existing no-op guard fires immediately — no second fade
+starts, no interference with "Change now"'s own animation.
+
+Live-verified via a new Part C in `tools/tab_switch_snapback_check.py`, built to reproduce the
+exact reported sequence rather than a simplified version of it: click "Change now", then click 4
+different tabs in rapid succession while its fade is still running (matching "I can switch
+multiple tabs," not just one). 5/5 trials × 3 full runs: every one of the 4 rapid clicks stays
+blocked on the Themes tab throughout the fade, the app correctly lands on the last tab clicked once
+settled, and the chrome matches the committed theme every time. Parts A (hover) and B (no hover)
+re-confirmed unaffected by the widened gate. 6 unit tests updated to model the predicate directly
+rather than the bare flag. Suite 479/479 throughout.
+
+This closes out the tab-switch scope entirely — both confirmed triggers now correctly intercepted
+and verified, no remaining open item for it in TODO.md.
+
+---
+
 ## 2026-08-05 (later same day) — Migration cleanup: two mechanisms deleted, tab-switch confirmed broken via two distinct triggers
 
 Follows directly from the snapback-timing v2 fix below. With the Esc/gutter-dismiss fix landed and

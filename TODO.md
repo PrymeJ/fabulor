@@ -35,7 +35,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
 
 ### Theme color/data
-- [2026-08-05] Settle a Themes-tab hover-preview snapback before a Settings **tab switch** (Look/Library/Audio/Controls) — the Esc/gutter-**dismiss** half is DONE. Tab-switch confirmed BROKEN via two distinct triggers (hover-then-switch: never reverts, no leaveEvent fires; Change-now-then-switch: state resolves fine but the fade overlay bleeds onto the new tab since it's parented to `main_window`, not the Themes tab — Pryme wants it confined to where it started). Both need the same tab-bar click-interception event filter; not yet implemented.
 - [2026-07-07] Per-theme library color pass only covers A–S alphabetically (`library_bg`/`library_row_one`/`_two`/`library_item_hover_color`/`_alpha`/`library_title`/`_author`/`_narrator`/`_elapsed`/`_total`/`_percentage`/`library_slider_bg`/`_fill`/`library_input_bg`/`_text`) — letters T onward still need the same tuning pass (`ae4441c`)
 - [2026-07-28] Some themes need a preset-ramp colour override (known theme-data issue)
 - [2026-07-28] Three-state panel background shipped and working; clicking an option has perceptible lag
@@ -88,40 +87,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-14] App-start flow-animation baseline roughness (Regime A) — standalone ~70ms hitch
 
 ## Pending
-
-- **[2026-08-05] Settle a Themes-tab hover-preview snapback before a Settings TAB SWITCH — confirmed
-  two ways in, both need the same eventFilter fix.** The Esc/gutter-**dismiss** half of this original
-  entry is DONE — see `review/Design_260805_snapback_timing_v2.md` for the full arc (three
-  corrections in one day: dropping an unconditional `snap_theme_forward()` that was killing the very
-  animation being waited on; a settle predicate that couldn't tell "the dismiss's own snapback
-  settled" from "an unrelated later hover's fade happened to settle," live-reproduced by Pryme as
-  "The Eyrie hovered, falls to main screen, corrects after"; and `get_committed_theme()` never
-  accounting for cover-art theme mode, where the committed value is a dict, not a string).
-  Live-verified across 5 full runs (dismiss-mid-preview, termination-guarantee fallback, 5x
-  mid-wait-hover injection, both cover-art modes) plus 477/477 unit tests.
-
-  **Tab switch remains open, confirmed BROKEN live via two distinct triggers:**
-  1. **Hovering a swatch, then switching tabs** (5/5 trials, immediate and paused) — never reverts;
-     `_is_hover_active` stays stuck and the chrome stays on the hovered theme for the full 2s
-     observation window. Root cause confirmed via signal-chain instrumentation, not inferred: Qt
-     never delivers a `leaveEvent` to `swatch_box` when `QTabWidget.setCurrentIndex()` hides its tab,
-     so neither `_on_themes_tab_left` nor `_on_theme_unhovered` is ever called at all.
-  2. **Clicking "Change now" (a genuine selection, not a hover), then immediately switching tabs.**
-     The internal state resolves correctly on its own (the committed theme and `_fade_anim` both
-     settle fine after ~1.5s, live-tested 5x) — this is NOT the same missing-leaveEvent mechanism as
-     (1). The actual defect: `_fade_overlay` is parented to `main_window`, not to the Themes tab, so
-     it is never hidden by the tab switch and keeps animating on top of whatever tab is now showing.
-     Pryme's stated preference, verbatim: "I prefer the fade finishes where it starts." Not a
-     correctness bug (nothing gets stuck or shows a wrong committed theme) — a scoping/containment
-     preference for where the fade is visually allowed to play.
-
-  Both need the same underlying mechanism: a tab-bar click-interception event filter (consume the
-  click, run/await the relevant settle — the unhover snapback for (1), or confining/completing the
-  in-flight fade for (2) — then call `setCurrentIndex` once settled), since `QTabWidget.currentChanged`
-  fires AFTER the tab has already switched with no pre-change signal to veto from. New diagnostic
-  tool for (1): `tools/tab_switch_snapback_check.py` — re-run it once the fix lands. Deliberately not
-  implemented this round, per Pryme's explicit call to land and verify the dismiss fix independently
-  first.
 
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;

@@ -1,11 +1,13 @@
 # Design v2: corrected snapback timing for Esc/gutter-dismiss — three corrections in one day
 
-**Date:** 2026-08-05  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:**
-Esc/gutter-dismiss implemented and live-verified. The two remaining `get_displayed_theme()`-migration
-deletion steps (`check_cursor_on_settle()`, `clear_stale_hover_state()`) re-verified against current
-code and landed the same day. Settings-internal tab-switch remains open — confirmed BROKEN via two
-distinct triggers (hover, and "Change now") — deliberately deferred as a structurally different
-follow-up (see TODO.md).
+**Date:** 2026-08-05  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:** ALL
+scoped work landed and live-verified. Esc/gutter-dismiss implemented. The two remaining
+`get_displayed_theme()`-migration deletion steps (`check_cursor_on_settle()`,
+`clear_stale_hover_state()`) re-verified against current code and landed the same day.
+Settings-internal tab-switch implemented via `_ThemesTabBarInterceptor`, covering both confirmed
+triggers (hovering a swatch, and clicking "Change now") — the second trigger required a fix
+iteration after the first version's gate (`_is_hover_active` alone) missed it, live-reported by
+Pryme and corrected same-day.
 
 ## Context
 
@@ -232,9 +234,9 @@ Verified one deletion at a time, not both before checking: 477/477 → 477/477 (
 verification suite (`tools/snapback_dismiss_live_verify.py`) passes identically to before either
 deletion.
 
-## Step 3: tab-switch — confirmed still broken, via two distinct triggers
+## Step 3: tab-switch — investigated, then implemented via tab-bar click interception
 
-Investigated live, not implemented, per the task's explicit instruction.
+### Investigation: confirmed broken via two distinct triggers
 
 **Trigger 1 — hover a swatch, then switch tabs.** 5/5 live trials (both immediate and paused
 switches): never reverts. `_is_hover_active` stays stuck `True` and the main window's chrome stays
@@ -244,8 +246,7 @@ every call), not inferred from reading alone: **neither method is ever called at
 `leave_log=[]` in every trial. Qt does not deliver a `leaveEvent` to `swatch_box` when
 `QTabWidget.setCurrentIndex()` hides its containing tab, so the entire mechanism the dismiss fix
 improved (the settle predicate, the interrupt marker) is never even entered on this path — there is
-nothing for it to help with, because nothing triggers it. New diagnostic tool,
-`tools/tab_switch_snapback_check.py`, kept for re-running once the tab-bar-interception fix lands.
+nothing for it to help with, because nothing triggers it.
 
 **Trigger 2 — click "Change now" (a genuine selection, not a hover), then immediately switch tabs —
 raised separately by Pryme after reviewing trigger 1's findings.** Live-tested 5x: this is
@@ -253,26 +254,64 @@ structurally DIFFERENT from trigger 1, confirmed rather than assumed identical. 
 `_current_theme_name` (so `get_committed_theme()`) synchronously, before `_on_theme_changed` even
 runs — so the committed value is correct from the instant of the click, regardless of any later tab
 switch. The fade/overlay/committed-theme internal state also all resolve correctly after ~1.5s in
-every trial (`_fade_anim` settles to `Stopped`, `_fade_overlay` hides, `get_committed_theme()`
-matches the live chrome) — nothing gets stuck, no wrong committed theme survives. The actual defect
-is narrower and purely visual: `_fade_overlay` is a child of `main_window`, not of `themes_tab`/
-`swatch_box`, confirmed by reading its construction (`QLabel(self.main_window)`) — so a tab switch
-never hides it, and the fade keeps animating on top of whatever tab is now showing instead of
-finishing where it started. The panel-occlusion mask this overlay uses is also computed once, at
-fade-start, from whichever panels are open at that instant — it does not change per-tab within the
-same Settings panel, so the overlay's masking stays geometrically consistent through the switch; the
-only issue is that it is visible/playing on the wrong tab's content at all. Pryme's stated
-preference, verbatim: *"I prefer the fade finishes where it starts."* Not a correctness bug (no
-stuck state, no wrong final theme) — a scoping/containment preference for where the fade is visually
-permitted to play.
+every trial — nothing gets stuck, no wrong committed theme survives. The actual defect, at
+investigation time, was narrower and purely visual: `_fade_overlay` is a child of `main_window`, not
+of `themes_tab`/`swatch_box`, so a tab switch never hides it and the fade keeps animating on top of
+whatever tab is now showing instead of finishing where it started. Pryme's stated preference,
+verbatim: *"I prefer the fade finishes where it starts."*
 
-**Both triggers need the same underlying mechanism** (a tab-bar click-interception event filter:
-consume the click, run/await the relevant settle, then call `setCurrentIndex` once resolved) since
+Both triggers need the same underlying mechanism (a tab-bar click-interception event filter) since
 `QTabWidget.currentChanged` fires AFTER the tab has already switched, with no pre-change signal to
-veto from. Neither is implemented — both are recorded in TODO.md as the scope for that future work.
+veto from.
+
+### Implementation: `_ThemesTabBarInterceptor`
+
+Installed on `mw.tabs.tabBar()` via `installEventFilter`, intercepting `QEvent.Type.
+MouseButtonPress` — the switch itself happens inside `QTabBar.mousePressEvent`, on press, so
+anything later (release, `currentChanged`) is too late and would show at least one frame of the new
+tab's stale-colored content before a correction could catch up.
+
+**First version, gated on `_is_hover_active` alone — correct for trigger 1, silently missed trigger
+2.** Live-verified working for the hover case (5/5 trials × 3 runs, both timings; the no-hover
+pass-through also confirmed 5/5 × 3 runs at ~40-55ms, identical to unmodified Qt). Then Pryme
+reported live: *"Doesn't work for the Change now button. It continues to fade and during that time
+I can switch multiple tabs."* Root cause: `_is_hover_active` is only ever `True` for a hover
+preview; "Change now" applies with `hover=False`, and — critically — `_mark_theme_applied` sets
+`_active_display_theme_internal` to match the new committed theme BEFORE `_fade_anim.start()` even
+runs, so an identity-only check would ALSO have missed this. `_fade_in_flight` is the field that
+actually stays `True` for a selection's full visual fade duration.
+
+**Fix: widened the gate to `ThemeManager._theme_genuinely_settled_on_committed()`** — the exact same
+predicate the Esc/gutter dismiss fix already uses, which checks all three (`not _fade_in_flight`,
+the committed-identity match, `not _is_hover_active`) together. This closes the selection case
+without weakening the hover case at all: a hover mid-fade already fails this predicate too
+(`_is_hover_active=True`), exactly as before. Confirmed `_on_theme_unhovered()` remains a safe no-op
+during a selection's own fade: it calls `_on_theme_changed(self._current_theme_name, hover=False,
+...)`, and since `_current_theme_name`/`_active_display_theme_internal` already match (both set by
+`_do_rotate`/`_mark_theme_applied` before the fade started), `_on_theme_changed`'s own pre-existing
+no-op guard (`_active_display_theme_internal == theme_name and _is_hover_active == hover`) fires
+immediately — no new fade is started, no interference with the one already running.
+
+**Live-verified via a new Part C in `tools/tab_switch_snapback_check.py`**, reproducing the exact
+reported sequence: click "Change now", then click 4 different tabs in rapid succession while its
+fade is still running. 5/5 trials × 3 full runs: every click stays blocked on the Themes tab
+throughout the fade, correctly lands on the last-clicked tab once settled (later clicks' waiters
+simply replace the effective target — Qt's own event delivery plus `call_when_theme_settled`'s
+append-and-drain-in-order semantics naturally resolve to "last click wins" for a rapid burst), and
+the chrome matches the committed theme. Parts A (hover) and B (no hover) re-confirmed unaffected by
+the widened gate. The interaction with an in-flight Esc/gutter dismiss wait was also constructed and
+tested live: both settle waiters queue on the same `ThemeManager` watch and fire in FIFO order (tab
+switches, then the panel closes) — 3/3 trials landed in a fully consistent final state.
+
+6 unit tests (`tests/test_themes_tab_bar_interceptor.py`) pin the interceptor's branch decisions
+directly, modeling `_theme_genuinely_settled_on_committed()` as the fake's own settled flag rather
+than reconstructing its three sub-conditions (that predicate has its own dedicated tests in
+`tests/test_theme_settle_resume.py`).
 
 ## Remaining scope
 
-Settings-internal tab switch (both triggers above) is unimplemented, structurally different from the
-dismiss fix (no Qt pre-change signal to block a `currentChanged` from), and deliberately deferred as
-its own follow-up per Pryme's explicit call — see TODO.md.
+None for tab-switch — both confirmed triggers (hover, and "Change now"/selection) are implemented
+and live-verified. The `_fade_overlay` main-window-parenting detail from trigger 2's investigation
+is now moot for the tab-switch case specifically (the switch itself is deferred until the fade
+settles, so the overlay never has a chance to bleed onto a different tab) — no separate fix to that
+parenting was needed.
