@@ -229,14 +229,38 @@ def test_interrupt_clears_a_superseded_stash():
 # --- BUG 3: swatch-leave discriminator ------------------------------------
 
 class _FakeWidget:
-    def __init__(self, visible=True):
+    """Models swatch_box's real geometry (mapFromGlobal/rect/contains), not just
+    isVisible() — needed to exercise the hidden-branch SUSPECT condition for real,
+    rather than silently falling into the `except Exception: outside = False`
+    fallback (which is what happened before this fake supported geometry at all:
+    both test_leave_while_hidden_is_always_suppressed and
+    test_moving_cursor_while_hidden_is_still_suppressed passed for the wrong
+    reason, a bare AttributeError, until this fix's own verification found it —
+    see the 2026-08-05 SWATCH-LEAVE-SUSPECT correction). `_origin`/`_size` model
+    a box anchored at global (142, 166) sized 240x285 (swatch_box's real live
+    dimensions, per fabulor.log's own SWATCH-LEAVE-SUSPECT lines) — so a GLOBAL
+    cursor position at (242, 266), the same anchor every other test in this file
+    already uses, maps to LOCAL (100, 100), comfortably inside; a position clearly
+    away from it maps outside."""
+
+    def __init__(self, visible=True, origin=(142, 166), size=(240, 285)):
         self._visible = visible
+        self._origin = origin
+        self._size = size
 
     def isVisible(self):
         return self._visible
 
+    def rect(self):
+        from PySide6.QtCore import QRect
+        return QRect(0, 0, self._size[0], self._size[1])
 
-def _leave(tm, cursor_pos, widget_visible=True, monkeypatch=None):
+    def mapFromGlobal(self, point):
+        from PySide6.QtCore import QPoint
+        return QPoint(point.x() - self._origin[0], point.y() - self._origin[1])
+
+
+def _leave(tm, cursor_pos, widget_visible=True, widget=None, monkeypatch=None):
     """Run the real _on_themes_tab_left with a pinned cursor position."""
     import fabulor.ui.theme_manager as mod
     calls = []
@@ -250,22 +274,26 @@ def _leave(tm, cursor_pos, widget_visible=True, monkeypatch=None):
     original = mod.QCursor
     mod.QCursor = _FakeCursor
     try:
-        ThemeManager._on_themes_tab_left(tm, _FakeWidget(widget_visible))
+        ThemeManager._on_themes_tab_left(tm, widget or _FakeWidget(widget_visible))
     finally:
         mod.QCursor = original
     return bool(calls)
 
 
-def test_leave_while_hidden_is_always_suppressed():
-    # Primary discriminator. The blur grab hides settings_panel (an ANCESTOR of
-    # swatch_box) ~15x/sec; every such leave is synthetic. Measured over a full live
-    # session: 6 real mouse-outs, ALL visible=True; zero real mouse-outs while hidden.
+def test_leave_while_hidden_and_cursor_still_inside_is_suppressed():
+    # THE GENUINELY-SYNTHETIC CASE (item 7 of the 2026-08-05 correction task) —
+    # the one case this whole mechanism was originally built to protect. Hidden
+    # (blur-grab mid-cycle) AND the cursor is still geometrically over the
+    # swatch grid: this is what "hidden" means when the blur grab is the cause,
+    # and must stay fully suppressed, no correction fired, exactly as before
+    # this fix. _FakeWidget's default rect is centered on (242, 266); a cursor
+    # AT that same anchor is inside it.
     tm = _make_tm()
     tm._last_swatch_pos = _Pos(242, 266)
     assert _leave(tm, _Pos(242, 266), widget_visible=False) is False
 
 
-def test_moving_cursor_while_hidden_is_still_suppressed():
+def test_moving_cursor_while_hidden_but_still_inside_is_still_suppressed():
     # REGRESSION PIN (live-found 2026-07-28, 02:25:47-54 — three misses back to back).
     # A rolling-reference design compared each leave against the PREVIOUS leave, so a
     # cursor merely moving ACROSS the swatch area travelled 4-14px between consecutive
@@ -273,11 +301,60 @@ def test_moving_cursor_while_hidden_is_still_suppressed():
     # _on_theme_unhovered -> _hover_debounce_timer.stop(), killing the 80ms debounce
     # ~15x/sec so previews never fired while the cursor was in motion.
     #
-    # Movement while hidden must NOT make a leave genuine.
+    # Movement while hidden, but still geometrically INSIDE swatch_box's rect, must
+    # NOT fire a correction — this is the case the 2026-08-05 fix must not touch.
     tm = _make_tm()
     tm._last_swatch_pos = _Pos(242, 266)
-    for dx in (6, 12, 18, 24):   # a cursor sweeping across the swatches
+    for dx in (6, 12, 18, 24):   # a cursor sweeping across the swatches, still inside
         assert _leave(tm, _Pos(242 + dx, 266), widget_visible=False) is False
+
+
+# --- SWATCH-LEAVE-SUSPECT correction (2026-08-05) ---------------------------
+# See review/Design_260805_swatch_leave_suspect_correction.md. Confirmed live
+# (2026-08-05) that a leave suppressed while hidden, with the cursor genuinely
+# OUTSIDE swatch_box's rect, produced real multi-minute stuck windows (62s-277s
+# observed) — nothing had ever called _on_theme_unhovered() to correct it. Fixed
+# by calling it directly when this exact condition fires, reusing the identical
+# call every other correction path already uses (no new mechanism).
+
+def test_leave_while_hidden_with_cursor_genuinely_outside_now_fires_correction():
+    # THE FIX. Hidden (so the blur-grab-synthetic explanation is plausible), but
+    # the cursor is geometrically OUTSIDE swatch_box's rect entirely — a real
+    # exit that happened to be delivered during a hidden window. Before
+    # 2026-08-05 this only logged [SWATCH-LEAVE-SUSPECT] and returned, leaving
+    # _is_hover_active stuck. Must now call _on_theme_unhovered().
+    tm = _make_tm()
+    tm._last_swatch_pos = _Pos(242, 266)
+    widget = _FakeWidget(visible=False)  # default rect centered on (242, 266)
+    far_outside = _Pos(242 + 1000, 266 + 1000)
+    assert _leave(tm, far_outside, widget_visible=False, widget=widget) is True
+
+
+def test_leave_while_hidden_with_cursor_just_outside_the_rect_edge_fires_correction():
+    # Boundary pin: not just "far away" — a cursor just past the rect's own edge
+    # must also correctly read as outside (QRect.contains is right-edge-exclusive
+    # for this purpose the same way rect().contains() behaves live).
+    tm = _make_tm()
+    tm._last_swatch_pos = _Pos(242, 266)
+    widget = _FakeWidget(visible=False)  # rect is (0,0,240,285) in local coords
+    just_outside = _Pos(142 + 240 + 5, 266)  # a few px past the right edge, globally
+    assert _leave(tm, just_outside, widget_visible=False, widget=widget) is True
+
+
+def test_exception_during_geometry_read_still_fails_safe_to_no_correction():
+    # The existing try/except Exception: outside = False wrapper is unchanged by
+    # this fix — confirm it still defaults to the SAFE (no correction) side, not
+    # a new risk. A widget whose mapFromGlobal raises reproduces this.
+    class _BrokenWidget:
+        def isVisible(self):
+            return False
+
+        def mapFromGlobal(self, point):
+            raise RuntimeError("simulated geometry failure")
+
+    tm = _make_tm()
+    tm._last_swatch_pos = _Pos(242, 266)
+    assert _leave(tm, _Pos(9999, 9999), widget_visible=False, widget=_BrokenWidget()) is False
 
 
 def test_genuine_mouse_out_while_visible_fires():

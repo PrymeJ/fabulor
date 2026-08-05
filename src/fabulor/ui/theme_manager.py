@@ -2566,6 +2566,21 @@ class ThemeManager(QObject):
                     f"was eaten. pos={(pos.x(), pos.y())} local={(local.x(), local.y())} "
                     f"rect={tab_widget.rect()}"
                 )
+                # CORRECTED (2026-08-05, see review/Design_260805_swatch_leave_suspect_
+                # correction.md): this condition is not a heuristic inference — the
+                # cursor's position relative to swatch_box's rect is a direct geometric
+                # fact read live from QCursor.pos(), independent of why the widget is
+                # hidden. If it's genuinely outside, there is no live hover to protect,
+                # so correct immediately rather than only logging and leaving
+                # _is_hover_active stuck (confirmed live, 2026-08-05: this produced
+                # real multi-minute stuck windows — 62s-277s observed within single
+                # running sessions — starving transport_bar_blur's hover_active_gate
+                # for the whole window). _on_theme_unhovered() has no call-context
+                # preconditions (already called from three other contexts: the
+                # genuine-leave branch below, _check_swatch_still_hovered's periodic
+                # backstop, and _close_settings_flow's unconditional dismiss call) —
+                # this is a fourth caller of the same kind, not a new mechanism.
+                self._on_theme_unhovered()
             else:
                 logger.debug(
                     f"[SWATCH-LEAVE] suppressed synthetic leave (widget hidden by blur "
