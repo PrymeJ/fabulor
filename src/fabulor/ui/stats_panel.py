@@ -2701,6 +2701,23 @@ class StatsPanel(QWidget):
         self._cached_active_days = None
         self._cached_active_weeks = None
         self._cached_active_months = None
+        # Rebuild-avoidance guard for the Day/Week/Month row lists. Each maps
+        # the currently-BUILT period label to the row-content signature (see
+        # _period_rows_signature) that produced it — so revisiting the same
+        # period (tab switch back, prev-then-next, wheel scroll back) can
+        # skip the deleteLater()+rebuild cycle entirely when nothing that
+        # affects rendering has changed. Same shape as FinishedScrollRow's
+        # own _current_sig guard (see set_items) — deliberately mirrored, not
+        # reinvented. Keyed by period label (not just "last one shown") so a
+        # single label->signature pair is all that's needed per tab: a period
+        # switch always rebuilds (different label), and only an exact-period
+        # revisit with an unchanged signature short-circuits.
+        self._day_built_period = None
+        self._day_built_sig = None
+        self._week_built_period = None
+        self._week_built_sig = None
+        self._month_built_period = None
+        self._month_built_sig = None
         self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
@@ -3423,11 +3440,13 @@ class StatsPanel(QWidget):
             self._cached_active_days = self.db.get_active_periods(
                 'day', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_days = self._cached_active_days
-        while self._day_rows_layout.count() > 1:
-            item = self._day_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         if not self._active_days:
+            while self._day_rows_layout.count() > 1:
+                item = self._day_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._day_built_period = None
+            self._day_built_sig = None
             self._day_label.setText("No activity yet")
             self._day_total_label.setText("")
             self._day_prev_btn.setEnabled(False)
@@ -3445,26 +3464,49 @@ class StatsPanel(QWidget):
         # Navigation button state
         self._day_prev_btn.setEnabled(self._current_day_index < len(self._active_days) - 1)
         self._day_next_btn.setEnabled(self._current_day_index > 0)
-    
-        rows = self.db.get_daily_book_breakdown(date_str, self.config.get_day_start_hour())
-        total_seconds = 0.0
-        rows = self._inject_active_covers([r for r in rows if (r.get("clock_seconds") or 0.0) >= 60])
-        self._day_rows_widget.setUpdatesEnabled(False)
-        for i, row in enumerate(rows):
-            total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-            book_row.clicked.connect(self._on_book_row_clicked)
-            self._add_row_safely(self._day_rows_layout, book_row)
-        self._day_rows_widget.setUpdatesEnabled(True)
-        self._day_rows_layout.invalidate()
-        self._day_rows_widget.updateGeometry()
 
+        day_start = self.config.get_day_start_hour()
+        rows = self.db.get_daily_book_breakdown(date_str, day_start)
+        rows = self._inject_active_covers([r for r in rows if (r.get("clock_seconds") or 0.0) >= 60])
+        finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
+
+        # Rebuild-avoidance guard: revisiting the SAME period (tab switch back,
+        # prev-then-next, wheel scroll back) with an unchanged content
+        # signature skips the deleteLater()+rebuild cycle entirely. A genuine
+        # data change (new/deleted session, re-finish, cover swap, soft-delete
+        # flag flip) always changes the signature and still triggers a full
+        # rebuild below. See _period_rows_signature.
+        sig = self._period_rows_signature(rows, finished)
+        if date_str == self._day_built_period and sig == self._day_built_sig:
+            # Total label/finished-section visibility/cap are cheap functions
+            # of the same rows/finished already fetched above, so recompute
+            # them unconditionally (see the shared tail below) rather than
+            # early-returning — only the widget rebuild is skipped.
+            pass
+        else:
+            while self._day_rows_layout.count() > 1:
+                item = self._day_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._day_rows_widget.setUpdatesEnabled(False)
+            for i, row in enumerate(rows):
+                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
+                book_row.clicked.connect(self._on_book_row_clicked)
+                self._add_row_safely(self._day_rows_layout, book_row)
+            self._day_rows_widget.setUpdatesEnabled(True)
+            self._day_rows_layout.invalidate()
+            self._day_rows_widget.updateGeometry()
+            self._day_built_period = date_str
+            self._day_built_sig = sig
+
+        total_seconds = sum(row.get("clock_seconds") or 0.0 for row in rows)
         # Blank, not "0m", when the day exists only via a playback finish
         # (no qualifying session rows) — the book shows in the Finished strip.
         self._day_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
-        day_start = self.config.get_day_start_hour()
-        finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
+        # set_items has its own internal signature guard (see
+        # FinishedScrollRow.set_items) so this stays cheap even when called
+        # every refresh.
         self._day_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._day_finished_section.show()
@@ -3611,11 +3653,13 @@ class StatsPanel(QWidget):
             self._cached_active_weeks = self.db.get_active_periods(
                 'week', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_weeks = self._cached_active_weeks
-        while self._week_rows_layout.count() > 1:
-            item = self._week_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         if not self._active_weeks:
+            while self._week_rows_layout.count() > 1:
+                item = self._week_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._week_built_period = None
+            self._week_built_sig = None
             self._week_label.setText("No activity yet")
             self._week_total_label.setText("")
             self._week_prev_btn.setEnabled(False)
@@ -3639,20 +3683,31 @@ class StatsPanel(QWidget):
             [r for r in self.db.get_books_listened_in_period('week', week_str, day_start)
              if (r.get("clock_seconds") or 0.0) >= 60]
         )
-        total_seconds = 0.0
-        self._week_rows_widget.setUpdatesEnabled(False)
-        for i, row in enumerate(rows):
-            total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-            book_row.clicked.connect(self._on_book_row_clicked)
-            self._add_row_safely(self._week_rows_layout, book_row)
-        self._week_rows_widget.setUpdatesEnabled(True)
-        self._week_rows_layout.invalidate()
-        self._week_rows_widget.updateGeometry()
+        finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
 
+        # Rebuild-avoidance guard — see _refresh_daily / _period_rows_signature.
+        sig = self._period_rows_signature(rows, finished)
+        if week_str == self._week_built_period and sig == self._week_built_sig:
+            pass
+        else:
+            while self._week_rows_layout.count() > 1:
+                item = self._week_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._week_rows_widget.setUpdatesEnabled(False)
+            for i, row in enumerate(rows):
+                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
+                book_row.clicked.connect(self._on_book_row_clicked)
+                self._add_row_safely(self._week_rows_layout, book_row)
+            self._week_rows_widget.setUpdatesEnabled(True)
+            self._week_rows_layout.invalidate()
+            self._week_rows_widget.updateGeometry()
+            self._week_built_period = week_str
+            self._week_built_sig = sig
+
+        total_seconds = sum(row.get("clock_seconds") or 0.0 for row in rows)
         self._week_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
-        finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
         self._week_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._week_finished_section.show()
@@ -3795,11 +3850,13 @@ class StatsPanel(QWidget):
             self._cached_active_months = self.db.get_active_periods(
                 'month', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_months = self._cached_active_months
-        while self._month_rows_layout.count() > 1:
-            item = self._month_rows_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
         if not self._active_months:
+            while self._month_rows_layout.count() > 1:
+                item = self._month_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._month_built_period = None
+            self._month_built_sig = None
             self._month_label.setText("No activity yet")
             self._month_total_label.setText("")
             self._month_prev_btn.setEnabled(False)
@@ -3821,20 +3878,31 @@ class StatsPanel(QWidget):
             [r for r in self.db.get_books_listened_in_period('month', month_str, day_start)
              if (r.get("clock_seconds") or 0.0) >= 60]
         )
-        total_seconds = 0.0
-        self._month_rows_widget.setUpdatesEnabled(False)
-        for i, row in enumerate(rows):
-            total_seconds += row.get("clock_seconds") or 0.0
-            book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-            book_row.clicked.connect(self._on_book_row_clicked)
-            self._add_row_safely(self._month_rows_layout, book_row)
-        self._month_rows_widget.setUpdatesEnabled(True)
-        self._month_rows_layout.invalidate()
-        self._month_rows_widget.updateGeometry()
+        finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
 
+        # Rebuild-avoidance guard — see _refresh_daily / _period_rows_signature.
+        sig = self._period_rows_signature(rows, finished)
+        if month_str == self._month_built_period and sig == self._month_built_sig:
+            pass
+        else:
+            while self._month_rows_layout.count() > 1:
+                item = self._month_rows_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._month_rows_widget.setUpdatesEnabled(False)
+            for i, row in enumerate(rows):
+                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
+                book_row.clicked.connect(self._on_book_row_clicked)
+                self._add_row_safely(self._month_rows_layout, book_row)
+            self._month_rows_widget.setUpdatesEnabled(True)
+            self._month_rows_layout.invalidate()
+            self._month_rows_widget.updateGeometry()
+            self._month_built_period = month_str
+            self._month_built_sig = sig
+
+        total_seconds = sum(row.get("clock_seconds") or 0.0 for row in rows)
         self._month_total_label.setText(self._format_duration(total_seconds) if rows else "")
 
-        finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
         self._month_finished_scroll.set_items(finished, self._on_book_row_clicked, self._placeholder_color)
         if finished:
             self._month_finished_section.show()
@@ -4087,6 +4155,44 @@ class StatsPanel(QWidget):
             if bp:
                 row["active_cover_path"] = self.db.get_active_cover_path(bp)
         return rows
+
+    @staticmethod
+    def _period_rows_signature(rows: list[dict], finished: list[dict]) -> tuple:
+        """Order-sensitive identity signature for a Day/Week/Month period's
+        full rendered content: the filtered+cover-injected book rows AND the
+        Finished-strip rows. Covers everything BookDayRow/FinishedBookThumb
+        actually read at draw time — book_id alone (or even just row COUNT)
+        misses changes that alter what's rendered without changing which
+        books are present: a new session against an already-listed book
+        shifting clock_seconds/position deltas, a re-finish flipping
+        is_finished, a cover swap, or a soft-delete flag (is_deleted/
+        is_excluded/is_missing) flipping on resurrection/exclusion. Same
+        reasoning FinishedScrollRow.set_items already documents for its own
+        _current_sig — mirrored here rather than reinvented.
+
+        Deliberately NOT keyed on session_count/"last modified" alone: two
+        different sessions against the same book on the same day can net out
+        to the same displayed totals, and that's fine to treat as unchanged
+        (nothing on screen would differ) — but any real DB write always
+        changes the affected book's clock_seconds/position fields, which stays
+        wrapped in this signature.
+        """
+        row_sig = tuple(
+            (r.get("book_id"), r.get("clock_seconds"), r.get("book_seconds_advanced"),
+             r.get("furthest_position"), r.get("period_position_start"),
+             r.get("period_position_end"), r.get("is_finished"),
+             r.get("active_cover_path") or r.get("cover_path"),
+             r.get("is_deleted"), r.get("is_excluded"), r.get("is_missing"),
+             r.get("book_title"), r.get("book_author"), r.get("book_duration"))
+            for r in rows
+        )
+        finished_sig = tuple(
+            (r.get("book_id"), r.get("event_time"),
+             r.get("active_cover_path") or r.get("cover_path"),
+             r.get("is_deleted"), r.get("is_excluded"), r.get("is_missing"))
+            for r in finished
+        )
+        return (row_sig, finished_sig)
 
     def on_cover_changed(self, book_path: str, cover_path: str) -> None:
         current_tab = self.tabs.tabText(self.tabs.currentIndex())
