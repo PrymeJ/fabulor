@@ -1,4 +1,4 @@
-## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2)
+## Session Summary — 2026-08-04/05 Session 2 — `investigate/restyle-cost-depth-and-narrowing`: write-path confinement, animation latency measured, corrected snapback timing landed (take 2), migration cleanup, tab-switch scoped
 
 Follows directly from Session 1 below (the `get_displayed_theme()` hover-state read-path redesign).
 That redesign fixed WHAT `get_active_theme()` returns; this session found and fixed WHO calls it,
@@ -82,6 +82,30 @@ before any code changed — three separate live corrections from Pryme (the writ
 `_apply_stylesheets` root cause, and the Esc-not-leaveEvent trigger) each redirected the work away
 from a plausible-but-wrong theory toward the real one, and each is recorded above rather than
 smoothed over.
+
+**Migration cleanup, same day (`00b88e3`).** With the dismiss fix landed, the two remaining deletion
+steps of the `get_displayed_theme()` migration (`review/Design_260804_hover_state_computed_read_
+path.md`) were revisited — re-verified against current code, not the original design's snapshot, per
+explicit instruction. `check_cursor_on_settle()` deleted: its one-shot hover-start trigger is
+redundant now that every reader re-derives "what's hovered" live; confirmed nothing built today
+depends on it. `clear_stale_hover_state()` deleted, more carefully: the task flagged a real risk to
+check rather than assume away — was this method accidentally covering `[SWATCH-LEAVE-SUSPECT]`'s
+still-open gap? Traced precisely: `_close_settings_flow` is the sole path to hiding Settings, and it
+unconditionally produces a genuine settle (via today's fixed predicate, in both its normal and
+timeout-fallback paths) before this method could ever run — so it was never actually providing that
+backstop. Both deletions verified one at a time (477→477→473) plus an unchanged live spot-check.
+
+**Tab-switch investigated live (not implemented) — confirmed broken via two distinct triggers.**
+Trigger 1, hover-then-switch: 5/5 trials never revert; signal-chain instrumentation confirmed Qt
+never delivers a `leaveEvent` to `swatch_box` on a tab switch at all, so the dismiss fix's own
+mechanism is never entered. Trigger 2, raised by Pryme after seeing trigger 1's result: "Change
+now" (a genuine selection) immediately followed by a tab switch. Checked live rather than assumed
+identical to trigger 1 — it isn't: the committed theme and fade state all resolve correctly on
+their own, but `_fade_overlay` is parented to `main_window`, not the Themes tab, so it keeps
+animating onto whatever tab is now showing instead of stopping where it started. Pryme's own
+framing when this was stated back: *"Exactly. I prefer the fade finishes where it starts."* Both
+triggers need the same tab-bar click-interception event filter; neither implemented, both recorded
+in TODO.md for that future work.
 
 ---
 

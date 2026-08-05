@@ -1,3 +1,65 @@
+## 2026-08-05 (later same day) — Migration cleanup: two mechanisms deleted, tab-switch confirmed broken via two distinct triggers
+
+Follows directly from the snapback-timing v2 fix below. With the Esc/gutter-dismiss fix landed and
+verified, the two remaining deletion steps of the `get_displayed_theme()` migration (`review/
+Design_260804_hover_state_computed_read_path.md`, steps 5-6) were revisited — explicitly
+re-verified against current code first, since significant new code (the containment fix,
+`get_committed_theme()`, the settle predicate, the cover-art fix) had landed since that design was
+written, and the task's own instruction was not to trust the old snapshot's safety reasoning.
+
+**`check_cursor_on_settle()` deleted.** Confirmed fresh: the native `QPushButton#theme_item:hover`
+QSS rule is unchanged, and nothing built this session depends on this method's one-shot preview
+trigger — it lived entirely on the hover-*start* side (fired once, on Settings-panel-open settle, if
+the cursor happened to already rest on a swatch), while every fix from earlier today lives on the
+hover-*end*/settle side. Deleted the method and its sole call site.
+
+**`clear_stale_hover_state()` deleted — the more careful check of the two.** The task specifically
+flagged a risk worth checking explicitly rather than assuming away: this method was a backstop for
+exactly the class of bug `[SWATCH-LEAVE-SUSPECT]` still detects-but-doesn't-correct today (a genuine
+leaveEvent misclassified as a blur-grab synthetic, leaving `_is_hover_active` stuck). If it had been
+providing accidental coverage for that still-open gap, deleting it could have widened a known
+problem. Traced it precisely: `_close_settings_flow` is confirmed the sole path to hiding Settings
+(every trigger routes through it; `is_overlay_open_or_committed()` blocks every other panel's open
+flow while Settings is open), and it unconditionally calls `_on_theme_unhovered()` — which, via
+today's fixed settle predicate, guarantees `_is_hover_active` is `False` before `_on_settings_hidden`
+can ever fire, in both the genuine-settle and 2000ms-timeout-fallback cases. So the dismiss path was
+already self-healing regardless of whether `[SWATCH-LEAVE-SUSPECT]`'s gap had fired earlier in the
+session — this method's correction never actually got a chance to matter. Deleted the method, its
+call site, and its 4 dedicated tests (kept 3 unrelated ones testing `get_current_theme()`/
+`get_active_theme()` directly). Verified one deletion at a time: 477→477→473, live spot-check
+identical to before either deletion.
+
+**Tab-switch investigated live (not implemented) — confirmed broken via TWO distinct triggers, not
+one.** First trigger, matching the original scope: hover a swatch, then switch Settings tabs without
+closing the panel or letting the hover end naturally. 5/5 live trials (immediate and paused
+switches): never reverts, `_is_hover_active` stuck, chrome wrong for the full 2s window. Confirmed
+precisely via signal-chain instrumentation (not inferred from reading alone) that neither
+`_on_themes_tab_left` nor `_on_theme_unhovered` is ever called — Qt simply never delivers a
+`leaveEvent` to `swatch_box` when a `QTabWidget.setCurrentIndex()` call hides its tab, so the entire
+mechanism the dismiss fix improved is never entered on this path at all.
+
+Pryme then raised a second, separate trigger after seeing the first result: clicking "Change now" (a
+genuine theme selection/rotation, not a hover) immediately followed by a tab switch. Checked this
+live rather than assuming it shared the first trigger's mechanism — it doesn't. `_do_rotate` sets
+`_current_theme_name` synchronously before `_on_theme_changed` even runs, so the committed theme is
+correct from the instant of the click regardless of any later switch, and the fade/overlay/committed
+state all resolve correctly after ~1.5s in every one of 5 trials — nothing gets stuck, no wrong
+final theme. The actual defect, confirmed by reading `_fade_overlay`'s construction directly
+(`QLabel(self.main_window)`), is that the overlay is parented to the main window, not to the Themes
+tab — so a tab switch never hides it, and the fade keeps visibly playing on top of whatever tab is
+now showing instead of finishing where it started. Pryme's own framing when I stated this back:
+*"Exactly. I prefer the fade finishes where it starts."* Not a correctness bug — a containment
+preference, recorded for the same future tab-bar-interception fix rather than treated as urgent.
+
+Both triggers need the same underlying mechanism (a tab-bar click-interception event filter:
+consume the click, run/await the relevant settle, then call `setCurrentIndex` once resolved) — Qt's
+`QTabWidget.currentChanged` fires after the switch with no pre-change signal to veto from, so neither
+can be fixed by extending the dismiss fix's own shape. Neither implemented this round, per explicit
+instruction; both recorded in TODO.md. New diagnostic tool, `tools/tab_switch_snapback_check.py`,
+kept for re-verifying trigger 1 once that fix is built.
+
+---
+
 ## 2026-08-05 — Corrected snapback timing, take 2: three live-reported bugs, three root causes, one fix landed for each
 
 Full design writeup: `review/Design_260805_snapback_timing_v2.md`. This entry is the narrative;

@@ -1,8 +1,11 @@
 # Design v2: corrected snapback timing for Esc/gutter-dismiss — three corrections in one day
 
 **Date:** 2026-08-05  **Branch:** `investigate/restyle-cost-depth-and-narrowing`  **Status:**
-Esc/gutter-dismiss implemented and live-verified. Settings-internal tab-switch remains open,
-deliberately deferred as a structurally different follow-up (see TODO.md).
+Esc/gutter-dismiss implemented and live-verified. The two remaining `get_displayed_theme()`-migration
+deletion steps (`check_cursor_on_settle()`, `clear_stale_hover_state()`) re-verified against current
+code and landed the same day. Settings-internal tab-switch remains open — confirmed BROKEN via two
+distinct triggers (hover, and "Change now") — deliberately deferred as a structurally different
+follow-up (see TODO.md).
 
 ## Context
 
@@ -185,8 +188,91 @@ muting it for the rest of the session — not a rare-visibility coincidence as f
 change was needed; this is recorded because it's exactly the "report about what Pryme did is data,
 not a competing theory" pattern this project's own CLAUDE.md names.
 
+## Steps 5-6: deleting the two superseded mechanisms (same day, follow-up task)
+
+Once the dismiss fix above landed and was verified, the two remaining deletion steps of the
+`get_displayed_theme()` migration (`review/Design_260804_hover_state_computed_read_path.md`, steps
+5-6) were re-examined — explicitly re-verified against CURRENT code rather than trusting that
+design's snapshot, since significant new code (the containment fix, `get_committed_theme()`, the
+settle predicate, the cover-art fix) had landed since it was written.
+
+**`check_cursor_on_settle()` — deleted.** Its one job: on Settings-panel-open settle, if the cursor
+is already resting on a swatch, synthetically fire `.hovered.emit(...)` to start a preview (working
+around Qt not guaranteeing `enterEvent` redelivery under a stationary cursor). Re-confirmed the
+native `QPushButton#theme_item:hover` QSS rule (themes.py:3730) is unchanged and fully independent
+of this method — Qt applies it purely from cursor-over-widget geometry, no signal involved. Traced
+fresh: nothing added since the original design reads or depends on this method firing; it lived
+entirely on the hover-START side, while everything built this session (the settle predicate,
+`get_committed_theme()`, the cover-art fix) lives on the hover-END/settle side. Deleted the method
+and its sole call site (`_on_settings_slide_finished`).
+
+**`clear_stale_hover_state()` — deleted.** Its job: force `_is_hover_active`/
+`_active_display_theme_internal` back to the active theme whenever Settings becomes hidden, as a
+backstop for the case where a hover completes but the swatch's leaveEvent gets misclassified as a
+blur-grab synthetic (the same class of bug `[SWATCH-LEAVE-SUSPECT]` still detects-but-doesn't-correct
+today). The task's own instruction was explicit: if this method was providing ANY accidental
+backstop coverage for that still-open gap, report it rather than deleting silently. Traced fresh and
+found it was not: `_close_settings_flow` is confirmed the sole path to hiding Settings (all three
+triggers — Esc, gutter/dismiss-all, right-click — route through it; `is_overlay_open_or_committed()`
+blocks every other panel's open flow while Settings is open, so nothing can force it closed via a
+different path), and it unconditionally calls `_on_theme_unhovered()` before `_on_settings_hidden`
+can ever fire — the settle predicate (`_theme_genuinely_settled_on_committed`) guarantees
+`_is_hover_active` is `False` by the time the slide starts, in BOTH the genuine-settle and
+2000ms-timeout-fallback paths. So the dismiss path is self-healing regardless of whether
+`[SWATCH-LEAVE-SUSPECT]`'s gap fired earlier in the session — the stuck state it would have
+corrected is always already fixed by the dismiss's own fresh snapback before this method would run.
+Also independently confirmed `get_displayed_theme()` never reads either field this method corrected,
+closing the original 7-runtime-call-site read leak this method was built for regardless. Deleted the
+method, its call site (`PanelManager._on_settings_hidden`), and its 4 dedicated tests in
+`tests/test_get_current_theme_hover_safety.py` (kept the 3 tests covering `get_current_theme()`/
+`get_active_theme()`'s own unrelated hover-safety).
+
+Verified one deletion at a time, not both before checking: 477/477 → 477/477 (step 1, pure deletion)
+→ 473/473 (step 2, 4 tests removed). Live spot-check after both: the full 8-check dismiss-
+verification suite (`tools/snapback_dismiss_live_verify.py`) passes identically to before either
+deletion.
+
+## Step 3: tab-switch — confirmed still broken, via two distinct triggers
+
+Investigated live, not implemented, per the task's explicit instruction.
+
+**Trigger 1 — hover a swatch, then switch tabs.** 5/5 live trials (both immediate and paused
+switches): never reverts. `_is_hover_active` stays stuck `True` and the main window's chrome stays
+on the hovered theme for the full 2-second observation window, every trial. Root cause confirmed via
+signal-chain instrumentation (wrapping the real `_on_themes_tab_left`/`_on_theme_unhovered` to log
+every call), not inferred from reading alone: **neither method is ever called at all** —
+`leave_log=[]` in every trial. Qt does not deliver a `leaveEvent` to `swatch_box` when
+`QTabWidget.setCurrentIndex()` hides its containing tab, so the entire mechanism the dismiss fix
+improved (the settle predicate, the interrupt marker) is never even entered on this path — there is
+nothing for it to help with, because nothing triggers it. New diagnostic tool,
+`tools/tab_switch_snapback_check.py`, kept for re-running once the tab-bar-interception fix lands.
+
+**Trigger 2 — click "Change now" (a genuine selection, not a hover), then immediately switch tabs —
+raised separately by Pryme after reviewing trigger 1's findings.** Live-tested 5x: this is
+structurally DIFFERENT from trigger 1, confirmed rather than assumed identical. `_do_rotate` sets
+`_current_theme_name` (so `get_committed_theme()`) synchronously, before `_on_theme_changed` even
+runs — so the committed value is correct from the instant of the click, regardless of any later tab
+switch. The fade/overlay/committed-theme internal state also all resolve correctly after ~1.5s in
+every trial (`_fade_anim` settles to `Stopped`, `_fade_overlay` hides, `get_committed_theme()`
+matches the live chrome) — nothing gets stuck, no wrong committed theme survives. The actual defect
+is narrower and purely visual: `_fade_overlay` is a child of `main_window`, not of `themes_tab`/
+`swatch_box`, confirmed by reading its construction (`QLabel(self.main_window)`) — so a tab switch
+never hides it, and the fade keeps animating on top of whatever tab is now showing instead of
+finishing where it started. The panel-occlusion mask this overlay uses is also computed once, at
+fade-start, from whichever panels are open at that instant — it does not change per-tab within the
+same Settings panel, so the overlay's masking stays geometrically consistent through the switch; the
+only issue is that it is visible/playing on the wrong tab's content at all. Pryme's stated
+preference, verbatim: *"I prefer the fade finishes where it starts."* Not a correctness bug (no
+stuck state, no wrong final theme) — a scoping/containment preference for where the fade is visually
+permitted to play.
+
+**Both triggers need the same underlying mechanism** (a tab-bar click-interception event filter:
+consume the click, run/await the relevant settle, then call `setCurrentIndex` once resolved) since
+`QTabWidget.currentChanged` fires AFTER the tab has already switched, with no pre-change signal to
+veto from. Neither is implemented — both are recorded in TODO.md as the scope for that future work.
+
 ## Remaining scope
 
-Settings-internal tab switch is unimplemented, structurally different (no Qt pre-change signal to
-block a `currentChanged` from), and deliberately deferred as its own follow-up per Pryme's explicit
-call — see TODO.md.
+Settings-internal tab switch (both triggers above) is unimplemented, structurally different from the
+dismiss fix (no Qt pre-change signal to block a `currentChanged` from), and deliberately deferred as
+its own follow-up per Pryme's explicit call — see TODO.md.
