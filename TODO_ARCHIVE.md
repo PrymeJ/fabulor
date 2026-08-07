@@ -401,3 +401,19 @@ order these entries had in TODO.md before the split (2026-07-30).
   something worth enforcing). Decided not worth pursuing further at this cost/value ratio. If
   revisited, do not re-attempt byte- or pixel-comparison against the stored JPEG — start from the
   schema-change approach or drop it again.
+
+- **[2026-08-07] FIXED and live-verified (2026-08-08): Smart Rewind re-fired on every Play press
+  after the first, until the next real pause.** `toggle_play_pause` (app.py) called
+  `apply_smart_rewind(self._last_pause_timestamp, ...)` on every unpause, but `_last_pause_timestamp`
+  was only ever written at pause (app.py, the `else` branch) and at app init — never reset after a
+  rewind actually applied. Diagnosed from log traces alone (`seek_async`/`_on_time_pos_change`/
+  persistence) since neither `toggle_play_pause` nor `apply_smart_rewind` had any logging: paused
+  ~15min, then 5 Play presses ~1-2s apart produced 5 separate `seek_async` backward seeks (~23-24s
+  each = `rewind_sec × speed`), all with `paused=True`, because `away_duration` kept recomputing from
+  the same stale timestamp. **Fix**: `Player.apply_smart_rewind` (player.py:1317) now returns `True`
+  when it issues a seek and `False` on every early-exit (no instance/timestamp, `wait_min`/
+  `rewind_sec` ≤ 0, or away-duration under threshold) — its only call site. `toggle_play_pause`
+  (app.py:3137) captures that return and sets `self._last_pause_timestamp = None` only when a rewind
+  actually fired, placed after the seek is issued and before `self.player.pause = False`.
+  `_last_pause_timestamp` still has exactly one set-site (the pause branch) plus this one new
+  `None`-reset site. Full test suite green; live-verified — did not get stuck on repeat Play presses.

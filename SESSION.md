@@ -1,3 +1,34 @@
+## Session Summary — 2026-08-08 — Smart Rewind repeat-fire bug: diagnosed from log traces, fixed, live-verified
+
+Reported directly: pausing a VT book, returning ~15 minutes later, and pressing Play multiple times
+in quick succession made each press rewind ~10s instead of just resuming — never seen before,
+suspected Smart Rewind. Neither `toggle_play_pause` nor `apply_smart_rewind` had any logging, and no
+probe existed for either — the log could not be grepped for the bug directly.
+
+Diagnosed anyway from adjacent traces (`seek_async`, `_on_time_pos_change`, the persistence writer).
+An initial pass at the reported ~18:28-18:34 window found a real but unrelated anomaly (a 5-minute
+storm of ~143 rapid `seek_async` calls, all `paused=True`) that turned out to be wheel-scrolling over
+the chapter slider, not the reported bug — flagged as such rather than force-fit into an explanation,
+and the user supplied the precise moment instead (18:39:00, 5 Play presses ~1s apart). That window
+showed exactly 5 `seek_async` calls, ~1-2s apart, each seeking backward ~23-24s while `paused=True`
+throughout.
+
+**Root cause**: `toggle_play_pause` (app.py) calls `apply_smart_rewind(self._last_pause_timestamp,
+...)` on every unpause, but `_last_pause_timestamp` was only ever written at pause and at app init —
+never reset after a rewind actually fired. So the first Play press correctly computed a 15-minute
+away-duration and rewound; every subsequent press recomputed `away_duration` from that same stale
+timestamp, saw it was still past the threshold, and rewound again — independent of whether playback
+had actually resumed in between.
+
+**Fix**: `Player.apply_smart_rewind` (player.py:1317) now returns `True` when it issues a seek and
+`False` on every early-exit; `toggle_play_pause` (app.py:3137) resets `self._last_pause_timestamp =
+None` only when the return value is `True`, placed after the seek is issued. `_last_pause_timestamp`
+still has exactly one set-site (the pause branch) plus this one new reset. Full test suite green
+(`pytest tests/ -q`); live-verified by the user — repeat Play presses after a long pause no longer
+get stuck re-rewinding. TODO.md entry closed to TODO_ARCHIVE.md.
+
+---
+
 ## Session Summary — 2026-08-05 — Transport-bar blur audit: grab scope/cadence re-confirmed, declined-tick re-arm live-verified
 
 Requested directly: re-verify three prior findings on the transport-bar blur mechanism against
