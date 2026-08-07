@@ -3134,7 +3134,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
                     self.db.update_last_played(self.current_file)
 
                 # Delegate smart rewind logic to Player
-                self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
+                rewound = self.player.apply_smart_rewind(self._last_pause_timestamp, self.config.get_smart_rewind_wait(), self.config.get_smart_rewind_duration())
+                if rewound:
+                    self._last_pause_timestamp = None
 
                 self.player.pause = False
                 self.library_panel.set_is_playing(True)

@@ -1314,29 +1314,32 @@ class Player(QObject):
                     self.seek_async(new_pos)
                     return new_pos
 
-    def apply_smart_rewind(self, last_pause_ts: float, wait_min: int, rewind_sec: int):
+    def apply_smart_rewind(self, last_pause_ts: float, wait_min: int, rewind_sec: int) -> bool:
         """
         Calculates and applies smart rewind logic.
         Rewinds based on how long the user was away.
+        Returns True if a rewind seek was issued, False otherwise.
         """
         if not self.instance or not last_pause_ts or wait_min <= 0 or rewind_sec <= 0:
-            return
+            return False
 
         away_duration = time.time() - last_pause_ts
         if away_duration >= (wait_min * 60):
             speed = self.speed or 1.0
             rewind_amt = rewind_sec * speed
-            
+
             # Respect chapter boundaries
             start_limit = 0
             curr_idx = self.chapter
             chaps = self.chapter_list
             if curr_idx is not None and chaps and curr_idx < len(chaps):
                 start_limit = chaps[curr_idx].get('time', 0)
-                
+
             new_pos = max(start_limit, (self.time_pos or 0) - rewind_amt)
             self.seek_async(new_pos)
             # is_seeking is set True inside seek_async already
+            return True
+        return False
 
     def save_seek_position(self, old_pos: float, duration_limit: int) -> bool:
         """
