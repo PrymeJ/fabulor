@@ -1789,6 +1789,16 @@ class LibraryPanel(QFrame):
                 sort_key = "title"
             ascending = self.config.get_library_sort_ascending()
             books = self.db.get_all_books(sort_by=sort_key, order="ASC" if ascending else "DESC")
+            # Stats' Day/Week/Month tabs show whatever had listening activity in a
+            # period, which can include books later excluded/soft-deleted/missing —
+            # get_all_books()'s active-library filter means those covers would
+            # otherwise NEVER preload no matter how long the app idles (confirmed
+            # live 2026-08-08: 21 of 70 distinct books in real Stats history fell
+            # into this gap). Appended, not interleaved — history-only books have
+            # no natural library sort position and are lower priority than the
+            # visible library. get_stats_history_only_books() is a cheap indexed
+            # query (measured sub-ms), safe to call every queue rebuild.
+            books = list(books) + self.db.get_stats_history_only_books()
             self._preload_queue = [b for b in books if self._needs_preload(b.id)]
 
         if not self._preload_queue:

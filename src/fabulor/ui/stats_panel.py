@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
-    QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex,
+    QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
 from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent
 from PySide6.QtWidgets import QAbstractScrollArea
@@ -995,6 +995,37 @@ def _grid_cell_anim(progress: float, row: int, col: int, n_rows: int, n_cols: in
     return alpha, 1.0
 
 
+class _StatsHistoryLookupSignals(QObject):
+    finished = Signal(list)  # list[(Book, active_cover_path_or_None)]
+
+
+class _StatsHistoryLookupWorker(QRunnable):
+    """Runs LibraryDB.get_all_stats_history_books() off the main thread.
+
+    Exists so the Day-tab eager pre-warm (see StatsPanel._eager_warm_stats_history_covers)
+    never pays this query's cost (measured live 2026-08-08: ~27ms cold / ~2ms warm on
+    this DB's real 70-book history) synchronously — same off-thread-DB-access pattern
+    SessionRecorder already uses for its daemon-thread writes (CLAUDE.md), applied here
+    to a read. `LibraryDB._get_conn()` opens a fresh sqlite3.connect() per call (never a
+    shared long-lived connection object), so calling it from a QRunnable's run() has no
+    cross-thread connection-sharing hazard — confirmed by reading _get_conn() directly,
+    not assumed."""
+
+    def __init__(self, db):
+        super().__init__()
+        self.signals = _StatsHistoryLookupSignals()
+        self.finished = self.signals.finished
+        self._db = db
+
+    @Slot()
+    def run(self):
+        try:
+            results = self._db.get_all_stats_history_books()
+        except Exception:
+            results = []
+        self.finished.emit(results)
+
+
 # ── StatsRowModel / StatsRowDelegate ────────────────────────────────────────
 # Lazy, delegate-painted replacement for the per-row BookDayRow widget
 # construction, Day tab only (proof of concept). See
@@ -1310,8 +1341,15 @@ class StatsRowDelegate(QStyledItemDelegate):
         title_w = min(_STATS_TITLE_WIDTH, max(0, content_w - self.SPACING - self.CLOCK_W))
         clock_w = self.CLOCK_W
         row0_h = line_h
-        title_rect = QRect(content_x, block_y, title_w, row0_h)
-        clock_rect = QRect(content_x + content_w - clock_w, block_y, clock_w, row0_h)
+        # +1px live-measured nudge vs. Week/Month (2026-08-08 side-by-side
+        # screenshot overlay) — the font-metrics-derived block_y above gets
+        # the two-line block's overall centering right, but the title line
+        # specifically still sits 1px high relative to the real BookDayRow;
+        # not explained by any BookDayRow margin/spacing value found by
+        # direct measurement, applied as a live-confirmed correction.
+        title_row_y = block_y + 1
+        title_rect = QRect(content_x, title_row_y, title_w, row0_h)
+        clock_rect = QRect(content_x + content_w - clock_w, title_row_y, clock_w, row0_h)
 
         painter.setFont(title_font)
         painter.setPen(self._color_finished if is_finished else self._color_text)
@@ -1329,7 +1367,12 @@ class StatsRowDelegate(QStyledItemDelegate):
         author_font = QFont(title_font)
         author_w = min(_STATS_AUTHOR_WIDTH, max(0, content_w - self.SPACING - self.PROG_W))
         prog_w = self.PROG_W
-        row1_y = block_y + row0_h + row_spacing
+        # -2px live-measured nudge vs. Week/Month (2026-08-08, same overlay
+        # check as the title nudge above) — not uniform with the title's
+        # +1px, the two lines are not spaced symmetrically around block_y in
+        # the real widget; applied as a live-confirmed correction, not
+        # derived from a BookDayRow margin value.
+        row1_y = block_y + row0_h + row_spacing - 2
         row1_h = line_h
         author_rect = QRect(content_x, row1_y, author_w, row1_h)
         prog_rect = QRect(content_x + content_w - prog_w, row1_y, prog_w, row1_h)
@@ -3162,6 +3205,7 @@ class StatsPanel(QWidget):
         self._assets_dir: str = os.path.join(os.path.dirname(__file__), "..", "assets")
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
+        self._eager_warm_stats_history_covers()
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -3954,6 +3998,21 @@ class StatsPanel(QWidget):
         rows = self._inject_active_covers([r for r in rows if (r.get("clock_seconds") or 0.0) >= 60])
         finished = self._inject_active_covers(self.db.get_finished_in_period('day', date_str, day_start))
 
+        # Dispatch cover loads BEFORE the rebuild-avoidance guard, unconditionally,
+        # not just inside the rebuild branch — gives the async worker's round-trip
+        # (measured ~10-20ms live) the earliest possible head start against the
+        # paint that follows set_rows below. _day_ensure_covers_loaded has its own
+        # cheap internal guards (_cover_cache hit, _day_cover_pending dedup), so
+        # calling it on every revisit (even when the signature is unchanged and
+        # set_rows is about to be skipped) is free for already-warm books and
+        # correctly retries any book whose load never completed last time (e.g.
+        # app closed mid-load) instead of being silently skipped forever by the
+        # rebuild guard. Confirmed live (2026-08-08) this ordering alone doesn't
+        # fully close the race — the DB query above only takes ~1.2ms, nowhere
+        # near enough of a head start — but it costs nothing extra and removes
+        # one structural reason a cold cover could be perpetually skipped.
+        self._day_ensure_covers_loaded(rows)
+
         # Rebuild-avoidance guard: revisiting the SAME period (tab switch back,
         # prev-then-next, wheel scroll back) with an unchanged content
         # signature skips the model reset entirely. A genuine data change
@@ -3971,7 +4030,6 @@ class StatsPanel(QWidget):
             pass
         else:
             self._day_model.set_rows(rows)
-            self._day_ensure_covers_loaded(rows)
             self._day_built_period = date_str
             self._day_built_sig = sig
 
@@ -4729,6 +4787,28 @@ class StatsPanel(QWidget):
         worker.signals.cover_loaded.connect(
             self._day_on_cover_loaded, Qt.ConnectionType.QueuedConnection
         )
+        # Keep a strong Python reference until finished — QThreadPool.start()
+        # is documented to take ownership at the C++/Qt level, but the local
+        # `worker`/`worker.signals` objects are otherwise free for shiboken to
+        # garbage-collect the instant this method returns, before the pooled
+        # thread ever calls run(). LibraryPanel's own preloader dispatch
+        # (_active_workers, library.py) already does this defensively; the
+        # Day-tab dispatch never did. Confirmed live (2026-08-08) as the real
+        # cause of the flicker bug: without this set, a cover load dispatched
+        # from a plain nav-click flow (not a manual re-trigger) never
+        # completed at all — QThreadPool.activeThreadCount() stayed 0 for 5+
+        # seconds and _day_on_cover_loaded never fired, leaving the row
+        # permanently on the placeholder until some other event (a later
+        # rebuild, cache warm from the Library preloader, etc.) eventually
+        # supplied a real cover — which is what read as a "flicker" rather
+        # than a simple, expected one-time cold-cache pop-in.
+        if not hasattr(self, '_day_active_workers'):
+            self._day_active_workers = set()
+        self._day_active_workers.add(worker)
+        worker.signals.finished.connect(
+            lambda w=worker: self._day_active_workers.discard(w),
+            Qt.ConnectionType.QueuedConnection
+        )
         QThreadPool.globalInstance().start(worker)
 
     def _day_on_cover_loaded(self, book_id: int, image: QImage) -> None:
@@ -4745,6 +4825,78 @@ class StatsPanel(QWidget):
             self._day_model.dataChanged.emit(idx, idx)
             if hasattr(self, '_day_list_view'):
                 self._day_list_view.viewport().update()
+
+    def _eager_warm_stats_history_covers(self) -> None:
+        """Fire once, at StatsPanel construction (app startup, before the user
+        has ever opened Stats) — dispatches a background query for every book
+        Stats history can ever show, then warms _cover_cache for all of them.
+
+        This is the fix for the genuine timing-gap flash on active books
+        (confirmed live 2026-08-08 via trace: Shroud/A Drop of Corruption both
+        still hit a real cache miss even after moving _day_ensure_covers_loaded
+        earlier in _refresh_daily — that reorder alone can't beat the async
+        round-trip because there's no lead time between a book's FIRST dispatch
+        and the paint that immediately follows it). Dispatching for the WHOLE
+        70-book history set at construction time, instead of only the currently
+        displayed period, gives every book a multi-second-or-more head start —
+        by the time a user opens Stats and navigates to any given day, its
+        cover has had the app's whole startup sequence to load, not zero time.
+
+        The DB lookup (get_all_stats_history_books) runs off-thread via
+        _StatsHistoryLookupWorker — see that class for why this is safe and
+        necessary (measured ~27ms cold, not a cost this pays on the main
+        thread). This method only fires the worker and connects its
+        completion; the actual per-book cover dispatch happens in
+        _on_stats_history_lookup_done once the query result is back.
+
+        Uses the active_cover_path get_all_stats_history_books() already
+        resolves via a single joined query, not book.cover_path alone — an
+        earlier version of this method used the scanner thumbnail only, on
+        the theory that resolving the active cover was too expensive to do
+        for all 70 books. That was wrong: this whole lookup runs off the main
+        thread already, so the extra query cost doesn't matter here the way
+        it would on the UI thread, and — the real bug — a book warmed with the
+        WRONG pixmap (scanner thumbnail instead of its custom active cover)
+        was never corrected by a later visit as assumed, because
+        _day_ensure_covers_loaded's own `if book_id in _cover_cache: continue`
+        guard has no way to distinguish "warm with the right cover" from
+        "warm with the wrong one" — it just sees an entry and skips. Found and
+        fixed 2026-08-08 after a live check showed a custom-cover book
+        displaying its embedded cover in the Day tab. See
+        get_all_stats_history_books()'s own docstring for the query detail."""
+        worker = _StatsHistoryLookupWorker(self.db)
+        if not hasattr(self, '_day_active_workers'):
+            self._day_active_workers = set()
+        self._day_active_workers.add(worker)
+
+        def _on_finished(books, w=worker):
+            # _StatsHistoryLookupWorker.finished carries the result (list[Book]),
+            # unlike CoverLoaderWorker's plain no-arg `finished` signal elsewhere
+            # in this file — a lambda relying on a `w=worker` DEFAULT to dodge
+            # the emitted argument breaks here, because Qt binds the emitted
+            # `books` list to the lambda's first positional parameter regardless
+            # of any default, silently landing the list into `w` instead of the
+            # worker (confirmed live 2026-08-08: `TypeError: unhashable type:
+            # 'list'` from `_day_active_workers.discard(w)`). Fixed by giving
+            # `books` its own real parameter name so `w` is never in the
+            # collision path.
+            self._day_active_workers.discard(w)
+            self._on_stats_history_lookup_done(books)
+
+        worker.finished.connect(_on_finished, Qt.ConnectionType.QueuedConnection)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_stats_history_lookup_done(self, results: list) -> None:
+        for book, active_cover_path in results:
+            book_id = getattr(book, 'id', None)
+            book_path = getattr(book, 'path', None)
+            cover_path = getattr(book, 'cover_path', None)
+            load_path = active_cover_path or cover_path
+            if not (book_id and book_path and load_path and os.path.exists(load_path)):
+                continue
+            if book_id in _cover_cache:
+                continue
+            self._day_dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
 
     def _day_ensure_covers_loaded(self, rows: list[dict]) -> None:
         """Dispatch a raw CoverLoaderWorker for every row not already in

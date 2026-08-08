@@ -402,6 +402,86 @@ class LibraryDB:
             cursor = conn.execute(f"SELECT * FROM books WHERE is_deleted = 0 AND is_excluded = 0 AND is_missing = 0 ORDER BY {sort_by}{collate} {order}")
             return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
 
+    def get_stats_history_only_books(self) -> list:
+        """Books referenced by Stats period history (listening_sessions/book_events)
+        that are currently excluded, soft-deleted, or missing — i.e. invisible to
+        get_all_books()'s active-library filter, but still shown by Day/Week/Month
+        (a book listened to before being excluded/removed correctly keeps appearing
+        in its historical periods; see the soft-delete-flags CLAUDE.md section).
+
+        Exists so the idle preloader (library.py) can warm covers for these books
+        too — without this, a book in this category can NEVER have its cover
+        preloaded no matter how long the app idles, since get_all_books() fences
+        exactly the three flags this method requires be true. Confirmed cheap via
+        EXPLAIN QUERY PLAN (both sides SEARCH ... USING COVERING INDEX on the
+        existing idx_sessions_book_id/idx_book_events_book_id indexes) and measured
+        live (2026-08-08): sub-millisecond (~0.1ms) on this DB's real session/event
+        volume — safe to call every time the preload queue is (re)built, not just
+        once per app launch."""
+        with self._get_conn() as conn:
+            cursor = conn.execute("""
+                SELECT b.* FROM books b
+                WHERE b.id IN (
+                    SELECT book_id FROM listening_sessions WHERE book_id IS NOT NULL
+                    UNION
+                    SELECT book_id FROM book_events WHERE book_id IS NOT NULL
+                )
+                AND (b.is_deleted = 1 OR b.is_excluded = 1 OR b.is_missing = 1)
+            """)
+            return [Book.from_dict(dict(row)) for row in cursor.fetchall()]
+
+    def get_all_stats_history_books(self) -> list[tuple]:
+        """Every book (any visibility) ever referenced by Stats period history,
+        paired with its resolved active_cover_path — the full set Day/Week/Month
+        can ever show, active or not. Unlike get_stats_history_only_books() (which
+        returns ONLY the currently-hidden subset, for the idle preloader's
+        permanent-gap fix), this returns the complete set so a caller can eagerly
+        warm _cover_cache for every book a user could conceivably navigate to in
+        Stats, not just the specific period/day currently on screen.
+
+        Returns list[(Book, active_cover_path_or_None)] — the active cover is
+        resolved via a single LEFT JOIN against book_covers (indexed on
+        book_path, idx_book_covers_book_path) rather than N per-book
+        get_active_cover_path() calls, so a book with a custom cover set is
+        warmed with the RIGHT pixmap on the first pass, not the scanner
+        thumbnail. (Fixed 2026-08-08: an earlier version of this eager pre-warm
+        used book.cover_path only, on the theory that resolving the active
+        cover per-book was too many extra DB calls — that reasoning was wrong
+        for two reasons found on live testing: the whole lookup already runs
+        off the main thread, so extra query cost here doesn't matter the way
+        it would on the UI thread; and _day_ensure_covers_loaded's own
+        `if book_id in _cover_cache: continue` guard has no way to tell "warm
+        with the right cover" from "warm with the wrong cover", so a wrong
+        eager-warmed pixmap was never corrected by a later real visit as
+        assumed — it stuck permanently for the session.)
+
+        Exists for the Day-tab-open eager pre-warm (stats_panel.py) — dispatched
+        ONCE per Stats session via a QRunnable so this query (measured live
+        2026-08-08: ~27ms cold / ~2ms warm on this DB's real 70-book history,
+        for the book/id lookup alone — the join adds negligible cost, see the
+        method's own docstring measurement note) runs off the main thread, same
+        pattern SessionRecorder already uses for threaded DB writes (see
+        CLAUDE.md). Never call this synchronously from a tab-refresh path — the
+        whole reason for the worker wrapper is to keep this query's cost off
+        the UI thread entirely."""
+        with self._get_conn() as conn:
+            cursor = conn.execute("""
+                SELECT b.*, bc.file_path AS active_cover_path
+                FROM books b
+                LEFT JOIN book_covers bc ON bc.book_path = b.path AND bc.is_active = 1
+                WHERE b.id IN (
+                    SELECT book_id FROM listening_sessions WHERE book_id IS NOT NULL
+                    UNION
+                    SELECT book_id FROM book_events WHERE book_id IS NOT NULL
+                )
+            """)
+            results = []
+            for row in cursor.fetchall():
+                row_dict = dict(row)
+                active_cover_path = row_dict.pop("active_cover_path", None)
+                results.append((Book.from_dict(row_dict), active_cover_path))
+            return results
+
     def get_all_book_paths(self) -> set:
         """Returns the paths of ALL books regardless of is_excluded or is_deleted.
         Used by the scanner to determine which paths have been seen before — excluded
