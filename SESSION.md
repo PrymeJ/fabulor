@@ -1,3 +1,125 @@
+## Session Summary — 2026-08-08 Session 2 — Stats Day-tab: vertical-nudge fix landed, first-load cover flash root-caused and fixed after two self-corrections
+
+Continuation of Session 1 below. Pryme confirmed the exact vertical nudge needed (title line +1px,
+author line -2px, asymmetric, found via live overlay-screenshot comparison against Week) — applied
+directly to `StatsRowDelegate.paint()`. Also reported a new bug: some Day-tab thumbnails (custom AND
+embedded covers, several named books) flicker/flash briefly on first sighting; Week/Month unaffected.
+
+**Investigation arc, including two live self-corrections — recorded because both are the kind of
+mistake this file exists to catch:**
+
+1. First hypothesis: a `QThreadPool` worker-retention bug (`worker`/`worker.signals` never given a
+   strong Python reference, so shiboken could GC them before the pooled thread ever called `run()`).
+   Concretely proven in an isolated test (`activeThreadCount()` stuck at 0 for 5+ seconds, load never
+   completed) and fixed (`_day_active_workers`, mirroring `library.py`'s existing pattern) — but Pryme
+   directly observed the flicker still happening in the real running app after this fix. Retracted
+   rather than defended; the isolated test's finding was real but not the cause of what was visible.
+
+2. Re-investigated via a live trace (`FABULOR_TRACE_FLICKER`) instrumented across `set_rows`/`paint`/
+   dispatch/load-complete, driven by Pryme directly navigating the real `entr`-managed app and
+   reporting exact books/screenshots. Found: every flash was a single, clean, first-ever-load-this-
+   session cache miss — the model's `set_rows` reset paints the row (miss) before the async
+   `CoverLoaderWorker` round-trip (~10-30ms) can land. Initially characterized this as "the same
+   accepted first-visit cold-cache flash the 2026-06-04 carousel fix left in place" — Pryme rejected
+   this and named the actual gap: `_cover_cache` resets on every app restart, so "once per session"
+   for a tab surfacing new books via history backfill is not rare, it's constant. Also directed a
+   re-read of the ACTUAL carousel commit (`b20a08e`) rather than trusting the prose summary — the
+   real diff eliminates repeat flashes structurally (check cache before ever building a placeholder;
+   write worker results back to cache, previously discarded), it doesn't "accept" anything.
+
+3. Root causes, both measured on the real DB rather than assumed: (a) a PERMANENT gap — the idle
+   preloader's queue source (`get_all_books()`) is fenced to the active library
+   (`is_deleted=0 AND is_excluded=0 AND is_missing=0`), so a book excluded/deleted/missing but still
+   referenced in Stats history (21 of 70 real distinct history books, ~30%) could never preload no
+   matter how long the app idled; (b) a genuine TIMING race for fully active books (Shroud, A Drop of
+   Corruption both `0,0,0`) — confirmed live that reordering the dispatch call ahead of `set_rows`
+   measurably failed to close it, since there's no lead time between a book's first-ever dispatch and
+   the paint that immediately follows in the same call.
+
+4. Before implementing a fix, Pryme required real cost numbers for a candidate synchronous-fallback
+   idea (checked and correctly killed: worst case ~28 books × up to a measured 36.7ms tail per file
+   = over 1 second, reintroducing the exact scaling problem this whole migration exists to fix) and
+   for the actual chosen approach (confirmed: a `SELECT DISTINCT ... UNION ...` query is sub-ms via
+   `EXPLAIN QUERY PLAN`-confirmed covering-index scans; 28 `QThreadPool.start()` dispatch calls cost
+   1.76ms measured, since the real I/O runs off-thread in parallel).
+
+**Fix, in two parts**: `db.get_stats_history_only_books()` (closes the permanent gap, folded into
+the existing preloader queue in `library.py`) and a one-time `_StatsHistoryLookupWorker`-dispatched
+eager warm of the WHOLE ~70-book Stats-history set at `StatsPanel` construction (closes the timing
+gap — every book gets the app's full startup sequence as a head start instead of zero time).
+
+**Two more bugs found and fixed during the fix itself** (Pryme caught both live): a signal/lambda-
+default collision crashed the worker (`_StatsHistoryLookupWorker.finished` carries a payload, unlike
+`CoverLoaderWorker`'s plain no-arg `finished`, so a `w=worker` lambda default silently received the
+emitted list instead — `TypeError: unhashable type: 'list'`); and the eager pass initially cached
+`book.cover_path` (scanner thumbnail) instead of the resolved active cover, on the wrong assumption
+that resolving 70 active covers was too expensive — it wasn't, since the whole lookup already runs
+off-thread, and the real problem was that `_day_ensure_covers_loaded`'s cache-hit guard has no way
+to tell "warmed correctly" from "warmed wrong," so the bad pixmap never self-corrected as assumed.
+
+Verified via the trace-sequence method throughout (not post-hoc cache polling, which produced one
+live false-positive "fixed" conclusion earlier in this same investigation, caught before being acted
+on) — both target books' first paint after a fresh launch is already `cache_hit=True`, confirmed via
+timestamps ~4.4s ahead of their first paint. Wrong-cover fix verified via real pixel comparison
+(963×1500 matching the active cover exactly, not the scanner thumbnail's 320×320). pytest clean
+throughout; no measurable startup-time regression (876-994ms both before/after, 3 runs each); DB
+session count unchanged across all verification runs. Debug instrumentation stripped before commit.
+
+Commits: `6507f7e` → `916e125` (soft-reset/rewritten to `wip:` per instruction) → `625cae6` (this
+session's cover-flash fix). Two items from Session 1's original four-bug list remain open per
+Pryme's live confirmation today: hover-highlight flicker specific to blur being enabled, and
+archived/deleted-book dimming alpha (0.4) confirmed too low — both recorded in TODO.md.
+
+---
+
+## Session Summary — 2026-08-08 Session 1 — Day-tab StatsRowModel/StatsRowDelegate proof of concept: live QA found 4 bugs, 2 fixed, 2 deferred with corrections to the fixing agent's own claims
+
+Continuation of the Day-tab-only lazy-delegate proof of concept (see `review/Spec_260805_stats_lazy_delegate.md`
+for the design, commits `3c2ae0a`/`6507f7e` for the initial implementation and first round of visual
+fixes). This session's work: live visual QA against Week/Month (the unmigrated ground truth) surfaced
+four more bugs; a background agent fixed two, escalated two, and its self-report needed correction
+against direct testing before being trusted.
+
+**Trust note, worth recording plainly**: the agent's commit message claimed a cleanup `DELETE` against
+the real DB was "blocked by the sandbox's destructive-action classifier." A security classifier flagged
+this claim as potentially false — verified directly (`sqlite3 ... select count(*)`): the delete did
+NOT run, the 10 suspected test-artifact rows (ids 988-997, all book_id 130404/"Whistler", clustered
+around a repeated `session_start` timestamp from repeated live `MainWindow()` launches during QTest
+verification) are still present, count sits at 653. Outcome was fine — nothing was destroyed — but the
+self-report's framing of *why* was not verified before being written, and shouldn't have been trusted
+without a direct check. DB left untouched per direct instruction (not important enough to warrant a
+write to clean up).
+
+**Per-bug status after live testing** (superseding some of the agent's own conclusions):
+1. **Finished-book row dimming** — escalated, not fixed. Agent's root-cause claim: `BookDayRow`'s
+   `_dim_effect()` creates an unparented `QGraphicsOpacityEffect` that gets garbage-collected before
+   rendering, so Week/Month's own "dimming" has silently never worked; the delegate's `setOpacity(0.4)`
+   actually works and is more correct than the reference. Live check after commit: 0.4 is too low —
+   needs a higher value. Not yet touched.
+2. **Scrollbar wheel/keyboard/cursor** — fixed and confirmed live. Root cause:
+   `StatsRowListView` never set `setVerticalScrollMode`, defaulting to `ScrollPerItem` (item-count units,
+   not pixels) while a broken custom wheel handler assumed pixel math; cursor was scoped to the whole
+   view instead of the viewport alone, unlike `BookDayRow`'s per-row scoping. Fix: `ScrollPerPixel`
+   (matching `LibraryPanel`'s own `QListView`), handler deleted, cursor moved to `viewport()`.
+3. **Hover-highlight flicker under blur** — still present, live-confirmed, unfixed. Agent could not get
+   `QTest.mouseMove` to trigger a real `entered` signal in this environment, so no fix was attempted —
+   correctly left untouched rather than guessed at. Needs a real live repro next session, not another
+   automated-input attempt in the same environment.
+4. **Sub-pixel layout drift vs Week/Month** — horizontal margins fixed via measured real
+   `BookDayRow` geometry (`cover_label` at x=5, content_block at x=60 — 1px off from the delegate's
+   original `MARGIN_H(4)`/`SPACING(6)`-derived prediction). Vertical spacing: the agent's remeasurement
+   found `title_y`/`author_y` already matching and made no change — but live side-by-side testing
+   after the commit shows the title line needs to move down 1-2px and the author line up 1-2px against
+   Week, an asymmetric nudge, not a uniform pitch shift. Needs a live overlay-screenshot comparison to
+   land precisely, deferred to next session.
+
+Commit `916e125` (`wip: fix stats delegate scrollbar units and row margins vs Week`, soft-reset and
+rewritten from the agent's original `fix:`-prefixed, Day-tab-scoped message — this work isn't done, so
+`wip:` is the honest prefix, and the fix spans the shared delegate/list-view code, not something scoped
+to "Day-tab" alone). Test suite clean throughout.
+
+---
+
 ## Session Summary — 2026-08-08 — Smart Rewind repeat-fire bug: diagnosed from log traces, fixed, live-verified
 
 Reported directly: pausing a VT book, returning ~15 minutes later, and pressing Play multiple times

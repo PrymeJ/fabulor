@@ -611,6 +611,51 @@ The `_panel_open` half still uses `_panel_guard_timer`, correctly: it ends when 
 panel, not on a clock, so there is no signal to subscribe to and 700ms is a re-check cadence rather
 than an overshoot.
 
+### DO NOT rely on a lambda's `w=worker`-style default argument to survive a signal connection when that signal carries its own payload
+A `w=worker` default in `lambda w=worker: ...` only protects against the *closure* capturing a
+mutated `worker` variable later (the classic late-binding trap) — it does nothing to stop Qt from
+overwriting that default with a real positional argument when the signal being connected to actually
+emits one. `CoverLoaderWorker.finished = Signal()` (cover_loader.py) is a no-argument signal, so this
+pattern works everywhere it's used in that class (`library.py`'s `_active_workers.discard(w)`
+cleanup lambdas, `stats_panel.py`'s equivalents) — Qt calls the slot with zero arguments and `w`
+correctly falls back to its default. `_StatsHistoryLookupWorker.finished = Signal(list)`
+(stats_panel.py, added 2026-08-08 for the Stats eager-cover-warm fix) carries the query result as
+its one argument — connecting `lambda w=worker: self._day_active_workers.discard(w)` to it crashed
+live (`TypeError: unhashable type: 'list'`) because Qt bound the emitted `list` to the lambda's first
+positional parameter regardless of the default, landing the list into `w` instead of the worker.
+Fixed by giving the emitted value its own real parameter name (`def _on_finished(books, w=worker):`)
+so `w` is never in the collision path. Before copying a `w=worker`-default cleanup lambda onto a new
+signal connection, check whether that signal is genuinely no-argument like `CoverLoaderWorker`'s — if
+it carries a payload, the payload needs its own named parameter, not a second default-argument slot.
+
+### A shared, session-lifetime cache (`_cover_cache`, `_sized_cover_cache`, etc.) resets to empty on every app restart — "warmed once this session" is not "warmed," it recurs every launch
+Confirmed the hard way (2026-08-08, Stats Day-tab cover-flash investigation): an early read of this
+bug treated the first-ever-load-per-book flash as the same rare, accepted edge case the 2026-06-04
+carousel fix (`b20a08e`) left in place — reasoning that a book only flashes once per session, so it's
+a minor cosmetic cost. That framing missed that "once per session" is not "once" for a cache that
+starts empty on every launch: a tab that surfaces many distinct books quickly (Day tab backfilling
+through months of listening history) hits this "rare" case constantly, every single session, for
+every book the idle preloader hasn't reached yet or structurally can't reach (see the preload-scope
+consequence above). Before characterizing any cache-miss cost as "accepted" or "rare" because it's
+gated on "has this book been seen this session," check what resets the cache and how often that reset
+actually happens in real use — a session boundary that recurs on every app launch is not a rare
+boundary.
+
+### A design document you read yourself is not the same as the actual commit — re-derive a cited historical fix from its real diff before treating a summary of it as settled
+The same 2026-08-08 investigation initially cited "the June carousel fix accepted the first-visit
+cold-cache flash, per SESSION.md/NOTES.md" as grounds for treating the Stats Day-tab flash the same
+way — before reading the actual commit (`b20a08e`) itself. The real diff shows something narrower and
+different: `FinishedBookThumb.__init__` was restructured to check `_cover_cache` BEFORE ever
+constructing or showing a placeholder, and `_on_cover_loaded` was fixed to write the load result INTO
+`_cover_cache` (previously discarded) — together, these make a cache hit skip the placeholder
+entirely and make every subsequent visit convergently warm, not "accept" anything. The prose summary
+in SESSION.md ("First-visit cold-cache flash... is accepted") was accurate as written — about a
+genuinely narrower residual case — but got silently widened into "the flash in general is an accepted
+design tradeoff" over the course of the investigation, without re-checking the source. When a
+historical fix is being cited as precedent for how to treat a current bug, read the actual commit
+diff, not a remembered or restated summary of it — a summary can be locally correct and still mislead
+about scope when reused for a different decision.
+
 ### A blur overlay can only cover what shares its parent — `raise_()` does NOT cross parents, and a panel's own QSS wash always paints under its children
 Two Qt facts, one shared consequence: an overlay meant to sit *behind translucent content* must be a
 child of the widget it is frosting, and the wash must be composited into its pixmap. Both halves were
@@ -999,6 +1044,7 @@ first, so the final `drawPixmap` is a near-1:1 blit).
    - **The scale is split for thread-safety.** `_lanczos_qimage(QImage→QImage)` (the PIL LANCZOS + UnsharpMask) is the ONLY part that may run on a `CoverLoaderWorker` thread — it touches only `QImage` (a pure raster container) and PIL. `QPixmap` is a GUI-thread-only paint device: creating or reading one off-thread is undefined behaviour (works sometimes, crashes others). So the worker emits a `QImage` (`sized_cover_loaded`), and the `QImage→QPixmap` conversion + the `_sized_cover_cache` write happen on the main thread in `_on_preload_sized_cover_loaded` (QueuedConnection). NEVER write either cover cache from a worker; NEVER move the QPixmap step off-thread.
    - **DPR is read on the main thread at enqueue time and passed by value** into the worker (`_current_sized_key_dims()` reads `self.screen()`), because `screen()`/DPR access off the GUI thread is unsafe. Do not read it inside the worker.
    - **The preloader's key MUST equal `_get_sized_cover`'s paint-time key**, `(book_id, round(target_w*dpr), round(target_h*dpr))`. `BookDelegate.cover_cell_size()` is the single source of the per-view-mode `target_w/target_h` and MUST stay in lockstep with the cover-rect math in `_paint_grid_cell` (`r.width()-4, r.height()-4`), `_paint_one_per_row` (100×151), and `_paint_two_per_row` (118×180, column-aware X via `_TWO_PER_ROW_LEFT_MARGIN`, fixed size regardless of column). A mismatch is silent: the preloaded entry keys on the wrong size, is never hit at paint time, and the LANCZOS runs on the main thread during the slide anyway — the exact stall this warming exists to remove. Verified matching for all five modes when added; re-verify if any cover-rect formula changes. Warming is **current view mode only** (all-modes doesn't scale by library size — see NOTES.md cost table and the "FUTURE IDEA" first-page-per-mode note). Batching is also load-bearing: dumping all workers at once froze the main thread ~766ms (completion slots pile onto it), so keep `PRELOAD_BATCH_SIZE` batched — 4 is the measured ceiling; do not raise without re-measuring the real two-slot completion path.
+4. **DO NOT assume `get_all_books()`'s active-library filter (`is_deleted=0 AND is_excluded=0 AND is_missing=0`) covers every book a preload/warm pass needs to reach.** The idle preloader's queue source is exactly this filtered query, which means a book can be excluded/soft-deleted/missing from the active library while still correctly appearing in Stats' Day/Week/Month history (a book listened to before being removed keeps showing in its historical periods — see the soft-delete-flags section above). Such a book's cover could NEVER preload, no matter how long the app idled — a permanent gap, not a timing one. Measured on a real library (2026-08-08): 21 of 70 distinct books referenced in Stats history fell into this gap. `db.get_stats_history_only_books()` (a cheap indexed query, sub-millisecond measured) closes it by feeding the currently-hidden-but-historically-relevant subset into the same preloader queue, appended after the active library. Any future preload/warm pass that sources its book list from `get_all_books()` alone should ask the same question before assuming full coverage.
 
 ---
 
@@ -1312,7 +1358,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Tabs**: Overall, Timeline, Day, Week, Month, ⚙.
   - **Overall** — `BarChartWidget` (last 7 days; click a bar → Day tab at that date); stat grid (Listening time, Books started, Sessions, Longest/Last/Average session, Current/Longest streak); "Recently finished" `FinishedScrollRow` (≤ 20, hidden when empty).
   - **Timeline** — both `HourlyHeatmap` and `StreakGrid` built, one visible (default from `config.get_default_timeline_view()`); `TasselOverlay` toggles them with a conceal→reveal transition.
-  - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), `BookDayRow` list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`.
+  - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), row list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`. **Day tab (only, as of 2026-08) uses `StatsRowModel`/`StatsRowDelegate`/`StatsRowListView`** (a `QAbstractListModel`/`QStyledItemDelegate` pair, lazily painting rows instead of constructing `BookDayRow` widgets — see `review/Spec_260805_stats_lazy_delegate.md` for the design and `review/INDEX.md` for the implementation/bugfix history). Week and Month still build `BookDayRow` widgets directly and remain the reference/ground-truth for Day's visual and behavioral parity. `StatsPanel` also fires a one-time eager cover-warm at construction (`_eager_warm_stats_history_covers`/`_StatsHistoryLookupWorker`) covering every book Stats history can ever show, closing a first-load cover-flash gap the delegate migration surfaced — see the CLAUDE.md rules near `_sized_cover_cache` and the two new rules on lambda-signal defaults / session-lifetime cache resets.
   - **⚙** — day-start hour `QSpinBox` (0–23, rebuilds streak cache), period scroll-acceleration toggle, default-timeline-view toggle, "Reset all stats" (7s confirm).
 - **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal/conceal cell transition uses the shared `_grid_cell_anim` helper, style `"pop"` (cells scale up from a center-anchored inset as they reveal, shrink back on conceal — not a plain alpha fade); top date labels and left-gutter hour labels cascade via per-label opacity fade with enter/exit as true mirrors (left-to-right entering top labels / right-to-left exiting; top-to-bottom entering gutter labels / bottom-to-top exiting).
 - **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small sharp centered 4×4 square dot (`_finished` set, `streak_grid_dot` per-theme override); the longest consecutive run **fills with a derived lighter/desaturated tint of accent and borders in plain accent** (`streak_grid_outline` per-theme override for the border color — fill/border roles were swapped from the original distinct-fill design), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + an animated count: linear count-up 0 → previously-shown value, then (only if the streak grew since last shown) a paused snappy tick up to the new value — see `animate_streak_count`/`catch_up_streak_count` and the two CLAUDE.md rules above on persistence and the panel-reopen catch-up exception. Same `_grid_cell_anim` "pop" transition as the heatmap.
@@ -1507,7 +1553,27 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-02 Session 1 — Panel-backdrop switch measured at ~1040ms per click and
+*Last updated: 2026-08-08 — Stats Day-tab lazy-delegate migration: five live-QA bugs fixed against
+Week/Month as the reference (cover crop, row-line spacing, scrollbar scroll-mode/cursor, sub-pixel
+margin drift, and — the deepest of the five — a first-load cover flash). The flash was initially
+misdiagnosed as an accepted carousel-precedent edge case; reopened after two corrections: the
+carousel's actual 2026-06-04 fix (re-read from its real diff, `b20a08e`, not a remembered summary)
+eliminates repeat flashes structurally rather than accepting them, and `_cover_cache` resets every
+app restart, so "once per session" recurs constantly for a tab that surfaces new books via history
+backfill. Real causes, both measured: a permanent 30%-of-history gap (the idle preloader's queue
+source is fenced to the active library, so excluded/deleted/missing books referenced in Stats
+history could never preload) and a genuine dispatch-vs-paint timing race for active books that
+reordering alone could not close. Fixed via `db.get_stats_history_only_books()` (closes the
+permanent gap) and a one-time eager cover-warm of the whole ~70-book Stats-history set at
+`StatsPanel` construction (closes the timing gap). Two bugs introduced and caught during the fix
+itself: a signal/lambda-default collision crash, and an initial version that cached the wrong
+(scanner-thumbnail) cover instead of the resolved active cover. Two new DO-NOT rules added (lambda
+`w=worker` defaults vs. payload-carrying signals; treating a session-lifetime cache reset as rare).
+Full history: `review/INDEX.md`, `review/Spec_260805_stats_lazy_delegate.md`. Remaining open from
+the same live-QA pass: hover-highlight flicker specific to blur being enabled, and archived/deleted
+book dimming alpha needs tuning (0.4 confirmed too low). `3c2ae0a`, `6507f7e`, `916e125`, `625cae6`.*
+
+*Previously: 2026-08-02 Session 1 — Panel-backdrop switch measured at ~1040ms per click and
 roughly halved. `restyle_for_backdrop_change` called `apply_full_pass` — the complete theme pass,
 visible **plus** deferred batch, synchronously — and that hardcodes `force_all_panels=True`, which
 is documented as startup-only and defeated the previous day's panel-skip. A backdrop change moves

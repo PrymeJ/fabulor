@@ -84,6 +84,30 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Pending
 
+- **[2026-08-08] Stats Day-tab row hover-highlight flicker, specific to blur being enabled.**
+  Live-confirmed by Pryme; reproduction blocked so far — `QTest.mouseMove` did not reliably trigger
+  Qt's real `entered`/hover machinery on `StatsRowListView` in the automated environment tried
+  during the same investigation that fixed the cover-flash bug, so this was left unfixed rather than
+  guessed at. Needs a real live repro (not another automated-input attempt in the same environment)
+  before a cause can be diagnosed — see the CLAUDE.md rule on `QTest.mouseMove` not reliably
+  triggering Qt's hover/mouse-tracking machinery in this environment (Keyboard focus ownership
+  section references a related but distinct headless-Qt trust issue; this is a live-repro gap, not
+  a headless-vs-live one). Candidate starting point: the delegate's hover repaint
+  (`self.viewport().update()` from `StatsRowListView._on_entered`/`leaveEvent`) racing whatever
+  redraw the panel's blur effect (`ClippedBlurEffect`/`TransportBarBlurOverlay`) does — unconfirmed,
+  not yet investigated live.
+
+- **[2026-08-08] Stats Day-tab archived/deleted-book cover dimming alpha needs tuning.**
+  `StatsRowDelegate.paint()` dims archived-book covers via `painter.setOpacity(0.4)` — confirmed
+  live by Pryme as too low (too faint/washed-out) against Week/Month's actual `BookDayRow` dimming.
+  Note: during the same investigation, `BookDayRow`'s own dimming (`_dim_effect()`, a bare
+  `QGraphicsOpacityEffect` with no parent/retained reference) was found to be silently
+  garbage-collected before it ever renders — confirmed live via `cover_label.graphicsEffect()`
+  returning `None` immediately after `setGraphicsEffect()` — so Week/Month's "reference" dimming may
+  not actually be a reliable target to match either. Needs a decision on which value is
+  actually correct (and possibly fixing `_dim_effect()`'s GC bug in `BookDayRow` too, so Day/Week/
+  Month agree) before just nudging the delegate's opacity constant.
+
 - **[2026-08-02] Theme-apply ordering/deferral for book-switch flow stutter (cover-theme on).**
   Confirmed directional: Book A (80% progress) → Book B (11.5%) stutters during the flow animation;
   the reverse (B→A) does not. Root cause not yet instrumented — likely tied to `_apply_stylesheets`
