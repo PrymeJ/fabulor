@@ -15,7 +15,7 @@ from PySide6.QtCore import (
     Qt, QRect, QRectF, Signal, QSize, QPoint, QPointF, QEvent, QThreadPool, QTimer, Property,
     QPropertyAnimation, QEasingCurve, QAbstractListModel, QModelIndex, QObject, QRunnable, Slot,
 )
-from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent
+from PySide6.QtGui import QPainter, QColor, QFont, QPixmap, QImage, QIcon, QEnterEvent, QPen, QPainterPath, QKeyEvent, QCursor
 from PySide6.QtWidgets import QAbstractScrollArea
 from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
@@ -1466,6 +1466,30 @@ class StatsRowListView(QListView):
             delegate.set_hovered_row(-1)
             self.viewport().update()
         super().leaveEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Re-derive hover from the CURRENT cursor position instead of waiting for
+        # entered — the transport-bar blur (TransportBarBlurOverlay._grab_and_blur)
+        # hides then shows this panel ~5x/sec while blur is enabled and any panel
+        # is open (see transport_bar_blur.py). Hiding a widget correctly delivers a
+        # real leaveEvent (Qt recomputes what's under the cursor), which clears the
+        # hover fill; but re-showing only fires showEvent/enterEvent, NOT Qt's
+        # entered signal — entered only fires on an actual mouse-move over a new
+        # index, never on a visibility change alone. With a stationary cursor this
+        # reads as "the highlight vanishes and never comes back until the mouse
+        # moves"; with a slowly-moving cursor, each ~200ms hide/show cycle races
+        # the movement and the highlight flickers on/off. Confirmed live
+        # (2026-08-09) via HOVER-TRACE: a genuine leaveEvent(hovered_row_was=0)
+        # fires at the hide, followed by showEvent/enterEvent with no _on_entered
+        # in between. Fix: ask indexAt() directly what's under the cursor right
+        # now, the same query a real mouse-move would trigger — restores the
+        # correct hover immediately instead of leaving it stranded.
+        pos = self.viewport().mapFromGlobal(QCursor.pos())
+        if self.viewport().rect().contains(pos):
+            index = self.indexAt(pos)
+            if index.isValid():
+                self._on_entered(index)
 
     def mousePressEvent(self, event):
         if event.button() in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
