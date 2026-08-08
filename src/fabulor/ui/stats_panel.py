@@ -1285,14 +1285,25 @@ class StatsRowDelegate(QStyledItemDelegate):
             # rendering squashed-to-square in the Day-tab delegate.)
             draw_x = cover_rect.x() - (scaled.width() - cover_rect.width()) // 2
             draw_y = cover_rect.y() - (scaled.height() - cover_rect.height()) // 2
-            # BookDayRow dims the cover via a QGraphicsOpacityEffect(0.4) on
-            # top of the grayscale conversion (_apply_cover/setGraphicsEffect,
-            # stats_panel.py). Mirror both here: grayscale already applied in
-            # _cover_pixmap, opacity applied at draw time.
+            # Archived-state signal is grayscale ONLY, no opacity dimming — a
+            # deliberate decision (2026-08-09), not an oversight. BookDayRow
+            # dims via a QGraphicsOpacityEffect on top of grayscale
+            # (_apply_cover/setGraphicsEffect) — though that effect is a
+            # separate, known bug (a bare QGraphicsOpacityEffect with no
+            # parent/retained reference gets GC'd before it ever renders, so
+            # BookDayRow/Week/Month's dimming has never actually applied — see
+            # the CLAUDE.md rule on _dim_effect()). This delegate's own
+            # painter.setOpacity() had no such bug and DID visibly dim; live
+            # tuning (0.4 too faint, 0.8 "looks better than 1.0") found no
+            # alpha value that could be adopted in isolation — any non-1.0
+            # value would need matching changes to the Finished-period
+            # carousels (FinishedBookThumb, all four periods) and the Tags
+            # panel's archived-book thumbnails to stay visually consistent,
+            # which was explicitly deferred, not done here. Grayscale alone
+            # (_cover_pixmap) is a strong, unambiguous signal on its own and
+            # needs no matching opacity change anywhere else.
             painter.save()
             painter.setClipRect(cover_rect)
-            if is_archived:
-                painter.setOpacity(0.4)
             painter.drawPixmap(draw_x, draw_y, scaled)
             painter.restore()
         else:
