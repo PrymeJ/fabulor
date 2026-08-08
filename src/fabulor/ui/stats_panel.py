@@ -1217,8 +1217,19 @@ class StatsRowDelegate(QStyledItemDelegate):
             painter.fillRect(r, self._hover_color)
 
         # Cover thumbnail — vertically centered within the row (BookDayRow's
-        # QHBoxLayout AlignVCenter default), left margin MARGIN_H.
-        cover_x = r.x() + self.MARGIN_H
+        # QHBoxLayout AlignVCenter default).
+        #
+        # Left offset is MARGIN_H + 1, NOT MARGIN_H, and this is a measured
+        # fact, not a guess: live geometry probing of the real BookDayRow
+        # (cover_label.geometry(), Week tab, `layout.setContentsMargins(4, 2,
+        # 4, 2)`) reports the label at x=5, not x=4 — Qt adds 1px beyond the
+        # configured left margin for this specific WA_StyledBackground +
+        # QHBoxLayout combination (style().pixelMetric(PM_DefaultFrameWidth)
+        # == 1 on this widget, consistent with the gap). Confirmed live
+        # 2026-08-08 via a side-by-side screenshot pixel sample AND direct
+        # widget-geometry introspection (both independently show the same
+        # +1px): Day's cover previously sat 1px left of Week's.
+        cover_x = r.x() + self.MARGIN_H + 1
         cover_y = r.y() + (r.height() - self.COVER_SIZE) // 2
         cover_rect = QRect(cover_x, cover_y, self.COVER_SIZE, self.COVER_SIZE)
 
@@ -1258,8 +1269,19 @@ class StatsRowDelegate(QStyledItemDelegate):
             painter.drawPixmap(cover_rect, ph)
 
         # Content block starts after cover + spacing.
-        content_x = cover_rect.right() + 1 + self.SPACING
-        content_w = r.right() - content_x - self.MARGIN_H
+        #
+        # Both offsets below are measured, not derived from SPACING/MARGIN_H
+        # alone — live geometry probing of the real BookDayRow (Week tab, a
+        # 252px-wide row) found content_block at x=60 (cover ends at x=53
+        # exclusive, so the real cover-to-content gap is 7px, one more than
+        # the configured SPACING=6) with its right edge (clock/prog labels'
+        # right-aligned edge) at x=246 (row_width(252) - 6, one more than
+        # MARGIN_H+1 would give, because r.right() below is Qt's INCLUSIVE
+        # last-pixel convention — r.right() == 251 for this row, so
+        # `251 - 60 - 5 == 186 == 246 - 60`). These are the exact real
+        # numbers, applied directly rather than eyeballed from a screenshot.
+        content_x = cover_rect.right() + 1 + self.SPACING + 1
+        content_w = r.right() - content_x - (self.MARGIN_H + 1)
         content_h = r.height() - 2 * self.MARGIN_V
         content_y = r.y() + self.MARGIN_V
 
@@ -1360,11 +1382,30 @@ class StatsRowListView(QListView):
         self.setResizeMode(QListView.ResizeMode.Adjust)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        # ScrollPerItem (the QListView default) reports the scrollbar's
+        # min/max/value in ITEM-COUNT units, not pixels — confirmed live: with
+        # 9 rows and ~7 visible, verticalScrollBar().maximum() read 2 (rows of
+        # overflow), not a pixel extent. Week/Month's real QScrollArea has no
+        # such mode (QScrollArea is always pixel-based), and LibraryPanel's own
+        # QListView (library.py, ~line 610) already sets ScrollPerPixel for
+        # exactly this reason — mirrored here so wheel/keyboard scrolling
+        # behaves the same way Week/Month's scrollbar does.
+        self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.setSelectionMode(QListView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # BookDayRow was never focusable either
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # BookDayRow sets the hand cursor on each ROW widget (stats_panel.py,
+        # BookDayRow.__init__), not on the scroll container — the container
+        # (QScrollArea, for Week/Month) keeps the default arrow cursor, so its
+        # scrollbar shows an arrow too. Setting the cursor on the whole
+        # QListView instead put a hand over EVERY child, including the
+        # scrollbar (a child widget of the view) — confirmed live via
+        # cursor().shape() on the scrollbar returning PointingHandCursor.
+        # Scoping it to the viewport alone (the row-painting surface, the
+        # closest equivalent to "a row widget" this delegate-based view has)
+        # keeps the scrollbar's cursor at the style default.
+        self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self.viewport().setMouseTracking(True)
         self.entered.connect(self._on_entered)
 
@@ -3687,15 +3728,22 @@ class StatsPanel(QWidget):
         self._day_cover_pending: set = set()
         self._day_scroll = self._day_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
-        def _day_rows_wheel(e):
-            bar = self._day_list_view.verticalScrollBar()
-            notches = -1 if e.angleDelta().y() > 0 else 1
-            target = bar.value() + notches * _STATS_ROW_HEIGHT
-            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
-            e.accept()
-        self._day_list_view.wheelEvent = _day_rows_wheel
+        # A hand-rolled wheelEvent snap-to-row-height handler used to live here
+        # (assigned as an instance attribute: `self._day_list_view.wheelEvent =
+        # ...`). Removed for two independent, both-confirmed-live reasons:
+        # (1) instance-attribute assignment doesn't hook Qt's C++ virtual
+        # dispatch reliably in every delivery path — QApplication.sendEvent
+        # targeting the outer view widget never reached it at all (only
+        # viewport()-targeted events did); (2) even when reached, its math
+        # was wrong for this view's actual scroll units — it divided/
+        # multiplied bar.value()/bar.maximum() by _STATS_ROW_HEIGHT (52) as
+        # if they were pixels, but ScrollPerItem mode (the default, in force
+        # before the ScrollPerPixel change above) reports those in ITEM-COUNT
+        # units. With 9 rows and bar.maximum()==2, `(2 // 52) * 52 == 0`
+        # clamped every wheel scroll straight back to the top. Native
+        # QListView wheel handling under ScrollPerPixel (set above) already
+        # scrolls correctly and matches Week/Month's QScrollArea feel — no
+        # replacement handler is needed.
 
         outer.addWidget(self._day_list_view, stretch=1)
 
