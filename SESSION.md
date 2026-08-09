@@ -1,3 +1,67 @@
+## Session Summary — 2026-08-09 — Stats delegate migration completed: hover-flicker fixed, dimming decided, Week+Month migrated, full dead-code chain removed
+
+Continuation of the prior sessions' Day-tab delegate work (see the two entries below). This session
+closed both items left open from 2026-08-08, then extended the migration to Week and Month, then
+removed the resulting dead code down to a clean chain.
+
+**Hover-flicker under blur — root-caused and fixed.** Added live trace instrumentation
+(`FABULOR_TRACE_HOVER_FLICKER`, stripped before commit) across `StatsRowListView`'s hover handlers
+and `TransportBarBlurOverlay._grab_and_blur`'s hide/show calls. Found precisely: the blur overlay
+hides then shows the active panel ~5x/sec while blur is enabled and any panel is open (a mechanism
+already described, but not yet fixed, in an existing `_on_tab_changed` code comment). Hiding
+`StatsRowListView` correctly delivers a real `leaveEvent` — Qt recomputes what's under the cursor —
+which clears the hover fill via the existing handler. But re-showing only fires `showEvent`/
+`enterEvent`, never Qt's `entered` signal, since `entered` only fires on an actual mouse-move over a
+new index, not a visibility change alone. With a stationary cursor this read as "the highlight
+vanishes and never comes back until the mouse moves"; Pryme also reported it looks like a flicker
+under slow mouse movement, since each ~200ms hide/show cycle races the movement. **Fix**: `showEvent`
+now re-derives the correct hovered row from the current cursor position via `indexAt()` — the same
+query a real mouse-move would trigger. Pryme confirmed live: fixed and stable, for both the
+stationary-cursor and slow-movement cases (`f2c88ae`).
+
+**Archived-cover dimming — tuned live, then decided against entirely.** 0.4 (the original value)
+confirmed too faint; 0.8 "looks better than 1.0" — but adopting any non-1.0 value would require
+matching changes to the Finished-period carousels (`FinishedBookThumb`, all four periods) and the
+Tags panel's archived-book thumbnails to stay visually consistent, which Pryme explicitly did not
+want to do in this pass. Decided to keep it simple: opacity fixed at 1.0 (i.e., no dimming), grayscale
+alone carries the archived signal. The now-dead `is_archived`/`setOpacity` branch was removed rather
+than left as a no-op `setOpacity(1.00)` call (`78ffd3a`).
+
+**Week and Month migration.** Before implementing Week, confirmed precisely which of the Day
+delegate's positioning constants were genuinely generic (derived live from font metrics — safe to
+inherit) versus hardcoded pixel corrections from a single measurement (the horizontal offsets were
+already measured against Week's real geometry, per their own comments; the vertical nudges' actual
+measurement scope was less clear) — treated all of them as needing live re-verification, not
+inheritance. Migrated Week (`a103619`) mirroring Day exactly, generalizing the cover-dispatch
+machinery from Day-only hardcoded methods into `prefix`-parameterized shared ones along the way, and
+fixing a real gap while doing it: cover-load dedup is now keyed on `book_id` alone via one shared
+`_stats_cover_pending` set, not per-tab — two tabs requesting the same never-cached book no longer
+race two redundant `CoverLoaderWorker`s. Caught and corrected an own test-methodology bug before
+reporting a false finding: a class-level `set_rows` monkeypatch was double-counting Day's own
+rebuilds during a Week→Day→Week verification bounce, producing an "unexpected delta=1" that a direct
+signature check disproved. Also found and cleaned up a leftover synthetic test session from that
+same flawed run, confirming the DB back to true baseline. Pryme independently confirmed Week's layout
+matched Month with no crop/margin difference, and separately flagged a genuinely pre-existing,
+out-of-scope bug: Day/Week/Month's title elision truncates at a fixed column width regardless of real
+free space in the row — logged to TODO.md, not fixed (correct fix is Library's invasive elision
+logic, a separate pass). Month followed the identical pattern (`5d364f9`), with one additional,
+larger cleanup: once all three tabs shared the delegate, removed every now-dead widget-per-row helper
+(`ScrollHoverTracker` import, `_rows_in`/`_add_row_safely`, `_claim_container_input` — its Qt
+flush-widget hit-testing lesson preserved as a comment pointer rather than deleted with the code —
+and `_iter_day_rows`), and flagged (without removing, since it was outside that commit's stated
+scope) that `BookDayRow` itself was now fully unreferenced.
+
+**Dead-code removal chain, three more commits at Pryme's direction, one link at a time with the same
+discipline at each step (fresh whole-tree grep, isinstance/type-hint check, CLAUDE.md load-bearing
+check) before removing:** `BookDayRow` (`c09f945`) → `ElidedLabel`/`_dim_effect()`, confirmed
+genuinely dead everywhere despite `ElidedLabel`'s generic name suggesting possible reuse elsewhere —
+it had none (`cfad399`) → `_elide()`, the last link, confirmed to reveal no further orphan when
+removed (`f0664fd`). Test suite and a live three-tab smoke check (app launch, Stats open, each tab
+renders and responds to nav clicks) confirmed clean after every single commit in the chain, not just
+the last one.
+
+---
+
 ## Session Summary — 2026-08-08 Session 2 — Stats Day-tab: vertical-nudge fix landed, first-load cover flash root-caused and fixed after two self-corrections
 
 Continuation of Session 1 below. Pryme confirmed the exact vertical nudge needed (title line +1px,

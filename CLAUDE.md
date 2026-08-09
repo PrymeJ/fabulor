@@ -1358,13 +1358,13 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - **Tabs**: Overall, Timeline, Day, Week, Month, ⚙.
   - **Overall** — `BarChartWidget` (last 7 days; click a bar → Day tab at that date); stat grid (Listening time, Books started, Sessions, Longest/Last/Average session, Current/Longest streak); "Recently finished" `FinishedScrollRow` (≤ 20, hidden when empty).
   - **Timeline** — both `HourlyHeatmap` and `StreakGrid` built, one visible (default from `config.get_default_timeline_view()`); `TasselOverlay` toggles them with a conceal→reveal transition.
-  - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), row list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`. **Day tab (only, as of 2026-08) uses `StatsRowModel`/`StatsRowDelegate`/`StatsRowListView`** (a `QAbstractListModel`/`QStyledItemDelegate` pair, lazily painting rows instead of constructing `BookDayRow` widgets — see `review/Spec_260805_stats_lazy_delegate.md` for the design and `review/INDEX.md` for the implementation/bugfix history). Week and Month still build `BookDayRow` widgets directly and remain the reference/ground-truth for Day's visual and behavioral parity. `StatsPanel` also fires a one-time eager cover-warm at construction (`_eager_warm_stats_history_covers`/`_StatsHistoryLookupWorker`) covering every book Stats history can ever show, closing a first-load cover-flash gap the delegate migration surfaced — see the CLAUDE.md rules near `_sized_cover_cache` and the two new rules on lambda-signal defaults / session-lifetime cache resets.
+  - **Day / Week / Month** — ‹/› nav (right-click jumps to oldest/newest), wheel-scroll header (Day optionally accelerated), row list (rows < 60s excluded), total label, "Finished" `FinishedScrollRow`. **All three tabs use `StatsRowModel`/`StatsRowDelegate`/`StatsRowListView`** (a `QAbstractListModel`/`QStyledItemDelegate` pair, lazily painting rows into a real `QListView` instead of constructing per-row widgets — migrated Day 2026-08-05, Week and Month 2026-08-09; see `review/Spec_260805_stats_lazy_delegate.md` for the original design and `review/INDEX.md` for the full implementation/bugfix history). The old widget-per-row class this replaced (`BookDayRow`) and everything that existed only to support it (`ElidedLabel`, `_dim_effect()`, `_elide()`, `ScrollHoverTracker`, `_claim_container_input`) were removed once all three tabs migrated — see git history if any of that mechanism's lessons (especially `_claim_container_input`'s flush-widget Qt hit-testing gotcha) are needed again for some future widget-per-row list. `StatsPanel` also fires a one-time eager cover-warm at construction (`_eager_warm_stats_history_covers`/`_StatsHistoryLookupWorker`) covering every book Stats history can ever show, closing a first-load cover-flash gap the delegate migration surfaced — see the CLAUDE.md rules near `_sized_cover_cache` and the two new rules on lambda-signal defaults / session-lifetime cache resets. Cover-load dispatch (`_dispatch_cover_load`/`_on_cover_loaded`/`_delegate_refresh_cover_for_path`) is shared across all three tabs via a `prefix` parameter (`_day`/`_week`/`_month`), with dedup keyed on `book_id` alone (`_stats_cover_pending`), not per-tab.
   - **⚙** — day-start hour `QSpinBox` (0–23, rebuilds streak cache), period scroll-acceleration toggle, default-timeline-view toggle, "Reset all stats" (7s confirm).
 - **`HourlyHeatmap`** — 14-day × 24-hour grid (CELL 14, GAP 1), today leftmost; cell alpha `40 + intensity×215` (intensity = `min(1, sec/3600)`); hover highlights + per-hour tooltip (date, total, per-book table). Mexico-wave reveal/conceal cell transition uses the shared `_grid_cell_anim` helper, style `"pop"` (cells scale up from a center-anchored inset as they reveal, shrink back on conceal — not a plain alpha fade); top date labels and left-gutter hour labels cascade via per-label opacity fade with enter/exit as true mirrors (left-to-right entering top labels / right-to-left exiting; top-to-bottom entering gutter labels / bottom-to-top exiting).
 - **`StreakGrid`** — 26×14 = 364-day calendar, today top-left, backed by `streak_grid_cache`. Listened days filled accent; finished days get a small sharp centered 4×4 square dot (`_finished` set, `streak_grid_dot` per-theme override); the longest consecutive run **fills with a derived lighter/desaturated tint of accent and borders in plain accent** (`streak_grid_outline` per-theme override for the border color — fill/border roles were swapped from the original distinct-fill design), computed in-widget by `_compute_longest_run` (most-recent run wins on tie). Left gutter shows the current-streak icon + an animated count: linear count-up 0 → previously-shown value, then (only if the streak grew since last shown) a paused snappy tick up to the new value — see `animate_streak_count`/`catch_up_streak_count` and the two CLAUDE.md rules above on persistence and the panel-reopen catch-up exception. Same `_grid_cell_anim` "pop" transition as the heatmap.
 - **`TasselOverlay`** — sliver tab pinned top-left (~7px peek), slides down → holds 1200 ms → switches view → retreats; clock icon (Streak) ↔ fire icon (Heatmap; was `calendar.svg`, swapped 2026-06-18 — rendered as a plain rectangle at 14px). Icon recolors via `accent_dark`/`bg_main` theme keys (was `accent`) and updates only once the bookmark is fully retreated at rest, not mid-transition — see `TasselOverlay.play(on_switch, on_retreated=...)`. `_switch_timeline_view` uses a 2-counter seam so the visibility flip waits for both conceal and label-out. A decorative tassel (cubic-Bezier cord looping from the tab's top-centre, vertically into a bound "head" rect, fanning into a 7-thread fringe — added 2026-06-19 Session 3, `_cord_color` from `accent_dark`/`bg_main`) hangs alongside the tab: a perpetual ~30fps idle micro-sway plus a decaying "kick" on slide-down/retreat, gated by `showEvent`/`hideEvent` + an `isVisible()` tick guard. The widget itself is wider/taller than the tab to give the tassel room, but `_tab_rect`/`REST_Y`/`EXT_Y`/the 7px peek are unchanged; clicking and the hand cursor are both driven by `_in_hit_region()` (tab rect OR a tight tassel-body box — see the CLAUDE.md rule above) so the cursor never shows over dead space.
-- **Widgets**: `BookDayRow` (48×48 cover, elided title/author, `pct_start · pct_end | +delta`; archived dimmed, finished/deleted styled), `FinishedBookThumb` (47×47 crop), `SessionListWidget` (scrollable session rows: timestamp / delta% / `_RangeBar` / end%), `_RangeBar` (flat start→end fill bar with animatable colors; also used by the detail panel).
-- **Data flow** — period caches (`_cached_active_days/weeks/months`) invalidated on tab change / `refresh_all`. `_inject_active_covers(rows)` adds `active_cover_path` from `book_covers` (must run at every `BookDayRow`/`FinishedBookThumb` site). `on_cover_changed(book_path, cover_path)` does a targeted refresh of the visible tab only (`_iter_day_rows` / `_iter_finished_thumbs` → `refresh_cover`); empty cover restores the placeholder without a worker.
+- **Widgets**: `StatsRowDelegate` (48×48 cover, elided title/author, `pct_start · pct_end | +delta`; archived shown in grayscale, no opacity dimming — see the CLAUDE.md decision note; finished/deleted styled) paints Day/Week/Month rows; `FinishedBookThumb` (47×47 crop) is the one remaining per-widget row class, used only by the Finished-period carousels, deliberately not migrated to the delegate pattern; `SessionListWidget` (scrollable session rows: timestamp / delta% / `_RangeBar` / end%), `_RangeBar` (flat start→end fill bar with animatable colors; also used by the detail panel).
+- **Data flow** — period caches (`_cached_active_days/weeks/months`) invalidated on tab change / `refresh_all`. `_inject_active_covers(rows)` adds `active_cover_path` from `book_covers` (must run at every row site, including `FinishedBookThumb`). `on_cover_changed(book_path, cover_path)` refreshes every tab's model directly via `_delegate_refresh_cover_for_path` (not gated on which tab is currently visible, so a hidden tab's `_cover_cache` entry still gets corrected) plus `_iter_finished_thumbs` → `refresh_cover` for the Finished carousels.
 
 ### Tag Manager (`tag_manager.py`, `TagManagerWidget`)
 
@@ -1553,7 +1553,47 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-08 — Stats Day-tab lazy-delegate migration: five live-QA bugs fixed against
+*Last updated: 2026-08-09 — Stats delegate migration completed across all three tabs (Day/Week/
+Month), both items left open from the 2026-08-08 pass fixed, and the resulting dead code fully
+removed. **Hover-flicker under blur**: root cause confirmed via live trace instrumentation —
+`TransportBarBlurOverlay._grab_and_blur` hides then shows the active panel ~5x/sec while blur is
+enabled and any panel is open; hiding `StatsRowListView` correctly delivers a real `leaveEvent`
+(clearing hover), but re-showing only fires `showEvent`/`enterEvent`, never Qt's `entered` signal,
+which only fires on an actual mouse-move over a new index. Fixed by overriding `showEvent` to
+re-derive the hovered row from the current cursor position via `indexAt()`, live-confirmed by the
+user. **Archived-cover dimming**: tuned live (0.4 too faint, 0.8 "looks better than 1.0") before
+deciding against any opacity dimming at all — a non-1.0 value would need matching changes to the
+Finished-period carousels and Tags panel to stay consistent, explicitly deferred; grayscale alone is
+judged a sufficient, unambiguous signal on its own. **Week and Month migration**: mirrors Day's
+`StatsRowModel`/`StatsRowDelegate`/`StatsRowListView` pattern exactly; the cover-dispatch machinery
+was generalized from Day-only hardcoded methods into prefix-parameterized shared ones along the way
+(`_dispatch_cover_load`, `_on_cover_loaded`, `_delegate_refresh_cover_for_path`,
+`_delegate_fixup_scroll_policy`), fixing a real gap in the process — cover-load dedup is now keyed on
+`book_id` alone via one shared `_stats_cover_pending` set, not per-tab. Verified live against the
+specific migration risks flagged before starting (not assumed to transfer from Day): positional
+offset constants were confirmed to already have been measured against Week's own real geometry;
+scrollbar cursor/scroll-mode came free from the shared `StatsRowListView` class; the rebuild-avoidance
+guard was confirmed correct for unchanged-revisit/insert/delete via real `db.write_session()`/
+`delete_session()` calls (catching and correcting a test-methodology bug — a class-level monkeypatch
+double-counting another tab's own rebuilds — before it was reported as a false finding); timing
+checkpoints on each tab's own largest real period showed consistent, if varying, wins (~3.8x for
+Week, ~1.8x for Month's larger 28-row case). **Dead-code chain removed** once all three tabs shared
+the delegate: `BookDayRow` (the widget class itself, confirmed via fresh whole-tree grep to have zero
+remaining references beyond comments/docstrings) → `ElidedLabel`/`_dim_effect()` (used only by
+`BookDayRow`) → `_elide()` (used only by `ElidedLabel`) — plus the now-dead `ScrollHoverTracker`
+import, `_rows_in`/`_add_row_safely`/`_claim_container_input`/`_iter_day_rows` helpers, each confirmed
+individually before removal, with `_claim_container_input`'s hard-won Qt flush-widget-hit-testing
+lesson preserved as a comment pointer rather than deleted along with the code. A live pixel-diff
+comparison between two independent screenshot captures (Week vs. Month) found a small, non-realignable,
+sub-visible difference — inconclusive noise from comparing separate app launches, not a real geometry
+bug; the user's direct live comparison found nothing wrong and is the stronger signal. One new
+TODO.md entry logged, explicitly deferred: Day/Week/Month row-title elision truncates at a fixed
+column width regardless of real free space in the row (pre-existing, not a migration regression —
+newly visible only from direct side-by-side tab comparison; correct fix is Library's invasive
+elision logic, its own separate pass). `f2c88ae`, `78ffd3a`, `a103619`, `5d364f9`, `c09f945`,
+`cfad399`, `f0664fd`.*
+
+*Previously: 2026-08-08 — Stats Day-tab lazy-delegate migration: five live-QA bugs fixed against
 Week/Month as the reference (cover crop, row-line spacing, scrollbar scroll-mode/cursor, sub-pixel
 margin drift, and — the deepest of the five — a first-load cover flash). The flash was initially
 misdiagnosed as an accepted carousel-precedent edge case; reopened after two corrections: the
@@ -1569,9 +1609,9 @@ permanent gap) and a one-time eager cover-warm of the whole ~70-book Stats-histo
 itself: a signal/lambda-default collision crash, and an initial version that cached the wrong
 (scanner-thumbnail) cover instead of the resolved active cover. Two new DO-NOT rules added (lambda
 `w=worker` defaults vs. payload-carrying signals; treating a session-lifetime cache reset as rare).
-Full history: `review/INDEX.md`, `review/Spec_260805_stats_lazy_delegate.md`. Remaining open from
-the same live-QA pass: hover-highlight flicker specific to blur being enabled, and archived/deleted
-book dimming alpha needs tuning (0.4 confirmed too low). `3c2ae0a`, `6507f7e`, `916e125`, `625cae6`.*
+Full history: `review/INDEX.md`, `review/Spec_260805_stats_lazy_delegate.md`. Both items left open at
+the time (hover-flicker under blur, archived-cover dimming alpha) were resolved the same week — see
+the entry immediately above this one. `3c2ae0a`, `6507f7e`, `916e125`, `625cae6`.*
 
 *Previously: 2026-08-02 Session 1 — Panel-backdrop switch measured at ~1040ms per click and
 roughly halved. `restyle_for_backdrop_change` called `apply_full_pass` — the complete theme pass,
