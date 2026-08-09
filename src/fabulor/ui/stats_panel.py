@@ -1,5 +1,4 @@
-# THEME_ANIM_TODO: ElidedLabel, SessionListWidget, BookDayRow, 
-# FinishedBookThumb, FinishedScrollRow, StatsPanel
+# THEME_ANIM_TODO: SessionListWidget, FinishedBookThumb, FinishedScrollRow, StatsPanel
 import math
 import os
 import random
@@ -32,29 +31,6 @@ _ARCHIVED_PLACEHOLDER_COLOR = "#888888"
 def _elide(text: str, font, max_px: int) -> str:
     from PySide6.QtGui import QFontMetrics
     return QFontMetrics(font).elidedText(text, Qt.TextElideMode.ElideRight, max_px)
-
-
-class ElidedLabel(QLabel):
-    """QLabel that elides text to a fixed pixel budget set at construction."""
-    def __init__(self, text: str, max_px: int = 120, parent=None):
-        super().__init__(parent)
-        self._full_text = text
-        self._max_px = max_px
-        self.setWordWrap(False)
-        self.setTextFormat(Qt.TextFormat.PlainText)
-        self.setMinimumWidth(0)
-        super().setText(text)  # show full text until font is known; updateElision called after setFont
-
-    def setFont(self, font):
-        super().setFont(font)
-        self._apply()
-
-    def _apply(self):
-        super().setText(_elide(self._full_text, self.font(), self._max_px))
-
-    def setText(self, text: str):
-        self._full_text = text
-        self._apply()
 
 
 class BarChartWidget(QWidget):
@@ -383,14 +359,9 @@ class _RangeBar(QWidget):
         painter.end()
 
 
-def _dim_effect():
-    from PySide6.QtWidgets import QGraphicsOpacityEffect
-    effect = QGraphicsOpacityEffect()
-    effect.setOpacity(0.4)
-    return effect
-
-
-# BookDayRow's intrinsic height: 48px cover + 2px top/bottom margin (layout.setContentsMargins(4, 2, 21, 2))
+# Row intrinsic height: 48px cover + 2px top/bottom margin (the original
+# BookDayRow's layout.setContentsMargins(4, 2, 21, 2), now the delegate's
+# own margin constants — see StatsRowDelegate).
 _STATS_ROW_HEIGHT = 52
 
 # BookDayRow's title/author labels previously had only an elision CAP (max_px), not a fixed
