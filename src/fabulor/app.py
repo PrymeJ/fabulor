@@ -671,7 +671,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setFixedSize(300, 564)
 
         # Initialize Sleep Timer Panel early to allow connections in build methods
-        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self)
+        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self,
+                                            dismiss_ms=_INDICATOR_DISMISS_MS)
         self.sleep_panel.hide()
         self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
         self.sleep_panel_animation.setDuration(300)
@@ -1701,6 +1702,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
 
         self._dismiss_eof_prompt()
+        # A sleep timer (either mode) is scoped to the book it was armed on — silently
+        # drop it on an actual switch to a different book. disable_sleep_timer() is
+        # silent by construction here: it only hides the cancel-pulse chrome and clears
+        # the indicator label, no "cancelled" message (that's reserved for the
+        # end-of-chapter forward-jump case — see _cancel_eoc_sleep). Scoped to a real
+        # switch only, not the EOF-restart-same-book path (toggle_play_pause).
+        self.sleep_panel.disable_sleep_timer()
         self._save_current_progress()
         self._paused_time = None
         # Enter the switch lifecycle: capture the current slider values as flow-animation
