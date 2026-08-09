@@ -28,11 +28,6 @@ from .icon_utils import load_currentcolor_icon
 _ARCHIVED_PLACEHOLDER_COLOR = "#888888"
 
 
-def _elide(text: str, font, max_px: int) -> str:
-    from PySide6.QtGui import QFontMetrics
-    return QFontMetrics(font).elidedText(text, Qt.TextElideMode.ElideRight, max_px)
-
-
 class BarChartWidget(QWidget):
     
     date_clicked = Signal(str)
