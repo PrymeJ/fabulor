@@ -1,3 +1,63 @@
+## Session Summary — 2026-08-09 (2) — Corner-hotspot sidebar trigger: plan, implementation, indicator tried and removed, merged to main
+
+Full arc on `feature/sidebar-hotspot-trigger`, now merged. A second way to open the sidebar
+(hover-intent on a 15×15 corner zone under the cover art, alongside the existing right-click), with
+`opened_via`-gated dismissal rules and a visual indicator that was implemented, diagnosed, and
+removed within the same branch.
+
+**Investigation + plan** (`review/Plan_260809_corner_hotspot_sidebar_trigger.md`) traced the
+sidebar's existing state machine before writing any code. Two live checks resolved open questions
+the plan itself had flagged as unverified: a click on the sidebar's own blank area already dismisses
+it today via the existing `MainWindow.mousePressEvent` click-away path (no new code needed); and —
+found only by reading the code, not assumed — there is no single named constant for the sidebar's
+y-position anywhere in `panels.py`, just a literal `56` repeated at ~15+ call sites. The hotspot
+reads `mw.sidebar.y()` directly at construction instead of referencing a constant that doesn't exist.
+
+**Two more plan assumptions broke during implementation, not before, and were corrected rather than
+patched around.** The plan's design for the idle-dismiss timer called for a new `QEvent.MouseMove`
+branch on `MainWindow`'s existing `QApplication`-level `eventFilter`. Live-confirmed offscreen that
+this doesn't work: Qt only generates `MouseMove` events for a widget with `setMouseTracking(True)`
+enabled, and almost nothing in this app's widget tree has that set. Replaced with a cheap repeating
+`QTimer` poll of `QCursor.pos()`, armed/disarmed at the same `_toggle_sidebar()` open/close
+transition the rest of the feature's state already uses. Separately, the plan assumed the hotspot
+could be parented to `visual_area` at local `(0, ~54)` — live-measured that `visual_area`'s own local
+origin sits 10px lower than `sidebar.y()` in the same coordinate space, which would have put the
+hotspot off the top of the widget entirely. Parented to `MainWindow` directly instead, matching
+`sidebar`'s own parenting, so both share one coordinate space.
+
+**Indicator implemented, then diagnosed, then removed — same session, informed deletion not a
+guess.** A flat 0.60-alpha white square (`ui/sidebar_hotspot.py`'s `paintEvent`, gated by a
+`None`/`Square` config setting) was built as a "faint" hover-zone marker. Live testing found it
+becomes invisible after extended use. Diagnosed BEFORE removing it, specifically to rule out a
+general bug this feature's own new code might have introduced (a stale-paint, missed-repaint, or
+z-order defect that could outlive the indicator's deletion) — confirmed instead that the hotspot sits
+directly over the top-left corner of the book cover artwork itself (not fixed app chrome), so a
+translucent white square blends into light-colored covers. Ruled out the code-level explanations
+directly rather than accepting the first plausible one: traced `paintEvent` call counts through a
+real panel open/close cycle and a full theme rotation (both repainted correctly); confirmed via a
+direct offscreen grab that the hotspot's rendered pixels survive both; grepped every reference to the
+widget across the codebase and found nothing else touches its visibility or z-order. Indicator-
+specific, not a general defect — no DEBT_INVENTORY.md/NOTES.md flag needed. Removed entirely per a
+separate, independent decision (a permanently-visible corner marker wasn't wanted regardless of the
+bug): no `paintEvent` left on the widget at all now, no dead code path, no settings for indicator
+style — only the hotspot's own enable/disable toggle remains.
+
+**Test-isolation gap found and worked around, flagged for the wider suite.**
+`QSettings.setDefaultFormat(IniFormat)` + `setPath` — the pattern `test_hover_excludes_speed_sleep.py`
+already uses — does NOT isolate test writes from the real `~/.config/Fabulor/Fabulor.conf` on this
+platform/PySide6 build; confirmed live (a test write actually leaked into the real config file during
+development, caught via `stat` mtime, cleaned up manually). `test_sidebar_hotspot.py` works around it
+locally by monkeypatching `fabulor.config.QSettings` to a subclass that always resolves to an explicit
+`tmp_path` `.ini` file. The underlying gap in the established pattern is unaddressed for other test
+files — see TODO.md.
+
+Three commits on the branch, kept separate so the pre-removal state stays diffable: the plan
+(`537cd2e`), the full implementation as a WIP snapshot (`3cdaf9d`), and the indicator removal
+(`114da01`). Merged to `main` as `feat: add corner-hotspot sidebar trigger` (`2349abd`), with docs
+written up afterward per Pryme's request, in their own commit per this repo's source/docs-commit
+split convention. Full suite: 501 passing (505 at peak with the indicator's own tests, 4 removed with
+it, no replacements invented). Branch deleted after merge.
+
 ## Session Summary — 2026-08-09 — Stats delegate migration completed: hover-flicker fixed, dimming decided, Week+Month migrated, full dead-code chain removed
 
 Continuation of the prior sessions' Day-tab delegate work (see the two entries below). This session

@@ -621,6 +621,17 @@ undone by `hide()` itself).
 - [x] Library clickable
 - [x] Clicking on chapter name dismisses
 
+### Corner-hotspot trigger (2026-08-09, `ui/sidebar_hotspot.py`)
+- [x] Hovering the 15×15 zone (top-left of the cover art, just under the progress bar) for ~200ms opens the sidebar
+- [x] A quick mouse pass-through the zone (shorter than the hover-intent delay) does NOT open it
+- [x] The hotspot is invisible — no indicator, no marker, by design (an earlier flat-alpha square indicator was tried and removed; see SESSION.md 2026-08-09)
+- [x] While the sidebar is open (either open method), hovering the zone does nothing
+- [x] Right-click-opened sidebar does NOT close when the cursor leaves the sidebar's own area — only idle timeout or an explicit dismiss (click-away, nav-item click) closes it
+- [x] Hotspot-opened sidebar DOES close as soon as the cursor leaves the sidebar's own area
+- [x] With no mouse movement anywhere in the window, an open sidebar (either method) auto-dismisses after ~10s
+- [x] Re-arm requires exit + re-entry: after any auto/explicit dismiss with the cursor still resting in the 15×15 zone, hovering does NOT immediately reopen it — moving the cursor out and back in does
+- [x] Settings > Controls tab: "Sidebar hotspot" On/Off toggle disables/enables hover-open; right-click-to-open still works regardless of this setting
+
 ### Soft-delete / path removal regression checks
 - [ ] Removing a scan location marks books as is_deleted=1 (not hard-deleted)
 - [ ] Removed books disappear from library view immediately

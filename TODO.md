@@ -60,6 +60,9 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-10] PageUp/PageDown jump distance in the library list — undecided
 - [2026-07-09] Keyboard-selection focus indicator is nearly invisible
 
+### Test infrastructure
+- [2026-08-09] `QSettings.setDefaultFormat(IniFormat)` + `setPath` does NOT isolate test writes from the real `~/.config/Fabulor/Fabulor.conf` on this platform/PySide6 build — confirmed live (a test write actually leaked into the real config file during `tests/test_sidebar_hotspot.py` development, caught via `stat` mtime, cleaned up manually). `test_hover_excludes_speed_sleep.py` uses this exact pattern and may have the same latent gap (never surfaced there because it doesn't check default-value isolation against the real file). `test_sidebar_hotspot.py` works around it locally via a `QSettings` subclass monkeypatch that always resolves to an explicit `tmp_path` `.ini` file; the underlying gap in the established pattern is unaddressed for other test files
+
 ### Volume / transport UI
 - [2026-06-23] Volume slider/muted icon don't accept wheel-scroll while visible
 - [2026-06-23] Slider→muted-icon transition is abrupt

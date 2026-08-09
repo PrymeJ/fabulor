@@ -1219,6 +1219,25 @@ real on 2026-07-30 — an emptied book title made `_apply_filter_and_sort` deref
 (`8678d68`). The `None` guard is fixed too, but **do not remove the `finally` on the grounds that
 the known trigger is handled** — it guards the class of failure, not that one instance.
 
+### DO NOT rely on a `QApplication`-level `QEvent.MouseMove` filter branch to detect "any mouse movement anywhere in the window"
+Qt only **generates** `MouseMove` events for a widget that has `setMouseTracking(True)` enabled (or
+has a mouse button held) — confirmed live, 2026-08-09. Almost nothing in this app's widget tree has
+tracking enabled (only `total_time_label` did, at the time this was found). A `QApplication`-level
+`eventFilter` branch on `QEvent.Type.MouseMove` only sees events Qt actually generated, so it will
+fire during drags but silently never fire for ordinary cursor movement over any widget that didn't
+opt in — there is no cascade from a parent's `setMouseTracking` to its children. The corner-hotspot
+sidebar trigger's idle-dismiss timer (`review/Plan_260809_corner_hotspot_sidebar_trigger.md`) was
+originally *designed* this way and would have silently never reset on real mouse movement; caught
+before shipping by testing the mechanism directly (a synthesized `sendEvent` proved nothing, since it
+bypasses the generation step this gotcha is about — the platform integration itself has to be
+consulted, or the underlying Qt behavior reasoned from first principles). Fixed by polling
+`QCursor.pos()` on a repeating `QTimer` instead (`ui/panels.py`, `_sidebar_idle_poll_timer`, 500ms
+cadence) — sidesteps the tracking-cascade problem entirely and touches no existing widget. Prefer a
+`QCursor.pos()` poll over a `MouseMove`-filter interception for any future "detect activity anywhere
+in the window" need; only reach for real `MouseMove` events for a hover mechanism scoped to a single
+widget that can set its own tracking (the pattern every other hover feature in this app already
+uses).
+
 ---
 
 ## Tech Stack
@@ -1388,6 +1407,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 - Manages sidebar, library, settings, speed, sleep, stats, tags, book-detail, and chapter-list visibility. All slide via `QPropertyAnimation` on position; re-entry guarded.
 - Library slides full-width from the left (sets `_is_animating` to suppress cover emits; `refresh()` on shown). Settings/speed/sleep/stats/tags slide from the left at 90% width, fixed 500px height. **Book detail uniquely enters from the right.** Optional blur animation (`blur_effect.blurRadius` 0↔10) per `config.get_blur_enabled`.
 - Sidebar uses a queued-open pattern (closes first, then dispatches the panel). `_on_library_hidden` ends the deadzone (`mw._switch.library_revealed`), calls `ungate_play`, then drains deferred file-ready events or applies the pending cover theme.
+- **Two ways to open the sidebar (added 2026-08-09)** — right-click on the cover-art area (existing), or hovering an invisible 15×15 hotspot zone at the cover art's top-left corner for ~200ms (`SidebarHotspot`, `ui/sidebar_hotspot.py`; toggle in Settings > Controls). `PanelManager._sidebar_opened_via` (`"right_click"` | `"hotspot_hover"` | `None`) records which, set at the two open call sites and cleared in `_toggle_sidebar`'s closing branch. It gates `on_sidebar_hover_out()`: cursor-leaves-the-sidebar-rect only dismisses a hotspot-opened sidebar, never a right-click-opened one. A universal idle-dismiss poll (`_sidebar_idle_poll_timer`, `QCursor.pos()`-based — see the CLAUDE.md rule on why this isn't a `MouseMove` filter) closes either after `_SIDEBAR_IDLE_DISMISS_MS` (10s) of no movement anywhere in the window. The hotspot's own `_armed` flag requires a genuine exit-then-reentry of the zone before it can fire again — disarmed on ANY sidebar-open transition while the cursor rests inside it (not just hotspot-triggered opens), which is what prevents the idle timer from closing the sidebar and immediately reopening it via a stationary cursor. See `review/Plan_260809_corner_hotspot_sidebar_trigger.md` for the full design and SESSION.md 2026-08-09 for why a visual indicator was tried and removed.
 - **Keyboard focus ownership (added 2026-07-11)** — every panel/overlay claims real Qt focus on open (`_claim_panel_focus`, called after `.raise_()`) and releases it on close (`_release_panel_focus`, called after `.hide()`), enforcing that exactly one widget owns focus at a time app-wide. Settings/Speed/Sleep claim the first entry of `panel_tab_widgets(panel_key)` (same list Tab-cycling uses); Stats/Tags/BookDetail claim the panel root itself (granted `StrongFocus` if it doesn't already have it). Library and ChapterList self-manage this in their own `showEvent`/`show_above` and are not routed through these helpers. See the "Keyboard focus ownership" CLAUDE.md rule for the full invariant and the `hide()`-before-`clearFocus()` Qt gotcha this depends on getting right.
 
 ### Controls & widgets (`controls.py`, `audio_controls.py`, `carousel.py`, `icon_utils.py`, `text_context_menu.py`)
@@ -1521,6 +1541,7 @@ src/fabulor/
     ├── hover_tracker.py      # ScrollHoverTracker — re-resolves a scroll area's hovered row from cursor position (QSS :hover goes stale on scroll); suspend() is the keyboard-coexistence hook
     ├── line_edit_dragfix.py  # DragSafeLineEdit — QLineEdit base for ALL text inputs; suppresses Qt's stray-move drag-select
     ├── scrollbar_jump.py     # ScrollBarJumpFilter — app-wide right-click-gutter-to-jump; suppresses the native scrollbar context menu
+    ├── sidebar_hotspot.py    # SidebarHotspot — invisible 15x15 hover-intent zone, second sidebar-open method alongside right-click
     └── text_context_menu.py  # Right-click Cut/Copy/Paste/Delete context menu for metadata and tag fields
 ```
 
