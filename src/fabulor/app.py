@@ -3468,9 +3468,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer.
-        Skipped when volume just hit 0 with no sleep timer active — that
-        case jumps straight to the muted icon instead of previewing the slider."""
-        if self.volume_slider.value() == 0 and not self.sleep_timer_label.text():
+        Skipped when volume just hit 0 — that case jumps straight to whatever
+        _settle_vol_stack() resolves to (mute icon, or a sleep-just-armed
+        confirmation) instead of previewing an empty slider first."""
+        if self.volume_slider.value() == 0:
             self.vol_hide_timer.stop()
             self.vol_fade_anim.stop()
             self.vol_opacity.setOpacity(0.0)
