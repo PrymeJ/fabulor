@@ -24,6 +24,7 @@ class SettingsController:
         main.chapter_digit_mode_changed.connect(self._update_chapter_digit_mode)
         main.chapter_digit_autoplay_changed.connect(self._update_chapter_digit_autoplay)
         main.chapter_list_source_changed.connect(self._update_chapter_list_source)
+        main.sidebar_hotspot_enabled_changed.connect(self._update_sidebar_hotspot_enabled)
         main._refresh_panel_visuals = self.sync_all_settings_visuals
         main._validate_smart_rewind_settings = self._validate_smart_rewind_settings
 
@@ -77,6 +78,13 @@ class SettingsController:
     def _update_notch_animation_visuals(self):
         enabled = self.config.get_chapter_notch_animation_enabled()
         self.visuals.set_notch_animation_selection(enabled)
+
+    def _update_sidebar_hotspot_enabled(self, enabled):
+        self.config.set_sidebar_hotspot_enabled(enabled)
+        self._update_sidebar_hotspot_visuals()
+
+    def _update_sidebar_hotspot_visuals(self):
+        self.visuals.set_sidebar_hotspot_selection(self.config.get_sidebar_hotspot_enabled())
 
     def _update_undo_mode(self, val):
         self.config.set_undo_duration(val)
@@ -173,6 +181,7 @@ class SettingsController:
         self._update_digit_mode_visuals()
         self._update_digit_autoplay_visuals()
         self._update_chapter_source_visuals()
+        self._update_sidebar_hotspot_visuals()
         self.panels.update_speed_panel_visuals(theme_name)
         self.panels.update_sleep_panel_visuals()
         self.panels.update_audio_panel_visuals()

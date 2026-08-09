@@ -563,6 +563,15 @@ def build_sidebar(mw):
     mw.sidebar_animation.setDuration(300)
     mw.sidebar_animation.setEasingCurve(QEasingCurve.OutCubic)
 
+    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md):
+    # a real cursor-leaves-the-sidebar-rect signal is only meaningful for a
+    # hotspot-opened sidebar (on_sidebar_hover_out no-ops for right_click). Needs mouse
+    # tracking enabled — mirrors the swatch_box.leaveEvent monkeypatch pattern used for
+    # the Themes tab (build_themes_tab). panel_manager doesn't exist yet at build time,
+    # so this reaches through mw.panel_manager lazily, same as that pattern does.
+    mw.sidebar.setMouseTracking(True)
+    mw.sidebar.leaveEvent = lambda _: mw.panel_manager.on_sidebar_hover_out()
+
 
 def build_library_panel(mw):
     mw.library_panel = LibraryPanel(mw.db, mw.config, player_instance=mw.player, parent=mw)
@@ -1083,5 +1092,26 @@ def build_controls_tab(mw):
         digit_row.addWidget(btn)
         mw.digit_autoplay_buttons[val] = btn
     short_layout.addLayout(digit_row)
+
+    # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+    # Placement here is explicitly temporary — likely to move once more of the settings
+    # surface is finalized. The indicator tier (None/Square visual marker) was tried and
+    # removed 2026-08-09 — the hotspot is permanently invisible now, so only its own
+    # enable/disable toggle remains; see SESSION.md for why.
+    hotspot_header = QLabel("Sidebar hotspot")
+    hotspot_header.setObjectName("settings_header")
+    short_layout.addWidget(hotspot_header)
+
+    hotspot_row = QHBoxLayout()
+    mw.hotspot_enabled_buttons = {}
+    for mode in ["On", "Off"]:
+        btn = QPushButton(mode)
+        btn.setObjectName("pattern_button")
+        btn.clicked.connect(lambda _, m=mode: mw.sidebar_hotspot_enabled_changed.emit(m == "On"))
+        hotspot_row.addWidget(btn)
+        mw.hotspot_enabled_buttons[mode] = btn
+    hotspot_row.addStretch()
+    short_layout.addLayout(hotspot_row)
+
     short_layout.addStretch()
     mw.tabs.addTab(shortcuts_tab, "Controls")

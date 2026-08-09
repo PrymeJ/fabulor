@@ -35,6 +35,7 @@ from .ui.stats_panel import StatsPanel
 from .ui.book_detail_panel import BookDetailPanel
 from .ui.tag_manager import TagManagerWidget
 from .ui.carousel import CoverCarousel, CAROUSEL_STRIPE_W
+from .ui.sidebar_hotspot import SidebarHotspot
 from .ui import main_window_builders as builders
 from .db import LibraryDB
 from .library.scanner import LibraryScanner
@@ -261,6 +262,15 @@ class VisualsInterface:
             for btn in m.notch_animation_buttons.values():
                 btn.setVisible(enabled)
 
+    def set_sidebar_hotspot_selection(self, enabled):
+        m = self._main
+        if hasattr(m, 'hotspot_enabled_buttons'):
+            for mode, btn in m.hotspot_enabled_buttons.items():
+                is_selected = (mode == "On" if enabled else mode == "Off")
+                btn.setProperty("selected", "true" if is_selected else "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
     def set_hover_fade_selection(self, mode):
         m = self._main
         if not hasattr(m, 'hover_fade_buttons'): return
@@ -373,6 +383,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     chapter_digit_mode_changed = Signal(str)
     chapter_digit_autoplay_changed = Signal(bool)
     chapter_list_source_changed = Signal(str)
+    sidebar_hotspot_enabled_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__()
@@ -695,6 +706,24 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.chapter_list_widget.chapter_selected.connect(self._on_chapter_list_selected)
 
         builders.build_sidebar(self)
+
+        # Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+        # Parented to MainWindow, not visual_area — sidebar.y() is in MainWindow-local
+        # coordinates (sidebar is also a direct MainWindow child), and visual_area's own
+        # local origin sits 10px lower (content_layout's margin), which would put a
+        # visual_area-local y derived from sidebar.y() off the top of visual_area entirely
+        # (confirmed live: sidebar.y()=56, visual_area's own top=66 in mw-local coords).
+        # Parenting here instead keeps the coordinate space identical to sidebar's own, so
+        # x=0 sits flush with the sidebar's own left edge and no cross-space translation is
+        # needed. y is read from mw.sidebar.y() itself (not hardcoded) so the two stay
+        # coupled if that value ever changes.
+        self.sidebar_hotspot = SidebarHotspot(
+            self.config, on_fire=self._on_sidebar_hotspot_fired, parent=self
+        )
+        self.sidebar_hotspot.move(0, self.sidebar.y())
+        self.sidebar_hotspot.show()
+        self.sidebar_hotspot.raise_()
+
         builders.build_library_panel(self)
         builders.build_settings_panel(self)
         # Parented to library_tab (the tab PAGE, not MainWindow) so it moves
@@ -3054,6 +3083,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Reposition percentage label
         if hasattr(self, 'progress_percentage_label'):
             self.progress_percentage_label.resize(self.progress_slider.size())
+
+    def _on_sidebar_hotspot_fired(self):
+        """SidebarHotspot's on_fire callback, after its hover-intent delay elapses.
+        Re-checks hotspot-enabled (the setting may have been toggled off during the
+        delay window) and the one-overlay-at-a-time gate (same gate every _open_*_flow
+        uses) before opening — cheap insurance against a race with another open path
+        firing during the same ~200ms window. Mirrors the empty-library guard the
+        right-click path already has."""
+        if not self.config.get_sidebar_hotspot_enabled():
+            return
+        if self.db.get_book_count() == 0:
+            return
+        pm = self.panel_manager
+        if pm.is_overlay_open_or_committed():
+            return
+        pm._toggle_sidebar()
+        pm._sidebar_opened_via = "hotspot_hover"
 
     def _on_drag_area_pressed(self, event):
         if event.button() == Qt.LeftButton:

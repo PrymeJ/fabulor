@@ -7,6 +7,7 @@ import time
 from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QGridLayout
 from PySide6.QtWidgets import QLineEdit, QApplication
 from PySide6.QtCore import QPoint, QRect, QPropertyAnimation, QAbstractAnimation, QTimer, Qt, QObject, QEvent
+from PySide6.QtGui import QCursor
 from .title_bar import ThemeItem
 from .transport_bar_blur import TransportBarBlurOverlay, panel_rect_in_common_space
 
@@ -53,6 +54,17 @@ _BLUR_OUT_MS = 500
 # on top of a 1500ms blur-in. Each tick is nine cheap QAbstractAnimation.state()
 # reads, so ~90 wakeups across a blur-in is negligible.
 _SETTLE_POLL_MS = 16
+
+# Corner-hotspot sidebar trigger (review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+# Dismisses the sidebar after this long with no mouse movement anywhere in the window,
+# regardless of which method opened it. Value locked in per the approved plan.
+_SIDEBAR_IDLE_DISMISS_MS = 10000
+# Poll cadence for the cursor-position check driving the above — see
+# _sidebar_idle_poll_timer's own comment for why this is a poll, not a move-event
+# listener. 500ms is frequent enough that the dismiss fires within half a second of
+# its stated deadline, and cheap: one QCursor.pos() read + a comparison, only while
+# the sidebar is open.
+_SIDEBAR_IDLE_POLL_MS = 500
 
 # Additional pause after a genuine hover-out snapback visibly settles, before the
 # Settings-dismiss action it was blocking actually proceeds (2026-08-05, corrected
@@ -223,6 +235,34 @@ class PanelManager:
         # toggle (relative); queueing toggles produced a runaway open/close cycle.
         self._sidebar_toggle_queued = False
         self._sidebar_pending_target = None
+
+        # Corner-hotspot sidebar trigger (see review/Plan_260809_corner_hotspot_sidebar_trigger.md).
+        # opened_via records which method opened the bare sidebar — "right_click" or
+        # "hotspot_hover" — read by the hover-out dismiss check (only applies to the
+        # hotspot path) and set at the two open call sites (handle_drag_area_right_click's
+        # sidebar branch, and SidebarHotspot's fire callback). Cleared in _toggle_sidebar's
+        # closing branch, the one site every dismiss path already funnels through.
+        self._sidebar_opened_via = None
+        # Idle-dismiss timer: a POLL, not a move-event listener. "Any mouse movement
+        # anywhere in the window resets the timer" was originally going to be a new
+        # QEvent.MouseMove branch on MainWindow's QApplication-level eventFilter, but Qt
+        # only ever GENERATES MouseMove events for a widget that has setMouseTracking(True)
+        # (or a button held) — confirmed live, offscreen, before writing this — and almost
+        # nothing in this app's widget tree has tracking enabled (only total_time_label).
+        # A move-event branch would therefore only fire during drags, not ordinary cursor
+        # movement, silently failing the "any movement" requirement for the common case.
+        # Cascading setMouseTracking onto every relevant widget was the plan's own
+        # explicitly-rejected alternative (touches too much). A cheap repeating poll of
+        # QCursor.pos() sidesteps the whole tracking-cascade problem and touches nothing
+        # else. Armed/disarmed at the same _toggle_sidebar open/close sites as
+        # _sidebar_opened_via — mirrors _swatch_leave_backstop_timer's convention
+        # (theme_manager.py): a repeating QTimer, started/stopped only on one boolean's
+        # transition edges (here, sidebar_expanded), never scattered start/stop calls.
+        self._sidebar_idle_poll_timer = QTimer(main_window)
+        self._sidebar_idle_poll_timer.setInterval(_SIDEBAR_IDLE_POLL_MS)
+        self._sidebar_idle_poll_timer.timeout.connect(self._on_sidebar_idle_poll_tick)
+        self._sidebar_last_cursor_pos = None
+        self._sidebar_last_movement_ts = None
 
         # Connect sidebar buttons to panel opening methods
         self.main_window.library_trigger_btn.clicked.connect(self._open_library_flow)
@@ -649,10 +689,24 @@ class PanelManager:
             self.sidebar_animation.setStartValue(QPoint(-width, sidebar_y))
             self.sidebar_animation.setEndValue(QPoint(0, sidebar_y))
             self.sidebar_expanded = True
+            # Idle-dismiss poll arms on every open, regardless of opened_via — see
+            # _SIDEBAR_IDLE_DISMISS_MS and _sidebar_idle_poll_timer's own comment.
+            self._sidebar_last_cursor_pos = QCursor.pos()
+            self._sidebar_last_movement_ts = time.monotonic()
+            self._sidebar_idle_poll_timer.start()
+            # Disarm the hotspot's re-arm gate if the cursor is currently resting inside
+            # it — this must happen on ANY open transition, not just a hotspot-triggered
+            # one, or the idle-timer-close loop the re-arm rule exists to prevent can
+            # still occur via a right-click open. See sidebar_hotspot.py's docstring.
+            hotspot = getattr(self.main_window, 'sidebar_hotspot', None)
+            if hotspot is not None:
+                hotspot.disarm_if_cursor_inside()
         else:
             self.sidebar_animation.setStartValue(QPoint(0, sidebar_y))
             self.sidebar_animation.setEndValue(QPoint(-width, sidebar_y))
             self.sidebar_expanded = False
+            self._sidebar_idle_poll_timer.stop()
+            self._sidebar_opened_via = None
 
         self.sidebar_animation.start()
         # SIDEBAR-VISIBILITY PROBE (2026-07-28). "App start: right click, no sidebar,
@@ -2067,6 +2121,39 @@ class PanelManager:
         if self.sidebar_expanded:
             self._toggle_sidebar()
 
+    def _on_sidebar_idle_poll_tick(self):
+        """Ticks every _SIDEBAR_IDLE_POLL_MS while the sidebar is open (armed/disarmed
+        alongside sidebar_expanded in _toggle_sidebar — see _sidebar_idle_poll_timer's
+        comment for why this is a poll rather than a MouseMove listener). Compares the
+        global cursor position against the last-seen one: any change resets the
+        movement clock; no change for _SIDEBAR_IDLE_DISMISS_MS dismisses the sidebar.
+        Applies regardless of opened_via, by design (see the plan's section 4)."""
+        if not self.sidebar_expanded:
+            return
+        pos = QCursor.pos()
+        if pos != self._sidebar_last_cursor_pos:
+            self._sidebar_last_cursor_pos = pos
+            self._sidebar_last_movement_ts = time.monotonic()
+            return
+        elapsed_ms = (time.monotonic() - self._sidebar_last_movement_ts) * 1000
+        if elapsed_ms >= _SIDEBAR_IDLE_DISMISS_MS:
+            self._toggle_sidebar()
+
+    def on_sidebar_hover_out(self):
+        """Called when the cursor leaves the sidebar widget's own rect while it is open.
+        Only dismisses when the sidebar was opened via the hotspot — a right-click-opened
+        sidebar has no hover-based signal to lose, so hover-out never applies to it (see
+        review/Plan_260809_corner_hotspot_sidebar_trigger.md section 4). Also guards
+        against a leaveEvent firing mid-slide (the widget's geometry is moving during its
+        own open/close animation, which is not a real 'cursor left' signal)."""
+        if not self.sidebar_expanded:
+            return
+        if self._sidebar_opened_via != "hotspot_hover":
+            return
+        if self.sidebar_animation.state() == QAbstractAnimation.State.Running:
+            return
+        self._toggle_sidebar()
+
     def hide_all_panels(self):
         """Closes any open panels."""
         if self.main_window.chapter_list_widget.isVisible():
@@ -2160,6 +2247,10 @@ class PanelManager:
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=toggle_sidebar (no panel visible)")
             _pre = self.sidebar_expanded
             self._toggle_sidebar()
+            if not _pre and self.sidebar_expanded:
+                # Opened (was closed, now open) — record the method for the hover-out
+                # dismiss check. _toggle_sidebar's closing branch clears this on dismiss.
+                self._sidebar_opened_via = "right_click"
             logger.warning(
                 f"[RCLICK-BRANCH] -> toggle_sidebar {_pre} -> {self.sidebar_expanded}"
                 f"{'  <-- NO CHANGE' if _pre == self.sidebar_expanded else ''}"
