@@ -1,3 +1,165 @@
+## 2026-08-10 (continued, same day) — End-of-chapter sleep, part 3: `Player.sleep_fired` closes the VT pause/unpause race left open at the end of part 2. Shipped as `935861b`
+
+Direct continuation of the entry immediately below this one, which stopped deliberately after
+finding — but not fixing — a genuine VT pause/unpause race: when the end-of-chapter anchor's end
+coincides with a VT file boundary, `SleepTimerPanel.update_timer_state`'s `disable_sleep_timer()` +
+`player.pause = True` correctly fires, but `_advance_or_finish` (player.py:329-357), called from
+`_on_pause_test`'s own near-EOF probe on mpv's thread, can run ~60ms later and unconditionally
+un-pause (`if self.instance.pause: self.instance.pause = False`) as part of completing its own
+unrelated file-advance — silently undoing the sleep pause.
+
+**The fix, proposed by a second reviewing Claude instance and verified before implementing, not
+assumed correct on its face:** the unpause line at 342-343 exists to lift a pause `_on_pause_test`
+itself applied while probing near-EOF — it is not "clear whatever pause exists," it's "clear the
+pause I put there." It just can't currently tell "I paused this" apart from "sleep paused this."
+`Player.sleep_fired` (a plain public flag, same shape as `user_seek_pending`) closes exactly that
+gap: `if self.instance.pause and not self.sleep_fired: self.instance.pause = False`.
+
+**Verified before writing any code, per direct request, that this can't wrongly suppress a legitimate
+unpause:** grepped every call site of `_advance_or_finish` (only two — `_on_pause_test` line 357 and
+`_on_end_file`'s `reason_int == 0` branch line 747, both confirmed mpv-native near-EOF/EOF triggers
+with zero UI/user-driven path reaching either) and confirmed via `tests/test_vt_seek.py` that the
+existing EOF→`_advance_or_finish` contract test still passes unmodified after the change.
+
+**Scope decision, made explicitly rather than defaulted:** `sleep_fired` guards BOTH sleep modes
+(timed and end-of-chapter), not only end-of-chapter as the reviewer's prompt literally named — both
+fire via the identical `disable_sleep_timer()` + `player.pause = True` shape in
+`update_timer_state`, so timed mode has the exact same latent vulnerability; scoping the fix to only
+one mode would have left a known-identical bug unfixed in the other for no reason.
+
+**Ordering detail that matters:** `sleep_fired = True` is set in both fire branches *after*
+`disable_sleep_timer()` returns, not before — `disable_sleep_timer()` clears the flag as part of its
+own state-reset (for the *next* arm/disarm cycle), so setting it before that call would have it wiped
+by the very call that precedes the pause it's meant to protect.
+
+All `[EOC-TRACE]` temporary logging from parts 1/2 of this investigation (arm-time, every
+`_on_chapter_changed` entry, every `update_timer_state` end-of-chapter-branch tick, `_cancel_eoc_sleep`,
+natural-fire — plus the `logging`/`logger` scaffolding that carried it) was stripped before this
+commit; it had already done its job finding all three real bugs in this feature and was never meant
+to ship. Full test suite (`pytest tests/ -q`, including `test_vt_seek.py` explicitly) green, live app
+boot clean, and the user confirmed the fix live before this was committed as `935861b`. Not yet merged
+to `main` — further live testing in progress.
+
+---
+
+## 2026-08-10 (continued, same day) — End-of-chapter sleep, part 2: two confirmed-working fixes (seek-source flag, stale-flag consumption), then a THIRD, structurally different, unfixed bug — a real VT pause/unpause race. Stopped here, not patched, per direct instruction
+
+Continuation of the entry immediately below this one, same branch (`sleep-fix`), same feature. The
+three attempts documented below (chapter-distance heuristic, `is_seeking` polling latch, re-derived-
+index gating) were fully reverted to commit `60f6e15` (the last confirmed-good state, pre-dating the
+whole end-of-chapter anchor feature) before this round started — see commits `54f7c8c`
+(code revert) and `42f8638` (NOTES.md only). Two more attempts followed, both real fixes for real,
+distinct bugs — then a third bug was found that is NOT a flag/logic bug and was NOT fixed.
+
+### Attempt 4 — `player.user_seek_pending`, a flag set at the seek SOURCE, not inferred from `is_seeking`'s timing
+
+Prompted by direct user instruction after confirming (via a dedicated Explore-agent trace) that
+**every** navigation path — Next/Prev, chapter-list click, slider drag/wheel, skip buttons, every
+keyboard shortcut — routes through `Player.seek_async` with zero bypass. That makes `seek_async`
+itself the one correct choke point, eliminating the entire "is `is_seeking` observable in time"
+problem attempts 2/3 were stuck on.
+
+Two additions only: `Player.user_seek_pending = False` in `__init__`, set `True` as the very first
+statement of `seek_async` (`player.py`, before any of its existing logic). `SleepTimerPanel.
+_on_chapter_changed` (rebuilt from the pre-existing, confirmed-working anchor design — see the
+original entry below for that design) reads and clears the flag on a forward crossing past the
+anchor: `True` → seek-driven → cancel with message; `False` → natural → leave it to
+`update_timer_state`'s boundary-fire check.
+
+**This part worked and was confirmed live** across cases (b) through (f) and (h) of the user's own
+test matrix (manual cancel, forward-seek-with-message while playing/paused, backward nav, within-
+chapter nav, and a second-seek-after-a-within-chapter-seek case) — "the rest of the items worked by
+the way," confirmed directly. Two things were still broken: (g) — see attempt 5 — and (a), the plain
+natural-arrival case, which is the still-unresolved bug this entry ends on.
+
+### Attempt 5 — consume the stale flag on EVERY `_on_chapter_changed` call, not only on a forward crossing
+
+Root cause, confirmed via log (`grep EOC-TRACE`, not inferred): a seek that lands ON the anchor
+chapter or stays WITHIN it (e.g. `seek_within_chapter` from a chapter-slider drag, confirmed in the
+log at `seek_async: entry target=30972.75 ... direction=forward`, landing back in `chapter=8`, the
+same as the anchor) sets `user_seek_pending=True` via `seek_async`, but since the chapter index never
+changes, `chapter_changed` never fires — so `_on_chapter_changed` never runs, and the flag survives
+stale across every subsequent event until the next real crossing (natural or not) wrongly inherits it.
+Live trace showed the flag reading `True` across 5 consecutive natural `_on_chapter_changed` calls
+after one such seek, all correctly no-op'd as `index <= anchor` — and then the real anchor→anchor+1
+crossing arrived with the flag still `True`, calling `_cancel_eoc_sleep()` instead of firing.
+
+Two fixes for two different manifestations of the same "flag never gets to `_on_chapter_changed`"
+problem, per direct instruction:
+- `_on_chapter_changed` now consumes (`seek_driven = ...; self.player.user_seek_pending = False`)
+  on every call past the mode/anchor guard, not only inside the forward-crossing branch — covers a
+  seek that lands exactly ON the anchor (still produces one `chapter_changed` call, just an
+  `index <= anchor` one).
+- A new `self._was_seeking` previous-tick tracker in `update_timer_state` detects an `is_seeking`
+  True→False transition (a seek settling) across 200ms polls; if the settled position is still
+  within the anchor chapter (re-checked via `_current_chapter_index()`), the flag is cleared there —
+  covers a seek that produces ZERO `chapter_changed` calls at all (stayed within the same chapter,
+  so the index literally never changed).
+
+**Confirmed via fresh log** (`grep EOC-TRACE`, entries after 02:09): a natural fire correctly showing
+`NATURAL-FIRE reached_end=True ... user_seek_pending=False` — the stale-flag class of bug is fixed.
+User also independently confirmed cases (b) through (f), (h) still pass, and reported (g) — scrub
+within anchor then let it reach natural end — "worked once, didn't work the next time," which turned
+out to be a DIFFERENT bug (see below), not a regression of this fix.
+
+### The bug this session stops on — a genuine VT pause/unpause race, not a flag/logic bug
+
+Confirmed via a third trace round (added `EOC-BRANCH` logging at the top of `update_timer_state`'s
+end-of-chapter branch, every 200ms tick) against a reproduction where the user armed sleep, took no
+action at all, and reported "no text, continues to play, doesn't stop":
+
+```
+02:13:37,819 update_timer_state EOC-BRANCH is_paused=False anchor=6 player_pos=23506.400... player_dur=158717.072
+02:13:37,819 update_timer_state NATURAL-FIRE reached_end=True player_pos=23506.400... anchor_end=23506.801 user_seek_pending=True
+02:13:37,876 [PERSIST-TRACE] _save_current_progress: ... pos=23506.400...
+02:13:37,878 _on_time_pos_change: raw time_pos=3868.08...
+02:13:37,879 _on_time_pos_change: VT walk local=3868.08... file_offset=23506.801 global=27374.88... -> chapter=7 (prev=6)
+02:13:37,883 [VT-SEEK-TRACE] site=_on_file_loaded_ENTRY(loaded='08.mp3') ... _is_vt_file_switch=True
+```
+
+The natural-fire branch DID run and correctly identified the boundary — `disable_sleep_timer()` and
+`self.player.pause = True` both fire at `02:13:37,819`. But **59ms later**, `_on_time_pos_change`
+(running on mpv's own thread, independent of the Qt-side sleep logic) shows a VT file switch already
+in progress — this book's anchor chapter (index 6) happened to end exactly at a VT FILE boundary, not
+just a chapter boundary within one file. `_advance_or_finish` (player.py:329, called from
+`_on_pause_test`'s own near-EOF check, entirely unrelated to sleep) calls
+`self.instance.play(next_file['file_path'])`, and `_advance_or_finish`'s own logic
+(player.py:342-343) unconditionally does `if self.instance.pause: self.instance.pause = False` —
+**silently un-pausing the exact pause the sleep timer had just set**, then continuing playback into
+the next file. This is a genuine race between two independent, correct-in-isolation mechanisms
+(sleep's pause-on-fire vs. VT's own end-of-file auto-advance-and-unpause), not a bug in any of the
+flag logic built in attempts 4/5 — those are confirmed correct and were NOT touched or reverted.
+
+**This is squarely inside the most protected part of the codebase** — `_advance_or_finish`/
+`_on_pause_test`/VT file-switch handling is exactly the "Seek/position tracking — VT+Undo is the
+known-fragile zone" territory CLAUDE.md warns has broken four independent times before. Per direct
+instruction, this was NOT touched. Stopped here, documented, no fix attempted in this session.
+
+**Stray, unrelated observation from the same log, not yet investigated**: `user_seek_pending=True`
+at the moment of this NATURAL-FIRE, despite the user reporting zero interaction for this specific
+repro. Not chased further before stopping — worth checking first thing if this area is revisited,
+since it's either a genuine leftover from a much earlier seek in the session (plausible — nothing
+in the current design guarantees a natural fire clears a flag that was never consumed by
+`_on_chapter_changed` in between) or a sign the earlier "stale flag" class of bug in attempt 5 isn't
+fully closed. Does not explain the "kept playing" symptom either way, since the natural-fire branch
+doesn't consult the flag at all — but it's a loose thread.
+
+### Where this stood at the stop, and what happened next (fixed — see the entry above this one)
+
+At the point this entry originally ended, `player.py`/`sleep_timer.py` held attempts 4 and 5 plus
+temporary `[EOC-TRACE]` logging, uncommitted, with the VT pause-race bug documented but explicitly
+not fixed per direct instruction. A follow-up round (same day, documented as its own entry directly
+above this one) took a reviewer's proposed design — a second flag, `Player.sleep_fired`, read by
+`_advance_or_finish`'s existing unpause line — confirmed both `_advance_or_finish` call sites are
+exclusively mpv-native near-EOF/EOF triggers with no user/UI path (so the guard can never wrongly
+block a legitimate case), extended the flag to cover both sleep modes (not just end-of-chapter, since
+timed mode has the identical vulnerability), implemented it, verified against the full test suite
+including the VT-specific `test_vt_seek.py`, stripped all `[EOC-TRACE]` instrumentation, and shipped
+it as `935861b`. Confirmed live by the user across the full test matrix. Not yet merged — further live
+testing in progress before merge to `main`.
+
+---
+
 ## 2026-08-10 — End-of-chapter sleep "Sleep cancelled" message: three failed attempts, root cause NOT confirmed, stopped mid-investigation at user's request
 
 Branch `sleep-fix`. Task: end-of-chapter sleep mode needs to distinguish three cases in the
