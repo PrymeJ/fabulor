@@ -1,3 +1,122 @@
+## 2026-08-10 — End-of-chapter sleep "Sleep cancelled" message: three failed attempts, root cause NOT confirmed, stopped mid-investigation at user's request
+
+Branch `sleep-fix`. Task: end-of-chapter sleep mode needs to distinguish three cases in the
+indicator zone: (1) sleep reaches the anchor chapter's end naturally → fires, no message; (2) user
+manually cancels via the sleep label/sidebar X → disarms, no message (already correct, untouched
+throughout); (3) user seeks forward past the anchor chapter → disarms AND shows "Sleep cancelled"
+for `_dismiss_ms`, because a seek is not an explicit cancellation.
+
+**Current live symptom, as last confirmed by the user:** seeking forward past the anchor (Next
+button, chapter-list click, or main slider drag, all while playing) disarms sleep, shows no
+"Sleep cancelled" text, AND incorrectly pauses playback — i.e. the code is taking the *natural-fire*
+branch (which calls `player.pause = True`) instead of the seek-cancel branch, even though the
+transition was unambiguously user-driven. This is worse than the state before this session's
+attempts started, and none of the three attempts below fixed it. **The actual root cause is not
+confirmed** — everything below is a chain of plausible-sounding explanations that were each acted on
+without being verified against a trace, which is exactly the failure mode CLAUDE.md's "never
+substitute a plausible explanation for a checked one" section exists to prevent. Recorded here
+instead of continuing to patch, per direct instruction.
+
+### Attempt 1 — chapter-index distance heuristic (`index > anchor + 1`)
+
+Reasoning at the time: natural sequential playback can only ever advance the derived chapter index
+by exactly one step (`_on_time_pos_change`'s walk), so a jump of 2+ chapters must be a deliberate
+user seek. Implemented in `_on_chapter_changed` (`sleep_timer.py`): only cancel-with-message when
+`index > anchor + 1`; a plain `+1` transition was left to `update_timer_state`'s own boundary-fire
+check.
+
+**Failure, reported directly by the user:** seeking forward to the *immediately next* chapter
+(a `+1` transition, e.g. via the chapter list or Next button) is exactly as much a deliberate user
+action as seeking further ahead — the user's own framing: "the only criteria is whether the user
+triggered the cancellation by seeking," not how many chapters were crossed. Distance-from-anchor was
+simply the wrong signal. Reverted in spirit (superseded by attempt 2, not git-reverted since this
+was all uncommitted/WIP-committed work on the same branch).
+
+### Attempt 2 — latch `player.is_seeking` across `update_timer_state`'s 200ms polling ticks
+
+Reasoning: `Player.chapter_changed` carries no metadata about why the index changed.
+`_on_time_pos_change` (player.py:204) clears `_is_seeking` *before* running its own chapter walk/
+emit in the same call, so sampling `player.is_seeking` at the moment `_on_chapter_changed` runs
+(queued, cross-thread) is unreliable — by delivery time a real seek may already read as settled.
+Devised a latch instead: `SleepTimerPanel.update_timer_state` (already polling every 200ms on the Qt
+main thread, the same thread `seek_async` is always called from) sets `self._seek_observed = True`
+whenever it observes `player.is_seeking` true; `_on_chapter_changed` consumes and clears the latch to
+decide seek-driven vs. natural. Reset on arm and on disarm.
+
+**Failure, reported directly by the user:** "No Sleep cancelled text anymore at all." Investigated
+(without a trace — see the pattern here) and concluded `update_timer_state`'s own natural-fire
+boundary check (`player_pos >= anchor_end - 0.5`) was racing the latch-consuming path and winning,
+since a seek landing past the anchor also satisfies that same position check — so the code called
+`disable_sleep_timer()` directly (no message) instead of routing through `_cancel_eoc_sleep()`. This
+diagnosis was **never confirmed with a log/trace** — it was inferred from the symptom and the code
+shape, then immediately acted on with attempt 3. This is the exact "plausible explanation for a
+checked one" failure CLAUDE.md warns about, repeated with awareness of the rule and without applying
+it.
+
+### Attempt 3 — re-derive current chapter index inside `update_timer_state`, defer to `_on_chapter_changed` when a seek is latched
+
+Built on attempt 2's unconfirmed diagnosis. Added a second chapter-index walk inside
+`update_timer_state`'s end-of-chapter branch (duplicating the walk `_current_chapter_index` already
+does) to compare against the anchor: if the re-derived index has moved past the anchor **and**
+`_seek_observed` is latched, `return` early instead of falling into the natural-fire boundary check —
+handing ownership to `_on_chapter_changed`. Added a second condition to avoid two more bugs this
+introduced on paper: (a) clearing the latch only when `curr_idx <= anchor` (to detect a stale
+within-chapter seek) needed to also require `not player.is_seeking`, or it would race ahead of a
+still-in-flight seek's real landing position and clear the latch before `_on_chapter_changed` ever
+saw it for the crossing that follows; (b) the gate itself needed `and self._seek_observed`, not an
+unconditional `if curr_idx > anchor: return`, or natural arrival would never fire at all once the
+index ticked past the anchor (this exact bug was caught only by hand-tracing before shipping, not by
+a test).
+
+**Failure, reported directly by the user:** "No difference," plus new information that sharpens the
+real question — the sequence is Next / chapter-list / slider **while playing**, and the result is
+disarm + no text + **incorrect pause** (i.e. `update_timer_state`'s `reached_end` branch is what's
+actually running, not `_cancel_eoc_sleep()`). Also newly reported: while paused, forward navigation
+never cancels the timer until Play is clicked (not investigated at all before this stop).
+
+At the point of stopping, a fourth hypothesis was raised but not verified: that mpv seeks on a local
+file can fully settle (`is_seeking` True→False) within a single 200ms polling gap, so
+`update_timer_state` might never observe `is_seeking=True` at all for a fast seek — meaning the
+entire polling-latch premise from attempt 2 onward may be structurally unable to work, independent of
+any of the gating logic layered on top of it in attempt 3. **This was not checked** — no trace, no
+log, no instrumentation confirms or refutes it. It is exactly the kind of plausible-sounding
+explanation this note is warning against repeating.
+
+### What is actually confirmed, vs. only inferred
+
+Confirmed directly by the user, across the two bug reports in this session:
+- Seeking forward past the anchor (any of: Next, chapter-list click, slider) while playing disarms
+  sleep, shows no message, and incorrectly pauses playback.
+- While paused, forward navigation past the anchor does not cancel the timer at all until Play is
+  pressed.
+- Manual cancel (sleep label / sidebar X) has been correct throughout — never regressed by any of
+  the three attempts, not touched by any of them.
+- Natural end-of-chapter firing (no navigation at all) was not re-confirmed as still correct after
+  attempt 3's changes — it was reasoned through by hand-trace only, not observed live.
+
+Not confirmed by any trace/log/instrumentation, only inferred from code-reading and symptom-shape:
+- That `update_timer_state`'s boundary check vs. `_on_chapter_changed`'s cancel path is genuinely a
+  race (attempt 2's diagnosis).
+- That the specific gating added in attempt 3 is what's still wrong, rather than some other cause
+  entirely (e.g. `_on_chapter_changed` never being invoked for this book/mode combination at all,
+  which was never ruled out).
+- The paused-navigation behavior's cause — not investigated.
+
+### Where this stands
+
+Uncommitted changes to `src/fabulor/ui/sleep_timer.py` are on disk on branch `sleep-fix`, on top of
+WIP commit `cf891c5` (which itself holds attempt 1 plus the anchor/arm/book-switch-reset machinery
+from earlier in the session — book-switch reset and the `_eoc_cancel_message_active`
+stomp-suppression fix are believed still correct and were not implicated in any of the three
+failures above). The right next step, per the user's direction, is NOT another inferred patch — it's
+adding a real trace/log at `_on_chapter_changed`, `_cancel_eoc_sleep`, and the `reached_end` branch of
+`update_timer_state` (matching this codebase's own established debugging discipline — see CLAUDE.md's
+"Debugging discipline" section, "change-only probes can't prove absence," and the repeated rule
+against shipping explanations that were constructed rather than checked) and reproducing live with
+logging on, before writing any more code.
+
+---
+
 ## 2026-08-05 — Transport-bar blur audit: grab scope/cadence re-confirmed, declined-tick re-arm live-verified. Investigation only, nothing changed
 
 Requested directly: re-verify three prior findings on the transport-bar blur mechanism
