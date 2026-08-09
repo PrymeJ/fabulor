@@ -1,9 +1,8 @@
 import time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
-from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer
+from PySide6.QtCore import Qt, QRegularExpression, Signal
 from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
-from ..player import _CHAPTER_WALK_TOLERANCE
 from .title_bar import RightClickButton
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
@@ -14,35 +13,19 @@ class SleepTimerPanel(QWidget):
     timer_expired = Signal()  # fired only when the timer fires and pauses playback
     display_text_updated = Signal(str)
 
-    def __init__(self, player, config, theme_manager, parent=None, dismiss_ms=2000):
+    def __init__(self, player, config, theme_manager, parent=None):
         super().__init__(parent)
         self.player = player
         self.config = config
         self.theme_manager = theme_manager
         self.setObjectName("sleep_panel")
         self.setAttribute(Qt.WA_StyledBackground, True)
-
+        
         self._sleep_timer_end_time = None # Unix timestamp when sleep timer should end
         self._sleep_mode = None # 'timed', 'end_of_chapter'
         self._total_timer_duration = 0 # Initial duration in seconds for the active timer
         self._current_sleep_fade = self.config.get_sleep_fade_duration()
-        # End-of-chapter mode: the chapter index sleep was armed on. Forward navigation
-        # past this anchor cancels sleep instead of letting it fire on whatever chapter
-        # is current; backward navigation (or staying put) keeps the anchor live. See
-        # _on_chapter_changed / _cancel_eoc_sleep.
-        self._sleep_eoc_anchor = None
-        # True while the "Sleep cancelled" confirmation is showing — update_timer_state
-        # must not touch display_text_updated during this window, or its own unconditional
-        # per-tick emit (every 200ms) stomps the message back to "" almost immediately.
-        self._eoc_cancel_message_active = False
-        # Shared with app.py's _INDICATOR_DISMISS_MS — how long the "Sleep cancelled"
-        # message shows in the indicator zone before clearing.
-        self._dismiss_ms = dismiss_ms
-        self._eoc_cancel_timer = QTimer(self)
-        self._eoc_cancel_timer.setSingleShot(True)
-        self._eoc_cancel_timer.timeout.connect(self._on_eoc_cancel_timeout)
-        self.player.chapter_changed.connect(self._on_chapter_changed)
-
+        
         self._setup_ui()
 
     def _setup_ui(self):
@@ -157,76 +140,21 @@ class SleepTimerPanel(QWidget):
         elif mode == 'end_of_chapter':
             self._total_timer_duration = 0
             self._sleep_mode = mode
-            self._sleep_eoc_anchor = self._current_chapter_index()
             self.config.set_sleep_mode(mode)
             self.disable_sleep_btn.show()
             self.timer_started.emit()
-
+        
         self.update_panel_styling()
-
-    def _current_chapter_index(self):
-        """Derives the current chapter index the same way Player._on_time_pos_change
-        does (same _CHAPTER_WALK_TOLERANCE), for arming the end-of-chapter anchor."""
-        chaps = self.player.chapter_list or []
-        pos = self.player.time_pos or 0.0
-        curr = 0
-        for i, chap in enumerate(chaps):
-            if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
-                curr = i
-        return curr
 
     def disable_sleep_timer(self):
         was_active = self._sleep_timer_end_time is not None or self._sleep_mode is not None
         self._sleep_timer_end_time = None
         self._sleep_mode = None
-        self._sleep_eoc_anchor = None
-        self._eoc_cancel_timer.stop()
-        self._eoc_cancel_message_active = False
         self.disable_sleep_btn.hide()
         if was_active:
             self.timer_stopped.emit()
         self.display_text_updated.emit("")
         self.update_panel_styling()
-
-    def _on_chapter_changed(self, index):
-        """Connected to Player.chapter_changed — the single universal chapter-index
-        signal (see CLAUDE.md invariant 25 / _on_time_pos_change). Only end-of-chapter
-        mode cares. Natural sequential playback only ever advances the derived index
-        by exactly one step at a time (_on_time_pos_change walks chapter_list in
-        order), so an anchor -> anchor+1 transition is always arrival, never a jump —
-        that case is left entirely to update_timer_state's own boundary-fire check,
-        which disarms sleep before this (queued, cross-thread) signal is even
-        processed. Only a jump of 2+ chapters in one step — a chapter-list click,
-        Next-button skip, or seek that lands past the anchor's immediate end — is
-        unambiguously a user action and cancels here. Backward navigation (or
-        staying within the anchor chapter) leaves sleep armed either way."""
-        if self._sleep_mode != 'end_of_chapter' or self._sleep_eoc_anchor is None:
-            return
-        if index > self._sleep_eoc_anchor + 1:
-            self._cancel_eoc_sleep()
-
-    def _cancel_eoc_sleep(self):
-        """A chapter jump carried playback past the end-of-chapter anchor (see
-        _on_chapter_changed — this never fires for natural +1 arrival). Disarms
-        sleep via the normal user-cancel path, then shows a "Sleep cancelled"
-        confirmation in the indicator zone for _dismiss_ms. The two
-        display_text_updated emits below must stay as separate, ordered calls:
-        the first (empty string, from disable_sleep_timer) clears the label so
-        the second ("Sleep cancelled") is read as a fresh, non-empty transition
-        by _on_sleep_display_text_updated's own newly-armed-while-muted check —
-        that's what makes the message show even if the user is currently muted,
-        with no separate override path needed here. _eoc_cancel_message_active
-        must be set before update_timer_state's next 200ms tick can run, or its
-        unconditional display_text_updated emit stomps this message almost
-        immediately — see update_timer_state's own guard."""
-        self.disable_sleep_timer()
-        self._eoc_cancel_message_active = True
-        self.display_text_updated.emit("Sleep cancelled")
-        self._eoc_cancel_timer.start(self._dismiss_ms)
-
-    def _on_eoc_cancel_timeout(self):
-        self._eoc_cancel_message_active = False
-        self.display_text_updated.emit("")
 
     def set_sleep_fade(self, seconds, save=False):
         self._current_sleep_fade = seconds
@@ -328,13 +256,6 @@ class SleepTimerPanel(QWidget):
     def update_timer_state(self, current_time, is_paused, player_pos, player_dur, is_eof):
         if not self.player:
             return
-        if self._eoc_cancel_message_active:
-            # A "Sleep cancelled" confirmation is showing (see _cancel_eoc_sleep /
-            # _on_eoc_cancel_timeout). Sleep is already disarmed, so there is nothing
-            # for this method to drive — the unconditional display_text_updated emit
-            # further down would otherwise stomp the message back to "" on the very
-            # next 200ms tick, well before its own dismiss timer elapses.
-            return
         display_text = ""
 
         # Reset fade ratio by default; it will be overwritten below if fading
@@ -361,22 +282,24 @@ class SleepTimerPanel(QWidget):
 
         elif self._sleep_mode == 'end_of_chapter':
             display_text = "[chapter]"
-            if not is_paused and self._sleep_eoc_anchor is not None:
+            if not is_paused:
                 if not player_dur:
                     return
-                # Fire only when position reaches the ANCHOR chapter's own end boundary —
-                # not "whatever chapter is current". Forward navigation past the anchor is
-                # handled separately by _on_chapter_changed, which cancels sleep before this
-                # branch would ever see a later chapter's position.
                 chaps = self.player.chapter_list or []
-                anchor = self._sleep_eoc_anchor
-                if chaps and anchor < len(chaps) - 1:
-                    anchor_end = chaps[anchor + 1].get('time', player_dur)
-                    reached_end = player_pos >= anchor_end - 0.5 or is_eof
-                else:
-                    anchor_end = player_dur
-                    reached_end = player_pos >= player_dur - 0.5 or is_eof
-                if reached_end:
+                curr_chap = 0
+                for i, ch in enumerate(chaps):
+                    if ch.get('time', 0) <= player_pos + 0.35:
+                        curr_chap = i
+                if chaps and curr_chap < len(chaps) - 1:
+                    next_chap_start = chaps[curr_chap + 1].get('time', player_dur)
+                    if player_pos >= next_chap_start - 0.5 or is_eof:
+                        self.disable_sleep_timer()
+                        try:
+                            self.player.pause = True
+                        except (ShutdownError, AttributeError, SystemError):
+                            pass
+                        self.timer_expired.emit()
+                elif chaps and curr_chap == len(chaps) - 1 and (player_pos >= player_dur - 0.5 or is_eof):
                     self.disable_sleep_timer()
                     try:
                         self.player.pause = True
