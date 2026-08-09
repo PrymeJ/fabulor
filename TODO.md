@@ -84,18 +84,18 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Pending
 
-- **[2026-08-08] Stats Day-tab row hover-highlight flicker, specific to blur being enabled.**
-  Live-confirmed by Pryme; reproduction blocked so far — `QTest.mouseMove` did not reliably trigger
-  Qt's real `entered`/hover machinery on `StatsRowListView` in the automated environment tried
-  during the same investigation that fixed the cover-flash bug, so this was left unfixed rather than
-  guessed at. Needs a real live repro (not another automated-input attempt in the same environment)
-  before a cause can be diagnosed — see the CLAUDE.md rule on `QTest.mouseMove` not reliably
-  triggering Qt's hover/mouse-tracking machinery in this environment (Keyboard focus ownership
-  section references a related but distinct headless-Qt trust issue; this is a live-repro gap, not
-  a headless-vs-live one). Candidate starting point: the delegate's hover repaint
-  (`self.viewport().update()` from `StatsRowListView._on_entered`/`leaveEvent`) racing whatever
-  redraw the panel's blur effect (`ClippedBlurEffect`/`TransportBarBlurOverlay`) does — unconfirmed,
-  not yet investigated live.
+- **[2026-08-09] Stats Day/Week/Month row title elision truncates at a fixed column width,
+  regardless of real free space in the row.** Confirmed visually by Pryme comparing Week and Month
+  side by side: "Blood of Amber: The Chronicl..." (Week) vs. "...Chronicle..." (Month), "David
+  Foster Wall..." — both cut off well before the row's actual right edge, even when nothing else on
+  that line needs the space. Not a migration regression — `_STATS_TITLE_WIDTH` (a fixed pixel budget,
+  `stats_panel.py`) predates the Day/Week delegate migration and Month's `BookDayRow`/`ElidedLabel`
+  path has the exact same fixed-width limitation; it only became visible from direct side-by-side
+  comparison once multiple tabs were showing the same books. Correct fix is adopting Library's
+  list-mode invasive elision logic (title borrows unused space from the row instead of truncating at
+  a fixed column) — a separate pass, not a quick fix folded into the delegate migration. Deliberately
+  not attempted during the Week-tab migration per direct instruction.
+
 
 - **[2026-08-08] Stats Day-tab archived/deleted-book cover dimming alpha needs tuning.**
   `StatsRowDelegate.paint()` dims archived-book covers via `painter.setOpacity(0.4)` — confirmed

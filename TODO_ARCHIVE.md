@@ -417,3 +417,20 @@ order these entries had in TODO.md before the split (2026-07-30).
   actually fired, placed after the seek is issued and before `self.player.pause = False`.
   `_last_pause_timestamp` still has exactly one set-site (the pause branch) plus this one new
   `None`-reset site. Full test suite green; live-verified — did not get stuck on repeat Play presses.
+
+- **[2026-08-08] FIXED and live-verified (2026-08-09): Stats Day-tab row hover-highlight flicker,
+  specific to blur being enabled.** Root cause: `TransportBarBlurOverlay._grab_and_blur` hides then
+  shows the active panel ~5x/sec while blur is enabled and any panel is open (`transport_bar_blur.py`).
+  Hiding `StatsRowListView` correctly delivers a real `leaveEvent` (Qt recomputes what's under the
+  cursor), clearing the hover fill via the existing `leaveEvent` handler — but re-showing only fires
+  `showEvent`/`enterEvent`, never Qt's `entered` signal, since `entered` only fires on an actual
+  mouse-move over a new index, not a visibility change alone. With a stationary cursor this read as
+  "the highlight vanishes and never comes back until the mouse moves"; with a slowly-moving cursor,
+  each ~200ms hide/show cycle raced the movement and produced a visible flicker. Confirmed live via
+  temporary `HOVER-TRACE` instrumentation (added and stripped in the same pass): a genuine
+  `leaveEvent(hovered_row_was=0)` fired at the hide, followed by `showEvent`/`enterEvent` with no
+  `_on_entered` in between. **Fix** (`f2c88ae`): `StatsRowListView.showEvent` re-derives the correct
+  hovered row from the CURRENT cursor position via `indexAt()` — the same query a real mouse-move
+  would trigger — instead of waiting for `entered` to eventually fire. Live-verified by Pryme for
+  both Day and Week (`a103619` extended the same `StatsRowListView` class to Week with zero
+  Week-specific change needed, since the fix lives on the shared class).
