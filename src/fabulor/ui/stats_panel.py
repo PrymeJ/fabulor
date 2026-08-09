@@ -21,7 +21,6 @@ from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .icon_utils import load_currentcolor_icon
-from .hover_tracker import ScrollHoverTracker
 
 # Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
 # to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
@@ -1028,9 +1027,10 @@ class _StatsHistoryLookupWorker(QRunnable):
 
 # ── StatsRowModel / StatsRowDelegate ────────────────────────────────────────
 # Lazy, delegate-painted replacement for the per-row BookDayRow widget
-# construction, Day tab only (proof of concept). See
-# review/Spec_260805_stats_lazy_delegate.md for the full design rationale.
-# Week/Month keep BookDayRow entirely — this pair is additive, not a rip-out.
+# construction. Originally Day-tab-only (proof of concept); Week and Month
+# both adopted the same pair 2026-08-09, completing the migration across all
+# three tabs. See review/Spec_260805_stats_lazy_delegate.md for the design
+# rationale (written when this was still Day-only).
 
 ROLE_ROW_DATA = Qt.UserRole + 0
 ROLE_IS_FINISHED = Qt.UserRole + 1
@@ -3391,13 +3391,12 @@ class StatsPanel(QWidget):
                 scroll_row.set_arrow_colors(arrow_overlay_rgb, arrow_text_rgb)
                 for widget in self._iter_finished_thumbs(scroll_row):
                     widget.update_placeholder_color(color)
-        for tab_name in ("Month",):
-            for widget in self._iter_day_rows(tab_name):
-                widget.update_placeholder_color(color)
-        # Day and Week tabs: StatsRowDelegate (not BookDayRow widgets) —
-        # re-derive theme colors and repaint. set_placeholder_color separately
-        # covers the placeholder-pixmap cache (mirrors update_placeholder_color's
-        # own color-changed check). Week joined this path 2026-08-09.
+        # Day/Week/Month all use StatsRowDelegate now (Month joined 2026-08-09,
+        # completing the migration) — no BookDayRow widgets left to iterate
+        # via _iter_day_rows for placeholder-color updates; re-derive theme
+        # colors and repaint via the delegate directly instead.
+        # set_placeholder_color separately covers the placeholder-pixmap cache
+        # (mirrors update_placeholder_color's own color-changed check).
         for prefix in self._STATS_DELEGATE_PREFIXES:
             delegate = getattr(self, f'{prefix}_delegate', None)
             if delegate is None:
@@ -3782,13 +3781,14 @@ class StatsPanel(QWidget):
         outer.addWidget(self._day_total_label)
 
         # Scrollable book rows — StatsRowModel/StatsRowDelegate/StatsRowListView.
-        # As of 2026-08-09, Week also uses this pair (_build_weekly_tab); Month
-        # keeps the BookDayRow/QScrollArea construction unchanged for now. A
-        # real QListView has its own viewport/scrollbar and native indexAt
-        # hit-testing, so neither ScrollHoverTracker (stale-:hover-on-scroll
-        # workaround) nor _claim_container_input (flush-sibling-widget
-        # boundary-pixel Qt bug workaround) has anything to attach to here —
-        # both are specific to the widget-per-row architecture Month still uses.
+        # As of 2026-08-09, Week and Month both use this same pair too
+        # (_build_weekly_tab/_build_monthly_tab), completing the migration
+        # across all three tabs. A real QListView has its own viewport/
+        # scrollbar and native indexAt hit-testing, so neither
+        # ScrollHoverTracker (the old stale-:hover-on-scroll workaround) nor
+        # _claim_container_input (the old flush-sibling-widget boundary-pixel
+        # Qt bug workaround) has anything to attach to here — both were
+        # removed once Month migrated, the last tab that needed them.
         # No theme dict is available yet at panel-construction time (StatsPanel
         # doesn't store one — theming arrives later via on_theme_changed(theme),
         # same as _accent_color's own "#9B59B6" placeholder default above).
@@ -3870,29 +3870,19 @@ class StatsPanel(QWidget):
             self._current_day_index = 0
             self._refresh_daily()
 
-    @staticmethod
-    def _rows_in(layout):
-        """Current BookDayRows of a rows-layout, in order. Read live rather than
-        cached: every refresh tears these down and rebuilds them, so a cached
-        list would go stale exactly when the panel repopulates."""
-        return [layout.itemAt(i).widget() for i in range(layout.count())
-                if layout.itemAt(i).widget() is not None]
-
-    def _add_row_safely(self, layout, widget):
-        widget.setVisible(False)
-        layout.insertWidget(layout.count() - 1, widget)
-        widget.setVisible(True)
-
     def _day_fixup_scroll_policy(self) -> None:
         self._delegate_fixup_scroll_policy('_day')
 
     def _week_fixup_scroll_policy(self) -> None:
         self._delegate_fixup_scroll_policy('_week')
 
+    def _month_fixup_scroll_policy(self) -> None:
+        self._delegate_fixup_scroll_policy('_month')
+
     def _delegate_fixup_scroll_policy(self, prefix: str) -> None:
         """QListView equivalent of _fixup_scroll_policy, shared by any tab
-        using StatsRowModel/StatsRowListView (Day, then Week as of 2026-08-09
-        — was `_day_fixup_scroll_policy`, generalized by prefix rather than
+        using StatsRowModel/StatsRowListView (Day, then Week and Month as of
+        2026-08-09 — was `_day_fixup_scroll_policy`, generalized by prefix rather than
         duplicated when Week adopted the same model/view pair).
 
         Same purpose, same QSS-property mechanism (policy stays
@@ -3954,62 +3944,18 @@ class StatsPanel(QWidget):
             scroll.setMaximumHeight(
                 self._ROWS_VIEWPORT_MAX_ROWS_NO_FINISHED * _STATS_ROW_HEIGHT)
 
-    def _claim_container_input(self, container, tracker):
-        """Let the rows CONTAINER own the hand cursor and route clicks to the
-        highlighted row.
-
-        The last pixel of a flush-stacked widget is not delivered to that widget
-        under real input on this platform — it goes to the parent instead. Proven
-        in a minimal repro (tools/row_hittest_minimal.py): six bare QWidgets, no
-        labels, styling, cursors, margins or scroll area, and with --no-layout
-        they are positioned by setGeometry with no layout engine involved at all.
-        A press on a row's last pixel still reaches the container. The control is
-        --no-spacing-zero: give the rows a real 6px gap and every hit routes
-        correctly, so it is specifically the pixel where one rect ends and the
-        next begins. Synthesized presses at the identical pixel always land
-        correctly, which is why no offscreen test ever caught it.
-
-        So rather than fight delivery, stop depending on it:
-
-        * The container carries the hand cursor. The rows fill it entirely, so
-          anywhere the cursor can be inside the list is over a row — there is no
-          position where a hand would be wrong. This fixes the arrow that used to
-          appear on the boundary pixels.
-
-        * A press that lands on the container is routed to the tracker's
-          `hovered_row` — the row the highlight is actually on, i.e. the one the
-          user is pointing at. An earlier attempt mapped the press y to whichever
-          row's geometry contained it and was reverted: on a boundary pixel that
-          resolves to the row ABOVE, so clicking while highlighting the lower row
-          opened the wrong book. The highlight is the user's intent; geometry is
-          not.
-        """
-        # The hand is applied only while a row is actually highlighted, not
-        # blanket on the container: on a short day the rows widget is taller
-        # than its rows, and a blanket cursor would show a hand over the empty
-        # space below the last one. The tracker already resolves "is the cursor
-        # over a row", so reuse that answer rather than testing geometry twice.
-        container.setMouseTracking(True)
-
-        def on_container_move(event):
-            if isinstance(tracker.hovered_row, BookDayRow):
-                container.setCursor(Qt.CursorShape.PointingHandCursor)
-            else:
-                container.unsetCursor()
-
-        container.mouseMoveEvent = on_container_move
-
-        def on_container_press(event):
-            # Must accept the same buttons BookDayRow does. If this stayed
-            # left-only, right-click would open the detail everywhere on a row
-            # except its boundary pixel — the one pixel that routes here.
-            if event.button() not in (Qt.MouseButton.LeftButton,
-                                      Qt.MouseButton.RightButton):
-                return
-            row = tracker.hovered_row
-            if isinstance(row, BookDayRow):
-                row.clicked.emit(row._row_data)
-        container.mousePressEvent = on_container_press
+    # `_claim_container_input` (the flush-stacked-widget boundary-pixel hit-
+    # testing workaround) was removed 2026-08-09 once Month migrated off
+    # BookDayRow-widgets-in-a-QVBoxLayout, the last tab that needed it — see
+    # git history for the full implementation if this Qt platform gotcha
+    # resurfaces for some future flush-stacked custom-widget list: the last
+    # pixel of a flush-stacked widget is not delivered to that widget under
+    # real input (proven via tools/row_hittest_minimal.py), only to its
+    # parent container, and no offscreen/synthesized-press test can catch it
+    # because synthesized presses at the same pixel always land correctly.
+    # A real QListView/QAbstractItemView (what Day/Week/Month all use now)
+    # has no such gap — native indexAt() hit-testing has nothing to fail on
+    # a widget boundary since there are no child widgets, only painted rects.
 
     def _refresh_daily(self):
         if self._cached_active_days is None:
@@ -4317,40 +4263,16 @@ class StatsPanel(QWidget):
         self._month_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(self._month_total_label)
 
-        scroll = QScrollArea()
-        scroll.setObjectName("stats_scroll_area")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._month_scroll = scroll
+        self._month_model = StatsRowModel(self)
+        self._month_delegate = StatsRowDelegate({}, self._placeholder_color, self)
+        self._month_list_view = StatsRowListView()
+        self._month_list_view.setObjectName("stats_scroll_area")
+        self._month_list_view.setModel(self._month_model)
+        self._month_list_view.setItemDelegate(self._month_delegate)
+        self._month_list_view.row_clicked.connect(self._on_book_row_clicked)
+        self._month_scroll = self._month_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
-        self._month_rows_widget = QWidget()
-        self._month_rows_layout = QVBoxLayout(self._month_rows_widget)
-        self._month_rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._month_rows_layout.setSpacing(0)
-        self._month_rows_layout.addStretch()
-
-        scroll.setWidget(self._month_rows_widget)
-        # Re-resolve the hovered row when the list scrolls under a still
-        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
-        self._month_hover = ScrollHoverTracker(
-            scroll, lambda: self._rows_in(self._month_rows_layout), self)
-        # The container owns the hand cursor and routes boundary-pixel
-        # clicks to the highlighted row — see _claim_container_input.
-        self._claim_container_input(
-            self._month_rows_widget, self._month_hover)
-
-        def _month_rows_wheel(e):
-            bar = scroll.verticalScrollBar()
-            notches = -1 if e.angleDelta().y() > 0 else 1
-            target = bar.value() + notches * _STATS_ROW_HEIGHT
-            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
-            e.accept()
-        scroll.wheelEvent = _month_rows_wheel
-
-        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(self._month_list_view, stretch=1)
 
         self._month_finished_section = QWidget()
         self._month_finished_section.setObjectName("stats_finished_section")
@@ -4399,10 +4321,7 @@ class StatsPanel(QWidget):
                 'month', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_months = self._cached_active_months
         if not self._active_months:
-            while self._month_rows_layout.count() > 1:
-                item = self._month_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+            self._month_model.set_rows([])
             self._month_built_period = None
             self._month_built_sig = None
             self._month_label.setText("No activity yet")
@@ -4428,23 +4347,16 @@ class StatsPanel(QWidget):
         )
         finished = self._inject_active_covers(self.db.get_finished_in_period('month', month_str, day_start))
 
+        # Dispatch cover loads BEFORE the rebuild-avoidance guard — see
+        # _refresh_daily for why.
+        self._ensure_covers_loaded(rows)
+
         # Rebuild-avoidance guard — see _refresh_daily / _period_rows_signature.
         sig = self._period_rows_signature(rows, finished)
         if month_str == self._month_built_period and sig == self._month_built_sig:
             pass
         else:
-            while self._month_rows_layout.count() > 1:
-                item = self._month_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            self._month_rows_widget.setUpdatesEnabled(False)
-            for i, row in enumerate(rows):
-                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-                book_row.clicked.connect(self._on_book_row_clicked)
-                self._add_row_safely(self._month_rows_layout, book_row)
-            self._month_rows_widget.setUpdatesEnabled(True)
-            self._month_rows_layout.invalidate()
-            self._month_rows_widget.updateGeometry()
+            self._month_model.set_rows(rows)
             self._month_built_period = month_str
             self._month_built_sig = sig
 
@@ -4458,7 +4370,7 @@ class StatsPanel(QWidget):
             self._month_finished_section.hide()
         self._cap_rows_viewport(self._month_scroll, bool(finished))
         # Scheduled after the cap — see the day tab.
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._month_scroll))
+        QTimer.singleShot(0, self._month_fixup_scroll_policy)
 
     def _on_tab_changed(self, index: int):
         self._invalidate_period_cache()
@@ -4754,25 +4666,27 @@ class StatsPanel(QWidget):
             for widget in self._iter_finished_thumbs(scroll_row):
                 if widget._row_data.get("book_path") == book_path:
                     widget.refresh_cover(cover_path)
-        for widget in self._iter_day_rows(current_tab):
-            if widget._row_data.get("book_path") == book_path:
-                widget.refresh_cover(cover_path)
-        if hasattr(self, '_day_model'):
-            self._delegate_refresh_cover_for_path('_day', book_path, cover_path)
-        if hasattr(self, '_week_model'):
-            self._delegate_refresh_cover_for_path('_week', book_path, cover_path)
+        # Day/Week/Month cover refresh: all three now go through
+        # _delegate_refresh_cover_for_path, unconditionally (not gated on
+        # current_tab) so even a hidden tab's model gets its _cover_cache
+        # entry corrected. Replaces the old per-widget BookDayRow.refresh_cover
+        # loop (via _iter_day_rows, removed 2026-08-09 once Month migrated —
+        # the last tab still building BookDayRow widgets in a QVBoxLayout).
+        for prefix in self._STATS_DELEGATE_PREFIXES:
+            if hasattr(self, f'{prefix}_model'):
+                self._delegate_refresh_cover_for_path(prefix, book_path, cover_path)
 
-    _STATS_DELEGATE_PREFIXES = ('_day', '_week')
+    _STATS_DELEGATE_PREFIXES = ('_day', '_week', '_month')
 
     def _delegate_refresh_cover_for_path(self, prefix: str, book_path: str, cover_path: str) -> None:
         """BookDayRow.refresh_cover equivalent, retargeted at a StatsRowModel
         instead of a widget repaint — same _cover_cache evict + CoverLoaderWorker
-        dispatch, dataChanged instead of setPixmap. `prefix` is '_day' or
-        '_week' — selects which tab's model/delegate/view this touches
-        (`{prefix}_model`, `{prefix}_delegate`, `{prefix}_list_view`), so Day
-        and Week share this one method instead of duplicating a
-        `_week_refresh_cover_for_path` copy — generalized 2026-08-09 when Week
-        adopted the same StatsRowModel/StatsRowDelegate pair Day already used.
+        dispatch, dataChanged instead of setPixmap. `prefix` is '_day', '_week',
+        or '_month' — selects which tab's model/delegate/view this touches
+        (`{prefix}_model`, `{prefix}_delegate`, `{prefix}_list_view`), so all
+        three tabs share this one method instead of duplicating a per-tab
+        copy — generalized 2026-08-09 as Week and then Month adopted the same
+        StatsRowModel/StatsRowDelegate pair Day already used.
         Dispatch dedup/worker-retention (`_stats_cover_pending`/
         `_day_active_workers`) is shared across ALL prefixes, not per-tab —
         see _dispatch_cover_load's docstring for why."""
@@ -4950,11 +4864,11 @@ class StatsPanel(QWidget):
     def _ensure_covers_loaded(self, rows: list[dict]) -> None:
         """Dispatch a raw CoverLoaderWorker for every row not already in
         _cover_cache — called once after set_rows() rebuilds a StatsRowModel
-        (Day or Week), mirroring what BookDayRow.__init__ used to do per-row
-        at construction time. Shared across tabs (renamed from
-        `_day_ensure_covers_loaded` 2026-08-09 when Week adopted the same
-        model/delegate pair) — nothing here reads which tab called it, since
-        _dispatch_cover_load's own dedup is keyed on book_id alone."""
+        (Day, Week, or Month), mirroring what BookDayRow.__init__ used to do
+        per-row at construction time. Shared across tabs (renamed from
+        `_day_ensure_covers_loaded` 2026-08-09 when Week, then Month, adopted
+        the same model/delegate pair) — nothing here reads which tab called
+        it, since _dispatch_cover_load's own dedup is keyed on book_id alone."""
         for row in rows:
             book_id = row.get("book_id")
             book_path = row.get("book_path")
@@ -4967,20 +4881,6 @@ class StatsPanel(QWidget):
                 continue
             self._dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
 
-    def _iter_day_rows(self, tab_name: str):
-        # Month is the only remaining tab still built from BookDayRow widgets
-        # in a QVBoxLayout — Day (2026-08-05) and Week (2026-08-09) both moved
-        # to StatsRowModel/StatsRowDelegate, which have no such layout to walk.
-        layout_map = {
-            "Month": getattr(self, '_month_rows_layout', None),
-        }
-        layout = layout_map.get(tab_name)
-        if layout is None:
-            return
-        for i in range(layout.count()):
-            item = layout.itemAt(i)
-            if item and item.widget() and isinstance(item.widget(), BookDayRow):
-                yield item.widget()
 
     def _iter_finished_thumbs(self, scroll_row):
         layout = scroll_row._layout
