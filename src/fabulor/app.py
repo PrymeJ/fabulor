@@ -671,7 +671,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setFixedSize(300, 564)
 
         # Initialize Sleep Timer Panel early to allow connections in build methods
-        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self)
+        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self,
+                                            dismiss_ms=_INDICATOR_DISMISS_MS)
         self.sleep_panel.hide()
         self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
         self.sleep_panel_animation.setDuration(300)
