@@ -3391,18 +3391,22 @@ class StatsPanel(QWidget):
                 scroll_row.set_arrow_colors(arrow_overlay_rgb, arrow_text_rgb)
                 for widget in self._iter_finished_thumbs(scroll_row):
                     widget.update_placeholder_color(color)
-        for tab_name in ("Week", "Month"):
+        for tab_name in ("Month",):
             for widget in self._iter_day_rows(tab_name):
                 widget.update_placeholder_color(color)
-        # Day tab: StatsRowDelegate (not BookDayRow widgets) — re-derive its
-        # theme colors and repaint. set_placeholder_color separately covers
-        # the placeholder-pixmap cache (mirrors update_placeholder_color's
-        # own color-changed check).
-        if hasattr(self, '_day_delegate'):
-            self._day_delegate._apply_theme(theme)
-            self._day_delegate.set_placeholder_color(color)
-            if hasattr(self, '_day_list_view'):
-                self._day_list_view.viewport().update()
+        # Day and Week tabs: StatsRowDelegate (not BookDayRow widgets) —
+        # re-derive theme colors and repaint. set_placeholder_color separately
+        # covers the placeholder-pixmap cache (mirrors update_placeholder_color's
+        # own color-changed check). Week joined this path 2026-08-09.
+        for prefix in self._STATS_DELEGATE_PREFIXES:
+            delegate = getattr(self, f'{prefix}_delegate', None)
+            if delegate is None:
+                continue
+            delegate._apply_theme(theme)
+            delegate.set_placeholder_color(color)
+            list_view = getattr(self, f'{prefix}_list_view', None)
+            if list_view is not None:
+                list_view.viewport().update()
 
     def _make_settings_icon(self, theme: dict) -> QIcon:
         color = QColor(theme.get("text", "#ffffff"))
@@ -3777,15 +3781,14 @@ class StatsPanel(QWidget):
         self._day_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(self._day_total_label)
 
-        # Scrollable book rows — StatsRowModel/StatsRowDelegate/StatsRowListView,
-        # Day tab only (proof of concept; Week/Month keep the BookDayRow/
-        # QScrollArea construction below unchanged). A real QListView has its
-        # own viewport/scrollbar and native indexAt hit-testing, so neither
-        # ScrollHoverTracker (stale-:hover-on-scroll workaround) nor
-        # _claim_container_input (flush-sibling-widget boundary-pixel Qt bug
-        # workaround) has anything to attach to here — both are specific to
-        # the widget-per-row architecture Week/Month still use. See Step 0 of
-        # the migration report for why neither applies.
+        # Scrollable book rows — StatsRowModel/StatsRowDelegate/StatsRowListView.
+        # As of 2026-08-09, Week also uses this pair (_build_weekly_tab); Month
+        # keeps the BookDayRow/QScrollArea construction unchanged for now. A
+        # real QListView has its own viewport/scrollbar and native indexAt
+        # hit-testing, so neither ScrollHoverTracker (stale-:hover-on-scroll
+        # workaround) nor _claim_container_input (flush-sibling-widget
+        # boundary-pixel Qt bug workaround) has anything to attach to here —
+        # both are specific to the widget-per-row architecture Month still uses.
         # No theme dict is available yet at panel-construction time (StatsPanel
         # doesn't store one — theming arrives later via on_theme_changed(theme),
         # same as _accent_color's own "#9B59B6" placeholder default above).
@@ -3800,11 +3803,9 @@ class StatsPanel(QWidget):
         self._day_list_view.row_clicked.connect(self._on_book_row_clicked)
         # Cover-load-on-miss: mirrors BookDayRow's per-row dispatch, but the
         # completion write-back targets the model (dataChanged) instead of a
-        # widget repaint. See _day_ensure_covers_loaded, called from the
-        # delegate's paint miss path via a post-paint scan (Qt disallows
-        # starting work mid-paint) — actually wired from _refresh_daily/
-        # dataChanged instead; see _day_on_cover_loaded.
-        self._day_cover_pending: set = set()
+        # widget repaint. See _ensure_covers_loaded (called from _refresh_daily)
+        # and _dispatch_cover_load/_on_cover_loaded for the shared (not
+        # per-tab) dispatch/dedup mechanism.
         self._day_scroll = self._day_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
         # A hand-rolled wheelEvent snap-to-row-height handler used to live here
@@ -3883,7 +3884,16 @@ class StatsPanel(QWidget):
         widget.setVisible(True)
 
     def _day_fixup_scroll_policy(self) -> None:
-        """QListView equivalent of _fixup_scroll_policy for the Day tab.
+        self._delegate_fixup_scroll_policy('_day')
+
+    def _week_fixup_scroll_policy(self) -> None:
+        self._delegate_fixup_scroll_policy('_week')
+
+    def _delegate_fixup_scroll_policy(self, prefix: str) -> None:
+        """QListView equivalent of _fixup_scroll_policy, shared by any tab
+        using StatsRowModel/StatsRowListView (Day, then Week as of 2026-08-09
+        — was `_day_fixup_scroll_policy`, generalized by prefix rather than
+        duplicated when Week adopted the same model/view pair).
 
         Same purpose, same QSS-property mechanism (policy stays
         ScrollBarAlwaysOn always; only the handle's inert/enabled state
@@ -3897,8 +3907,8 @@ class StatsPanel(QWidget):
         that this pairing needed explicit re-verification against the live
         app for a QListView, not an assumption that it carries over unchanged.
         """
-        view = self._day_list_view
-        model = self._day_model
+        view = getattr(self, f'{prefix}_list_view')
+        model = getattr(self, f'{prefix}_model')
         content_h = model.rowCount() * _STATS_ROW_HEIGHT
         overflow = content_h - view.viewport().height()
         bar = view.verticalScrollBar()
@@ -4036,8 +4046,8 @@ class StatsPanel(QWidget):
         # Dispatch cover loads BEFORE the rebuild-avoidance guard, unconditionally,
         # not just inside the rebuild branch — gives the async worker's round-trip
         # (measured ~10-20ms live) the earliest possible head start against the
-        # paint that follows set_rows below. _day_ensure_covers_loaded has its own
-        # cheap internal guards (_cover_cache hit, _day_cover_pending dedup), so
+        # paint that follows set_rows below. _ensure_covers_loaded has its own
+        # cheap internal guards (_cover_cache hit, _stats_cover_pending dedup), so
         # calling it on every revisit (even when the signature is unchanged and
         # set_rows is about to be skipped) is free for already-warm books and
         # correctly retries any book whose load never completed last time (e.g.
@@ -4046,7 +4056,7 @@ class StatsPanel(QWidget):
         # fully close the race — the DB query above only takes ~1.2ms, nowhere
         # near enough of a head start — but it costs nothing extra and removes
         # one structural reason a cold cover could be perpetually skipped.
-        self._day_ensure_covers_loaded(rows)
+        self._ensure_covers_loaded(rows)
 
         # Rebuild-avoidance guard: revisiting the SAME period (tab switch back,
         # prev-then-next, wheel scroll back) with an unchanged content
@@ -4141,40 +4151,16 @@ class StatsPanel(QWidget):
         self._week_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(self._week_total_label)
 
-        scroll = QScrollArea()
-        scroll.setObjectName("stats_scroll_area")
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        self._week_scroll = scroll
+        self._week_model = StatsRowModel(self)
+        self._week_delegate = StatsRowDelegate({}, self._placeholder_color, self)
+        self._week_list_view = StatsRowListView()
+        self._week_list_view.setObjectName("stats_scroll_area")
+        self._week_list_view.setModel(self._week_model)
+        self._week_list_view.setItemDelegate(self._week_delegate)
+        self._week_list_view.row_clicked.connect(self._on_book_row_clicked)
+        self._week_scroll = self._week_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
-        self._week_rows_widget = QWidget()
-        self._week_rows_layout = QVBoxLayout(self._week_rows_widget)
-        self._week_rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._week_rows_layout.setSpacing(0)
-        self._week_rows_layout.addStretch()
-
-        scroll.setWidget(self._week_rows_widget)
-        # Re-resolve the hovered row when the list scrolls under a still
-        # cursor — QSS :hover alone goes stale there. See ui/hover_tracker.py.
-        self._week_hover = ScrollHoverTracker(
-            scroll, lambda: self._rows_in(self._week_rows_layout), self)
-        # The container owns the hand cursor and routes boundary-pixel
-        # clicks to the highlighted row — see _claim_container_input.
-        self._claim_container_input(
-            self._week_rows_widget, self._week_hover)
-
-        def _week_rows_wheel(e):
-            bar = scroll.verticalScrollBar()
-            notches = -1 if e.angleDelta().y() > 0 else 1
-            target = bar.value() + notches * _STATS_ROW_HEIGHT
-            snapped = round(target / _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            max_aligned = (bar.maximum() // _STATS_ROW_HEIGHT) * _STATS_ROW_HEIGHT
-            bar.setValue(max(bar.minimum(), min(max_aligned, snapped)))
-            e.accept()
-        scroll.wheelEvent = _week_rows_wheel
-
-        outer.addWidget(scroll, stretch=1)
+        outer.addWidget(self._week_list_view, stretch=1)
 
         self._week_finished_section = QWidget()
         self._week_finished_section.setObjectName("stats_finished_section")
@@ -4223,10 +4209,7 @@ class StatsPanel(QWidget):
                 'week', self.config.get_day_start_hour(), include_playback_finished=True)
         self._active_weeks = self._cached_active_weeks
         if not self._active_weeks:
-            while self._week_rows_layout.count() > 1:
-                item = self._week_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+            self._week_model.set_rows([])
             self._week_built_period = None
             self._week_built_sig = None
             self._week_label.setText("No activity yet")
@@ -4254,23 +4237,19 @@ class StatsPanel(QWidget):
         )
         finished = self._inject_active_covers(self.db.get_finished_in_period('week', week_str, day_start))
 
+        # Dispatch cover loads BEFORE the rebuild-avoidance guard — see
+        # _refresh_daily for why (head start against the paint that follows
+        # set_rows; also retries any book whose load never completed last
+        # time, since this runs even when set_rows itself is about to be
+        # skipped below).
+        self._ensure_covers_loaded(rows)
+
         # Rebuild-avoidance guard — see _refresh_daily / _period_rows_signature.
         sig = self._period_rows_signature(rows, finished)
         if week_str == self._week_built_period and sig == self._week_built_sig:
             pass
         else:
-            while self._week_rows_layout.count() > 1:
-                item = self._week_rows_layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            self._week_rows_widget.setUpdatesEnabled(False)
-            for i, row in enumerate(rows):
-                book_row = BookDayRow(row, self._assets_dir, index=i, placeholder_color=self._placeholder_color)
-                book_row.clicked.connect(self._on_book_row_clicked)
-                self._add_row_safely(self._week_rows_layout, book_row)
-            self._week_rows_widget.setUpdatesEnabled(True)
-            self._week_rows_layout.invalidate()
-            self._week_rows_widget.updateGeometry()
+            self._week_model.set_rows(rows)
             self._week_built_period = week_str
             self._week_built_sig = sig
 
@@ -4284,7 +4263,7 @@ class StatsPanel(QWidget):
             self._week_finished_section.hide()
         self._cap_rows_viewport(self._week_scroll, bool(finished))
         # Scheduled after the cap — see the day tab.
-        QTimer.singleShot(0, lambda: _fixup_scroll_policy(self._week_scroll))
+        QTimer.singleShot(0, self._week_fixup_scroll_policy)
 
     def _build_monthly_tab(self) -> QWidget:
         widget = QWidget()
@@ -4778,14 +4757,27 @@ class StatsPanel(QWidget):
         for widget in self._iter_day_rows(current_tab):
             if widget._row_data.get("book_path") == book_path:
                 widget.refresh_cover(cover_path)
-        if current_tab == "Day" and hasattr(self, '_day_model'):
-            self._day_refresh_cover_for_path(book_path, cover_path)
+        if hasattr(self, '_day_model'):
+            self._delegate_refresh_cover_for_path('_day', book_path, cover_path)
+        if hasattr(self, '_week_model'):
+            self._delegate_refresh_cover_for_path('_week', book_path, cover_path)
 
-    def _day_refresh_cover_for_path(self, book_path: str, cover_path: str) -> None:
-        """Day-tab equivalent of BookDayRow.refresh_cover, retargeted at the
-        model instead of a widget repaint — same _cover_cache evict +
-        CoverLoaderWorker dispatch, dataChanged instead of setPixmap."""
-        for row in self._day_model._rows:
+    _STATS_DELEGATE_PREFIXES = ('_day', '_week')
+
+    def _delegate_refresh_cover_for_path(self, prefix: str, book_path: str, cover_path: str) -> None:
+        """BookDayRow.refresh_cover equivalent, retargeted at a StatsRowModel
+        instead of a widget repaint — same _cover_cache evict + CoverLoaderWorker
+        dispatch, dataChanged instead of setPixmap. `prefix` is '_day' or
+        '_week' — selects which tab's model/delegate/view this touches
+        (`{prefix}_model`, `{prefix}_delegate`, `{prefix}_list_view`), so Day
+        and Week share this one method instead of duplicating a
+        `_week_refresh_cover_for_path` copy — generalized 2026-08-09 when Week
+        adopted the same StatsRowModel/StatsRowDelegate pair Day already used.
+        Dispatch dedup/worker-retention (`_stats_cover_pending`/
+        `_day_active_workers`) is shared across ALL prefixes, not per-tab —
+        see _dispatch_cover_load's docstring for why."""
+        model = getattr(self, f'{prefix}_model')
+        for row in model._rows:
             if row.get("book_path") != book_path:
                 continue
             book_id = row.get("book_id")
@@ -4793,34 +4785,48 @@ class StatsPanel(QWidget):
                 continue
             if book_id in _cover_cache:
                 del _cover_cache[book_id]
-            if hasattr(self, '_day_delegate'):
-                self._day_delegate.invalidate_cover(book_id)
+            delegate = getattr(self, f'{prefix}_delegate', None)
+            if delegate is not None:
+                delegate.invalidate_cover(book_id)
             row["active_cover_path"] = cover_path
             if cover_path and os.path.exists(cover_path):
-                self._day_dispatch_cover_load(book_id, book_path, cover_path, cover_path)
+                self._dispatch_cover_load(book_id, book_path, cover_path, cover_path)
             else:
-                idx = self._day_model.index_for_book_id(book_id)
+                idx = model.index_for_book_id(book_id)
                 if idx.isValid():
-                    self._day_model.dataChanged.emit(idx, idx)
-            if hasattr(self, '_day_list_view'):
-                self._day_list_view.viewport().update()
+                    model.dataChanged.emit(idx, idx)
+            list_view = getattr(self, f'{prefix}_list_view', None)
+            if list_view is not None:
+                list_view.viewport().update()
 
-    def _day_dispatch_cover_load(self, book_id, book_path: str, cover_path, active_cover_path) -> None:
+    def _dispatch_cover_load(self, book_id, book_path: str, cover_path, active_cover_path) -> None:
         """Raw-mode CoverLoaderWorker dispatch, identical to BookDayRow's own
         (duck-typed book_data object, cover_loaded signal, QThreadPool) — the
         only mechanical change is that completion writes to _cover_cache and
-        emits dataChanged on the model instead of calling setPixmap on a
-        per-row QLabel. Not touching _sized_cover_cache/LANCZOS — out of
-        scope per the design doc."""
-        if book_id in getattr(self, '_day_cover_pending', ()):
+        emits dataChanged on every tab's model that has this book_id, instead
+        of calling setPixmap on a per-row QLabel. Not touching
+        _sized_cover_cache/LANCZOS — out of scope per the design doc.
+
+        Dedup (`_stats_cover_pending`) is keyed on book_id ALONE, shared across
+        every tab (Day/Week/eventually Month), not per-prefix — a book's cover
+        is the same file regardless of which tab is asking for it, so two tabs
+        requesting the same never-yet-cached book_id at the same time must
+        share one in-flight CoverLoaderWorker, not race two redundant ones.
+        Same reasoning for the worker-retention set (`_day_active_workers`,
+        name kept from when Day was the only caller — it has never been
+        Day-specific in behavior, a plain set works the same for any caller's
+        workers)."""
+        if not hasattr(self, '_stats_cover_pending'):
+            self._stats_cover_pending: set = set()
+        if book_id in self._stats_cover_pending:
             return
-        self._day_cover_pending.add(book_id)
+        self._stats_cover_pending.add(book_id)
         worker = CoverLoaderWorker(
             type('_SD', (), {'path': book_path, 'cover_path': cover_path, 'id': book_id})(),
             active_cover_path=active_cover_path,
         )
         worker.signals.cover_loaded.connect(
-            self._day_on_cover_loaded, Qt.ConnectionType.QueuedConnection
+            self._on_cover_loaded, Qt.ConnectionType.QueuedConnection
         )
         # Keep a strong Python reference until finished — QThreadPool.start()
         # is documented to take ownership at the C++/Qt level, but the local
@@ -4832,7 +4838,7 @@ class StatsPanel(QWidget):
         # cause of the flicker bug: without this set, a cover load dispatched
         # from a plain nav-click flow (not a manual re-trigger) never
         # completed at all — QThreadPool.activeThreadCount() stayed 0 for 5+
-        # seconds and _day_on_cover_loaded never fired, leaving the row
+        # seconds and the completion callback never fired, leaving the row
         # permanently on the placeholder until some other event (a later
         # rebuild, cache warm from the Library preloader, etc.) eventually
         # supplied a real cover — which is what read as a "flicker" rather
@@ -4846,20 +4852,28 @@ class StatsPanel(QWidget):
         )
         QThreadPool.globalInstance().start(worker)
 
-    def _day_on_cover_loaded(self, book_id: int, image: QImage) -> None:
-        self._day_cover_pending.discard(book_id)
+    def _on_cover_loaded(self, book_id: int, image: QImage) -> None:
+        self._stats_cover_pending.discard(book_id)
         if image.isNull():
             return
         _cover_cache[book_id] = QPixmap.fromImage(image)
-        if hasattr(self, '_day_delegate'):
-            self._day_delegate.invalidate_cover(book_id)
-        if not hasattr(self, '_day_model'):
-            return
-        idx = self._day_model.index_for_book_id(book_id)
-        if idx.isValid():
-            self._day_model.dataChanged.emit(idx, idx)
-            if hasattr(self, '_day_list_view'):
-                self._day_list_view.viewport().update()
+        # Notify EVERY tab currently holding this book_id, not just whichever
+        # tab happened to trigger the dispatch — a book can legitimately
+        # appear in both Day and Week's row lists at once (e.g. today's day
+        # is inside the currently-viewed week), and both need the repaint.
+        for prefix in self._STATS_DELEGATE_PREFIXES:
+            delegate = getattr(self, f'{prefix}_delegate', None)
+            if delegate is not None:
+                delegate.invalidate_cover(book_id)
+            model = getattr(self, f'{prefix}_model', None)
+            if model is None:
+                continue
+            idx = model.index_for_book_id(book_id)
+            if idx.isValid():
+                model.dataChanged.emit(idx, idx)
+                list_view = getattr(self, f'{prefix}_list_view', None)
+                if list_view is not None:
+                    list_view.viewport().update()
 
     def _eager_warm_stats_history_covers(self) -> None:
         """Fire once, at StatsPanel construction (app startup, before the user
@@ -4931,13 +4945,16 @@ class StatsPanel(QWidget):
                 continue
             if book_id in _cover_cache:
                 continue
-            self._day_dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
+            self._dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
 
-    def _day_ensure_covers_loaded(self, rows: list[dict]) -> None:
+    def _ensure_covers_loaded(self, rows: list[dict]) -> None:
         """Dispatch a raw CoverLoaderWorker for every row not already in
-        _cover_cache — called once after set_rows() rebuilds the Day model,
-        mirroring what BookDayRow.__init__ used to do per-row at construction
-        time."""
+        _cover_cache — called once after set_rows() rebuilds a StatsRowModel
+        (Day or Week), mirroring what BookDayRow.__init__ used to do per-row
+        at construction time. Shared across tabs (renamed from
+        `_day_ensure_covers_loaded` 2026-08-09 when Week adopted the same
+        model/delegate pair) — nothing here reads which tab called it, since
+        _dispatch_cover_load's own dedup is keyed on book_id alone."""
         for row in rows:
             book_id = row.get("book_id")
             book_path = row.get("book_path")
@@ -4948,11 +4965,13 @@ class StatsPanel(QWidget):
                 continue
             if book_id in _cover_cache:
                 continue
-            self._day_dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
+            self._dispatch_cover_load(book_id, book_path, cover_path, active_cover_path)
 
     def _iter_day_rows(self, tab_name: str):
+        # Month is the only remaining tab still built from BookDayRow widgets
+        # in a QVBoxLayout — Day (2026-08-05) and Week (2026-08-09) both moved
+        # to StatsRowModel/StatsRowDelegate, which have no such layout to walk.
         layout_map = {
-            "Week": getattr(self, '_week_rows_layout', None),
             "Month": getattr(self, '_month_rows_layout', None),
         }
         layout = layout_map.get(tab_name)
