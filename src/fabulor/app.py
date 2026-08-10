@@ -1128,10 +1128,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._save_current_progress()
 
     def _on_sprint_display_text_updated(self, text):
-        was_armed = bool(self.sleep_timer_label.text())
+        old_text = self.sleep_timer_label.text()
+        was_armed = bool(old_text)
         self.sleep_timer_label.setText(text)
         newly_armed = bool(text) and not was_armed
-        if newly_armed and self.volume_slider.value() == 0:
+        # Entering the grace countdown ("Grace MM:SS", shown while paused mid-sprint)
+        # is its OWN transient-confirmation trigger while muted, same as arming —
+        # was_armed alone can't catch this, since both the running countdown and the
+        # grace text are non-empty, so the plain empty->non-empty check never re-fires
+        # for this transition. Reported live, 2026-08-11 ("same for the grace").
+        entered_grace = text.startswith("Grace ") and not old_text.startswith("Grace ")
+        if (newly_armed or entered_grace) and self.volume_slider.value() == 0:
             self._sprint_just_set = True
             self.sprint_confirm_timer.start(_INDICATOR_DISMISS_MS)
         elif not text:

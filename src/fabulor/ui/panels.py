@@ -1293,6 +1293,12 @@ class PanelManager:
     def _start_sleep_entry(self):
         """Starts the sleep panel slide-in animation."""
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        # Sync the disable-button's visibility here, at panel-open time, not
+        # during arming — see SleepTimerPanel._do_arm_sleep_timer's comment for
+        # why (a same-call-stack .show() during arm flashes visibly for one
+        # frame before the panel's own close-on-arm animation starts). Same
+        # deferred-reconciliation shape as _sync_persist_filter_on_open.
+        self.sleep_panel.sync_disable_button_visibility()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.sleep_panel.setFixedWidth(panel_w)
@@ -1363,6 +1369,7 @@ class PanelManager:
     def _start_sprint_entry(self):
         """Starts the sprint panel slide-in animation. Mirrors _start_sleep_entry exactly."""
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        self.sprint_panel.sync_disable_button_visibility()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.sprint_panel.setFixedWidth(panel_w)

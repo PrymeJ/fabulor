@@ -562,7 +562,10 @@ def build_sidebar(mw):
 
     mw.sprint_cancel_btn = QPushButton("✕", mw.sprint_trigger_btn)
     mw.sprint_cancel_btn.setFixedSize(16, 16)
-    mw.sprint_cancel_btn.move(34, 1)
+    # "SPRINT" is a letter wider than "SLEEP" — sleep_cancel_btn's move(34, 1) put the
+    # X too close to/overlapping the trigger text (reported live, 2026-08-11). Nudged
+    # right; re-tune live if still off, per the "user's eyes are ground truth" rule.
+    mw.sprint_cancel_btn.move(44, 1)
     mw.sprint_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
     mw.sprint_cancel_btn.clicked.connect(mw.sprint_panel.disable_sprint)
     mw.sprint_cancel_btn.hide()

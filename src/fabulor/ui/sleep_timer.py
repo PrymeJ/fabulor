@@ -235,7 +235,6 @@ class SleepTimerPanel(QWidget):
             self._sleep_mode = 'timed'
             self.config.set_sleep_duration(duration_minutes)
             self.config.set_sleep_mode('timed')
-            self.disable_sleep_btn.show()
             self.timer_started.emit()
         elif mode == 'end_of_chapter':
             self._total_timer_duration = 0
@@ -245,10 +244,29 @@ class SleepTimerPanel(QWidget):
             # transition.
             self.player.user_seek_pending = False
             self.config.set_sleep_mode(mode)
-            self.disable_sleep_btn.show()
             self.timer_started.emit()
+        # disable_sleep_btn.show() is deliberately NOT called here. timer_started
+        # (above) is connected to panel_manager._close_sleep_flow, which starts the
+        # slide-out synchronously in the same call stack — Qt does not paint
+        # between two Python statements, so showing the button before OR after the
+        # emit still lands in the same paint cycle as the close-slide, producing a
+        # one-frame flash of the button just before the panel disappears (reported
+        # live, 2026-08-11; a same-call-stack reorder was tried first and did not
+        # fix it, confirming this mechanism). Matches the deferred-reconciliation
+        # shape already used by _sync_persist_filter_on_open (app.py) for Settings'
+        # persist-filter sub-buttons: the visibility fixup is deferred to the next
+        # panel-OPEN instead of applied synchronously during the interaction that
+        # would otherwise disturb an already-closing panel. See
+        # sync_disable_button_visibility(), called from PanelManager._start_sleep_entry.
 
         self.update_panel_styling()
+
+    def sync_disable_button_visibility(self):
+        """Called from PanelManager._start_sleep_entry, before the panel becomes
+        visible — NOT from the arm path itself. See _do_arm_sleep_timer's comment
+        for why the button's visibility is deferred to panel-open time instead of
+        being set synchronously during arming."""
+        self.disable_sleep_btn.setVisible(self._sleep_mode is not None)
 
     def _current_chapter_index(self):
         """Derives the current chapter index the same way Player._on_time_pos_change
@@ -522,4 +540,16 @@ class SleepTimerPanel(QWidget):
                     except (ShutdownError, AttributeError, SystemError):
                         pass
                     self.timer_expired.emit()
-        self.display_text_updated.emit(display_text)
+        # Gated on _sleep_mode, NOT unconditional: this used to fire every single
+        # 200ms tick regardless of whether sleep was armed at all, always sending
+        # "" when it wasn't. That's harmless in isolation (disable_sleep_timer()
+        # already emits its own "" on the actual disarm transition, so this was
+        # merely redundant) — but display_text_updated feeds a label SHARED with
+        # SprintPanel (sleep_timer_label / vol_stack page 0), and sleep's repeated
+        # "" emits were clobbering sprint's own countdown/grace text on every tick
+        # sleep wasn't armed, corrupting sprint's own old-text tracking in
+        # _on_sprint_display_text_updated and disrupting its message-dismiss timing
+        # and mute-transient logic. Confirmed live, 2026-08-11. Only emit here when
+        # sleep actually has something to say.
+        if self._sleep_mode is not None:
+            self.display_text_updated.emit(display_text)

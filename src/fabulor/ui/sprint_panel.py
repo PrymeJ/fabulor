@@ -245,12 +245,25 @@ class SprintPanel(QWidget):
                 self.player.pause = False
             except (ShutdownError, AttributeError, SystemError):
                 pass
-        self.disable_sprint_btn.show()
         self.update_panel_styling()
+        # disable_sprint_btn.show() is deliberately NOT called here — see
+        # SleepTimerPanel._do_arm_sleep_timer's comment for the full mechanism
+        # (a same-call-stack reorder does not work: Qt doesn't paint between two
+        # Python statements, so the button flashes before the close-slide
+        # regardless of emit/show ordering). Deferred to panel-open time instead —
+        # see sync_disable_button_visibility(), called from
+        # PanelManager._start_sprint_entry.
         self.sprint_started.emit()
         self.display_text_updated.emit(
             self._format_display(0, self._sprint_duration_s)
         )
+
+    def sync_disable_button_visibility(self):
+        """Called from PanelManager._start_sprint_entry, before the panel becomes
+        visible — NOT from the arm path itself. See _do_arm_sprint's comment for
+        why the button's visibility is deferred to panel-open time instead of
+        being set synchronously during arming."""
+        self.disable_sprint_btn.setVisible(self._sprint_active)
 
     def disable_sprint(self, was_cancelled=False):
         was_active = self._sprint_active
@@ -315,14 +328,21 @@ class SprintPanel(QWidget):
         return f"Grace {g_m:02d}:{g_s:02d}"
 
     def _trigger_cancel(self):
-        self._cancel_message_active = True
+        # disable_sprint() FIRST, THEN set the guard — disable_sprint() unconditionally
+        # clears _cancel_message_active as part of its own state reset, so setting the
+        # guard before calling it just gets immediately clobbered back to False. That
+        # left the guard never actually armed for the next update_sprint_state tick,
+        # which stomped "Sprint cancelled" back to "" almost immediately (reported
+        # live, 2026-08-11). Matches sleep_timer.py's _cancel_eoc_sleep ordering.
         self.disable_sprint(was_cancelled=True)
+        self._cancel_message_active = True
         self.display_text_updated.emit("Sprint cancelled")
         self._cancel_timer.start(self._dismiss_ms)
 
     def _trigger_complete(self):
-        self._cancel_message_active = True
+        # Same ordering fix as _trigger_cancel — see its comment.
         self.disable_sprint(was_cancelled=False)
+        self._cancel_message_active = True
         self.sprint_expired.emit()
         self.display_text_updated.emit("Sprint completed")
         self._cancel_timer.start(self._dismiss_ms)
