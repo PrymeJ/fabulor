@@ -1,3 +1,162 @@
+## 2026-08-10/11 — Listening Sprint: new sibling feature to the sleep timer, built on `listening-sprint`, plus a live bug-fix round exposing a shared-widget interference bug in the pre-existing sleep timer code
+
+Full arc: investigation-only mapping pass (no code), a three-checkpoint implementation plan
+(`SprintPanel`, app.py wiring + mutual-exclusion, sidebar/PanelManager registration), then a live
+bug-fix round against four reported issues. Two commits: `0fe4331` (feature), `001fb2a` (bug fixes).
+
+### Investigation and plan
+
+Before any code, mapped `SleepTimerPanel`'s structure, the shared indicator zone (`vol_stack`),
+the sidebar's Sleep trigger/cancel-button/pulsate pattern, the "Delete listening history"-style
+confirm-overlay pattern, keybinding `R` (confirmed free), and `Player.user_seek_pending`/
+`sleep_fired` (confirmed present from the prior end-of-chapter-sleep session). `SprintPanel` was
+then built as a structural sibling of `SleepTimerPanel`: duration presets, a manual-minutes input,
+a grace-period row replacing fade-out, and a 200ms-polled state machine
+(`update_sprint_state`, called from `app.py`'s `_sync_playback_state` alongside
+`update_timer_state`).
+
+### Design decisions made during planning, each confirmed rather than assumed
+
+- **Mutual exclusion via a gate-callback pattern**, not app.py rewiring button connections after
+  construction: both panels gained `set_arm_gate`/`show_conflict_confirm`, and `set_sleep_timer`/
+  `set_sprint` were split into thin outer shells (`proceed = lambda: self._do_arm_*(...)`) plus the
+  real `_do_arm_*` state-mutation body. `app.py`'s `_sleep_arm_gate`/`_sprint_arm_gate` intercept
+  the `proceed` callable, show a 7s confirm overlay (reusing the "Delete listening history" pattern
+  — a local `_ClickableLabel` copy in each panel, not a shared import) when the other timer is
+  active, and only call `proceed()` on confirm. Panels stay unaware of each other by name; the
+  conflict *policy* lives entirely in app.py.
+- **`_on_sprint_expired` deliberately does NOT mirror `_on_sleep_timer_expired`'s
+  `session_recorder.pause()`** — a sprint completing does not pause playback (unlike sleep), so
+  pausing the recorder there would silently stop listening-time tracking for a session that's still
+  live. Confirmed with the user before implementing rather than copying sleep's shape blindly.
+- **`_do_arm_sprint` gained the same `player.pause = False` on arm that `SleepTimerPanel` has** —
+  confirmed this wasn't in the original spec's pseudocode, traced that sleep's version lives in the
+  panel itself (not the app.py signal handler, which only opens/resumes the session recorder), and
+  matched it exactly rather than leaving sprint arm-while-paused in an undefined state.
+
+### `PanelManager` registration required a much larger sweep than expected
+
+Registering a fourth full panel touched every hardcoded panel enumeration in `panels.py` — the
+`_CLOSE_ANIMS` table, `active_full_panel()`, `escape_active_panel()`,
+`handle_drag_area_right_click()` (dispatch + debug log), `panel_tab_widgets()` (Tab-cycling, CLAUDE.md
+invariant 27), `is_any_full_panel_visible()`, `is_any_panel_animating()`, `_any_panel_animating()`
+(found to be MISSING `tags_panel_animation`'s sibling gap independently — no, confirmed it already
+had `tags_panel_animation`; the actual gap found here was sleep's own animation missing from this
+specific list before sprint even existed — folded the fix in as part of the same pass),
+`hide_all_panels()`, `handle_mouse_press()` (both `panels.py`'s and `app.py`'s own copy), the
+Book-Detail-underlay restoration map, `blurred_panel()` (carousel-clip helper), and `resize_panels()`
+(three separate spots: width, height, position). Also required a new `get_sprint_stylesheet()` in
+`themes.py` and registering `sprint_panel` in `theme_manager.py`'s panel-sheet dispatch dict (two
+sites) and fade-overlay mask-punch lists (two sites). `tests/test_sidebar_hotspot.py`'s fixture
+(constructs `PanelManager` attributes manually, predates sprint) needed the same additions or its
+tests failed with `AttributeError: 'PanelManager' object has no attribute 'sprint_panel'` —
+caught immediately by the test suite, not discovered live.
+
+### Two structural bugs found and fixed before the first live test
+
+- **No background at all** (reported: "the panel has no background or it is set to 0 alpha... even
+  when I set the panel background option as Opaque"). Root cause: `get_panel_base_stylesheet`'s
+  background rule was a **literal three-name QWidget# selector**
+  (`QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel`), not a generic rule —
+  `sprint_panel` was never added to it, so the panel got zero background rule regardless of any
+  opacity setting. This was never a transparency bug; the selector simply never matched. Fixed by
+  adding `QWidget#sprint_panel` to the list.
+- **Arming a sprint completed it instantly.** `_do_arm_sprint` recorded `_sprint_start_time` via
+  `time.monotonic()` (per the original spec's pseudocode), but `update_sprint_state`'s
+  `current_time` parameter is always `time.time()`-based (sourced from `app.py`'s
+  `_sync_playback_state`, shared with sleep's own `time.time()`-based
+  `_sleep_timer_end_time`). `elapsed = time.time() - time.monotonic()` is two incompatible clocks —
+  an enormous, meaningless number that instantly exceeded any sprint duration and fired completion
+  on the very first tick. Fixed by switching `SprintPanel` to `time.time()` throughout, matching
+  what its one real caller actually supplies.
+
+### Live bug-fix round: four issues reported, three genuinely fixed on the second attempt
+
+1. **Sidebar cancel-button (×) too close to the "SPRINT" trigger text.** `sprint_cancel_btn`'s
+   `move(34, 1)` was copied verbatim from `sleep_cancel_btn` — "SPRINT" is a letter wider than
+   "SLEEP", so the same x-offset overlapped the text. Nudged to `move(44, 1)`. Fixed on the first
+   attempt, confirmed live.
+
+2. **"Sprint cancelled"/"Sprint completed" messages dismissed almost instantly.** First diagnosis
+   (wrong, but a real bug in its own right, fixed anyway): `_trigger_cancel`/`_trigger_complete` set
+   `_cancel_message_active = True` *before* calling `disable_sprint()`, which unconditionally clears
+   that same flag as part of its own reset — clobbering the guard back to `False` before it could
+   ever protect the next tick. Fixed by reordering to match `sleep_timer.py`'s `_cancel_eoc_sleep`
+   (disarm first, then arm the guard). **This did not fix the reported symptom** — see below.
+
+3. **Mute icon not covering the sprint countdown; sprint text never shown at all under some
+   conditions while muted.** Investigated via added `[SPRINT-TRACE]` logging (not guessed a second
+   time) rather than a second blind fix — see CLAUDE.md's "never substitute a plausible explanation
+   for a checked one" section. Live logs showed `_on_sprint_display_text_updated`'s `old_text` reading
+   `''` on almost every tick even when a countdown had clearly been showing for many prior ticks —
+   meaning something ELSE was blanking the shared label between sprint's own writes.
+
+   **Root cause, confirmed via the trace log, not inferred:** `SleepTimerPanel.update_timer_state`'s
+   trailing `display_text_updated.emit(display_text)` is unconditional — it fires every single 200ms
+   tick regardless of whether sleep is armed, sending `""` whenever it isn't. Since sleep and sprint
+   share one label (`sleep_timer_label` / `vol_stack` page 0), and `_sync_playback_state` calls
+   sleep's `update_timer_state` BEFORE sprint's `update_sprint_state` on every tick, sleep's
+   redundant `""` write was clobbering sprint's own text on every tick sleep wasn't armed — i.e.
+   constantly, for anyone testing sprint in isolation. This corrupted sprint's own `was_armed`/
+   `old_text` tracking (making `newly_armed` spuriously read `True` far more often than intended)
+   and explains why the message-dismiss timing (issue 2) and the mute-priority transient (issue 3)
+   both malfunctioned from ONE shared cause, even though the state-machine logic for both was
+   independently correct in isolation (confirmed by reading the trace log's own timestamps: the
+   "Sprint cancelled" text was genuinely held for ~2083ms against a configured 2000ms dismiss — the
+   fix in point 2 above DID work exactly as designed; the visible symptom was caused by this
+   separate interference, not by point 2's bug).
+
+   Fixed by gating `update_timer_state`'s trailing emit on `self._sleep_mode is not None` — sleep
+   still emits everything it legitimately needs to (the running countdown, `[chapter]` text, and
+   `disable_sleep_timer()`'s own explicit `""` emit on the real disarm transition); it just stops
+   repeating a redundant `""` every tick when it was never armed at all. `SprintPanel.
+   update_sprint_state` was confirmed already correctly gated (`if not self._sprint_active: return`
+   at the top) — the bug was one-directional, sleep clobbering sprint, never the reverse, matching
+   that sleep's own behavior was never reported broken.
+
+   Also added: the grace countdown ("Grace MM:SS", shown while paused mid-sprint) now gets its own
+   transient reveal while muted, alongside arming — the original `newly_armed` check only caught
+   empty-to-non-empty transitions, and both the running countdown and the grace text are non-empty,
+   so entering grace never re-triggered the transient on its own. Detected via a text-prefix check
+   (`text.startswith("Grace ")`) rather than a new signal/flag from `SprintPanel`, per direct
+   confirmation — app.py already receives the formatted string, so no new API surface was needed.
+   Confirmed with the user that grace-EXIT does NOT need the same treatment (resuming just returns
+   to a state that was already showing before the pause — nothing new to confirm).
+
+4. **Disable-button ("Disable the sleep timer" / "Cancel the sprint") visibly flashes for one frame
+   right before the panel closes on arm.** Reported as pre-existing on Sleep, inherited by Sprint,
+   not introduced by it. First attempt (wrong): reordered `timer_started.emit()`/`disable_sleep_btn.
+   show()` on the theory that emit-before-show would let the close-slide start before the button
+   painted visible. **This has no mechanism to work** — Qt does not paint between two synchronous
+   Python statements in the same call stack; both land in the same paint cycle regardless of order.
+   Confirmed this reasoning only after the user reported the reorder didn't fix anything.
+
+   User pointed at a working, already-shipped analogous case: Settings' Library tab has a
+   "Persist search filter" master switch with sub-toggles; turning all sub-toggles off should turn
+   the master off too, but doesn't do so live during the interaction — it's reconciled once, at the
+   NEXT panel open, via `_sync_persist_filter_on_open()` (called from `PanelManager.
+   _start_settings_entry`). Applied the same shape: `disable_sleep_btn.show()`/`disable_sprint_btn.
+   show()` removed entirely from the arm path; a new `sync_disable_button_visibility()` on each
+   panel (`self.disable_sleep_btn.setVisible(self._sleep_mode is not None)` /
+   `self.disable_sprint_btn.setVisible(self._sprint_active)`) is called from `PanelManager.
+   _start_sleep_entry`/`_start_sprint_entry` instead — i.e. exactly when the panel is about to
+   become visible again, never during the arm-then-auto-close sequence. `disable_sleep_timer()`/
+   `disable_sprint()`'s own `.hide()` calls (the disarm-while-open path) were left untouched — that
+   path never triggers an auto-close, so it has no flash to fix. **Not yet live-verified before end
+   of session** — the fix is logically sound and matches a confirmed-working pattern, but should be
+   confirmed live next session before being treated as settled.
+
+### What's confirmed vs. not yet re-verified
+
+User confirmed live, end of session: "verified" (after the second round of fixes — items 2 and 3
+above, both traced to the same root cause). Item 1 (button position) was confirmed after the first
+round. Item 4 (button flash) was implemented in the same commit as items 2/3 but was NOT explicitly
+re-tested live before the session ended — flagged here rather than assumed working, per the
+"1 out of 4" correction earlier in this same session, which is exactly the kind of thing that should
+not be silently assumed fixed a second time.
+
+---
+
 ## 2026-08-10 (continued, same day) — Streak grid silently froze across a day-boundary rollover in a long-running session. Fixed via a self-rescheduling single-shot rollover timer. Shipped as `f50d1f6`
 
 **Symptom, reported live:** Stats > Timeline showed the correct finished-book dot for today, but

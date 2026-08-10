@@ -544,6 +544,63 @@ the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why 
 - [ ] Restarting the SAME finished book (EOF → Restart) does NOT disarm an active sleep timer — only
       an actual switch to a different book does
 
+## Listening Sprint (added 2026-08-10/11)
+
+Sprint (sidebar, `R` key) is a structural sibling of the sleep timer — same 200ms-polled indicator
+zone, same shared `sleep_timer_label`. See NOTES.md 2026-08-10/11 for the mechanism (grace pool,
+`time.time()`-based clock, and the shared-label interference bug this session found and fixed —
+that bug's regression check is folded into the cases below rather than a separate section).
+
+### Basic run
+- [ ] Set a short sprint (e.g. 5 min) — indicator shows `-MM:SS | TT:TT`, remaining ticking down,
+      total staying fixed
+- [ ] Sprint indicator text updates every ~200ms while playing, does NOT freeze or go blank at any
+      point during a normal run (regression check for the shared-label interference bug — sleep's
+      own per-tick emit must not blank sprint's text)
+- [ ] Panel background is fully opaque/themed, same as Sleep's panel — NOT transparent or missing
+      (regression check for the literal-selector background bug)
+- [ ] Let a sprint complete naturally — "Sprint completed" shows for the full dismiss window (~2s,
+      matching Sleep's own message timing), then clears; playback CONTINUES uninterrupted (sprint
+      completion never pauses, unlike sleep)
+- [ ] Cancel via the sidebar × or the panel's own cancel button — sprint disarms immediately, no
+      "Sprint cancelled" message (matches Sleep's manual-cancel behavior — only pool-exhaustion
+      cancels WITH a message)
+
+### Grace pool
+- [ ] Pause mid-sprint — indicator switches from the running countdown to a "Grace MM:SS" countdown
+- [ ] Unpause before grace exhausts — sprint countdown resumes correctly, consumed grace time is
+      deducted from future grace windows (repeated brief pauses shouldn't refill the pool)
+- [ ] Let grace exhaust while paused — "Sprint cancelled" shows for the full dismiss window (~2s,
+      not the near-instant dismissal this session found and fixed — see NOTES.md), then clears
+- [ ] Set grace to "None" — pausing at all cancels the sprint immediately (no grace window)
+- [ ] Forward seeking mid-sprint does NOT consume grace or pause the sprint (seeks are free)
+
+### Mute interaction (mirrors Sleep's own mute-priority section above)
+- [ ] Arm a sprint while muted — sprint text shows briefly (~2s) as confirmation, then reverts to
+      the mute icon
+- [ ] While muted with an active sprint (past the initial confirmation), the indicator shows the
+      mute icon, NOT the countdown
+- [ ] Pause mid-sprint while muted — entering the grace countdown ALSO gets its own brief transient
+      reveal before reverting to the mute icon (this is sprint-specific — the grace-entry transition
+      needed its own detection separate from the arm-time one; see NOTES.md)
+- [ ] Unmute while a sprint or its grace countdown is active — the relevant text reappears
+      immediately
+
+### Mutual exclusion with Sleep
+- [ ] Arm a sprint, then try to arm the sleep timer — a confirm overlay appears IN THE SLEEP PANEL;
+      confirming cancels the sprint and arms sleep; letting it time out (7s) or not confirming
+      leaves both states unchanged
+- [ ] Arm the sleep timer, then try to arm a sprint — same, confirm overlay appears IN THE SPRINT
+      PANEL this time; confirming cancels sleep and arms the sprint
+
+### Panel-open button flash (not live-verified as of 2026-08-11 — check this explicitly)
+- [ ] Arm a sprint (or sleep timer) from its own panel — the panel closes on arm; watch closely for
+      whether the "Cancel the sprint"/"Disable the sleep timer" button visibly flashes on screen
+      for a frame before the panel slides away (this was reported broken, a fix was shipped, but
+      NOT re-confirmed live before the session that shipped it ended)
+- [ ] Reopen the panel after arming — the Cancel/Disable button IS correctly visible now (confirms
+      the deferred-to-panel-open sync still works even though the flash fix couldn't be re-verified)
+
 ## UI
 
 - [x] Window draggable

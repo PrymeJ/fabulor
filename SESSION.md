@@ -1,3 +1,58 @@
+## Session Summary — 2026-08-10/11 — Listening Sprint: new sibling feature to the sleep timer, on `listening-sprint`
+
+New feature, sibling to the existing sleep timer: a timed listening session with a grace pool for
+pauses (pausing drains the pool; hitting zero cancels the sprint; forward seeks are free) and mutual
+exclusion with the sleep timer (arming one while the other is active shows a 7s confirm before
+cancelling it). Two commits: `0fe4331` (feature) and `5ecc579` (live bug-fix round).
+
+Investigation-only pass first (no code) mapped `SleepTimerPanel`'s structure, the shared indicator
+zone (`vol_stack`), the sidebar trigger/cancel/pulsate pattern, and the confirm-overlay pattern used
+elsewhere ("Delete listening history"). `SprintPanel` (`ui/sprint_panel.py`) was then built as a
+structural sibling — duration presets, a manual-minutes input, a grace-period row in place of
+fade-out, and a 200ms-polled state machine. Mutual exclusion uses a gate-callback pattern
+(`set_arm_gate`/`show_conflict_confirm`) so app.py owns the conflict policy without either panel
+knowing the other exists by name.
+
+Registering a fourth full panel in `PanelManager` touched nearly every hardcoded panel enumeration
+in `panels.py` — the one-overlay gate, right-click-close, Tab focus, hide-all, the
+animation-interference guard, and the Book-Detail-underlay-restore map all needed a `sprint` entry.
+`tests/test_sidebar_hotspot.py`'s manually-constructed fixture caught one gap immediately
+(`AttributeError: no attribute 'sprint_panel'`) before it ever reached live testing.
+
+Two structural bugs were found and fixed before the first live test: the panel had zero background
+at all (the shared background QSS rule was a literal three-name selector that never included
+`sprint_panel` — not a transparency/opacity-setting bug, as first suspected), and arming a sprint
+completed it instantly (`_sprint_start_time` used `time.monotonic()` per the original spec, but the
+one real caller only ever supplies `time.time()` — two incompatible clocks made elapsed time
+enormous on the first tick).
+
+**Four issues reported after the first live pass; the fix session is the interesting part.** Issue 1
+(sidebar cancel-button too close to "SPRINT" text) was a simple position tune, fixed correctly first
+try. Issues 2 and 3 (messages dismissed almost instantly; mute icon not covering the sprint label)
+were *both* diagnosed as separate bugs and *both* given plausible-sounding fixes that turned out not
+to address the actual symptom — confirmed only by adding real trace logging and reading the log,
+not by re-guessing a second time. The true root cause was a single, pre-existing bug in
+`SleepTimerPanel.update_timer_state`: its trailing `display_text_updated.emit()` was unconditional,
+firing every 200ms regardless of whether sleep was armed and sending `""` whenever it wasn't. Sleep
+and sprint share one label, and sleep's redundant empty-write ran before sprint's own write on every
+tick, corrupting sprint's internal state tracking. This is a genuinely new class of bug for this
+codebase: a pre-existing, sole-owner assumption in one panel's code silently broken by adding a
+second panel that shares the same display widget — worth remembering if any future feature reuses
+`vol_stack`'s indicator zone again.
+
+Issue 4 (disable-button flashes visibly right before its panel closes on arm) was reported as
+pre-existing on Sleep, inherited by Sprint. A same-call-stack emit/show reorder was tried first and
+confirmed not to work (Qt doesn't paint between two Python statements in one call stack, so ordering
+within it cannot matter) — the user then pointed at a working, already-shipped analogous pattern
+(Settings' "Persist search filter" sub-toggle reconciliation, deferred to the next panel-open rather
+than applied live during the interaction) as the correct shape to copy. Implemented via a new
+`sync_disable_button_visibility()` on each panel, called from `PanelManager._start_sleep_entry`/
+`_start_sprint_entry` instead of from the arm path. Not yet re-verified live before end of session —
+flagged explicitly in NOTES.md rather than assumed fixed, given the session's own "1 out of 4"
+correction earlier.
+
+---
+
 ## Session Summary — 2026-08-10 Session 2 — Streak grid day-boundary rollover bug found and fixed. `f50d1f6` on `sleep-fix`
 
 Live-reported bug: Stats Timeline showed today's finished-book dot but never filled today's cell or
