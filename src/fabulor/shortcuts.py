@@ -68,6 +68,7 @@ class Action(Enum):
     SHOW_STATS = auto()
     SHOW_SETTINGS = auto()
     SHOW_SLEEP = auto()
+    SHOW_SPRINT = auto()
     # Transport / player actions (added alongside modifier support). Availability gating
     # (no book loaded, undo affordance not shown, etc.) lives in each MainWindow handler.
     PLAY_PAUSE = auto()
@@ -143,6 +144,7 @@ DEFAULT_BINDINGS: dict[Action, Binding] = {
     Action.SHOW_STATS:        Binding(Qt.Key.Key_A, GuardKind.COOLDOWN_DROP, 500),
     Action.SHOW_SETTINGS:     Binding(Qt.Key.Key_S, GuardKind.COOLDOWN_DROP, 500),
     Action.SHOW_SLEEP:        Binding(Qt.Key.Key_Z, GuardKind.COOLDOWN_DROP, 500),
+    Action.SHOW_SPRINT:       Binding(Qt.Key.Key_R, GuardKind.COOLDOWN_DROP, 500),
 
     # Transport / player keys. All GuardKind.NONE (fire on every press — no leading/coalesce
     # semantics apply to a play/pause toggle or a per-step nudge). Volume/speed/seek/chapter-nav/

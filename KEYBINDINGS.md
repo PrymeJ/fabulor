@@ -37,8 +37,9 @@ app state allows it (that gating lives in each action's handler, not in the disp
 | `A` | Open Stats | Only when at least one book is indexed, and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
 | `S` | Open Settings | Only when at least one book is indexed, and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
 | `Z` | Open Sleep timer | Only when a book is loaded (the Sleep button is hidden otherwise), and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
+| `R` | Open Listening Sprint | Only when a book is loaded (the Sprint button is hidden otherwise), and no full panel is already open. Does not close the panel if it's already open. | Same as `L`. |
 
-`G`/`P`/`A`/`S`/`Z` all share `L`'s shape exactly: **open-only** (pressing the key again while
+`G`/`P`/`A`/`S`/`Z`/`R` all share `L`'s shape exactly: **open-only** (pressing the key again while
 its own panel is already open does nothing — these keys never close a panel, only the sidebar's
 own buttons and the panel's own close controls do that) and gated by the same one-overlay-at-a-time
 rule (`is_overlay_open_or_committed`) as every other panel-open path.

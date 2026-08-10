@@ -184,6 +184,7 @@ class SettingsController:
         self._update_sidebar_hotspot_visuals()
         self.panels.update_speed_panel_visuals(theme_name)
         self.panels.update_sleep_panel_visuals()
+        self.panels.update_sprint_panel_visuals()
         self.panels.update_audio_panel_visuals()
 
     def _validate_smart_rewind_settings(self):

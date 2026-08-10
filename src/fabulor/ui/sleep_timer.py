@@ -8,6 +8,19 @@ from .title_bar import RightClickButton
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
 
+
+class _ClickableLabel(QLabel):
+    """Same shape as book_detail_panel.py's private _ClickableLabel / sprint_panel.py's
+    local copy — a QLabel that emits a real Signal on left-click, for the confirm-overlay
+    pattern used across this codebase (Delete listening history, Reset all stats, etc.)."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class SleepTimerPanel(QWidget):
     timer_started = Signal()
     timer_stopped = Signal()
@@ -49,6 +62,15 @@ class SleepTimerPanel(QWidget):
         self._eoc_cancel_timer.setSingleShot(True)
         self._eoc_cancel_timer.timeout.connect(self._on_eoc_cancel_timeout)
         self.player.chapter_changed.connect(self._on_chapter_changed)
+        # Optional external gate, set by app.py via set_arm_gate(). See SprintPanel's
+        # matching mechanism (ui/sprint_panel.py) for the full rationale — this panel
+        # has no built-in awareness of any other panel (e.g. sprint); app.py owns
+        # that policy entirely.
+        self._arm_gate = None
+        self._conflict_confirm_timer = QTimer(self)
+        self._conflict_confirm_timer.setSingleShot(True)
+        self._conflict_confirm_timer.timeout.connect(self._on_conflict_confirm_timeout)
+        self._conflict_on_confirm = None
 
         self._setup_ui()
 
@@ -133,6 +155,18 @@ class SleepTimerPanel(QWidget):
         self.disable_sleep_btn.hide()
         layout.addWidget(self.disable_sleep_btn)
 
+        # Conflict confirmation (shown via show_conflict_confirm when app.py's
+        # arm gate detects sprint is active). Same shape as sprint_panel.py's
+        # own confirm label / book_detail_panel.py's "Delete listening history".
+        self._conflict_confirm_label = _ClickableLabel("")
+        self._conflict_confirm_label.setObjectName("sleep_conflict_confirm")
+        self._conflict_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._conflict_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._conflict_confirm_label.setFixedHeight(28)
+        self._conflict_confirm_label.clicked.connect(self._on_conflict_confirm_clicked)
+        self._conflict_confirm_label.hide()
+        layout.addWidget(self._conflict_confirm_label)
+
         layout.addStretch()
 
     def _on_custom_sleep_time_set(self):
@@ -145,7 +179,49 @@ class SleepTimerPanel(QWidget):
         except ValueError:
             pass
 
+    @property
+    def is_active(self):
+        return self._sleep_mode is not None
+
+    def set_arm_gate(self, gate_fn):
+        """gate_fn(proceed) is called instead of arming directly whenever
+        set_sleep_timer() is invoked. gate_fn must eventually call proceed()
+        (now, later via a confirm click, or never if the user lets it time
+        out/cancel). See SprintPanel.set_arm_gate for the full rationale."""
+        self._arm_gate = gate_fn
+
+    def show_conflict_confirm(self, message, on_confirm):
+        """Shows a click-to-confirm overlay with the given message; on_confirm is
+        called (with no arguments) if the user clicks it before the timeout, or
+        silently dropped on timeout (matching every confirm pattern in this
+        codebase — Delete listening history, Reset all stats). Fixed 7s window,
+        NOT _dismiss_ms (the much shorter "Sleep cancelled" MESSAGE display
+        window — a different concept entirely)."""
+        self._conflict_on_confirm = on_confirm
+        self._conflict_confirm_label.setText(message)
+        self._conflict_confirm_label.show()
+        self._conflict_confirm_timer.start(7000)
+
+    def _on_conflict_confirm_clicked(self):
+        self._conflict_confirm_timer.stop()
+        self._conflict_confirm_label.hide()
+        callback = self._conflict_on_confirm
+        self._conflict_on_confirm = None
+        if callback:
+            callback()
+
+    def _on_conflict_confirm_timeout(self):
+        self._conflict_confirm_label.hide()
+        self._conflict_on_confirm = None
+
     def set_sleep_timer(self, duration_minutes=None, mode=None):
+        proceed = lambda: self._do_arm_sleep_timer(duration_minutes, mode)
+        if self._arm_gate:
+            self._arm_gate(proceed)
+        else:
+            proceed()
+
+    def _do_arm_sleep_timer(self, duration_minutes=None, mode=None):
         self.disable_sleep_timer()
         if self.player:
             try:

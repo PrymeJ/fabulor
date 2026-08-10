@@ -8,7 +8,7 @@ from PySide6.QtGui import QFont, QFontMetrics, QColor, QCursor
 from ..themes import (
     get_base_stylesheet, get_title_bar_stylesheet, get_player_stylesheet,
     get_library_stylesheet, get_settings_stylesheet, get_speed_stylesheet,
-    get_sleep_stylesheet, get_sidebar_stylesheet,
+    get_sleep_stylesheet, get_sprint_stylesheet, get_sidebar_stylesheet,
     get_stats_stylesheet, get_tags_stylesheet, THEMES
 )
 from .title_bar import ThemeItem
@@ -987,8 +987,9 @@ class ThemeManager(QObject):
             'settings_panel': get_settings_stylesheet(theme_name),
             'speed_panel': get_speed_stylesheet(theme_name),
             'sleep_panel': get_sleep_stylesheet(theme_name),
+            'sprint_panel': get_sprint_stylesheet(theme_name),
         }
-        _mark("build settings/speed/sleep ss")
+        _mark("build settings/speed/sleep/sprint ss")
         # Mirrors _apply_stylesheets' stash so a panel skipped there is still caught
         # up correctly; here every panel is styled, so the stash just stays truthful.
         self._pending_panel_sheet = dict(panel_sheets)
@@ -1416,7 +1417,7 @@ class ThemeManager(QObject):
                 )
                 mask = QRegion(self.main_window.rect())
                 panels = ['library_panel', 'tags_panel', 'speed_panel',
-                          'sleep_panel', 'stats_panel', 'book_detail_panel']
+                          'sleep_panel', 'sprint_panel', 'stats_panel', 'book_detail_panel']
                 for attr in panels:
                     p = getattr(pm, attr, None)
                     if p and p.isVisible():
@@ -1568,7 +1569,7 @@ class ThemeManager(QObject):
             )
             mask = QRegion(mw.rect())
             panels = ['library_panel', 'tags_panel', 'speed_panel',
-                      'sleep_panel', 'stats_panel', 'book_detail_panel']
+                      'sleep_panel', 'sprint_panel', 'stats_panel', 'book_detail_panel']
             for attr in panels:
                 p = getattr(pm, attr, None)
                 if p and p.isVisible():
@@ -1892,6 +1893,7 @@ class ThemeManager(QObject):
                 'settings_panel': get_settings_stylesheet(theme_name),
                 'speed_panel': get_speed_stylesheet(theme_name),
                 'sleep_panel': get_sleep_stylesheet(theme_name),
+                'sprint_panel': get_sprint_stylesheet(theme_name),
             }
         # SPURIOUS-ENTEREVENT GUARD (2026-07-20 — the "heartbeat" bug; see
         # NOTES.md for the full confirmed mechanism). settings_panel
@@ -1933,13 +1935,13 @@ class ThemeManager(QObject):
             #
             # MERGE, not replace, when hover=True (2026-08-04, same fix as above):
             # panel_sheets only has 'settings_panel' during a hover, since speed_panel/
-            # sleep_panel are deliberately excluded from it entirely now. A bare
-            # `dict(panel_sheets)` here would WIPE OUT speed_panel/sleep_panel's
-            # existing, correct (committed-theme) stash entries on every single hover
-            # tick, leaving them with NOTHING to apply the next time either panel
+            # sleep_panel/sprint_panel are deliberately excluded from it entirely now. A
+            # bare `dict(panel_sheets)` here would WIPE OUT those panels' existing,
+            # correct (committed-theme) stash entries on every single hover
+            # tick, leaving them with NOTHING to apply the next time any of them
             # opens — the exact "panel opens unstyled" regression the comment above
             # already documents, reintroduced via a different path. update() preserves
-            # whatever was already stashed for the two keys this call never touches.
+            # whatever was already stashed for the keys this call never touches.
             if self._pending_panel_sheet is None:
                 self._pending_panel_sheet = {}
             self._pending_panel_sheet.update(panel_sheets)
@@ -2099,27 +2101,30 @@ class ThemeManager(QObject):
         self._flush_deferred_restyle_now()
 
     def apply_pending_panel_sheet(self, panel):
-        """Catch `panel` up on any settings/speed/sleep stylesheet it missed while
-        hidden. Called from each _start_*_entry BEFORE show().
+        """Catch `panel` up on any settings/speed/sleep/sprint stylesheet it missed
+        while hidden. Called from each _start_*_entry BEFORE show().
 
-        _apply_stylesheets skips a hidden settings/speed/sleep panel (measured
-        2026-08-01: restyling all three cost ~215-250ms per hover AND per snapback,
-        for two panels the one-overlay gate guarantees are invisible). That skip is
-        only safe if the panel is caught up before it paints — this is that catch-up.
+        _apply_stylesheets skips a hidden settings/speed/sleep/sprint panel (measured
+        2026-08-01, pre-sprint: restyling settings/speed/sleep cost ~215-250ms per
+        hover AND per snapback, for panels the one-overlay gate guarantees are
+        invisible; sprint_panel added 2026-08-10 shares the same skip and the same
+        need for this catch-up). That skip is only safe if the panel is caught up
+        before it paints — this is that catch-up.
 
         Deliberately separate from flush_deferred_restyle: that drains the deferred
         INVISIBLE-SURFACE batch (library/stats/tags/book_detail) and does not touch
-        these three panels at all, so it cannot serve as the catch-up here. Checked,
+        these panels at all, so it cannot serve as the catch-up here. Checked,
         not assumed.
 
         _pending_panel_sheet is a dict keyed by objectName (2026-08-03, the
         settings/speed/sleep stylesheet split — each panel now gets its own
-        function's output, not one shared string). Keyed by `panel.objectName()`
-        rather than by caller-supplied attribute name, since callers pass the
-        widget itself, not its MainWindow attribute name — and objectName() is
-        exactly 'settings_panel'/'speed_panel'/'sleep_panel', verified against
-        main_window_builders.py/speed_controls.py/sleep_timer.py's own
-        setObjectName calls.
+        function's output, not one shared string; sprint_panel joined the same
+        split 2026-08-10). Keyed by `panel.objectName()` rather than by
+        caller-supplied attribute name, since callers pass the widget itself, not
+        its MainWindow attribute name — and objectName() is exactly
+        'settings_panel'/'speed_panel'/'sleep_panel'/'sprint_panel', verified against
+        main_window_builders.py/speed_controls.py/sleep_timer.py/sprint_panel.py's
+        own setObjectName calls.
         """
         pending = getattr(self, '_pending_panel_sheet', None)
         if not pending or panel is None:

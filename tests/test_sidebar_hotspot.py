@@ -209,7 +209,7 @@ def _make_panel_manager(config):
     pm.main_window = _FakeMainWindow()
 
     for name in ("library_panel", "settings_panel", "speed_panel", "sleep_panel",
-                 "stats_panel", "tags_panel"):
+                 "sprint_panel", "stats_panel", "tags_panel"):
         w = QWidget()
         w.cancel_preload = lambda: None
         setattr(pm, name, w)
@@ -222,7 +222,7 @@ def _make_panel_manager(config):
     # of them are under test here — real, never-started QPropertyAnimations so
     # .state() reads Stopped, same as a genuinely idle panel.
     for name in ("library_panel_animation", "settings_panel_animation",
-                 "speed_panel_animation", "sleep_panel_animation",
+                 "speed_panel_animation", "sleep_panel_animation", "sprint_panel_animation",
                  "stats_panel_animation", "tags_panel_animation", "blur_animation"):
         setattr(pm, name, QPropertyAnimation(QWidget(), b"pos"))
 

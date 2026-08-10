@@ -388,7 +388,9 @@ def build_secondary_controls(mw):
     mw.sleep_timer_label.setObjectName("sleep_timer_display")
     mw.sleep_timer_label.setFixedWidth(104)
     mw.sleep_timer_label.setFocusPolicy(Qt.NoFocus)  # chrome button — keep out of the focus chain
-    mw.sleep_timer_label.clicked.connect(mw.sleep_panel.disable_sleep_timer)
+    # Shared between sleep and sprint display (see _settle_vol_stack) — dispatches to
+    # whichever is actually active, not always sleep. See _on_indicator_label_clicked.
+    mw.sleep_timer_label.clicked.connect(mw._on_indicator_label_clicked)
 
     for lbl in [mw.current_time_label, mw.total_time_label, mw.sleep_timer_label]:
         font = lbl.font()
@@ -447,6 +449,10 @@ def build_secondary_controls(mw):
     mw.sleep_confirm_timer = QTimer(mw)
     mw.sleep_confirm_timer.setSingleShot(True)
     mw.sleep_confirm_timer.timeout.connect(mw._on_sleep_confirm_timeout)
+
+    mw.sprint_confirm_timer = QTimer(mw)
+    mw.sprint_confirm_timer.setSingleShot(True)
+    mw.sprint_confirm_timer.timeout.connect(mw._on_sprint_confirm_timeout)
 
 
 def build_carousel_covers(mw):
@@ -535,6 +541,10 @@ def build_sidebar(mw):
     mw.sleep_trigger_btn.setObjectName("sidebar_sleep_btn")
     mw.sidebar_layout.addWidget(mw.sleep_trigger_btn)
 
+    mw.sprint_trigger_btn = QPushButton("SPRINT")
+    mw.sprint_trigger_btn.setObjectName("sidebar_sprint_btn")
+    mw.sidebar_layout.addWidget(mw.sprint_trigger_btn)
+
     mw.stats_trigger_btn = QPushButton("STATS")
     mw.stats_trigger_btn.setObjectName("sidebar_stats_btn")
     mw.sidebar_layout.addWidget(mw.stats_trigger_btn)
@@ -550,14 +560,21 @@ def build_sidebar(mw):
     mw.sleep_cancel_btn.clicked.connect(mw.sleep_panel.disable_sleep_timer)
     mw.sleep_cancel_btn.hide()
 
+    mw.sprint_cancel_btn = QPushButton("✕", mw.sprint_trigger_btn)
+    mw.sprint_cancel_btn.setFixedSize(16, 16)
+    mw.sprint_cancel_btn.move(34, 1)
+    mw.sprint_cancel_btn.setStyleSheet("font-size: 10px; padding: 0;")
+    mw.sprint_cancel_btn.clicked.connect(mw.sprint_panel.disable_sprint)
+    mw.sprint_cancel_btn.hide()
+
     # The sidebar is moved off-screen (move(-50,56)) but stays show()n when "closed", so its
     # buttons live in the keyboard focus chain permanently. Without NoFocus, arrow/Tab keys
     # cycle focus onto these hidden triggers and Space fires their clicked — opening panels
     # one by one — instead of reaching the global transport shortcuts. NoFocus keeps them
     # mouse-only; the sidebar's own open/close mechanics are untouched.
     for _btn in (mw.library_trigger_btn, mw.settings_trigger_btn, mw.speed_trigger_btn,
-                 mw.sleep_trigger_btn, mw.stats_trigger_btn, mw.tags_trigger_btn,
-                 mw.sleep_cancel_btn):
+                 mw.sleep_trigger_btn, mw.sprint_trigger_btn, mw.stats_trigger_btn,
+                 mw.tags_trigger_btn, mw.sleep_cancel_btn, mw.sprint_cancel_btn):
         _btn.setFocusPolicy(Qt.NoFocus)
 
     mw.sidebar_layout.addStretch()
