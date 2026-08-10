@@ -2934,6 +2934,15 @@ class TasselOverlay(QWidget):
             cb()
 
 
+def _next_streak_rollover(day_start_hour: int) -> datetime:
+    """Wall-clock instant at which the adjusted streak-grid day next advances."""
+    from datetime import timedelta
+    now = datetime.now()
+    adjusted_today = (now - timedelta(hours=day_start_hour)).date()
+    return (datetime.combine(adjusted_today + timedelta(days=1), datetime.min.time())
+            + timedelta(hours=day_start_hour))
+
+
 class StatsPanel(QWidget):
     def __init__(self, db, config, parent=None):
         super().__init__(parent)
@@ -2987,6 +2996,8 @@ class StatsPanel(QWidget):
         self._assets_dir = os.path.normpath(self._assets_dir)
         self._build_ui()
         self._eager_warm_stats_history_covers()
+        self._streak_rollover_timer: QTimer | None = None
+        self._arm_streak_rollover_timer()
 
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -4280,6 +4291,39 @@ class StatsPanel(QWidget):
         self.db.build_streak_grid_cache(hour)
         today_adjusted = datetime.now() - timedelta(hours=hour)
         self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
+        self._arm_streak_rollover_timer()
+
+    def _arm_streak_rollover_timer(self):
+        """Schedules a single-shot rebuild for the exact instant the adjusted
+        streak-grid day next rolls over, so a long-running session doesn't need
+        a relaunch to pick up "today" once day_start_hour's boundary passes.
+        Zero idle polling — this fires exactly once per real day boundary, then
+        reschedules itself. Also re-armed by _on_day_start_hour_changed whenever
+        the setting changes, so a pending shot always matches the current hour."""
+        if self._streak_rollover_timer is not None:
+            self._streak_rollover_timer.stop()
+        hour = self.config.get_day_start_hour()
+        next_rollover = _next_streak_rollover(hour)
+        ms = max(1000, int((next_rollover - datetime.now()).total_seconds() * 1000))
+        self._streak_rollover_timer = QTimer(self)
+        self._streak_rollover_timer.setSingleShot(True)
+        self._streak_rollover_timer.timeout.connect(self._on_streak_rollover)
+        self._streak_rollover_timer.start(ms)
+
+    def _on_streak_rollover(self):
+        """Fires once at the adjusted-day boundary. Not a reset+rebuild like
+        _on_day_start_hour_changed — a rollover doesn't change historical
+        attribution, it only needs to extend the cached window forward and
+        flip newly-qualifying cells, which build_streak_grid_cache already does
+        idempotently without a prior clear."""
+        from datetime import timedelta
+        hour = self.config.get_day_start_hour()
+        self.db.build_streak_grid_cache(hour)
+        today_adjusted = datetime.now() - timedelta(hours=hour)
+        self.config.set_streak_grid_cache_date(today_adjusted.strftime('%Y-%m-%d'))
+        if self.isVisible():
+            self.refresh_current_tab()
+        self._arm_streak_rollover_timer()
 
     def _refresh_time(self, streak_mode: str = "none"):
         """streak_mode:
