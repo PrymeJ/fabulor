@@ -81,6 +81,11 @@ _SPEED_NUDGE_THROTTLE_S = 0.12
 _CHAPTER_NUDGE_THROTTLE_S = 0.15
 _LONG_SKIP_THROTTLE_S = 0.18
 
+# Shared dismiss duration for the indicator zone's two transient states: the volume-slider
+# preview (vol_hide_timer) and the sleep-just-armed-while-muted confirmation
+# (sleep_confirm_timer). Both revert to whatever _settle_vol_stack() resolves to next.
+_INDICATOR_DISMISS_MS = 2000
+
 
 def _sliver_clamp(pause: bool, c_elapsed: float) -> float:
     """Display-only: collapse the sub-second chapter-start landing residue to 0 on the
@@ -412,6 +417,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Volume before a keyboard mute (m); None = not muted. Any manual move off 0 while
         # "muted" is treated as unmuted, so the next m stores fresh (see _toggle_mute).
         self._pre_mute_volume = None
+        # True for a brief window right after the sleep timer is (re)armed while muted —
+        # lets the sleep text show as a confirmation before reverting to the mute icon.
+        # See _on_sleep_display_text_updated / _settle_vol_stack / sleep_confirm_timer.
+        self._sleep_just_set = False
         # monotonic() of the last applied speed nudge, for throttling Alt+Up/Down autorepeat.
         self._last_speed_nudge_ts = 0.0
         # Same shape as _last_speed_nudge_ts, one per throttled action (chapter-nav and
@@ -662,7 +671,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.setFixedSize(300, 564)
 
         # Initialize Sleep Timer Panel early to allow connections in build methods
-        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self)
+        self.sleep_panel = SleepTimerPanel(self.player, self.config, self.theme_manager, self,
+                                            dismiss_ms=_INDICATOR_DISMISS_MS)
         self.sleep_panel.hide()
         self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
         self.sleep_panel_animation.setDuration(300)
@@ -2527,7 +2537,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         interaction — extend the auto-hide timer so it doesn't fade out
         from underneath the user's cursor."""
         if self.vol_stack.currentIndex() == 1:
-            self.vol_hide_timer.start(2000)
+            self.vol_hide_timer.start(_INDICATOR_DISMISS_MS)
 
     def _set_speed(self, value, save=True):
         """Applies a specific speed value."""
@@ -3459,9 +3469,10 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _show_volume_overlay(self):
         """Triggers the volume slider fade-in and starts the auto-hide timer.
-        Skipped when volume just hit 0 with no sleep timer active — that
-        case jumps straight to the muted icon instead of previewing the slider."""
-        if self.volume_slider.value() == 0 and not self.sleep_timer_label.text():
+        Skipped when volume just hit 0 — that case jumps straight to whatever
+        _settle_vol_stack() resolves to (mute icon, or a sleep-just-armed
+        confirmation) instead of previewing an empty slider first."""
+        if self.volume_slider.value() == 0:
             self.vol_hide_timer.stop()
             self.vol_fade_anim.stop()
             self.vol_opacity.setOpacity(0.0)
@@ -3474,7 +3485,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self.vol_fade_anim.setStartValue(self.vol_opacity.opacity())
             self.vol_fade_anim.setEndValue(1.0)
             self.vol_fade_anim.start()
-        self.vol_hide_timer.start(2000) # Visible for 2 seconds
+        self.vol_hide_timer.start(_INDICATOR_DISMISS_MS)
 
     def _fade_out_volume(self):
         """Starts the volume slider fade-out."""
@@ -3488,24 +3499,43 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             self._settle_vol_stack()
 
     def _settle_vol_stack(self):
-        """Picks the vol_stack page to rest on: the muted icon if volume is 0
-        and no sleep timer is active, else the sleep timer label (which may
-        be empty text). Callers that must not disturb an in-progress volume
-        overlay should check vol_stack.currentIndex() == 1 themselves first."""
+        """Picks the vol_stack page to rest on: the muted icon if volume is 0,
+        else the sleep timer label (which may be empty text). Mute takes
+        priority over the sleep label — the one exception is a freshly-armed
+        sleep timer while muted, which shows a transient confirmation first
+        (see _sleep_just_set / _on_sleep_display_text_updated). Callers that
+        must not disturb an in-progress volume overlay should check
+        vol_stack.currentIndex() == 1 themselves first."""
         muted = self.volume_slider.value() == 0
-        sleep_active = bool(self.sleep_timer_label.text())
-        if muted and not sleep_active:
+        if muted and not self._sleep_just_set:
             self.vol_stack.setCurrentIndex(2)
         else:
             self.vol_stack.setCurrentIndex(0)
 
     def _on_sleep_display_text_updated(self, text):
+        was_armed = bool(self.sleep_timer_label.text())
         self.sleep_timer_label.setText(text)
+        newly_armed = bool(text) and not was_armed
+        if newly_armed and self.volume_slider.value() == 0:
+            # Sleep was just (re)armed while muted — show the sleep text as a
+            # confirmation for _INDICATOR_DISMISS_MS, then revert to the mute icon.
+            self._sleep_just_set = True
+            self.sleep_confirm_timer.start(_INDICATOR_DISMISS_MS)
+        elif not text:
+            # Sleep disarmed — drop any stale pending confirmation so a later
+            # mute doesn't incorrectly re-show old sleep text.
+            self.sleep_confirm_timer.stop()
+            self._sleep_just_set = False
         if self.vol_stack.currentIndex() != 1:
             # Volume overlay (index 1) takes precedence over both the sleep
             # label and the muted icon; otherwise re-settle now so a sleep
             # timer starting/stopping immediately shows/hides its countdown
             # even if the muted icon was resting.
+            self._settle_vol_stack()
+
+    def _on_sleep_confirm_timeout(self):
+        self._sleep_just_set = False
+        if self.vol_stack.currentIndex() != 1:
             self._settle_vol_stack()
 
     def _handle_tab_escape(self, event) -> bool:

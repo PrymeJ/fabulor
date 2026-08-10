@@ -106,6 +106,25 @@ class Player(QObject):
         self.instance = None  # deferred
         self._eof = False
         self._is_seeking = False # For UI deadzone logic
+        # Plain public flag, set unconditionally at the top of every seek_async call
+        # (any UI navigation action — every one routes through seek_async, confirmed
+        # by direct trace: Next/Prev, chapter-list click, slider drag/wheel, skip
+        # buttons, all keyboard shortcuts, no bypass anywhere). Consumed by
+        # SleepTimerPanel._on_chapter_changed to tell a user-driven seek past the
+        # end-of-chapter anchor apart from natural sequential playback reaching it on
+        # its own — the seek SOURCE, not an inferred side effect like is_seeking's
+        # timing (which settles asynchronously and is unreliable to poll for this).
+        self.user_seek_pending = False
+        # Plain public flag, set True by SleepTimerPanel.update_timer_state at the
+        # moment either sleep mode fires (pauses playback), cleared by
+        # disable_sleep_timer(). Read by _advance_or_finish's own unpause line: that
+        # line exists to clear a pause _on_pause_test itself put there while probing
+        # near-EOF, but it can't otherwise distinguish "I paused this" from "sleep
+        # paused this" — if a chapter's (or a VT file's) end happens to land within
+        # that same probe window, the VT advance would silently undo the sleep pause
+        # a few dozen ms after it landed. Confirmed live 2026-08-10 (VT book, anchor
+        # chapter's end coincided with a VT file boundary) — see NOTES.md.
+        self.sleep_fired = False
         self._undo_pos = None # For undo seek logic
         self._last_undo_click_time = 0 # For undo seek logic
         self._base_volume = 100.0 # User's set volume (log scale)
@@ -330,7 +349,12 @@ class Player(QObject):
                 self._is_vt_file_switch = True
                 self._pending_local_pos = None
                 self.instance.play(next_file['file_path'])
-                if self.instance.pause:
+                # Don't clear a pause the sleep timer just set — see sleep_fired's
+                # docstring in __init__. This unpause exists to lift the pause
+                # _on_pause_test itself applied to probe near-EOF; it must not also
+                # lift a pause that landed here coincidentally from sleep firing at
+                # (or very near) the same VT file boundary.
+                if self.instance.pause and not self.sleep_fired:
                     self.instance.pause = False
             else:
                 self._eof = True
@@ -878,6 +902,7 @@ class Player(QObject):
         """Non-blocking seek. For virtual timeline books, resolves file and local offset."""
         if not self.instance:
             return
+        self.user_seek_pending = True
         # Any real seek supersedes a still-pending VT restore-on-load target — last write
         # wins, with no extra coordination flag. Covers a manual seek (chapter click, undo,
         # slider drag) arriving during the brief window before _on_file_loaded's VT branch

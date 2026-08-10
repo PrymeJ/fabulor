@@ -1,3 +1,368 @@
+## 2026-08-10 (continued, same day) — Streak grid silently froze across a day-boundary rollover in a long-running session. Fixed via a self-rescheduling single-shot rollover timer. Shipped as `f50d1f6`
+
+**Symptom, reported live:** Stats > Timeline showed the correct finished-book dot for today, but
+today's cell never filled into the streak and the streak count never incremented — even after a
+second session (different book, 4 minutes) was logged, ruling out an archived-book special case.
+
+**Root cause, confirmed by direct DB inspection, not guessed:** `streak_grid_cache` (the table the
+grid fill/count read from) is only ever rebuilt in two places: unconditionally at app startup
+(`app.py`, `MainWindow.__init__`) and inside `StatsPanel._on_day_start_hour_changed` when the user
+edits the day-start-hour setting. The reporting session's process (confirmed via `ps`) had launched
+at 06:12 that day. With `day_start_hour=10`, the adjusted "today" at 06:12 was still the *previous*
+calendar day — the day hadn't rolled over past 10am yet. The startup rebuild correctly seeded/flipped
+the cache for that adjusted day and stopped — correct at the instant it ran. Once wall-clock passed
+10:00am the same day, the adjusted day rolled forward, but nothing in the long-running process
+re-triggered a rebuild. `sqlite3 library.db "SELECT MAX(date) FROM streak_grid_cache"` confirmed the
+table had no row at all for the new day, even though both sessions and the `finished` book_event for
+that day were correctly present in `listening_sessions`/`book_events`. The dot rendered correctly the
+whole time because `get_streak_grid_finished_dates` is a live query, not cache-backed; only the grid
+fill/count are cache-backed and went stale. User confirmed a restart fixed it immediately (a fresh
+startup rebuild computes "today" correctly once it's actually past `day_start_hour`) — but a restart
+isn't a fix; a session spanning the boundary needs to self-correct.
+
+**Two approaches were discussed before picking one.** A low-frequency repeating `QTimer` that checks
+`adjusted_today > streak_grid_cache_date` on each tick was the simpler option, but was rejected in
+favor of computing the exact next rollover instant and arming a single-shot `QTimer` for exactly that
+moment — zero idle firing between rollovers, and it sidesteps the "how cheap does a periodic DB check
+need to be" question entirely by never polling. This was an explicit design ask driven by the user's
+standing sensitivity to panel-open/close hitches on this app (see CLAUDE.md's Debugging discipline
+section) — the goal wasn't making the rebuild itself faster (it's the same "cheap (<=364 rows)"
+operation `_on_day_start_hour_changed` already documents and ships), it was making sure it can never
+land inside a panel transition and never becomes a busy poll.
+
+**Implementation** (`src/fabulor/ui/stats_panel.py`, all inside `StatsPanel` — chosen because the
+sibling logic this mirrors, `_on_day_start_hour_changed`, already lives entirely inside `StatsPanel`
+with direct `self.db`/`self.config` access and no `MainWindow` dependency, and `StatsPanel` is
+constructed once and lives for the app's lifetime):
+- `_next_streak_rollover(day_start_hour)` — module-level helper computing the wall-clock instant the
+  adjusted day next advances: `datetime.combine(adjusted_today + 1 day, midnight) + day_start_hour
+  hours`. Verified against the real repro numbers before shipping: at 06:12 with
+  `day_start_hour=10`, this correctly resolves to `10:00:00` the same calendar day — the exact
+  instant the bug's window opened.
+- `_arm_streak_rollover_timer()` — stops any existing timer, computes `ms` until the next rollover
+  (floored at 1000ms to guard clock-skew/near-zero edge cases), arms a single-shot `QTimer`. Called
+  once at the end of `StatsPanel.__init__` and again at the end of `_on_day_start_hour_changed`, so a
+  pending shot always tracks the current setting — no separate cancel-and-recompute logic needed
+  beyond calling the same arm method again.
+- `_on_streak_rollover()` — the fire handler. Deliberately does **not** call
+  `reset_streak_grid_cache()` first (unlike `_on_day_start_hour_changed`): a plain rollover doesn't
+  change historical attribution, it only needs to extend the window forward and flip
+  newly-qualifying cells, and `build_streak_grid_cache`'s existing seed(`INSERT OR IGNORE`)+flip
+  (`UPDATE ... SET listened = 1 WHERE ...`) logic is genuinely idempotent for that — re-verified by
+  reading the function fresh before implementing (per explicit review gate, see below): the delete
+  only prunes out-of-window rows, the insert no-ops on existing rows, and the update is a one-way
+  0→1 flag derived fresh from source tables each call, so calling it twice in a row is provably
+  equivalent to calling it once. Only refreshes the visible tab (`if self.isVisible():
+  refresh_current_tab()`) — the ordinary case is the panel being closed when the boundary passes, and
+  `refresh_current_tab()` is the same call the normal panel-open flow already makes, so this adds no
+  new codepath, just an occasional extra call to something already proven safe.
+
+**Explicit review gate before implementing, not skipped despite already having read the code once
+earlier in the session:** a second reviewing pass raised three concrete risks — cited line numbers
+might have drifted since the first read (`stats_panel.py` has been heavily touched recently),
+`config.set_streak_grid_cache_date` might be redundant if `build_streak_grid_cache` already wrote
+that field internally, and `build_streak_grid_cache`'s idempotency was asserted rather than checked.
+All three were re-verified against the current file before writing code: line numbers matched
+byte-for-byte, `build_streak_grid_cache` is DB-layer-only and never touches `config` (confirmed via
+grep — the explicit `config.set_streak_grid_cache_date` call is the *only* writer of that field
+alongside the startup one in `app.py`, so it is required, not redundant), and the idempotency claim
+held up against a fresh read of the function body. Worth recording as a pattern: rereading code you
+already read once, on request, caught nothing wrong here, but the check was cheap and the three risks
+were concrete enough that skipping it would have been the wrong call regardless of outcome.
+
+**Verification.** `tests/` full suite green. App launched clean (no traceback in stdout or
+`fabulor.log`) with the fix in place; DB inspection before/after confirmed
+`streak_grid_cache`/`Fabulor.conf`'s `streak_grid_cache_date` already reflected the correct day from
+the user's own earlier manual restart, undisturbed by the new code path. **Not verified against a
+real live rollover** — the user could not reproduce the exact boundary-crossing conditions on demand
+and deferred that check to the next natural day-boundary crossing while the app happens to be
+running. If this resurfaces, the fastest re-check is `sqlite3 library.db "SELECT MAX(date) FROM
+streak_grid_cache"` immediately before and after a `day_start_hour` wall-clock crossing, without
+restarting the app in between.
+
+---
+
+## 2026-08-10 (continued, same day) — End-of-chapter sleep, part 3: `Player.sleep_fired` closes the VT pause/unpause race left open at the end of part 2. Shipped as `935861b`
+
+Direct continuation of the entry immediately below this one, which stopped deliberately after
+finding — but not fixing — a genuine VT pause/unpause race: when the end-of-chapter anchor's end
+coincides with a VT file boundary, `SleepTimerPanel.update_timer_state`'s `disable_sleep_timer()` +
+`player.pause = True` correctly fires, but `_advance_or_finish` (player.py:329-357), called from
+`_on_pause_test`'s own near-EOF probe on mpv's thread, can run ~60ms later and unconditionally
+un-pause (`if self.instance.pause: self.instance.pause = False`) as part of completing its own
+unrelated file-advance — silently undoing the sleep pause.
+
+**The fix, proposed by a second reviewing Claude instance and verified before implementing, not
+assumed correct on its face:** the unpause line at 342-343 exists to lift a pause `_on_pause_test`
+itself applied while probing near-EOF — it is not "clear whatever pause exists," it's "clear the
+pause I put there." It just can't currently tell "I paused this" apart from "sleep paused this."
+`Player.sleep_fired` (a plain public flag, same shape as `user_seek_pending`) closes exactly that
+gap: `if self.instance.pause and not self.sleep_fired: self.instance.pause = False`.
+
+**Verified before writing any code, per direct request, that this can't wrongly suppress a legitimate
+unpause:** grepped every call site of `_advance_or_finish` (only two — `_on_pause_test` line 357 and
+`_on_end_file`'s `reason_int == 0` branch line 747, both confirmed mpv-native near-EOF/EOF triggers
+with zero UI/user-driven path reaching either) and confirmed via `tests/test_vt_seek.py` that the
+existing EOF→`_advance_or_finish` contract test still passes unmodified after the change.
+
+**Scope decision, made explicitly rather than defaulted:** `sleep_fired` guards BOTH sleep modes
+(timed and end-of-chapter), not only end-of-chapter as the reviewer's prompt literally named — both
+fire via the identical `disable_sleep_timer()` + `player.pause = True` shape in
+`update_timer_state`, so timed mode has the exact same latent vulnerability; scoping the fix to only
+one mode would have left a known-identical bug unfixed in the other for no reason.
+
+**Ordering detail that matters:** `sleep_fired = True` is set in both fire branches *after*
+`disable_sleep_timer()` returns, not before — `disable_sleep_timer()` clears the flag as part of its
+own state-reset (for the *next* arm/disarm cycle), so setting it before that call would have it wiped
+by the very call that precedes the pause it's meant to protect.
+
+All `[EOC-TRACE]` temporary logging from parts 1/2 of this investigation (arm-time, every
+`_on_chapter_changed` entry, every `update_timer_state` end-of-chapter-branch tick, `_cancel_eoc_sleep`,
+natural-fire — plus the `logging`/`logger` scaffolding that carried it) was stripped before this
+commit; it had already done its job finding all three real bugs in this feature and was never meant
+to ship. Full test suite (`pytest tests/ -q`, including `test_vt_seek.py` explicitly) green, live app
+boot clean, and the user confirmed the fix live before this was committed as `935861b`. Not yet merged
+to `main` — further live testing in progress.
+
+---
+
+## 2026-08-10 (continued, same day) — End-of-chapter sleep, part 2: two confirmed-working fixes (seek-source flag, stale-flag consumption), then a THIRD, structurally different, unfixed bug — a real VT pause/unpause race. Stopped here, not patched, per direct instruction
+
+Continuation of the entry immediately below this one, same branch (`sleep-fix`), same feature. The
+three attempts documented below (chapter-distance heuristic, `is_seeking` polling latch, re-derived-
+index gating) were fully reverted to commit `60f6e15` (the last confirmed-good state, pre-dating the
+whole end-of-chapter anchor feature) before this round started — see commits `54f7c8c`
+(code revert) and `42f8638` (NOTES.md only). Two more attempts followed, both real fixes for real,
+distinct bugs — then a third bug was found that is NOT a flag/logic bug and was NOT fixed.
+
+### Attempt 4 — `player.user_seek_pending`, a flag set at the seek SOURCE, not inferred from `is_seeking`'s timing
+
+Prompted by direct user instruction after confirming (via a dedicated Explore-agent trace) that
+**every** navigation path — Next/Prev, chapter-list click, slider drag/wheel, skip buttons, every
+keyboard shortcut — routes through `Player.seek_async` with zero bypass. That makes `seek_async`
+itself the one correct choke point, eliminating the entire "is `is_seeking` observable in time"
+problem attempts 2/3 were stuck on.
+
+Two additions only: `Player.user_seek_pending = False` in `__init__`, set `True` as the very first
+statement of `seek_async` (`player.py`, before any of its existing logic). `SleepTimerPanel.
+_on_chapter_changed` (rebuilt from the pre-existing, confirmed-working anchor design — see the
+original entry below for that design) reads and clears the flag on a forward crossing past the
+anchor: `True` → seek-driven → cancel with message; `False` → natural → leave it to
+`update_timer_state`'s boundary-fire check.
+
+**This part worked and was confirmed live** across cases (b) through (f) and (h) of the user's own
+test matrix (manual cancel, forward-seek-with-message while playing/paused, backward nav, within-
+chapter nav, and a second-seek-after-a-within-chapter-seek case) — "the rest of the items worked by
+the way," confirmed directly. Two things were still broken: (g) — see attempt 5 — and (a), the plain
+natural-arrival case, which is the still-unresolved bug this entry ends on.
+
+### Attempt 5 — consume the stale flag on EVERY `_on_chapter_changed` call, not only on a forward crossing
+
+Root cause, confirmed via log (`grep EOC-TRACE`, not inferred): a seek that lands ON the anchor
+chapter or stays WITHIN it (e.g. `seek_within_chapter` from a chapter-slider drag, confirmed in the
+log at `seek_async: entry target=30972.75 ... direction=forward`, landing back in `chapter=8`, the
+same as the anchor) sets `user_seek_pending=True` via `seek_async`, but since the chapter index never
+changes, `chapter_changed` never fires — so `_on_chapter_changed` never runs, and the flag survives
+stale across every subsequent event until the next real crossing (natural or not) wrongly inherits it.
+Live trace showed the flag reading `True` across 5 consecutive natural `_on_chapter_changed` calls
+after one such seek, all correctly no-op'd as `index <= anchor` — and then the real anchor→anchor+1
+crossing arrived with the flag still `True`, calling `_cancel_eoc_sleep()` instead of firing.
+
+Two fixes for two different manifestations of the same "flag never gets to `_on_chapter_changed`"
+problem, per direct instruction:
+- `_on_chapter_changed` now consumes (`seek_driven = ...; self.player.user_seek_pending = False`)
+  on every call past the mode/anchor guard, not only inside the forward-crossing branch — covers a
+  seek that lands exactly ON the anchor (still produces one `chapter_changed` call, just an
+  `index <= anchor` one).
+- A new `self._was_seeking` previous-tick tracker in `update_timer_state` detects an `is_seeking`
+  True→False transition (a seek settling) across 200ms polls; if the settled position is still
+  within the anchor chapter (re-checked via `_current_chapter_index()`), the flag is cleared there —
+  covers a seek that produces ZERO `chapter_changed` calls at all (stayed within the same chapter,
+  so the index literally never changed).
+
+**Confirmed via fresh log** (`grep EOC-TRACE`, entries after 02:09): a natural fire correctly showing
+`NATURAL-FIRE reached_end=True ... user_seek_pending=False` — the stale-flag class of bug is fixed.
+User also independently confirmed cases (b) through (f), (h) still pass, and reported (g) — scrub
+within anchor then let it reach natural end — "worked once, didn't work the next time," which turned
+out to be a DIFFERENT bug (see below), not a regression of this fix.
+
+### The bug this session stops on — a genuine VT pause/unpause race, not a flag/logic bug
+
+Confirmed via a third trace round (added `EOC-BRANCH` logging at the top of `update_timer_state`'s
+end-of-chapter branch, every 200ms tick) against a reproduction where the user armed sleep, took no
+action at all, and reported "no text, continues to play, doesn't stop":
+
+```
+02:13:37,819 update_timer_state EOC-BRANCH is_paused=False anchor=6 player_pos=23506.400... player_dur=158717.072
+02:13:37,819 update_timer_state NATURAL-FIRE reached_end=True player_pos=23506.400... anchor_end=23506.801 user_seek_pending=True
+02:13:37,876 [PERSIST-TRACE] _save_current_progress: ... pos=23506.400...
+02:13:37,878 _on_time_pos_change: raw time_pos=3868.08...
+02:13:37,879 _on_time_pos_change: VT walk local=3868.08... file_offset=23506.801 global=27374.88... -> chapter=7 (prev=6)
+02:13:37,883 [VT-SEEK-TRACE] site=_on_file_loaded_ENTRY(loaded='08.mp3') ... _is_vt_file_switch=True
+```
+
+The natural-fire branch DID run and correctly identified the boundary — `disable_sleep_timer()` and
+`self.player.pause = True` both fire at `02:13:37,819`. But **59ms later**, `_on_time_pos_change`
+(running on mpv's own thread, independent of the Qt-side sleep logic) shows a VT file switch already
+in progress — this book's anchor chapter (index 6) happened to end exactly at a VT FILE boundary, not
+just a chapter boundary within one file. `_advance_or_finish` (player.py:329, called from
+`_on_pause_test`'s own near-EOF check, entirely unrelated to sleep) calls
+`self.instance.play(next_file['file_path'])`, and `_advance_or_finish`'s own logic
+(player.py:342-343) unconditionally does `if self.instance.pause: self.instance.pause = False` —
+**silently un-pausing the exact pause the sleep timer had just set**, then continuing playback into
+the next file. This is a genuine race between two independent, correct-in-isolation mechanisms
+(sleep's pause-on-fire vs. VT's own end-of-file auto-advance-and-unpause), not a bug in any of the
+flag logic built in attempts 4/5 — those are confirmed correct and were NOT touched or reverted.
+
+**This is squarely inside the most protected part of the codebase** — `_advance_or_finish`/
+`_on_pause_test`/VT file-switch handling is exactly the "Seek/position tracking — VT+Undo is the
+known-fragile zone" territory CLAUDE.md warns has broken four independent times before. Per direct
+instruction, this was NOT touched. Stopped here, documented, no fix attempted in this session.
+
+**Stray, unrelated observation from the same log, not yet investigated**: `user_seek_pending=True`
+at the moment of this NATURAL-FIRE, despite the user reporting zero interaction for this specific
+repro. Not chased further before stopping — worth checking first thing if this area is revisited,
+since it's either a genuine leftover from a much earlier seek in the session (plausible — nothing
+in the current design guarantees a natural fire clears a flag that was never consumed by
+`_on_chapter_changed` in between) or a sign the earlier "stale flag" class of bug in attempt 5 isn't
+fully closed. Does not explain the "kept playing" symptom either way, since the natural-fire branch
+doesn't consult the flag at all — but it's a loose thread.
+
+### Where this stood at the stop, and what happened next (fixed — see the entry above this one)
+
+At the point this entry originally ended, `player.py`/`sleep_timer.py` held attempts 4 and 5 plus
+temporary `[EOC-TRACE]` logging, uncommitted, with the VT pause-race bug documented but explicitly
+not fixed per direct instruction. A follow-up round (same day, documented as its own entry directly
+above this one) took a reviewer's proposed design — a second flag, `Player.sleep_fired`, read by
+`_advance_or_finish`'s existing unpause line — confirmed both `_advance_or_finish` call sites are
+exclusively mpv-native near-EOF/EOF triggers with no user/UI path (so the guard can never wrongly
+block a legitimate case), extended the flag to cover both sleep modes (not just end-of-chapter, since
+timed mode has the identical vulnerability), implemented it, verified against the full test suite
+including the VT-specific `test_vt_seek.py`, stripped all `[EOC-TRACE]` instrumentation, and shipped
+it as `935861b`. Confirmed live by the user across the full test matrix. Not yet merged — further live
+testing in progress before merge to `main`.
+
+---
+
+## 2026-08-10 — End-of-chapter sleep "Sleep cancelled" message: three failed attempts, root cause NOT confirmed, stopped mid-investigation at user's request
+
+Branch `sleep-fix`. Task: end-of-chapter sleep mode needs to distinguish three cases in the
+indicator zone: (1) sleep reaches the anchor chapter's end naturally → fires, no message; (2) user
+manually cancels via the sleep label/sidebar X → disarms, no message (already correct, untouched
+throughout); (3) user seeks forward past the anchor chapter → disarms AND shows "Sleep cancelled"
+for `_dismiss_ms`, because a seek is not an explicit cancellation.
+
+**Current live symptom, as last confirmed by the user:** seeking forward past the anchor (Next
+button, chapter-list click, or main slider drag, all while playing) disarms sleep, shows no
+"Sleep cancelled" text, AND incorrectly pauses playback — i.e. the code is taking the *natural-fire*
+branch (which calls `player.pause = True`) instead of the seek-cancel branch, even though the
+transition was unambiguously user-driven. This is worse than the state before this session's
+attempts started, and none of the three attempts below fixed it. **The actual root cause is not
+confirmed** — everything below is a chain of plausible-sounding explanations that were each acted on
+without being verified against a trace, which is exactly the failure mode CLAUDE.md's "never
+substitute a plausible explanation for a checked one" section exists to prevent. Recorded here
+instead of continuing to patch, per direct instruction.
+
+### Attempt 1 — chapter-index distance heuristic (`index > anchor + 1`)
+
+Reasoning at the time: natural sequential playback can only ever advance the derived chapter index
+by exactly one step (`_on_time_pos_change`'s walk), so a jump of 2+ chapters must be a deliberate
+user seek. Implemented in `_on_chapter_changed` (`sleep_timer.py`): only cancel-with-message when
+`index > anchor + 1`; a plain `+1` transition was left to `update_timer_state`'s own boundary-fire
+check.
+
+**Failure, reported directly by the user:** seeking forward to the *immediately next* chapter
+(a `+1` transition, e.g. via the chapter list or Next button) is exactly as much a deliberate user
+action as seeking further ahead — the user's own framing: "the only criteria is whether the user
+triggered the cancellation by seeking," not how many chapters were crossed. Distance-from-anchor was
+simply the wrong signal. Reverted in spirit (superseded by attempt 2, not git-reverted since this
+was all uncommitted/WIP-committed work on the same branch).
+
+### Attempt 2 — latch `player.is_seeking` across `update_timer_state`'s 200ms polling ticks
+
+Reasoning: `Player.chapter_changed` carries no metadata about why the index changed.
+`_on_time_pos_change` (player.py:204) clears `_is_seeking` *before* running its own chapter walk/
+emit in the same call, so sampling `player.is_seeking` at the moment `_on_chapter_changed` runs
+(queued, cross-thread) is unreliable — by delivery time a real seek may already read as settled.
+Devised a latch instead: `SleepTimerPanel.update_timer_state` (already polling every 200ms on the Qt
+main thread, the same thread `seek_async` is always called from) sets `self._seek_observed = True`
+whenever it observes `player.is_seeking` true; `_on_chapter_changed` consumes and clears the latch to
+decide seek-driven vs. natural. Reset on arm and on disarm.
+
+**Failure, reported directly by the user:** "No Sleep cancelled text anymore at all." Investigated
+(without a trace — see the pattern here) and concluded `update_timer_state`'s own natural-fire
+boundary check (`player_pos >= anchor_end - 0.5`) was racing the latch-consuming path and winning,
+since a seek landing past the anchor also satisfies that same position check — so the code called
+`disable_sleep_timer()` directly (no message) instead of routing through `_cancel_eoc_sleep()`. This
+diagnosis was **never confirmed with a log/trace** — it was inferred from the symptom and the code
+shape, then immediately acted on with attempt 3. This is the exact "plausible explanation for a
+checked one" failure CLAUDE.md warns about, repeated with awareness of the rule and without applying
+it.
+
+### Attempt 3 — re-derive current chapter index inside `update_timer_state`, defer to `_on_chapter_changed` when a seek is latched
+
+Built on attempt 2's unconfirmed diagnosis. Added a second chapter-index walk inside
+`update_timer_state`'s end-of-chapter branch (duplicating the walk `_current_chapter_index` already
+does) to compare against the anchor: if the re-derived index has moved past the anchor **and**
+`_seek_observed` is latched, `return` early instead of falling into the natural-fire boundary check —
+handing ownership to `_on_chapter_changed`. Added a second condition to avoid two more bugs this
+introduced on paper: (a) clearing the latch only when `curr_idx <= anchor` (to detect a stale
+within-chapter seek) needed to also require `not player.is_seeking`, or it would race ahead of a
+still-in-flight seek's real landing position and clear the latch before `_on_chapter_changed` ever
+saw it for the crossing that follows; (b) the gate itself needed `and self._seek_observed`, not an
+unconditional `if curr_idx > anchor: return`, or natural arrival would never fire at all once the
+index ticked past the anchor (this exact bug was caught only by hand-tracing before shipping, not by
+a test).
+
+**Failure, reported directly by the user:** "No difference," plus new information that sharpens the
+real question — the sequence is Next / chapter-list / slider **while playing**, and the result is
+disarm + no text + **incorrect pause** (i.e. `update_timer_state`'s `reached_end` branch is what's
+actually running, not `_cancel_eoc_sleep()`). Also newly reported: while paused, forward navigation
+never cancels the timer until Play is clicked (not investigated at all before this stop).
+
+At the point of stopping, a fourth hypothesis was raised but not verified: that mpv seeks on a local
+file can fully settle (`is_seeking` True→False) within a single 200ms polling gap, so
+`update_timer_state` might never observe `is_seeking=True` at all for a fast seek — meaning the
+entire polling-latch premise from attempt 2 onward may be structurally unable to work, independent of
+any of the gating logic layered on top of it in attempt 3. **This was not checked** — no trace, no
+log, no instrumentation confirms or refutes it. It is exactly the kind of plausible-sounding
+explanation this note is warning against repeating.
+
+### What is actually confirmed, vs. only inferred
+
+Confirmed directly by the user, across the two bug reports in this session:
+- Seeking forward past the anchor (any of: Next, chapter-list click, slider) while playing disarms
+  sleep, shows no message, and incorrectly pauses playback.
+- While paused, forward navigation past the anchor does not cancel the timer at all until Play is
+  pressed.
+- Manual cancel (sleep label / sidebar X) has been correct throughout — never regressed by any of
+  the three attempts, not touched by any of them.
+- Natural end-of-chapter firing (no navigation at all) was not re-confirmed as still correct after
+  attempt 3's changes — it was reasoned through by hand-trace only, not observed live.
+
+Not confirmed by any trace/log/instrumentation, only inferred from code-reading and symptom-shape:
+- That `update_timer_state`'s boundary check vs. `_on_chapter_changed`'s cancel path is genuinely a
+  race (attempt 2's diagnosis).
+- That the specific gating added in attempt 3 is what's still wrong, rather than some other cause
+  entirely (e.g. `_on_chapter_changed` never being invoked for this book/mode combination at all,
+  which was never ruled out).
+- The paused-navigation behavior's cause — not investigated.
+
+### Where this stands
+
+Uncommitted changes to `src/fabulor/ui/sleep_timer.py` are on disk on branch `sleep-fix`, on top of
+WIP commit `cf891c5` (which itself holds attempt 1 plus the anchor/arm/book-switch-reset machinery
+from earlier in the session — book-switch reset and the `_eoc_cancel_message_active`
+stomp-suppression fix are believed still correct and were not implicated in any of the three
+failures above). The right next step, per the user's direction, is NOT another inferred patch — it's
+adding a real trace/log at `_on_chapter_changed`, `_cancel_eoc_sleep`, and the `reached_end` branch of
+`update_timer_state` (matching this codebase's own established debugging discipline — see CLAUDE.md's
+"Debugging discipline" section, "change-only probes can't prove absence," and the repeated rule
+against shipping explanations that were constructed rather than checked) and reproducing live with
+logging on, before writing any more code.
+
+---
+
 ## 2026-08-05 — Transport-bar blur audit: grab scope/cadence re-confirmed, declined-tick re-arm live-verified. Investigation only, nothing changed
 
 Requested directly: re-verify three prior findings on the transport-bar blur mechanism

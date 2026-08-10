@@ -444,6 +444,10 @@ def build_secondary_controls(mw):
     mw.vol_hide_timer.setSingleShot(True)
     mw.vol_hide_timer.timeout.connect(mw._fade_out_volume)
 
+    mw.sleep_confirm_timer = QTimer(mw)
+    mw.sleep_confirm_timer.setSingleShot(True)
+    mw.sleep_confirm_timer.timeout.connect(mw._on_sleep_confirm_timeout)
+
 
 def build_carousel_covers(mw):
     """Build (pixmaps, cover_h) for the no-book carousel from cached covers.
