@@ -1,4 +1,28 @@
-## Session Summary — 2026-08-10 — Volume/sleep/mute indicator zone fixed, end-of-chapter sleep mode rebuilt around a seek-source flag, a genuine VT pause race found and fixed. On `sleep-fix`, awaiting further live testing before merge
+## Session Summary — 2026-08-10 Session 2 — Streak grid day-boundary rollover bug found and fixed. `f50d1f6` on `sleep-fix`
+
+Live-reported bug: Stats Timeline showed today's finished-book dot but never filled today's cell or
+incremented the streak count. Traced to direct DB inspection (not guessed): `streak_grid_cache` only
+rebuilds at app startup or on a manual `day_start_hour` edit, so a process that launches before the
+adjusted-day boundary and keeps running past it never picks up the new day — confirmed live, the
+user's own running process had launched at 06:12 (before the 10:00 `day_start_hour` boundary) and the
+cache table had no row at all for the day that started at 10:00 that same morning, even though the
+sessions and finished event were correctly recorded. A restart fixed it immediately, confirming the
+diagnosis, but isn't a real fix.
+
+Fix: `StatsPanel` now arms a self-rescheduling single-shot `QTimer` for the exact next rollover
+instant (computed from `day_start_hour`), rebuilds the cache and reschedules on fire. Zero idle
+polling, chosen explicitly over a periodic-check timer per the user's standing sensitivity to
+panel-hitch risk — this also never touches any panel open/close codepath. Full root-cause writeup and
+implementation detail in NOTES.md. Plan-reviewed before implementing (a second pass re-verified three
+specific claims — line numbers, whether `config.set_streak_grid_cache_date` was redundant, and
+`build_streak_grid_cache`'s idempotency — against the current file rather than trusting the first
+read); all three held up. Not verified against a real live day-boundary crossing — the user couldn't
+reproduce the exact conditions on demand and will re-check at the next natural rollover while the app
+happens to be running.
+
+---
+
+## Session Summary — 2026-08-10 Session 1 — Volume/sleep/mute indicator zone fixed, end-of-chapter sleep mode rebuilt around a seek-source flag, a genuine VT pause race found and fixed. On `sleep-fix`, awaiting further live testing before merge
 
 Two separate pieces of work on the shared volume/sleep/mute indicator zone (`vol_stack`, app.py),
 committed in stages on branch `sleep-fix`.
@@ -50,7 +74,7 @@ testing first.
 
 ---
 
-## Session Summary — 2026-08-09 (2) — Corner-hotspot sidebar trigger: plan, implementation, indicator tried and removed, merged to main
+## Session Summary — 2026-08-09 Session 2 — Corner-hotspot sidebar trigger: plan, implementation, indicator tried and removed, merged to main
 
 Full arc on `feature/sidebar-hotspot-trigger`, now merged. A second way to open the sidebar
 (hover-intent on a 15×15 corner zone under the cover art, alongside the existing right-click), with
@@ -110,7 +134,7 @@ written up afterward per Pryme's request, in their own commit per this repo's so
 split convention. Full suite: 501 passing (505 at peak with the indicator's own tests, 4 removed with
 it, no replacements invented). Branch deleted after merge.
 
-## Session Summary — 2026-08-09 — Stats delegate migration completed: hover-flicker fixed, dimming decided, Week+Month migrated, full dead-code chain removed
+## Session Summary — 2026-08-09 Session 1 — Stats delegate migration completed: hover-flicker fixed, dimming decided, Week+Month migrated, full dead-code chain removed
 
 Continuation of the prior sessions' Day-tab delegate work (see the two entries below). This session
 closed both items left open from 2026-08-08, then extended the migration to Week and Month, then

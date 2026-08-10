@@ -1,3 +1,87 @@
+## 2026-08-10 (continued, same day) — Streak grid silently froze across a day-boundary rollover in a long-running session. Fixed via a self-rescheduling single-shot rollover timer. Shipped as `f50d1f6`
+
+**Symptom, reported live:** Stats > Timeline showed the correct finished-book dot for today, but
+today's cell never filled into the streak and the streak count never incremented — even after a
+second session (different book, 4 minutes) was logged, ruling out an archived-book special case.
+
+**Root cause, confirmed by direct DB inspection, not guessed:** `streak_grid_cache` (the table the
+grid fill/count read from) is only ever rebuilt in two places: unconditionally at app startup
+(`app.py`, `MainWindow.__init__`) and inside `StatsPanel._on_day_start_hour_changed` when the user
+edits the day-start-hour setting. The reporting session's process (confirmed via `ps`) had launched
+at 06:12 that day. With `day_start_hour=10`, the adjusted "today" at 06:12 was still the *previous*
+calendar day — the day hadn't rolled over past 10am yet. The startup rebuild correctly seeded/flipped
+the cache for that adjusted day and stopped — correct at the instant it ran. Once wall-clock passed
+10:00am the same day, the adjusted day rolled forward, but nothing in the long-running process
+re-triggered a rebuild. `sqlite3 library.db "SELECT MAX(date) FROM streak_grid_cache"` confirmed the
+table had no row at all for the new day, even though both sessions and the `finished` book_event for
+that day were correctly present in `listening_sessions`/`book_events`. The dot rendered correctly the
+whole time because `get_streak_grid_finished_dates` is a live query, not cache-backed; only the grid
+fill/count are cache-backed and went stale. User confirmed a restart fixed it immediately (a fresh
+startup rebuild computes "today" correctly once it's actually past `day_start_hour`) — but a restart
+isn't a fix; a session spanning the boundary needs to self-correct.
+
+**Two approaches were discussed before picking one.** A low-frequency repeating `QTimer` that checks
+`adjusted_today > streak_grid_cache_date` on each tick was the simpler option, but was rejected in
+favor of computing the exact next rollover instant and arming a single-shot `QTimer` for exactly that
+moment — zero idle firing between rollovers, and it sidesteps the "how cheap does a periodic DB check
+need to be" question entirely by never polling. This was an explicit design ask driven by the user's
+standing sensitivity to panel-open/close hitches on this app (see CLAUDE.md's Debugging discipline
+section) — the goal wasn't making the rebuild itself faster (it's the same "cheap (<=364 rows)"
+operation `_on_day_start_hour_changed` already documents and ships), it was making sure it can never
+land inside a panel transition and never becomes a busy poll.
+
+**Implementation** (`src/fabulor/ui/stats_panel.py`, all inside `StatsPanel` — chosen because the
+sibling logic this mirrors, `_on_day_start_hour_changed`, already lives entirely inside `StatsPanel`
+with direct `self.db`/`self.config` access and no `MainWindow` dependency, and `StatsPanel` is
+constructed once and lives for the app's lifetime):
+- `_next_streak_rollover(day_start_hour)` — module-level helper computing the wall-clock instant the
+  adjusted day next advances: `datetime.combine(adjusted_today + 1 day, midnight) + day_start_hour
+  hours`. Verified against the real repro numbers before shipping: at 06:12 with
+  `day_start_hour=10`, this correctly resolves to `10:00:00` the same calendar day — the exact
+  instant the bug's window opened.
+- `_arm_streak_rollover_timer()` — stops any existing timer, computes `ms` until the next rollover
+  (floored at 1000ms to guard clock-skew/near-zero edge cases), arms a single-shot `QTimer`. Called
+  once at the end of `StatsPanel.__init__` and again at the end of `_on_day_start_hour_changed`, so a
+  pending shot always tracks the current setting — no separate cancel-and-recompute logic needed
+  beyond calling the same arm method again.
+- `_on_streak_rollover()` — the fire handler. Deliberately does **not** call
+  `reset_streak_grid_cache()` first (unlike `_on_day_start_hour_changed`): a plain rollover doesn't
+  change historical attribution, it only needs to extend the window forward and flip
+  newly-qualifying cells, and `build_streak_grid_cache`'s existing seed(`INSERT OR IGNORE`)+flip
+  (`UPDATE ... SET listened = 1 WHERE ...`) logic is genuinely idempotent for that — re-verified by
+  reading the function fresh before implementing (per explicit review gate, see below): the delete
+  only prunes out-of-window rows, the insert no-ops on existing rows, and the update is a one-way
+  0→1 flag derived fresh from source tables each call, so calling it twice in a row is provably
+  equivalent to calling it once. Only refreshes the visible tab (`if self.isVisible():
+  refresh_current_tab()`) — the ordinary case is the panel being closed when the boundary passes, and
+  `refresh_current_tab()` is the same call the normal panel-open flow already makes, so this adds no
+  new codepath, just an occasional extra call to something already proven safe.
+
+**Explicit review gate before implementing, not skipped despite already having read the code once
+earlier in the session:** a second reviewing pass raised three concrete risks — cited line numbers
+might have drifted since the first read (`stats_panel.py` has been heavily touched recently),
+`config.set_streak_grid_cache_date` might be redundant if `build_streak_grid_cache` already wrote
+that field internally, and `build_streak_grid_cache`'s idempotency was asserted rather than checked.
+All three were re-verified against the current file before writing code: line numbers matched
+byte-for-byte, `build_streak_grid_cache` is DB-layer-only and never touches `config` (confirmed via
+grep — the explicit `config.set_streak_grid_cache_date` call is the *only* writer of that field
+alongside the startup one in `app.py`, so it is required, not redundant), and the idempotency claim
+held up against a fresh read of the function body. Worth recording as a pattern: rereading code you
+already read once, on request, caught nothing wrong here, but the check was cheap and the three risks
+were concrete enough that skipping it would have been the wrong call regardless of outcome.
+
+**Verification.** `tests/` full suite green. App launched clean (no traceback in stdout or
+`fabulor.log`) with the fix in place; DB inspection before/after confirmed
+`streak_grid_cache`/`Fabulor.conf`'s `streak_grid_cache_date` already reflected the correct day from
+the user's own earlier manual restart, undisturbed by the new code path. **Not verified against a
+real live rollover** — the user could not reproduce the exact boundary-crossing conditions on demand
+and deferred that check to the next natural day-boundary crossing while the app happens to be
+running. If this resurfaces, the fastest re-check is `sqlite3 library.db "SELECT MAX(date) FROM
+streak_grid_cache"` immediately before and after a `day_start_hour` wall-clock crossing, without
+restarting the app in between.
+
+---
+
 ## 2026-08-10 (continued, same day) — End-of-chapter sleep, part 3: `Player.sleep_fired` closes the VT pause/unpause race left open at the end of part 2. Shipped as `935861b`
 
 Direct continuation of the entry immediately below this one, which stopped deliberately after
