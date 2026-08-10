@@ -476,14 +476,80 @@ capable of running invisibly.
 - [ ] Muted icon recolors correctly on theme change (`slider_vol_fill` key; check a theme that overrides it and one that falls back to `text`)
 - [ ] Muted icon disappears the instant volume is raised above 0%
 
-## Muted-volume icon + sleep timer interaction
+## Muted-volume icon + sleep timer interaction (rewritten 2026-08-10 — mute now takes priority by default)
 
-- [ ] Mute first (volume to 0%, no timer), then start a sleep timer — countdown label appears immediately, muted icon does NOT flash or linger
-- [ ] Start a sleep timer first, then mute — slider overlay still previews normally (2s + fade) at 0%, then settles back to the countdown label, never to the muted icon
-- [ ] While a sleep timer is active and volume is 0%, the indicator always shows the countdown, never the muted icon, for the entire duration of the timer
-- [ ] Let an active sleep timer expire/get cancelled while volume is still at 0% — muted icon appears immediately once the countdown clears
-- [ ] Unmuting while a sleep timer is active never reveals the muted icon at any point (no flash during the transition)
-- [ ] Toggling mute on/off repeatedly while a sleep timer counts down — countdown text never gets stuck hidden behind the volume overlay or the muted icon
+Mute wins over the sleep label by default; the one exception is a freshly-(re)armed sleep timer
+while muted, which shows a transient confirmation for `_INDICATOR_DISMISS_MS` (2s) before reverting
+to the mute icon. See `_settle_vol_stack`/`_on_sleep_display_text_updated` in `app.py`.
+
+- [ ] Mute first (volume to 0%, no timer), then start a sleep timer — countdown/confirmation text
+      shows immediately (jumps straight to it, no empty-slider preview first — see the
+      `_show_volume_overlay` fix below), then reverts to the muted icon after ~2s
+- [ ] Start a sleep timer first (not muted), then mute — muted icon appears immediately, no empty
+      slider preview, no lingering countdown text
+- [ ] While muted with an active sleep timer (past the initial 2s confirmation), the indicator shows
+      the muted icon, NOT the countdown — mute wins for the remainder of the timer
+- [ ] Unmute while a sleep timer is active — countdown label reappears immediately
+- [ ] Let an active sleep timer expire/get cancelled while muted — indicator stays on the muted icon
+      throughout (no flash of empty countdown text)
+- [ ] Toggling mute on/off repeatedly while a sleep timer counts down — no stuck/blank indicator state
+- [ ] Hitting 0% via M key, mouse wheel, or Down arrow (not just slider drag) while a sleep timer is
+      armed jumps straight to mute icon (or the transient confirmation, if just armed) — no empty
+      slider preview for the full 2s dismiss window (regression check for the fix that closed this
+      exact gap)
+
+## End-of-chapter sleep mode (added 2026-08-10)
+
+Sleep timer's "End of chapter" mode (`SleepTimerPanel.set_sleep_timer(mode='end_of_chapter')`) is
+anchored to the chapter index it was armed on (`_sleep_eoc_anchor`), not "whatever chapter is
+current" on each tick. `Player.user_seek_pending` (set at the top of `seek_async`, the sole
+navigation choke point) and `Player.sleep_fired` (set when either sleep mode fires) are the two
+flags this whole mode's correctness rests on — see the two new CLAUDE.md rules on seek-source flags
+and `_advance_or_finish`'s unpause guard for the mechanism. Test against both an embedded-M4B/CUE
+book AND a multi-file (VT) book — the VT case specifically surfaced two of the three real bugs this
+feature had.
+
+### Natural arrival (no interaction after arming)
+- [ ] Arm end-of-chapter sleep, take no action, let it reach the anchor chapter's own end — playback
+      pauses, indicator shows nothing extra (no "Sleep cancelled" text)
+- [ ] Repeat on a VT (multi-file) book where the anchor chapter's end happens to coincide with a VT
+      file boundary — playback still pauses and STAYS paused (regression check for the
+      `_advance_or_finish` unpause race: VT's own near-EOF auto-advance must not silently un-pause
+      the sleep-triggered pause within the following ~100ms)
+- [ ] Repeat with the anchor as the LAST chapter in the book (fires against `player_dur`, not the
+      next chapter's start time)
+
+### Manual cancel
+- [ ] Arm end-of-chapter sleep, click the sleep countdown label to disarm — indicator clears
+      immediately, no "Sleep cancelled" text at any point
+- [ ] Arm end-of-chapter sleep, click the sidebar cancel (X) button to disarm — same, no message
+
+### Seek-driven cancellation
+- [ ] Arm end-of-chapter sleep, seek forward past the anchor WHILE PLAYING via each of: Next button,
+      chapter-list click, main slider drag, wheel/skip — each shows "Sleep cancelled" for the full
+      `_dismiss_ms` window, then clears; playback does NOT pause
+- [ ] Same, but landing on the immediately-next chapter specifically (not several chapters ahead) —
+      must still show the message (this was the exact case an earlier distance-based heuristic got
+      wrong — see NOTES.md 2026-08-10)
+- [ ] Arm end-of-chapter sleep, seek forward past the anchor WHILE PAUSED — "Sleep cancelled" shows
+      for the full window; playback stays paused (it was already paused, sleep didn't cause it)
+- [ ] Arm end-of-chapter sleep, scrub/seek within the SAME (anchor) chapter — sleep stays armed, no
+      message, and a later natural arrival still fires correctly (regression check for the
+      same-chapter-seek stale-flag bug: such a seek never fires `chapter_changed`, so the flag needs
+      the settle-based clear in `update_timer_state`, not just `_on_chapter_changed`)
+- [ ] Arm end-of-chapter sleep, scrub within the anchor chapter, THEN seek forward past the anchor —
+      "Sleep cancelled" still shows (confirms the flag gets correctly re-set by the second seek, not
+      left stuck from the first)
+- [ ] Navigate BACKWARD past the anchor — sleep stays armed, no message
+- [ ] "Sleep cancelled" text is visible even while muted (confirms it reuses the sleep-just-armed
+      transient display mechanism correctly, not swallowed by the mute icon)
+
+### Book switch
+- [ ] Arm either sleep mode (timed or end-of-chapter), switch to a different book from the library —
+      sleep silently disarms (no "Sleep cancelled" message, no confirmation banner) — a sleep timer
+      is scoped to the book it was armed on
+- [ ] Restarting the SAME finished book (EOF → Restart) does NOT disarm an active sleep timer — only
+      an actual switch to a different book does
 
 ## UI
 
