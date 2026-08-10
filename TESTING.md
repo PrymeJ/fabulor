@@ -479,8 +479,7 @@ capable of running invisibly.
 ## Muted-volume icon + sleep timer interaction (rewritten 2026-08-10 — mute now takes priority by default)
 
 Mute wins over the sleep label by default; the one exception is a freshly-(re)armed sleep timer
-while muted, which shows a transient confirmation for `_INDICATOR_DISMISS_MS` (2s) before reverting
-to the mute icon. See `_settle_vol_stack`/`_on_sleep_display_text_updated` in `app.py`.
+while muted, which shows a transient confirmation for ~2s before reverting to the mute icon.
 
 - [ ] Mute first (volume to 0%, no timer), then start a sleep timer — countdown/confirmation text
       shows immediately (jumps straight to it, no empty-slider preview first — see the
@@ -500,14 +499,8 @@ to the mute icon. See `_settle_vol_stack`/`_on_sleep_display_text_updated` in `a
 
 ## End-of-chapter sleep mode (added 2026-08-10)
 
-Sleep timer's "End of chapter" mode (`SleepTimerPanel.set_sleep_timer(mode='end_of_chapter')`) is
-anchored to the chapter index it was armed on (`_sleep_eoc_anchor`), not "whatever chapter is
-current" on each tick. `Player.user_seek_pending` (set at the top of `seek_async`, the sole
-navigation choke point) and `Player.sleep_fired` (set when either sleep mode fires) are the two
-flags this whole mode's correctness rests on — see the two new CLAUDE.md rules on seek-source flags
-and `_advance_or_finish`'s unpause guard for the mechanism. Test against both an embedded-M4B/CUE
-book AND a multi-file (VT) book — the VT case specifically surfaced two of the three real bugs this
-feature had.
+Test against both an embedded-M4B/CUE book AND a multi-file (VT) book — see NOTES.md 2026-08-10 for
+the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why VT specifically.
 
 ### Natural arrival (no interaction after arming)
 - [ ] Arm end-of-chapter sleep, take no action, let it reach the anchor chapter's own end — playback
