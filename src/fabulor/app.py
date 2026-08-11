@@ -2372,7 +2372,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # Delegate Sleep Timer Logic
         self.sleep_panel.update_timer_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
         # Delegate Sprint Logic
-        self.sprint_panel.update_sprint_state(current_time, self.player.pause if self.current_file else True, pos)
+        self.sprint_panel.update_sprint_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
             chap_list = self.player.chapter_list

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
+from ..player import _CHAPTER_WALK_TOLERANCE
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
 
@@ -48,6 +49,27 @@ class SprintPanel(QWidget):
         self._grace_pool_s = None        # total grace seconds for the active sprint (int)
         self._grace_used_s = 0.0         # cumulative pause seconds consumed
         self._sprint_active = False
+        # End-of-chapter mode: None = duration-based sprint (the only mode before
+        # this pass), 'end_of_chapter' = anchor-pinned. _sprint_eoc_anchor is the
+        # chapter index sprint was armed on, mirroring SleepTimerPanel's own
+        # panel-local _sleep_eoc_anchor (NOT a Player attribute — Player has no
+        # EOC-anchor state of its own; both panels track their own anchor
+        # independently). A forward crossing past the anchor is handled by
+        # _on_chapter_changed, distinguishing a user-driven seek
+        # (player.user_seek_pending, set at the seek SOURCE in Player.seek_async)
+        # from natural playback reaching it — same mechanism as sleep's, see that
+        # method's docstring in sleep_timer.py for the full rationale.
+        self._sprint_mode = None
+        self._sprint_eoc_anchor = None
+        # Previous tick's player.is_seeking, so update_sprint_state can detect a
+        # True->False transition (a seek settling) across 200ms polls — used to
+        # consume a stale user_seek_pending flag left by a seek that stayed within
+        # the anchor chapter (no chapter_changed emit, so _on_chapter_changed never
+        # runs to consume it itself). Mirrors sleep_timer.py's _was_seeking exactly
+        # — without this, EOC sprint would reintroduce the exact bug sleep's EOC
+        # mode had until 2026-08-10 (a stale flag surviving to falsely tag the
+        # next, entirely natural, chapter transition as seek-driven).
+        self._sprint_was_seeking = False
         # pos value from the previous update_sprint_state tick, for backward-seek
         # detection (Pass 3). Reset to None on arm and disarm so a stale pre-arm/
         # post-disarm position is never diffed against the next sprint's first tick.
@@ -79,6 +101,7 @@ class SprintPanel(QWidget):
         self._cancel_timer = QTimer(self)
         self._cancel_timer.setSingleShot(True)
         self._cancel_timer.timeout.connect(self._on_cancel_message_timeout)
+        self.player.chapter_changed.connect(self._on_chapter_changed)
         # Optional external gate, set by app.py via set_arm_gate(). Takes a single
         # zero-arg callable (`proceed`) and either calls it immediately or defers
         # it behind a confirm UI (see show_conflict_confirm). Defaults to None,
@@ -117,6 +140,19 @@ class SprintPanel(QWidget):
             btn.clicked.connect(lambda _, v=val: self.set_sprint(duration_minutes=v))
             grid.addWidget(btn, i // 4, i % 4)
             self._sprint_presets_buttons.append(btn)
+        # 10 presets fill cells (0,0)-(2,1); (2,2)-(2,3) are otherwise empty —
+        # End of chapter spans them rather than adding a new row. No
+        # setObjectName here — matches SleepTimerPanel.end_chap_btn exactly,
+        # which is also a plain unnamed QPushButton (styled by the same
+        # ramp/default QSS as the duration presets, NOT "pattern_button").
+        self._eoc_btn = QPushButton("End of chapter")
+        self._eoc_btn.setFixedHeight(30)
+        # Grid column-width negotiation for a 2-column span left this 1px short
+        # of flush with the preset buttons above it (57+8+57=122) — reported
+        # live, 2026-08-11. setMinimumWidth forces it to claim the full span.
+        self._eoc_btn.setMinimumWidth(122)
+        self._eoc_btn.clicked.connect(self._on_eoc_sprint_clicked)
+        grid.addWidget(self._eoc_btn, 2, 2, 1, 2)
         layout.addLayout(grid)
         layout.addSpacing(2)
 
@@ -397,16 +433,42 @@ class SprintPanel(QWidget):
         else:
             proceed()
 
+    def _resolve_grace_pool(self, sprint_duration_s):
+        """Shared by _do_arm_sprint and _do_arm_eoc_sprint — EOC sprints get a
+        grace pool too (update_sprint_state's pause/grace-drain block runs for
+        both modes unconditionally). sprint_duration_s is only meaningful for
+        'percentage' mode; EOC sprints have no fixed duration, so percentage
+        mode there is computed against 0 (mirrors passing None-safe math.ceil(0)
+        = 0 rather than crashing — percentage grace on an EOC sprint is
+        therefore always 0, same as if "None" were selected; Fixed/Custom still
+        work normally since they don't depend on sprint_duration_s)."""
+        if self._grace_mode == "percentage":
+            return math.ceil((sprint_duration_s or 0) * self._grace_percentage / 100)
+        elif self._grace_mode == "fixed":
+            return self._grace_fixed_s
+        elif self._grace_mode == "custom":
+            return self._grace_custom_s if self._grace_custom_s > 0 else 0
+        else:  # "none"
+            return 0
+
+    def _current_chapter_index(self):
+        """Derives the current chapter index the same way Player._on_time_pos_change
+        does (same _CHAPTER_WALK_TOLERANCE), for arming the end-of-chapter anchor.
+        Mirrors SleepTimerPanel._current_chapter_index exactly — kept as a local
+        copy rather than shared, matching how this codebase already duplicates
+        small panel-local helpers (e.g. _ClickableLabel) between the two panels."""
+        chaps = self.player.chapter_list or []
+        pos = self.player.time_pos or 0.0
+        curr = 0
+        for i, chap in enumerate(chaps):
+            if chap.get('time', 0) <= pos + _CHAPTER_WALK_TOLERANCE:
+                curr = i
+        return curr
+
     def _do_arm_sprint(self, duration_minutes):
         self._sprint_duration_s = duration_minutes * 60
-        if self._grace_mode == "percentage":
-            self._grace_pool_s = math.ceil(self._sprint_duration_s * self._grace_percentage / 100)
-        elif self._grace_mode == "fixed":
-            self._grace_pool_s = self._grace_fixed_s
-        elif self._grace_mode == "custom":
-            self._grace_pool_s = self._grace_custom_s if self._grace_custom_s > 0 else 0
-        else:  # "none"
-            self._grace_pool_s = 0
+        self._sprint_mode = None
+        self._grace_pool_s = self._resolve_grace_pool(self._sprint_duration_s)
         self._sprint_paused_at = None
         self._grace_used_s = 0.0
         self._last_known_pos = None
@@ -437,6 +499,38 @@ class SprintPanel(QWidget):
             self._format_display(0, self._sprint_duration_s)
         )
 
+    def _on_eoc_sprint_clicked(self):
+        proceed = lambda: self._do_arm_eoc_sprint()
+        if self._arm_gate:
+            self._arm_gate(proceed)
+        else:
+            proceed()
+
+    def _do_arm_eoc_sprint(self):
+        self._sprint_duration_s = None
+        self._sprint_mode = 'end_of_chapter'
+        self._sprint_eoc_anchor = self._current_chapter_index()
+        # A seek right before arming shouldn't count toward the first post-arm
+        # transition — matches SleepTimerPanel._do_arm_sleep_timer's identical line.
+        self.player.user_seek_pending = False
+        self._sprint_was_seeking = False
+        self._grace_pool_s = self._resolve_grace_pool(self._sprint_duration_s)
+        self._sprint_paused_at = None
+        self._grace_used_s = 0.0
+        self._last_known_pos = None
+        self._sprint_start_time = time.time()
+        self._sprint_active = True
+        if self.player:
+            try:
+                self.player.pause = False
+            except (ShutdownError, AttributeError, SystemError):
+                pass
+        self.update_panel_styling()
+        # disable_sprint_btn.show() deliberately NOT called here — same deferred-
+        # visibility mechanism as _do_arm_sprint above.
+        self.sprint_started.emit()
+        self.display_text_updated.emit(self._format_display(0, None))
+
     def sync_disable_button_visibility(self):
         """Called from PanelManager._start_sprint_entry, before the panel becomes
         visible — NOT from the arm path itself. See _do_arm_sprint's comment for
@@ -453,6 +547,10 @@ class SprintPanel(QWidget):
         self._grace_pool_s = None
         self._grace_used_s = 0.0
         self._last_known_pos = None
+        self._sprint_mode = None
+        self._sprint_eoc_anchor = None
+        self.player.user_seek_pending = False
+        self._sprint_was_seeking = False
         self._cancel_timer.stop()
         self._cancel_message_active = False
         self.disable_sprint_btn.hide()
@@ -461,9 +559,22 @@ class SprintPanel(QWidget):
         self.display_text_updated.emit("")
         self.update_panel_styling()
 
-    def update_sprint_state(self, current_time, is_paused, pos):
+    def update_sprint_state(self, current_time, is_paused, pos, dur, is_eof):
         if not self._sprint_active:
             return
+        # Detect a seek settling (is_seeking True->False) since the last poll. A seek
+        # that lands back in the anchor chapter never fires chapter_changed (the
+        # index didn't move), so _on_chapter_changed never runs to consume the
+        # user_seek_pending flag that seek_async set — left uncleared, it would
+        # falsely tag the NEXT chapter transition (possibly a natural one) as
+        # seek-driven. Mirrors SleepTimerPanel.update_timer_state's identical block.
+        currently_seeking = self.player.is_seeking
+        if self._sprint_was_seeking and not currently_seeking:
+            if (self._sprint_mode == 'end_of_chapter'
+                    and self._sprint_eoc_anchor is not None
+                    and self._current_chapter_index() == self._sprint_eoc_anchor):
+                self.player.user_seek_pending = False
+        self._sprint_was_seeking = currently_seeking
         if self._cancel_message_active:
             return
 
@@ -486,8 +597,10 @@ class SprintPanel(QWidget):
         # genuine rewind from "seeked forward then came back": a 10-minute
         # sprint, forward-seek 20 minutes, then back to the same spot, became a
         # 30-minute sprint even though net audio progress was zero. See
-        # __init__'s _backward_compensation comment.
-        if self._backward_compensation:
+        # __init__'s _backward_compensation comment. EOC mode ignores backward
+        # seeks entirely — its clock is elapsed wall-time toward a fixed chapter
+        # boundary, not a duration budget that could be "extended" by a rewind.
+        if self._backward_compensation and self._sprint_mode != 'end_of_chapter':
             if (self._last_known_pos is not None
                     and pos is not None
                     and pos < self._last_known_pos):
@@ -527,11 +640,37 @@ class SprintPanel(QWidget):
 
         if not is_paused:
             elapsed = (current_time - self._sprint_start_time) - self._grace_used_s
-            remaining = self._sprint_duration_s - elapsed
-            if remaining <= 0:
-                self._trigger_complete()
-                return
-            self.display_text_updated.emit(self._format_display(elapsed, remaining))
+            if self._sprint_mode == 'end_of_chapter':
+                # Fire only when position reaches the ANCHOR chapter's own end
+                # boundary — not "whatever chapter is current". A forward
+                # crossing past the anchor (whether natural or seek-driven) is
+                # detected via chapter_changed and handled by
+                # _on_chapter_changed, which decides whether to cancel with a
+                # message (seek-driven) or leave this branch to fire normally
+                # (natural — user_seek_pending stays False, so
+                # _on_chapter_changed no-ops and this boundary check fires
+                # exactly as it always has). Mirrors SleepTimerPanel's
+                # identical end_of_chapter branch in update_timer_state,
+                # including the -0.5 tolerance and the is_eof fallback (a book
+                # that ends slightly before anchor_end-0.5 must still complete).
+                if self._sprint_eoc_anchor is not None and dur:
+                    chaps = self.player.chapter_list or []
+                    anchor = self._sprint_eoc_anchor
+                    if chaps and anchor < len(chaps) - 1:
+                        anchor_end = chaps[anchor + 1].get('time', dur)
+                        reached_end = (pos is not None and pos >= anchor_end - 0.5) or is_eof
+                    else:
+                        reached_end = (pos is not None and pos >= dur - 0.5) or is_eof
+                    if reached_end:
+                        self._trigger_complete()
+                        return
+                self.display_text_updated.emit(self._format_display(elapsed, None))
+            else:
+                remaining = self._sprint_duration_s - elapsed
+                if remaining <= 0:
+                    self._trigger_complete()
+                    return
+                self.display_text_updated.emit(self._format_display(elapsed, remaining))
         else:
             grace_remaining = max(0.0,
                 self._grace_pool_s - self._grace_used_s
@@ -539,6 +678,10 @@ class SprintPanel(QWidget):
             self.display_text_updated.emit(self._format_grace_display(grace_remaining))
 
     def _format_display(self, elapsed_s, remaining_s):
+        if self._sprint_mode == 'end_of_chapter':
+            elapsed_s = max(0, int(elapsed_s))
+            e_m, e_s = divmod(elapsed_s, 60)
+            return f"{e_m:02d}:{e_s:02d} | chapter"
         remaining_s = max(0, int(remaining_s))
         rem_m, rem_s = divmod(remaining_s, 60)
         total_s = int(self._sprint_duration_s)
@@ -571,15 +714,19 @@ class SprintPanel(QWidget):
         self._cancel_timer.start(self._dismiss_ms)
 
     def cancel_for_book_switch(self):
-        """Disarms the sprint with a "Sprint cancelled" message, for a book
-        switch mid-sprint (2026-08-11: previously the sprint silently carried
-        over to the newly selected book instead of disarming at all). Distinct
-        from both existing disarm paths: a book switch is neither a grace-pool
-        failure ("Sprint failed", _trigger_cancel) nor a deliberate manual
-        cancel (bare disable_sprint(), silent — the sidebar X / panel cancel
-        button / conflict-gate paths must all stay silent, unchanged by this
-        method). No-ops if no sprint is active, so callers don't need to check
-        is_active first."""
+        """Disarms the sprint with a "Sprint cancelled" message. Originally added
+        for a book switch mid-sprint (2026-08-11: previously the sprint silently
+        carried over to the newly selected book instead of disarming at all);
+        also reused by _on_chapter_changed for a seek-driven forward crossing
+        past an end-of-chapter sprint's anchor — both are the same category of
+        event (an external interruption, not a grace-pool failure and not a
+        deliberate manual cancel), so they share this method and its wording.
+        Distinct from both other disarm paths: a grace-pool failure
+        ("Sprint failed", _trigger_cancel) and a deliberate manual cancel (bare
+        disable_sprint(), silent — the sidebar X / panel cancel button /
+        conflict-gate paths must all stay silent, unchanged by this method).
+        No-ops if no sprint is active, so callers don't need to check is_active
+        first."""
         if not self._sprint_active:
             return
         # Same ordering as _trigger_cancel/_trigger_complete — disable_sprint()
@@ -588,6 +735,36 @@ class SprintPanel(QWidget):
         self._cancel_message_active = True
         self.display_text_updated.emit("Sprint cancelled")
         self._cancel_timer.start(self._dismiss_ms)
+
+    def _on_chapter_changed(self, index):
+        """Connected to Player.chapter_changed — the single universal chapter-index
+        signal (see CLAUDE.md invariant 25 / _on_time_pos_change). Only end-of-chapter
+        mode cares, and only about a forward crossing past the anchor. Mirrors
+        SleepTimerPanel._on_chapter_changed exactly — see that method's docstring
+        for the full user_seek_pending rationale (why a flag set at the seek
+        SOURCE is used instead of inferring seek-vs-natural from is_seeking's
+        asynchronous settle timing).
+
+        Natural playback reaching the anchor's own end is handled entirely by
+        update_sprint_state's boundary-fire check; this method does nothing for
+        that case (user_seek_pending stays False, so the branch below no-ops)."""
+        if self._sprint_mode != 'end_of_chapter' or self._sprint_eoc_anchor is None:
+            return
+        # Consume the flag on EVERY chapter transition this method sees, not only a
+        # forward crossing — see SleepTimerPanel._on_chapter_changed's identical
+        # comment for why (a seek landing <= anchor still sets user_seek_pending;
+        # left uncleared it would falsely tag the next, possibly natural, crossing).
+        seek_driven = self.player.user_seek_pending
+        self.player.user_seek_pending = False
+        if index <= self._sprint_eoc_anchor:
+            return
+        if seek_driven:
+            # "Sprint cancelled", not "Sprint failed" — a seek-driven forward
+            # crossing is an external interruption (same category as a book
+            # switch), not a grace-pool exhaustion. See cancel_for_book_switch's
+            # docstring.
+            self.cancel_for_book_switch()
+        # else: natural arrival — update_sprint_state's boundary check owns this
 
     def _on_cancel_message_timeout(self):
         self._cancel_message_active = False
