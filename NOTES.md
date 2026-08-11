@@ -1,3 +1,108 @@
+## 2026-08-11 — Listening Sprint: grace mode selector, backward-seek accounting unit-mismatch bug, book-switch cancellation, end-of-chapter mode
+
+Five commits on `listening-sprint`: `c55d005`, `1309662`, `2a65703`, `9f8c1de`, `350867c`. Full
+session narrative in SESSION.md ("2026-08-11 Session 1"); this entry is the technical root-cause
+record for the two bugs worth remembering the mechanism of.
+
+### Backward-seek compensation added a wall-clock/audio-position unit mismatch
+
+`SprintPanel.update_sprint_state` added backward-seek accounting in Pass 3: a 200ms tick-to-tick
+`_last_known_pos` diff detects a rewind and adds the rewound distance to `_sprint_duration_s`, so the
+sprint clock measures forward audio progress rather than wall time. This shipped with a live-verified
+VT-boundary check (a temporary `SPRINT-REWIND-TRACE` log line confirmed zero false backward readings
+across a real VT file-boundary crossing, ruling out the obvious "is this actually a chapter-boundary
+artifact" theory before it was ever suspected of being one).
+
+The user reported: "it doubles the time rewound... I seek back 5 seconds, it adds 10." First response
+pulled the raw `SPRINT-REWIND-TRACE` log and found each individual seek logged exactly once with
+`delta` matching the real position distance — concluded (WRONG) that this wasn't a bug, and that the
+observed "doubling" must be the skip-button's existing `skip = get_skip_duration() * speed` behavior
+at 2x speed (5s configured × 2x speed = 10s actual seek). This conclusion was explicitly retracted,
+not quietly revised, when the user pushed back with a sharper repro: "I am going back 5 seconds in
+clock time if it is 1x or 8x, but it adds 40 seconds at 8x. I still need to go 40 seconds to clean
+this, not 5 seconds. Book time doesn't matter. Otherwise 10 minute sprint would become 5 minute sprint
+at 2x."
+
+**Real mechanism**: `_sprint_duration_s`/`elapsed`/`remaining` are all WALL-CLOCK seconds
+(`current_time` is `time.time()`), but the rewind distance measured via `pos` (`player.time_pos`) is
+AUDIO-POSITION seconds. These are different units whenever `speed != 1.0`. Rewinding 40 seconds of
+*audio* at 8x speed only costs the user 5 seconds of their actual *wall-clock* time to re-listen to
+it — so the correct wall-clock penalty is `rewind_delta / speed`, not the raw audio delta. The fix
+divides by `player.speed or 1.0` before adding to `_sprint_duration_s`. Confirmed live afterward: at
+8x, a 5-second wall-clock backward seek now adds ~5 seconds, not 40.
+
+**Lesson**: the first-pass conclusion ("not a bug, it's just speed-scaled skip buttons") was
+plausible, matched the raw log data, and was still wrong — it explained the SYMPTOM's magnitude at
+2x by coincidence (skip-scaling and the real unit-mismatch bug both produce a speed-proportional
+inflation, so a single 2x data point couldn't distinguish them) without explaining why "book time
+doesn't matter" for a *duration budget* denominated in wall-clock time. The user's second report (a
+counter-example reasoned from first principles: "10 minute sprint would become 5 minute sprint at
+2x") is what actually falsified the first theory — not new data, a better argument from data already
+available. Worth remembering: a theory that fits the numbers isn't automatically the right theory if
+the person reporting the bug can still articulate why the fitted explanation doesn't make sense.
+
+### Backward compensation's remaining structural gap — gated behind a setting rather than fixed
+
+Separately (after the unit-mismatch fix), the user found a second, more fundamental problem with the
+same feature: seek forward 20 minutes, then back to the same spot, on a 10-minute sprint — it became
+a 30-minute sprint. Correct behavior is zero net change, since net audio progress across the whole
+excursion is zero. Root cause: a pure tick-to-tick `_last_known_pos` diff has no memory of the
+position before a forward jump — "came back 20 minutes" reads as a fresh 20-minute rewind relative to
+the now-elevated last-seen position, with no way to net it against the earlier free forward seek.
+This is not fixable by adjusting a threshold or constant; it needs the detector to track more than
+one prior sample (e.g. a high-water mark, or the position at each direction change). Deliberately
+NOT attempted this session — instead gated behind a new `sprint_backward_seek_compensation` config
+key (default Off, `config.py`), so the feature ships without shipping this known gap as default
+behavior. Fixing the detection algorithm itself is future work.
+
+### End-of-chapter sprint mode — two factual errors in the task brief caught before writing code
+
+The implementation task claimed `_sleep_eoc_anchor` exists on `Player` and that `SprintPanel` already
+had a `chapter_changed` connection from an earlier pass. Both were checked against the actual code
+before implementing (grep, then read) and both were wrong: `_sleep_eoc_anchor` is panel-local to
+`SleepTimerPanel` (`Player` has no EOC-anchor state of its own — each panel that wants end-of-chapter
+behavior tracks its own anchor independently), and `SprintPanel` had zero `chapter_changed`
+plumbing — the whole mechanism was built fresh, mirroring sleep's shape exactly rather than
+"extending" something that didn't exist.
+
+A load-bearing piece the task brief never mentioned at all: sleep's `update_timer_state` carries a
+`_was_seeking` True→False settle-detection latch that consumes a stale `player.user_seek_pending` flag
+when a seek lands back INSIDE the anchor chapter (no `chapter_changed` emit in that case, since the
+chapter index didn't move — so `_on_chapter_changed` never runs to clear the flag itself). Sleep
+needed this fixed live on 2026-08-10 after the flag was found surviving to falsely tag the next,
+entirely natural, chapter transition as seek-driven. Sprint's EOC mode got the identical latch
+(`_sprint_was_seeking`) proactively, specifically because omitting it would have shipped a bug class
+already known and already fixed once in the sibling panel — the brief's specification wasn't
+sufficient on its own to avoid regressing something sleep had already learned the hard way.
+
+Two decisions were confirmed with the user rather than silently resolved to whatever the task text
+literally said: the message shown when a seek carries playback past the anchor is "Sprint cancelled"
+(reusing the already-existing `cancel_for_book_switch()` method — both are the same category of event,
+an external interruption, not a grace-pool failure), not "Sprint failed" as the task brief's snippet
+would have produced via `_trigger_cancel()`; and the EOC boundary-fire check includes an `is_eof`
+fallback matching sleep's own `reached_end = pos >= anchor_end - 0.5 or is_eof`, which the task brief's
+snippet omitted — without it, an EOC sprint armed on a book's last chapter could fail to complete if
+position never quite reaches `anchor_end - 0.5` before genuine end-of-file.
+
+### Two small visual bugs, both from copying sleep's button imprecisely
+
+The "End of chapter" button was given `setObjectName("pattern_button")`, which pulled in the wrong
+QSS dispatcher rule — sleep's own `end_chap_btn` has NO object name at all, and is styled purely by
+the same per-index ramp coloring (`_apply_preset_ramp_colors`) the numbered duration-preset buttons
+use. This also left a dead `update_panel_styling()` block setting a `selected` Qt property that
+nothing in QSS was targeting (sleep's `end_chap_btn` has no distinct "armed" visual state beyond the
+ramp color, unlike the Fade-out row's buttons, which genuinely do use `selected`/`is_default`
+properties). Both removed once the object-name mismatch was found by direct comparison against
+`sleep_timer.py`'s source, not by guessing at what QSS rule might be wrong.
+
+Separately, the button rendered 1px short of flush with the duration grid's right edge above it — a
+`QGridLayout` 2-column span (`grid.addWidget(btn, 2, 2, 1, 2)`) with no explicit width, letting Qt's
+column-width negotiation round down by a pixel rather than claim the full `57 + 8 + 57 = 122px` span
+its two sibling columns define. Fixed via `setMinimumWidth(122)`, using the exact sum rather than a
+guessed value.
+
+---
+
 ## 2026-08-11 — Chapter title flicker on Prev/Next/chapter-list seeks: reproduced, root-caused to a PRE-EXISTING mpv artifact, confirmed unrelated to the sleep-fix/listening-sprint work, NOT fixed (investigation only — see TODO.md)
 
 Reported live: "Each Prev/Next or seek within the chapter list fluctuates the chapter title,"

@@ -544,27 +544,43 @@ the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why 
 - [ ] Restarting the SAME finished book (EOF → Restart) does NOT disarm an active sleep timer — only
       an actual switch to a different book does
 
-## Listening Sprint (added 2026-08-10/11)
+## Listening Sprint (added 2026-08-10/11, extended 2026-08-11)
 
 Sprint (sidebar, `R` key) is a structural sibling of the sleep timer — same 200ms-polled indicator
-zone, same shared `sleep_timer_label`. See NOTES.md 2026-08-10/11 for the mechanism (grace pool,
-`time.time()`-based clock, and the shared-label interference bug this session found and fixed —
-that bug's regression check is folded into the cases below rather than a separate section).
+zone, same shared `sleep_timer_label`. See NOTES.md 2026-08-10/11 for the original mechanism (grace
+pool, `time.time()`-based clock, shared-label interference bug) and NOTES.md 2026-08-11 for the
+backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mode.
 
 ### Basic run
-- [ ] Set a short sprint (e.g. 5 min) — indicator shows `-MM:SS | TT:TT`, remaining ticking down,
+- [x] Set a short sprint (e.g. 5 min) — indicator shows `-MM:SS | TT:TT`, remaining ticking down,
       total staying fixed
-- [ ] Sprint indicator text updates every ~200ms while playing, does NOT freeze or go blank at any
+- [x] Sprint indicator text updates every ~200ms while playing, does NOT freeze or go blank at any
       point during a normal run (regression check for the shared-label interference bug — sleep's
       own per-tick emit must not blank sprint's text)
-- [ ] Panel background is fully opaque/themed, same as Sleep's panel — NOT transparent or missing
+- [x] Panel background is fully opaque/themed, same as Sleep's panel — NOT transparent or missing
       (regression check for the literal-selector background bug)
-- [ ] Let a sprint complete naturally — "Sprint completed" shows for the full dismiss window (~2s,
+- [x] Let a sprint complete naturally — "Sprint completed" shows for the full dismiss window (~2s,
       matching Sleep's own message timing), then clears; playback CONTINUES uninterrupted (sprint
       completion never pauses, unlike sleep)
-- [ ] Cancel via the sidebar × or the panel's own cancel button — sprint disarms immediately, no
-      "Sprint failed" message (matches Sleep's manual-cancel behavior — only pool-exhaustion
-      cancels WITH a message)
+- [x] Cancel via the sidebar × or the panel's own cancel button — sprint disarms immediately, no
+      message shown (matches Sleep's manual-cancel behavior — only pool-exhaustion ("Sprint failed"),
+      book switch ("Sprint cancelled"), and a seek-driven EOC crossing ("Sprint cancelled") show one)
+
+### Grace mode selector (redesigned 2026-08-11 — was a flat None/3s/5s/15s/30s row)
+- [ ] Open the panel — Percentage mode selected by default (new-install default), 2% submenu row
+      visible and flush with the duration grid's right edge, correct preset highlighted
+- [ ] Switch None → Percentage or Fixed — submenu appears immediately at the correct position, no
+      flicker/flash of the wrong position first (regression check for the container-shown-before-
+      child-row-visible ordering bug)
+- [ ] Switch to Custom — input field + Set button visible, no preset row shown
+- [ ] Switch to None — submenu container hides entirely, no empty gap left behind
+- [ ] Each preset row (Percentage: 2/5/10/15/20/25%, Fixed: 5/10/15/30/45/60s) — 6 buttons, flush
+      with the duration grid above, no visible gap on the right edge
+- [ ] Custom grace input caps at 3 digits (999s max); Set button, Enter, Escape, and right-click-
+      clears all work
+- [ ] Close and relaunch the app — grace mode AND the selected value within that mode both persist,
+      AND the mode button shows as visibly selected immediately on panel open (not just after
+      clicking something — regression check for the missing startup `update_panel_styling()` call)
 
 ### Grace pool
 - [ ] Pause mid-sprint — indicator switches from the running countdown to a "Grace MM:SS" countdown
@@ -574,6 +590,50 @@ that bug's regression check is folded into the cases below rather than a separat
       not the near-instant dismissal this session found and fixed — see NOTES.md), then clears
 - [ ] Set grace to "None" — pausing at all cancels the sprint immediately (no grace window)
 - [ ] Forward seeking mid-sprint does NOT consume grace or pause the sprint (seeks are free)
+
+### Backward-seek compensation (added 2026-08-11, config-gated, default Off)
+- [ ] Toggle Off (default) — seeking backward during an active sprint does NOT change the displayed
+      remaining time at all
+- [ ] Toggle On — seeking backward visibly extends the remaining time by the rewound distance,
+      converted to WALL-CLOCK seconds (at e.g. 2x speed, a 5-second backward seek should add ~5
+      seconds to the timer, NOT 10 — regression check for the speed/wall-clock unit-mismatch bug;
+      test explicitly at a non-1x speed, the bug was invisible at 1x)
+- [ ] Toggle On, seek forward then seek back to the same spot — KNOWN GAP, not fixed: this currently
+      still inflates the sprint duration by the full backward distance with no credit for the earlier
+      free forward seek (a 10-min sprint, +20min forward, -20min back, becomes a ~30-min sprint).
+      This is why the setting defaults Off — do not treat this as a regression, it's the documented
+      reason the toggle exists. See NOTES.md 2026-08-11 and TODO.md.
+- [ ] Setting persists after relaunch
+
+### Book switch cancels an active sprint (added 2026-08-11)
+- [ ] Start a sprint, switch to a different book via the library — sprint disarms, "Sprint cancelled"
+      shows for the dismiss window, then clears; the new book does NOT inherit the sprint
+- [ ] Confirm this is DISTINCT from manual cancel: sidebar ×, panel cancel button, and both
+      sleep/sprint conflict-gate confirms must all still disarm SILENTLY, no message
+
+### End-of-chapter mode (added 2026-08-11)
+- [ ] Click "End of chapter" in the duration grid — sprint arms, indicator shows `00:00 | chapter`
+      and ticks UP (elapsed, not counting down like duration mode)
+- [ ] Let playback reach the anchor chapter's end naturally (no seeking) — "Sprint completed" shows,
+      playback continues uninterrupted (matches duration mode's own non-pausing completion)
+- [ ] Arm, then seek forward past the anchor chapter (chapter-list click, Next button, or slider) —
+      "Sprint cancelled" shows (NOT "Sprint failed" — this is a seek-driven interruption, not a grace
+      failure)
+- [ ] Arm, then seek backward — sprint stays armed, elapsed continues ticking from where it was (no
+      cancellation for backward navigation)
+- [ ] Arm, then pause until the grace pool exhausts — "Sprint failed" shows (grace still applies in
+      EOC mode)
+- [ ] Arm, navigate backward to an earlier chapter, then play forward through to the ORIGINAL anchor
+      chapter's end — sprint completes normally (the anchor is fixed at arm time; backward navigation
+      alone never cancels, only a seek that lands PAST the anchor does)
+- [ ] With backward-seek compensation toggled On, seek backward during an EOC sprint — the elapsed
+      display does NOT change from the compensation (EOC mode is exempt — it has no duration budget
+      to extend)
+- [ ] Arm an EOC sprint while the sleep timer is active — the sleep/sprint conflict confirm still
+      appears correctly
+- [ ] "End of chapter" button visually matches Sleep's own "End of chapter" button — same color/style
+      as the numbered presets (NOT the grace-mode-selector button style), flush with the duration
+      grid's right edge, no 1px gap
 
 ### Mute interaction (mirrors Sleep's own mute-priority section above)
 - [ ] Arm a sprint while muted — sprint text shows briefly (~2s) as confirmation, then reverts to
@@ -593,13 +653,13 @@ that bug's regression check is folded into the cases below rather than a separat
 - [ ] Arm the sleep timer, then try to arm a sprint — same, confirm overlay appears IN THE SPRINT
       PANEL this time; confirming cancels sleep and arms the sprint
 
-### Panel-open button flash (not live-verified as of 2026-08-11 — check this explicitly)
-- [ ] Arm a sprint (or sleep timer) from its own panel — the panel closes on arm; watch closely for
-      whether the "Cancel the sprint"/"Disable the sleep timer" button visibly flashes on screen
-      for a frame before the panel slides away (this was reported broken, a fix was shipped, but
-      NOT re-confirmed live before the session that shipped it ended)
-- [ ] Reopen the panel after arming — the Cancel/Disable button IS correctly visible now (confirms
-      the deferred-to-panel-open sync still works even though the flash fix couldn't be re-verified)
+### Panel-open button flash
+- [x] Arm a sprint (or sleep timer) from its own panel — the panel closes on arm; the "Cancel the
+      sprint"/"Disable the sleep timer" button does NOT visibly flash on screen for a frame before
+      the panel slides away (confirmed live 2026-08-11, across multiple rounds of this session's
+      testing — previously flagged as not yet re-verified)
+- [x] Reopen the panel after arming — the Cancel/Disable button IS correctly visible now (confirms
+      the deferred-to-panel-open sync)
 
 ## UI
 

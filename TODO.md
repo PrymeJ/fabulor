@@ -9,6 +9,17 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 
 ## Summary index
 
+### Listening Sprint backward-seek compensation doesn't net forward+backward excursions
+- [2026-08-11] The pure tick-to-tick `_last_known_pos` diff in `SprintPanel.update_sprint_state`
+  can't tell a genuine rewind from "seeked forward then came back" — seeking forward 20 minutes then
+  back to the same spot on a 10-minute sprint currently inflates it to ~30 minutes, since the diff
+  has no memory of the position before the forward jump. Needs the detector to track more than one
+  prior sample (e.g. a high-water mark, or the position at each direction change) rather than a
+  single previous-tick value. Deliberately shipped gated behind a config toggle
+  (`sprint_backward_seek_compensation`, default Off) rather than fixed — see NOTES.md 2026-08-11 for
+  the full mechanism and the earlier (already-fixed) wall-clock/audio-position unit-mismatch bug in
+  the same feature.
+
 ### Chapter title flicker on Prev/Next/chapter-list seeks (VT/CUE, non-VT walk)
 - [2026-08-11] **Reproduced, root-caused, NOT fixed — investigation only, see NOTES.md for full
   write-up + log excerpt.** Every chapter-boundary seek settles correctly, but the very next raw
