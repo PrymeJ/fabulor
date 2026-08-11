@@ -96,6 +96,10 @@ class SleepTimerPanel(QWidget):
 
         self.end_chap_btn = QPushButton("End of chapter")
         self.end_chap_btn.setFixedHeight(30)
+        # Grid column-width negotiation for a 2-column span left this 1px short
+        # of flush with the preset buttons above it (57+8+57=122) — same fix as
+        # SprintPanel's identical "End of chapter" button (2026-08-11/12).
+        self.end_chap_btn.setMinimumWidth(122)
         self.end_chap_btn.clicked.connect(lambda: self.set_sleep_timer(mode='end_of_chapter'))
         grid.addWidget(self.end_chap_btn, 3, 2, 1, 2)
         layout.addLayout(grid)
@@ -108,7 +112,8 @@ class SleepTimerPanel(QWidget):
         self.custom_sleep_input.setPlaceholderText("min")
         self.custom_sleep_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.custom_sleep_input.customContextMenuRequested.connect(lambda _: self.custom_sleep_input.clear())
-        self.custom_sleep_input.setFixedWidth(50)
+        self.custom_sleep_input.setFixedWidth(39)
+        self.custom_sleep_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
         self.custom_sleep_input.returnPressed.connect(self._on_custom_sleep_time_set)
         def _sleep_input_key(e):

@@ -175,7 +175,8 @@ class SprintPanel(QWidget):
         self.custom_sprint_input.setPlaceholderText("min")
         self.custom_sprint_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.custom_sprint_input.customContextMenuRequested.connect(lambda _: self.custom_sprint_input.clear())
-        self.custom_sprint_input.setFixedWidth(50)
+        self.custom_sprint_input.setFixedWidth(39)
+        self.custom_sprint_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.custom_sprint_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
         self.custom_sprint_input.returnPressed.connect(self._on_custom_sprint_time_set)
         def _sprint_input_key(e):
@@ -237,7 +238,7 @@ class SprintPanel(QWidget):
 
         self._grace_submenu = QWidget()
         submenu_layout = QVBoxLayout(self._grace_submenu)
-        submenu_layout.setContentsMargins(0, 4, 0, 0)
+        submenu_layout.setContentsMargins(0, 1, 0, 0)
         submenu_layout.setSpacing(0)
 
         # Percentage preset row — 6 buttons at 36px/7px spacing = 251px, measured
@@ -284,9 +285,16 @@ class SprintPanel(QWidget):
         self.custom_grace_input.setPlaceholderText("sec")
         self.custom_grace_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.custom_grace_input.customContextMenuRequested.connect(lambda _: self.custom_grace_input.clear())
-        self.custom_grace_input.setFixedWidth(50)
+        self.custom_grace_input.setFixedWidth(39)
+        self.custom_grace_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.custom_grace_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
-        self.custom_grace_input.returnPressed.connect(self._on_custom_grace_set)
+        # Live validation — no Set button. textChanged fires on every keystroke;
+        # editingFinished (focus-out and Enter) is belt-and-suspenders in case a
+        # future change makes textChanged not fire for some input path.
+        self.custom_grace_input.textChanged.connect(self._on_custom_grace_changed)
+        self.custom_grace_input.editingFinished.connect(self._on_custom_grace_changed)
+        if self._grace_custom_s > 0:
+            self.custom_grace_input.setText(str(self._grace_custom_s))
 
         def _grace_input_key(e):
             if e.key() == Qt.Key.Key_Escape:
@@ -296,11 +304,9 @@ class SprintPanel(QWidget):
                 DragSafeLineEdit.keyPressEvent(self.custom_grace_input, e)
         self.custom_grace_input.keyPressEvent = _grace_input_key
         custom_grace_layout.addWidget(self.custom_grace_input)
-
-        set_custom_grace_btn = QPushButton("Set")
-        set_custom_grace_btn.setFixedHeight(25)
-        set_custom_grace_btn.clicked.connect(self._on_custom_grace_set)
-        custom_grace_layout.addWidget(set_custom_grace_btn)
+        # Without a trailing stretch, the lone fixed-width child was centered
+        # in the row instead of staying left-anchored where the Set button
+        # used to visually pin it — reported live, 2026-08-12.
         custom_grace_layout.addStretch()
         submenu_layout.addWidget(self._grace_custom_row)
 
@@ -388,14 +394,25 @@ class SprintPanel(QWidget):
         self.config.set_sprint_grace_fixed_s(seconds)
         self.update_panel_styling()
 
-    def _on_custom_grace_set(self):
+    def _on_custom_grace_changed(self):
+        """Live validation on textChanged/editingFinished — no Set button.
+        Empty field: sets the in-memory value to 0 (no grace this session) but
+        deliberately does NOT overwrite config, so a last valid value restores
+        on next launch even if the user cleared the field without meaning to
+        discard it permanently. Invalid mid-type input (e.g. a bare "-", which
+        the validator regex still lets through as an intermediate state) is a
+        no-op — the last valid in-memory value is left untouched rather than
+        reset to 0, so a momentarily-invalid keystroke doesn't zero the grace
+        pool before the user finishes typing."""
+        text = self.custom_grace_input.text().strip()
+        if text == '':
+            self._grace_custom_s = 0
+            return
         try:
-            text = self.custom_grace_input.text()
-            if text:
-                seconds = int(text)
-                if seconds > 0:
-                    self._grace_custom_s = seconds
-                    self.config.set_sprint_grace_custom_s(seconds)
+            val = int(text)
+            if val > 0:
+                self._grace_custom_s = val
+                self.config.set_sprint_grace_custom_s(val)
         except ValueError:
             pass
 
