@@ -65,6 +65,14 @@ class SprintPanel(QWidget):
         self._grace_percentage = self.config.get_sprint_grace_percentage()
         self._grace_fixed_s = self.config.get_sprint_grace_fixed_s()
         self._grace_custom_s = self.config.get_sprint_grace_custom_s()
+        # Backward-seek compensation (Pass 3 gated behind a setting, default Off,
+        # 2026-08-11): the pure tick-to-tick _last_known_pos diff cannot tell a
+        # genuine rewind from "seeked forward then came back" — the latter reads
+        # as a large backward jump relative to the elevated post-forward-seek
+        # position, even though net audio progress is zero. Confirmed live: a
+        # 10-minute sprint, seek forward 20 minutes, seek back to the same spot,
+        # became a 30-minute sprint. Off by default until that's fixed properly.
+        self._backward_compensation = self.config.get_sprint_backward_seek_compensation()
         # Shared with app.py's _INDICATOR_DISMISS_MS — how long "Sprint failed"/
         # "Sprint completed" show in the indicator zone before clearing.
         self._dismiss_ms = dismiss_ms
@@ -136,6 +144,25 @@ class SprintPanel(QWidget):
         custom_time_layout.addWidget(set_custom_btn)
         custom_time_layout.addStretch()
         layout.addLayout(custom_time_layout)
+
+        # Backward seek compensation toggle — always exactly two rows (label +
+        # button row), no submenu/foldable content, so Grace period below it
+        # never shifts position when this is toggled.
+        backward_header = QLabel("Backward seek compensation")
+        backward_header.setObjectName("settings_header")
+        layout.addWidget(backward_header)
+
+        backward_layout = QHBoxLayout()
+        backward_layout.setSpacing(5)
+        self._backward_compensation_btns = {}
+        for enabled, text in [(False, "Off"), (True, "On")]:
+            btn = QPushButton(text)
+            btn.setObjectName("pattern_button")
+            btn.clicked.connect(lambda _, e=enabled: self._set_backward_compensation(e))
+            backward_layout.addWidget(btn)
+            self._backward_compensation_btns[enabled] = btn
+        backward_layout.addStretch()
+        layout.addLayout(backward_layout)
 
         # Grace period options — two-tier mode selector + submenu, matching the
         # instant show/hide (no animation) convention used for conditionally-visible
@@ -275,6 +302,11 @@ class SprintPanel(QWidget):
                     self.set_sprint(duration_minutes=minutes)
         except ValueError:
             pass
+
+    def _set_backward_compensation(self, enabled):
+        self._backward_compensation = enabled
+        self.config.set_sprint_backward_seek_compensation(enabled)
+        self.update_panel_styling()
 
     def _set_grace_mode(self, mode):
         self._grace_mode = mode
@@ -448,24 +480,33 @@ class SprintPanel(QWidget):
         # 8x-inflated penalty, not the reported "doubling" it first looked like.
         # Counted regardless of pause state (a backward seek while paused is
         # still a backward seek; the grace pool drains independently of this).
-        # _last_known_pos updates unconditionally on every tick where pos is
-        # not None, regardless of direction, so it always reflects the most
-        # recent sample for the NEXT tick's comparison.
-        if (self._last_known_pos is not None
-                and pos is not None
-                and pos < self._last_known_pos):
-            rewind_delta = self._last_known_pos - pos
-            speed = self.player.speed or 1.0
-            self._sprint_duration_s += rewind_delta / speed
-            # TEMPORARY (Pass 3 VT-boundary verification, 2026-08-11): confirms
-            # whether a natural VT file-boundary crossing can present as a false
-            # backward-seek reading here. Remove once verified — see NOTES.md.
-            logger.warning(
-                f"SPRINT-REWIND-TRACE: pos={pos:.3f} "
-                f"prev={self._last_known_pos:.3f} "
-                f"delta={rewind_delta:.3f} speed={speed:.2f} "
-                f"wall_clock_penalty={rewind_delta / speed:.3f} "
-                f"new_duration={self._sprint_duration_s:.1f}")
+        #
+        # Gated behind _backward_compensation (default Off, config-backed) —
+        # confirmed live 2026-08-11 that a pure tick-to-tick diff cannot tell a
+        # genuine rewind from "seeked forward then came back": a 10-minute
+        # sprint, forward-seek 20 minutes, then back to the same spot, became a
+        # 30-minute sprint even though net audio progress was zero. See
+        # __init__'s _backward_compensation comment.
+        if self._backward_compensation:
+            if (self._last_known_pos is not None
+                    and pos is not None
+                    and pos < self._last_known_pos):
+                rewind_delta = self._last_known_pos - pos
+                speed = self.player.speed or 1.0
+                self._sprint_duration_s += rewind_delta / speed
+                # TEMPORARY (Pass 3 VT-boundary verification, 2026-08-11): confirms
+                # whether a natural VT file-boundary crossing can present as a false
+                # backward-seek reading here. Remove once verified — see NOTES.md.
+                logger.warning(
+                    f"SPRINT-REWIND-TRACE: pos={pos:.3f} "
+                    f"prev={self._last_known_pos:.3f} "
+                    f"delta={rewind_delta:.3f} speed={speed:.2f} "
+                    f"wall_clock_penalty={rewind_delta / speed:.3f} "
+                    f"new_duration={self._sprint_duration_s:.1f}")
+        # _last_known_pos updates unconditionally on every tick where pos is not
+        # None, regardless of direction AND regardless of the gate above — so
+        # toggling compensation On mid-sprint compares against the immediately
+        # preceding tick, not a stale pre-toggle position.
         if pos is not None:
             self._last_known_pos = pos
 
@@ -581,6 +622,12 @@ class SprintPanel(QWidget):
         unconditionally (not just the currently-visible one) — cheap, and avoids a
         stale 'selected' property if the mode is switched away and back."""
         self._apply_preset_ramp_colors()
+
+        for enabled, btn in self._backward_compensation_btns.items():
+            is_active = (enabled == self._backward_compensation)
+            btn.setProperty("selected", "true" if is_active else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
         for mode, btn in self._grace_mode_btns.items():
             is_active = (mode == self._grace_mode)

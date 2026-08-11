@@ -224,6 +224,12 @@ class Config:
     def set_sprint_grace_custom_s(self, seconds):
         self.settings.setValue("sprint_grace_custom_s", seconds)
 
+    def get_sprint_backward_seek_compensation(self):
+        return self.settings.value("sprint_backward_seek_compensation", "false") == "true"
+
+    def set_sprint_backward_seek_compensation(self, enabled):
+        self.settings.setValue("sprint_backward_seek_compensation", str(enabled).lower())
+
     def get_theme_rotation_interval(self):
         return self._safe_int("theme_rotation_interval", 0) # 0 means Off
 
