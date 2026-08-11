@@ -31,6 +31,14 @@ class SprintPanel(QWidget):
     sprint_stopped = Signal()
     sprint_expired = Signal(int)  # fired only on natural completion, not cancel — carries elapsed_s
     display_text_updated = Signal(str)
+    # Emitted only on a True<->False TRANSITION of the grace_remaining <= 3s
+    # threshold while paused — not every tick. app.py owns the actual pulsation
+    # animation (it targets sleep_timer_label, a widget SprintPanel doesn't have
+    # a handle to), so this is a pure state-transition signal, not a display
+    # value — deliberately not derived by app.py parsing the "Grace MM:SS" text
+    # (SprintPanel already has the precise float; re-deriving it via string
+    # parsing would be fragile and duplicate work).
+    grace_warning_changed = Signal(bool)
 
     def __init__(self, player, config, theme_manager, parent=None, dismiss_ms=2000):
         super().__init__(parent)
@@ -70,6 +78,11 @@ class SprintPanel(QWidget):
         # mode had until 2026-08-10 (a stale flag surviving to falsely tag the
         # next, entirely natural, chapter transition as seek-driven).
         self._sprint_was_seeking = False
+        # True while grace_remaining <= 3s (paused, grace draining toward
+        # exhaustion) — tracked so grace_warning_changed only emits on a real
+        # transition, not every 200ms tick. Reset on unpause and on every
+        # disarm path via disable_sprint() (see its own comment).
+        self._grace_warning_active = False
         # pos value from the previous update_sprint_state tick, for backward-seek
         # detection (Pass 3). Reset to None on arm and disarm so a stale pre-arm/
         # post-disarm position is never diffed against the next sprint's first tick.
@@ -554,6 +567,14 @@ class SprintPanel(QWidget):
         self._cancel_timer.stop()
         self._cancel_message_active = False
         self.disable_sprint_btn.hide()
+        # Single safety-catch reset for the grace-warning pulsation, covering
+        # EVERY disarm path in one place (_trigger_cancel, _trigger_complete,
+        # cancel_for_book_switch, and every bare manual disable_sprint() call) —
+        # all of them already call disable_sprint(), so a per-call-site reset
+        # would just duplicate this same check at each one.
+        if self._grace_warning_active:
+            self._grace_warning_active = False
+            self.grace_warning_changed.emit(False)
         if was_active:
             self.sprint_stopped.emit()
         self.display_text_updated.emit("")
@@ -637,6 +658,12 @@ class SprintPanel(QWidget):
             if self._sprint_paused_at is not None:
                 self._grace_used_s += current_time - self._sprint_paused_at
                 self._sprint_paused_at = None
+                # Unpausing before grace exhausted must stop the warning
+                # pulsation immediately — it only ever applies to the paused
+                # grace-drain state.
+                if self._grace_warning_active:
+                    self._grace_warning_active = False
+                    self.grace_warning_changed.emit(False)
 
         if not is_paused:
             elapsed = (current_time - self._sprint_start_time) - self._grace_used_s
@@ -675,6 +702,13 @@ class SprintPanel(QWidget):
             grace_remaining = max(0.0,
                 self._grace_pool_s - self._grace_used_s
                 - (current_time - self._sprint_paused_at))
+            # Emit only on a True<->False transition, not every 200ms tick —
+            # app.py's animation start()/stop() calls are idempotent-adjacent
+            # but there's no reason to invoke them every tick regardless.
+            is_warning = grace_remaining <= self._grace_warn_threshold()
+            if is_warning != self._grace_warning_active:
+                self._grace_warning_active = is_warning
+                self.grace_warning_changed.emit(is_warning)
             self.display_text_updated.emit(self._format_grace_display(grace_remaining))
 
     def _format_display(self, elapsed_s, remaining_s):
@@ -692,6 +726,19 @@ class SprintPanel(QWidget):
         grace_remaining_s = max(0, int(grace_remaining_s))
         g_m, g_s = divmod(grace_remaining_s, 60)
         return f"Grace {g_m:02d}:{g_s:02d}"
+
+    def _grace_warn_threshold(self) -> float:
+        """Warning-pulsation threshold, binned by grace pool size — a fixed 3s
+        warning window would be nearly the whole pool for a short grace period
+        and barely noticeable for a long one, so the window scales with the
+        pool instead."""
+        pool = self._grace_pool_s or 0
+        if pool >= 120:
+            return 15.0
+        elif pool >= 15:
+            return 10.0
+        else:
+            return 5.0
 
     def _trigger_cancel(self):
         # disable_sprint() FIRST, THEN set the guard — disable_sprint() unconditionally

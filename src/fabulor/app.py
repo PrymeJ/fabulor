@@ -813,6 +813,27 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sprint_pulse_anim.setLoopCount(-1)
         self.sprint_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
 
+        # Grace-exhaustion warning pulsation on the indicator label itself
+        # (sleep_timer_label / vol_stack page 0) — distinct animation from
+        # sprint_pulse_anim above (that one pulses the sidebar trigger button
+        # while ANY sprint is active; this one pulses the shared indicator text
+        # only in the last 3s of grace while paused). sleep_timer_label had no
+        # QGraphicsOpacityEffect before this — confirmed no conflict with
+        # vol_opacity/vol_fade_anim, which target volume_slider, a different
+        # widget entirely. Faster/shallower than the sidebar pulse (1500ms,
+        # dips to 0.3 vs 4000ms/0.4) — deliberately more urgent, matching an
+        # imminent-cancellation warning rather than a general "active" pulse.
+        self.grace_warn_opacity_effect = QGraphicsOpacityEffect(self.sleep_timer_label)
+        self.grace_warn_opacity_effect.setOpacity(1.0)
+        self.sleep_timer_label.setGraphicsEffect(self.grace_warn_opacity_effect)
+        self.grace_warn_anim = QPropertyAnimation(self.grace_warn_opacity_effect, b"opacity")
+        self.grace_warn_anim.setDuration(1500)
+        self.grace_warn_anim.setKeyValueAt(0.0, 1.0)
+        self.grace_warn_anim.setKeyValueAt(0.5, 0.3)
+        self.grace_warn_anim.setKeyValueAt(1.0, 1.0)
+        self.grace_warn_anim.setLoopCount(-1)
+        self.grace_warn_anim.setEasingCurve(QEasingCurve.InOutSine)
+
         # Speed/grid visual initialization moved to after SettingsController binding
 
         # Initialize Blur Effect for background depth.
@@ -867,6 +888,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sprint_panel.sprint_stopped.connect(self._on_sprint_stopped)
         self.sprint_panel.sprint_expired.connect(self._on_sprint_expired)
         self.sprint_panel.display_text_updated.connect(self._on_sprint_display_text_updated)
+        self.sprint_panel.grace_warning_changed.connect(self._on_sprint_grace_warning)
         self.sprint_panel.sprint_started.connect(self.panel_manager._close_sprint_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
         self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
@@ -1119,6 +1141,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sprint_cancel_btn.hide()
         self.sprint_pulse_anim.stop()
         self.sprint_opacity_effect.setOpacity(1.0)
+
+    def _on_sprint_grace_warning(self, active: bool):
+        """SprintPanel.grace_warning_changed only fires on a True<->False
+        transition (grace_remaining crossing the 3s threshold while paused),
+        so this doesn't need its own idempotency guard."""
+        if active:
+            self.grace_warn_anim.start()
+        else:
+            self.grace_warn_anim.stop()
+            self.grace_warn_opacity_effect.setOpacity(1.0)
 
     def _on_sprint_expired(self, duration_s):
         """Called only on natural sprint completion. Unlike sleep, a sprint completing
