@@ -1828,6 +1828,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._dismiss_eof_prompt()
         self._save_current_progress()
         self._paused_time = None
+        # A sprint targets THIS book's listening session — switching books mid-sprint
+        # must not silently carry the countdown/grace pool over to the new book.
+        # Distinct from a deliberate manual cancel (sidebar X / panel button), which
+        # stays silent — this shows "Sprint cancelled" (2026-08-11).
+        self.sprint_panel.cancel_for_book_switch()
         # Enter the switch lifecycle: capture the current slider values as flow-animation
         # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
         self._switch.begin(

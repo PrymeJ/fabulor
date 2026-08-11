@@ -529,6 +529,25 @@ class SprintPanel(QWidget):
         self.display_text_updated.emit("Sprint completed")
         self._cancel_timer.start(self._dismiss_ms)
 
+    def cancel_for_book_switch(self):
+        """Disarms the sprint with a "Sprint cancelled" message, for a book
+        switch mid-sprint (2026-08-11: previously the sprint silently carried
+        over to the newly selected book instead of disarming at all). Distinct
+        from both existing disarm paths: a book switch is neither a grace-pool
+        failure ("Sprint failed", _trigger_cancel) nor a deliberate manual
+        cancel (bare disable_sprint(), silent — the sidebar X / panel cancel
+        button / conflict-gate paths must all stay silent, unchanged by this
+        method). No-ops if no sprint is active, so callers don't need to check
+        is_active first."""
+        if not self._sprint_active:
+            return
+        # Same ordering as _trigger_cancel/_trigger_complete — disable_sprint()
+        # FIRST, then set the guard, or its own reset clobbers it right back.
+        self.disable_sprint(was_cancelled=True)
+        self._cancel_message_active = True
+        self.display_text_updated.emit("Sprint cancelled")
+        self._cancel_timer.start(self._dismiss_ms)
+
     def _on_cancel_message_timeout(self):
         self._cancel_message_active = False
         self.display_text_updated.emit("")
