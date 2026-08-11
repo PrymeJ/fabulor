@@ -1,3 +1,118 @@
+## 2026-08-11 — Chapter title flicker on Prev/Next/chapter-list seeks: reproduced, root-caused to a PRE-EXISTING mpv artifact, confirmed unrelated to the sleep-fix/listening-sprint work, NOT fixed (investigation only — see TODO.md)
+
+Reported live: "Each Prev/Next or seek within the chapter list fluctuates the chapter title,"
+persisting across book switches and, at the time of the report, across an app restart. The user
+flagged this as suspicious given the recent end-of-chapter-sleep rebuild (`935861b`) and asked for
+investigation only, no fix, plus a check of whether it's contained to `listening-sprint` or also on
+`main`. **After this investigation, a later app restart made the flicker stop reproducing** — see
+"Open question" below; this write-up and the log excerpt are what the next session needs to pick
+the thread back up.
+
+### Reproduction and mechanism (confirmed via log trace, `fabulor.log.1`, DEBUG level)
+
+Log window analyzed: 2026-08-11 15:14:00–15:16:14 (see excerpt below for the clearest single
+instance, 15:15:23,555–15:15:24,032). The user was rapidly exercising Prev/Next and chapter-list
+clicks across two VT books ("Death and the Dervish", then "Now I Surrender" after a book switch).
+
+Every chapter seek lands exactly on target — e.g. `activate_chapter_index requested_idx=3` sets
+`target=41.91`; the settle sample (`raw_value=41.91`) has `distance=0.0`, clears `is_seeking`, and
+`_on_time_pos_change`'s non-VT chapter walk correctly resolves `chapter=3`
+(`tolerance_affected_outcome=True` — floating-point exact-boundary case). The chapter list correctly
+does `setCurrentRow(3)`.
+
+**Then the very next raw `time_pos` sample from mpv reads BACKWARD** — `41.363562545195265`,
+below the 41.91 chapter-3 boundary. `_on_time_pos_change`'s non-VT walk (player.py:317-330) reads
+mpv's **raw** `value`, not the settled `_logical_pos` — so this stale sample resolves to
+`chapter=2`, and `_update_chapter_label_from_index` does `setCurrentRow(2)`. The samples after that
+(41.45, 41.64, 41.73...) climb back past the boundary and it flips back to `chapter=3`. That
+back-then-forward flip within ~100ms is the visible "fluctuation" the user is seeing — it happens on
+essentially every chapter-boundary seek in the trace, both Prev and Next, paused and playing.
+
+```
+2026-08-11 15:15:23,875 DEBUG fabulor.ui.chapter_list — [_activate_item ENTRY] requested_idx=3 force_play=False
+2026-08-11 15:15:23,875 DEBUG fabulor.player — activate_chapter_index: entry requested_idx=3 current_idx=5
+2026-08-11 15:15:23,876 DEBUG fabulor.player — seek_async: entry target=41.91 current=26327.049... direction=back paused=False
+2026-08-11 15:15:23,876 DEBUG fabulor.player — seek_async: non-VT branch mpv_command_pos=41.91 undershoot_comp_applied=False final_seek_target=41.91
+2026-08-11 15:15:23,877 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.91
+2026-08-11 15:15:23,877 DEBUG fabulor.player — [VT-SEEK-TRACE] site=settle_eval raw_value=41.91 _seek_target=41.91 distance=0.0 will_settle=True
+2026-08-11 15:15:23,877 DEBUG fabulor.player — [VT-SEEK-TRACE] site=settle_branch_CLEARED_is_seeking _is_seeking=False _seek_target=None _logical_pos=41.91 _cached_time_pos=41.91
+2026-08-11 15:15:23,878 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.91 tolerance=0.5 -> chapter=3 (prev=-1) tolerance_affected_outcome=True
+2026-08-11 15:15:23,881 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(3) isVisible=True scroll_before=72
+2026-08-11 15:15:23,926 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.363562545195265        <-- STALE BACKWARD SAMPLE
+2026-08-11 15:15:23,927 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.363562545195265 tolerance=0.5 -> chapter=2 (prev=3) tolerance_affected_outcome=False
+2026-08-11 15:15:23,927 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(2) isVisible=True scroll_before=72   <-- FLICKER: label shows chapter 2
+2026-08-11 15:15:23,977 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.45315218880282
+2026-08-11 15:15:23,977 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.45315218880282 tolerance=0.5 -> chapter=2 (prev=2) tolerance_affected_outcome=False
+2026-08-11 15:15:24,027 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.64436752182297
+2026-08-11 15:15:24,028 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.64436752182297 tolerance=0.5 -> chapter=3 (prev=2) tolerance_affected_outcome=True
+2026-08-11 15:15:24,031 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(3) isVisible=True scroll_before=48   <-- flips back to chapter 3
+```
+
+Full window (5351 lines, 15:14:00–15:16:14, includes ~15 more Prev/Next instances across both
+books) was extracted to `/tmp/.../scratchpad/window.log` during the investigation — not committed
+anywhere permanent; re-extract from `fabulor.log`/`fabulor.log.1`/`fabulor.log.2` (rotated,
+`~/.local/state/fabulor/log/`) if needed again. Log level is DEBUG by default in this build
+(`FABULOR_LOG_LEVEL` env var controls it — see `logger_setup.py`).
+
+### This is a KNOWN, PREVIOUSLY-FIXED-THEN-REVERTED bug — not new
+
+`git log --oneline -- src/fabulor/player.py` surfaces:
+
+- **`b6a4023`** (2026-06-15) — "fix: drop mpv's stale backward time_pos sample after a seek
+  (chapter-UI bounce/stick)". Commit message describes the *exact* mechanism found above, almost
+  verbatim: "Every chapter seek (Next/Prev/list-click) lands exactly on target (dist=0.0) and
+  is_seeking clears correctly — then mpv emits ONE stale time_pos sample ~0.56-0.87s BACKWARD (into
+  the previous chapter) before resuming forward." Documented two consequences: paused → chapter
+  UI sticks on the previous chapter (no forward sample ever arrives to overwrite it); playing →
+  transient slider bounce. Fix shape: reject a backward *global*-position jump in
+  `_on_time_pos_change` while `not is_seeking`, via a new `_last_global_pos` + a
+  `_STALE_BACKWARD_TOLERANCE = 0.3` threshold (comparing in global/VT-aware space so a legitimate
+  VT file-boundary regression in local `value` isn't misread as the artifact). Claimed verification:
+  "32 drops, all the genuine ~0.31-0.34s post-seek stale sample, all pause=True, ZERO during VT file
+  switches, zero false positives during forward playback" (instrumentation since removed).
+- **`4ae0783`** (same day, minutes later) — "Revert ... (chapter-UI bounce/stick)". Reverts
+  `b6a4023` wholesale. **The revert commit records no rationale of its own** — CLAUDE.md's "VT+Undo
+  is the known-fragile zone" section is the only place the reasoning survives: this attempt "broke
+  VT backward-seek, the play/pause icon, and chapter[1]→[0] click. No mechanism-level cause for any
+  of the three was ever diagnosed — the record stops at 'regressed X/Y/Z.'"
+- The `_STALE_BACKWARD_TOLERANCE` constant, `_last_global_pos` field, and the reject-branch itself
+  are **fully absent from the current codebase** (confirmed via `grep` — zero hits on either name).
+  Nothing today implements even a reverted attempt at this.
+
+### Confirmed NOT caused by sleep-fix or listening-sprint
+
+`git diff main -- src/fabulor/player.py` shows **zero difference** in `_on_time_pos_change`'s
+non-VT chapter walk (player.py:317-330) or anywhere else in the seek/settle machinery between
+`main` and `listening-sprint`. Neither the end-of-chapter sleep rebuild (`935861b`) nor the sprint
+work touched this code path at all. The user's suspicion that the recent sleep-timer work made this
+"more visible" is understandable given the timing, but the diff rules it out as the cause — this is
+inherited, pre-existing behavior that `main` has too.
+
+### Open question: why did it stop reproducing after a restart?
+
+The user reported the flicker persisted across a book switch AND a prior app restart (which is why
+they suspected a stuck flag rather than a live mpv quirk) — but a LATER restart, done right after
+this investigation, made it stop reproducing entirely, with no code changes in between. This is
+inconsistent with a purely mpv-timing artifact (which should reproduce independent of app restarts)
+and also inconsistent with a stuck application-level flag (which a restart should always clear).
+Neither explanation alone fits both observations. Not chased further per explicit instruction to
+stop at investigation — **next session should re-establish reproducibility first** (it may be
+intermittent/timing-sensitive rather than gone) before attempting any fix. If it truly no longer
+reproduces on demand, that intermittency is itself a fact worth understanding before trusting a fix
+is unnecessary — CLAUDE.md's "never substitute a plausible explanation for a checked one" applies
+here as much as anywhere: don't assume it "must have been something transient."
+
+### Why no fix was attempted this session
+
+Explicit instruction: investigation only. Also, per CLAUDE.md's seek/position-tracking standing
+rule ("Seek/position tracking — VT+Undo is the known-fragile zone"), this exact code path has
+broken four independent times from four different fix attempts, and a green instrumentation run
+(exactly what `b6a4023` had — 32/32 clean) has already been proven insufficient evidence of safety
+on this specific bug class once. Mid-way through an unrelated feature branch is also the wrong time
+to touch it. See TODO.md for the follow-up entry with a concrete next-step ledger.
+
+---
+
 ## 2026-08-10/11 — Listening Sprint: new sibling feature to the sleep timer, built on `listening-sprint`, plus a live bug-fix round exposing a shared-widget interference bug in the pre-existing sleep timer code
 
 Full arc: investigation-only mapping pass (no code), a three-checkpoint implementation plan
