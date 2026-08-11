@@ -110,6 +110,7 @@ class SleepTimerPanel(QWidget):
         self.custom_sleep_input.customContextMenuRequested.connect(lambda _: self.custom_sleep_input.clear())
         self.custom_sleep_input.setFixedWidth(50)
         self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
+        self.custom_sleep_input.returnPressed.connect(self._on_custom_sleep_time_set)
         def _sleep_input_key(e):
             if e.key() == Qt.Key.Key_Escape:
                 self.custom_sleep_input.clear()

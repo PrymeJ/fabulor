@@ -563,14 +563,14 @@ that bug's regression check is folded into the cases below rather than a separat
       matching Sleep's own message timing), then clears; playback CONTINUES uninterrupted (sprint
       completion never pauses, unlike sleep)
 - [ ] Cancel via the sidebar × or the panel's own cancel button — sprint disarms immediately, no
-      "Sprint cancelled" message (matches Sleep's manual-cancel behavior — only pool-exhaustion
+      "Sprint failed" message (matches Sleep's manual-cancel behavior — only pool-exhaustion
       cancels WITH a message)
 
 ### Grace pool
 - [ ] Pause mid-sprint — indicator switches from the running countdown to a "Grace MM:SS" countdown
 - [ ] Unpause before grace exhausts — sprint countdown resumes correctly, consumed grace time is
       deducted from future grace windows (repeated brief pauses shouldn't refill the pool)
-- [ ] Let grace exhaust while paused — "Sprint cancelled" shows for the full dismiss window (~2s,
+- [ ] Let grace exhaust while paused — "Sprint failed" shows for the full dismiss window (~2s,
       not the near-instant dismissal this session found and fixed — see NOTES.md), then clears
 - [ ] Set grace to "None" — pausing at all cancels the sprint immediately (no grace window)
 - [ ] Forward seeking mid-sprint does NOT consume grace or pause the sprint (seeks are free)

@@ -1,3 +1,4 @@
+import math
 import time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
 from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer
@@ -44,14 +45,20 @@ class SprintPanel(QWidget):
         self._grace_pool_s = None        # total grace seconds for the active sprint (int)
         self._grace_used_s = 0.0         # cumulative pause seconds consumed
         self._sprint_active = False
-        # True while "Sprint cancelled"/"Sprint completed" is showing — update_sprint_state
+        # True while "Sprint failed"/"Sprint completed" is showing — update_sprint_state
         # must not touch display_text_updated during this window, or its own per-tick emit
         # would stomp the message back to "" almost immediately. Same shape as sleep's
         # _eoc_cancel_message_active (see ui/sleep_timer.py).
         self._cancel_message_active = False
-        # UI-selected grace preset (seconds), copied into _grace_pool_s at arm time.
-        self._grace_pool_s_setting = 30
-        # Shared with app.py's _INDICATOR_DISMISS_MS — how long "Sprint cancelled"/
+        # Grace mode selector + per-mode settings, config-backed (see config.py's
+        # sprint_grace_* keys). _grace_pool_s is computed FROM these at arm time
+        # (_do_arm_sprint), not stored directly — mirrors the mode/value split so
+        # switching modes never loses the other modes' last-entered values.
+        self._grace_mode = self.config.get_sprint_grace_mode()
+        self._grace_percentage = self.config.get_sprint_grace_percentage()
+        self._grace_fixed_s = self.config.get_sprint_grace_fixed_s()
+        self._grace_custom_s = self.config.get_sprint_grace_custom_s()
+        # Shared with app.py's _INDICATOR_DISMISS_MS — how long "Sprint failed"/
         # "Sprint completed" show in the indicator zone before clearing.
         self._dismiss_ms = dismiss_ms
         self._cancel_timer = QTimer(self)
@@ -106,6 +113,7 @@ class SprintPanel(QWidget):
         self.custom_sprint_input.customContextMenuRequested.connect(lambda _: self.custom_sprint_input.clear())
         self.custom_sprint_input.setFixedWidth(50)
         self.custom_sprint_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
+        self.custom_sprint_input.returnPressed.connect(self._on_custom_sprint_time_set)
         def _sprint_input_key(e):
             if e.key() == Qt.Key.Key_Escape:
                 self.custom_sprint_input.clear()
@@ -122,24 +130,99 @@ class SprintPanel(QWidget):
         custom_time_layout.addStretch()
         layout.addLayout(custom_time_layout)
 
-        # Grace period options
+        # Grace period options — two-tier mode selector + submenu, matching the
+        # instant show/hide (no animation) convention used for conditionally-visible
+        # settings sub-rows elsewhere in this app.
         grace_header = QLabel("Grace period")
         grace_header.setObjectName("settings_header")
         layout.addWidget(grace_header)
 
-        grace_layout = QHBoxLayout()
-        grace_layout.setSpacing(5)
-        self._grace_btns = {}
-        grace_options = [("None", 0), ("3s", 3), ("5s", 5), ("15s", 15), ("30s", 30)]
-        for text, seconds in grace_options:
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(5)
+        self._grace_mode_btns = {}
+        for mode, text in [("percentage", "Percentage"), ("fixed", "Fixed"),
+                            ("custom", "Custom"), ("none", "None")]:
             btn = QPushButton(text)
             btn.setObjectName("pattern_button")
-            btn.setFixedSize(45, 25)
-            btn.clicked.connect(lambda _, s=seconds: self._set_grace_pool_setting(s))
-            grace_layout.addWidget(btn)
-            self._grace_btns[seconds] = btn
+            # Natural width/height — no setFixedSize/setFixedHeight. Unlike the
+            # preset buttons (2%/5%/... and 5s/10s/...), these size to their text.
+            btn.clicked.connect(lambda _, m=mode: self._set_grace_mode(m))
+            mode_layout.addWidget(btn)
+            self._grace_mode_btns[mode] = btn
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
 
-        layout.addLayout(grace_layout)
+        self._grace_submenu = QWidget()
+        submenu_layout = QVBoxLayout(self._grace_submenu)
+        submenu_layout.setContentsMargins(0, 4, 0, 0)
+        submenu_layout.setSpacing(0)
+
+        # Percentage preset row — 6 buttons at 36px/7px spacing = 251px, measured
+        # live against the row's actual available width (45px/8px, the grid's own
+        # sizing, was too wide for 6 buttons and overflowed the panel).
+        self._grace_pct_row = QWidget()
+        pct_layout = QHBoxLayout(self._grace_pct_row)
+        pct_layout.setContentsMargins(0, 0, 0, 0)
+        pct_layout.setSpacing(3)
+        self._grace_pct_btns = {}
+        for pct in (2, 5, 10, 15, 20, 25):
+            btn = QPushButton(f"{pct}%")
+            btn.setObjectName("pattern_button")
+            btn.setFixedSize(39, 25)
+            btn.clicked.connect(lambda _, p=pct: self._set_grace_percentage(p))
+            pct_layout.addWidget(btn)
+            self._grace_pct_btns[pct] = btn
+        submenu_layout.addWidget(self._grace_pct_row)
+
+        # Fixed preset row — same 36px/7px sizing as the percentage row above.
+        self._grace_fixed_row = QWidget()
+        fixed_layout = QHBoxLayout(self._grace_fixed_row)
+        fixed_layout.setContentsMargins(0, 0, 0, 0)
+        fixed_layout.setSpacing(3)
+        self._grace_fixed_btns = {}
+        for seconds in (5, 10, 15, 30, 45, 60):
+            btn = QPushButton(f"{seconds}s")
+            btn.setObjectName("pattern_button")
+            btn.setFixedSize(39, 25)
+            btn.clicked.connect(lambda _, s=seconds: self._set_grace_fixed(s))
+            fixed_layout.addWidget(btn)
+            self._grace_fixed_btns[seconds] = btn
+        submenu_layout.addWidget(self._grace_fixed_row)
+
+        # Custom input row — same Escape-clears/right-click-clears/Set-button shape
+        # as the custom sprint-duration input above; also commits on Enter via
+        # returnPressed (kept in addition to the Set button, per explicit
+        # instruction — the sprint-duration input and SleepTimerPanel's
+        # custom_sleep_input gained the same returnPressed wiring in this pass).
+        self._grace_custom_row = QWidget()
+        custom_grace_layout = QHBoxLayout(self._grace_custom_row)
+        custom_grace_layout.setContentsMargins(0, 0, 0, 0)
+        self.custom_grace_input = DragSafeLineEdit()
+        self.custom_grace_input.setPlaceholderText("sec")
+        self.custom_grace_input.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.custom_grace_input.customContextMenuRequested.connect(lambda _: self.custom_grace_input.clear())
+        self.custom_grace_input.setFixedWidth(50)
+        self.custom_grace_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
+        self.custom_grace_input.returnPressed.connect(self._on_custom_grace_set)
+
+        def _grace_input_key(e):
+            if e.key() == Qt.Key.Key_Escape:
+                self.custom_grace_input.clear()
+                self.custom_grace_input.clearFocus()
+            else:
+                DragSafeLineEdit.keyPressEvent(self.custom_grace_input, e)
+        self.custom_grace_input.keyPressEvent = _grace_input_key
+        custom_grace_layout.addWidget(self.custom_grace_input)
+
+        set_custom_grace_btn = QPushButton("Set")
+        set_custom_grace_btn.setFixedHeight(25)
+        set_custom_grace_btn.clicked.connect(self._on_custom_grace_set)
+        custom_grace_layout.addWidget(set_custom_grace_btn)
+        custom_grace_layout.addStretch()
+        submenu_layout.addWidget(self._grace_custom_row)
+
+        layout.addWidget(self._grace_submenu)
+        self._sync_grace_submenu_visibility()
 
         # Disable button
         layout.addSpacing(20)
@@ -165,6 +248,17 @@ class SprintPanel(QWidget):
 
         layout.addStretch()
 
+        # Sync the grace mode/preset buttons' selected state to the config values
+        # just loaded in __init__. Without this, the persisted mode (e.g. "fixed")
+        # is correctly reflected in which submenu row is visible (that's driven by
+        # _sync_grace_submenu_visibility() above, called unconditionally) but no
+        # mode button shows as selected until the user clicks one — the two calls
+        # that normally do this (update_sprint_panel_visuals' theme-apply pass)
+        # only run _apply_preset_ramp_colors(), not the full selected-property
+        # sync. Reported live: "submenu selections persist, but... the main
+        # selection is gone" on every restart (2026-08-11).
+        self.update_panel_styling()
+
     def _on_custom_sprint_time_set(self):
         try:
             text = self.custom_sprint_input.text()
@@ -175,9 +269,47 @@ class SprintPanel(QWidget):
         except ValueError:
             pass
 
-    def _set_grace_pool_setting(self, seconds):
-        self._grace_pool_s_setting = seconds
+    def _set_grace_mode(self, mode):
+        self._grace_mode = mode
+        self.config.set_sprint_grace_mode(mode)
+        self._sync_grace_submenu_visibility()
         self.update_panel_styling()
+
+    def _sync_grace_submenu_visibility(self):
+        """Instant show/hide, no animation. Child-row visibility MUST be settled
+        BEFORE the container is shown — showing the container first let it briefly
+        paint at the previous mode's size/position before the correct row's
+        setVisible(True) landed, causing a visible flicker on None -> Percentage/
+        Fixed. So: set all three child rows first, then show/hide the container
+        last."""
+        self._grace_pct_row.setVisible(self._grace_mode == "percentage")
+        self._grace_fixed_row.setVisible(self._grace_mode == "fixed")
+        self._grace_custom_row.setVisible(self._grace_mode == "custom")
+        if self._grace_mode == "none":
+            self._grace_submenu.hide()
+        else:
+            self._grace_submenu.show()
+
+    def _set_grace_percentage(self, pct):
+        self._grace_percentage = pct
+        self.config.set_sprint_grace_percentage(pct)
+        self.update_panel_styling()
+
+    def _set_grace_fixed(self, seconds):
+        self._grace_fixed_s = seconds
+        self.config.set_sprint_grace_fixed_s(seconds)
+        self.update_panel_styling()
+
+    def _on_custom_grace_set(self):
+        try:
+            text = self.custom_grace_input.text()
+            if text:
+                seconds = int(text)
+                if seconds > 0:
+                    self._grace_custom_s = seconds
+                    self.config.set_sprint_grace_custom_s(seconds)
+        except ValueError:
+            pass
 
     @property
     def is_active(self):
@@ -198,7 +330,7 @@ class SprintPanel(QWidget):
         silently dropped on timeout (matching every confirm pattern in this
         codebase — Delete listening history, Reset all stats). Uses a fixed 7s
         window, the same literal every other confirm-overlay uses — NOT
-        _dismiss_ms, which is the much shorter "Sprint cancelled" MESSAGE
+        _dismiss_ms, which is the much shorter "Sprint failed" MESSAGE
         display window, a different concept entirely."""
         self._conflict_on_confirm = on_confirm
         self._conflict_confirm_label.setText(message)
@@ -228,7 +360,14 @@ class SprintPanel(QWidget):
 
     def _do_arm_sprint(self, duration_minutes):
         self._sprint_duration_s = duration_minutes * 60
-        self._grace_pool_s = self._grace_pool_s_setting
+        if self._grace_mode == "percentage":
+            self._grace_pool_s = math.ceil(self._sprint_duration_s * self._grace_percentage / 100)
+        elif self._grace_mode == "fixed":
+            self._grace_pool_s = self._grace_fixed_s
+        elif self._grace_mode == "custom":
+            self._grace_pool_s = self._grace_custom_s if self._grace_custom_s > 0 else 0
+        else:  # "none"
+            self._grace_pool_s = 0
         self._sprint_paused_at = None
         self._grace_used_s = 0.0
         # time.time(), NOT time.monotonic() — update_sprint_state's current_time
@@ -332,11 +471,11 @@ class SprintPanel(QWidget):
         # clears _cancel_message_active as part of its own state reset, so setting the
         # guard before calling it just gets immediately clobbered back to False. That
         # left the guard never actually armed for the next update_sprint_state tick,
-        # which stomped "Sprint cancelled" back to "" almost immediately (reported
+        # which stomped the message back to "" almost immediately (reported
         # live, 2026-08-11). Matches sleep_timer.py's _cancel_eoc_sleep ordering.
         self.disable_sprint(was_cancelled=True)
         self._cancel_message_active = True
-        self.display_text_updated.emit("Sprint cancelled")
+        self.display_text_updated.emit("Sprint failed")
         self._cancel_timer.start(self._dismiss_ms)
 
     def _trigger_complete(self):
@@ -374,14 +513,27 @@ class SprintPanel(QWidget):
             )
 
     def update_panel_styling(self):
-        """Full sync: the ramp (see _apply_preset_ramp_colors) plus the grace
-        buttons' selected Qt PROPERTY. Mirrors SleepTimerPanel.update_panel_styling;
-        no is_default concept here — grace has no persisted config default, only
-        the in-memory _grace_pool_s_setting."""
+        """Full sync: the ramp (see _apply_preset_ramp_colors) plus the grace mode
+        buttons' and the per-mode preset buttons' selected Qt PROPERTY. Mirrors
+        SleepTimerPanel.update_panel_styling. All three preset rows are synced
+        unconditionally (not just the currently-visible one) — cheap, and avoids a
+        stale 'selected' property if the mode is switched away and back."""
         self._apply_preset_ramp_colors()
 
-        for seconds, btn in self._grace_btns.items():
-            is_active = (seconds == self._grace_pool_s_setting)
+        for mode, btn in self._grace_mode_btns.items():
+            is_active = (mode == self._grace_mode)
+            btn.setProperty("selected", "true" if is_active else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+        for pct, btn in self._grace_pct_btns.items():
+            is_active = (pct == self._grace_percentage)
+            btn.setProperty("selected", "true" if is_active else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+        for seconds, btn in self._grace_fixed_btns.items():
+            is_active = (seconds == self._grace_fixed_s)
             btn.setProperty("selected", "true" if is_active else "false")
             btn.style().unpolish(btn)
             btn.style().polish(btn)
