@@ -29,7 +29,7 @@ class _ClickableLabel(QLabel):
 class SprintPanel(QWidget):
     sprint_started = Signal()
     sprint_stopped = Signal()
-    sprint_expired = Signal()  # fired only on natural completion, not cancel
+    sprint_expired = Signal(int)  # fired only on natural completion, not cancel — carries elapsed_s
     display_text_updated = Signal(str)
 
     def __init__(self, player, config, theme_manager, parent=None, dismiss_ms=2000):
@@ -662,13 +662,13 @@ class SprintPanel(QWidget):
                     else:
                         reached_end = (pos is not None and pos >= dur - 0.5) or is_eof
                     if reached_end:
-                        self._trigger_complete()
+                        self._trigger_complete(elapsed)
                         return
                 self.display_text_updated.emit(self._format_display(elapsed, None))
             else:
                 remaining = self._sprint_duration_s - elapsed
                 if remaining <= 0:
-                    self._trigger_complete()
+                    self._trigger_complete(elapsed)
                     return
                 self.display_text_updated.emit(self._format_display(elapsed, remaining))
         else:
@@ -705,11 +705,14 @@ class SprintPanel(QWidget):
         self.display_text_updated.emit("Sprint failed")
         self._cancel_timer.start(self._dismiss_ms)
 
-    def _trigger_complete(self):
-        # Same ordering fix as _trigger_cancel — see its comment.
+    def _trigger_complete(self, elapsed_s):
+        # elapsed_s must be passed in by the caller (update_sprint_state), computed
+        # BEFORE this is called — disable_sprint() below nulls _sprint_start_time/
+        # _grace_used_s, so this method has no way to derive elapsed itself once
+        # it runs. Same ordering fix as _trigger_cancel otherwise — see its comment.
         self.disable_sprint(was_cancelled=False)
         self._cancel_message_active = True
-        self.sprint_expired.emit()
+        self.sprint_expired.emit(int(elapsed_s))
         self.display_text_updated.emit("Sprint completed")
         self._cancel_timer.start(self._dismiss_ms)
 

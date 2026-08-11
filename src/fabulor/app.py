@@ -1108,6 +1108,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._dismiss_eof_prompt()
         self.sprint_cancel_btn.show()
         self.sprint_pulse_anim.start()
+        self.db.record_sprint_attempt()
         if self.current_file:
             if not self.session_recorder.is_active:
                 self.session_recorder.open()
@@ -1119,13 +1120,22 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sprint_pulse_anim.stop()
         self.sprint_opacity_effect.setOpacity(1.0)
 
-    def _on_sprint_expired(self):
+    def _on_sprint_expired(self, duration_s):
         """Called only on natural sprint completion. Unlike sleep, a sprint completing
         does NOT pause playback — the user keeps listening — so this deliberately does
         NOT mirror _on_sleep_timer_expired's library_panel.set_is_playing(False) or
         session_recorder.pause() calls; pausing the recorder here would silently stop
         listening-time tracking for a session that's still live."""
         self._save_current_progress()
+        self.db.record_sprint_session(duration_s)
+        # Without this, the Overall tab's Sprints row only picked up a natural
+        # completion on the NEXT tab switch or panel reopen — reported live,
+        # 2026-08-11. Mirrors the EOF book-finished handler's own
+        # stats_panel.isVisible() + refresh_current_tab() pattern (app.py, the
+        # write_book_event('finished') call site) rather than an unconditional
+        # refresh, so this is a no-op when Stats isn't open.
+        if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
+            self.stats_panel.refresh_current_tab()
 
     def _on_sprint_display_text_updated(self, text):
         old_text = self.sleep_timer_label.text()

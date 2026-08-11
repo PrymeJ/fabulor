@@ -3021,6 +3021,23 @@ class StatsPanel(QWidget):
         scroll.setObjectName("stats_scroll_area")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Adding the Sprints rows (2026-08-11) pushed content a few px past the
+        # panel's fixed height, surfacing a vertical scrollbar for the first time.
+        # Confirmed live that this overflow is only a few pixels — deliberately
+        # forced off rather than trimming spacing to fit; matches this tab's own
+        # prior no-scrollbar behavior. Day/Week/Month's own scroll areas
+        # (StatsRowListView) are a different, intentionally-scrollable case and
+        # keep ScrollBarAlwaysOn — not touched by this change.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # ScrollBarAlwaysOff only hides the scrollbar WIDGET — the QScrollArea
+        # still responds to mouse-wheel input, so the few px of overflow content
+        # was still reachable by scrolling with no visible affordance. No-op the
+        # wheel event on just this scroll area (not the whole panel — Day/Week/
+        # Month's own scroll areas must keep working) so it's genuinely inert,
+        # not just visually hidden. Matches this file's existing instance-
+        # attribute wheelEvent-assignment convention (see _day_wheel/_week_wheel/
+        # _month_wheel).
+        scroll.wheelEvent = lambda event: event.ignore()
 
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
@@ -3035,17 +3052,19 @@ class StatsPanel(QWidget):
         grid = QGridLayout(grid_container)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(8)
+        grid.setVerticalSpacing(6)
 
         rows = [
             ("Listening time",  "—"),
-            ("Books started",   "—"),
+            ("Books",   "—"),
             ("Sessions",        "—"),
             ("Longest session", "—"),
             ("Last session",    "—"),
             ("Average session", "—"),
             ("Current streak",  "—"),
             ("Longest streak",  "—"),
+            ("Sprints",  "—"),
+            ("Average successful sprint",  "—"),
         ]
 
         self._overall_value_labels = []
@@ -3202,7 +3221,9 @@ class StatsPanel(QWidget):
         day_start = self.config.get_day_start_hour()
         stats = self.db.get_overall_stats(day_start)
         self._overall_value_labels[0].setText(self._format_duration(stats['total_seconds']))
-        self._overall_value_labels[1].setText(str(stats['books_started']))
+        self._overall_value_labels[1].setText(
+            f"{stats['books_started']} started · {stats['books_finished']} finished"
+        )
         self._overall_value_labels[2].setText(str(stats['total_sessions']))
         days = self.db.get_last_n_days(7, day_start)
         self._bar_chart.set_data(days)
@@ -3238,6 +3259,15 @@ class StatsPanel(QWidget):
         streaks = self.db.get_streaks(self.config.get_day_start_hour())
         self._overall_value_labels[6].setText(f"{streaks['current']} days")
         self._overall_value_labels[7].setText(f"{streaks['longest']} days")
+
+        # Sprints
+        self._overall_value_labels[8].setText(
+            f"{stats['sprints_started']} started · {stats['sprints_finished']} finished"
+        )
+        avg_sprint_s = stats['avg_sprint_s']
+        self._overall_value_labels[9].setText(
+            "—" if avg_sprint_s is None else self._format_duration(avg_sprint_s)
+        )
 
     def _build_options_tab(self) -> QWidget:
         widget = QWidget()

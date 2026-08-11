@@ -174,6 +174,29 @@ class LibraryDB:
                 )
             """)
 
+            # One row per sprint armed (SprintPanel.sprint_started), regardless of
+            # outcome (completed/cancelled/failed) — drives the Overall tab's
+            # "Sprints" started count. No FK to books: a sprint isn't tied to one
+            # specific book in the schema (matches how listening_sessions is the
+            # source of truth for "books started" rather than a dedicated table).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sprint_attempts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT
+                )
+            """)
+
+            # One row per NATURAL sprint completion (SprintPanel.sprint_expired) —
+            # duration_s is the elapsed wall-clock time at completion (see
+            # _trigger_complete). Drives "Sprints" finished count and "Average
+            # successful sprint". Deliberately excludes cancelled/failed sprints.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sprint_sessions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    completed_at TEXT    NOT NULL,
+                    duration_s   INTEGER NOT NULL
+                )
+            """)
+
             # Migrate: add book_id FK columns to session/event/tag tables
             ls_cols = {row[1] for row in conn.execute("PRAGMA table_info(listening_sessions)").fetchall()}
             if "book_id" not in ls_cols:
@@ -902,9 +925,21 @@ class LibraryDB:
                 LIMIT 1
             """).fetchone()
 
+            # COUNT(DISTINCT book_path) — unique books ever finished, matching
+            # books_started's semantics (a book unfinished then refinished counts
+            # once, not twice). No source filter: both 'playback' and 'manual'
+            # finishes count. Unfenced by soft-delete flags, matching every other
+            # query in this method — see CLAUDE.md's stats-query rule.
             finished = conn.execute("""
-                SELECT COUNT(*) as n FROM book_events WHERE event_type = 'finished'
+                SELECT COUNT(DISTINCT book_path) as n FROM book_events WHERE event_type = 'finished'
             """).fetchone()
+
+            # Sprint stats — separate scalar queries against sprint_attempts/
+            # sprint_sessions, never joined against listening_sessions (would
+            # cartesian-product the same way book_events joined directly against
+            # listening_sessions does — see CLAUDE.md).
+            sprints_started = conn.execute("SELECT COUNT(*) as n FROM sprint_attempts").fetchone()
+            sprints_finished_row = conn.execute("SELECT COUNT(*) as n, AVG(duration_s) as avg_s FROM sprint_sessions").fetchone()
 
         return {
             'total_sessions': agg['total_sessions'] or 0,
@@ -918,7 +953,27 @@ class LibraryDB:
             'last_session_title': last['book_title'] if last else None,
             'last_session_seconds': last['seconds'] if last else 0.0,
             'last_session_start': last['session_start'] if last else None,
+            'sprints_started': sprints_started['n'] or 0,
+            'sprints_finished': sprints_finished_row['n'] or 0,
+            'avg_sprint_s': sprints_finished_row['avg_s'],  # None if no completed sprints yet
         }
+
+    def record_sprint_attempt(self):
+        """One row per sprint armed, regardless of outcome — see sprint_attempts'
+        CREATE TABLE comment in _create_tables."""
+        with self._get_conn() as conn:
+            conn.execute("INSERT INTO sprint_attempts DEFAULT VALUES")
+
+    def record_sprint_session(self, duration_s: int):
+        """One row per NATURAL sprint completion — see sprint_sessions' CREATE
+        TABLE comment in _create_tables. duration_s is the elapsed wall-clock
+        time at completion, computed by SprintPanel.update_sprint_state and
+        passed through _trigger_complete/sprint_expired."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO sprint_sessions (completed_at, duration_s) "
+                "VALUES (datetime('now'), ?)",
+                (duration_s,))
 
     def get_last_n_days(self, n: int = 7, day_start_hour: int = 0) -> list[dict]:
         """Returns total listening seconds per day for the last N days.
