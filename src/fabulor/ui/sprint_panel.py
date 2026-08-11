@@ -1,3 +1,4 @@
+import logging
 import math
 import time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
@@ -6,6 +7,8 @@ from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
+
+logger = logging.getLogger(__name__)
 
 
 class _ClickableLabel(QLabel):
@@ -45,6 +48,10 @@ class SprintPanel(QWidget):
         self._grace_pool_s = None        # total grace seconds for the active sprint (int)
         self._grace_used_s = 0.0         # cumulative pause seconds consumed
         self._sprint_active = False
+        # pos value from the previous update_sprint_state tick, for backward-seek
+        # detection (Pass 3). Reset to None on arm and disarm so a stale pre-arm/
+        # post-disarm position is never diffed against the next sprint's first tick.
+        self._last_known_pos = None
         # True while "Sprint failed"/"Sprint completed" is showing — update_sprint_state
         # must not touch display_text_updated during this window, or its own per-tick emit
         # would stomp the message back to "" almost immediately. Same shape as sleep's
@@ -370,6 +377,7 @@ class SprintPanel(QWidget):
             self._grace_pool_s = 0
         self._sprint_paused_at = None
         self._grace_used_s = 0.0
+        self._last_known_pos = None
         # time.time(), NOT time.monotonic() — update_sprint_state's current_time
         # parameter comes from app.py's _sync_playback_state, which is always
         # time.time()-based (matches sleep_timer.py's own _sleep_timer_end_time
@@ -412,6 +420,7 @@ class SprintPanel(QWidget):
         self._sprint_paused_at = None
         self._grace_pool_s = None
         self._grace_used_s = 0.0
+        self._last_known_pos = None
         self._cancel_timer.stop()
         self._cancel_message_active = False
         self.disable_sprint_btn.hide()
@@ -420,11 +429,45 @@ class SprintPanel(QWidget):
         self.display_text_updated.emit("")
         self.update_panel_styling()
 
-    def update_sprint_state(self, current_time, is_paused):
+    def update_sprint_state(self, current_time, is_paused, pos):
         if not self._sprint_active:
             return
         if self._cancel_message_active:
             return
+
+        # Backward-seek accounting: if pos moved backward since last tick, the
+        # user re-listened to content. _sprint_duration_s and elapsed/remaining
+        # are all WALL-CLOCK seconds (current_time is time.time()) — but the
+        # rewind distance measured via pos is AUDIO-position seconds. These are
+        # different units whenever speed != 1.0: rewinding 40s of audio at 8x
+        # only costs 5s of the user's actual wall-clock time to re-listen to.
+        # Divide by speed to convert the audio-distance penalty into the
+        # wall-clock unit _sprint_duration_s is measured in. Confirmed live
+        # 2026-08-11: adding the raw (unconverted) audio delta made an 8x-speed
+        # 5s backward seek add 40s to the sprint duration instead of 5s — an
+        # 8x-inflated penalty, not the reported "doubling" it first looked like.
+        # Counted regardless of pause state (a backward seek while paused is
+        # still a backward seek; the grace pool drains independently of this).
+        # _last_known_pos updates unconditionally on every tick where pos is
+        # not None, regardless of direction, so it always reflects the most
+        # recent sample for the NEXT tick's comparison.
+        if (self._last_known_pos is not None
+                and pos is not None
+                and pos < self._last_known_pos):
+            rewind_delta = self._last_known_pos - pos
+            speed = self.player.speed or 1.0
+            self._sprint_duration_s += rewind_delta / speed
+            # TEMPORARY (Pass 3 VT-boundary verification, 2026-08-11): confirms
+            # whether a natural VT file-boundary crossing can present as a false
+            # backward-seek reading here. Remove once verified — see NOTES.md.
+            logger.warning(
+                f"SPRINT-REWIND-TRACE: pos={pos:.3f} "
+                f"prev={self._last_known_pos:.3f} "
+                f"delta={rewind_delta:.3f} speed={speed:.2f} "
+                f"wall_clock_penalty={rewind_delta / speed:.3f} "
+                f"new_duration={self._sprint_duration_s:.1f}")
+        if pos is not None:
+            self._last_known_pos = pos
 
         if is_paused:
             if self._sprint_paused_at is None:
