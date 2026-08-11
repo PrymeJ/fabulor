@@ -199,6 +199,37 @@ class Config:
     def set_sleep_fade_duration(self, seconds):
         self.settings.setValue("sleep_fade_duration", seconds)
 
+    def get_sprint_grace_mode(self):
+        """Returns the last set sprint grace mode ('percentage', 'fixed', 'custom', 'none')."""
+        return self.settings.value("sprint_grace_mode", "percentage")
+
+    def set_sprint_grace_mode(self, mode):
+        self.settings.setValue("sprint_grace_mode", mode)
+
+    def get_sprint_grace_percentage(self):
+        return self._safe_int("sprint_grace_percentage", 2)
+
+    def set_sprint_grace_percentage(self, pct):
+        self.settings.setValue("sprint_grace_percentage", pct)
+
+    def get_sprint_grace_fixed_s(self):
+        return self._safe_int("sprint_grace_fixed_s", 5)
+
+    def set_sprint_grace_fixed_s(self, seconds):
+        self.settings.setValue("sprint_grace_fixed_s", seconds)
+
+    def get_sprint_grace_custom_s(self):
+        return self._safe_int("sprint_grace_custom_s", 0)
+
+    def set_sprint_grace_custom_s(self, seconds):
+        self.settings.setValue("sprint_grace_custom_s", seconds)
+
+    def get_sprint_backward_seek_compensation(self):
+        return self.settings.value("sprint_backward_seek_compensation", "false") == "true"
+
+    def set_sprint_backward_seek_compensation(self, enabled):
+        self.settings.setValue("sprint_backward_seek_compensation", str(enabled).lower())
+
     def get_theme_rotation_interval(self):
         return self._safe_int("theme_rotation_interval", 0) # 0 means Off
 

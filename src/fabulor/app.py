@@ -23,6 +23,7 @@ from .ui.chapter_list import ChapterList # Keep ChapterList here as it's a direc
 from .ui.excluded_books import ExcludedBooksPopup # Same reason — direct child of MainWindow, not nested in the settings tab
 from .ui.speed_controls import SpeedControlsPanel
 from .ui.sleep_timer import SleepTimerPanel
+from .ui.sprint_panel import SprintPanel
 from .ui.theme_manager import ThemeManager, ThemeComboBox
 import time # For sleep timer
 from .library_controller import LibraryController
@@ -311,9 +312,10 @@ class VisualsInterface:
 
 
 class PanelInterface:
-    def __init__(self, speed_panel, sleep_panel, audio_tab, main):
+    def __init__(self, speed_panel, sleep_panel, sprint_panel, audio_tab, main):
         self._speed = speed_panel
         self._sleep = sleep_panel
+        self._sprint = sprint_panel
         self._audio = audio_tab
         # panel_manager is created AFTER this interface (see _setup_ui ordering),
         # so hold `main` and read main.panel_manager lazily at call time.
@@ -332,6 +334,9 @@ class PanelInterface:
         # Theme-apply path only -- see update_speed_panel_visuals' comment above,
         # same reasoning applies to Sleep's _apply_preset_ramp_colors.
         if self._sleep: self._sleep._apply_preset_ramp_colors()
+    def update_sprint_panel_visuals(self):
+        # Theme-apply path only -- same reasoning as update_sleep_panel_visuals.
+        if self._sprint: self._sprint._apply_preset_ramp_colors()
     def update_audio_panel_visuals(self):
         if self._audio: self._audio.update_visuals()
     def apply_blur_live(self, enabled):
@@ -421,6 +426,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         # lets the sleep text show as a confirmation before reverting to the mute icon.
         # See _on_sleep_display_text_updated / _settle_vol_stack / sleep_confirm_timer.
         self._sleep_just_set = False
+        # Same shape as _sleep_just_set, for sprint's own arm-while-muted confirmation.
+        # See _on_sprint_display_text_updated / _settle_vol_stack / sprint_confirm_timer.
+        self._sprint_just_set = False
         # monotonic() of the last applied speed nudge, for throttling Alt+Up/Down autorepeat.
         self._last_speed_nudge_ts = 0.0
         # Same shape as _last_speed_nudge_ts, one per throttled action (chapter-nav and
@@ -598,7 +606,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
         # Wire SettingsController with explicit, minimal interfaces (defined at module level).
         visuals = VisualsInterface(self)
-        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.audio_tab, self)
+        panels = PanelInterface(self.speed_panel, self.sleep_panel, self.sprint_panel, self.audio_tab, self)
         ui_callbacks = UICallbackInterface(self)
         library = LibraryInterface(self.db, self.library_panel)
         player = PlayerInterface(self)
@@ -620,6 +628,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.shortcuts.register(Action.SHOW_STATS, self._open_stats_shortcut)
         self.shortcuts.register(Action.SHOW_SETTINGS, self._open_settings_shortcut)
         self.shortcuts.register(Action.SHOW_SLEEP, self._open_sleep_shortcut)
+        self.shortcuts.register(Action.SHOW_SPRINT, self._open_sprint_shortcut)
         # Transport / player keys. Each wires to the SAME method the on-screen button or
         # wheel uses (no reimplemented playback logic); volume/speed share the extracted
         # _nudge_* step helpers with wheelEvent. App-state gating lives in the handlers.
@@ -677,6 +686,16 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel_animation = QPropertyAnimation(self.sleep_panel, b"pos")
         self.sleep_panel_animation.setDuration(300)
         self.sleep_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        self.sprint_panel = SprintPanel(self.player, self.config, self.theme_manager, self,
+                                         dismiss_ms=_INDICATOR_DISMISS_MS)
+        self.sprint_panel.hide()
+        self.sprint_panel_animation = QPropertyAnimation(self.sprint_panel, b"pos")
+        self.sprint_panel_animation.setDuration(300)
+        self.sprint_panel_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        self.sleep_panel.set_arm_gate(self._sleep_arm_gate)
+        self.sprint_panel.set_arm_gate(self._sprint_arm_gate)
 
         self.setObjectName("mainwindow")
 
@@ -782,6 +801,18 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_pulse_anim.setLoopCount(-1)
         self.sleep_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
 
+        # Pulse Animation for active sprint — mirrors sleep's exactly.
+        self.sprint_opacity_effect = QGraphicsOpacityEffect(self.sprint_trigger_btn)
+        self.sprint_opacity_effect.setOpacity(1.0)
+        self.sprint_trigger_btn.setGraphicsEffect(self.sprint_opacity_effect)
+        self.sprint_pulse_anim = QPropertyAnimation(self.sprint_opacity_effect, b"opacity")
+        self.sprint_pulse_anim.setDuration(4000)
+        self.sprint_pulse_anim.setStartValue(1.0)
+        self.sprint_pulse_anim.setKeyValueAt(0.5, 0.4)
+        self.sprint_pulse_anim.setEndValue(1.0)
+        self.sprint_pulse_anim.setLoopCount(-1)
+        self.sprint_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
+
         # Speed/grid visual initialization moved to after SettingsController binding
 
         # Initialize Blur Effect for background depth.
@@ -829,6 +860,14 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sleep_panel.timer_expired.connect(self._on_sleep_timer_expired)
         self.sleep_panel.display_text_updated.connect(self._on_sleep_display_text_updated)
         self.sleep_panel.timer_started.connect(self.panel_manager._close_sleep_flow)
+        # Connect Sprint signals — mirrors the sleep block above exactly, including the
+        # panel-close-on-arm connection (armed sprint should close its own panel just
+        # like an armed sleep timer does).
+        self.sprint_panel.sprint_started.connect(self._on_sprint_started)
+        self.sprint_panel.sprint_stopped.connect(self._on_sprint_stopped)
+        self.sprint_panel.sprint_expired.connect(self._on_sprint_expired)
+        self.sprint_panel.display_text_updated.connect(self._on_sprint_display_text_updated)
+        self.sprint_panel.sprint_started.connect(self.panel_manager._close_sprint_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
         self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
         self.speed_panel.skip_duration_changed.connect(lambda _: self._update_skip_icons())
@@ -1064,6 +1103,90 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.library_panel.set_is_playing(False)
         if self.session_recorder.is_active:
             self.session_recorder.pause()
+
+    def _on_sprint_started(self):
+        self._dismiss_eof_prompt()
+        self.sprint_cancel_btn.show()
+        self.sprint_pulse_anim.start()
+        if self.current_file:
+            if not self.session_recorder.is_active:
+                self.session_recorder.open()
+            else:
+                self.session_recorder.resume()
+
+    def _on_sprint_stopped(self):
+        self.sprint_cancel_btn.hide()
+        self.sprint_pulse_anim.stop()
+        self.sprint_opacity_effect.setOpacity(1.0)
+
+    def _on_sprint_expired(self):
+        """Called only on natural sprint completion. Unlike sleep, a sprint completing
+        does NOT pause playback — the user keeps listening — so this deliberately does
+        NOT mirror _on_sleep_timer_expired's library_panel.set_is_playing(False) or
+        session_recorder.pause() calls; pausing the recorder here would silently stop
+        listening-time tracking for a session that's still live."""
+        self._save_current_progress()
+
+    def _on_sprint_display_text_updated(self, text):
+        old_text = self.sleep_timer_label.text()
+        was_armed = bool(old_text)
+        self.sleep_timer_label.setText(text)
+        newly_armed = bool(text) and not was_armed
+        # Entering the grace countdown ("Grace MM:SS", shown while paused mid-sprint)
+        # is its OWN transient-confirmation trigger while muted, same as arming —
+        # was_armed alone can't catch this, since both the running countdown and the
+        # grace text are non-empty, so the plain empty->non-empty check never re-fires
+        # for this transition. Reported live, 2026-08-11 ("same for the grace").
+        entered_grace = text.startswith("Grace ") and not old_text.startswith("Grace ")
+        if (newly_armed or entered_grace) and self.volume_slider.value() == 0:
+            self._sprint_just_set = True
+            self.sprint_confirm_timer.start(_INDICATOR_DISMISS_MS)
+        elif not text:
+            self.sprint_confirm_timer.stop()
+            self._sprint_just_set = False
+        if self.vol_stack.currentIndex() != 1:
+            self._settle_vol_stack()
+
+    def _on_sprint_confirm_timeout(self):
+        self._sprint_just_set = False
+        if self.vol_stack.currentIndex() != 1:
+            self._settle_vol_stack()
+
+    def _sleep_arm_gate(self, proceed):
+        """Passed to SleepTimerPanel.set_arm_gate(). If sprint is active, defer
+        arming behind a confirm shown IN THE SLEEP PANEL (the panel the user is
+        currently interacting with) — confirming cancels sprint, then arms sleep.
+        No conflict: proceed immediately."""
+        if self.sprint_panel.is_active:
+            self.sleep_panel.show_conflict_confirm(
+                "This will cancel your active sprint. Confirm?",
+                lambda: (self.sprint_panel.disable_sprint(), proceed())
+            )
+        else:
+            proceed()
+
+    def _sprint_arm_gate(self, proceed):
+        """Passed to SprintPanel.set_arm_gate(). Mirrors _sleep_arm_gate exactly,
+        checking sleep instead of sprint, confirming in the sprint panel."""
+        if self.sleep_panel.is_active:
+            self.sprint_panel.show_conflict_confirm(
+                "This will cancel your active sleep timer. Confirm?",
+                lambda: (self.sleep_panel.disable_sleep_timer(), proceed())
+            )
+        else:
+            proceed()
+
+    def _on_indicator_label_clicked(self):
+        """sleep_timer_label (vol_stack page 0) is shared between sleep and sprint
+        display. Clicking it must disable whichever of the two is actually
+        active, not always sleep — replaces the old direct
+        sleep_timer_label.clicked -> sleep_panel.disable_sleep_timer connection
+        (main_window_builders.py), which predates sprint's existence."""
+        if self.sleep_panel.is_active:
+            self.sleep_panel.disable_sleep_timer()
+        elif self.sprint_panel.is_active:
+            self.sprint_panel.disable_sprint()
+
     def _update_chapter_title_text(self, text):
         """Update the scrolling label text."""
         self.current_chapter_label.setText(text)
@@ -1599,8 +1722,9 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.progress_slider._suppress_fill = not visible
         self.progress_slider.setEnabled(visible)
         self.progress_slider.update()
-        # Sleep and Playback panels have no function without an active book.
+        # Sleep, Sprint, and Playback panels have no function without an active book.
         self.sleep_trigger_btn.setVisible(visible)
+        self.sprint_trigger_btn.setVisible(visible)
         self.speed_trigger_btn.setVisible(visible)
 
     def _set_scan_buttons_enabled(self, enabled):
@@ -1704,6 +1828,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._dismiss_eof_prompt()
         self._save_current_progress()
         self._paused_time = None
+        # A sprint targets THIS book's listening session — switching books mid-sprint
+        # must not silently carry the countdown/grace pool over to the new book.
+        # Distinct from a deliberate manual cancel (sidebar X / panel button), which
+        # stays silent — this shows "Sprint cancelled" (2026-08-11).
+        self.sprint_panel.cancel_for_book_switch()
         # Enter the switch lifecycle: capture the current slider values as flow-animation
         # start points, arm the deadzone, and reset the per-switch retry/deferred flags.
         self._switch.begin(
@@ -2242,6 +2371,8 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
     def _sync_playback_state(self, current_time, pos, dur):
         # Delegate Sleep Timer Logic
         self.sleep_panel.update_timer_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
+        # Delegate Sprint Logic
+        self.sprint_panel.update_sprint_state(current_time, self.player.pause if self.current_file else True, pos, dur, self.player.eof_reached)
 
         if self.current_chapter_label.text() == "Select Chapter" and self.player.chapter_list:
             chap_list = self.player.chapter_list
@@ -2785,9 +2916,19 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
             return
         self.panel_manager._open_sleep_flow()
 
+    def _open_sprint_shortcut(self):
+        # sprint_trigger_btn is hidden whenever no book is loaded (_set_interface_visible).
+        # Mirrors _open_sleep_shortcut exactly.
+        if self.sprint_trigger_btn.isHidden():
+            return
+        if self.panel_manager.is_overlay_open_or_committed():
+            return
+        self.panel_manager._open_sprint_flow()
+
     def mousePressEvent(self, event):
         # Do not hide popups if clicking inside the panels
-        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel, self.tags_panel, self.book_detail_panel]:
+        for panel in [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel,
+                      self.sprint_panel, self.stats_panel, self.tags_panel, self.book_detail_panel]:
             if panel.isVisible() and panel.geometry().contains(event.pos()):
                 return
         self._hide_popups()
@@ -3500,14 +3641,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _settle_vol_stack(self):
         """Picks the vol_stack page to rest on: the muted icon if volume is 0,
-        else the sleep timer label (which may be empty text). Mute takes
-        priority over the sleep label — the one exception is a freshly-armed
-        sleep timer while muted, which shows a transient confirmation first
-        (see _sleep_just_set / _on_sleep_display_text_updated). Callers that
-        must not disturb an in-progress volume overlay should check
-        vol_stack.currentIndex() == 1 themselves first."""
+        else the shared sleep/sprint indicator label (which may be empty text —
+        sleep and sprint are mutually exclusive, see _sleep_arm_gate/_sprint_arm_gate,
+        so the label never needs to show both at once). Mute takes priority over
+        the label — the one exception is a freshly-armed sleep timer OR sprint
+        while muted, which shows a transient confirmation first (see
+        _sleep_just_set/_sprint_just_set / _on_sleep_display_text_updated /
+        _on_sprint_display_text_updated). Callers that must not disturb an
+        in-progress volume overlay should check vol_stack.currentIndex() == 1
+        themselves first."""
         muted = self.volume_slider.value() == 0
-        if muted and not self._sleep_just_set:
+        if muted and not self._sleep_just_set and not self._sprint_just_set:
             self.vol_stack.setCurrentIndex(2)
         else:
             self.vol_stack.setCurrentIndex(0)

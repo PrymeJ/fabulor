@@ -186,6 +186,7 @@ class PanelManager:
         self.settings_panel = main_window.settings_panel
         self.speed_panel = main_window.speed_panel
         self.sleep_panel = main_window.sleep_panel
+        self.sprint_panel = main_window.sprint_panel
         self.stats_panel = main_window.stats_panel
         self.blur_effect = main_window.blur_effect # Reference to the blur effect
         self.blur_animation = main_window.blur_animation # Reference to the blur animation
@@ -196,6 +197,7 @@ class PanelManager:
         self.settings_panel_animation = main_window.settings_panel_animation
         self.speed_panel_animation = main_window.speed_panel_animation
         self.sleep_panel_animation = main_window.sleep_panel_animation
+        self.sprint_panel_animation = main_window.sprint_panel_animation
         self.stats_panel_animation = main_window.stats_panel_animation
         self.tags_panel_animation = main_window.tags_panel_animation
         self.tags_panel = main_window.tags_panel
@@ -270,6 +272,7 @@ class PanelManager:
         self.main_window.settings_trigger_btn.clicked.connect(self._open_settings_flow)
         self.main_window.speed_trigger_btn.clicked.connect(self._open_speed_flow)
         self.main_window.sleep_trigger_btn.clicked.connect(self._open_sleep_flow)
+        self.main_window.sprint_trigger_btn.clicked.connect(self._open_sprint_flow)
         self.main_window.stats_trigger_btn.clicked.connect(self._open_stats_flow)
         self.main_window.tags_trigger_btn.clicked.connect(self._open_tags_flow)
 
@@ -435,6 +438,7 @@ class PanelManager:
             'settings': self.settings_panel,
             'speed': self.speed_panel,
             'sleep': self.sleep_panel,
+            'sprint': self.sprint_panel,
         }.get(key)
         if panel is None or not panel.isVisible():
             return
@@ -500,7 +504,7 @@ class PanelManager:
         visual_area with its own effect, so it needs to know which panel edge to
         clip against. Returns None for the library panel — it is full-width and
         opaque, so nothing behind it blurs (see _apply_visual_area_clip)."""
-        for panel in (self.settings_panel, self.speed_panel, self.sleep_panel,
+        for panel in (self.settings_panel, self.speed_panel, self.sleep_panel, self.sprint_panel,
                       self.stats_panel, self.tags_panel):
             if panel.isVisible():
                 return panel
@@ -1126,6 +1130,7 @@ class PanelManager:
         elif self._pending_panel_open == "settings": self._start_settings_entry()
         elif self._pending_panel_open == "speed": self._start_speed_entry()
         elif self._pending_panel_open == "sleep": self._start_sleep_entry()
+        elif self._pending_panel_open == "sprint": self._start_sprint_entry()
         elif self._pending_panel_open == "stats": self._start_stats_entry()
         elif self._pending_panel_open == "tags": self._start_tags_entry()
         logger.debug(
@@ -1288,6 +1293,12 @@ class PanelManager:
     def _start_sleep_entry(self):
         """Starts the sleep panel slide-in animation."""
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        # Sync the disable-button's visibility here, at panel-open time, not
+        # during arming — see SleepTimerPanel._do_arm_sleep_timer's comment for
+        # why (a same-call-stack .show() during arm flashes visibly for one
+        # frame before the panel's own close-on-arm animation starts). Same
+        # deferred-reconciliation shape as _sync_persist_filter_on_open.
+        self.sleep_panel.sync_disable_button_visibility()
         panel_w = int(self.main_window.width() * 0.9)
         sidebar_y = 56
         self.sleep_panel.setFixedWidth(panel_w)
@@ -1338,6 +1349,75 @@ class PanelManager:
             pass
         self.sleep_panel.hide()
         self._release_panel_focus(self.sleep_panel)
+        self._notify_panel_closed()
+
+    def _open_sprint_flow(self):
+        # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
+        if self.is_overlay_open_or_committed():
+            return
+        self._complete_main_fade()
+        """Hides sidebar first, then shows sprint panel."""
+        if self.sidebar_expanded:
+            self._pending_panel_open = "sprint"
+            if not self._sidebar_panel_signal_connected:
+                self.sidebar_animation.finished.connect(self._on_sidebar_closed_for_panel)
+                self._sidebar_panel_signal_connected = True
+            self._toggle_sidebar()
+        else:
+            self._start_sprint_entry()
+
+    def _start_sprint_entry(self):
+        """Starts the sprint panel slide-in animation. Mirrors _start_sleep_entry exactly."""
+        self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
+        self.sprint_panel.sync_disable_button_visibility()
+        panel_w = int(self.main_window.width() * 0.9)
+        sidebar_y = 56
+        self.sprint_panel.setFixedWidth(panel_w)
+        self.sprint_panel.move(-panel_w, sidebar_y)
+        self.sprint_panel.show()
+        self.sprint_panel.raise_()
+        self._claim_panel_focus(self.sprint_panel, panel_key="sprint")
+
+        self.sprint_panel_animation.setStartValue(QPoint(-panel_w, sidebar_y))
+        self.sprint_panel_animation.setEndValue(QPoint(0, sidebar_y))
+
+        def _on_sprint_slide_finished():
+            try:
+                self.sprint_panel_animation.finished.disconnect(_on_sprint_slide_finished)
+            except (TypeError, RuntimeError):
+                pass
+            self._apply_transport_bar_blur(self.sprint_panel)
+            self._start_visual_area_blur(self.sprint_panel)
+
+        self.sprint_panel_animation.finished.connect(_on_sprint_slide_finished)
+        self.sprint_panel_animation.start()
+
+    def _close_sprint_flow(self):
+        """Slides the sprint panel back out. Mirrors _close_sleep_flow exactly."""
+        if self.sprint_panel_animation.state() == QAbstractAnimation.State.Running:
+            return
+        panel_w = self.sprint_panel.width()
+        sidebar_y = 56
+        self.sprint_panel_animation.setStartValue(QPoint(0, sidebar_y))
+        self.sprint_panel_animation.setEndValue(QPoint(-panel_w, sidebar_y))
+        self.sprint_panel_animation.finished.connect(self._on_sprint_hidden)
+        self.sprint_panel_animation.start()
+        self._clear_transport_bar_blur()
+
+        if self.config.get_blur_enabled():
+            self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+            self.blur_animation.setDuration(_BLUR_OUT_MS)
+            self.blur_animation.setEndValue(0)
+            self.blur_animation.start()
+            self._clear_visual_area_clip()
+
+    def _on_sprint_hidden(self):
+        try:
+            self.sprint_panel_animation.finished.disconnect(self._on_sprint_hidden)
+        except RuntimeError:
+            pass
+        self.sprint_panel.hide()
+        self._release_panel_focus(self.sprint_panel)
         self._notify_panel_closed()
 
     def _close_stats_flow(self):
@@ -1738,12 +1818,12 @@ class PanelManager:
                          f"CALLED was_pending={_was_pending}")
             tm.flush_deferred_restyle()
             # Separate catch-up, same pre-show() instant: _apply_stylesheets skips a
-            # HIDDEN settings/speed/sleep panel (see apply_pending_panel_sheet for the
-            # measurement), and flush_deferred_restyle above does NOT cover those three
-            # — it drains the library/stats/tags/book_detail batch only. Without this a
+            # HIDDEN settings/speed/sleep/sprint panel (see apply_pending_panel_sheet for
+            # the measurement), and flush_deferred_restyle above does NOT cover those —
+            # it drains the library/stats/tags/book_detail batch only. Without this a
             # panel hidden across a theme change would open with stale colours.
             if hasattr(tm, 'apply_pending_panel_sheet'):
-                for _attr in ('settings_panel', 'speed_panel', 'sleep_panel'):
+                for _attr in ('settings_panel', 'speed_panel', 'sleep_panel', 'sprint_panel'):
                     _p = getattr(self.main_window, _attr, None)
                     if _p is not None and not _p.isVisible():
                         tm.apply_pending_panel_sheet(_p)
@@ -1756,6 +1836,7 @@ class PanelManager:
             self.settings_panel_animation,
             self.speed_panel_animation,
             self.sleep_panel_animation,
+            self.sprint_panel_animation,
             self.stats_panel_animation,
             self.tags_panel_animation,
             self.blur_animation,
@@ -1896,6 +1977,7 @@ class PanelManager:
             self.settings_panel.isVisible(),
             self.speed_panel.isVisible(),
             self.sleep_panel.isVisible(),
+            self.sprint_panel.isVisible(),
             self.stats_panel.isVisible(),
             self.tags_panel.isVisible(),
             self.book_detail_panel.isVisible() if self.book_detail_panel else False,
@@ -1921,6 +2003,7 @@ class PanelManager:
             self.settings_panel_animation,
             self.speed_panel_animation,
             self.sleep_panel_animation,
+            self.sprint_panel_animation,
             self.stats_panel_animation,
             self.tags_panel_animation,
             self.book_detail_panel_animation,
@@ -1960,6 +2043,7 @@ class PanelManager:
         ("settings", "settings_panel_animation"),
         ("speed", "speed_panel_animation"),
         ("sleep", "sleep_panel_animation"),
+        ("sprint", "sprint_panel_animation"),
         ("stats", "stats_panel_animation"),
         ("tags", "tags_panel_animation"),
     )
@@ -1987,7 +2071,7 @@ class PanelManager:
 
     def active_full_panel(self):
         """Which single full panel/overlay is currently open, as a string key
-        ('library'/'settings'/'speed'/'sleep'/'stats'/'tags'/'book_detail'/'chapter_list'),
+        ('library'/'settings'/'speed'/'sleep'/'sprint'/'stats'/'tags'/'book_detail'/'chapter_list'),
         or None. Same visibility checks and priority order as handle_drag_area_right_click —
         there is no existing single accessor, so this centralizes it.
 
@@ -2000,6 +2084,8 @@ class PanelManager:
             return "speed"
         if self.sleep_panel.isVisible() and not self._is_closing("sleep"):
             return "sleep"
+        if self.sprint_panel.isVisible() and not self._is_closing("sprint"):
+            return "sprint"
         if self.stats_panel.isVisible() and not self._is_closing("stats"):
             return "stats"
         if self.tags_panel.isVisible() and not self._is_closing("tags"):
@@ -2031,6 +2117,8 @@ class PanelManager:
             self._close_speed_flow()
         elif panel == "sleep":
             self._close_sleep_flow()
+        elif panel == "sprint":
+            self._close_sprint_flow()
         elif panel == "stats":
             self._close_stats_flow()
         elif panel == "tags":
@@ -2042,18 +2130,20 @@ class PanelManager:
 
     def panel_tab_widgets(self, panel: str) -> list:
         """Focusable controls of `panel`, in tab order, for Tab cycling. Only settings/speed/
-        sleep participate; every other context is a Tab no-op (returns []). Filters to widgets
-        currently visible within the panel and whose focus policy accepts Tab, in findChildren
-        order (== creation == visual order for these three, confirmed). Settings is scoped to the
-        active tab; on the Themes tab the N generated theme swatches (ThemeItem — mode/bulk
-        buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is deferred
-        to a later arrows+space design."""
+        sleep/sprint participate; every other context is a Tab no-op (returns []). Filters to
+        widgets currently visible within the panel and whose focus policy accepts Tab, in
+        findChildren order (== creation == visual order for these, confirmed). Settings is
+        scoped to the active tab; on the Themes tab the N generated theme swatches (ThemeItem —
+        mode/bulk buttons are plain QPushButton) are excluded, since swatch-grid keyboard nav is
+        deferred to a later arrows+space design."""
         if panel == "settings":
             root = self.main_window.tabs.currentWidget()
         elif panel == "speed":
             root = self.speed_panel
         elif panel == "sleep":
             root = self.sleep_panel
+        elif panel == "sprint":
+            root = self.sprint_panel
         else:
             return []
         if root is None:
@@ -2168,6 +2258,8 @@ class PanelManager:
             self._close_speed_flow()
         if self.sleep_panel.isVisible():
             self._close_sleep_flow()
+        if self.sprint_panel.isVisible():
+            self._close_sprint_flow()
         if self.stats_panel.isVisible():
             self._close_stats_flow()
         if self.tags_panel.isVisible():
@@ -2177,7 +2269,8 @@ class PanelManager:
 
     def handle_mouse_press(self, event):
         """Handles mouse press events to prevent panel dismissal when clicking inside."""
-        panels = [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel]
+        panels = [self.library_panel, self.settings_panel, self.speed_panel, self.sleep_panel,
+                  self.sprint_panel, self.stats_panel]
         if self.book_detail_panel:
             panels.append(self.book_detail_panel)
         for panel in panels:
@@ -2193,6 +2286,7 @@ class PanelManager:
             f"settings={self.settings_panel.isVisible()} "
             f"speed={self.speed_panel.isVisible()} "
             f"sleep={self.sleep_panel.isVisible()} "
+            f"sprint={self.sprint_panel.isVisible()} "
             f"stats={self.stats_panel.isVisible()} "
             f"tags={self.tags_panel.isVisible()} "
             f"book_detail={bool(self.book_detail_panel and self.book_detail_panel.isVisible())} "
@@ -2231,6 +2325,9 @@ class PanelManager:
         elif panel == "sleep":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_sleep")
             self._close_sleep_flow()
+        elif panel == "sprint":
+            logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_sprint")
+            self._close_sprint_flow()
         elif panel == "stats":
             logger.debug(f"t={time.perf_counter():.6f} [handle_drag_area_right_click] branch=close_stats")
             self._close_stats_flow()
@@ -2268,12 +2365,14 @@ class PanelManager:
         self.library_panel.setFixedWidth(window_w)
         self.library_panel.setFixedHeight(self.main_window.height() - library_y)
 
-        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel, self.stats_panel, self.tags_panel]:
+        for panel in [self.settings_panel, self.speed_panel, self.sleep_panel, self.sprint_panel,
+                      self.stats_panel, self.tags_panel]:
             panel.setFixedWidth(panel_w)
 
         self.settings_panel.setFixedHeight(500)
         self.speed_panel.setFixedHeight(500)
         self.sleep_panel.setFixedHeight(500)
+        self.sprint_panel.setFixedHeight(500)
         self.stats_panel.setFixedHeight(500)
         self.tags_panel.setFixedHeight(500)
 
@@ -2300,6 +2399,11 @@ class PanelManager:
         if self.sleep_panel_animation.state() != QAbstractAnimation.State.Running:
             x = 0 if self.sleep_panel.isVisible() else -panel_w
             self.sleep_panel.move(x, sidebar_y)
+
+        # Update Sprint Panel position if not animating
+        if self.sprint_panel_animation.state() != QAbstractAnimation.State.Running:
+            x = 0 if self.sprint_panel.isVisible() else -panel_w
+            self.sprint_panel.move(x, sidebar_y)
 
         # Update Stats Panel position if not animating
         if self.stats_panel_animation.state() != QAbstractAnimation.State.Running:

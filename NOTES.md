@@ -1,3 +1,382 @@
+## 2026-08-11 — Listening Sprint: grace mode selector, backward-seek accounting unit-mismatch bug, book-switch cancellation, end-of-chapter mode
+
+Five commits on `listening-sprint`: `c55d005`, `1309662`, `2a65703`, `9f8c1de`, `350867c`. Full
+session narrative in SESSION.md ("2026-08-11 Session 1"); this entry is the technical root-cause
+record for the two bugs worth remembering the mechanism of.
+
+### Backward-seek compensation added a wall-clock/audio-position unit mismatch
+
+`SprintPanel.update_sprint_state` added backward-seek accounting in Pass 3: a 200ms tick-to-tick
+`_last_known_pos` diff detects a rewind and adds the rewound distance to `_sprint_duration_s`, so the
+sprint clock measures forward audio progress rather than wall time. This shipped with a live-verified
+VT-boundary check (a temporary `SPRINT-REWIND-TRACE` log line confirmed zero false backward readings
+across a real VT file-boundary crossing, ruling out the obvious "is this actually a chapter-boundary
+artifact" theory before it was ever suspected of being one).
+
+The user reported: "it doubles the time rewound... I seek back 5 seconds, it adds 10." First response
+pulled the raw `SPRINT-REWIND-TRACE` log and found each individual seek logged exactly once with
+`delta` matching the real position distance — concluded (WRONG) that this wasn't a bug, and that the
+observed "doubling" must be the skip-button's existing `skip = get_skip_duration() * speed` behavior
+at 2x speed (5s configured × 2x speed = 10s actual seek). This conclusion was explicitly retracted,
+not quietly revised, when the user pushed back with a sharper repro: "I am going back 5 seconds in
+clock time if it is 1x or 8x, but it adds 40 seconds at 8x. I still need to go 40 seconds to clean
+this, not 5 seconds. Book time doesn't matter. Otherwise 10 minute sprint would become 5 minute sprint
+at 2x."
+
+**Real mechanism**: `_sprint_duration_s`/`elapsed`/`remaining` are all WALL-CLOCK seconds
+(`current_time` is `time.time()`), but the rewind distance measured via `pos` (`player.time_pos`) is
+AUDIO-POSITION seconds. These are different units whenever `speed != 1.0`. Rewinding 40 seconds of
+*audio* at 8x speed only costs the user 5 seconds of their actual *wall-clock* time to re-listen to
+it — so the correct wall-clock penalty is `rewind_delta / speed`, not the raw audio delta. The fix
+divides by `player.speed or 1.0` before adding to `_sprint_duration_s`. Confirmed live afterward: at
+8x, a 5-second wall-clock backward seek now adds ~5 seconds, not 40.
+
+**Lesson**: the first-pass conclusion ("not a bug, it's just speed-scaled skip buttons") was
+plausible, matched the raw log data, and was still wrong — it explained the SYMPTOM's magnitude at
+2x by coincidence (skip-scaling and the real unit-mismatch bug both produce a speed-proportional
+inflation, so a single 2x data point couldn't distinguish them) without explaining why "book time
+doesn't matter" for a *duration budget* denominated in wall-clock time. The user's second report (a
+counter-example reasoned from first principles: "10 minute sprint would become 5 minute sprint at
+2x") is what actually falsified the first theory — not new data, a better argument from data already
+available. Worth remembering: a theory that fits the numbers isn't automatically the right theory if
+the person reporting the bug can still articulate why the fitted explanation doesn't make sense.
+
+### Backward compensation's remaining structural gap — gated behind a setting rather than fixed
+
+Separately (after the unit-mismatch fix), the user found a second, more fundamental problem with the
+same feature: seek forward 20 minutes, then back to the same spot, on a 10-minute sprint — it became
+a 30-minute sprint. Correct behavior is zero net change, since net audio progress across the whole
+excursion is zero. Root cause: a pure tick-to-tick `_last_known_pos` diff has no memory of the
+position before a forward jump — "came back 20 minutes" reads as a fresh 20-minute rewind relative to
+the now-elevated last-seen position, with no way to net it against the earlier free forward seek.
+This is not fixable by adjusting a threshold or constant; it needs the detector to track more than
+one prior sample (e.g. a high-water mark, or the position at each direction change). Deliberately
+NOT attempted this session — instead gated behind a new `sprint_backward_seek_compensation` config
+key (default Off, `config.py`), so the feature ships without shipping this known gap as default
+behavior. Fixing the detection algorithm itself is future work.
+
+### End-of-chapter sprint mode — two factual errors in the task brief caught before writing code
+
+The implementation task claimed `_sleep_eoc_anchor` exists on `Player` and that `SprintPanel` already
+had a `chapter_changed` connection from an earlier pass. Both were checked against the actual code
+before implementing (grep, then read) and both were wrong: `_sleep_eoc_anchor` is panel-local to
+`SleepTimerPanel` (`Player` has no EOC-anchor state of its own — each panel that wants end-of-chapter
+behavior tracks its own anchor independently), and `SprintPanel` had zero `chapter_changed`
+plumbing — the whole mechanism was built fresh, mirroring sleep's shape exactly rather than
+"extending" something that didn't exist.
+
+A load-bearing piece the task brief never mentioned at all: sleep's `update_timer_state` carries a
+`_was_seeking` True→False settle-detection latch that consumes a stale `player.user_seek_pending` flag
+when a seek lands back INSIDE the anchor chapter (no `chapter_changed` emit in that case, since the
+chapter index didn't move — so `_on_chapter_changed` never runs to clear the flag itself). Sleep
+needed this fixed live on 2026-08-10 after the flag was found surviving to falsely tag the next,
+entirely natural, chapter transition as seek-driven. Sprint's EOC mode got the identical latch
+(`_sprint_was_seeking`) proactively, specifically because omitting it would have shipped a bug class
+already known and already fixed once in the sibling panel — the brief's specification wasn't
+sufficient on its own to avoid regressing something sleep had already learned the hard way.
+
+Two decisions were confirmed with the user rather than silently resolved to whatever the task text
+literally said: the message shown when a seek carries playback past the anchor is "Sprint cancelled"
+(reusing the already-existing `cancel_for_book_switch()` method — both are the same category of event,
+an external interruption, not a grace-pool failure), not "Sprint failed" as the task brief's snippet
+would have produced via `_trigger_cancel()`; and the EOC boundary-fire check includes an `is_eof`
+fallback matching sleep's own `reached_end = pos >= anchor_end - 0.5 or is_eof`, which the task brief's
+snippet omitted — without it, an EOC sprint armed on a book's last chapter could fail to complete if
+position never quite reaches `anchor_end - 0.5` before genuine end-of-file.
+
+### Two small visual bugs, both from copying sleep's button imprecisely
+
+The "End of chapter" button was given `setObjectName("pattern_button")`, which pulled in the wrong
+QSS dispatcher rule — sleep's own `end_chap_btn` has NO object name at all, and is styled purely by
+the same per-index ramp coloring (`_apply_preset_ramp_colors`) the numbered duration-preset buttons
+use. This also left a dead `update_panel_styling()` block setting a `selected` Qt property that
+nothing in QSS was targeting (sleep's `end_chap_btn` has no distinct "armed" visual state beyond the
+ramp color, unlike the Fade-out row's buttons, which genuinely do use `selected`/`is_default`
+properties). Both removed once the object-name mismatch was found by direct comparison against
+`sleep_timer.py`'s source, not by guessing at what QSS rule might be wrong.
+
+Separately, the button rendered 1px short of flush with the duration grid's right edge above it — a
+`QGridLayout` 2-column span (`grid.addWidget(btn, 2, 2, 1, 2)`) with no explicit width, letting Qt's
+column-width negotiation round down by a pixel rather than claim the full `57 + 8 + 57 = 122px` span
+its two sibling columns define. Fixed via `setMinimumWidth(122)`, using the exact sum rather than a
+guessed value.
+
+---
+
+## 2026-08-11 — Chapter title flicker on Prev/Next/chapter-list seeks: reproduced, root-caused to a PRE-EXISTING mpv artifact, confirmed unrelated to the sleep-fix/listening-sprint work, NOT fixed (investigation only — see TODO.md)
+
+Reported live: "Each Prev/Next or seek within the chapter list fluctuates the chapter title,"
+persisting across book switches and, at the time of the report, across an app restart. The user
+flagged this as suspicious given the recent end-of-chapter-sleep rebuild (`935861b`) and asked for
+investigation only, no fix, plus a check of whether it's contained to `listening-sprint` or also on
+`main`. **After this investigation, a later app restart made the flicker stop reproducing** — see
+"Open question" below; this write-up and the log excerpt are what the next session needs to pick
+the thread back up.
+
+### Reproduction and mechanism (confirmed via log trace, `fabulor.log.1`, DEBUG level)
+
+Log window analyzed: 2026-08-11 15:14:00–15:16:14 (see excerpt below for the clearest single
+instance, 15:15:23,555–15:15:24,032). The user was rapidly exercising Prev/Next and chapter-list
+clicks across two VT books ("Death and the Dervish", then "Now I Surrender" after a book switch).
+
+Every chapter seek lands exactly on target — e.g. `activate_chapter_index requested_idx=3` sets
+`target=41.91`; the settle sample (`raw_value=41.91`) has `distance=0.0`, clears `is_seeking`, and
+`_on_time_pos_change`'s non-VT chapter walk correctly resolves `chapter=3`
+(`tolerance_affected_outcome=True` — floating-point exact-boundary case). The chapter list correctly
+does `setCurrentRow(3)`.
+
+**Then the very next raw `time_pos` sample from mpv reads BACKWARD** — `41.363562545195265`,
+below the 41.91 chapter-3 boundary. `_on_time_pos_change`'s non-VT walk (player.py:317-330) reads
+mpv's **raw** `value`, not the settled `_logical_pos` — so this stale sample resolves to
+`chapter=2`, and `_update_chapter_label_from_index` does `setCurrentRow(2)`. The samples after that
+(41.45, 41.64, 41.73...) climb back past the boundary and it flips back to `chapter=3`. That
+back-then-forward flip within ~100ms is the visible "fluctuation" the user is seeing — it happens on
+essentially every chapter-boundary seek in the trace, both Prev and Next, paused and playing.
+
+```
+2026-08-11 15:15:23,875 DEBUG fabulor.ui.chapter_list — [_activate_item ENTRY] requested_idx=3 force_play=False
+2026-08-11 15:15:23,875 DEBUG fabulor.player — activate_chapter_index: entry requested_idx=3 current_idx=5
+2026-08-11 15:15:23,876 DEBUG fabulor.player — seek_async: entry target=41.91 current=26327.049... direction=back paused=False
+2026-08-11 15:15:23,876 DEBUG fabulor.player — seek_async: non-VT branch mpv_command_pos=41.91 undershoot_comp_applied=False final_seek_target=41.91
+2026-08-11 15:15:23,877 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.91
+2026-08-11 15:15:23,877 DEBUG fabulor.player — [VT-SEEK-TRACE] site=settle_eval raw_value=41.91 _seek_target=41.91 distance=0.0 will_settle=True
+2026-08-11 15:15:23,877 DEBUG fabulor.player — [VT-SEEK-TRACE] site=settle_branch_CLEARED_is_seeking _is_seeking=False _seek_target=None _logical_pos=41.91 _cached_time_pos=41.91
+2026-08-11 15:15:23,878 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.91 tolerance=0.5 -> chapter=3 (prev=-1) tolerance_affected_outcome=True
+2026-08-11 15:15:23,881 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(3) isVisible=True scroll_before=72
+2026-08-11 15:15:23,926 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.363562545195265        <-- STALE BACKWARD SAMPLE
+2026-08-11 15:15:23,927 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.363562545195265 tolerance=0.5 -> chapter=2 (prev=3) tolerance_affected_outcome=False
+2026-08-11 15:15:23,927 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(2) isVisible=True scroll_before=72   <-- FLICKER: label shows chapter 2
+2026-08-11 15:15:23,977 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.45315218880282
+2026-08-11 15:15:23,977 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.45315218880282 tolerance=0.5 -> chapter=2 (prev=2) tolerance_affected_outcome=False
+2026-08-11 15:15:24,027 DEBUG fabulor.player — _on_time_pos_change: raw time_pos=41.64436752182297
+2026-08-11 15:15:24,028 DEBUG fabulor.player — _on_time_pos_change: non-VT walk pos=41.64436752182297 tolerance=0.5 -> chapter=3 (prev=2) tolerance_affected_outcome=True
+2026-08-11 15:15:24,031 DEBUG fabulor.app — [_update_chapter_label_from_index] setCurrentRow(3) isVisible=True scroll_before=48   <-- flips back to chapter 3
+```
+
+Full window (5351 lines, 15:14:00–15:16:14, includes ~15 more Prev/Next instances across both
+books) was extracted to `/tmp/.../scratchpad/window.log` during the investigation — not committed
+anywhere permanent; re-extract from `fabulor.log`/`fabulor.log.1`/`fabulor.log.2` (rotated,
+`~/.local/state/fabulor/log/`) if needed again. Log level is DEBUG by default in this build
+(`FABULOR_LOG_LEVEL` env var controls it — see `logger_setup.py`).
+
+### This is a KNOWN, PREVIOUSLY-FIXED-THEN-REVERTED bug — not new
+
+`git log --oneline -- src/fabulor/player.py` surfaces:
+
+- **`b6a4023`** (2026-06-15) — "fix: drop mpv's stale backward time_pos sample after a seek
+  (chapter-UI bounce/stick)". Commit message describes the *exact* mechanism found above, almost
+  verbatim: "Every chapter seek (Next/Prev/list-click) lands exactly on target (dist=0.0) and
+  is_seeking clears correctly — then mpv emits ONE stale time_pos sample ~0.56-0.87s BACKWARD (into
+  the previous chapter) before resuming forward." Documented two consequences: paused → chapter
+  UI sticks on the previous chapter (no forward sample ever arrives to overwrite it); playing →
+  transient slider bounce. Fix shape: reject a backward *global*-position jump in
+  `_on_time_pos_change` while `not is_seeking`, via a new `_last_global_pos` + a
+  `_STALE_BACKWARD_TOLERANCE = 0.3` threshold (comparing in global/VT-aware space so a legitimate
+  VT file-boundary regression in local `value` isn't misread as the artifact). Claimed verification:
+  "32 drops, all the genuine ~0.31-0.34s post-seek stale sample, all pause=True, ZERO during VT file
+  switches, zero false positives during forward playback" (instrumentation since removed).
+- **`4ae0783`** (same day, minutes later) — "Revert ... (chapter-UI bounce/stick)". Reverts
+  `b6a4023` wholesale. **The revert commit records no rationale of its own** — CLAUDE.md's "VT+Undo
+  is the known-fragile zone" section is the only place the reasoning survives: this attempt "broke
+  VT backward-seek, the play/pause icon, and chapter[1]→[0] click. No mechanism-level cause for any
+  of the three was ever diagnosed — the record stops at 'regressed X/Y/Z.'"
+- The `_STALE_BACKWARD_TOLERANCE` constant, `_last_global_pos` field, and the reject-branch itself
+  are **fully absent from the current codebase** (confirmed via `grep` — zero hits on either name).
+  Nothing today implements even a reverted attempt at this.
+
+### Confirmed NOT caused by sleep-fix or listening-sprint
+
+`git diff main -- src/fabulor/player.py` shows **zero difference** in `_on_time_pos_change`'s
+non-VT chapter walk (player.py:317-330) or anywhere else in the seek/settle machinery between
+`main` and `listening-sprint`. Neither the end-of-chapter sleep rebuild (`935861b`) nor the sprint
+work touched this code path at all. The user's suspicion that the recent sleep-timer work made this
+"more visible" is understandable given the timing, but the diff rules it out as the cause — this is
+inherited, pre-existing behavior that `main` has too.
+
+### Open question: why did it stop reproducing after a restart?
+
+The user reported the flicker persisted across a book switch AND a prior app restart (which is why
+they suspected a stuck flag rather than a live mpv quirk) — but a LATER restart, done right after
+this investigation, made it stop reproducing entirely, with no code changes in between. This is
+inconsistent with a purely mpv-timing artifact (which should reproduce independent of app restarts)
+and also inconsistent with a stuck application-level flag (which a restart should always clear).
+Neither explanation alone fits both observations. Not chased further per explicit instruction to
+stop at investigation — **next session should re-establish reproducibility first** (it may be
+intermittent/timing-sensitive rather than gone) before attempting any fix. If it truly no longer
+reproduces on demand, that intermittency is itself a fact worth understanding before trusting a fix
+is unnecessary — CLAUDE.md's "never substitute a plausible explanation for a checked one" applies
+here as much as anywhere: don't assume it "must have been something transient."
+
+### Why no fix was attempted this session
+
+Explicit instruction: investigation only. Also, per CLAUDE.md's seek/position-tracking standing
+rule ("Seek/position tracking — VT+Undo is the known-fragile zone"), this exact code path has
+broken four independent times from four different fix attempts, and a green instrumentation run
+(exactly what `b6a4023` had — 32/32 clean) has already been proven insufficient evidence of safety
+on this specific bug class once. Mid-way through an unrelated feature branch is also the wrong time
+to touch it. See TODO.md for the follow-up entry with a concrete next-step ledger.
+
+---
+
+## 2026-08-10/11 — Listening Sprint: new sibling feature to the sleep timer, built on `listening-sprint`, plus a live bug-fix round exposing a shared-widget interference bug in the pre-existing sleep timer code
+
+Full arc: investigation-only mapping pass (no code), a three-checkpoint implementation plan
+(`SprintPanel`, app.py wiring + mutual-exclusion, sidebar/PanelManager registration), then a live
+bug-fix round against four reported issues. Two commits: `0fe4331` (feature), `001fb2a` (bug fixes).
+
+### Investigation and plan
+
+Before any code, mapped `SleepTimerPanel`'s structure, the shared indicator zone (`vol_stack`),
+the sidebar's Sleep trigger/cancel-button/pulsate pattern, the "Delete listening history"-style
+confirm-overlay pattern, keybinding `R` (confirmed free), and `Player.user_seek_pending`/
+`sleep_fired` (confirmed present from the prior end-of-chapter-sleep session). `SprintPanel` was
+then built as a structural sibling of `SleepTimerPanel`: duration presets, a manual-minutes input,
+a grace-period row replacing fade-out, and a 200ms-polled state machine
+(`update_sprint_state`, called from `app.py`'s `_sync_playback_state` alongside
+`update_timer_state`).
+
+### Design decisions made during planning, each confirmed rather than assumed
+
+- **Mutual exclusion via a gate-callback pattern**, not app.py rewiring button connections after
+  construction: both panels gained `set_arm_gate`/`show_conflict_confirm`, and `set_sleep_timer`/
+  `set_sprint` were split into thin outer shells (`proceed = lambda: self._do_arm_*(...)`) plus the
+  real `_do_arm_*` state-mutation body. `app.py`'s `_sleep_arm_gate`/`_sprint_arm_gate` intercept
+  the `proceed` callable, show a 7s confirm overlay (reusing the "Delete listening history" pattern
+  — a local `_ClickableLabel` copy in each panel, not a shared import) when the other timer is
+  active, and only call `proceed()` on confirm. Panels stay unaware of each other by name; the
+  conflict *policy* lives entirely in app.py.
+- **`_on_sprint_expired` deliberately does NOT mirror `_on_sleep_timer_expired`'s
+  `session_recorder.pause()`** — a sprint completing does not pause playback (unlike sleep), so
+  pausing the recorder there would silently stop listening-time tracking for a session that's still
+  live. Confirmed with the user before implementing rather than copying sleep's shape blindly.
+- **`_do_arm_sprint` gained the same `player.pause = False` on arm that `SleepTimerPanel` has** —
+  confirmed this wasn't in the original spec's pseudocode, traced that sleep's version lives in the
+  panel itself (not the app.py signal handler, which only opens/resumes the session recorder), and
+  matched it exactly rather than leaving sprint arm-while-paused in an undefined state.
+
+### `PanelManager` registration required a much larger sweep than expected
+
+Registering a fourth full panel touched every hardcoded panel enumeration in `panels.py` — the
+`_CLOSE_ANIMS` table, `active_full_panel()`, `escape_active_panel()`,
+`handle_drag_area_right_click()` (dispatch + debug log), `panel_tab_widgets()` (Tab-cycling, CLAUDE.md
+invariant 27), `is_any_full_panel_visible()`, `is_any_panel_animating()`, `_any_panel_animating()`
+(found to be MISSING `tags_panel_animation`'s sibling gap independently — no, confirmed it already
+had `tags_panel_animation`; the actual gap found here was sleep's own animation missing from this
+specific list before sprint even existed — folded the fix in as part of the same pass),
+`hide_all_panels()`, `handle_mouse_press()` (both `panels.py`'s and `app.py`'s own copy), the
+Book-Detail-underlay restoration map, `blurred_panel()` (carousel-clip helper), and `resize_panels()`
+(three separate spots: width, height, position). Also required a new `get_sprint_stylesheet()` in
+`themes.py` and registering `sprint_panel` in `theme_manager.py`'s panel-sheet dispatch dict (two
+sites) and fade-overlay mask-punch lists (two sites). `tests/test_sidebar_hotspot.py`'s fixture
+(constructs `PanelManager` attributes manually, predates sprint) needed the same additions or its
+tests failed with `AttributeError: 'PanelManager' object has no attribute 'sprint_panel'` —
+caught immediately by the test suite, not discovered live.
+
+### Two structural bugs found and fixed before the first live test
+
+- **No background at all** (reported: "the panel has no background or it is set to 0 alpha... even
+  when I set the panel background option as Opaque"). Root cause: `get_panel_base_stylesheet`'s
+  background rule was a **literal three-name QWidget# selector**
+  (`QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel`), not a generic rule —
+  `sprint_panel` was never added to it, so the panel got zero background rule regardless of any
+  opacity setting. This was never a transparency bug; the selector simply never matched. Fixed by
+  adding `QWidget#sprint_panel` to the list.
+- **Arming a sprint completed it instantly.** `_do_arm_sprint` recorded `_sprint_start_time` via
+  `time.monotonic()` (per the original spec's pseudocode), but `update_sprint_state`'s
+  `current_time` parameter is always `time.time()`-based (sourced from `app.py`'s
+  `_sync_playback_state`, shared with sleep's own `time.time()`-based
+  `_sleep_timer_end_time`). `elapsed = time.time() - time.monotonic()` is two incompatible clocks —
+  an enormous, meaningless number that instantly exceeded any sprint duration and fired completion
+  on the very first tick. Fixed by switching `SprintPanel` to `time.time()` throughout, matching
+  what its one real caller actually supplies.
+
+### Live bug-fix round: four issues reported, three genuinely fixed on the second attempt
+
+1. **Sidebar cancel-button (×) too close to the "SPRINT" trigger text.** `sprint_cancel_btn`'s
+   `move(34, 1)` was copied verbatim from `sleep_cancel_btn` — "SPRINT" is a letter wider than
+   "SLEEP", so the same x-offset overlapped the text. Nudged to `move(44, 1)`. Fixed on the first
+   attempt, confirmed live.
+
+2. **"Sprint cancelled"/"Sprint completed" messages dismissed almost instantly.** First diagnosis
+   (wrong, but a real bug in its own right, fixed anyway): `_trigger_cancel`/`_trigger_complete` set
+   `_cancel_message_active = True` *before* calling `disable_sprint()`, which unconditionally clears
+   that same flag as part of its own reset — clobbering the guard back to `False` before it could
+   ever protect the next tick. Fixed by reordering to match `sleep_timer.py`'s `_cancel_eoc_sleep`
+   (disarm first, then arm the guard). **This did not fix the reported symptom** — see below.
+
+3. **Mute icon not covering the sprint countdown; sprint text never shown at all under some
+   conditions while muted.** Investigated via added `[SPRINT-TRACE]` logging (not guessed a second
+   time) rather than a second blind fix — see CLAUDE.md's "never substitute a plausible explanation
+   for a checked one" section. Live logs showed `_on_sprint_display_text_updated`'s `old_text` reading
+   `''` on almost every tick even when a countdown had clearly been showing for many prior ticks —
+   meaning something ELSE was blanking the shared label between sprint's own writes.
+
+   **Root cause, confirmed via the trace log, not inferred:** `SleepTimerPanel.update_timer_state`'s
+   trailing `display_text_updated.emit(display_text)` is unconditional — it fires every single 200ms
+   tick regardless of whether sleep is armed, sending `""` whenever it isn't. Since sleep and sprint
+   share one label (`sleep_timer_label` / `vol_stack` page 0), and `_sync_playback_state` calls
+   sleep's `update_timer_state` BEFORE sprint's `update_sprint_state` on every tick, sleep's
+   redundant `""` write was clobbering sprint's own text on every tick sleep wasn't armed — i.e.
+   constantly, for anyone testing sprint in isolation. This corrupted sprint's own `was_armed`/
+   `old_text` tracking (making `newly_armed` spuriously read `True` far more often than intended)
+   and explains why the message-dismiss timing (issue 2) and the mute-priority transient (issue 3)
+   both malfunctioned from ONE shared cause, even though the state-machine logic for both was
+   independently correct in isolation (confirmed by reading the trace log's own timestamps: the
+   "Sprint cancelled" text was genuinely held for ~2083ms against a configured 2000ms dismiss — the
+   fix in point 2 above DID work exactly as designed; the visible symptom was caused by this
+   separate interference, not by point 2's bug).
+
+   Fixed by gating `update_timer_state`'s trailing emit on `self._sleep_mode is not None` — sleep
+   still emits everything it legitimately needs to (the running countdown, `[chapter]` text, and
+   `disable_sleep_timer()`'s own explicit `""` emit on the real disarm transition); it just stops
+   repeating a redundant `""` every tick when it was never armed at all. `SprintPanel.
+   update_sprint_state` was confirmed already correctly gated (`if not self._sprint_active: return`
+   at the top) — the bug was one-directional, sleep clobbering sprint, never the reverse, matching
+   that sleep's own behavior was never reported broken.
+
+   Also added: the grace countdown ("Grace MM:SS", shown while paused mid-sprint) now gets its own
+   transient reveal while muted, alongside arming — the original `newly_armed` check only caught
+   empty-to-non-empty transitions, and both the running countdown and the grace text are non-empty,
+   so entering grace never re-triggered the transient on its own. Detected via a text-prefix check
+   (`text.startswith("Grace ")`) rather than a new signal/flag from `SprintPanel`, per direct
+   confirmation — app.py already receives the formatted string, so no new API surface was needed.
+   Confirmed with the user that grace-EXIT does NOT need the same treatment (resuming just returns
+   to a state that was already showing before the pause — nothing new to confirm).
+
+4. **Disable-button ("Disable the sleep timer" / "Cancel the sprint") visibly flashes for one frame
+   right before the panel closes on arm.** Reported as pre-existing on Sleep, inherited by Sprint,
+   not introduced by it. First attempt (wrong): reordered `timer_started.emit()`/`disable_sleep_btn.
+   show()` on the theory that emit-before-show would let the close-slide start before the button
+   painted visible. **This has no mechanism to work** — Qt does not paint between two synchronous
+   Python statements in the same call stack; both land in the same paint cycle regardless of order.
+   Confirmed this reasoning only after the user reported the reorder didn't fix anything.
+
+   User pointed at a working, already-shipped analogous case: Settings' Library tab has a
+   "Persist search filter" master switch with sub-toggles; turning all sub-toggles off should turn
+   the master off too, but doesn't do so live during the interaction — it's reconciled once, at the
+   NEXT panel open, via `_sync_persist_filter_on_open()` (called from `PanelManager.
+   _start_settings_entry`). Applied the same shape: `disable_sleep_btn.show()`/`disable_sprint_btn.
+   show()` removed entirely from the arm path; a new `sync_disable_button_visibility()` on each
+   panel (`self.disable_sleep_btn.setVisible(self._sleep_mode is not None)` /
+   `self.disable_sprint_btn.setVisible(self._sprint_active)`) is called from `PanelManager.
+   _start_sleep_entry`/`_start_sprint_entry` instead — i.e. exactly when the panel is about to
+   become visible again, never during the arm-then-auto-close sequence. `disable_sleep_timer()`/
+   `disable_sprint()`'s own `.hide()` calls (the disarm-while-open path) were left untouched — that
+   path never triggers an auto-close, so it has no flash to fix. **Not yet live-verified before end
+   of session** — the fix is logically sound and matches a confirmed-working pattern, but should be
+   confirmed live next session before being treated as settled.
+
+### What's confirmed vs. not yet re-verified
+
+User confirmed live, end of session: "verified" (after the second round of fixes — items 2 and 3
+above, both traced to the same root cause). Item 1 (button position) was confirmed after the first
+round. Item 4 (button flash) was implemented in the same commit as items 2/3 but was NOT explicitly
+re-tested live before the session ended — flagged here rather than assumed working, per the
+"1 out of 4" correction earlier in this same session, which is exactly the kind of thing that should
+not be silently assumed fixed a second time.
+
+---
+
 ## 2026-08-10 (continued, same day) — Streak grid silently froze across a day-boundary rollover in a long-running session. Fixed via a self-rescheduling single-shot rollover timer. Shipped as `f50d1f6`
 
 **Symptom, reported live:** Stats > Timeline showed the correct finished-book dot for today, but

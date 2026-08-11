@@ -8,6 +8,19 @@ from .title_bar import RightClickButton
 from mpv import ShutdownError
 from .line_edit_dragfix import DragSafeLineEdit
 
+
+class _ClickableLabel(QLabel):
+    """Same shape as book_detail_panel.py's private _ClickableLabel / sprint_panel.py's
+    local copy — a QLabel that emits a real Signal on left-click, for the confirm-overlay
+    pattern used across this codebase (Delete listening history, Reset all stats, etc.)."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class SleepTimerPanel(QWidget):
     timer_started = Signal()
     timer_stopped = Signal()
@@ -49,6 +62,15 @@ class SleepTimerPanel(QWidget):
         self._eoc_cancel_timer.setSingleShot(True)
         self._eoc_cancel_timer.timeout.connect(self._on_eoc_cancel_timeout)
         self.player.chapter_changed.connect(self._on_chapter_changed)
+        # Optional external gate, set by app.py via set_arm_gate(). See SprintPanel's
+        # matching mechanism (ui/sprint_panel.py) for the full rationale — this panel
+        # has no built-in awareness of any other panel (e.g. sprint); app.py owns
+        # that policy entirely.
+        self._arm_gate = None
+        self._conflict_confirm_timer = QTimer(self)
+        self._conflict_confirm_timer.setSingleShot(True)
+        self._conflict_confirm_timer.timeout.connect(self._on_conflict_confirm_timeout)
+        self._conflict_on_confirm = None
 
         self._setup_ui()
 
@@ -88,6 +110,7 @@ class SleepTimerPanel(QWidget):
         self.custom_sleep_input.customContextMenuRequested.connect(lambda _: self.custom_sleep_input.clear())
         self.custom_sleep_input.setFixedWidth(50)
         self.custom_sleep_input.setValidator(QRegularExpressionValidator(QRegularExpression("[1-9][0-9]{0,2}"), self))
+        self.custom_sleep_input.returnPressed.connect(self._on_custom_sleep_time_set)
         def _sleep_input_key(e):
             if e.key() == Qt.Key.Key_Escape:
                 self.custom_sleep_input.clear()
@@ -133,6 +156,18 @@ class SleepTimerPanel(QWidget):
         self.disable_sleep_btn.hide()
         layout.addWidget(self.disable_sleep_btn)
 
+        # Conflict confirmation (shown via show_conflict_confirm when app.py's
+        # arm gate detects sprint is active). Same shape as sprint_panel.py's
+        # own confirm label / book_detail_panel.py's "Delete listening history".
+        self._conflict_confirm_label = _ClickableLabel("")
+        self._conflict_confirm_label.setObjectName("sleep_conflict_confirm")
+        self._conflict_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._conflict_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._conflict_confirm_label.setFixedHeight(28)
+        self._conflict_confirm_label.clicked.connect(self._on_conflict_confirm_clicked)
+        self._conflict_confirm_label.hide()
+        layout.addWidget(self._conflict_confirm_label)
+
         layout.addStretch()
 
     def _on_custom_sleep_time_set(self):
@@ -145,7 +180,49 @@ class SleepTimerPanel(QWidget):
         except ValueError:
             pass
 
+    @property
+    def is_active(self):
+        return self._sleep_mode is not None
+
+    def set_arm_gate(self, gate_fn):
+        """gate_fn(proceed) is called instead of arming directly whenever
+        set_sleep_timer() is invoked. gate_fn must eventually call proceed()
+        (now, later via a confirm click, or never if the user lets it time
+        out/cancel). See SprintPanel.set_arm_gate for the full rationale."""
+        self._arm_gate = gate_fn
+
+    def show_conflict_confirm(self, message, on_confirm):
+        """Shows a click-to-confirm overlay with the given message; on_confirm is
+        called (with no arguments) if the user clicks it before the timeout, or
+        silently dropped on timeout (matching every confirm pattern in this
+        codebase — Delete listening history, Reset all stats). Fixed 7s window,
+        NOT _dismiss_ms (the much shorter "Sleep cancelled" MESSAGE display
+        window — a different concept entirely)."""
+        self._conflict_on_confirm = on_confirm
+        self._conflict_confirm_label.setText(message)
+        self._conflict_confirm_label.show()
+        self._conflict_confirm_timer.start(7000)
+
+    def _on_conflict_confirm_clicked(self):
+        self._conflict_confirm_timer.stop()
+        self._conflict_confirm_label.hide()
+        callback = self._conflict_on_confirm
+        self._conflict_on_confirm = None
+        if callback:
+            callback()
+
+    def _on_conflict_confirm_timeout(self):
+        self._conflict_confirm_label.hide()
+        self._conflict_on_confirm = None
+
     def set_sleep_timer(self, duration_minutes=None, mode=None):
+        proceed = lambda: self._do_arm_sleep_timer(duration_minutes, mode)
+        if self._arm_gate:
+            self._arm_gate(proceed)
+        else:
+            proceed()
+
+    def _do_arm_sleep_timer(self, duration_minutes=None, mode=None):
         self.disable_sleep_timer()
         if self.player:
             try:
@@ -159,7 +236,6 @@ class SleepTimerPanel(QWidget):
             self._sleep_mode = 'timed'
             self.config.set_sleep_duration(duration_minutes)
             self.config.set_sleep_mode('timed')
-            self.disable_sleep_btn.show()
             self.timer_started.emit()
         elif mode == 'end_of_chapter':
             self._total_timer_duration = 0
@@ -169,10 +245,29 @@ class SleepTimerPanel(QWidget):
             # transition.
             self.player.user_seek_pending = False
             self.config.set_sleep_mode(mode)
-            self.disable_sleep_btn.show()
             self.timer_started.emit()
+        # disable_sleep_btn.show() is deliberately NOT called here. timer_started
+        # (above) is connected to panel_manager._close_sleep_flow, which starts the
+        # slide-out synchronously in the same call stack — Qt does not paint
+        # between two Python statements, so showing the button before OR after the
+        # emit still lands in the same paint cycle as the close-slide, producing a
+        # one-frame flash of the button just before the panel disappears (reported
+        # live, 2026-08-11; a same-call-stack reorder was tried first and did not
+        # fix it, confirming this mechanism). Matches the deferred-reconciliation
+        # shape already used by _sync_persist_filter_on_open (app.py) for Settings'
+        # persist-filter sub-buttons: the visibility fixup is deferred to the next
+        # panel-OPEN instead of applied synchronously during the interaction that
+        # would otherwise disturb an already-closing panel. See
+        # sync_disable_button_visibility(), called from PanelManager._start_sleep_entry.
 
         self.update_panel_styling()
+
+    def sync_disable_button_visibility(self):
+        """Called from PanelManager._start_sleep_entry, before the panel becomes
+        visible — NOT from the arm path itself. See _do_arm_sleep_timer's comment
+        for why the button's visibility is deferred to panel-open time instead of
+        being set synchronously during arming."""
+        self.disable_sleep_btn.setVisible(self._sleep_mode is not None)
 
     def _current_chapter_index(self):
         """Derives the current chapter index the same way Player._on_time_pos_change
@@ -446,4 +541,16 @@ class SleepTimerPanel(QWidget):
                     except (ShutdownError, AttributeError, SystemError):
                         pass
                     self.timer_expired.emit()
-        self.display_text_updated.emit(display_text)
+        # Gated on _sleep_mode, NOT unconditional: this used to fire every single
+        # 200ms tick regardless of whether sleep was armed at all, always sending
+        # "" when it wasn't. That's harmless in isolation (disable_sleep_timer()
+        # already emits its own "" on the actual disarm transition, so this was
+        # merely redundant) — but display_text_updated feeds a label SHARED with
+        # SprintPanel (sleep_timer_label / vol_stack page 0), and sleep's repeated
+        # "" emits were clobbering sprint's own countdown/grace text on every tick
+        # sleep wasn't armed, corrupting sprint's own old-text tracking in
+        # _on_sprint_display_text_updated and disrupting its message-dismiss timing
+        # and mute-transient logic. Confirmed live, 2026-08-11. Only emit here when
+        # sleep actually has something to say.
+        if self._sleep_mode is not None:
+            self.display_text_updated.emit(display_text)

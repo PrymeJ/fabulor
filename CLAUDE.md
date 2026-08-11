@@ -421,6 +421,57 @@ above) — a plain flag set at the moment intent is known, not inferred from tim
 caller of `_advance_or_finish` needs the unpause to fire despite `sleep_fired`, that is new scope —
 verify the caller doesn't already special-case sleep before assuming this guard needs weakening.
 
+### DO NOT let a per-tick state machine emit an unconditional "nothing to show" value into a widget shared with another per-tick state machine
+`SleepTimerPanel.update_timer_state`'s trailing `display_text_updated.emit(display_text)` was
+unconditional — it ran on every single 200ms tick regardless of whether sleep was armed, sending
+`""` whenever it wasn't. This was harmless for years because `sleep_timer_label` (`vol_stack` page
+0) had exactly one writer. Adding `SprintPanel` as a second writer of the SAME label (2026-08-11,
+by design — sleep and sprint are mutually exclusive, so sharing one indicator slot is correct)
+turned the old "harmless redundant `""`" into a live bug: `_sync_playback_state` calls sleep's
+`update_timer_state` BEFORE sprint's `update_sprint_state` on every tick, so sleep's redundant
+empty-write ran first and clobbered whatever sprint had just written, on every tick sleep wasn't
+armed — i.e. constantly, for anyone using sprint alone. This corrupted sprint's own
+`_on_sprint_display_text_updated`'s `old_text`/`was_armed` tracking (spuriously reading `newly_armed
+= True` far more often than intended), which surfaced as two seemingly unrelated symptoms — the
+mute-icon transient misfiring, and (via a compounding but distinct ordering bug, see the
+`_cancel_message_active` note below) the cancel/complete message appearing to dismiss early. Two
+live-tried fixes that addressed the WRONG layer before this was traced: reordering
+`_cancel_message_active = True` vs. `disable_sprint()` (a real, separately-confirmed bug — see
+`_trigger_cancel`/`_trigger_complete` — but insufficient on its own), and a same-call-stack
+`emit()`/`.show()` reorder for a different, unrelated symptom (see the button-flash rule below).
+Neither was found wrong by re-guessing — both were confirmed insufficient only after adding real
+`logger.warning` trace logging and reading the actual log timestamps. Fixed by gating sleep's
+trailing emit on `self._sleep_mode is not None`: sleep still emits everything it legitimately needs
+to (the running countdown, `[chapter]` text, and `disable_sleep_timer()`'s own explicit `""` on the
+real disarm transition) — it just stops repeating a redundant `""` every tick when it was never
+armed at all. `SprintPanel.update_sprint_state` was already correctly gated (`if not
+self._sprint_active: return` at the top) — the interference was one-directional. **Any future
+per-tick state machine that shares a display widget with another one must emit only when it
+genuinely has something to say, never an unconditional default value on every poll** — even a value
+that looks obviously harmless (an empty string) can silently break a second writer added later.
+
+### DO NOT try to fix a visible flash by reordering an `emit()`/`.show()` pair within the same call stack
+`SleepTimerPanel`/`SprintPanel`'s "Disable/Cancel" button flashed visibly for one frame right before
+its own panel closed on arm (`timer_started`/`sprint_started` is connected to
+`PanelManager._close_sleep_flow`/`_close_sprint_flow`, which starts the close-slide synchronously in
+the same call). Reordering `.show()` to run after the `emit()` was tried first, on the theory that
+the close-slide would start before the button painted visible — **this has no mechanism to work**:
+Qt does not paint between two synchronous Python statements in the same call stack, so both the
+button's visibility change and the animation start land in the same paint cycle regardless of
+statement order. Confirmed live that the reorder did not fix the symptom. The correct shape (pointed
+out directly, already shipped elsewhere in this codebase): `_sync_persist_filter_on_open`
+(`app.py`, called from `PanelManager._start_settings_entry`) defers reconciling Settings' "Persist
+search filter" master switch to the NEXT panel-open, rather than applying it live during the
+sub-toggle interaction that would otherwise visibly disturb an already-open/closing panel. Applied
+the same shape: `.show()` was removed from the arm path entirely; a new
+`sync_disable_button_visibility()` on each panel is called from `PanelManager._start_sleep_entry`/
+`_start_sprint_entry` instead, i.e. exactly when the panel is about to become visible again, never
+during the arm-then-auto-close sequence. `disable_sleep_timer()`/`disable_sprint()`'s own `.hide()`
+calls (the disarm-while-open path, which never triggers an auto-close) were left untouched. If a
+future visible-flash bug looks like an ordering problem, check whether the two statements are
+genuinely separated by a return to the Qt event loop (a different call stack) before assuming a
+same-call-stack reorder can fix it — most of the time it cannot.
+
 ### DO NOT let `_do_fade_with_slider_animation` iterate `chapter_progress_slider` when `_chapter_ui_active` is False
 The slider loop in `_do_fade_with_slider_animation` must skip `chapter_progress_slider` when `mw._chapter_ui_active` is `False`. The theme overlay punch-through re-exposes the slider during the window between `_apply_stylesheets` (which repolishes child widgets and overwrites transparent colors with theme colors) and the `_set_chapter_ui_active` reapplication at the end of `_apply_stylesheets`. Without the guard the slider briefly renders at full opacity, causing a visible flash. Guard: `if attr == 'chapter_progress_slider' and not mw._chapter_ui_active: continue`.
 

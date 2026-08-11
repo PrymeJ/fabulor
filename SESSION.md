@@ -1,3 +1,157 @@
+## Session Summary — 2026-08-11 Session 1 — Listening Sprint: grace-period redesign, backward-seek accounting, book-switch cancellation, end-of-chapter mode. `listening-sprint`
+
+Continuation of the Listening Sprint feature (see the 2026-08-10 Session 3 entry below for the
+original build). Five commits this session: `c55d005` (grace mode selector), `1309662` (backward-seek
+accounting, WIP), `2a65703` (book-switch cancel + speed-scaling fix), `9f8c1de` (backward-compensation
+toggle), `350867c` (end-of-chapter mode). One investigation-only detour also landed as `c518445`,
+covered in its own NOTES.md/TODO.md entries — an unrelated pre-existing chapter-title-flicker bug
+found while chasing something else, confirmed present on `main`, deliberately not fixed this session.
+
+### Grace period redesign: flat row → two-tier mode selector
+
+The original flat grace row (None/3s/5s/15s/30s) was replaced with a Percentage/Fixed/Custom/None
+mode selector, each with its own config-backed preset row (instant show/hide, no animation, matching
+the existing settings-panel convention for conditionally-visible sub-rows). Iterated through several
+rounds of live-reported visual bugs: a submenu-container-shown-before-its-child-row-visible ordering
+bug caused a position flicker on None→Percentage/Fixed (fixed by settling all three child rows'
+visibility BEFORE showing/hiding the container, never the other order); the four mode buttons needed
+natural width instead of the preset buttons' fixed size; the preset rows needed a sixth option each
+(25%, 45s) and needed their button width/spacing tuned twice against the user's own live pixel
+measurement (251px row width) — first landed at 36px/7px spacing (exact fit), then the user re-tuned
+it further to 39px/3px after visually comparing against the real render. Also found and fixed: the
+persisted grace mode never painted as selected on startup (the submenu row's visibility was correctly
+restored from config, but no code path called `update_panel_styling()` at construction time to sync
+the button's own `selected` property — only live interactions did).
+
+### Pass 3: backward-seek time accounting, and a real unit-mismatch bug caught by report-then-verify
+
+New feature: seeking backward during an active sprint extends the sprint duration by the rewound
+distance, detected purely positionally (a 200ms tick-to-tick `_last_known_pos` diff, no seek
+interception) — mirroring the existing `pos`-as-parameter convention `SleepTimerPanel.update_timer_state`
+already used, rather than adding a second internal `player.time_pos` read alongside the one `app.py`
+already threads through `_sync_playback_state`. Before implementing, live-verified (per the standing
+CLAUDE.md rule on this fragile zone) that a natural VT file-boundary crossing does NOT produce a false
+backward-position reading — confirmed clean via a temporary `SPRINT-REWIND-TRACE` log line, zero hits
+across a real VT crossing.
+
+The user then reported the compensation "doubled" a 5-second backward seek into +10 seconds — and,
+critically, kept pushing back when the first theory (measured from the log) concluded it wasn't a bug
+at all. That conclusion was wrong and was explicitly retracted, not quietly revised, per the CLAUDE.md
+rule on retracting claims: the real cause was a genuine unit mismatch. `_sprint_duration_s`/`elapsed`/
+`remaining` are all wall-clock seconds (`current_time` is `time.time()`), but the rewind distance
+measured via `pos` is audio-position seconds — at 2x speed those differ by exactly 2x, at 8x by 8x.
+Confirmed directly: the user was testing at 2x and 8x, and reported the exact multiplier both times
+("5 seconds... adds 10" at 2x; "5 seconds... it adds 40" at 8x). Fixed by dividing the rewind delta by
+`player.speed` before adding it to `_sprint_duration_s`.
+
+### Backward compensation gated behind a setting, default Off
+
+A second live-reported bug proved the feature's core detection algorithm has a real structural gap,
+not just a units bug: seeking forward 20 minutes then back to the same spot on a 10-minute sprint
+turned it into a 30-minute sprint, because a pure tick-to-tick position diff has no memory that the
+position was ever lower before the forward jump — it just sees a large backward jump relative to the
+now-elevated last-known position. Rather than attempt a fix to the detection algorithm mid-session,
+the whole feature was gated behind a new Off/On toggle (`sprint_backward_seek_compensation` config
+key, default Off) so existing sprint behavior is unaffected unless a user opts in.
+
+### Sprint silently carrying over to a newly-selected book — fixed with a distinct cancellation message
+
+Switching books mid-sprint left the sprint running against the new book instead of disarming — neither
+`disable_sprint()` nor any sprint-aware reset existed anywhere in `_on_book_selected_from_library`.
+Fixed via a new `cancel_for_book_switch()` method showing "Sprint cancelled" (deliberately a THIRD
+distinct message, alongside the pre-existing "Sprint failed" for grace exhaustion and the silent
+disarm for deliberate manual cancels — a book switch is neither of those, it's an external
+interruption). Confirmed live that every existing silent manual-cancel path (sidebar ×, panel cancel
+button, both conflict-gate confirms) is untouched by this change, since none of them call the new
+method.
+
+### End-of-chapter sprint mode
+
+Mirrors `SleepTimerPanel`'s end-of-chapter sleep mode closely, reusing the same anchor-chapter +
+`chapter_changed` + `player.user_seek_pending` mechanism rather than duplicating a parallel one. The
+task brief for this piece contained two factual errors caught before any code was written: it assumed
+`_sleep_eoc_anchor` lives on `Player` (it's actually panel-local to `SleepTimerPanel`, so the sprint
+equivalent is panel-local too, not a new `Player` attribute) and assumed `SprintPanel` already had a
+`chapter_changed` connection from an earlier pass (grepped — it did not; the whole mechanism, including
+the `_was_seeking` settle-latch that a stale `user_seek_pending` flag needs to avoid mistagging the
+next natural chapter transition, had to be built fresh). That settle-latch specifically isn't
+mentioned anywhere in the task brief at all — it was added anyway because omitting it would have
+reintroduced a bug class sleep's own EOC mode already had and fixed once (2026-08-10). Two wording/
+behavior decisions were confirmed with the user rather than assumed: a seek-driven forward crossing
+past the anchor shows "Sprint cancelled" (reusing the book-switch method above, not "Sprint failed" —
+same external-interruption category), and the boundary-fire check includes an `is_eof` fallback
+matching sleep's own (the task brief's snippet omitted it).
+
+Two small visual bugs found and fixed after the first live pass: the "End of chapter" button was
+using the `pattern_button` object name (wrong QSS dispatcher rule — sleep's own `end_chap_btn` has no
+object name at all, and relies purely on the same per-index ramp coloring as the numbered duration
+presets) plus a dead `selected`-property sync that nothing in QSS targeted once the object name was
+removed; and the button was 1px short of flush with the duration grid's right edge (grid column-width
+negotiation for a 2-column span rounding down by a pixel — fixed via `setMinimumWidth(122)`, the exact
+57+8+57 sum of the two spanned columns).
+
+All eight verification cases for EOC mode confirmed live in one pass: arm/tick display, natural
+completion, seek-driven cancellation, backward-seek-stays-armed, grace exhaustion, backward-navigate-
+then-forward-to-anchor still completes normally, backward compensation has no effect in EOC mode, and
+the sleep/sprint mutual-exclusion conflict confirm still fires correctly.
+
+---
+
+## Session Summary — 2026-08-10 Session 3 — Listening Sprint: new sibling feature to the sleep timer, on `listening-sprint`
+
+New feature, sibling to the existing sleep timer: a timed listening session with a grace pool for
+pauses (pausing drains the pool; hitting zero cancels the sprint; forward seeks are free) and mutual
+exclusion with the sleep timer (arming one while the other is active shows a 7s confirm before
+cancelling it). Two commits: `0fe4331` (feature) and `5ecc579` (live bug-fix round).
+
+Investigation-only pass first (no code) mapped `SleepTimerPanel`'s structure, the shared indicator
+zone (`vol_stack`), the sidebar trigger/cancel/pulsate pattern, and the confirm-overlay pattern used
+elsewhere ("Delete listening history"). `SprintPanel` (`ui/sprint_panel.py`) was then built as a
+structural sibling — duration presets, a manual-minutes input, a grace-period row in place of
+fade-out, and a 200ms-polled state machine. Mutual exclusion uses a gate-callback pattern
+(`set_arm_gate`/`show_conflict_confirm`) so app.py owns the conflict policy without either panel
+knowing the other exists by name.
+
+Registering a fourth full panel in `PanelManager` touched nearly every hardcoded panel enumeration
+in `panels.py` — the one-overlay gate, right-click-close, Tab focus, hide-all, the
+animation-interference guard, and the Book-Detail-underlay-restore map all needed a `sprint` entry.
+`tests/test_sidebar_hotspot.py`'s manually-constructed fixture caught one gap immediately
+(`AttributeError: no attribute 'sprint_panel'`) before it ever reached live testing.
+
+Two structural bugs were found and fixed before the first live test: the panel had zero background
+at all (the shared background QSS rule was a literal three-name selector that never included
+`sprint_panel` — not a transparency/opacity-setting bug, as first suspected), and arming a sprint
+completed it instantly (`_sprint_start_time` used `time.monotonic()` per the original spec, but the
+one real caller only ever supplies `time.time()` — two incompatible clocks made elapsed time
+enormous on the first tick).
+
+**Four issues reported after the first live pass; the fix session is the interesting part.** Issue 1
+(sidebar cancel-button too close to "SPRINT" text) was a simple position tune, fixed correctly first
+try. Issues 2 and 3 (messages dismissed almost instantly; mute icon not covering the sprint label)
+were *both* diagnosed as separate bugs and *both* given plausible-sounding fixes that turned out not
+to address the actual symptom — confirmed only by adding real trace logging and reading the log,
+not by re-guessing a second time. The true root cause was a single, pre-existing bug in
+`SleepTimerPanel.update_timer_state`: its trailing `display_text_updated.emit()` was unconditional,
+firing every 200ms regardless of whether sleep was armed and sending `""` whenever it wasn't. Sleep
+and sprint share one label, and sleep's redundant empty-write ran before sprint's own write on every
+tick, corrupting sprint's internal state tracking. This is a genuinely new class of bug for this
+codebase: a pre-existing, sole-owner assumption in one panel's code silently broken by adding a
+second panel that shares the same display widget — worth remembering if any future feature reuses
+`vol_stack`'s indicator zone again.
+
+Issue 4 (disable-button flashes visibly right before its panel closes on arm) was reported as
+pre-existing on Sleep, inherited by Sprint. A same-call-stack emit/show reorder was tried first and
+confirmed not to work (Qt doesn't paint between two Python statements in one call stack, so ordering
+within it cannot matter) — the user then pointed at a working, already-shipped analogous pattern
+(Settings' "Persist search filter" sub-toggle reconciliation, deferred to the next panel-open rather
+than applied live during the interaction) as the correct shape to copy. Implemented via a new
+`sync_disable_button_visibility()` on each panel, called from `PanelManager._start_sleep_entry`/
+`_start_sprint_entry` instead of from the arm path. Not yet re-verified live before end of session —
+flagged explicitly in NOTES.md rather than assumed fixed, given the session's own "1 out of 4"
+correction earlier.
+
+---
+
 ## Session Summary — 2026-08-10 Session 2 — Streak grid day-boundary rollover bug found and fixed. `f50d1f6` on `sleep-fix`
 
 Live-reported bug: Stats Timeline showed today's finished-book dot but never filled today's cell or

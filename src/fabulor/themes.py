@@ -3525,26 +3525,30 @@ def get_library_stylesheet(theme_name="default"):
 
 def get_panel_base_stylesheet(theme_name="default"):
     """
-    Rules genuinely shared, identically, by settings_panel, speed_panel, AND
-    sleep_panel — panel chrome/background, generic label/button treatment, and
-    the generic scrollbar rules. Every one of these selectors was verified
-    against actual object-name usage in main_window_builders.py (settings_panel),
-    speed_controls.py, and sleep_timer.py before being placed here — see
-    review/ for the 2026-08-03 classification pass. get_settings_stylesheet,
-    get_speed_stylesheet, and get_sleep_stylesheet each return this base plus
-    their own panel-specific rules (Shape A: flat string concatenation, not a
-    QSS cascade — see the classification doc for why Shape B was rejected).
+    Rules genuinely shared, identically, by settings_panel, speed_panel,
+    sleep_panel, AND sprint_panel — panel chrome/background, generic
+    label/button treatment, and the generic scrollbar rules. Every one of
+    these selectors was verified against actual object-name usage in
+    main_window_builders.py (settings_panel), speed_controls.py, and
+    sleep_timer.py before being placed here — see review/ for the 2026-08-03
+    classification pass; sprint_panel.py joined the same object-name list
+    2026-08-10 (the panel was otherwise getting NO background rule at all —
+    not a transparency/opacity-setting bug, the selector simply never matched
+    it). get_settings_stylesheet, get_speed_stylesheet, get_sleep_stylesheet,
+    and get_sprint_stylesheet each return this base plus their own
+    panel-specific rules (Shape A: flat string concatenation, not a QSS
+    cascade — see the classification doc for why Shape B was rejected).
 
     Do NOT add a rule here unless it is confirmed used identically by all
-    three panels' own widgets, not merely "not obviously wrong" for one of
-    them — the split's whole point is to stop three panels silently trading
+    panels' own widgets, not merely "not obviously wrong" for one of
+    them — the split's whole point is to stop panels silently trading
     rules through one shared function.
     """
     t = _resolve_theme(theme_name)
     accent_style = _get_gradient_style(t, "accent", t['accent'])
 
     return f"""
-        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel {{
+        QWidget#settings_panel, QWidget#speed_panel, QWidget#sleep_panel, QWidget#sprint_panel {{
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border-right: 1px solid {t['accent']};
             border-radius: 0px;
@@ -3881,6 +3885,60 @@ def get_sleep_stylesheet(theme_name="default"):
             font-size: 14px;
             padding: 10px;
             margin-top: 10px;
+        }}
+        QLabel#sleep_conflict_confirm {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 0px 0px;
+        }}
+    """
+
+
+def get_sprint_stylesheet(theme_name="default"):
+    """
+    sprint_panel-specific rules only: base (get_panel_base_stylesheet) plus the
+    custom-duration QLineEdit input, the disable-sprint button, and the conflict
+    confirm label. Mirrors get_sleep_stylesheet's shape exactly — see that
+    function's docstring for why #disable_sprint_btn isn't unified with the
+    other destructive-action button styles in this app.
+
+    The grace-period row (objectName #pattern_button, same as sleep's fade row)
+    needs NO sprint-specific rule here — it's already fully covered by
+    get_panel_base_stylesheet's #pattern_button/#pattern_button[selected="true"]
+    rules. Sprint never sets the is_default property (no persisted default grace
+    exists, only the in-memory _grace_pool_s_setting — see sprint_panel.py), so
+    that selector variant simply never matches for these buttons; no rule is
+    needed or added for it here.
+    """
+    t = _resolve_theme(theme_name)
+    accent_style = _get_gradient_style(t, "accent", t['accent'])
+
+    return get_panel_base_stylesheet(theme_name) + f"""
+        QLineEdit {{
+            background-color: {t['bg_dropdown']};
+            color: {t['text']};
+            selection-background-color: {t['accent']};
+            selection-color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-size: 12px;
+            border: 1px solid {t['accent']};
+            border-radius: 4px;
+            padding: 2px;
+        }}
+        #disable_sprint_btn {{
+            background: {accent_style};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+            font-size: 14px;
+            padding: 10px;
+            margin-top: 10px;
+        }}
+        QLabel#sprint_conflict_confirm {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 0px 0px;
         }}
     """
 
