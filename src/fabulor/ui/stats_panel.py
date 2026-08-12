@@ -20,12 +20,40 @@ from .cover_loader import CoverLoaderWorker, to_grayscale
 from .library import _cover_cache
 from .icon_utils import render_logo_placeholder_bordered as _render_svg_placeholder_bordered
 from .icon_utils import load_currentcolor_icon
+from . import scrollbar_jump
 
 # Fixed neutral grey used for SVG placeholders on archived (deleted/excluded) books.
 # to_grayscale() on a raster cover looks right; applying it to a themed SVG placeholder
 # does not — the SVG is already a flat icon and the grey wash just looks odd. Instead,
 # render the placeholder in a fixed monochrome colour so it reads as intentionally greyed.
 _ARCHIVED_PLACEHOLDER_COLOR = "#888888"
+
+
+def _make_stats_snap(view):
+    """Row-snap function factory for a StatsRowListView's scrollbar.
+
+    Walks sizeHintForRow per row rather than assuming the fixed
+    _STATS_ROW_HEIGHT constant, so it stays correct if row heights ever
+    become variable (e.g. a future header/section row). StatsRowDelegate
+    currently returns a fixed 52px for every row, so this also terminates
+    correctly today. Safe to call sizeHintForRow here (unlike the Library
+    view): StatsRowListView uses ScrollPerPixel, and every row is uniform
+    ListMode, not IconMode — see the scrollbar-jump investigation notes.
+    """
+    def snap(v):
+        model = view.model()
+        if model is None:
+            return v
+        y = 0
+        for row in range(model.rowCount()):
+            h = view.sizeHintForRow(row)
+            if h <= 0:
+                continue
+            if y + h > v:
+                return y
+            y += h
+        return y
+    return snap
 
 
 class BarChartWidget(QWidget):
@@ -3588,6 +3616,10 @@ class StatsPanel(QWidget):
         self._day_list_view.setObjectName("stats_scroll_area")
         self._day_list_view.setModel(self._day_model)
         self._day_list_view.setItemDelegate(self._day_delegate)
+        scrollbar_jump.register_snap(
+            self._day_list_view.verticalScrollBar(),
+            _make_stats_snap(self._day_list_view),
+        )
         self._day_list_view.row_clicked.connect(self._on_book_row_clicked)
         # Cover-load-on-miss: mirrors BookDayRow's per-row dispatch, but the
         # completion write-back targets the model (dataChanged) instead of a
@@ -3891,6 +3923,10 @@ class StatsPanel(QWidget):
         self._week_list_view.setObjectName("stats_scroll_area")
         self._week_list_view.setModel(self._week_model)
         self._week_list_view.setItemDelegate(self._week_delegate)
+        scrollbar_jump.register_snap(
+            self._week_list_view.verticalScrollBar(),
+            _make_stats_snap(self._week_list_view),
+        )
         self._week_list_view.row_clicked.connect(self._on_book_row_clicked)
         self._week_scroll = self._week_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 
@@ -4057,6 +4093,10 @@ class StatsPanel(QWidget):
         self._month_list_view.setObjectName("stats_scroll_area")
         self._month_list_view.setModel(self._month_model)
         self._month_list_view.setItemDelegate(self._month_delegate)
+        scrollbar_jump.register_snap(
+            self._month_list_view.verticalScrollBar(),
+            _make_stats_snap(self._month_list_view),
+        )
         self._month_list_view.row_clicked.connect(self._on_book_row_clicked)
         self._month_scroll = self._month_list_view  # _cap_rows_viewport/_fixup_scroll_policy read this name
 

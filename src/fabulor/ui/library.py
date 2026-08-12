@@ -13,6 +13,7 @@ from typing import Optional
 from ..models.book import Book
 from .icon_utils import render_logo_placeholder, render_logo_placeholder_bordered
 from .line_edit_dragfix import DragSafeLineEdit
+from . import scrollbar_jump
 from PySide6.QtGui import QPixmap, QImage, QColor, QFont, QFontMetrics, QPolygon, QPainter, QValidator
 from PIL import Image, ImageFilter
 
@@ -606,6 +607,18 @@ class LibraryPanel(QFrame):
         self._list_view = QListView(self)
         self._list_view.setModel(self._book_model)
         self._list_view.setItemDelegate(self._delegate)
+
+        def _library_snap(v):
+            dims = ITEM_DIMENSIONS.get(self._delegate._view_mode,
+                                       ITEM_DIMENSIONS["3 per row"])
+            h = dims["h"]
+            return (v // h) * h if h > 0 else v
+
+        scrollbar_jump.register_snap(
+            self._list_view.verticalScrollBar(),
+            _library_snap,
+        )
+
         self._list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_view.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self._list_view.setResizeMode(QListView.ResizeMode.Adjust)

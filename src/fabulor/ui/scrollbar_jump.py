@@ -120,11 +120,30 @@ class ScrollBarJumpFilter(QObject):
         value = QStyle.sliderValueFromPosition(
             obj.minimum(), obj.maximum(), click, span,
             opt.upsideDown if obj.orientation() == Qt.Orientation.Vertical else False)
+        snap = _snap_fns.get(obj)
+        if snap is not None:
+            value = snap(value)
         obj.setValue(value)
         return True  # consume, so the native context menu never opens
 
 
 _filter = None
+_snap_fns: dict = {}
+
+
+def register_snap(scrollbar, fn):
+    """Register a row-snap function for one scrollbar.
+
+    fn(raw_value: int) -> int — receives the would-be setValue argument
+    and returns the snapped value. Evaluated at right-click time, not at
+    registration time, so closures that re-read live state are correct.
+
+    No deregister API is provided. In this app no registered view is
+    ever destroyed mid-session, so the dict does not leak. If a future
+    view teardown/rebuild were added, a matching deregister call would
+    be needed.
+    """
+    _snap_fns[scrollbar] = fn
 
 
 def install(app):
