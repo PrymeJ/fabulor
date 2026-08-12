@@ -458,6 +458,19 @@ class BookDetailPanel(QWidget):
         self._history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._history_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        # QScrollArea's default focusPolicy is StrongFocus (confirmed: viewport() is NoFocus
+        # by default, but the QScrollArea itself is not). Clicking _trash_btn (now NoFocus,
+        # see _HistoryRow.__init__) makes Qt fall through the ancestor chain for the next
+        # focusable widget on release — with nothing else in that chain accepting focus,
+        # it landed HERE, silently stealing focus from BookDetailPanel. Once that happened,
+        # BookDetailPanel.keyPressEvent was never reached again (confirmed via a
+        # [HISTORY-KEY-TRACE] logger.warning: it fired for every key before arming a
+        # confirmation via mouse click, then never fired again for the rest of the live
+        # session — while the rest of the app kept running normally in the log). Arrow keys
+        # then went straight to QAbstractScrollArea's own native handling instead, which
+        # scrolls by an unaligned amount, reproducing the pre-fix partial-row clipping.
+        # Reported live, 2026-08-12.
+        self._history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self._history_container = QWidget()
         self._history_layout = QVBoxLayout(self._history_container)
@@ -1189,6 +1202,20 @@ class BookDetailPanel(QWidget):
             return
         if 0 <= self._history_selected_index < n:
             self._history_rows[self._history_selected_index].set_keyboard_selected(False)
+        # Also clear any row the real mouse is currently hovering, if it's not the new
+        # target — _history_selected_index only tracks KEYBOARD selection, so a row the
+        # mouse is resting on (never touched _history_selected_index at all) would
+        # otherwise keep showing its own X alongside the new keyboard selection. Mirrors
+        # _on_history_hover_entered's clear in the opposite direction (mouse takes over
+        # from keyboard); this is keyboard taking over from mouse. Uses
+        # force_idle_from_hover, NOT set_keyboard_selected(False) — an arrow press doesn't
+        # move the cursor, so the row the mouse is resting on stays underMouse()==True the
+        # whole time, and set_keyboard_selected(False)'s guard would refuse to clear it.
+        # Reported live, 2026-08-12, right after the hover_entered fix — this reverse
+        # direction was missed, and the first fix attempt reused the wrong method here.
+        for row in self._history_rows:
+            if row is not self._history_rows[new_index] and row._state == 'hover':
+                row.force_idle_from_hover()
         self._history_selected_index = new_index
         self._history_rows[new_index].set_keyboard_selected(True)
         self._history_scroll.scroll_to_row(self._history_rows[new_index])
@@ -1696,6 +1723,9 @@ class BookDetailPanel(QWidget):
                 lambda checked=False, r=row: self._on_history_confirm_requested(r)
             )
             row.delete_confirmed.connect(self._on_history_delete_confirmed)
+            row.hover_entered.connect(
+                lambda r=row: self._on_history_hover_entered(r)
+            )
             self._history_layout.addWidget(row)
             self._history_rows.append(row)
 
@@ -1710,6 +1740,19 @@ class BookDetailPanel(QWidget):
         if self._confirming_history_row is not None and self._confirming_history_row is not row:
             self._confirming_history_row.dismiss_confirmation()
         self._confirming_history_row = row
+
+    def _on_history_hover_entered(self, row):
+        """Real mouse hover always wins over a stale keyboard selection elsewhere — same
+        most-recent-input-wins rule most list widgets use. Without this, arrow-navigating to
+        row B then moving the mouse onto row A left BOTH rows showing a hover-X simultaneously
+        (reported live, 2026-08-12), since set_keyboard_selected/enterEvent only ever affect
+        the row they're called on, with no cross-row reconciliation. Confirming rows are
+        untouched here — _on_history_confirm_requested already owns that exclusivity, and
+        set_keyboard_selected itself refuses to downgrade a 'confirming' row back to 'hover'."""
+        idx = self._history_selected_index
+        if 0 <= idx < len(self._history_rows) and self._history_rows[idx] is not row:
+            self._history_rows[idx].set_keyboard_selected(False)
+            self._history_selected_index = -1
 
     def _on_history_delete_confirmed(self, session_id: int):
         row = self._confirming_history_row
@@ -2072,6 +2115,7 @@ class _HistoryRow(QWidget):
 
     confirm_requested = Signal()       # trash clicked — panel uses this to coordinate exclusivity
     delete_confirmed  = Signal(int)    # "Delete?" clicked — emits session id
+    hover_entered     = Signal()       # real mouse enterEvent — panel clears stale keyboard selection
 
     _OVERLAY_W   = 156   # width of expanded "Delete?" overlay (covers bar + pct area)
     _TRASH_W     = 45   # width of stage-1 trash icon reveal (covers pct label)
@@ -2172,6 +2216,15 @@ class _HistoryRow(QWidget):
         self._trash_btn.setObjectName("history_row_trash_btn")
         self._trash_btn.setFixedSize(self._TRASH_W - 8, self.ROW_H - 4)
         self._trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # QToolButton's default focus policy lets a click steal real Qt focus away from
+        # BookDetailPanel, which owns keyPressEvent for History's Up/Down row nav (see
+        # keyPressEvent's docstring: "the panel holds real Qt focus while open"). Once
+        # _trash_btn had focus, arrow keys never reached the panel at all and fell through
+        # to native QScrollArea scrolling instead — reproducing the exact partial-row
+        # clipping the ROW_H-aligned viewport fix was meant to close, just via unaligned
+        # native scroll steps rather than the old default margin. Reported live, 2026-08-12,
+        # right after arming a row's delete confirmation and then pressing arrow keys.
+        self._trash_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._trash_btn.clicked.connect(self._on_trash_clicked)
         self._trash_icon_color = '#cccccc'
         self._set_trash_icon(self._trash_icon_color)
@@ -2269,6 +2322,7 @@ class _HistoryRow(QWidget):
 
     def enterEvent(self, event):
         super().enterEvent(event)
+        self.hover_entered.emit()
         if self._state == 'idle':
             self._state = 'hover'
             self._slide_overlay(self._TRASH_W)
@@ -2296,6 +2350,22 @@ class _HistoryRow(QWidget):
             if self._state == 'hover' and not self.underMouse():
                 self._state = 'idle'
                 self._slide_overlay(0)
+
+    def force_idle_from_hover(self):
+        """Unconditionally drop 'hover' back to 'idle', ignoring underMouse().
+
+        Distinct from set_keyboard_selected(False), whose underMouse() guard deliberately
+        PRESERVES a real mouse hover — correct when keyboard is stepping AWAY from a row
+        the mouse isn't on. It's wrong for the opposite case this exists for: keyboard
+        navigation moving to a DIFFERENT row while this one is still physically under the
+        mouse (an arrow-key press doesn't move the cursor, so underMouse() stays True the
+        whole time). Keyboard taking over must win regardless, or the row the mouse
+        happens to be resting on keeps showing its own X forever alongside the new
+        keyboard selection. Never touches 'confirming' — same exclusion as
+        set_keyboard_selected. Reported live, 2026-08-12."""
+        if self._state == 'hover':
+            self._state = 'idle'
+            self._slide_overlay(0)
 
     def _on_trash_clicked(self):
         self._state = 'confirming'
