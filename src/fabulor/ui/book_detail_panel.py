@@ -449,8 +449,8 @@ class BookDetailPanel(QWidget):
     def _build_history_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(0, 10, 0, 10)
-        outer.setSpacing(8)
+        outer.setContentsMargins(0, 9, 0, 10)
+        outer.setSpacing(9)
 
         # Scroll area fills all available space; container sized to content so rows never stretch.
         self._history_scroll = _HistoryScrollArea()
