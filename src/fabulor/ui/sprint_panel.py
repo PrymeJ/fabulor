@@ -837,12 +837,12 @@ class SprintPanel(QWidget):
         if self._sprint_mode == 'end_of_chapter':
             elapsed_s = max(0, int(elapsed_s))
             e_m, e_s = divmod(elapsed_s, 60)
-            return f"{e_m:02d}:{e_s:02d} | chapter"
+            return f"{e_m:02d}:{e_s:02d} · chapter"
         remaining_s = max(0, int(remaining_s))
         rem_m, rem_s = divmod(remaining_s, 60)
         total_s = int(self._sprint_duration_s)
         tot_m, tot_s = divmod(total_s, 60)
-        return f"-{rem_m:02d}:{rem_s:02d} | {tot_m:02d}:{tot_s:02d}"
+        return f"-{rem_m:02d}:{rem_s:02d} · {tot_m:02d}:{tot_s:02d}"
 
     def _format_grace_display(self, grace_remaining_s):
         grace_remaining_s = max(0, int(grace_remaining_s))
