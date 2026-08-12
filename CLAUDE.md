@@ -1464,7 +1464,7 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 - Two alternating child widgets (not a `QStackedWidget`): **list view** (tag rows: colored dot, name ≤ 20 chars, book-count badge) and **tag panel** (back, name edit, reserved 21px row, book grid).
 - **Rename** — typing flips the single `_action_btn` to save mode; Enter/click → `db.rename_tag`; success shows a check for 2000 ms; name-taken shows a red save icon (`save_error`); Escape/click-outside reverts.
-- **Delete** — trash → reserved row shows a "Click to delete the tag" confirm (7s), grid locked; confirm → `db.delete_tag`.
+- **Delete** — trash → reserved row shows a "Confirm to delete the tag" confirm (7s), grid locked; confirm → `db.delete_tag`.
 - **Color** — clicking the dot shows a 9-swatch + neutral picker (`db.set_tag_color`); mutually exclusive with delete-confirm.
 - **Remove book from tag** — left-click a `_TagBookThumb` → `db.remove_book_tag` (deletes the tag if it was the last book); right-click → `detail_requested`.
 - `TAG_COLORS`: 9 named (coral/peach/lemon/lime/mint/sky/lavender/rose/white) + neutral. `MAX_TAG_LENGTH = 20`. Per-book limit 5, global 50 unique (enforced in `db.add_book_tag`). `_TagBookGrid` 5 columns; `set_locked` routes clicks through the parent. Completer popup styled by `_style_completer_popup` on each keystroke + theme change.
@@ -1479,8 +1479,9 @@ All mode detection happens in `_resolve_playlist()` (run async on a `QThreadPool
 
 ### Panels (`panels.py`, `PanelManager`)
 
-- Manages sidebar, library, settings, speed, sleep, stats, tags, book-detail, and chapter-list visibility. All slide via `QPropertyAnimation` on position; re-entry guarded.
-- Library slides full-width from the left (sets `_is_animating` to suppress cover emits; `refresh()` on shown). Settings/speed/sleep/stats/tags slide from the left at 90% width, fixed 500px height. **Book detail uniquely enters from the right.** Optional blur animation (`blur_effect.blurRadius` 0↔10) per `config.get_blur_enabled`.
+- Manages sidebar, library, settings, speed, sleep, sprint, stats, tags, book-detail, and chapter-list visibility. All slide via `QPropertyAnimation` on position; re-entry guarded.
+- Library slides full-width from the left (sets `_is_animating` to suppress cover emits; `refresh()` on shown). Settings/speed/sleep/sprint/stats/tags slide from the left at 90% width, fixed 500px height. **Book detail uniquely enters from the right.** Optional blur animation (`blur_effect.blurRadius` 0↔10) per `config.get_blur_enabled`.
+- **Sprint** (`_start_sprint_entry`/`_close_sprint_flow`) mirrors `_start_sleep_entry`/`_close_sleep_flow` exactly — same slide geometry, same `_claim_panel_focus`/`_release_panel_focus` pair, same transport-bar/visual-area blur hookup on slide-finish. `sync_disable_button_visibility()` runs on every entry (reconciles the Cancel-sprint vs. Reset-all-sprint-data button visibility against `_sprint_active`, since that toggle can change while the panel is closed); `_cancel_reset_sprint_data()` runs on every close (dismisses any in-flight 7s reset confirmation rather than leaving it stranded). `SprintPanel` holds no `db` reference — coordinates with `app.py` entirely via signals (`sprint_started`, `sprint_stopped`, `sprint_expired(int)`, `display_text_updated(str)`, `grace_warning_changed(bool)`, `reset_sprint_stats_requested`), same shape as `SleepTimerPanel`.
 - Sidebar uses a queued-open pattern (closes first, then dispatches the panel). `_on_library_hidden` ends the deadzone (`mw._switch.library_revealed`), calls `ungate_play`, then drains deferred file-ready events or applies the pending cover theme.
 - **Two ways to open the sidebar (added 2026-08-09)** — right-click on the cover-art area (existing), or hovering an invisible 15×15 hotspot zone at the cover art's top-left corner for ~200ms (`SidebarHotspot`, `ui/sidebar_hotspot.py`; toggle in Settings > Controls). `PanelManager._sidebar_opened_via` (`"right_click"` | `"hotspot_hover"` | `None`) records which, set at the two open call sites and cleared in `_toggle_sidebar`'s closing branch. It gates `on_sidebar_hover_out()`: cursor-leaves-the-sidebar-rect only dismisses a hotspot-opened sidebar, never a right-click-opened one. A universal idle-dismiss poll (`_sidebar_idle_poll_timer`, `QCursor.pos()`-based — see the CLAUDE.md rule on why this isn't a `MouseMove` filter) closes either after `_SIDEBAR_IDLE_DISMISS_MS` (10s) of no movement anywhere in the window. The hotspot's own `_armed` flag requires a genuine exit-then-reentry of the zone before it can fire again — disarmed on ANY sidebar-open transition while the cursor rests inside it (not just hotspot-triggered opens), which is what prevents the idle timer from closing the sidebar and immediately reopening it via a stationary cursor. See `review/Plan_260809_corner_hotspot_sidebar_trigger.md` for the full design and SESSION.md 2026-08-09 for why a visual indicator was tried and removed.
 - **Keyboard focus ownership (added 2026-07-11)** — every panel/overlay claims real Qt focus on open (`_claim_panel_focus`, called after `.raise_()`) and releases it on close (`_release_panel_focus`, called after `.hide()`), enforcing that exactly one widget owns focus at a time app-wide. Settings/Speed/Sleep claim the first entry of `panel_tab_widgets(panel_key)` (same list Tab-cycling uses); Stats/Tags/BookDetail claim the panel root itself (granted `StrongFocus` if it doesn't already have it). Library and ChapterList self-manage this in their own `showEvent`/`show_above` and are not routed through these helpers. See the "Keyboard focus ownership" CLAUDE.md rule for the full invariant and the `hide()`-before-`clearFocus()` Qt gotcha this depends on getting right.
@@ -1603,6 +1604,7 @@ src/fabulor/
     ├── title_bar.py          # Custom title bar
     ├── speed_controls.py     # Speed panel
     ├── sleep_timer.py        # Sleep timer panel
+    ├── sprint_panel.py       # SprintPanel — Listening Sprint timer, grace-warning pulsation, Reset all sprint data
     ├── audio_controls.py     # Audio settings panel (normalisation, voice boost, balance, stereo/mono)
     ├── excluded_books.py     # ExcludedBooksSection (toggle line) + ExcludedBooksPopup (MainWindow-level popup, ChapterList's architecture — hover-reveal-eye restore rows)
     ├── carousel.py           # CoverCarousel — ambient scrolling strip in no-book state
@@ -1633,6 +1635,7 @@ Each major component owns its stylesheet. Never call `main_window.setStyleSheet(
 | `content_container` | `get_player_stylesheet()` — cover, sliders, playback buttons, metadata labels |
 | `library_panel` | `get_library_stylesheet()` — skipped during hover |
 | `settings_panel`, `speed_panel`, `sleep_panel` | `get_settings_stylesheet()` |
+| `sprint_panel` | `get_sprint_stylesheet()` — own function, NOT `get_settings_stylesheet()`; any object name shared with another panel (e.g. `#stats_reset_btn`) needs its own rule defined here too, or Qt silently falls back to default styling (see NOTES.md 2026-08-12) |
 | `sidebar` | `get_sidebar_stylesheet()` |
 | `stats_panel` | `get_stats_stylesheet()` |
 | `tags_panel` (`TagManagerWidget`) | `get_tags_stylesheet()` |

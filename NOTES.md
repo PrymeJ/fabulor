@@ -1,10 +1,12 @@
-## 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data — three live-only bugs that source-reading alone missed twice each
+## 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data, blur-cancel fix — four live-only bugs that source-reading alone missed twice each
 
-Four commits: `299edd8` (sprint_attempts/sprint_sessions tables, Overall tab wiring), `a96cba6`
+Six commits: `299edd8` (sprint_attempts/sprint_sessions tables, Overall tab wiring), `a96cba6`
 (grace-exhaustion pulsation on the shared indicator label), `d591090` (custom grace live validation,
 End of chapter button width on both panels, input centering), `238f3e8` (Reset all sprint data
-button + rename/reposition of Stats' own reset button). The three bugs below are the load-bearing
-lessons — the features themselves are straightforward and covered in the commit messages.
+button + rename/reposition of Stats' own reset button), `705901a` (blur hide/show cycle silently
+cancelling armed reset confirmations), `0aae50b` (confirmation-text wording pass). The four bugs
+below are the load-bearing lessons — the features themselves are straightforward and covered in the
+commit messages.
 
 ### Sprint stats: `books_finished` widened to COUNT(DISTINCT book_path), sprint tables added
 `get_overall_stats()` already computed `books_finished` (found during investigation, not assumed) —
@@ -103,6 +105,33 @@ because the user provided a real screenshot and rejected a "this matches" claim;
 different from the first three (it was found by continued code investigation once the user asked
 "why does it look different") but was still preceded by an incorrect "should be identical" claim
 based on comparing rule TEXT rather than checking which function's SCOPE the rule actually lived in.
+
+### Blur's panel hide/show cycle silently cancelled armed reset confirmations — a fifth, functional bug in the same feature
+Found the same day, after the four visual/layout bugs above were already fixed and shipped.
+`TransportBarBlurOverlay._grab_and_blur` hides then re-shows the currently-open panel on every
+dirty-refresh tick while the blur effect is enabled (the same mechanism documented elsewhere in this
+file for the hover-flicker-under-blur bug) — this is a normal, expected part of how the blur grab
+works, not itself a defect. But both `StatsPanel.hideEvent` and `SprintPanel.hideEvent` called their
+respective `_cancel_reset_stats()`/`_cancel_reset_sprint_data()` unconditionally, so every single
+blur tick — not just a genuine panel close — dismissed an armed "Reset all..." confirmation before
+the user had any real chance to click it. With blur enabled, the nominal 7s confirmation window was
+never actually 7s; it silently collapsed to whatever fraction of a second separated one blur tick
+from the next. Root cause: `hideEvent` fires on BOTH a genuine panel close and a blur-driven
+hide/show cycle, and nothing distinguished the two.
+
+Fixed by moving the cancel out of `hideEvent` entirely and into the two REAL close flows,
+`_close_stats_flow`/`_close_sprint_flow` (`panels.py`) — both of which Escape already routes
+through, so Escape-to-cancel behavior is unaffected. Tags and Book Detail were independently
+confirmed unaffected by the same underlying blur-hide mechanism: Tags never cancelled its own
+delete-confirm from `hideEvent` in the first place, and Book Detail's delete/remove confirmations
+use the static `frost_panel_backdrop` path, which never calls `.hide()` on the panel at all — so
+neither was ever exposed to this failure mode. `705901a`.
+
+This is the same class of bug as the CLAUDE.md rule on the sleep/sprint shared-label interference
+(a per-tick or per-event mechanism silently stomping state a different, less-frequent code path
+depends on) — worth checking any future `hideEvent`-driven cleanup against whether blur's
+hide/show cycle can also trigger it before assuming `hideEvent` only ever means "the user closed
+this."
 
 ---
 

@@ -1,9 +1,11 @@
-## Session Summary — 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data. `main`
+## Session Summary — 2026-08-12 Session 1 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data, blur-cancel fix, confirmation wording. `main`
 
 Continuation of the Listening Sprint feature after the `listening-sprint` branch merged (see the
-2026-08-11 Session 1 entry below). Four commits, all directly on `main`: `299edd8` (sprint stats
+2026-08-11 Session 1 entry below). Six commits, all directly on `main`: `299edd8` (sprint stats
 tracking + Overall tab wiring), `a96cba6` (grace-exhaustion warning pulsation), `d591090` (custom
-grace live validation + several small visual fixes), `238f3e8` (Reset all sprint data button).
+grace live validation + several small visual fixes), `238f3e8` (Reset all sprint data button),
+`705901a` (blur hide/show cycle silently cancelling armed reset confirmations), `0aae50b`
+(confirmation-text wording consistency pass).
 
 New `sprint_attempts`/`sprint_sessions` tables record every arm and every natural completion;
 Overall tab's Books/Sprints/Average successful sprint rows (already scaffolded, unwired since the
@@ -41,9 +43,26 @@ earlier request in the same session.
 
 Full root-cause detail and the four-bug pattern behind the reset button: NOTES.md, 2026-08-12.
 
+**Follow-up same day: a fifth bug in the same feature, this one a real functional regression, not a
+visual one.** `TransportBarBlurOverlay._grab_and_blur` hides and re-shows the active panel on every
+dirty-refresh tick while blur is enabled — both `StatsPanel` and `SprintPanel` cancelled their
+"Reset all..." confirmation from `hideEvent`, so every blur tick silently dismissed an armed
+confirmation before the user could ever click it (with blur on, the 7s window was never really 7s).
+Fixed by moving the cancel out of `hideEvent` and into the real close flows
+(`_close_stats_flow`/`_close_sprint_flow` in `panels.py`), which Escape already routes through
+either way. Tags and Book Detail were unaffected — Tags never cancelled on hide, and Book Detail
+uses the static `frost_panel_backdrop` path, which never hides the panel at all. `705901a`.
+
+Also folded into the same commit: several confirmation labels reworded for consistency —
+Stats' reset confirm ("DO YOU WANT TO DELETE ALL LISTENING HISTORY?" → "CONFIRM TO DELETE ALL
+LISTENING HISTORY"), Book Detail's remove/history-delete confirms, and Sprint's own reset confirm
+("Delete all sprint data? Confirm?" → "Confirm to delete all sprint data") — all now use the same
+imperative "Confirm to..." phrasing. A second, separate wording pass (`0aae50b`) applied the same
+treatment to Tags' delete-tag confirm ("Click to delete the tag" → "Confirm to delete the tag").
+
 ---
 
-## Session Summary — 2026-08-11 Session 1 — Listening Sprint: grace-period redesign, backward-seek accounting, book-switch cancellation, end-of-chapter mode. `listening-sprint`
+## Session Summary — 2026-08-11 — Listening Sprint: grace-period redesign, backward-seek accounting, book-switch cancellation, end-of-chapter mode. `listening-sprint`
 
 Continuation of the Listening Sprint feature (see the 2026-08-10 Session 3 entry below for the
 original build). Five commits this session: `c55d005` (grace mode selector), `1309662` (backward-seek
