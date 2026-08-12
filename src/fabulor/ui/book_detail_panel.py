@@ -366,6 +366,18 @@ class BookDetailPanel(QWidget):
         self.tabs.addTab(self._build_metadata_tab(), "Tags")
         self.tabs.addTab(self._cover_panel, "Cover")
         self.tabs.currentChanged.connect(self._on_tab_changed)
+        # 3px fixed push (confirmed live via tools/history_tab_geometry_probe.py, 2026-08-12):
+        # the History tab's row list viewport is 273px against a fixed 27px row height —
+        # 273 % 27 = 3, so whichever row sits at the scroll boundary always renders with a 3px
+        # sliver clipped off. self.tabs is the sole stretch=1 participant in this fixed-532px
+        # panel, so shrinking it by 3px here shrinks every tab page's content area by the same
+        # 3px — which, for History specifically, cascades into _history_scroll (also stretch=1
+        # within its own tab page) and makes its viewport an exact 270 = 10*27. Same idiom as
+        # library.py's flat top-push constants for 2-per-row/3-per-row (eyeballed/derived once,
+        # not recomputed live) — see CLAUDE.md. Affects all four tabs' content start position
+        # equally (deliberate); "Delete listening history" is unaffected since it's a
+        # fixed-height sibling below History's own stretch=1 scroll area.
+        layout.addSpacing(3)
         layout.addWidget(self.tabs, stretch=1)
 
         self._update_remove_btn_icon()
@@ -441,7 +453,7 @@ class BookDetailPanel(QWidget):
         outer.setSpacing(8)
 
         # Scroll area fills all available space; container sized to content so rows never stretch.
-        self._history_scroll = QScrollArea()
+        self._history_scroll = _HistoryScrollArea()
         self._history_scroll.setWidgetResizable(True)
         self._history_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._history_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1179,7 +1191,7 @@ class BookDetailPanel(QWidget):
             self._history_rows[self._history_selected_index].set_keyboard_selected(False)
         self._history_selected_index = new_index
         self._history_rows[new_index].set_keyboard_selected(True)
-        self._history_scroll.ensureWidgetVisible(self._history_rows[new_index])
+        self._history_scroll.scroll_to_row(self._history_rows[new_index])
 
     def _cover_key_event(self, key) -> bool:
         """Cover-tab-local key handling. Returns True if the key was claimed here (caller
@@ -2331,3 +2343,55 @@ class _HistoryRow(QWidget):
         self._anim.setStartValue(start_geom)
         self._anim.setEndValue(end_geom)
         self._anim.start()
+
+
+class _HistoryScrollArea(QScrollArea):
+    """QScrollArea for the History tab's row list, stepping the mouse wheel by
+    a whole _HistoryRow.ROW_H per notch instead of Qt's default pixel step.
+
+    A bare QScrollArea's wheel step has no relationship to ROW_H, so repeated
+    wheel scrolling would drift the content out of alignment with row
+    boundaries and reproduce the same partial-row clipping the viewport-height
+    fix above (book_detail_panel.py's BookDetailPanel.__init__, the 3px
+    layout.addSpacing push) already closed for the static case. A real
+    subclass, not an instance-attribute wheelEvent patch: this codebase's own
+    CLAUDE.md records that pattern failing here before (an earlier
+    stats_panel.py row-snap wheel handler assigned directly to an instance's
+    wheelEvent and silently never fired for events delivered to the outer
+    widget — only viewport()-targeted events reached it). Subclassing avoids
+    that failure mode entirely. Same idiom as FinishedScrollRow.wheelEvent
+    (stats_panel.py, fixed 2026-08-12 for the identical class of bug on the
+    Recently-finished carousel).
+    """
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        bar = self.verticalScrollBar()
+        step = _HistoryRow.ROW_H
+        bar.setValue(bar.value() + (-step if delta > 0 else step))
+
+    def scroll_to_row(self, row):
+        """Keyboard-nav equivalent of ensureWidgetVisible, but ROW_H-aligned.
+
+        QScrollArea.ensureWidgetVisible defaults to a 50px margin around the
+        target widget — unrelated to ROW_H (27), so it can land the scrollbar
+        at any pixel value, drifting the whole row list out of alignment with
+        the viewport exactly like the unfixed wheel step did (reported live,
+        2026-08-12, arrow-navigating the History tab: compare the first row's
+        y-position before/after a long Down-arrow run — it visibly shifted).
+        This only works because the viewport height is now an exact multiple
+        of ROW_H (the earlier 3px layout.addSpacing fix, BookDetailPanel
+        __init__) — both branches below compute a bar value that is itself an
+        exact multiple of ROW_H as a consequence, not by rounding.
+        """
+        bar = self.verticalScrollBar()
+        h = _HistoryRow.ROW_H
+        row_top = row.y()
+        row_bottom = row_top + h
+        viewport_h = self.viewport().height()
+        if row_top < bar.value():
+            bar.setValue(row_top)
+        elif row_bottom > bar.value() + viewport_h:
+            bar.setValue(row_bottom - viewport_h)
