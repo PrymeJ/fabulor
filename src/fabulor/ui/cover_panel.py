@@ -329,7 +329,7 @@ class CoverPanel(QWidget):
 
     def _build_ui(self):
         root = QHBoxLayout(self)
-        root.setContentsMargins(6, 10, 6, 10)
+        root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
         # ── Left column ──
@@ -355,12 +355,12 @@ class CoverPanel(QWidget):
         # ── Right column ──
         right_col = QVBoxLayout()
         right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(6)
+        right_col.setSpacing(13)
 
         self._preview_label = QLabel()
         self._preview_label.setObjectName("CoverPreview")
         self._preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview_label.setFixedSize(208, 266)
+        self._preview_label.setFixedSize(200, 266)
 
         # Fit mode buttons
         fit_row = QHBoxLayout()
@@ -374,7 +374,7 @@ class CoverPanel(QWidget):
             btn.setCheckable(True)
             btn.setObjectName("FitModeButton")
             btn.setProperty("fitKey", key)
-            btn.setFixedHeight(34)
+            btn.setFixedHeight(31)
             self._fit_group.addButton(btn)
             self._fit_buttons[key] = btn
             fit_row.addWidget(btn)
