@@ -91,6 +91,15 @@ _VT_MP3_SIZE_THRESHOLD: int = 40 * 1024 * 1024  # 40 MB — VT files above this 
 # catches every file-boundary / rapid-seek discontinuity. See _on_time_pos_change.
 _LOGICAL_POS_RESYNC_THRESHOLD = 2.5
 
+# After a seek settles, mpv emits one stale time_pos sample backward into the previous
+# chapter before resuming forward (~50-900ms post-settle, observed). The chapter walk in
+# _on_time_pos_change reads raw value (not _logical_pos), so this sample transiently
+# resolves to the wrong chapter. Suppress it within a short post-settle window, comparing
+# against the ACTUAL settle target (not a high-water mark) — see _post_settle_target /
+# _post_settle_deadline. Tolerance is tight because we know exactly where the settle
+# landed; it only needs to cover float noise, not magnitude uncertainty.
+_POST_SETTLE_BACKWARD_TOLERANCE: float = 0.05
+
 class Player(QObject):
     chapter_changed = Signal(int)
     file_loaded = Signal()
@@ -143,6 +152,9 @@ class Player(QObject):
         self._logical_pos: float | None = None       # GLOBAL space, matches _seek_target
         self._last_raw_global: float | None = None    # previous raw GLOBAL sample, for delta accumulation
         self._just_settled: bool = False               # skip the first post-settle sample's accumulation
+        # Post-settle stale-backward-sample guard (see _POST_SETTLE_BACKWARD_TOLERANCE).
+        self._post_settle_target: float | None = None   # local position where the last seek settled
+        self._post_settle_deadline: float | None = None # time.monotonic() deadline; guard expires after this
         # Virtual timeline state (multi-file MP3 books)
         self._virtual_timeline: list | None = None
         self._file_offset: float = 0.0
@@ -258,6 +270,10 @@ class Player(QObject):
                 self._last_nonvt_chapter = -1
                 self._last_vt_chapter = -1
                 self._seek_state_trace("settle_branch_CLEARED_is_seeking")
+                # Arm the post-settle stale-backward-sample guard against the ACTUAL
+                # local settle position (not global — see _POST_SETTLE_BACKWARD_TOLERANCE).
+                self._post_settle_target = value
+                self._post_settle_deadline = time.monotonic() + 0.25
         # Logical-position maintenance. Runs AFTER the settle branch and BEFORE the chapter
         # walk (which must keep reading RAW value/global_pos). Only maintained while NOT
         # mid-seek — during a seek's intermediate samples _logical_pos holds the value set
@@ -294,6 +310,18 @@ class Player(QObject):
                 else:
                     self._logical_pos += delta            # normal playback — accumulate
             self._last_raw_global = global_value
+        # Suppress the stale post-settle backward sample (see _POST_SETTLE_BACKWARD_TOLERANCE)
+        # from reaching the chapter walk below. Compares against the actual settle target,
+        # not a high-water mark, so this only rejects the transient artifact — a genuine
+        # backward seek (Prev, chapter[1]->[0], etc.) settles to its own target and is never
+        # backward relative to itself. Runs after _cached_time_pos / _logical_pos maintenance
+        # above (both already updated for this sample) — only the chapter walk is skipped.
+        if (value is not None
+                and self._post_settle_deadline is not None
+                and time.monotonic() < self._post_settle_deadline
+                and self._post_settle_target is not None
+                and value < self._post_settle_target - _POST_SETTLE_BACKWARD_TOLERANCE):
+            return
         # VT: use self._chapter_list directly — it holds the virtual timeline chapter
         # data (exact DB times, global positions). self._file_offset translates the
         # local mpv time_pos into the global VT position.
@@ -554,6 +582,8 @@ class Player(QObject):
         self._logical_pos = None          # new book — getter falls back to raw until first seek/sample
         self._last_raw_global = None
         self._just_settled = False
+        self._post_settle_target = None
+        self._post_settle_deadline = None
 
         self._seek_state_trace("load_book_after_state_reset")
 
