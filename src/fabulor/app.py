@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QRect, QEvent, QPropertyAnimation, QEasingCurve, QModelIndex,
-    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation
+    QRegularExpression, Signal, QObject, QElapsedTimer, QSize, QVariantAnimation, QThreadPool
 )
 from PySide6.QtGui import QPixmap, QColor, QIntValidator, QRegularExpressionValidator, QIcon, QPainter, QKeyEvent, QCursor
 
@@ -3975,6 +3975,17 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self._undo_timer.stop()
         self.status_hide_timer.stop()
         self.library_panel.save_search_filter()
+
+        # Stop dispatching new cover-loader jobs, then block until every job already
+        # handed to the shared QThreadPool has finished — QThreadPool has no API to
+        # cancel a running QRunnable, only to drop ones not yet started, so this wait
+        # is the only way to stop a worker thread from emitting into (or a queued
+        # slot from touching) a widget tree Qt is about to start deleting below. All
+        # CoverLoaderWorker dispatch sites (library preload, stats_panel, tag_manager)
+        # share this one global pool, so this covers all of them, not just the
+        # preloader. See NOTES.md 2026-08-12 "Signal source has been deleted" on close.
+        self.library_panel.cancel_preload()
+        QThreadPool.globalInstance().waitForDone(2000)
         if self.player:
             self.config.set_volume(self.volume_slider.value())
             if self.current_file:
