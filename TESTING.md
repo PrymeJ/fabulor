@@ -1123,6 +1123,11 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Thumbs are not compressed — each is 47×47, not squashed to fit viewport
 - [ ] With 15+ finished books: scroll to the end of the carousel — the last thumb is fully visible, not clipped at the right edge
 - [ ] Placeholder and real-cover thumbs appear the same visual size (47×47) — no 1px size discrepancy between books with and without cover art
+- [ ] Mouse wheel over the carousel (added 2026-08-12, `4848eaf`): each wheel notch moves exactly
+      one thumbnail — repeated scrolling never leaves a thumbnail partially clipped at either edge
+- [ ] Wheel-scroll and arrow-button clicks land on the same positions — scrolling by wheel to a
+      given thumb and by arrow clicks to the same thumb produce identical scroll offsets
+- [ ] Wheel-scroll at either end of the carousel: no wrap, no crash, display unchanged
 
 ### Scroll-arrow overlay (15px sliver, accent_dark / stats_carousel_stripe)
 - [ ] Arrow sliver is a flat, fully-opaque solid color — no gradient, no rounded corners, no border
@@ -1170,6 +1175,44 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Carousel hides immediately on book load
 - [ ] Cover art, transport controls, and full chrome restore correctly
 - [ ] No carousel visible during or after book-load transition
+
+## Scrollbar right-click jump / row-snap (`ui/scrollbar_jump.py`)
+
+App-wide: right-clicking any scrollbar's gutter jumps the handle to the cursor instead of opening
+the native "Scroll here / Top / Bottom / ..." context menu (`1ac70b2`, 2026-07-31). As of
+2026-08-12 (`a343b6c`), four of those scrollbars additionally snap the jump to a row boundary
+instead of a pixel-exact position.
+
+### Right-click jump (all scrollbars, base behaviour)
+- [ ] Right-click a scrollbar gutter (not the handle) at various points: handle jumps to that
+      point, centered under the cursor
+- [ ] No native context menu ("Scroll here / Top / Bottom / Page up / ...") appears
+- [ ] Right-click directly on the handle itself: no crash, behaves sanely (jumps or no-ops)
+- [ ] Left-click on the gutter (native page-step behaviour) is unaffected
+- [ ] A scrollbar whose handle fills the entire groove (nothing to scroll): right-click is a no-op,
+      still suppresses the native menu, no crash
+- [ ] `QComboBox` popup scrollbars, the chapter-list overlay, and `SessionListWidget` are
+      unaffected by any of the row-snap changes below (never registered)
+
+### Row-snap — Library panel
+- [ ] 3-per-row mode: right-click the scrollbar at several gutter positions — the topmost visible
+      row of covers is always fully shown, never clipped mid-row
+- [ ] 2-per-row mode: same check
+- [ ] Square mode: same check
+- [ ] List mode: same check
+- [ ] 1-per-row mode (if present in the view-mode rotation): same check
+- [ ] Switch view mode (1/2/3/4/5 or the dropdown) then immediately right-click the scrollbar: snap
+      uses the NEW mode's row height, not a stale one from before the switch
+- [ ] Right-click near the very top and very bottom of the scrollbar range: snap still lands on a
+      clean row boundary at both extremes, no off-by-one
+
+### Row-snap — Stats Day / Week / Month tabs
+- [ ] Day tab: right-click the scrollbar at several positions — topmost row is always fully shown,
+      never clipped
+- [ ] Week tab: same check
+- [ ] Month tab: same check
+- [ ] A period with few enough rows that the scrollbar has little/no range: right-click is a
+      harmless no-op, no crash
 
 ## Scan-active button disabling
 

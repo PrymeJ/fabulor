@@ -1,3 +1,30 @@
+## Session Summary — 2026-08-12 Session 3 — Scrollbar right-click row-snap (Library + Stats Day/Week/Month), plus a pre-existing carousel wheel-scroll bug found and fixed along the way. `main`
+
+Added opt-in row-boundary snapping to the existing scrollbar right-click-jump filter
+(`ui/scrollbar_jump.py`, `1ac70b2`): a right-click jump used to land at a pixel-exact position,
+which could leave the topmost visible row partially clipped. `register_snap(scrollbar, fn)` — a
+module-level registry keyed by the live `QScrollBar` object — lets a scrollbar round the jump down
+to a row boundary. Registered for Library's `_list_view` and Stats' three `StatsRowListView`s
+(Day/Week/Month). Library's snap deliberately reads `ITEM_DIMENSIONS[view_mode]["h"]` rather than
+`sizeHintForRow`, since that method's behavior under `IconMode` (used by Library's grid view modes)
+couldn't be confirmed from source and has no other call site in this codebase to prove it safe;
+Stats' views walk `sizeHintForRow` per row instead, which is safe there specifically because
+`StatsRowListView` uses `ScrollPerPixel` and every row has a fixed, uniform height. `a343b6c`.
+
+Live testing (Checkpoint C) surfaced a second bug in the same area, initially worth checking for a
+connection to the change above before assuming one: the Recently-finished carousel
+(`FinishedScrollRow`, shared by Overall/Day/Week/Month) let a thumbnail sit partially clipped after
+mouse-wheel scrolling. `git blame` confirmed the responsible code predates this session by three
+months (2026-05-04) and is structurally unable to route through the new snap registry — wheel
+events never reach a `QScrollBar`'s own event stream on this widget. Fixed separately:
+`wheelEvent` now steps by a whole thumbnail (`THUMB_STEP = 51`) via the same `_scroll_by` the arrow
+buttons already used, instead of an arbitrary pixel amount from `angleDelta()`. `4848eaf`.
+
+Full investigation trail, including the plan/checkpoint structure this was built under and why
+`sizeHintForRow` was ruled unsafe for Library specifically: NOTES.md, 2026-08-12 Session 3.
+
+---
+
 ## Session Summary — 2026-08-12 Session 2 — Fix: closeEvent didn't wait for in-flight cover-loader workers, causing a "Signal source has been deleted" error on close. `main`
 
 Reported live: closing the app (right after an OS restart, slow ~10s boot, heavy concurrent system

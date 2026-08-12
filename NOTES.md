@@ -1,3 +1,74 @@
+## 2026-08-12 Session 3 — Scrollbar right-click row-snap, and an unrelated carousel wheel bug it surfaced
+
+Two commits: `a343b6c` (row-boundary snapping for the right-click scrollbar jump) and `4848eaf`
+(fixing a pre-existing carousel wheel-scroll bug found during live verification of the first).
+CLAUDE.md carries only the load-bearing facts from this (the registry exists, why Library's snap
+avoids `sizeHintForRow`); this entry has the fuller investigation trail.
+
+**Row-snap design.** `scrollbar_jump.py`'s existing right-click-to-jump filter (`1ac70b2`,
+2026-07-31) computed a pixel-exact `setValue` target, which could land mid-row and leave the
+topmost visible row partially clipped. Added `register_snap(scrollbar, fn)` — a module-level
+`_snap_fns: dict[QScrollBar, Callable]` — with the snap function evaluated at right-click time
+(inside `eventFilter`, right before `setValue`), not at registration time, so a closure reading
+live state (current view mode, current row count) stays correct without re-registering on every
+state change. Registered for Library's `_list_view` and Stats Day/Week/Month's three
+`StatsRowListView`s; deliberately NOT registered for `QComboBox` popups, the chapter list,
+`SessionListWidget`, or the Recently-finished carousels (`FinishedScrollRow`) — none of those were
+in scope, and none was touched.
+
+**Why Library's snap doesn't use `sizeHintForRow`.** The two view classes needed different snap
+math. Stats' `StatsRowListView` uses `ScrollPerPixel` (confirmed) and `StatsRowDelegate.sizeHint`
+returns a fixed, uniform 52px for every row regardless of row type (confirmed by reading the
+delegate directly — no header/section row type exists in this model at all), so walking
+`sizeHintForRow` per row and accumulating heights is safe and terminates correctly. Library's
+`BookDelegate` switches between `ListMode` (1-per-row, List) and `IconMode` (2-per-row, 3-per-row,
+Square) depending on view mode, and `sizeHintForRow`'s behavior under `IconMode` could not be
+confirmed from source (PySide6 ships no docstrings; no vendored Qt C++ source was found on this
+machine via `find /` — see the investigation transcript). `sizeHintForRow` is also not called
+anywhere else in this codebase, so there was no existing precedent proving it safe in `IconMode`
+either. Rather than assume it works, Library's snap instead reads
+`ITEM_DIMENSIONS[delegate._view_mode]["h"]` — a plain module-level dict lookup already used by
+`BookDelegate.sizeHint` itself — fresh on every snap call, sidestepping the unverified Qt behavior
+entirely. This was flagged as an open risk during investigation and deliberately designed around
+rather than tested live and found to fail; if a future change wants to unify Library onto the same
+`sizeHintForRow`-walk pattern Stats uses, that Qt behavior needs to be confirmed live first.
+
+**The carousel wheel bug — found during Checkpoint C live testing, initially mis-suspected as
+caused by the snap change.** After the snap fix landed, live testing showed the Recently-finished
+carousel (`FinishedScrollRow`, embedded in all four of Overall/Day/Week/Month) letting a thumbnail
+sit partially clipped at the row's edge after wheel-scrolling. The first framing of the report
+("scrollbar's scroll steps") was initially misread as implying a right-click scrollbar issue,
+before the user corrected: no visible scrollbar exists on this widget at all — the row scrolls via
+side arrow buttons (whole-thumbnail steps, which worked correctly) or the mouse wheel (broken).
+
+Before touching anything, checked whether this could actually be caused by today's change:
+`FinishedScrollRow` **does** have a real `QScrollBar` (`self._scroll.horizontalScrollBar()`, a
+`QScrollArea` internal), but it was never in the `register_snap` list — correctly excluded per the
+approved plan. More importantly, `ScrollBarJumpFilter.eventFilter` only fires on
+`QEvent.Type.MouseButtonPress` with the right button, or `QEvent.Type.ContextMenu`; wheel events
+never reach either — `FinishedScrollRow.wheelEvent` is its own override that consumes the event
+directly (`bar.setValue(bar.value() - event.angleDelta().y() // 2)`) before it can ever reach the
+scrollbar's own event stream, and arrow-button clicks go through `_scroll_by`, a plain method call,
+not any Qt event at all. `git blame` on both methods confirmed they date to 2026-05-04
+(`458b7b32`/`d1716edf`), over three months before this session — settling that this was a
+pre-existing bug, not a regression from today's work, before writing any fix.
+
+**The actual bug and fix.** `wheelEvent` applied `event.angleDelta().y() // 2` directly to the
+scrollbar value — an arbitrary pixel-ish amount (120 per notch on most mice, smaller/variable on
+trackpads) with no relationship to a thumbnail's actual horizontal stride. `FinishedBookThumb` is a
+fixed 47px wide with 4px `QHBoxLayout` spacing between them (confirmed by reading both directly),
+so one thumbnail's true stride is 51px — which is also exactly what the arrow buttons already used
+(`_scroll_by(±51)`), just never factored out into a shared constant. Repeated wheel scrolling
+therefore drifted the scroll position out of step with thumbnail boundaries, eventually leaving one
+partially visible at the edge. Fixed by introducing `FinishedScrollRow.THUMB_STEP = 51` and routing
+`wheelEvent` through the same `_scroll_by(±THUMB_STEP)` the arrows use — one wheel notch now always
+moves exactly one thumbnail, so wheel and arrows can never disagree on where a step lands. Verified
+live: wheel-scrolling all four tabs' carousels now always leaves a full thumbnail at the edge, never
+a partial one. The user separately confirmed the one-thumbnail-per-notch pace itself (as opposed to
+paging a full batch of 5) is the desired behavior, not something to change further.
+
+---
+
 ## 2026-08-12 Session 2 — "Signal source has been deleted" on close: closeEvent never waited for in-flight cover-loader workers
 
 Reported live: closing the app (right after an OS restart, ~10s slow boot, heavy system load from
