@@ -385,13 +385,14 @@ class BookDetailPanel(QWidget):
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        outer.setContentsMargins(10, 10, 10, 20)
+        # TEMP 9px right margin is wrong here just to match the History tab's percentage
+        outer.setContentsMargins(10, 10, 9, 20)
         outer.setSpacing(12)
 
         from PySide6.QtGui import QColor
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
-        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setContentsMargins(0, 4, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
