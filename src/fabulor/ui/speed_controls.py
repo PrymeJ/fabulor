@@ -150,7 +150,7 @@ class SpeedControlsPanel(QWidget):
         layout.addWidget(smart_label)
 
         smart_buttons_row = QHBoxLayout()
-        for val, label in [(0, "Off"), (5, "5"), (30, "30"), (60, "60")]:
+        for val, label in [(0, "Off"), (5, "5"), (15, "15"), (30, "30"), (60, "60")]:
             btn = QPushButton(label)
             btn.setObjectName("pattern_button")
             btn.clicked.connect(lambda _, v=val: self._update_smart_rewind_mode(v))
