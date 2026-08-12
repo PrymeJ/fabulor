@@ -394,6 +394,17 @@ The load-bearing lesson is not any one of these bugs — it's that clean instrum
 
 Full incident detail: NOTES.md entries dated 2026-06-06 (×2), 2026-06-15, and 2026-07-13 ("`_on_file_loaded`'s general... race — FIXED and live-verified"); commits `12dcf32`→`a506de9`, `4ae0783`/`92902cd`.
 
+**Post-settle stale-backward-sample guard (787bfaa, 2026-08-12):** After
+settle clears `_is_seeking`, `_post_settle_target` (LOCAL position, not
+global) and `_post_settle_deadline` are armed. The suppression block in
+`_on_time_pos_change` sits AFTER `_cached_time_pos` and `_logical_pos`
+maintenance and BEFORE the chapter walk — this insertion point is not
+arbitrary. Moving it earlier would drop `_cached_time_pos` updates on
+suppressed samples (reproducing b6a4023's icon regression). Moving it later
+or into the chapter-walk branch would require duplicating it across VT and
+non-VT paths. The tolerance (0.05s) is tight by design — reference is the
+exact settle position, not a magnitude estimate. Do not widen it.
+
 **`Player.time_pos` returns `_logical_pos` (the app's believed position), NOT raw mpv `_cached_time_pos` — and the two must stay decoupled** (added 2026-07-13 to fix compounding seek drift, `9521ee4`, live-verified — this change also fell under, and was verified against, the VT+Undo standing rule above). `time_pos`'s getter returns `_logical_pos` when set, falling back to the raw `_cached_time_pos` path only before the first sample of a book. `_logical_pos` is the fix for the drift class where `time_pos` was reading mpv's raw per-seek landing residual (the ~0.09/0.37s over/undershoot `_PAUSED_SEEK_UNDERSHOOT_COMP` compensates), so every subsequent seek computed its target from an imprecise base and residuals compounded (alternating scroll/skip crept to EOF). Load-bearing invariants:
 - **`_logical_pos` is ALWAYS GLOBAL** (matches `_seek_target`'s convention — never add `_file_offset` to it). Never conflate with `_cached_time_pos`, which is FILE-LOCAL for VT. Do NOT couple a `_logical_pos` write to any `_cached_time_pos` write.
 - **`_cached_time_pos` stays raw, unconditional, every sample** — untouched by this fix. It is the raw mirror the chapter-walk and settle-detection read, pinned by `tests/test_seek_state.py::test_cached_time_pos_tracks_every_sample`. The chapter-walk-and-emit block in `_on_time_pos_change` MUST keep reading raw `value`/`global_pos`, never `_logical_pos` — that is what keeps `_CHAPTER_WALK_TOLERANCE`/the seek epsilons calibrated against mpv's actual landing.

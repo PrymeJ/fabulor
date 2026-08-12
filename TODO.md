@@ -20,7 +20,8 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   the full mechanism and the earlier (already-fixed) wall-clock/audio-position unit-mismatch bug in
   the same feature.
 
-### Chapter title flicker on Prev/Next/chapter-list seeks (VT/CUE, non-VT walk)
+### Chapter title flicker on Prev/Next/chapter-list seeks (VT/CUE, non-VT walk) — CLOSED
+- **Fixed: `787bfaa`. Post-settle guard — see NOTES.md 2026-08-11.**
 - [2026-08-11] **Reproduced, root-caused, NOT fixed — investigation only, see NOTES.md for full
   write-up + log excerpt.** Every chapter-boundary seek settles correctly, but the very next raw
   `time_pos` sample from mpv reads BACKWARD (into the previous chapter) before resuming forward.
@@ -377,7 +378,10 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   both Prev key and chapter-list click; UI briefly shows previous chapter before correcting.
   Low-frequency (weeks between occurrences), instrumentation already in place. See NOTES.md
   for captured instance + working theory (mpv settle undershoot, ~0.435s, outside
-  `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.
+  `_CHAPTER_BOUNDARY_EPSILON`). Do not fix speculatively — needs more captures first.**
+  **May be distinct from the `787bfaa` fix — the 2026-07-22 working theory was settle undershoot
+  (landing short of the boundary), not the stale post-settle sample `787bfaa` targets. Monitor; do
+  not assume closed.**
 
 - **[2026-07-21] Chapter list: clicking a chapter sometimes makes the current-chapter highlight
   fluctuate between chapter rows and scrolls the list to the bottom — visual bug, not yet
@@ -389,6 +393,9 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   of race — see the CLAUDE.md chapter-navigation rules — but this is a guess, not confirmed).
   Needs live instrumentation added first to catch an occurrence with real state, before any fix is
   attempted — do not fix blind. Not started.
+  **Likely closed by the same fix (`787bfaa`) — same mechanism, same code path (chapter-list clicks
+  route through `activate_chapter_index` → `seek_async`, same as Prev/Next) confirmed in the
+  chapter-flicker investigation. Re-verify when next reproduced before removing this entry.**
 
 - **[2026-07-21] `SUSPECT_MASKED_STASH` diagnostic marker has a false-positive gap — deal with
   later, not a functional bug.** Confirmed via a real 15-minute live session (03:00–03:15) after

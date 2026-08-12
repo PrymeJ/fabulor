@@ -402,6 +402,29 @@ broken four independent times from four different fix attempts, and a green inst
 on this specific bug class once. Mid-way through an unrelated feature branch is also the wrong time
 to touch it. See TODO.md for the follow-up entry with a concrete next-step ledger.
 
+### Resolution (2026-08-12)
+
+Fixed in commit `787bfaa` on `fix/chapter-flicker`, merged to `main`.
+
+Fix shape: 250ms post-settle guard window. After settle clears `_is_seeking`,
+`_post_settle_target` (local position) and `_post_settle_deadline`
+(time.monotonic() + 0.25) are armed. Any sample within the window that reads
+more than 0.05s backward from `_post_settle_target` skips the chapter-walk
+only — `_cached_time_pos` and `_logical_pos` still update. Guard is
+self-expiring; no ratchet, no global arithmetic.
+
+`b6a4023`'s three regressions are now mechanically diagnosed and avoided:
+- Chapter[1]→[0]: reference is the actual settle position (~0.05s), not a
+  stale high-water mark — `0.05 < 0.0` is never true, no false suppression
+- VT backward-seek: no global arithmetic; guard only activates post-settle;
+  `_file_offset` race and in-flight sample poisoning are irrelevant
+- Play/pause icon: `_cached_time_pos` updates unconditionally before the
+  guard; only the chapter-walk branch is skipped
+
+Live verification: 149 settle events, ~50 genuine artifact firings, zero
+chapter regressions, zero false suppressions on legitimate backward seeks
+(including Prev across file boundary). Script-scanned, not just eyeballed.
+
 ---
 
 ## 2026-08-10/11 — Listening Sprint: new sibling feature to the sleep timer, built on `listening-sprint`, plus a live bug-fix round exposing a shared-widget interference bug in the pre-existing sleep timer code
