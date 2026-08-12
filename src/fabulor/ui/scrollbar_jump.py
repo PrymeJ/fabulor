@@ -40,6 +40,15 @@ that changes it.
 Horizontal scrollbars are handled with the same logic on the x axis. The app has
 none today, but the filter is orientation-agnostic rather than silently wrong if
 one is ever added.
+
+**Opt-in row-boundary snapping** (`register_snap`, 2026-08-12). The pixel-exact
+jump above can land mid-row, clipping the topmost visible row. A scrollbar can
+register a `fn(raw_value: int) -> int` that rounds the computed value down to a
+row boundary before `setValue` — see `library.py`'s `_list_view` and
+`stats_panel.py`'s three `StatsRowListView`s for the two registered snap shapes.
+Unregistered scrollbars (QComboBox popups, the chapter list, `SessionListWidget`,
+the Recently-finished carousels) are unaffected — `_snap_fns.get(obj)` is `None`
+for them and the jump behaves exactly as before.
 """
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import QScrollBar, QStyle, QStyleOptionSlider

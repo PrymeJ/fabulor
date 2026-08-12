@@ -1665,7 +1665,33 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-09 — Stats delegate migration completed across all three tabs (Day/Week/
+*Last updated: 2026-08-12 — Scrollbar right-click jump (`ui/scrollbar_jump.py`, `1ac70b2`,
+2026-07-31) gained opt-in row-boundary snapping: a module-level `_snap_fns` registry keyed by the
+live `QScrollBar` object, with `register_snap(scrollbar, fn)` evaluated at right-click time (not
+registration time) so mode-dependent closures stay correct across state changes. Registered for
+Library's `_list_view` (snap reads `ITEM_DIMENSIONS[delegate._view_mode]["h"]` fresh on every call
+— deliberately NOT `sizeHintForRow`, whose `IconMode` behavior was investigated and found
+unverified/unused anywhere in this codebase) and Stats Day/Week/Month's three `StatsRowListView`s
+(a shared `_make_stats_snap` factory walks `sizeHintForRow` per row — safe there specifically
+because `StatsRowListView` uses `ScrollPerPixel` and `StatsRowDelegate.sizeHint` returns a fixed,
+uniform row height for every row, confirmed by reading the delegate directly rather than assumed).
+No other scrollbar (QComboBox popups, chapter list, `SessionListWidget`, the Recently-finished
+carousels) was touched. `a343b6c`.
+Live testing surfaced a second, unrelated bug in the same area: the Recently-finished carousel's
+(`FinishedScrollRow`) mouse wheel applied `angleDelta().y() // 2` — an arbitrary pixel amount with
+no relationship to a thumbnail's 51px stride (47px width + 4px spacing) — directly to the
+scrollbar value, so repeated wheel scrolling drifted out of alignment with thumbnail boundaries and
+left one partially clipped at the row's edge. Confirmed via `git blame` to predate this session
+(2026-05-04, `458b7b32`/`d1716edf`) and structurally unable to route through the new snap registry
+(wheel events never reach a `QScrollBar`'s own event stream — `FinishedScrollRow.wheelEvent`
+consumes them first) before fixing it, rather than assuming the two were connected because they
+surfaced in the same session. Fixed by routing `wheelEvent` through the same
+`_scroll_by(±THUMB_STEP)` the row's arrow buttons already use (new named constant `THUMB_STEP = 51`,
+replacing a magic number duplicated at both the arrow and wheel call sites) — one wheel notch now
+always moves exactly one thumbnail, matching the arrows exactly. Shared by all four tabs that embed
+`FinishedScrollRow` (Overall, Day, Week, Month) — one fix covers all four. `4848eaf`.*
+
+*Previously: 2026-08-09 — Stats delegate migration completed across all three tabs (Day/Week/
 Month), both items left open from the 2026-08-08 pass fixed, and the resulting dead code fully
 removed. **Hover-flicker under blur**: root cause confirmed via live trace instrumentation —
 `TransportBarBlurOverlay._grab_and_blur` hides then shows the active panel ~5x/sec while blur is
