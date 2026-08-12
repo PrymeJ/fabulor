@@ -1,3 +1,29 @@
+## Session Summary — 2026-08-12 Session 2 — Fix: closeEvent didn't wait for in-flight cover-loader workers, causing a "Signal source has been deleted" error on close. `main`
+
+Reported live: closing the app (right after an OS restart, slow ~10s boot, heavy concurrent system
+load) logged `RuntimeError: Signal source has been deleted` from `cover_loader.py:89`. Traced (with
+an Explore subagent doing the file-tracing legwork) to `MainWindow.closeEvent` never stopping the
+idle cover preloader or waiting on `QThreadPool` before tearing down the player/scanner/session
+recorder — a `CoverLoaderWorker` mid-LANCZOS-rescale on a pooled thread could still be executing,
+and emitting into (or a queued slot touching) a widget tree Qt had already started deleting. The
+slow boot and system load were a likely trigger window, not the actual cause — the race exists on
+any close.
+
+`QThreadPool` has no API to cancel a running `QRunnable`, only to drop ones not yet started, so the
+existing `cancel_preload()` (stops the dispatch timer, clears Python-side tracking) doesn't close
+the race on its own. Fix: `closeEvent` now calls `cancel_preload()` then
+`QThreadPool.globalInstance().waitForDone(2000)` before any teardown — pool-wide rather than scoped
+to the preloader's own tracking set, since stats_panel/tag_manager's cover-loader dispatch sites
+share the same global pool and keep no in-flight tracking of their own. `2e1c28a`.
+
+Verified with an ad hoc harness that boots a real `MainWindow`, force-dispatches a preload batch to
+get genuine in-flight workers, then calls the real `mw.close()`: confirmed active pool threads went
+from 4 to 0 by the time `close()` returned, no error. Full test suite green.
+
+Full root-cause detail: NOTES.md, 2026-08-12 Session 2.
+
+---
+
 ## Session Summary — 2026-08-12 Session 1 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data, blur-cancel fix, confirmation wording. `main`
 
 Continuation of the Listening Sprint feature after the `listening-sprint` branch merged (see the

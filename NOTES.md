@@ -1,3 +1,52 @@
+## 2026-08-12 Session 2 — "Signal source has been deleted" on close: closeEvent never waited for in-flight cover-loader workers
+
+Reported live: closing the app (right after an OS restart, ~10s slow boot, heavy system load from
+other apps launching concurrently) logged `RuntimeError: Signal source has been deleted` from
+`cover_loader.py:89`, inside `CoverLoaderWorker.run()` on a `QThreadPool` worker thread. The slow
+boot/system load were not the cause, only a likely trigger window — the race is real and
+reproducible on any close, independent of load.
+
+**Mechanism.** Only one `CoverLoaderWorker` dispatch site passes `sized_target`: the idle cover
+preloader (`library.py` `_preload_tick`, armed by a 5s idle `QTimer` after `_finish_startup`). That
+path does an off-thread LANCZOS rescale before emitting `sized_cover_loaded` — real, non-trivial
+work, unlike the raw-cover-only dispatch sites (stats_panel.py, tag_manager.py, and library.py's own
+visible-row loader), which never reach that line. `MainWindow.closeEvent` tore down the player,
+scanner, and session recorder without ever stopping the preloader or waiting on
+`QThreadPool.globalInstance()` — so a worker mid-LANCZOS-rescale when the user closed the app kept
+running while Qt began deleting the widget tree underneath it. By the time `run()` reached
+`self.sized_cover_loaded.emit(...)`, the receiving `QObject` chain could already be gone.
+
+**A second, unfired half of the same bug**, confirmed by reading rather than assumed: even with
+`Qt.ConnectionType.QueuedConnection`, the receiving slot `_on_preload_sized_cover_loaded` touches
+`self._delegate._sized_cover_cache` — if that slot is ever delivered after `LibraryPanel`/its
+delegate has been destroyed, it raises `RuntimeError: wrapped C/C++ object ... has been deleted`.
+This didn't happen to fire in the reported repro, but it's the same race at the delivery end instead
+of the emit end, and the fix below closes both at once by never letting either happen.
+
+**Why the existing `cancel_preload()` doesn't help.** It only stops the dispatch `QTimer` and clears
+the Python-side `_active_workers` tracking set — `QThreadPool` has no API to cancel a `QRunnable`
+already inside `run()`, only to drop ones queued-but-not-yet-started. A worker already handed to
+`QThreadPool.globalInstance().start(worker)` keeps executing regardless of what `cancel_preload()`
+does.
+
+**Fix (`app.py:3979-3988`).** `closeEvent` now calls `cancel_preload()` (stop new dispatch) then
+`QThreadPool.globalInstance().waitForDone(2000)` — blocking until every job already handed to the
+pool finishes — before any of the teardown that could delete the widgets those jobs touch. This is
+pool-wide, not scoped to `_active_workers`, deliberately: every `CoverLoaderWorker` dispatch site
+(library preload, stats_panel Day/Week/Month + `FinishedBookThumb`, tag_manager) shares the one
+`QThreadPool.globalInstance()`, and only the preloader's own tracking set exists — stats_panel/
+tag_manager sites keep no in-flight tracking at all, so a `waitForDone()` on the shared pool is the
+only mechanism that covers all of them. 2000ms is generous for what is normally a single cover
+load+scale; `waitForDone` returns a bool and does not raise on timeout, so a pathological large batch
+still lets the app close rather than hang.
+
+**Verified** with a harness (`tools/`-style, not committed — ad hoc) that boots a real `MainWindow`,
+force-dispatches a preload tick to get genuine in-flight workers, then calls the real `mw.close()`:
+confirmed `active_workers=4`/`pool_active_threads=4` at dispatch, `pool_active_threads_after_close=0`
+by the time `close()` returned, no `RuntimeError`. Full `pytest` suite green after the change.
+
+---
+
 ## 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data, blur-cancel fix — four live-only bugs that source-reading alone missed twice each
 
 Six commits: `299edd8` (sprint_attempts/sprint_sessions tables, Overall tab wiring), `a96cba6`
