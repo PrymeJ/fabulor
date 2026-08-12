@@ -491,7 +491,7 @@ class TagManagerWidget(QWidget):
             picker_layout.addWidget(dot)
         picker_layout.addStretch()
 
-        self._confirm_delete_label = _ClickableLabel("Click to delete the tag")
+        self._confirm_delete_label = _ClickableLabel("Confirm to delete the tag")
         self._confirm_delete_label.setObjectName("tag_confirm_delete")
         self._confirm_delete_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_delete_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

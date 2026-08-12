@@ -3340,7 +3340,7 @@ class StatsPanel(QWidget):
 
         layout.addStretch()
 
-        self._reset_confirm_label = QLabel("DO YOU WANT TO DELETE ALL LISTENING HISTORY?")
+        self._reset_confirm_label = QLabel("CONFIRM TO DELETE ALL LISTENING HISTORY")
         self._reset_confirm_label.setObjectName("book_detail_confirm_remove")
         self._reset_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._reset_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
