@@ -1396,6 +1396,7 @@ class PanelManager:
         """Slides the sprint panel back out. Mirrors _close_sleep_flow exactly."""
         if self.sprint_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self.sprint_panel._cancel_reset_sprint_data()
         panel_w = self.sprint_panel.width()
         sidebar_y = 56
         self.sprint_panel_animation.setStartValue(QPoint(0, sidebar_y))
@@ -1423,6 +1424,7 @@ class PanelManager:
     def _close_stats_flow(self):
         if self.stats_panel_animation.state() == QAbstractAnimation.State.Running:
             return
+        self.stats_panel._cancel_reset_stats()
         panel_w = self.stats_panel.width()
         sidebar_y = 56
         self.stats_panel_animation.setStartValue(QPoint(0, sidebar_y))

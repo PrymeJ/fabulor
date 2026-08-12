@@ -353,7 +353,7 @@ class SprintPanel(QWidget):
         # _cancel_reset_stats, which never call anything but setVisible on the
         # label and never touch the button at all — confirmed via screenshot,
         # 2026-08-12, after two earlier wrong guesses at this same mechanism).
-        self._reset_sprint_confirm_label = _ClickableLabel("Delete all sprint data? Confirm?")
+        self._reset_sprint_confirm_label = _ClickableLabel("Confirm to delete all sprint data")
         self._reset_sprint_confirm_label.setObjectName("sprint_reset_confirm")
         self._reset_sprint_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._reset_sprint_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -519,7 +519,6 @@ class SprintPanel(QWidget):
 
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
-        self._cancel_reset_sprint_data()
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):

@@ -214,7 +214,7 @@ class BookDetailPanel(QWidget):
         self._duration_label.clicked.connect(self._toggle_duration)
         self._duration_label.setContentsMargins(3, 0, 0, 0)
 
-        self._confirm_remove_label = _ClickableLabel("Confirm to remove from the library")
+        self._confirm_remove_label = _ClickableLabel("Confirm to exclude from the library")
         self._confirm_remove_label.setObjectName("book_detail_confirm_remove")
         self._confirm_remove_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self._confirm_remove_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -474,7 +474,7 @@ class BookDetailPanel(QWidget):
 
         # Confirm label floats absolutely above the button — not in the flow layout,
         # so it never causes the button to shift position.
-        self._delete_history_confirm_label = _ClickableLabel("Click to delete all history for this book")
+        self._delete_history_confirm_label = _ClickableLabel("Confirm to delete all history for this book")
         self._delete_history_confirm_label.setObjectName("book_detail_confirm_remove")
         self._delete_history_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._delete_history_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)

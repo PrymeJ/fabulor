@@ -4270,7 +4270,6 @@ class StatsPanel(QWidget):
 
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
-        self._cancel_reset_stats()
         super().hideEvent(event)
 
     def eventFilter(self, obj, event):
