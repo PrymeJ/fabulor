@@ -1,3 +1,111 @@
+## 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data — three live-only bugs that source-reading alone missed twice each
+
+Four commits: `299edd8` (sprint_attempts/sprint_sessions tables, Overall tab wiring), `a96cba6`
+(grace-exhaustion pulsation on the shared indicator label), `d591090` (custom grace live validation,
+End of chapter button width on both panels, input centering), `238f3e8` (Reset all sprint data
+button + rename/reposition of Stats' own reset button). The three bugs below are the load-bearing
+lessons — the features themselves are straightforward and covered in the commit messages.
+
+### Sprint stats: `books_finished` widened to COUNT(DISTINCT book_path), sprint tables added
+`get_overall_stats()` already computed `books_finished` (found during investigation, not assumed) —
+just never wired into the UI. Confirmed with the user before changing its `COUNT(*)` to
+`COUNT(DISTINCT book_path)` (a book unfinished-then-refinished was double-counting). Two new tables,
+`sprint_attempts` (one row per arm) and `sprint_sessions` (one row per NATURAL completion,
+`duration_s` = elapsed wall-clock), added via the same plain `CREATE TABLE IF NOT EXISTS` pattern
+every other post-release table in this codebase uses (confirmed via `git log -p` — there is no
+`sqlite_master` existence-check convention here, `IF NOT EXISTS` alone is the idempotency
+mechanism). `SprintPanel.sprint_expired` widened from a bare `Signal()` to `Signal(int)` carrying
+elapsed seconds — required restructuring `_trigger_complete` to take `elapsed_s` as a parameter,
+since `disable_sprint()` (called first, matching `_trigger_cancel`'s established ordering) nulls
+`_sprint_start_time`/`_grace_used_s` before the emit would otherwise have any state left to compute
+elapsed from.
+
+Two bugs reported live, both about the Overall tab, both fixed same-session:
+1. **Scrollbar appeared** — the two new rows overflowed the fixed-height panel by a few px. Forced
+   off both visually (`ScrollBarAlwaysOff`) AND functionally — `ScrollBarAlwaysOff` alone does not
+   stop mouse-wheel scrolling, only hides the bar widget, so the scroll area's `wheelEvent` was also
+   no-op'd via this file's existing instance-attribute-assignment convention (`_day_wheel`/
+   `_week_wheel`/`_month_wheel`).
+2. **Sprints count didn't update live** while Stats was open on a natural completion — `_on_sprint_expired`
+   had no stats-refresh call at all. Fixed by mirroring the EOF-book-finished handler's existing
+   `hasattr(self, 'stats_panel') and self.stats_panel.isVisible()` guard pattern.
+
+### Grace-exhaustion pulsation: the animation had to live in app.py, not SprintPanel
+Investigation before implementing found the task's premise wrong twice: `sleep_timer_label` (the
+widget the pulsation targets) is owned by `MainWindow`/`app.py`, not `SprintPanel` — so the
+`QGraphicsOpacityEffect`/`QPropertyAnimation` construction had to move to `app.py`, mirroring the
+already-existing sidebar `sprint_pulse_anim` construction there. `SprintPanel` emits a new
+`grace_warning_changed(bool)` signal only on threshold TRANSITIONS (not every 200ms tick), avoiding
+both a polling connection and the fragile alternative of `app.py` parsing "Grace MM:SS" text back
+into a number. `disable_sprint()` resets the warning state once, covering every disarm path in one
+place rather than duplicating the reset at `_trigger_cancel`/`_trigger_complete`/
+`cancel_for_book_switch` individually — all three already call `disable_sprint()` first.
+
+Follow-up fix same day: the fixed 3.0s threshold was replaced with `_grace_warn_threshold()`, binned
+by grace pool size (5s under 15s pools, 10s under 120s, 15s at 120s+) — a fixed 3s window is nearly
+the whole pool for a short grace period and barely perceptible for a long one.
+
+### Reset all sprint data — three live-only layout/styling bugs, none visible from reading the QSS/layout code alone
+This button went through three full wrong-then-corrected rounds, each one caught only by the user
+looking at an actual screenshot and explicitly rejecting a claim of "this matches" — a direct
+recurrence of the "user's eyes are ground truth" pattern this file already has multiple prior
+entries about, worth restating because it happened three separate times in one sitting on the same
+feature:
+
+1. **Confirm placement.** First build: confirm label occupied the SAME layout slot as the button
+   (button hidden, label shown, and back) — this was actually correct (verified by reading
+   `StatsPanel._on_reset_stats`/`_cancel_reset_stats`, which only ever call `setVisible` on the
+   label and never touch the button)... except the mental model was mis-verified: two subsequent
+   "fixes," each based on a NEW theory rather than re-reading the same code more carefully, moved
+   further away from correct before the third attempt matched two side-by-side screenshots exactly.
+   The final, confirmed-correct shape: confirm label is a REAL widget added to the layout BEFORE the
+   button (both always present in the vertical flow), only the label's `setVisible` toggles, and the
+   button is NEVER hidden/disabled during confirm — this is what `StatsPanel`'s own reset button and
+   Book Detail's "Delete listening history" both actually do, confirmed only by reading their code a
+   third time after being shown screenshots that contradicted the first two theories.
+2. **Vertical position.** The button was floating in the middle of the panel (right after Grace
+   period's content) with visible empty space below it, instead of pinned to the bottom like Stats'
+   button. Root cause: `layout.addStretch()` was placed AFTER the reset button/confirm block instead
+   of before it — the stretch must come first so it absorbs all slack ABOVE the button, pushing the
+   button itself down to the panel's bottom edge. This was a simple ordering bug, invisible from
+   reading the individual widget-construction code without also tracing the surrounding layout's
+   overall vertical sequence.
+3. **Button never reappeared after a sprint ended.** `_reset_sprint_btn`'s visibility was ONLY ever
+   set inside `sync_disable_button_visibility()`, which runs exclusively at panel-OPEN time
+   (`PanelManager._start_sprint_entry`) — deliberately deferred there for `disable_sprint_btn`
+   (avoids a same-call-stack flash against the panel-close animation on ARM). But nothing symmetric
+   existed for showing `_reset_sprint_btn` back on DISARM, so once a sprint started while the panel
+   was open, the button stayed hidden forever until the panel was closed and reopened. Fixed by
+   adding `self._reset_sprint_btn.show()` synchronously inside `disable_sprint()`, directly beside
+   the existing `self.disable_sprint_btn.hide()` — safe synchronously because `disable_sprint()` is
+   never called from the same call stack as `sprint_started.emit()`'s panel-close animation (only
+   the ARM path is), confirmed by checking every call site before assuming the asymmetric fix was
+   safe rather than just pattern-matching the sibling button's shape.
+4. **Wrong visual style — outline instead of solid-fill-on-hover.** Both buttons shared the object
+   name `stats_reset_btn`, and the QSS rule for it existed identically in `get_stats_stylesheet` and
+   `get_tags_stylesheet` — but `get_sprint_stylesheet` had NEVER defined it at all. Confirmed by
+   `awk`-scoping the function body and grepping within just that scope, not by re-reading the two
+   OTHER functions' rules again (which are correct and were never the problem). Qt silently fell
+   back to default `QPushButton` styling for the undefined selector — no error, no warning, just a
+   visually different but structurally valid button. This is the same failure shape as the earlier
+   "End of chapter" 1px-gap and object-name-mismatch bugs from the prior session: a shared object
+   name creates an assumption of shared styling that is only actually true if EVERY consuming
+   stylesheet function independently defines a rule for it — nothing enforces that across functions
+   this way, and grepping the object name across the whole file (rather than scoping to the specific
+   function under test) had already turned up the "twin" rule in two OTHER functions, which is what
+   made it easy to wrongly conclude the styling infrastructure was already in place everywhere.
+
+The common thread across bugs 1-4: reading the QSS/layout source, finding a rule that LOOKS like it
+should produce the right result, and treating that as confirmation without checking the one thing
+that actually matters — whether that specific rule is reachable from the specific stylesheet
+function that styles the specific widget being changed. Three of these bugs were only ever caught
+because the user provided a real screenshot and rejected a "this matches" claim; the fourth was
+different from the first three (it was found by continued code investigation once the user asked
+"why does it look different") but was still preceded by an incorrect "should be identical" claim
+based on comparing rule TEXT rather than checking which function's SCOPE the rule actually lived in.
+
+---
+
 ## 2026-08-11 — Listening Sprint: grace mode selector, backward-seek accounting unit-mismatch bug, book-switch cancellation, end-of-chapter mode
 
 Five commits on `listening-sprint`: `c55d005`, `1309662`, `2a65703`, `9f8c1de`, `350867c`. Full

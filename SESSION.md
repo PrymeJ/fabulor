@@ -1,3 +1,48 @@
+## Session Summary — 2026-08-12 — Listening Sprint: stats tracking, grace-warning pulsation, Reset all sprint data. `main`
+
+Continuation of the Listening Sprint feature after the `listening-sprint` branch merged (see the
+2026-08-11 Session 1 entry below). Four commits, all directly on `main`: `299edd8` (sprint stats
+tracking + Overall tab wiring), `a96cba6` (grace-exhaustion warning pulsation), `d591090` (custom
+grace live validation + several small visual fixes), `238f3e8` (Reset all sprint data button).
+
+New `sprint_attempts`/`sprint_sessions` tables record every arm and every natural completion;
+Overall tab's Books/Sprints/Average successful sprint rows (already scaffolded, unwired since the
+prior session) are now live. Two follow-up bugs from live testing: a scrollbar appeared on the
+Overall tab from the new rows' overflow (forced off — visually AND functionally, since hiding the
+scrollbar widget alone doesn't stop wheel-scrolling), and the Sprints count didn't update live while
+Stats was open on a natural completion (now mirrors the existing EOF-book-finished refresh pattern).
+
+Grace-exhaustion pulsation: when a sprint is paused and grace is about to run out, the shared
+indicator label pulses as a warning. Required moving the actual animation construction into `app.py`
+(it targets a widget `SprintPanel` doesn't own) — `SprintPanel` only emits a transition signal.
+Threshold was later widened from a fixed 3s to a pool-size-binned window (5s/10s/15s) so the warning
+window scales sensibly with how long the grace pool actually is.
+
+Custom grace input dropped its "Set" button for live validation (saves on every keystroke; an
+emptied field zeroes the session's grace without discarding the last saved config value). Sleep's
+"End of chapter" button got the same 1px-flush-width fix Sprint's got last session. All three custom
+numeric input fields across both panels now center their text — the user tuned the exact field
+widths afterward.
+
+**"Reset all sprint data" took three full corrected rounds to land, each one only caught by the user
+providing a real screenshot** — this is the part worth remembering for next time. First attempt
+mixed up two different confirm-overlay shapes; user rejected it flatly ("you are still putting them
+in the same place"). Second attempt over-corrected into a wrong direction entirely, based on a new
+guess rather than re-reading the reference code more carefully. Third attempt, built only after
+directly re-reading `StatsPanel._on_reset_stats` line-by-line rather than pattern-matching from
+memory, matched the confirmed screenshots. Two more bugs surfaced after that: the button never
+reappeared after a sprint ended if the panel stayed open (a visibility-sync gap between the
+panel-open-only sync path and the disarm path), and the button rendered with plain outline styling
+instead of the shared solid-fill-on-hover look every other panel's reset/delete button has — because
+`get_sprint_stylesheet` had simply never defined a rule for the shared object name at all, something
+no amount of re-reading the OTHER two panels' correct QSS rules would ever have caught. Also
+renamed Stats' own "Reset all stats" → "Reset all listening stats" and nudged it 3px down, per an
+earlier request in the same session.
+
+Full root-cause detail and the four-bug pattern behind the reset button: NOTES.md, 2026-08-12.
+
+---
+
 ## Session Summary — 2026-08-11 Session 1 — Listening Sprint: grace-period redesign, backward-seek accounting, book-switch cancellation, end-of-chapter mode. `listening-sprint`
 
 Continuation of the Listening Sprint feature (see the 2026-08-10 Session 3 entry below for the

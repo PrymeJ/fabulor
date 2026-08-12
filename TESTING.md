@@ -544,12 +544,14 @@ the mechanism (anchor chapter, `user_seek_pending`/`sleep_fired` flags) and why 
 - [ ] Restarting the SAME finished book (EOF → Restart) does NOT disarm an active sleep timer — only
       an actual switch to a different book does
 
-## Listening Sprint (added 2026-08-10/11, extended 2026-08-11)
+## Listening Sprint (added 2026-08-10/11, extended 2026-08-11 and 2026-08-12)
 
 Sprint (sidebar, `R` key) is a structural sibling of the sleep timer — same 200ms-polled indicator
 zone, same shared `sleep_timer_label`. See NOTES.md 2026-08-10/11 for the original mechanism (grace
-pool, `time.time()`-based clock, shared-label interference bug) and NOTES.md 2026-08-11 for the
-backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mode.
+pool, `time.time()`-based clock, shared-label interference bug), NOTES.md 2026-08-11 for the
+backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mode, and NOTES.md
+2026-08-12 for stats tracking, grace-warning pulsation, and the Reset all sprint data button's
+three-round layout/styling fix trail.
 
 ### Basic run
 - [x] Set a short sprint (e.g. 5 min) — indicator shows `-MM:SS | TT:TT`, remaining ticking down,
@@ -572,12 +574,15 @@ backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mo
 - [ ] Switch None → Percentage or Fixed — submenu appears immediately at the correct position, no
       flicker/flash of the wrong position first (regression check for the container-shown-before-
       child-row-visible ordering bug)
-- [ ] Switch to Custom — input field + Set button visible, no preset row shown
+- [ ] Switch to Custom — input field visible, no Set button (removed 2026-08-12 in favor of live
+      validation), text centered
 - [ ] Switch to None — submenu container hides entirely, no empty gap left behind
 - [ ] Each preset row (Percentage: 2/5/10/15/20/25%, Fixed: 5/10/15/30/45/60s) — 6 buttons, flush
       with the duration grid above, no visible gap on the right edge
-- [ ] Custom grace input caps at 3 digits (999s max); Set button, Enter, Escape, and right-click-
-      clears all work
+- [ ] Custom grace input: type a value — saves immediately on every keystroke, no Set click needed;
+      caps at 3 digits (999s max); clear the field — in-memory grace becomes 0 for the current
+      session WITHOUT overwriting the last saved config value (relaunch restores the last valid
+      value, even if the field was left empty); Escape and right-click both clear the field
 - [ ] Close and relaunch the app — grace mode AND the selected value within that mode both persist,
       AND the mode button shows as visibly selected immediately on panel open (not just after
       clicking something — regression check for the missing startup `update_panel_styling()` call)
@@ -590,6 +595,55 @@ backward-seek unit-mismatch bug, book-switch cancellation, and end-of-chapter mo
       not the near-instant dismissal this session found and fixed — see NOTES.md), then clears
 - [ ] Set grace to "None" — pausing at all cancels the sprint immediately (no grace window)
 - [ ] Forward seeking mid-sprint does NOT consume grace or pause the sprint (seeks are free)
+
+### Grace-exhaustion warning pulsation (added 2026-08-12)
+- [ ] 6s grace pool, pause — no pulsation for the first 1s, starts at 5s remaining
+- [ ] 30s grace pool, pause — pulsation starts at 10s remaining (20s into the pause), not before
+- [ ] 120s+ grace pool, pause — pulsation starts at 15s remaining (105s into the pause)
+- [ ] Unpause mid-pulsation, before grace exhausted — pulsation stops immediately, indicator label
+      returns to full opacity (not left mid-fade)
+- [ ] Pause until grace exhausts — pulsation stops exactly as "Sprint failed" appears (not still
+      pulsating behind the message)
+- [ ] EOC sprint — same pulsation behavior as duration mode (grace pool applies identically)
+
+### Books / Sprints stats (Overall tab, added 2026-08-12)
+- [ ] Overall tab shows exactly 10 rows, NO vertical scrollbar — even with mouse wheel scrolled over
+      the tab (regression check: `ScrollBarAlwaysOff` alone does not stop wheel-scroll, the scroll
+      area's wheelEvent must also be no-op'd)
+- [ ] "Books" row shows "N started · M finished" — M counts DISTINCT books ever finished (an
+      unfinish-then-refinish of the same book must not double-count)
+- [ ] Arm and cancel a sprint (any method) — "Sprints" row's started count increments; finished
+      count does NOT
+- [ ] Arm and let a sprint complete naturally (duration or EOC mode) — finished count increments,
+      "Average successful sprint" updates, WHILE Stats stays open on the Overall tab (no tab switch
+      or panel reopen needed — regression check for the missing live-refresh-while-visible bug)
+- [ ] Relaunch — Sprints/Books counts persist correctly
+
+### Reset all sprint data (added 2026-08-12)
+- [ ] Button sits pinned to the bottom of the Sprint panel, same margin from the panel edge as
+      Stats' "Reset all listening stats" — NOT floating with empty space below it (regression check
+      for the addStretch-placement bug: the stretch must come BEFORE the reset button/confirm block,
+      not after, or the button floats wherever the content above happens to end)
+- [ ] Visual style (solid-fill on hover, outline at rest) matches Stats' "Reset all listening stats"
+      and Book Detail's "Delete listening history" exactly — NOT a plain outline with no hover fill
+      (regression check: `get_sprint_stylesheet` must define its own `#stats_reset_btn` rule; the
+      object name being shared with those two panels does NOT mean the styling is automatically
+      shared — each stylesheet function is independently scoped)
+- [ ] Click the button — confirmation label appears directly ABOVE the button (the button itself
+      stays visible and unchanged the whole time — it is never hidden or disabled during confirm),
+      no layout shift anywhere else in the panel
+- [ ] Click anywhere else in the app while confirming — dismisses the confirmation (matches Stats'
+      own click-outside-dismisses behavior)
+- [ ] Escape while confirming — same as click-outside, dismisses immediately
+- [ ] 7 seconds pass with no interaction — confirmation dismisses on its own
+- [ ] Confirm (click the label) — `sprint_attempts`/`sprint_sessions` both emptied; Overall tab's
+      Sprints row resets to "0 started · 0 finished", Average successful sprint resets to "—"
+- [ ] Start a sprint while the Sprint panel is open (or leave it open, then arm from elsewhere) —
+      the reset button is NOT visible while a sprint is active; when the sprint ends (any way —
+      cancel, fail, or complete) WHILE THE PANEL STAYS OPEN, the reset button reappears immediately
+      without needing to close and reopen the panel (regression check: `disable_sprint()` must show
+      the button synchronously — the panel-open-only sync path alone is not enough, since it never
+      re-runs on a disarm that happens while the panel is already open)
 
 ### Backward-seek compensation (added 2026-08-11, config-gated, default Off)
 - [ ] Toggle Off (default) — seeking backward during an active sprint does NOT change the displayed
@@ -1349,7 +1403,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 - [ ] Day-start hour spinner persists across restarts
 - [ ] Changing day-start hour reflects immediately on all tabs without restart
 - [ ] Streak grid lit-cell count and the displayed streak number agree at every day-start-hour value — test with a session that straddles the configured day-start hour (e.g. a session from ~5 min before to ~1hr after the boundary): the grid should light BOTH adjusted-day cells (correct — the session was genuinely listened to on both), and the streak number/label must count both of those days too, not just the start day (regression: `get_streaks` used to only credit the session's start-date, undercounting relative to the grid — see NOTES.md "Streak count / grid cell mismatch"). The Day tab is expected to show the session as ONE entry on its start date only — that's by design, not a bug.
-- [ ] Reset all stats prompts confirmation, clears all data, refreshes all tabs
+- [ ] "Reset all listening stats" (renamed from "Reset all stats" 2026-08-12, moved 3px down) prompts
+      confirmation, clears all data, refreshes all tabs
 
 ### Timeline tab — grid transitions and label cascades
 
@@ -1428,7 +1483,7 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 
 ### Options tab
 - [ ] Day-start hour spinner range 0–23, persists correctly
-- [ ] Reset all stats button shows inline confirmation label above the button on first click
+- [ ] "Reset all listening stats" button shows inline confirmation label above the button on first click
 - [ ] Clicking the confirmation label executes the reset and refreshes all tabs
 - [ ] Confirmation auto-dismisses after 7 seconds if not acted on
 - [ ] Button and confirmation label are pinned to the bottom of the tab (not top)
