@@ -1,3 +1,178 @@
+## 2026-08-12 Session 4 — Book Detail History tab: viewport/wheel/keyboard-nav clipping, then two hover/keyboard conflicts, then a focus-strand bug — four fixes across three commits, three found only after the previous one was verified live
+
+Continuation of the Session 3 scrollbar-jump work, but in a different widget: the History tab
+inside Book Detail (`book_detail_panel.py`) is architecturally unrelated to the `QListView`-based
+Library/Stats scrollbars — it's a `QScrollArea` with the scrollbar hidden entirely
+(`ScrollBarAlwaysOff`), wrapping fixed-height (`ROW_H = 27`) `_HistoryRow` widgets. Reported live via
+a screenshot showing a partially-clipped row at the bottom. Commits: `b20a1ff` (viewport/wheel/
+keyboard-nav alignment), `61eab91` (user's own follow-up margin/spacing tuning), `3f04e03`
+(hover/keyboard-selection conflicts + focus-strand fix).
+
+### Bug 1 — 3px viewport remainder (`b20a1ff`)
+
+Same root shape as the Session 3 Library/Stats work: `_history_scroll`'s viewport was 273px against
+a 27px row height (`273 % 27 = 3`), so whichever row landed at the scroll boundary always rendered
+with a 3px sliver clipped. Confirmed live via a new throwaway probe
+(`tools/history_tab_geometry_probe.py`, same "read the real widget tree after a real show()" shape
+as `tools/tags_geometry_probe.py`) — not computed offscreen. Book Detail's actual height needed
+checking too: it is NOT one of the fixed-500px panels (Settings/Speed/Sleep/Sprint/Stats/Tags) —
+`panels.py` gives it `main_window.height() - 32 = 532px` instead, confirmed by reading
+`_start_book_detail_entry`.
+
+Fix: `layout.addSpacing(3)` in the panel's OUTER layout, right before `self.tabs` — `self.tabs` is
+the sole `stretch=1` participant in that layout, so the 3px comes out of its own height and cascades
+down into History's own `stretch=1` scroll area (the tab page's `outer` layout), landing the
+viewport on an exact `270 = 10*27`. This was a deliberate choice to push the WHOLE shared tab bar
+(Stats/History/Tags/Cover) down 3px, not just History's row content — the user was asked directly
+and chose the tab-bar-wide option over a History-only scoped fix, so Stats/Tags/Cover's content
+start position also shifted by the same 3px. "Delete listening history" is unaffected: it's a
+fixed-height sibling below History's own `stretch=1` scroll area inside the tab page, not touched by
+either layout's stretch redistribution.
+
+### Bug 2 — wheel step unrelated to `ROW_H` (`b20a1ff`, same commit)
+
+`_history_scroll` was a bare `QScrollArea()` with no `wheelEvent` override — wheel scrolling used
+Qt's un-set default step, unrelated to `ROW_H`, so repeated wheel scrolling could drift the content
+out of row-alignment regardless of the viewport fix. Same class of bug as `FinishedScrollRow`'s
+carousel wheel fix from Session 3 (`4848eaf`), found and fixed the same way: a real subclass,
+`_HistoryScrollArea(QScrollArea)`, overriding `wheelEvent` to step by exactly one `ROW_H` per notch.
+Deliberately NOT an instance-attribute `wheelEvent` patch on the bare `QScrollArea` — this
+codebase's own history (recorded in `stats_panel.py`'s comments, read during Session 3's
+investigation) documents that exact pattern failing before: events delivered to the outer widget
+never reached an instance-attribute override, only `viewport()`-targeted ones did. Verified via
+`tools/history_wheel_probe.py`: six synthesized real `QWheelEvent`s per direction, every resulting
+scrollbar value an exact multiple of 27.
+
+### Bug 3 — keyboard arrow-nav used `ensureWidgetVisible`, unrelated to `ROW_H` (`b20a1ff`, same commit)
+
+A THIRD independent code path into the same viewport: `_move_history_selection`'s Up/Down handling
+called `QScrollArea.ensureWidgetVisible(row)` with no margin arguments, so Qt used its built-in
+default (`xMargin=50, yMargin=50`) — a 50px margin against a 27px row height guarantees
+non-row-aligned scroll positions almost every time, reproducing the same clipping via a third,
+unrelated mechanism. Reported live by the user directly (before Session 3's Library/Stats work was
+even fully wrapped): "the arrow navigation makes the rows drift up and down... see how the first and
+last rows are in different positions" — two screenshots compared, the first row's on-screen position
+visibly differed.
+
+Fix: `_HistoryScrollArea.scroll_to_row(row)`, a `ROW_H`-aware replacement that only scrolls the
+minimum needed to bring a row fully into view — computing the target purely from `row.y()` and
+`ROW_H`, never touching Qt's margin-based logic. This only produces `ROW_H`-aligned results because
+the viewport height is itself an exact multiple of `ROW_H` (Bug 1's fix is a hard precondition for
+Bug 3's fix to work at all). Verified via `tools/history_keyboard_nav_probe.py`: walked all 84
+Down-arrows through the full row list, then all 84 back Up — every single step landed on an exact
+`ROW_H`-aligned scrollbar value, returning exactly to 0.
+
+### User's own follow-up fix (`61eab91`) — margins alone weren't enough, spacing had to move too
+
+After Bug 1-3 landed, the user nudged the top margin `outer.setContentsMargins(0, 10, 0, 10)` →
+`(0, 9, 0, 10)` to fix a top/bottom breathing-room mismatch they measured directly (10px top, 8px
+visual bottom) — and found that changing ONLY the margin reintroduced row drift. They also changed
+`outer.setSpacing(8)` → `setSpacing(9)` (the spacing between `outer`'s own children — the scroll
+area and the button — not between rows themselves, which have their own `setSpacing(0)`) and that
+combination fixed it cleanly. Not independently re-derived or verified by Claude — applied directly
+as reported, per the standing "user sees the rendered pixels" rule: a live-measured pixel value from
+direct observation is ground truth, not a claim to second-guess.
+
+### Bug 4 — two hover/keyboard-selection conflicts, found only by testing the ALREADY-FIXED behavior (`3f04e03`)
+
+With Bugs 1-3 fixed and verified, the user then found a genuinely NEW class of issue while testing
+mouse+keyboard interaction together: multiple rows could show a hover-X simultaneously (2, then 3
+once a delete confirmation was also armed). This was never reachable before because the drift/
+clipping bugs made this interaction untestable in practice — fixing the geometry surfaced a
+pre-existing state-model gap.
+
+**Mechanism**: each `_HistoryRow` tracks its OWN `_state` (`idle`/`hover`/`confirming`)
+independently — there was no cross-row reconciliation between real mouse `enterEvent`/`leaveEvent`
+and `set_keyboard_selected()` (the keyboard-driven equivalent). Two directions, found and fixed
+separately because the first fix attempt only covered one:
+
+1. **Keyboard selects row B, then mouse enters row A** — row A's real `enterEvent` promotes it to
+   `'hover'` with no awareness that row B is already keyboard-selected. Fixed via a new
+   `_HistoryRow.hover_entered` signal (emitted unconditionally from `enterEvent`), wired to a new
+   `_on_history_hover_entered(row)` panel method that clears `_history_selected_index`'s row via the
+   EXISTING `set_keyboard_selected(False)` — safe here because the row being cleared genuinely isn't
+   under the mouse in this direction.
+2. **Mouse hovers row A (stays physically there), then keyboard navigates to row B** — the reverse
+   direction was MISSED by the first fix and reported as a regression ("still get two X's... right
+   and left arrows stop switching the tabs" — the second half turned out to be Bug 5, see below,
+   found in the same report). `_move_history_selection` only ever cleared the PREVIOUS
+   keyboard-selected index, never checked for an independently mouse-hovered row.
+   `set_keyboard_selected(False)`'s `underMouse()` guard — correct for direction 1 — is WRONG for
+   this direction: an arrow-key press never moves the cursor, so the row the mouse is resting on
+   stays `underMouse()==True` for the whole interaction, and the guard silently refuses to clear it.
+   Fixed via a new method, `force_idle_from_hover()`, that drops `'hover'`→`'idle'` unconditionally,
+   bypassing the `underMouse()` check entirely — used ONLY in `_move_history_selection`'s
+   cross-row-hover cleanup loop, never as a general replacement for `set_keyboard_selected(False)`.
+
+Both verified live via `tools/history_hover_kbd_conflict_probe.py` (direction 1: real
+`QEnterEvent` synthesized on a different row than the keyboard selection, confirmed exactly one row
+in `'hover'` state after) and `tools/history_hover_kbd_conflict_probe2.py` (direction 2: real
+`QEnterEvent` on row 0, confirmed `underMouse()==True` throughout, then two keyboard moves — row 0
+correctly dropped to `'idle'` despite `underMouse()` never changing).
+
+### Bug 5 — a focus-strand bug, initially misdiagnosed as a third hover-conflict direction
+
+The same report that surfaced Bug 4's missed direction also said: "If I arm the confirmation with
+the mouse, the keyboard starts scrolling the list with no X... right and left arrows stop switching
+the tabs." This is a DIFFERENT bug from Bug 4 — Left/Right breaking is not explainable by any
+hover-state gap (Left/Right never touches `_HistoryRow` state at all; it's unconditional tab-cycling
+in `keyPressEvent`, checked before any tab-local dispatch). Both symptoms together (arrows scroll
+instead of select, tab-cycling stops) are the exact signature of `BookDetailPanel.keyPressEvent`
+never being reached — i.e. focus loss, not a dispatch-logic bug — which is the same failure mode
+`_ensure_panel_owns_focus`'s own docstring describes in detail elsewhere in this file (mouse-clickable
+`QToolButton`/`QPushButton` stealing focus, arrows falling through to global shortcuts or, here,
+native `QScrollArea` scrolling).
+
+**A synthetic-click probe gave a false negative before the real bug was found — worth recording as
+a methodology lesson, not just the bug itself.** `tools/history_confirm_focus_probe.py` constructed
+a `QMouseEvent` press+release and sent it via `app.sendEvent(btn, ...)` directly to `_trash_btn`,
+then checked `QApplication.focusWidget()` — and it reported focus correctly retained on the panel,
+even BEFORE the eventual real fix existed. This contradicted the user's live report. Per the
+"never substitute a plausible explanation for a checked one" rule, the contradiction was NOT
+resolved by trusting the probe over the user, nor by re-asserting the probe must be right — it was
+resolved by going back to the user for a live reproduction with temporary trace logging
+(`logger.warning` lines added to `keyPressEvent`, since normal print-based probes can't observe a
+live GUI session), because `app.sendEvent` on a raw constructed `QMouseEvent` evidently does not
+fully replicate whatever a REAL click+release cycle does to Qt's focus chain (press, release, and
+platform-level focus reconciliation apparently involve more than what a single synthetic send
+triggers) — this was not further diagnosed, since the live trace already gave a definitive answer
+without needing to explain the probe's blind spot.
+
+**The live trace was decisive.** The user reproduced the exact sequence (arm via mouse click, then
+arrow keys, across two test passes) with `logger.warning("[HISTORY-KEY-TRACE] ...")` lines temporarily
+added to the top of `keyPressEvent` and the Left/Right/History-tab dispatch branches, writing to
+Fabulor's rotating file log (`platformdirs.user_log_dir("fabulor")` — no console handler, confirmed
+via `logger_setup.py`, so this had to be read from the file directly, not the terminal). The trace
+showed `[HISTORY-KEY-TRACE]` firing correctly for every key BEFORE the mouse-click-to-arm moment,
+then NEVER firing again for the rest of the session — while unrelated log lines (`transport_bar_blur`
+repaint ticks, `_sync_chapter_ui`) kept appearing normally in the same window, proving the app itself
+was alive and the silence was specific to this one dispatch path, not a hang or crash.
+
+**Root cause, found by checking Qt's actual default focus policies directly rather than assuming**:
+`python -c "QScrollArea().focusPolicy()"` returns `11` (`StrongFocus`); `QScrollArea().viewport().
+focusPolicy()` returns `0` (`NoFocus`). `_history_scroll` (the outer `_HistoryScrollArea` instance)
+had never been given an explicit focus policy, so it defaulted to `StrongFocus` — a real, easy-to-miss
+Qt gotcha (the intuitive assumption is that a scroll container's default matches its own viewport's,
+which it doesn't). `_trash_btn` (a `QToolButton`) was ALSO still missing `NoFocus` at this point — a
+first attempted fix earlier in the session (before this deeper trace) had added it, but that alone
+was insufficient: fixing `_trash_btn` alone just meant Qt's focus-fallback search continued past it
+to the next focusable ancestor in the chain (`_overlay` → `_HistoryRow` → `_history_container` →
+`_history_scroll`'s viewport [`NoFocus`, safe] → `_history_scroll` itself [`StrongFocus`, the actual
+landing spot]). Confirmed both plain `QWidget` (`_history_container`, `_HistoryRow`, `_overlay`) and
+`QToolButton`'s ACTUAL default (`1`/`TabFocus`, not `StrongFocus` as initially assumed from a general
+CLAUDE.md-documented pattern — the practical click-steals-focus effect is the same regardless of
+which specific policy value it is) via direct instantiation before writing the fix, rather than
+trusting the assumption. Both `_trash_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)` (already landed in
+an earlier attempt within this same session, before the trace) and the NEW
+`_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)` were required together — fixing only one
+would have left the other as the fallback landing spot.
+
+Trace logging was removed after the fix (four `logger.warning` call sites in `keyPressEvent`,
+restoring it to its pre-investigation form) — it served its diagnostic purpose and was never meant
+to ship. The user confirmed live afterward: "The focus works correctly now."
+
+---
+
 ## 2026-08-12 Session 3 — Scrollbar right-click row-snap, and an unrelated carousel wheel bug it surfaced
 
 Two commits: `a343b6c` (row-boundary snapping for the right-click scrollbar jump) and `4848eaf`

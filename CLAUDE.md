@@ -1665,7 +1665,35 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-12 — Scrollbar right-click jump (`ui/scrollbar_jump.py`, `1ac70b2`) gained
+*Last updated: 2026-08-12 — Book Detail's History tab (`book_detail_panel.py`) had three related
+bugs fixed in sequence, all found live: a 3px viewport/`ROW_H` remainder and an unaligned wheel step
+both caused partial-row clipping (mirroring the scrollbar-jump/carousel-wheel fixes below — see
+NOTES.md 2026-08-12 for detail, not repeated here); then two hover/keyboard-selection state
+conflicts and a focus-strand bug surfaced from live interaction testing. Two facts worth keeping
+here as standing gotchas:
+- **`QScrollArea`'s default `focusPolicy()` is `StrongFocus`, not `NoFocus`** — only its
+  `viewport()` defaults to `NoFocus`. `_history_scroll` was missing this, so a click on a
+  `NoFocus`-correct child (`_trash_btn`, a `QToolButton` — also fixed here, `TabFocus` by default)
+  fell through the ancestor chain and silently stole real Qt focus from `BookDetailPanel`, breaking
+  all of History's keyboard handling (Up/Down/Left/Right) until the panel was reopened. Any future
+  `QScrollArea` added to a panel that owns its own `keyPressEvent` needs an explicit
+  `setFocusPolicy(Qt.FocusPolicy.NoFocus)` — this is not the default and is easy to miss. Same
+  underlying class of bug as the "Keyboard focus ownership" rule elsewhere in this file, applied to
+  a widget type (`QScrollArea`) not covered by that rule's original sweep.
+- **`_HistoryRow.set_keyboard_selected(False)` and `force_idle_from_hover()` are NOT
+  interchangeable** — `set_keyboard_selected(False)`'s `underMouse()` guard deliberately preserves a
+  row's hover state if the mouse is still physically on it (correct for keyboard stepping away from
+  a row the mouse isn't on). `force_idle_from_hover()` exists specifically because an arrow-key
+  press never moves the cursor, so the row the mouse is resting on stays `underMouse()==True`
+  indefinitely — reusing `set_keyboard_selected(False)` there is a silent no-op. Use
+  `force_idle_from_hover()` only for "a different input source is taking over now regardless of
+  where the mouse physically is"; never as a general-purpose hover-clear.
+`3f04e03` (hover/keyboard conflicts + focus fix), `b20a1ff` (viewport/wheel/keyboard-nav-scroll
+alignment), `61eab91` (a separate top/bottom breathing-room tune inside History's own tab layout,
+applied directly from the user's own measured pixel values). Full investigation trail, including the
+dead-end synthetic-click probe that gave a false negative for the focus bug: NOTES.md, 2026-08-12.*
+
+*Previously: 2026-08-12 — Scrollbar right-click jump (`ui/scrollbar_jump.py`, `1ac70b2`) gained
 opt-in row-boundary snapping via `register_snap(scrollbar, fn)` (a module-level `_snap_fns` dict
 keyed by the live `QScrollBar` object), so a right-click jump lands on a row boundary instead of
 mid-row. Registered for Library's `_list_view` and Stats Day/Week/Month's three

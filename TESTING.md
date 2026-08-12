@@ -1781,6 +1781,44 @@ Applies to **every** text input in the app: Book Detail metadata fields, library
 - [ ] Click outside "Delete listening history" confirm label (but not on button) → confirm dismissed, button re-enabled with hand cursor
 - [ ] Click on button area while confirm label is visible → nothing happens (button stays disabled, confirm stays)
 
+#### Row-boundary alignment (viewport / wheel / keyboard-nav — added 2026-08-12)
+- [ ] With enough sessions to overflow: scroll to the very bottom (any method) — the last row is
+      fully visible, never clipped/partial
+- [ ] Mouse wheel over the row list: each notch moves by exactly one row height — never leaves a
+      row partially visible at either edge, in either scroll direction
+- [ ] Arrow-key navigation (see Keyboard navigation below) through the full list, both directions:
+      no row is ever partially clipped at the top or bottom edge while navigating
+- [ ] With the tab bar (Stats/History/Tags/Cover) visible: switch to Stats, Tags, and Cover tabs —
+      their content still looks correctly positioned (the 3px push affects all four tabs' content
+      start position equally, not just History)
+
+#### Keyboard navigation (added 2026-08-12)
+- [ ] With History tab focused/open: Down arrow selects the first row (shows its hover-X);
+      repeated Down moves selection one row at a time, no wrap past the last row
+- [ ] Up arrow moves selection back up one row at a time, no wrap past the first row
+- [ ] Keyboard-selecting a row scrolls it fully into view if it was partially/fully off-screen
+- [ ] Delete/X key with a row keyboard-selected: arms that row's delete confirmation, same as
+      clicking its X
+- [ ] Space/Enter with a confirmation armed (via keyboard or mouse): confirms the delete
+- [ ] Left/Right arrow still cycles Stats → History → Tags → Cover (wrapping both ways) while the
+      History tab is active
+
+#### Mouse + keyboard interaction (added 2026-08-12)
+- [ ] Keyboard-select a row (Down arrow), then move the mouse onto a DIFFERENT row: the
+      keyboard-selected row's X disappears, only the mouse-hovered row shows an X — never both
+      at once
+- [ ] Hover a row with the mouse and hold it there (don't move), then press Down/Up arrow: the
+      mouse-hovered row's X disappears once keyboard selection moves to a different row, even
+      though the cursor never physically left it — never two X's showing simultaneously
+- [ ] Arm a delete confirmation via mouse click (the X icon), THEN press Up/Down: selection moves
+      correctly with the usual hover-X on the new row (not the armed row's own confirming state,
+      which is untouched) — do NOT see the list scroll natively with no X and no row-boundary
+      alignment (this was a focus-strand regression — see below)
+- [ ] Arm a delete confirmation via mouse click, THEN press Left/Right: tabs still switch
+      correctly (Stats/History/Tags/Cover) — do NOT see Left/Right stop responding
+- [ ] After the above: close and reopen Book Detail (or switch tabs and back) — keyboard
+      navigation and tab-cycling both still work normally, confirming no lingering focus loss
+
 ### Tags tab
 - [ ] Tag chips display all assigned tags
 - [ ] Add tag field with autocomplete works; Enter and + button both add

@@ -1,3 +1,36 @@
+## Session Summary — 2026-08-12 Session 4 — Book Detail History tab: viewport/wheel/keyboard-nav clipping fixed, then two hover/keyboard-selection conflicts and a focus-strand bug found and fixed via live interaction testing. `main`
+
+Continuation of Session 3's row-snap work, but a different, architecturally unrelated widget: the
+History tab in Book Detail Panel is a `QScrollArea` (scrollbar hidden entirely) wrapping fixed-height
+rows, not a `QListView`. Reported via a screenshot showing a clipped row at the bottom — same
+underlying shape as Session 3 (a 273px viewport against a 27px row height, `273 % 27 = 3`), but
+independently discovered and fixed via a new `layout.addSpacing(3)` before the shared tab bar
+(`self.tabs`), the panel's sole `stretch=1` participant, cascading down into History's own scroll
+area. Two more independent code paths into the same viewport also needed fixing: the wheel step
+(`_HistoryScrollArea.wheelEvent`, same idiom as the carousel fix from Session 3) and keyboard
+arrow-nav, which used `QScrollArea.ensureWidgetVisible`'s default 50px margin — unrelated to row
+height — instead of a new `ROW_H`-aware `scroll_to_row()`. `b20a1ff`; a follow-up margin/spacing
+tune, `61eab91`, applied directly from the user's own measured pixel values.
+
+With the geometry fixed, live mouse+keyboard interaction testing surfaced two NEW bugs that the
+broken geometry had made untestable before: multiple rows could show a hover-X at once (no
+cross-row reconciliation between real mouse hover and keyboard selection — fixed in both directions,
+the second direction needing a new `force_idle_from_hover()` method since the existing
+`set_keyboard_selected(False)`'s `underMouse()` guard is wrong for "keyboard takes over from a row
+the mouse is still physically resting on"); and arming a delete confirmation via mouse click
+silently stole real Qt focus from the panel (`QScrollArea`'s actual Qt default `focusPolicy()` is
+`StrongFocus`, not `NoFocus` — confirmed by direct instantiation, easy to miss since only its
+`viewport()` defaults to `NoFocus`), breaking all of History's keyboard handling until the panel was
+reopened. Found via temporary `logger.warning` trace lines the user reproduced live and whose log
+file (not visible in-terminal — no console handler) had to be read directly; a synthetic-click probe
+tried first gave a false negative and was set aside per the standing rule that a live report
+contradicting an inference means the inference is the suspect. `3f04e03`.
+
+Full investigation trail, including the synthetic-probe dead end and the exact focus-chain
+fallback path: NOTES.md, 2026-08-12 Session 4.
+
+---
+
 ## Session Summary — 2026-08-12 Session 3 — Scrollbar right-click row-snap (Library + Stats Day/Week/Month), plus a pre-existing carousel wheel-scroll bug found and fixed along the way. `main`
 
 Added opt-in row-boundary snapping to the existing scrollbar right-click-jump filter
