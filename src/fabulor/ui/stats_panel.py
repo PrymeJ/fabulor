@@ -534,6 +534,7 @@ class FinishedBookThumb(QWidget):
 class FinishedScrollRow(QWidget):
     """Horizontally scrollable row of FinishedBookThumb widgets with edge scroll indicators."""
     ARROW_W = 11  # width of each edge-scroll arrow sliver
+    THUMB_STEP = 51  # FinishedBookThumb width (47) + _layout spacing (4) — one thumbnail's stride
 
     def __init__(self, assets_dir: str, parent=None):
         super().__init__(parent)
@@ -569,13 +570,13 @@ class FinishedScrollRow(QWidget):
         self._left_arrow = QPushButton("◀", self)
         self._left_arrow.setFixedSize(self.ARROW_W, 51)
         self._left_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._left_arrow.clicked.connect(lambda: self._scroll_by(-51))
+        self._left_arrow.clicked.connect(lambda: self._scroll_by(-self.THUMB_STEP))
         self._left_arrow.hide()
 
         self._right_arrow = QPushButton("▶", self)
         self._right_arrow.setFixedSize(self.ARROW_W, 51)
         self._right_arrow.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._right_arrow.clicked.connect(lambda: self._scroll_by(51))
+        self._right_arrow.clicked.connect(lambda: self._scroll_by(self.THUMB_STEP))
         self._right_arrow.hide()
 
         self._apply_arrow_styles()
@@ -720,8 +721,17 @@ class FinishedScrollRow(QWidget):
         bar.setValue(bar.value() + delta)
 
     def wheelEvent(self, event):
-        bar = self._scroll.horizontalScrollBar()
-        bar.setValue(bar.value() - event.angleDelta().y() // 2)
+        # angleDelta().y() is an arbitrary pixel-ish amount (120 per notch on most
+        # mice, smaller/variable on trackpads) with no relationship to THUMB_STEP —
+        # applying it directly to the scrollbar value let repeated wheel scrolling
+        # drift out of alignment with thumbnail boundaries, leaving one partially
+        # clipped at the edge (reported 2026-08-12). One wheel step now always
+        # moves exactly one THUMB_STEP, same unit _scroll_by's arrow buttons use,
+        # so wheel and arrows can never disagree on where a "step" lands.
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+        self._scroll_by(-self.THUMB_STEP if delta > 0 else self.THUMB_STEP)
 
 
 # --- Grid transition style (A/B toggle, gutters unaffected) ---
