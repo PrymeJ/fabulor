@@ -1,8 +1,8 @@
 import logging
 import math
 import time
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
-from PySide6.QtCore import Qt, QRegularExpression, Signal, QTimer
+from PySide6.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGridLayout, QLineEdit
+from PySide6.QtCore import Qt, QEvent, QRect, QRegularExpression, Signal, QTimer
 from PySide6.QtGui import QRegularExpressionValidator, QColor
 from ..themes import preset_ramp_rgb
 from ..player import _CHAPTER_WALK_TOLERANCE
@@ -39,6 +39,11 @@ class SprintPanel(QWidget):
     # (SprintPanel already has the precise float; re-deriving it via string
     # parsing would be fragile and duplicate work).
     grace_warning_changed = Signal(bool)
+    # SprintPanel has no db reference by design (matches SleepTimerPanel, which
+    # also has none) — app.py owns the actual DB call and any follow-up stats
+    # refresh, mirroring how every other app.py-coordination need here already
+    # goes through a signal (sprint_started/sprint_stopped/sprint_expired).
+    reset_sprint_stats_requested = Signal()
 
     def __init__(self, player, config, theme_manager, parent=None, dismiss_ms=2000):
         super().__init__(parent)
@@ -337,6 +342,34 @@ class SprintPanel(QWidget):
 
         layout.addStretch()
 
+        # Reset all sprint data — pinned to the bottom of the panel via the
+        # stretch above (matches Stats' "Reset all listening stats" / Book
+        # Detail's "Delete listening history"). Confirm label is added to the
+        # layout BEFORE the button, exactly like both of those — it is a real
+        # widget in the normal vertical flow, occupying its own space above the
+        # button, NOT a swap-in-place replacement of the button. The button
+        # itself is never hidden or disabled during confirm; only the label's
+        # setVisible toggles (verified directly against StatsPanel._on_reset_stats/
+        # _cancel_reset_stats, which never call anything but setVisible on the
+        # label and never touch the button at all — confirmed via screenshot,
+        # 2026-08-12, after two earlier wrong guesses at this same mechanism).
+        self._reset_sprint_confirm_label = _ClickableLabel("Delete all sprint data? Confirm?")
+        self._reset_sprint_confirm_label.setObjectName("sprint_reset_confirm")
+        self._reset_sprint_confirm_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._reset_sprint_confirm_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reset_sprint_confirm_label.setFixedHeight(28)
+        self._reset_sprint_confirm_label.clicked.connect(self._on_reset_sprint_data_confirmed)
+        self._reset_sprint_confirm_label.setVisible(False)
+        layout.addWidget(self._reset_sprint_confirm_label)
+
+        self._reset_sprint_btn = QPushButton("Reset all sprint data")
+        self._reset_sprint_btn.setObjectName("stats_reset_btn")
+        self._reset_sprint_btn.clicked.connect(self._on_reset_sprint_data_clicked)
+        layout.addWidget(self._reset_sprint_btn)
+        self._reset_sprint_cancel_timer = QTimer(self)
+        self._reset_sprint_cancel_timer.setSingleShot(True)
+        self._reset_sprint_cancel_timer.timeout.connect(self._cancel_reset_sprint_data)
+
         # Sync the grace mode/preset buttons' selected state to the config values
         # just loaded in __init__. Without this, the persisted mode (e.g. "fixed")
         # is correctly reflected in which submenu row is visible (that's driven by
@@ -454,6 +487,62 @@ class SprintPanel(QWidget):
         self._conflict_confirm_label.hide()
         self._conflict_on_confirm = None
 
+    def _on_reset_sprint_data_clicked(self):
+        # Button is NOT touched — matches StatsPanel._on_reset_stats exactly,
+        # which only ever calls setVisible(True) on the confirm label.
+        self._reset_sprint_confirm_label.setVisible(True)
+        self._reset_sprint_cancel_timer.start(7000)
+
+    def _cancel_reset_sprint_data(self):
+        self._reset_sprint_cancel_timer.stop()
+        self._reset_sprint_confirm_label.setVisible(False)
+
+    def _on_reset_sprint_data_confirmed(self):
+        self._cancel_reset_sprint_data()
+        self.reset_sprint_stats_requested.emit()
+
+    def keyPressEvent(self, event):
+        # Minimal, single-purpose override — NOT a full eventFilter priority
+        # chain like BookDetailPanel's (that exists to arbitrate FOUR
+        # concurrent confirm/edit states across a much larger panel; this
+        # panel has exactly one Escape-cancellable state today). Reuses the
+        # same _cancel_reset_sprint_data the 7s timer and the click-outside
+        # eventFilter below both already call.
+        if event.key() == Qt.Key.Key_Escape and self._reset_sprint_confirm_label.isVisible():
+            self._cancel_reset_sprint_data()
+            return
+        super().keyPressEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QApplication.instance().installEventFilter(self)
+
+    def hideEvent(self, event):
+        QApplication.instance().removeEventFilter(self)
+        self._cancel_reset_sprint_data()
+        super().hideEvent(event)
+
+    def eventFilter(self, obj, event):
+        # Matches StatsPanel's own click-outside-dismisses eventFilter exactly
+        # (same shape, same install/remove lifecycle) — reported live,
+        # 2026-08-12, that the confirm should behave identically to Stats'
+        # "Reset all listening stats" for visual/behavioral consistency.
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and self._reset_sprint_confirm_label.isVisible()
+        ):
+            gpos = event.globalPosition().toPoint()
+
+            def hits(w):
+                return w.isVisible() and QRect(
+                    w.mapToGlobal(w.rect().topLeft()),
+                    w.mapToGlobal(w.rect().bottomRight())
+                ).contains(gpos)
+
+            if not hits(self._reset_sprint_confirm_label) and not hits(self._reset_sprint_btn):
+                self._cancel_reset_sprint_data()
+        return super().eventFilter(obj, event)
+
     def set_sprint(self, duration_minutes=None):
         if not duration_minutes or duration_minutes <= 0:
             return
@@ -565,8 +654,16 @@ class SprintPanel(QWidget):
         """Called from PanelManager._start_sprint_entry, before the panel becomes
         visible — NOT from the arm path itself. See _do_arm_sprint's comment for
         why the button's visibility is deferred to panel-open time instead of
-        being set synchronously during arming."""
+        being set synchronously during arming.
+
+        Also owns Reset all sprint data's visibility (inverse of the disable
+        button's — only meaningful when no sprint is active) for the same
+        deferred-to-panel-open reason, and unconditionally cancels any armed
+        reset confirmation on panel (re)open rather than leaving a stale 7s
+        timer running against a panel the user just reopened."""
         self.disable_sprint_btn.setVisible(self._sprint_active)
+        self._reset_sprint_btn.setVisible(not self._sprint_active)
+        self._cancel_reset_sprint_data()
 
     def disable_sprint(self, was_cancelled=False):
         was_active = self._sprint_active
@@ -584,6 +681,15 @@ class SprintPanel(QWidget):
         self._cancel_timer.stop()
         self._cancel_message_active = False
         self.disable_sprint_btn.hide()
+        # Symmetric with the hide above — safe to do synchronously here (unlike
+        # showing it on ARM, which shares a call stack with sprint_started's
+        # panel-close animation and would flash; disable_sprint() is not called
+        # from that same path). Without this, _reset_sprint_btn stayed hidden
+        # forever after a sprint ended while the panel was already open —
+        # sync_disable_button_visibility only runs at panel-OPEN time, so
+        # nothing ever re-showed it on disarm. Reported live (screenshots),
+        # 2026-08-12.
+        self._reset_sprint_btn.show()
         # Single safety-catch reset for the grace-warning pulsation, covering
         # EVERY disarm path in one place (_trigger_cancel, _trigger_complete,
         # cancel_for_book_switch, and every bare manual disable_sprint() call) —

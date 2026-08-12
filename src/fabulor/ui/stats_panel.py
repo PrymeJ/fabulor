@@ -3349,7 +3349,8 @@ class StatsPanel(QWidget):
         self._reset_confirm_label.setVisible(False)
         layout.addWidget(self._reset_confirm_label)
 
-        self._reset_stats_btn = QPushButton("Reset all stats")
+        layout.addSpacing(3)
+        self._reset_stats_btn = QPushButton("Reset all listening stats")
         self._reset_stats_btn.setObjectName("stats_reset_btn")
         self._reset_stats_btn.clicked.connect(self._on_reset_stats)
         layout.addWidget(self._reset_stats_btn)

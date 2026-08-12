@@ -889,6 +889,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         self.sprint_panel.sprint_expired.connect(self._on_sprint_expired)
         self.sprint_panel.display_text_updated.connect(self._on_sprint_display_text_updated)
         self.sprint_panel.grace_warning_changed.connect(self._on_sprint_grace_warning)
+        self.sprint_panel.reset_sprint_stats_requested.connect(self._on_reset_sprint_stats_requested)
         self.sprint_panel.sprint_started.connect(self.panel_manager._close_sprint_flow)
         # Delegate speed display update to a dedicated slot to ensure reliability
         self.speed_panel.speed_changed.connect(self._on_player_speed_changed)
@@ -1151,6 +1152,11 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         else:
             self.grace_warn_anim.stop()
             self.grace_warn_opacity_effect.setOpacity(1.0)
+
+    def _on_reset_sprint_stats_requested(self):
+        self.db.reset_sprint_stats()
+        if hasattr(self, 'stats_panel') and self.stats_panel.isVisible():
+            self.stats_panel.refresh_overall()
 
     def _on_sprint_expired(self, duration_s):
         """Called only on natural sprint completion. Unlike sleep, a sprint completing

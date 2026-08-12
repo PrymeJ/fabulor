@@ -3899,10 +3899,17 @@ def get_sleep_stylesheet(theme_name="default"):
 def get_sprint_stylesheet(theme_name="default"):
     """
     sprint_panel-specific rules only: base (get_panel_base_stylesheet) plus the
-    custom-duration QLineEdit input, the disable-sprint button, and the conflict
-    confirm label. Mirrors get_sleep_stylesheet's shape exactly — see that
-    function's docstring for why #disable_sprint_btn isn't unified with the
-    other destructive-action button styles in this app.
+    custom-duration QLineEdit input, the disable-sprint button, the conflict/
+    reset confirm labels, and the reset-sprint-data button (#stats_reset_btn,
+    shared object name with StatsPanel's own reset button and Book Detail's
+    "Delete listening history" — copied here verbatim since each panel's
+    stylesheet function is self-contained and this object name was previously
+    undefined in THIS function's scope, silently falling back to Qt's default
+    QPushButton styling: outline-only with no hover/pressed fill, reported
+    live via screenshot comparison against Stats' own button, 2026-08-12).
+    Mirrors get_sleep_stylesheet's shape exactly — see that function's
+    docstring for why #disable_sprint_btn isn't unified with the other
+    destructive-action button styles in this app.
 
     The grace-period row (objectName #pattern_button, same as sleep's fade row)
     needs NO sprint-specific rule here — it's already fully covered by
@@ -3939,6 +3946,29 @@ def get_sprint_stylesheet(theme_name="default"):
             background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
             border: 2px solid {t['accent']};
             padding: 0px 0px;
+        }}
+        QLabel#sprint_reset_confirm {{
+            font-size: 12px;
+            color: {t['accent_light']};
+            background-color: rgba({_hex_to_rgb(t['bg_main'])}, {t['panel_opacity_hover']});
+            border: 2px solid {t['accent']};
+            padding: 0px 0px;
+        }}
+        QPushButton#stats_reset_btn {{
+            background: transparent;
+            color: {t['text']};
+            border: 1px solid {t['accent_dark']};
+            padding: 4px;
+            border-radius: 4px;
+            font-weight: bold;
+        }}
+        QPushButton#stats_reset_btn:hover {{
+            background: {t['accent']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
+        }}
+        QPushButton#stats_reset_btn:pressed {{
+            background: {t['accent_dark']};
+            color: {t.get('button_text', t.get('text_on_light_bg', t['text']))};
         }}
     """
 

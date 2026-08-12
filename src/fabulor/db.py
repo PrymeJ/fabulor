@@ -975,6 +975,14 @@ class LibraryDB:
                 "VALUES (datetime('now'), ?)",
                 (duration_s,))
 
+    def reset_sprint_stats(self):
+        """Wipes sprint_attempts and sprint_sessions entirely — the Sprint
+        equivalent of reset_stats(), triggered by SprintPanel's own
+        "Reset all sprint data" button."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM sprint_attempts")
+            conn.execute("DELETE FROM sprint_sessions")
+
     def get_last_n_days(self, n: int = 7, day_start_hour: int = 0) -> list[dict]:
         """Returns total listening seconds per day for the last N days.
         Days with no activity are included as zero so the chart has a consistent shape."""
