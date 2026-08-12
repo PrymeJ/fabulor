@@ -20,36 +20,6 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   the full mechanism and the earlier (already-fixed) wall-clock/audio-position unit-mismatch bug in
   the same feature.
 
-### Chapter title flicker on Prev/Next/chapter-list seeks (VT/CUE, non-VT walk) — CLOSED
-- **Fixed: `787bfaa`. Post-settle guard — see NOTES.md 2026-08-11.**
-- [2026-08-11] **Reproduced, root-caused, NOT fixed — investigation only, see NOTES.md for full
-  write-up + log excerpt.** Every chapter-boundary seek settles correctly, but the very next raw
-  `time_pos` sample from mpv reads BACKWARD (into the previous chapter) before resuming forward.
-  `_on_time_pos_change`'s non-VT chapter walk (`player.py:317-330`) reads mpv's raw `value`, not the
-  settled `_logical_pos`, so the stale sample resolves to the previous chapter for one tick and the
-  chapter-list/label flicker back-then-forward. Confirmed via DEBUG-level log trace (excerpt in
-  NOTES.md), reproduced on real Prev/Next/chapter-list-click seeks across two VT books.
-  **Confirmed present on `main`, unrelated to the sleep-fix/listening-sprint branches** — `git diff
-  main -- src/fabulor/player.py` shows zero difference in the affected code.
-  **This is a known bug, already fixed once and reverted**: `b6a4023` ("fix: drop mpv's stale
-  backward time_pos sample after a seek (chapter-UI bounce/stick)", 2026-06-15) describes this exact
-  mechanism almost verbatim and fixed it via a global-position backward-jump reject
-  (`_last_global_pos` + `_STALE_BACKWARD_TOLERANCE=0.3`, comparing in global/VT-aware space); reverted
-  minutes later by `4ae0783` with no rationale recorded in the revert itself — CLAUDE.md's "VT+Undo
-  is the known-fragile zone" section says it broke VT backward-seek, the play/pause icon, and
-  chapter[1]→[0] click, with no mechanism-level cause ever diagnosed for any of the three. Neither
-  the constant nor the reject-branch exist in the codebase today (confirmed via grep).
-  **Open question, unresolved:** the user reported this persisting across a book switch AND a prior
-  app restart, but a LATER restart (immediately after this investigation, no code changes) made it
-  stop reproducing. Neither "pure mpv timing artifact" nor "stuck app-level flag" cleanly explains
-  both observations — re-establish reproducibility before assuming it's gone or attempting a fix.
-  **Do not attempt a fix without live-verifying VT backward-seek, the play/pause icon, and
-  chapter[1]→[0] click specifically** — those are the three symptoms `b6a4023` is recorded as having
-  broken, and no mechanism-level cause was ever found for any of them; a fix that doesn't specifically
-  re-check those three risks reintroducing the same regression blind. Standing CLAUDE.md rule
-  applies: a clean instrumentation run is not sufficient evidence of safety in this zone — `b6a4023`
-  itself had one (32/32 clean) and still broke three other things live.
-
 ### Right-click / theme-restyle performance
 - [2026-08-02] Theme-apply ordering/deferral proposed for book-switch flow stutter (cover-theme on) — directional (A→B stutters, B→A doesn't), root cause not instrumented yet
 - [2026-08-02] **ROOT CAUSE FOUND:** ANY `mw.setStyleSheet()` call costs **~436ms live** (offscreen harness reads ~25% high) regardless of argument — full sheet, 1 rule, identical string, and EMPTY string all measure the same; Qt does not no-op an identical sheet and clearing is not cheaper. Cost tracks VISIBILITY (~22% higher with the four heavy panels shown, at identical widget count), and DEPTH is the multiplier. **(A), (E) and (F) are all now dead** — splitting the sheet saves nothing, emptying the root saves nothing (the 8ms figure was a measurement error), and E's guard sites fire only 1-5×/session while the existing no-op guard already catches 44. **Only depth reduction remains → Stats refactor.** See NOTES.md 2026-08-02

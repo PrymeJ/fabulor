@@ -434,3 +434,44 @@ order these entries had in TODO.md before the split (2026-07-30).
   would trigger — instead of waiting for `entered` to eventually fire. Live-verified by Pryme for
   both Day and Week (`a103619` extended the same `StatsRowListView` class to Week with zero
   Week-specific change needed, since the fix lives on the shared class).
+
+- **[2026-08-11] FIXED and live-verified (2026-08-12): Chapter title flicker on Prev/Next/chapter-list
+  seeks (VT/CUE, non-VT walk).** Fixed in `787bfaa` — see NOTES.md's 2026-08-11 entry, "Resolution
+  (2026-08-12)", for the fix shape and live-verification detail (149 settle events, ~50 genuine
+  artifact firings, zero chapter regressions, zero false suppressions on legitimate backward seeks
+  including Prev across a file boundary). Original investigation, preserved below:
+
+  [2026-08-11] **Reproduced, root-caused, NOT fixed — investigation only, see NOTES.md for full
+  write-up + log excerpt.** Every chapter-boundary seek settles correctly, but the very next raw
+  `time_pos` sample from mpv reads BACKWARD (into the previous chapter) before resuming forward.
+  `_on_time_pos_change`'s non-VT chapter walk (`player.py:317-330`) reads mpv's raw `value`, not the
+  settled `_logical_pos`, so the stale sample resolves to the previous chapter for one tick and the
+  chapter-list/label flicker back-then-forward. Confirmed via DEBUG-level log trace (excerpt in
+  NOTES.md), reproduced on real Prev/Next/chapter-list-click seeks across two VT books.
+  **Confirmed present on `main`, unrelated to the sleep-fix/listening-sprint branches** — `git diff
+  main -- src/fabulor/player.py` shows zero difference in the affected code.
+  **This is a known bug, already fixed once and reverted**: `b6a4023` ("fix: drop mpv's stale
+  backward time_pos sample after a seek (chapter-UI bounce/stick)", 2026-06-15) describes this exact
+  mechanism almost verbatim and fixed it via a global-position backward-jump reject
+  (`_last_global_pos` + `_STALE_BACKWARD_TOLERANCE=0.3`, comparing in global/VT-aware space); reverted
+  minutes later by `4ae0783` with no rationale recorded in the revert itself — CLAUDE.md's "VT+Undo
+  is the known-fragile zone" section says it broke VT backward-seek, the play/pause icon, and
+  chapter[1]→[0] click, with no mechanism-level cause ever diagnosed for any of the three. Neither
+  the constant nor the reject-branch exist in the codebase today (confirmed via grep).
+  **Open question, unresolved:** the user reported this persisting across a book switch AND a prior
+  app restart, but a LATER restart (immediately after this investigation, no code changes) made it
+  stop reproducing. Neither "pure mpv timing artifact" nor "stuck app-level flag" cleanly explains
+  both observations — re-establish reproducibility before assuming it's gone or attempting a fix.
+  **Do not attempt a fix without live-verifying VT backward-seek, the play/pause icon, and
+  chapter[1]→[0] click specifically** — those are the three symptoms `b6a4023` is recorded as having
+  broken, and no mechanism-level cause was ever found for any of them; a fix that doesn't specifically
+  re-check those three risks reintroducing the same regression blind. Standing CLAUDE.md rule
+  applies: a clean instrumentation run is not sufficient evidence of safety in this zone — `b6a4023`
+  itself had one (32/32 clean) and still broke three other things live.
+
+  This entry's mechanism is closely related to, but not necessarily identical with, two still-open
+  TODO.md entries: "Chapter list highlight fluctuates and scrolls to bottom on click" (2026-07-21,
+  likely closed by the same fix per the investigation, but explicitly not closed pending
+  re-verification) and "Investigate intermittent chapter-number flicker on backward seek to
+  boundary" (2026-07-22, working theory is settle undershoot rather than a stale post-settle sample
+  — possibly a distinct bug). Both remain in TODO.md; do not assume either is closed by this entry.
