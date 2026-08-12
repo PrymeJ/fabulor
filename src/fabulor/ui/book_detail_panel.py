@@ -350,7 +350,7 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.setFixedHeight(38)  # two tag lines reserved always
         self._tag_display_label.setOpenExternalLinks(False)
         self._tag_display_label.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-        self._tag_display_label.linkActivated.connect(self.tag_filter_requested)
+        self._tag_display_label.linkActivated.connect(self._on_tag_display_link_activated)
         layout.addWidget(self._tag_display_label)
 
         from .cover_panel import CoverPanel
@@ -618,40 +618,105 @@ class BookDetailPanel(QWidget):
 
         self._tag_input_widget.setVisible(len(tags) < 5)
 
+        # FlowLayout.sizeHint() returns minimumSize() (a single item's size, not the
+        # wrapped total) — the parent QVBoxLayout only gets the correct wrapped height
+        # via heightForWidth, and that cache goes stale on shrink: removing chips down
+        # to fewer wrapped lines left the input field one row lower than a fresh
+        # load_book's layout pass, confirmed via a live geometry probe (container's own
+        # heightForWidth recomputes correctly; the ancestor QVBoxLayout just never
+        # re-queried it without an explicit invalidate+activate).
+        self._tag_chip_layout.invalidate()
+        self._tag_chip_container.parentWidget().layout().activate()
+
         self._rebuild_tag_display(tags)
+
+    # Sentinel href for the "+N more" link — distinct from any real tag name so
+    # _on_tag_display_link_activated can tell it apart from a genuine tag click.
+    _MORE_LINK_HREF = "__tags_more__"
 
     def _rebuild_tag_display(self, tags: list[str]):
         self._tag_display_tags = list(tags)
-        sep = "  "
         if not tags:
             self._tag_display_label.setText("")
             return
         tag_colors = {t: self.db.get_tag_color(t) for t in tags} if self._book_path else {}
+
+        # The strip is a fixed two-line QLabel. When not every tag fits, the last visible
+        # tag(s) are replaced by a "+N more" link (opens the Tags panel) instead of letting
+        # Qt silently overflow/clip the wrapped text. heightForWidth is the same layout
+        # engine that will actually paint the label, so it's used directly as the fitting
+        # oracle rather than re-deriving line-wrap math independently (see CLAUDE.md's "a
+        # test that shares the code's assumption cannot falsify it" — here the label testing
+        # itself is correct precisely because it IS the real renderer, not a parallel
+        # approximation of it).
+        #
+        # The budget is 2x a measured ONE-LINE heightForWidth, not the label's literal
+        # setFixedHeight(38) — measured live (2026-08-13) that a genuine 2-line wrap
+        # (e.g. 5 real tags including "historical fantasy"/"science fiction") reports 42,
+        # 4px over the fixed height, while a 3rd line jumps to 59 (a much larger, real
+        # step). A strict <=38 comparison over-truncates content that visibly renders fine
+        # in the app's 38px box (confirmed against the live screenshot). Re-measuring
+        # one-line height here (rather than hardcoding it) keeps this correct if the theme
+        # font/size ever changes.
+        usable_w = self._tag_display_label.width() - (
+            self._tag_display_label.contentsMargins().left()
+            + self._tag_display_label.contentsMargins().right()
+        )
+        self._tag_display_label.setText('<span>&#9679;</span>')
+        one_line_h = self._tag_display_label.heightForWidth(usable_w)
+        budget_h = one_line_h * 2
+
+        shown_count = len(tags)
+        html = self._build_tag_display_html(tags, tag_colors, more=0)
+        if usable_w > 0:
+            while shown_count > 0:
+                self._tag_display_label.setText(html)
+                if self._tag_display_label.heightForWidth(usable_w) <= budget_h:
+                    break
+                shown_count -= 1
+                more = len(tags) - shown_count
+                html = self._build_tag_display_html(tags[:shown_count], tag_colors, more=more)
+
+        self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
+        self._tag_display_label.setText(html)
+
+    def _build_tag_display_html(self, shown_tags: list[str], tag_colors: dict, more: int) -> str:
+        sep = "  "
         dot_color  = self._theme.get("accent_light", "#ffffff")
         text_color = self._theme.get("accent_light", "#ffffff")
-        if self._context == 'library':
-            self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
-            parts = []
-            for t in tags:
-                dot_html = f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span>'
-                if f"#{t}" == self._active_search_text:
-                    # Already the active filter — inert, no <a href>, same shape as the
-                    # non-library plain-span rendering below.
-                    parts.append(f'{dot_html}<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>')
-                else:
-                    parts.append(
-                        f'<a href="{t}" style="color:{text_color};text-decoration:none;">'
-                        f'{dot_html} {t.replace(chr(32), " ")}</a>'
-                    )
-            self._tag_display_label.setText(sep.join(parts))
+        parts = []
+        for t in shown_tags:
+            dot_html = f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span>'
+            if self._context == 'library' and f"#{t}" != self._active_search_text:
+                parts.append(
+                    f'<a href="{t}" style="color:{text_color};text-decoration:none;">'
+                    f'{dot_html} {t.replace(chr(32), " ")}</a>'
+                )
+            else:
+                # Non-library context, or already the active library filter — inert.
+                parts.append(f'{dot_html}<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>')
+        if more > 0:
+            parts.append(
+                f'<a href="{self._MORE_LINK_HREF}" style="color:{text_color};text-decoration:underline;">'
+                f'+{more} more</a>'
+            )
+        return sep.join(parts)
+
+    def _on_tag_display_link_activated(self, href: str) -> None:
+        if href == self._MORE_LINK_HREF:
+            # This book's own Tags tab (add/remove tags here) — NOT open_tag_manager_requested,
+            # which opens the separate, library-wide Tag Manager panel and closes this one.
+            self._select_tab_by_name("Tags")
         else:
-            self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
-            parts = [
-                f'<span style="color:{TAG_COLORS.get(tag_colors.get(t)) or dot_color};">&#9679;</span>'  
-                f'<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>'
-                for t in tags
-            ]
-            self._tag_display_label.setText(sep.join(parts))
+            self.tag_filter_requested.emit(href)
+
+    def refresh_tag_display(self) -> None:
+        """Re-run the "+N more" fit calculation against the panel's current width. Called by
+        PanelManager._start_book_detail_entry after setFixedWidth — load_book() (which runs
+        before the panel is sized on a fresh-session first open) can't yet see the real
+        width, so the initial call may under-truncate. Cheap and idempotent; safe to call
+        any time _tag_display_tags is populated."""
+        self._rebuild_tag_display(self._tag_display_tags)
 
     def _on_tag_input_changed(self, text: str):
         self._tag_suggest_timer.start()  # restarts if already running
@@ -668,6 +733,12 @@ class BookDetailPanel(QWidget):
     def _on_tag_completer_activated(self, text: str):
         self._tag_input.setText(text)
         self._on_add_tag()
+
+    def _select_tab_by_name(self, tab: str) -> None:
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i).lower() == tab.lower():
+                self.tabs.setCurrentIndex(i)
+                break
 
     def _on_tags_tab(self) -> bool:
         """True iff the Tags tab is the currently-shown tab. Keyed on tab text (not a hardcoded
@@ -847,10 +918,7 @@ class BookDetailPanel(QWidget):
 
         self._rebuild_tag_chips()
 
-        for i in range(self.tabs.count()):
-            if self.tabs.tabText(i).lower() == tab.lower():
-                self.tabs.setCurrentIndex(i)
-                break
+        self._select_tab_by_name(tab)
 
         self._cover_panel.load_book(self._book_path)
         self._refresh_stats()

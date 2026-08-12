@@ -1563,6 +1563,12 @@ class PanelManager:
         self.book_detail_panel.setFixedWidth(panel_w)
         self.book_detail_panel.setFixedHeight(self.main_window.height() - book_detail_panel_y)
         self.book_detail_panel.move(panel_w, book_detail_panel_y)
+        # load_book() (called just before this, in open_book_detail) ran the tag-display
+        # "+N more" fit calculation against whatever width the panel had BEFORE this
+        # setFixedWidth — on the very first book-detail open in a session that's the
+        # widget's un-laid-out default (640px), not the real ~284px usable width, so the
+        # fit calc would under-truncate. Redo it now that the real width is in effect.
+        self.book_detail_panel.refresh_tag_display()
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
         self._claim_panel_focus(self.book_detail_panel)
