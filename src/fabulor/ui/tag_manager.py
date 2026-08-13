@@ -13,6 +13,7 @@ from .icon_utils import render_logo_placeholder_bordered as _render_svg_placehol
 from .text_context_menu import ContextIconMenu
 from .line_edit_dragfix import DragSafeLineEdit
 from .hover_tracker import ScrollHoverTracker
+from . import scrollbar_jump
 
 MAX_TAG_LENGTH = 20
 
@@ -385,6 +386,14 @@ class TagManagerWidget(QWidget):
         # the last aligned position, mirroring the Stats rows wheelEvent.
         bar = self._tag_scroll.verticalScrollBar()
         bar.setSingleStep(_TAG_ROW_PITCH)
+        # Right-click-to-jump (ui/scrollbar_jump.py) lands on a pixel-exact position by
+        # default, same as it did for Library/Stats before their row-snap fix — would clip
+        # a row here too. _TAG_ROW_PITCH is a fixed, uniform stride (every row is the same
+        # 32px height + 5px spacing, unlike Library's per-view-mode heights), so the snap is
+        # a plain floor-to-multiple, no per-row walk needed.
+        scrollbar_jump.register_snap(
+            bar, lambda v: (v // _TAG_ROW_PITCH) * _TAG_ROW_PITCH
+        )
 
         def _tag_rows_wheel(e):
             notches = -1 if e.angleDelta().y() > 0 else 1
