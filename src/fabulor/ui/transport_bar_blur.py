@@ -819,28 +819,24 @@ class TransportBarBlurOverlay:
         if self._tracker is not None:
             self._tracker.take_dirty_union()  # this pass already covers everything just grabbed
 
-    def hide_for_panel(self):
-        """Tear down unconditionally, instantly — no fade on the way out. Called
-        from the panel's *_close_flow (at the START of the close animation, not
-        after it finishes), so the transport bar returns to live view right away
-        instead of staying blurred through the whole slide-out — see the accepted
-        plan's §6 for why live-dissolve-during-slide is deferred, not implemented
-        here. Any in-flight fade-IN (see show_for_panel) is stopped and opacity
-        reset to 1.0 so the next show_for_panel starts from a clean state."""
-        logger.warning(
-            f"[TIMER-TRACE] hide_for_panel ENTRY active={self._active} "
-            f"active_panel={self._active_panel.objectName() if self._active_panel else None!r} "
-            f"refresh_pending={self._refresh_pending} "
-            f"tick_count_this_session={getattr(self, '_refresh_tick_count', 0)}"
-        )
+    def _disarm_grabbing(self):
+        """Stop live grabbing, WITHOUT touching the displayed image or identity.
+
+        The "stop grabbing" half of hide_for_panel, extracted so park_for_panel
+        can reuse it (see the park/unpark section below). Everything here is
+        about not producing new frames; nothing here changes what is currently
+        on screen.
+
+        Deliberately does NOT touch _overlay, _opacity_effect, _fade_in_anim,
+        _bounding_rect or _active_panel — those are the display/identity half
+        and stay in hide_for_panel. That split is the whole point: parking needs
+        this half alone.
+        """
         self._refresh_tick_count = 0
         # The drag watcher must not outlive the overlay it was polling for —
         # otherwise it keeps ticking against a panel that is no longer active.
         self._drag_watch_timer.stop()
         self._drag_suspended = False
-        if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
-            self._fade_in_anim.stop()
-        self._opacity_effect.setOpacity(1.0)
         # No timer to .stop() anymore (event-driven, not polled — see
         # _DirtyRectTracker's docstring). Any already-armed singleShot(0) from a
         # paint that happened right before close will still fire once, but
@@ -858,16 +854,37 @@ class TransportBarBlurOverlay:
                 widget.removeEventFilter(self._tracker)
             self._tracker = None
             self._tracker_widgets = []
-        self._overlay.hide()
-        self._overlay.setPixmap(QPixmap())
-        self._bounding_rect = None
         self._active = False
-        self._active_panel = None
         # Any in-flight decline-retry is left to fire once and no-op on its own
         # `if not self._active` guard (same safety property the coalescing
         # singleShot already relies on); clearing the flag here just lets the
         # next panel-open arm a fresh one instead of inheriting a stale True.
         self._rearm_pending = False
+
+    def hide_for_panel(self):
+        """Tear down unconditionally, instantly — no fade on the way out. Called
+        from the panel's *_close_flow (at the START of the close animation, not
+        after it finishes), so the transport bar returns to live view right away
+        instead of staying blurred through the whole slide-out — see the accepted
+        plan's §6 for why live-dissolve-during-slide is deferred, not implemented
+        here. Any in-flight fade-IN (see show_for_panel) is stopped and opacity
+        reset to 1.0 so the next show_for_panel starts from a clean state."""
+        logger.warning(
+            f"[TIMER-TRACE] hide_for_panel ENTRY active={self._active} "
+            f"active_panel={self._active_panel.objectName() if self._active_panel else None!r} "
+            f"refresh_pending={self._refresh_pending} "
+            f"tick_count_this_session={getattr(self, '_refresh_tick_count', 0)}"
+        )
+        self._disarm_grabbing()
+        if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
+            self._fade_in_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
+        self._overlay.hide()
+        self._overlay.setPixmap(QPixmap())
+        self._bounding_rect = None
+        self._active_panel = None
+        self._parked = False
+        self._parked_panel = None
 
     # -- geometry -------------------------------------------------------------
 
