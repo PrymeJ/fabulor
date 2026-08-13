@@ -38,6 +38,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
 
 ### Book Detail panel blur timing
+- [2026-08-14] Both 2026-08-01 entries below are ADDRESSED by the park/unpark change (branch
+  `fix/book-detail-blur-park`) — `hide_for_panel` split into `_disarm_grabbing` + display teardown,
+  so the underlay's blurred frame stays on screen while Book Detail covers it instead of being
+  discarded and rebuilt. Pending live verification (TESTING.md, "Book Detail blur — park/unpark");
+  do not close these until that passes. `stash@{0}`'s reveal-scanner is NOT used — the parked
+  overlay is a child of `content_container`, so Book Detail occludes it by construction and no mask
+  or per-frame scan is needed.
+- [2026-08-14] DEFERRED (own pass, only if live testing shows it matters): stale parked frame. While
+  parked, the active book can be excluded or its cover changed from inside Book Detail.
+  `force_refresh_now()` — the existing hook for "content changed, no Paint event", called from
+  `_on_book_removed` — guards on `not self._active`, so it skips a parked frame. NOT a regression:
+  that call was already inert on this path, since the old suspend also set `_active = False`;
+  parking only makes the stale content *visible*. Fix is ~5 lines: add `_parked_frame_invalid`, set
+  it from a new `if self._parked:` branch at the top of `force_refresh_now()`, have
+  `unpark_for_panel` discard and return `False` on it. Keep `unpark_for_panel`'s step order
+  (`_active = True` → clear `_parked` → refresh) or that branch short-circuits the unpark refresh.
 - [2026-08-01] NEXT: the OPENING slide — blurred main window is dropped too early, should persist into the slide
 - [2026-08-01] Closing reveal-scanner works but is intermittent — buttons sometimes arrive late (`stash@{0}`)
 

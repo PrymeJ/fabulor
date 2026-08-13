@@ -928,7 +928,7 @@ class TransportBarBlurOverlay:
         HARD INVARIANT: never grab while parked. Re-grabbing calls
         _grab_and_blur, which hides _active_panel while Book Detail is on top —
         photographing Book Detail into the cache. That is the exact feedback
-        loop _suspend_blur_for_book_detail exists to prevent (measured
+        loop _park_blur_for_book_detail exists to prevent (measured
         self-sustaining at ~64ms / ~15 grabs per second, NOTES.md 2026-07-27).
         Every guard that keeps this true reads `if not self._active`, which
         _disarm_grabbing sets False — hence _parked being a separate flag.

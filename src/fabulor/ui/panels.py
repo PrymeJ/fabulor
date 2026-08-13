@@ -362,28 +362,39 @@ class PanelManager:
     def _clear_transport_bar_blur(self):
         self._transport_bar_blur.hide_for_panel()
 
-    def _suspend_blur_for_book_detail(self):
-        """Tear down the underlying panel's blur when Book Detail opens over it.
+    def _park_blur_for_book_detail(self):
+        """Stop grabbing when Book Detail opens over a panel, but KEEP the
+        transport overlay's last frame on screen as a static backdrop.
 
         Book Detail is full window width at y=32 and content_container starts at
         y=56, so it covers the cover art, the transport bar, the carousel AND the
-        underlying panel entirely — nothing the underlay's blur produces can be
-        seen.
+        underlying panel entirely — nothing NEW the underlay's blur produces can
+        be seen, which is why the grabbing must stop.
 
-        Leaving it running is not merely wasted work. The transport overlay's
-        _active_panel is still the UNDERLYING panel, so _grab_and_blur keeps hiding
-        Stats (not Book Detail) and grabbing main_window — which photographs Book
-        Detail INTO the cached pixmap and composites it back underneath itself.
-        Measured self-sustaining at ~64ms / ~15 grabs per second (NOTES.md,
-        2026-07-27, "grab feedback loop").
+        Leaving grabbing running is not merely wasted work. The transport
+        overlay's _active_panel is still the UNDERLYING panel, so _grab_and_blur
+        keeps hiding Stats (not Book Detail) and grabbing main_window — which
+        photographs Book Detail INTO the cached pixmap and composites it back
+        underneath itself. Measured self-sustaining at ~64ms / ~15 grabs per
+        second (NOTES.md, 2026-07-27, "grab feedback loop").
 
-        The visual_area half must go too: it is fully occluded, and leaving its
-        1500ms tween running would let _grab_and_blur bake a PARTIALLY blurred
-        visual_area into Book Detail's own grab, then blur that again — a double
-        blur whose strength depends on where the tween happened to be.
+        But DISCARDING the already-grabbed frame was never required by that, and
+        it is what produced a visible crisp frame on both the open and the close
+        (reported live 2026-08-14). park_for_panel stops the grabbing and leaves
+        the frame up; Book Detail's own geometry occludes it on the way in and
+        uncovers it on the way out, with no mask and no per-frame work, because
+        the overlay is a child of content_container while Book Detail is a child
+        of main_window raised above it.
+
+        The visual_area half is NOT parked and still goes to 0 — it is a
+        paint-time effect on a live widget, not a cached pixmap, so there is no
+        frame to freeze. Leaving its 1500ms tween running would let
+        _grab_and_blur bake a PARTIALLY blurred visual_area into Book Detail's
+        own grab, then blur that again — a double blur whose strength depends on
+        where the tween happened to be. The asymmetry is forced, not chosen.
 
         Unconditional on get_blur_enabled(): every call below is a no-op when blur
-        is off (hide_for_panel early-exits on _active=False, setBlurRadius(0) on an
+        is off (park_for_panel early-exits on _active=False, setBlurRadius(0) on an
         already-0 effect is free, _clear_visual_area_clip nulls an already-null
         clip), and being unconditional means a mid-session backdrop-mode change
         cannot strand a live blur.
@@ -392,24 +403,24 @@ class PanelManager:
         learn about it (see the _settled_watch_timer note in __init__), and it is
         the same call _start_visual_area_blur already makes.
 
-        Symmetric with _resume_blur_after_book_detail. Deliberately reuses the same
-        teardown calls every _close_*_flow uses — no new blur path.
+        Symmetric with _resume_blur_after_book_detail.
         """
-        self._clear_transport_bar_blur()
+        self._transport_bar_blur.park_for_panel()
         self.blur_animation.stop()
         self.blur_effect.setBlurRadius(0)
         self._clear_visual_area_clip()
 
     def _resume_blur_after_book_detail(self):
-        """Re-establish the underlying panel's blur once Book Detail is fully
-        hidden. Symmetric with _suspend_blur_for_book_detail.
+        """Re-arm the underlying panel's blur once Book Detail is fully hidden.
+        Symmetric with _park_blur_for_book_detail.
 
         Runs from _on_book_detail_hidden (AFTER .hide()), never from
         _close_book_detail_flow: a grab taken while Book Detail is still sliding
         out would photograph it into the cache, because _active_panel would by then
         be the underlying panel again and _grab_and_blur only ever hides
-        _active_panel. That is the same corruption this change removes, just moved
-        to the close side.
+        _active_panel. That constraint is why the RE-GRAB waits until here — the
+        parked frame itself stays on screen throughout the slide-out and needs no
+        grab at all, which is what removes the close-side crisp flash.
 
         The isVisible() re-check is load-bearing, not defensive padding.
         _on_open_tag_manager_from_detail (app.py) calls hide_all_panels() — closing
@@ -419,11 +430,20 @@ class PanelManager:
         stranding a frozen overlay over the transport bar with _active_panel
         pointing at an invisible widget.
 
-        Cache invalidation is free: hide_for_panel already nulls the pixmap and
-        _bounding_rect, and _apply_transport_bar_blur -> show_for_panel takes a
-        mandatory full-rect first pass. A fresh show_for_panel IS the invalidation,
-        so no force_refresh_now() is needed (it would no-op anyway — _active is
-        False at this point).
+        Cache invalidation is NOT free any more (it was, while this method always
+        went through hide_for_panel + a fresh show_for_panel — that pairing was
+        itself the invalidation). Under parking the pixmap survives the whole Book
+        Detail session, so:
+          - the reuse path (unpark_for_panel) re-arms tracking and then issues one
+            force_refresh_now() to reconcile anything that changed while parked;
+          - the early-return path MUST call discard_parked_frame(), or those
+            hide_all_panels flows above leave a frozen blurred band over the
+            transport bar with nothing left to clear it. discard_parked_frame()
+            rather than hide_for_panel(): by the time this fires the overlay may
+            legitimately belong to another panel (Library), and dropping a park
+            that is no longer ours would kill that panel's live overlay.
+        Stale-frame invalidation WHILE parked (book excluded / cover changed from
+        inside Book Detail) is deliberately not implemented — see TODO.md.
 
         Library is deliberately absent from the map: it is full-width and opaque and
         never had either blur on open (see _apply_visual_area_clip's LIBRARY-PANEL
@@ -441,9 +461,16 @@ class PanelManager:
             'sprint': self.sprint_panel,
         }.get(key)
         if panel is None or not panel.isVisible():
+            self._transport_bar_blur.discard_parked_frame()
             return
-        self._apply_transport_bar_blur(panel)
-        self._start_visual_area_blur(panel)
+        if not self._transport_bar_blur.unpark_for_panel(panel):
+            # Nothing reusable was parked (blur was off, the underlay was opaque,
+            # or the park was already dropped) — fall back to the original path.
+            self._apply_transport_bar_blur(panel)
+        # animate=False: the backdrop the user is returning to was already blurred
+        # before Book Detail opened, so replaying the 1500ms build reads as a
+        # re-render rather than a softening.
+        self._start_visual_area_blur(panel, animate=False)
 
     def _start_visual_area_blur(self, panel, animate: bool = True):
         """Set the clip and run the visual_area blur-in — called ONLY from a
@@ -1574,10 +1601,11 @@ class PanelManager:
     def _start_book_detail_entry(self):
         self._flush_pending_restyle()  # before show() — see _flush_pending_restyle
         # Immediately, at open-START: the underlay is about to be fully covered, so
-        # its blur must stop now rather than at slide-finish. This and the blur START
+        # its GRABBING must stop now rather than at slide-finish — but its last
+        # frame stays on screen as a static backdrop. This and the blur START
         # below are two SEPARATE moments and must not be merged — see
-        # _suspend_blur_for_book_detail.
-        self._suspend_blur_for_book_detail()
+        # _park_blur_for_book_detail.
+        self._park_blur_for_book_detail()
         panel_w = self.main_window.width()
         book_detail_panel_y = 32 # Position under the titlebar
         self.book_detail_panel.setFixedWidth(panel_w)
@@ -1637,11 +1665,13 @@ class PanelManager:
         self.book_detail_panel_animation.setEndValue(QPoint(panel_w, book_detail_panel_y))
         self.book_detail_panel_animation.finished.connect(self._on_book_detail_hidden)
         self.book_detail_panel_animation.start()
-        # At close-START, matching _close_stats_flow: the transport bar returns to
-        # live view right away instead of staying frosted through the whole slide-out
-        # (see hide_for_panel's contract). The underlay's blur is deliberately NOT
-        # restored here — see _resume_blur_after_book_detail.
-        self._clear_transport_bar_blur()
+        # NO _clear_transport_bar_blur() here, deliberately — unlike every other
+        # _close_*_flow. The underlay's frame is PARKED (see
+        # _park_blur_for_book_detail): it is already the correct blurred backdrop
+        # and Book Detail is about to slide off it. Clearing it here is what used
+        # to snap the window crisp for the whole slide-out and then rebuild with a
+        # 1500ms fade. Re-arming waits for _resume_blur_after_book_detail, which
+        # runs after .hide() so no grab can photograph the still-sliding panel.
         # The frost is a child of the panel and would otherwise slide out still
         # showing a stale backdrop through the translucent wash.
         self._transport_bar_blur.clear_panel_backdrop_frost(self.book_detail_panel)

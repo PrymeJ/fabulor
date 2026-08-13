@@ -219,6 +219,70 @@ A non-zero DIRTY-TRACE count in that window means the tracker is back and the ~6
 running again — **the absence of visible stutter does not rule this out**, a ~3ms grab is entirely
 capable of running invisibly.
 
+### Book Detail blur — park/unpark (2026-08-14)
+
+Opening Book Detail used to tear the underlay's blur down entirely and rebuild it at close; that
+produced a crisp main window at open-start and again at close-start, the second followed by a 1500ms
+fade. The blur is now **parked** — grabbing stops, the last frame stays on screen — so Book Detail's
+own geometry occludes and uncovers it with no rebuild. **Live-only**: an offscreen harness returned
+byte-identical output for a plainly-visible compositing bug on this exact code (2026-07-27).
+
+All with **Panel background = Frosty glass** and **a book playing** (the grab loop must be genuinely
+active before the open, or there is nothing to park).
+
+The two target transitions — watch the transition, not the endpoints:
+
+- [ ] Stats open, main window blurred → click a book row: the main window **never goes crisp** at
+      any point while Book Detail slides in. Watch the region right of the panel's left edge
+- [ ] Close Book Detail: the main window **never goes crisp**, and there is **no ~1.5s softening**
+      afterwards — the blur is simply already there as the panel uncovers it
+- [ ] Repeat both 5+ times at varying speeds, including a fast open-close-open. The earlier
+      reveal-scanner attempt was *intermittent*, so one clean run proves nothing. Watch specifically
+      for transport buttons arriving sharp or late at the panel's trailing edge
+- [ ] Stats behind Book Detail going crisp then blurred (the pre-existing minor seam) is unchanged —
+      confirm it did not get worse
+
+Paths where a stranded parked frame would show up:
+
+- [ ] Book Detail over Stats → tag chip → Tag Manager: no frozen blurred band over the transport
+      bar; Tags gets its own correct blur (`hide_all_panels` closes both, Tags opens 320ms later)
+- [ ] Book Detail over Stats → tag filter → Library: no leftover band; Library is opaque and
+      full-width so it correctly takes no blur
+- [ ] Book Detail opened from **Library** context (right-click a book), then closed: `'library'` is
+      absent from the resume map, so this takes the early-return branch — the one that must call
+      `discard_parked_frame()`. A band left here means that call was dropped
+- [ ] Book Detail over Stats' **Timeline** tab (opaque, `covers_opaquely()`): nothing was parked;
+      expect exactly today's behaviour
+
+Regression checks on the five panels that must be untouched by the `_disarm_grabbing` extraction:
+
+- [ ] Settings / Speed / Sleep / Sprint / Stats / Tags: open and close each — blur appears at
+      slide-finish, clears at close-start, as before
+- [ ] Settings > Blur toggle ON then OFF with a panel open (`apply_blur_live` → `hide_for_panel`)
+- [ ] Stats → Week/Month → drag the scrollbar (the drag-watcher lives in the extracted half)
+
+Deferred item — **record what you see, do not fix**:
+
+- [ ] Open Book Detail over Stats for the **currently playing** book, exclude it via the trash
+      button (Book Detail stays open in the Stats context), then close. Note whether the stale
+      parked frame is visible or stays hidden behind the closing panel. This observation is what
+      decides whether the stale-frame invalidation pass is needed — see TODO.md
+
+**Perf tell — not optional.** Between `park_for_panel` and `unpark_for_panel` there must be **zero**
+`_grab_and_blur` lines and **zero** `refresh_dirty ... COMPOSITED` lines. A non-zero count means the
+~15 grabs/sec feedback loop is back and the design's premise is broken.
+```
+grep -n "park_for_panel\|unpark_for_panel\|_grab_and_blur\|DIRTY-TRACE" \
+     ~/.local/state/fabulor/log/fabulor.log | less
+```
+Log path is `~/.local/state/fabulor/log/fabulor.log` — **not** `/tmp/fabulor_run.log`. As above, the
+absence of visible stutter does not rule this out.
+
+**Cost, stated honestly:** grabs per open/close cycle stay at **2** (Book Detail's own frost, plus
+one at unpark). This does not reduce the count — it moves one grab *off* the visible transition.
+Read ~10 consecutive cycles **chronologically, unsorted**, before aggregating: the first cycle in a
+process differs in kind (cold pixmap) and sorting would hide exactly that.
+
 ## Finish-book status banner (revert/dismiss)
 
 - [ ] Reaching EOF shows "Marked as finished." banner with revert (↺) and close (✕) buttons
