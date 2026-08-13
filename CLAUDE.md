@@ -1665,7 +1665,37 @@ Any `QWidget` subclass (not `QFrame`, not `QLabel`) that owns a background-color
 
 *Reorganization note (2026-07-13): the "Critical Architecture Rules" section was restructured to remove repetition — it previously existed as two passes (a full-prose section and a later condensed second pass covering many of the same rules). The two were merged: rules that appeared in both now appear once, under whichever fact they share, with no information dropped. Rules unique to either pass are unchanged. See the note directly under the "Critical Architecture Rules" heading for detail.*
 
-*Last updated: 2026-08-12 — Book Detail's History tab (`book_detail_panel.py`) had three related
+*Last updated: 2026-08-13 — Scrollbar row-alignment work extended to a third and fourth panel.
+**Tags panel** (`ui/tag_manager.py`) gained `register_snap` for `_tag_scroll`'s right-click jump
+(`0cbddbd`) — its wheel step and viewport cap were already row-pitch-correct (`_TAG_ROW_PITCH`,
+fixed/uniform), so this was purely additive: right-click jump was the only gap, same as the
+Library/Stats fix it mirrors. **Library and Stats** (`ui/library.py`, `ui/stats_panel.py`) gained a
+DIFFERENT correction: a manually-DRAGGED scrollbar handle can rest off the row pitch, and (unlike
+Tags' `_tag_rows_wheel`, which recomputes and rounds its target every tick) native wheel scrolling
+only ever applies a relative delta, so an off-pitch position persisted through every subsequent
+flick instead of self-correcting. Fixed by letting native scrolling run first (no change to the
+existing per-notch amount), then rounding the resulting scrollbar value to the nearest row boundary
+on the next event-loop tick (`QTimer.singleShot(0, ...)`) — the corrected value isn't available yet
+inside the triggering event/filter call, since `eventFilter`/override callbacks run BEFORE
+`QAbstractItemView` applies its own scroll. Library's correction lives in `LibraryPanel.eventFilter`
+(a new `QEvent.Type.Wheel` branch on `_list_view.viewport()`, reusing the SAME
+`ITEM_DIMENSIONS[view_mode]["h"]` lookup the right-click snap already established); Stats' lives as
+a direct `wheelEvent` override on `StatsRowListView` (a real subclass, so no instance-attribute
+patching needed). `ad95ab1`. **This deferred-correction idiom is the reusable piece** — any future
+scrollbar that needs "stay row-aligned regardless of how the value got there" should reach for this
+same shape (native action first, correct the RESULT one tick later) rather than trying to intercept
+and pre-compute the corrected value inline, which the event ordering makes impossible.
+
+Also this session: `0156fb9` fixed an intermittent Tag-Manager-reopen-from-Book-Detail failure — a
+`QTimer.singleShot(320, ...)` guessed at when the 300ms close-slide animations would finish, with
+only ~20ms of margin, and any hitch made the reopen silently no-op against
+`is_overlay_open_or_committed()`. Replaced with `call_when_panels_settled()`, the same predicate
+recheck (not a `finished`-signal wait) already established elsewhere for this exact race — see the
+"DO NOT resume a panel-animation wait via a `finished` signal" rule above.
+
+Full trail for both: NOTES.md, 2026-08-13.*
+
+*Previously: 2026-08-12 — Book Detail's History tab (`book_detail_panel.py`) had three related
 bugs fixed in sequence, all found live: a 3px viewport/`ROW_H` remainder and an unaligned wheel step
 both caused partial-row clipping (mirroring the scrollbar-jump/carousel-wheel fixes below — see
 NOTES.md 2026-08-12 for detail, not repeated here); then two hover/keyboard-selection state

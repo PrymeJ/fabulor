@@ -1,3 +1,107 @@
+## 2026-08-13 — Tags right-click-jump snap, and a deferred wheel-scroll pitch correction for Library/Stats
+
+Two commits, both extending the scrollbar row-alignment work from 2026-08-12 Session 4 into
+panels not yet covered: `0cbddbd` (Tags panel right-click jump) and `ad95ab1` (Library/Stats wheel
+self-correction from a manually-dragged scrollbar).
+
+### Tags panel right-click jump (`0cbddbd`)
+
+Reported: the Tags panel's scrollbar already scrolled and self-corrected correctly (wheel step and
+viewport cap were pre-existing and pitch-aligned — `_TAG_ROW_PITCH = 37`, fixed and uniform per
+row, confirmed by reading `_tag_list_height`/the `_tag_rows_wheel` handler directly), but
+right-clicking the gutter to jump landed at a pixel-exact position like every other unregistered
+scrollbar, clipping a row. This was purely additive — register `_tag_scroll.verticalScrollBar()`
+with `scrollbar_jump.register_snap`, using a plain floor-to-multiple snap function (no per-row walk
+needed, since the pitch is a flat constant unlike Library's per-view-mode heights). Verified via
+`tools/tags_scrollbar_snap_probe.py`: confirmed the registry picked up the scrollbar and an
+off-pitch value both snaps correctly AND lands the real scrollbar there via `setValue`.
+
+### Library/Stats wheel self-correction from a dragged scrollbar (`ad95ab1`)
+
+**The actual bug, precisely scoped by the user before any code was written** — this was NOT the
+same bug as the earlier right-click-jump work. Right-clicking the gutter (fixed 2026-08-12) computes
+a pixel-exact target directly; a manually DRAGGED scrollbar handle is a completely different input
+path that the earlier fix never touched. Confirmed directly: Library's `QListView` and Stats'
+`StatsRowListView` had zero pitch-awareness in either their native scrollbar-drag handling or their
+wheel scrolling — grep showed no `wheelEvent` override existed on either class at all before this
+fix, meaning both relied entirely on Qt's native per-notch delta, which has no concept of row
+boundaries. The Tags panel's OWN wheel handler (`_tag_rows_wheel`, pre-existing, untouched) happened
+to fix this incidentally as a side effect of its own design: it recomputes `bar.value() + notches *
+pitch`, then rounds THAT result to the nearest pitch multiple, every single tick — so even if
+`bar.value()` starts off-pitch (from a drag), the very first wheel notch snaps it back. This was the
+user's own direct observation, made by testing all three panels side by side and noticing Tags
+"just worked" where Library and Stats didn't — not something surfaced by any prior investigation.
+
+**Clarifying the exact intended mechanism took two direct questions before implementing, and the
+answers mattered — an initial reading of "auto-corrects on the next scroll tick" would have been
+implemented wrong.** First question: does Tags correct via "every wheel step is already pitch-aligned
+by construction" or "a genuinely off-pitch position gets detected and corrected"? Answer: the former
+in steady state, but the real trigger is a MANUALLY DRAGGED scrollbar handle landing off-pitch —
+Library and Stats should "continue to scroll the same amount and keep the partial view the same
+through flicks" (i.e., no self-correction at all) where Tags corrects on the very first scroll after
+a drag. Second question: should the correction be a separate no-movement tick before normal
+scrolling resumes, or should the correction and the normal scroll amount both apply together on the
+same tick? Answer: together, on the same tick — which turns out to be exactly what Tags' own
+`_tag_rows_wheel` already does (`snap(bar.value() + delta)`, one combined step), so the fix for
+Library/Stats could target that same one-step shape rather than needing a two-phase correct-then-
+scroll design.
+
+**Implementation had to preserve each panel's own EXISTING per-notch scroll amount exactly** — the
+user was explicit: "After that, they will continue to scroll the same like today (i.e full page in
+the library, 3 rows in Stats)". This ruled out copying Tags' `_tag_rows_wheel` wholesale (which
+computes its OWN delta, `notches * pitch * _TAG_SCROLL_ROWS`, replacing Qt's native amount entirely)
+— Library and Stats needed to keep Qt's native wheel amount untouched and only correct the
+RESULT. Checked directly rather than assumed: Stats' "3 rows" per flick was never an explicit
+`setSingleStep` call (grepped — none exists for `StatsRowListView`) — it's simply Qt's own default
+`QAbstractItemView` wheel behavior (3 lines/notch is the platform-standard default), which happens
+to equal 3 rows here because `setUniformItemSizes(True)` + `ScrollPerPixel` makes one "line" equal
+one row's pixel height. This meant the fix could let `super().wheelEvent(event)` (Stats) or the
+native unfiltered pass-through (Library) run first, rather than needing to hardcode or re-derive any
+multiplier.
+
+**The event-ordering constraint that shaped the whole mechanism**: `eventFilter` callbacks
+(Library, since `_list_view` is a bare `QListView` with no local subclass to add a real `wheelEvent`
+override to) and widget method overrides (Stats, a real `StatsRowListView` subclass) BOTH run BEFORE
+`QAbstractItemView` applies its own native scroll — so the corrected/scrolled value is never
+available to read inside the same call that receives the wheel event, regardless of which mechanism
+is used. Solved via `QTimer.singleShot(0, ...)`, an idiom already used throughout `library.py` for
+"defer until this event/paint cycle settles" (multiple existing call sites grepped and confirmed
+before reusing it, not introduced as a new pattern). `valueChanged`-signal-based correction was
+considered and rejected: confirmed via direct testing that `QScrollBar.valueChanged` only fires on
+an actual change (so re-snapping an already-aligned value inside its own handler doesn't loop), but
+it fires for EVERY scroll source — wheel, drag, keyboard, programmatic — with no way to distinguish
+which one triggered it from inside the handler, which would have corrected a drag mid-drag (defeating
+the user's own ability to intentionally rest the scrollbar off-pitch) and fought the right-click-jump
+snap and any future keyboard-driven scroll.
+
+Library's correction is a NEW branch (`QEvent.Type.Wheel`) inside the SAME `eventFilter` already
+installed on `_list_view.viewport()` for hover/cursor tracking — not a second filter — and reuses
+the identical `ITEM_DIMENSIONS[view_mode]["h"]` lookup the earlier right-click-snap fix (`a343b6c`,
+2026-08-12) already established, so the two fixes can never disagree about what "one row" means for
+a given view mode. Stats' correction is a plain `wheelEvent` override on `StatsRowListView` — safe
+as a real subclass, unlike the instance-attribute-assignment pattern CLAUDE.md documents failing
+elsewhere in this exact file's own history (a removed `stats_panel.py` row-snap wheel handler that
+was assigned directly to an instance attribute and silently never fired for events delivered to the
+outer widget, only `viewport()`-targeted ones — not relevant here since `wheelEvent` as a real class
+method is dispatched through Qt's normal virtual-method mechanism, not instance-attribute lookup).
+
+**Verification hit a real environment limit, isolated and worked around rather than accepted as
+inconclusive.** `tools/wheel_pitch_correction_probe.py` confirmed Library's correction cleanly on
+the first run (real book library, real overflow, off-pitch value 82 → corrected to 636, an exact
+multiple of the current view mode's row height). Stats initially showed `scrollbar_max=0` on all
+three of Day/Week/Month despite Month genuinely having 18 rows × 52px = 936px of content against a
+480px viewport — a probe-environment artifact (the panel's real layout/viewport-cap logic likely
+never fully settles without an actual user-driven show+resize cycle, not a bug in the fix itself).
+Diagnosed by printing `rowCount`/`viewport_h`/`scrollbar_max` per tab before concluding anything, per
+the "never substitute a plausible explanation for a checked one" rule, rather than assuming the
+fix was broken from the null result alone. Isolated by forcing a scrollbar range directly
+(`bar.setRange(0, 500)`) on the Month view to test the correction LOGIC independent of whether
+natural overflow occurs in this specific synthetic drive-through — confirmed working (off-pitch 29
+→ corrected to 52, exact multiple of `_STATS_ROW_HEIGHT`). The natural-overflow gap was not chased
+further since the correction mechanism itself was proven sound by the isolated test.
+
+---
+
 ## 2026-08-13 — Tag Management from Book Detail was hit-and-miss opening the Tags panel (P6-D fixed)
 
 Reported: clicking "Tag management" in Book Detail closed the two open panels (Book Detail + its

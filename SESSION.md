@@ -1,4 +1,31 @@
-## Session Summary — 2026-08-13 — Book Detail tags: "+N more" overflow link (deterministic width-packed fit, not trusted heightForWidth) and an add-tag-field stale-layout position bug. `main`
+## Session Summary — 2026-08-13 Session 2 — Tag Management reopen race fixed, Tags scrollbar right-click snap added, and a deferred wheel-scroll pitch correction for Library/Stats. `main`
+
+Three commits. `0156fb9` fixed an intermittent failure to reopen the Tags panel from Book Detail's
+"Tag management" button: a `QTimer.singleShot(320, ...)` guessed at when the 300ms close-slide
+animations of the two panels underneath would finish, with only ~20ms of margin, and any hitch made
+the reopen silently no-op. Replaced with `call_when_panels_settled()` — the same predicate-recheck
+mechanism (not a `finished`-signal wait) already established elsewhere in this codebase for this
+exact class of race.
+
+`0cbddbd` extended yesterday's scrollbar right-click-jump row-snap work to the Tags panel: its wheel
+step and viewport cap were already row-pitch-correct, so this was purely additive — register its
+scrollbar with `scrollbar_jump.register_snap`, same mechanism as Library/Stats.
+
+`ad95ab1` is a different, more subtle bug the user found by direct comparison across panels: a
+manually-DRAGGED scrollbar handle can rest off the row pitch, and Library/Stats' native wheel
+scrolling only ever applies a relative delta — an off-pitch drag position persisted through every
+subsequent flick instead of self-correcting, unlike Tags' own wheel handler, which happened to fix
+this incidentally by recomputing and rounding its target every tick. Fixed via a deferred correction
+(let native scrolling run with its EXISTING per-notch amount unchanged, then round the resulting
+scrollbar value to the nearest row boundary one event-loop tick later) — necessary because the
+corrected value isn't available inside the same call that receives the wheel event, for both the
+`eventFilter`-based mechanism (Library) and the direct subclass override (Stats).
+
+Full trail for the Tags/Library/Stats work: NOTES.md, 2026-08-13.
+
+---
+
+## Session Summary — 2026-08-13 Session 1 — Book Detail tags: "+N more" overflow link (deterministic width-packed fit, not trusted heightForWidth) and an add-tag-field stale-layout position bug. `main`
 
 Two independent Book Detail tag bugs, reported together via screenshots. (1) The tag-display header
 strip (the small pill row above the Stats/History/Tags/Cover tabs) silently overflowed past its

@@ -1180,8 +1180,8 @@ This state fires when `has_locations=True` but `get_visible_book_count()=0` (e.g
 
 App-wide: right-clicking any scrollbar's gutter jumps the handle to the cursor instead of opening
 the native "Scroll here / Top / Bottom / ..." context menu (`1ac70b2`, 2026-07-31). As of
-2026-08-12 (`a343b6c`), four of those scrollbars additionally snap the jump to a row boundary
-instead of a pixel-exact position.
+2026-08-12 (`a343b6c`) and 2026-08-13 (`0cbddbd`), five of those scrollbars additionally snap the
+jump to a row boundary instead of a pixel-exact position.
 
 ### Right-click jump (all scrollbars, base behaviour)
 - [ ] Right-click a scrollbar gutter (not the handle) at various points: handle jumps to that
@@ -1213,6 +1213,22 @@ instead of a pixel-exact position.
 - [ ] Month tab: same check
 - [ ] A period with few enough rows that the scrollbar has little/no range: right-click is a
       harmless no-op, no crash
+
+### Row-snap — Tags panel (added 2026-08-13)
+- [ ] Right-click the tag-list scrollbar at several gutter positions — topmost row is always fully
+      shown, never clipped
+- [ ] Existing wheel-scroll and viewport-cap behavior unaffected (unchanged by this fix)
+
+### Wheel self-correction from a dragged scrollbar — Library / Stats (added 2026-08-13)
+- [ ] Library: drag the scrollbar handle to a position that leaves a row half-visible, then wheel-
+      scroll once — the half-visible row snaps to fully visible on that same flick
+- [ ] After the correction, further wheel flicks scroll by the same amount as before (unchanged
+      per-notch behavior)
+- [ ] Repeat in each view mode (1-per-row, 2-per-row, 3-per-row, Square, List)
+- [ ] Stats Day/Week/Month: same drag-then-wheel check, same result
+- [ ] Tags panel is unaffected (already self-corrected before this change)
+- [ ] The four carousels (Recently-finished, cover carousel, etc.) are unaffected — no partial-row
+      state to correct
 
 ## Scan-active button disabling
 
