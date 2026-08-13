@@ -1693,6 +1693,18 @@ only ~20ms of margin, and any hitch made the reopen silently no-op against
 recheck (not a `finished`-signal wait) already established elsewhere for this exact race — see the
 "DO NOT resume a panel-animation wait via a `finished` signal" rule above.
 
+And: the same deferred-correction idiom was extended to Tags' arrow-key scrolling too (`e721a03`) —
+Tags has no real keyboard-nav implementation yet, but `_tag_scroll` is `StrongFocus` by Qt's default
+and unclaimed, so Up/Down already scroll it natively (`bar.setSingleStep(_TAG_ROW_PITCH)` already
+makes a press move exactly one row; only a dragged off-pitch starting position needed the fix).
+Added now, ahead of that keyboard-nav work landing, so the mechanism doesn't get forgotten. **DO NOT
+call `installEventFilter(self)` on a widget from partway through `TagManagerWidget._build_ui`** if
+`eventFilter`'s dispatch reads an attribute (`self._action_btn`) constructed LATER in the same
+method — Qt can deliver events (e.g. from the `addWidget` call immediately following) before
+construction finishes, and `eventFilter` will crash on the not-yet-existing attribute. Confirmed by
+hitting this exact crash live before catching it: `self._tag_scroll.installEventFilter(self)` must
+stay at the END of `_build_ui`, after every attribute `eventFilter` touches already exists.
+
 Full trail for both: NOTES.md, 2026-08-13.*
 
 *Previously: 2026-08-12 — Book Detail's History tab (`book_detail_panel.py`) had three related

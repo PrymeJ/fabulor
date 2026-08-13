@@ -1,8 +1,9 @@
-## 2026-08-13 — Tags right-click-jump snap, and a deferred wheel-scroll pitch correction for Library/Stats
+## 2026-08-13 — Tags right-click-jump snap, a deferred wheel-scroll pitch correction for Library/Stats, and the same for Tags' arrow-key scrolling
 
-Two commits, both extending the scrollbar row-alignment work from 2026-08-12 Session 4 into
-panels not yet covered: `0cbddbd` (Tags panel right-click jump) and `ad95ab1` (Library/Stats wheel
-self-correction from a manually-dragged scrollbar).
+Three commits, all extending the scrollbar row-alignment work from 2026-08-12 Session 4 into
+panels/input paths not yet covered: `0cbddbd` (Tags panel right-click jump), `ad95ab1` (Library/Stats
+wheel self-correction from a manually-dragged scrollbar), and `e721a03` (the same self-correction
+extended to Tags' arrow-key scrolling, ahead of any real keyboard-nav work landing there).
 
 ### Tags panel right-click jump (`0cbddbd`)
 
@@ -99,6 +100,52 @@ fix was broken from the null result alone. Isolated by forcing a scrollbar range
 natural overflow occurs in this specific synthetic drive-through — confirmed working (off-pitch 29
 → corrected to 52, exact multiple of `_STATS_ROW_HEIGHT`). The natural-overflow gap was not chased
 further since the correction mechanism itself was proven sound by the isolated test.
+
+### Tags arrow-key correction, added ahead of real keyboard-nav work (`e721a03`)
+
+Same session, a follow-up request: extend the deferred-correction idiom above to Tags' arrow-key
+scrolling too, even though this panel has no real keyboard-navigation implementation yet — the user
+had noticed arrow keys already scroll `_tag_scroll` (Qt's native `QAbstractScrollArea` fallback,
+`StrongFocus` by default and unclaimed here — the exact same default that was a genuine bug in Book
+Detail's History tab the day before, except here nothing fights it). The ask was explicitly to land
+this now, ahead of any real keyboard-nav work, so the mechanism is already in place and doesn't get
+forgotten later.
+
+`bar.setSingleStep(_TAG_ROW_PITCH)` (pre-existing, confirmed by reading the constructor) already
+makes a native arrow press move by exactly one row — so, same as the wheel case, the only gap was a
+manually-DRAGGED scrollbar starting off-pitch, which a relative `singleStep` delta never
+self-corrects. Fixed with the identical deferred-tick shape: let native arrow-key scrolling run
+first (unchanged amount), then round the result to the nearest row boundary one tick later. Added as
+a new `QEvent.Type.KeyPress` branch (`obj is self._tag_scroll`, `Key_Up`/`Key_Down`) inside
+`TagManagerWidget`'s EXISTING `eventFilter` — not a second filter — installed directly on
+`_tag_scroll` itself (not its `viewport()`), since arrow-key `KeyPress` events target whatever widget
+currently holds focus, which under Qt's default is the scroll area itself, not its viewport.
+
+**A real construction-order bug was found and fixed before it could reach the user, caught by a live
+probe traceback rather than assumed safe.** The first attempt called
+`self._tag_scroll.installEventFilter(self)` right next to `_tag_scroll`'s other setup, early in
+`_build_ui()` — and crashed immediately: `eventFilter`'s very first branch reads
+`self._action_btn`, a widget constructed much LATER in the same method (confirmed via grep: line 420
+vs. line 477). Qt delivered an event to the freshly-installed filter before `_build_ui` finished
+(triggered by the `list_layout.addWidget(self._tag_scroll, ...)` call immediately following),
+raising `AttributeError` on the not-yet-existing attribute. This surfaced as a `RecursionError`-
+looking wall of `hover_tracker.py`/`eventFilter` frames in the probe's stdout at first glance — the
+ACTUAL exception (a plain `AttributeError` from Qt's own C++/Python override-call machinery) was
+several screens further into the real traceback, and reading only the visible tail would have
+pointed at the wrong subsystem entirely (`ScrollHoverTracker`, which had nothing to do with the real
+bug). The persisted full-output file (not the truncated terminal preview) was what actually
+surfaced it. Fixed by moving the `installEventFilter()` call itself to the true end of `_build_ui`,
+after every attribute `eventFilter` touches already exists — the explanatory comment stayed near
+`_tag_scroll`'s other setup for locality, with a short pointer added at both ends. Re-verified via
+the same probe: off-pitch value 21 → corrected to 74, an exact `2×37` multiple of
+`_TAG_ROW_PITCH`, no crash.
+
+The verification probe (`tools/tags_arrow_key_correction_probe.py`) was deleted after confirming the
+fix live — it booted a full `MainWindow` + real DB with `QTimer`-based async callbacks, which doesn't
+fit this codebase's actual `tests/*.py` pytest style (synchronous, no `QApplication`/DB boot), and
+converting it properly would have been real rework rather than a file move. Not promoted to
+`tests/`; not kept in `tools/` either, per direct instruction — deleted outright, same as the other
+throwaway probes from this session that weren't kept.
 
 ---
 

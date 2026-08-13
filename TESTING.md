@@ -1219,14 +1219,15 @@ jump to a row boundary instead of a pixel-exact position.
       shown, never clipped
 - [ ] Existing wheel-scroll and viewport-cap behavior unaffected (unchanged by this fix)
 
-### Wheel self-correction from a dragged scrollbar — Library / Stats (added 2026-08-13)
+### Self-correction from a dragged scrollbar — Library / Stats / Tags (added 2026-08-13)
 - [ ] Library: drag the scrollbar handle to a position that leaves a row half-visible, then wheel-
       scroll once — the half-visible row snaps to fully visible on that same flick
 - [ ] After the correction, further wheel flicks scroll by the same amount as before (unchanged
       per-notch behavior)
 - [ ] Repeat in each view mode (1-per-row, 2-per-row, 3-per-row, Square, List)
 - [ ] Stats Day/Week/Month: same drag-then-wheel check, same result
-- [ ] Tags panel is unaffected (already self-corrected before this change)
+- [ ] Tags panel: drag the scrollbar to a half-visible row, then press Up or Down (arrow-key nav,
+      not real keyboard row-navigation yet) — same on-the-spot correction, same result
 - [ ] The four carousels (Recently-finished, cover carousel, etc.) are unaffected — no partial-row
       state to correct
 

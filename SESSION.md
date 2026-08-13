@@ -1,6 +1,6 @@
-## Session Summary — 2026-08-13 Session 2 — Tag Management reopen race fixed, Tags scrollbar right-click snap added, and a deferred wheel-scroll pitch correction for Library/Stats. `main`
+## Session Summary — 2026-08-13 Session 2 — Tag Management reopen race fixed, Tags scrollbar right-click snap added, and deferred wheel/arrow-key pitch correction for Library, Stats, and Tags. `main`
 
-Three commits. `0156fb9` fixed an intermittent failure to reopen the Tags panel from Book Detail's
+Four commits. `0156fb9` fixed an intermittent failure to reopen the Tags panel from Book Detail's
 "Tag management" button: a `QTimer.singleShot(320, ...)` guessed at when the 300ms close-slide
 animations of the two panels underneath would finish, with only ~20ms of margin, and any hitch made
 the reopen silently no-op. Replaced with `call_when_panels_settled()` — the same predicate-recheck
@@ -20,6 +20,16 @@ this incidentally by recomputing and rounding its target every tick. Fixed via a
 scrollbar value to the nearest row boundary one event-loop tick later) — necessary because the
 corrected value isn't available inside the same call that receives the wheel event, for both the
 `eventFilter`-based mechanism (Library) and the direct subclass override (Stats).
+
+`e721a03` extended the same self-correction to Tags' own arrow-key scrolling — this panel has no
+real keyboard-nav implementation yet, but its scrollbar is Qt's default `StrongFocus`, so Up/Down
+already scroll it natively, and the same off-pitch-drag gap applied there too. Added ahead of any
+real keyboard-nav work landing in this panel, per direct request, so the mechanism is already in
+place and doesn't get forgotten later. A real construction-order bug was found and fixed along the
+way: installing the event filter too early in `_build_ui()` crashed immediately, since
+`eventFilter`'s dispatch reads `self._action_btn`, which doesn't exist yet at that point — caught
+live via a probe traceback before it could reach the user, fixed by moving the
+`installEventFilter()` call to the end of the method.
 
 Full trail for the Tags/Library/Stats work: NOTES.md, 2026-08-13.
 
