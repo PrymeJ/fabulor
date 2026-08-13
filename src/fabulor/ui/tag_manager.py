@@ -404,6 +404,23 @@ class TagManagerWidget(QWidget):
             e.accept()
 
         self._tag_scroll.wheelEvent = _tag_rows_wheel
+        # Arrow-key scrolling has no real keyboard-nav implementation in this panel yet — this
+        # is Qt's native QAbstractScrollArea fallback (StrongFocus by default, unclaimed here,
+        # unlike Book Detail's History tab where the same default was a bug to fix — see
+        # book_detail_panel.py's `_history_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)`).
+        # bar.setSingleStep(_TAG_ROW_PITCH) above already makes a native arrow press move by
+        # exactly one row, but — same gap as the wheel case — a manually DRAGGED scrollbar can
+        # start off that pitch, and a relative singleStep delta from an off-pitch position never
+        # self-corrects. Added now, ahead of any real keyboard-nav work landing here, so the
+        # deferred-correction idiom (see Library's eventFilter Wheel branch / Stats'
+        # StatsRowListView.wheelEvent, 2026-08-12/13) is already in place and doesn't get
+        # forgotten once real key handling is built. Installed on _tag_scroll itself, not its
+        # viewport() — arrow-key KeyPress events target whatever widget holds focus, which is
+        # the scroll area itself under Qt's default StrongFocus. The installEventFilter() call
+        # itself is deferred to the END of _build_ui (not here) — eventFilter's very first
+        # branch reads self._action_btn, which does not exist yet at this point in
+        # construction; installing here crashed immediately with AttributeError the first
+        # time this was tried (confirmed via a live probe traceback, 2026-08-13).
         # stretch=1 so the scroll area claims surplus height BEFORE the trailing
         # stretch does. A bare addStretch() carries a stretch factor of 1 too, so
         # without this the two split the surplus and the viewport settled at
@@ -528,6 +545,10 @@ class TagManagerWidget(QWidget):
         panel_layout.addWidget(self._book_grid)
 
         self._stack_layout.addWidget(self._panel_widget)
+
+        # Deferred to the end of _build_ui — see the comment near _tag_scroll's other
+        # setup above for why (eventFilter's self._action_btn access needs it to exist first).
+        self._tag_scroll.installEventFilter(self)
 
     def hideEvent(self, event):
         QApplication.instance().removeEventFilter(self)
@@ -728,6 +749,23 @@ class TagManagerWidget(QWidget):
                 self._revert_tag_name()
                 self._tag_name_edit.clearFocus()
                 return True
+
+        if obj is self._tag_scroll and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+                # Correction only, same shape as Library/Stats' wheel fix (2026-08-12/13) —
+                # let native singleStep-based scrolling run first (unchanged amount), then
+                # round the RESULT to the nearest row boundary one event-loop tick later,
+                # since the corrected value isn't available yet inside this filter call.
+                bar = self._tag_scroll.verticalScrollBar()
+
+                def _snap_after_native_scroll(bar=bar):
+                    v = bar.value()
+                    snapped = round(v / _TAG_ROW_PITCH) * _TAG_ROW_PITCH
+                    snapped = max(bar.minimum(), min(bar.maximum(), snapped))
+                    if snapped != v:
+                        bar.setValue(snapped)
+
+                QTimer.singleShot(0, _snap_after_native_scroll)
 
         if event.type() == QEvent.Type.MouseButtonPress:
             from PySide6.QtCore import QRect
