@@ -17,6 +17,18 @@ Read in full before any design work: CLAUDE.md's "Only `swatch_box.leaveEvent` m
 only" (722-734), plus `tests/test_hover_interrupts_snapback.py`'s BUG 3 section
 (lines 194-288), which pins the current, shipped behavior against both historical regressions.
 
+> **Pointer added 2026-08-13** (`3ffa8f3`) — the two CLAUDE.md headings cited above no longer exist
+> under those names or line numbers. Both, plus "The theme-hover-active region is `swatch_box`
+> only" and the `theme_item` padding rule, were consolidated into a single section, **"The Themes
+> tab's hover machinery vs. the blur grab's synthetic events — one shared fact, four
+> consequences"**; this design's subject is consequence 4 there. Everything cited is preserved —
+> only the headings and line numbers changed. Note also that the `[SWATCH-LEAVE-SUSPECT]` probe
+> referenced below under its original **`grep -c` must be 0** contract was upgraded from
+> detect-only to detect-and-correct on 2026-08-05 (`17d46e2`,
+> `Design_260805_swatch_leave_suspect_correction.md`), so a non-zero count is now the expected,
+> handled case. The rest of this document is left exactly as written on 2026-08-03, per
+> `review/README.md`: a dated design record describes what was true when it was written.
+
 ### The bug this guard was built to fix (2026-07-22)
 
 With blur enabled, `transport_bar_blur._grab_and_blur` hides `settings_panel` (an ancestor of

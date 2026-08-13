@@ -73,11 +73,21 @@ class _FakeHistoryRow:
 
 
 class _FakeHistoryScroll:
-    def __init__(self):
-        self.ensure_visible_calls = []
+    """Stands in for _HistoryScrollArea.
 
-    def ensureWidgetVisible(self, widget):
-        self.ensure_visible_calls.append(widget)
+    Models scroll_to_row, NOT ensureWidgetVisible: keyboard nav moved to the
+    ROW_H-aligned scroll_to_row on 2026-08-12 (b20a1ff) because
+    ensureWidgetVisible's 50px margin drifts the row list out of viewport
+    alignment. This fake kept only the old method for a while, so the two
+    History arrow-key tests below failed with AttributeError rather than
+    exercising anything.
+    """
+
+    def __init__(self):
+        self.scroll_to_row_calls = []
+
+    def scroll_to_row(self, row):
+        self.scroll_to_row_calls.append(row)
 
 
 class _FakeCoverPanel:
@@ -341,6 +351,15 @@ def test_history_down_moves_selection_and_clears_previous_row(qapp):
     assert fake._history_selected_index == 1
     assert rows[0].kbd_selected_calls == [False]
     assert rows[1].kbd_selected_calls == [True]
+
+
+def test_history_arrow_nav_scrolls_the_newly_selected_row_into_view(qapp):
+    # Pins the scroll_to_row call added 2026-08-12 (b20a1ff). Keyboard nav must
+    # route through it rather than ensureWidgetVisible, whose 50px margin drifts
+    # the row list out of ROW_H alignment with the viewport.
+    fake, rows = _history_fake(selected_index=0)
+    _press(fake, Qt.Key.Key_Down)
+    assert fake._history_scroll.scroll_to_row_calls == [rows[1]]
 
 
 def test_history_down_clamps_at_last_row_no_wrap(qapp):

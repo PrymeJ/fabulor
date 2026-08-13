@@ -164,6 +164,10 @@ order these entries had in TODO.md before the split (2026-07-30).
   fires only when a leave is suppressed while hidden AND the cursor is outside `swatch_box`, i.e. a
   real exit that was eaten — the one observation that falsifies the premise. If non-zero, bring the
   lines back rather than patching around them; they carry the cursor position and widget rect.
+  **[Superseded 2026-08-05 — do not act on the "must be 0" step above.** The premise was falsified
+  live on 2026-08-03; `17d46e2` made the probe detect-and-correct, so a non-zero count is expected
+  and handled. See `review/Design_260805_swatch_leave_suspect_correction.md`. Left as the archived
+  record.**]**
   Also worth watching: previews appearing reliably while the cursor is in motion (regression 2's
   symptom), and after clicking a theme (the selection-fade case).
 

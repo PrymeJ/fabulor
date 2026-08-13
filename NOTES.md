@@ -4752,6 +4752,13 @@ eaten, the one thing that would falsify the premise. `grep -c "SWATCH-LEAVE-SUSP
 it is not, bring the lines back rather than patching around them; they carry the cursor position and
 widget rect.
 
+> **Superseded 2026-08-05 — do not act on the "must be 0" instruction above.** The premise *was*
+> falsified live on 2026-08-03, and `17d46e2` upgraded the branch from detect-only to
+> detect-and-correct: the `if outside:` arm now calls `_on_theme_unhovered()` right after the
+> warning. A non-zero count is the expected, handled case. See the 2026-08-05 entry
+> "SWATCH-LEAVE-SUSPECT corrected" above and
+> `review/Design_260805_swatch_leave_suspect_correction.md`. Left in place as the 2026-07-28 record.
+
 ### Verification
 
 `tests/test_hover_interrupts_snapback.py` + `tests/test_fade_drain.py`. Every regression pin was
@@ -4762,7 +4769,8 @@ after pins nothing. Suite: 242 passed, 4 pre-existing `test_cover_theme_pending.
 **Live verification is NOT covered by any of this** — the decision logic is unit tested; the Qt
 paint/timing behaviour cannot be. How to test the visibility premise: use the Themes tab normally
 with a book playing (the grab only fires during playback, which is what creates synthetic leaves),
-then with the app closed run `grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log` — must be 0.
+then with the app closed run `grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log` — must be 0. (Superseded
+2026-08-05: a non-zero count is now expected and self-corrects — see the note above.)
 
 ### What this session should have done differently
 
