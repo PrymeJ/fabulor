@@ -445,7 +445,7 @@ class PanelManager:
         self._apply_transport_bar_blur(panel)
         self._start_visual_area_blur(panel)
 
-    def _start_visual_area_blur(self, panel):
+    def _start_visual_area_blur(self, panel, animate: bool = True):
         """Set the clip and run the visual_area blur-in — called ONLY from a
         panel's slide-FINISHED callback, never at panel-open.
 
@@ -459,17 +459,35 @@ class PanelManager:
         window blur together once the panel is settled. Panel CLOSE is
         unaffected — clearing immediately at close-start is correct and already
         matches the transport bar.
+
+        `animate=False` snaps straight to the target radius instead of tweening.
+        For RE-establishing a blur the user has already seen — returning from
+        Book Detail to the Stats/Tags panel underneath — the softening
+        transition is what makes a genuine panel-open feel gentle, but on the
+        way back the blurred backdrop is already what they expect to find, so
+        replaying the 1500ms build reads as a needless re-render. Genuine opens
+        keep the default. The clip is still applied either way; only the ramp is
+        skipped.
         """
         if not self.config.get_blur_enabled():
             return
         self._apply_visual_area_clip(panel)
+        target = 8 if panel is self.tags_panel else 10
+        if not animate:
+            self.blur_animation.stop()
+            self.blur_effect.setBlurRadius(target)
+            # The carousel must get the FINAL radius here, not the current one —
+            # passing an intermediate value would leave it sharp for a frame,
+            # which is the very thing the sync call below exists to prevent.
+            self.main_window.sync_carousel_blur(target, True)
+            return
         # The carousel is a sibling of visual_area with its own effect — set its
         # clip now so it blurs in step rather than staying sharp.
         self.main_window.sync_carousel_blur(self.blur_effect.blurRadius(), True)
         self.blur_animation.stop()
         self.blur_animation.setDuration(self._blur_in_duration_for(panel))
         self.blur_animation.setStartValue(self.blur_effect.blurRadius())
-        self.blur_animation.setEndValue(8 if panel is self.tags_panel else 10)
+        self.blur_animation.setEndValue(target)
         self.blur_animation.start()
 
     def _blur_in_duration_for(self, panel):
