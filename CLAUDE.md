@@ -794,36 +794,50 @@ the stash. Same shape as the "content change that produces no Paint event strand
 class — if you change any dismiss path, re-verify it issues its own snapback rather than inheriting
 one.
 
-### Only `swatch_box.leaveEvent` may call `_on_themes_tab_left` — never add a second bare `_on_theme_unhovered()` lambda anywhere in the Themes tab hierarchy
-With the transport-bar blur effect enabled, a deliberately-still hover on a theme swatch could
-silently never convert into an applied preview — confirmed live (2026-07-22) via a trace showing a
-genuine `enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
-`[hover debounce] firing preview` line ever appearing for that hover despite DEBUG logging being
-active. Root cause: both `themes_tab.leaveEvent` and, at the time, `pool_container.leaveEvent` (the
-container then directly holding the `ThemeItem` swatch grid) were bare
-`lambda _: mw.theme_manager._on_theme_unhovered()` lambdas with no equivalent of `ThemeItem`'s own
-`_last_leave_was_synthetic` suppression (see the 2026-07-21 heartbeat fix above) — so the blur
-grab's `_active_panel.hide()`/`.show()` cycle (`transport_bar_blur._grab_and_blur`, firing roughly
-every ~200ms while a book plays) fired a synthetic leave on both container widgets, not just the
-individual swatch, which called `_on_theme_unhovered()` → `self._hover_debounce_timer.stop()`
-unconditionally. If a grab tick landed inside the swatch's 80ms `_HOVER_DEBOUNCE_MS` window —
-likely, given the ~200ms cadence — the debounce timer was killed before it could ever fire, silently
-dropping a genuine hover's preview.
+#### The Themes tab's hover machinery vs. the blur grab's synthetic events — one shared fact, four consequences
 
-**FIXED (2026-07-22), two passes:** `ThemeManager._on_themes_tab_left(tab_widget)`
-(`theme_manager.py`, near `_on_theme_unhovered`) checks `tab_widget.isVisible()` first and skips the
-snapback entirely when the leave fired while the widget was hidden by the blur grab — a real
-mouse-out of any container always happens while it's visible, so this check cannot false-negative a
-genuine leave.
+**The shared fact:** with the transport-bar blur effect enabled,
+`transport_bar_blur._grab_and_blur` hides and re-shows the active panel roughly every ~65-200ms
+while a book plays, in order to grab a clean backdrop. Every one of those hide/show cycles fires
+**synthetic** enter/leave events on `swatch_box` and every descendant widget in between — events Qt
+delivers identically to real ones. So every piece of the Themes tab's hover machinery has to answer
+one question correctly: *did the user actually leave, or did the blur grab just blink the widget?*
+Getting that wrong in either direction is a shipped bug — three distinct times so far, plus a layout
+consequence from the containment fix.
 
-**That claim was recorded without evidence, was briefly assumed to be wrong, and is CORRECT
-(re-verified by counting, 2026-07-28).** Over a full live session: 6 real mouse-outs, ALL
-`visible=True`, all at the right-hand edge (x = 254, 254, 256, 254, 254, 238) exiting toward the
-dismiss sliver — and 12 leaves classified genuine while hidden, all false positives. **Zero** real
-mouse-outs arrived while hidden.
+Current wiring: **`swatch_box.leaveEvent` is the SOLE trigger** for
+`ThemeManager._on_themes_tab_left(tab_widget)` (`theme_manager.py`, near `_on_theme_unhovered`).
+That method's first check is `tab_widget.isVisible()` — a leave arriving while the widget is hidden
+is the blur grab's, not the user's.
 
-**DO NOT replace this visibility check with a cursor-position/delta test.** That was tried twice on
-2026-07-28, both times reasoning from a single trace, and both attempts shipped a regression:
+Consequences of this shared fact, each independently load-bearing:
+
+**1. Never add a second bare `_on_theme_unhovered()` lambda anywhere in the Themes tab hierarchy.**
+A deliberately-still hover on a theme swatch could
+silently never convert into an applied preview (confirmed live 2026-07-22: a genuine
+`enterEvent PASSED` followed 7ms later by a leave recorded as synthetic, with no
+`[hover debounce] firing preview` line ever appearing). Root cause: `themes_tab.leaveEvent` and, at
+the time, `pool_container.leaveEvent` were bare `lambda _: mw.theme_manager._on_theme_unhovered()`
+lambdas with no equivalent of `ThemeItem`'s own `_last_leave_was_synthetic` suppression (see the
+2026-07-21 heartbeat fix above), so a grab-fired synthetic leave called
+`_hover_debounce_timer.stop()` unconditionally. A grab tick landing inside the swatch's 80ms
+`_HOVER_DEBOUNCE_MS` window — likely at that cadence — killed the debounce before it could fire.
+
+Fixing only the OUTER container was insufficient, confirmed live rather than assumed from the shared
+lambda shape: a caller-identifying trace showed 133 of 134 calls in one hover session came from
+`pool_container.leaveEvent`, not `themes_tab.leaveEvent` — the inner widget receives the grab's
+hide/show before the cursor's hit-test ever reaches the outer one. Both wirings were later removed
+when `swatch_box` was introduced (consequence 3), but **the lesson stands regardless of which widget
+currently owns it: do not add a new bare `lambda _: mw.theme_manager._on_theme_unhovered()` anywhere
+in the Themes tab hierarchy** — any future container needing unhover-on-leave must route through
+`_on_themes_tab_left`, or this bug reopens for that container. NOTES.md, 2026-07-22.
+
+**2. DO NOT replace the visibility check with a cursor-position/delta test.**
+The `isVisible()` premise was re-verified by counting (2026-07-28): over a full live session, 6 real
+mouse-outs, ALL `visible=True`, all at the right-hand edge (x = 254, 254, 256, 254, 254, 238) exiting
+toward the dismiss sliver — and 12 leaves classified genuine while hidden, all false positives.
+A delta test was tried twice on 2026-07-28, both times reasoning from a single trace, and both
+attempts shipped a regression:
 1. Position vs. the last genuine ENTER, consuming the reference on a genuine leave — every later
    synthetic leave hit the `None` fallback and fired a snapback (~70 in 5s, cursor frozen at
    `pos=(222,271)`).
@@ -831,7 +845,7 @@ mouse-outs arrived while hidden.
    so a cursor merely MOVING ACROSS the swatch area travels 4-14px between them, past the jitter
    threshold. Every one read as genuine, and `_on_theme_unhovered`'s `_hover_debounce_timer.stop()`
    killed the 80ms debounce ~15x/sec — previews never fired while the cursor was in motion. That is
-   this very bug, reopened by a different route.
+   consequence 1's bug, reopened by a different route.
 
 Both share one root error: inferring "did the user leave?" from cursor deltas when the widget's own
 visibility answers it directly. A position check remains ONLY as a secondary guard for a leave
@@ -841,73 +855,75 @@ leave, and is never consumed. `_MOUSE_JITTER_PX` (2) absorbs sub-pixel reporting
 failed variants are pinned by tests that fail against them
 (`tests/test_hover_interrupts_snapback.py`).
 
-A `[SWATCH-LEAVE-SUSPECT]` WARNING probe fires if a leave is suppressed while hidden AND the cursor
-is outside `swatch_box`'s bounds — the one observation that would falsify the premise.
-`grep -c "SWATCH-LEAVE-SUSPECT"` must be 0; if it is not, bring those lines back rather than
-patching around them.
+**The `[SWATCH-LEAVE-SUSPECT]` probe — contract CHANGED, read this before acting on a hit.** The
+probe fires at WARNING when a leave is suppressed while hidden AND the cursor is outside
+`swatch_box`'s bounds. It was added as a **falsification probe** for this branch's premise ("a real
+mouse-out never arrives while hidden"), originally carrying a `grep -c "SWATCH-LEAVE-SUSPECT"` →
+**must be 0** contract. **That premise was falsified live on 2026-08-03, and the probe was upgraded
+from detect-only to detect-and-correct on 2026-08-05** (`17d46e2`,
+`review/Design_260805_swatch_leave_suspect_correction.md`): the `if outside:` branch now calls
+`_on_theme_unhovered()` immediately after the warning log. **A non-zero count is therefore the
+expected, handled case — it is no longer a signal to revert anything.** Correcting unconditionally
+here is safe because this condition is not an inference: unlike the sibling jitter guard (which
+infers intent from a position *delta*, with the two documented false-positive regressions above),
+it is a direct geometric fact — is the cursor outside the rect right now — independent of *why* the
+widget is hidden. Before the correction landed, this gap produced real stuck windows of 62s, 80s,
+106s, 125s and 277s within single sessions, with `_is_hover_active` stranded `True` and nothing to
+clear it, starving `transport_bar_blur`'s `hover_active_gate` for the whole window. The probe's log
+lines still carry the cursor pos and widget rect and remain the diagnostic for this branch — keep
+them.
 
-Pass 1 wired only `themes_tab.leaveEvent` through it — insufficient in practice.
-**`pool_container` (the container at the time) needed the fix too, confirmed live, not assumed from
-the shared lambda shape**: a temporary caller-identifying trace on `_on_theme_unhovered` showed 133
-of 134 calls in one hover session came from `pool_container.leaveEvent`, not `themes_tab.leaveEvent`
-— the INNER widget received the blur grab's synthetic hide/show before the cursor's hit-test ever
-reached the outer one, so fixing only the outer container left the bug fully intact.
+**3. The hover-active region is `swatch_box` only — not the whole Themes tab, not `pool_container`.**
+As of 2026-07-22, hovering a theme swatch only keeps previewing while the cursor stays inside
+`swatch_box` (`main_window_builders.py`, `build_themes_tab`) — a narrow container holding ONLY the
+"Cover art based theme" entry and the theme swatch rows. The "Theme pool" header, the Add
+all/Remove all/Change now row, and the Interval Selection row all sit outside it (still inside the
+wider `pool_container`, which now exists ONLY as the Exclusive-mode show/hide unit — see
+`update_cover_art_mode_visuals`, `theme_manager.py`). Moving onto any of those, or off the tab
+entirely, reverts the preview to the active theme — previously the whole tab (then the whole
+`pool_container`) counted as "still hovering," so moving onto the header/buttons/interval row while
+a preview was showing silently left it stuck. Do not re-add `themes_tab.leaveEvent` or
+`pool_container.leaveEvent` wiring; both were removed when `swatch_box` was introduced specifically
+to avoid a duplicate/racing revert trigger.
 
-**Superseded later the same session** by the hover-active-region narrowing below —
-`pool_container.leaveEvent` no longer exists; `swatch_box.leaveEvent` is now the sole wiring. The
-lesson stands regardless of which widget currently owns it: **do not add a new bare
-`lambda _: mw.theme_manager._on_theme_unhovered()` anywhere in the Themes tab hierarchy** — any
-future container that needs unhover-on-leave behavior must route through `_on_themes_tab_left`, or
-this exact bug reopens for that container. Full trace and verification detail in NOTES.md,
-2026-07-22.
-
-### `_swatch_leave_backstop_timer` exists because the visible-widget jitter guard has its own false-suppression case — a THIRD failure mode of the same guard, not a reopening of either fix above
+**4. `_swatch_leave_backstop_timer` covers a THIRD failure mode — the visible-branch jitter guard's
+own false-suppression case, not a reopening of either regression above.**
 Confirmed live twice (2026-08-02, `review/Investigation_260802_swatch_leave_jitter_suppression.md`):
-hovering a swatch that sits near `swatch_box`'s own edge, then leaving toward the gutter, can report
-a `leaveEvent` position within `_MOUSE_JITTER_PX` (2px) of the recorded enter position — **not**
-because the cursor failed to move (the case this guard's secondary check exists for), but because a
-genuine boundary crossing at a shallow angle or short distance is itself small relative to the
-tolerance. Both confirmed repros showed `ThemeItem.leaveEvent` and `swatch_box.leaveEvent` firing in
-the same millisecond at the identical reported position, ruling out a stale-cursor-sample theory —
-the position genuinely was that close at both firings. Confirmed structurally independent of blur
-and panel-backdrop mode (reproduced identically in Frosty and Transparent modes) — the branch that
-misfires (`theme_manager.py`'s `visible=True` jitter check) never reads blur/backdrop state at all;
-only the sibling hidden-widget branch does.
+hovering a swatch near `swatch_box`'s own edge, then leaving toward the gutter, can report a
+`leaveEvent` position within `_MOUSE_JITTER_PX` (2px) of the recorded enter position — **not**
+because the cursor failed to move (the case that check exists for), but because a genuine boundary
+crossing at a shallow angle or short distance is itself small relative to the tolerance. Both repros
+showed `ThemeItem.leaveEvent` and `swatch_box.leaveEvent` firing in the same millisecond at the
+identical position, ruling out a stale-cursor-sample theory. Structurally independent of blur and
+panel-backdrop mode (reproduced identically in Frosty and Transparent) — the misfiring branch
+(`visible=True` jitter check) never reads blur/backdrop state at all; only its sibling does.
 
-**This is NOT the same failure as either historical regression above**, and the fix does not touch
-the jitter guard itself. Both historical fixes were about the **hidden-widget branch** misreading
-blur-grab synthetic leaves as real (or vice versa) via a cursor-DELTA comparison between two
-time-adjacent samples. This bug is in the sibling **visible-widget** branch, and the delta being
-compared (leave position vs. last recorded enter) is doing exactly what it was designed to do — the
-tolerance is just too narrow for a real, short boundary crossing. Narrowing/widening
-`_MOUSE_JITTER_PX` or changing what it's compared against was explicitly ruled out as the fix
-(same class of risk as the two prior regressions — see the design doc for the full reasoning); the
-guard's condition, constant, and reference semantics (enter-anchored, never consumed, never rolled
-forward) are all unchanged.
+This is in the **visible-widget** branch, where the compared delta is doing exactly what it was
+designed to do — the tolerance is just too narrow for a real, short crossing. Narrowing/widening
+`_MOUSE_JITTER_PX` or changing what it compares against was explicitly ruled out (same class of risk
+as the two regressions above); the guard's condition, constant, and reference semantics
+(enter-anchored, never consumed, never rolled forward) are all unchanged.
 
 **The fix (2026-08-03, `1a82c11`) is a periodic backstop, not a guard redesign.**
 `ThemeManager._swatch_leave_backstop_timer` (a repeating `QTimer`, `_SWATCH_LEAVE_BACKSTOP_MS = 500`)
 is armed/disarmed **only** inside `_mark_theme_applied` — the sole writer of `_is_hover_active` — on
-its `False`↔`True` transitions, so it is only ever ticking while a hover preview is genuinely
-showing. Its tick (`_check_swatch_still_hovered`) asks a structurally different question than the
-jitter guard: an **absolute** cursor-vs-`swatch_box`-rect containment check, once per tick, using the
-exact same `mapFromGlobal`/`rect().contains()` pattern the hidden-widget branch's own
-`SWATCH-LEAVE-SUSPECT` probe already uses. It never compares two time-adjacent samples against each
-other, so it cannot reproduce either historical regression: there is no reference to consume (attempt
-1's failure), and no pair of close-in-time leave events to compare (attempt 2's failure) — only one
-absolute position check against one static rect, on a 500ms cadence far outside the ~65-200ms
-blur-grab cadence that made those two attempts fail. If it finds the cursor genuinely outside while
-a preview is still active, it calls the existing `_on_theme_unhovered()` — the same corrective call
-the jitter guard's own genuine-leave branch already makes; this backstop only widens WHEN that call
-can fire, never what it does.
+its `False`↔`True` transitions, so it only ticks while a preview is genuinely showing. Its tick
+(`_check_swatch_still_hovered`) asks a structurally different question than the jitter guard: an
+**absolute** cursor-vs-`swatch_box`-rect containment check, using the same
+`mapFromGlobal`/`rect().contains()` pattern the `SWATCH-LEAVE-SUSPECT` branch uses. It never compares
+two time-adjacent samples, so it cannot reproduce either regression: there is no reference to consume
+(attempt 1's failure), and no pair of close-in-time leaves to compare (attempt 2's failure) — one
+absolute check against one static rect, on a 500ms cadence far outside the ~65-200ms grab cadence
+that made those attempts fail. On finding the cursor genuinely outside while a preview is active it
+calls the existing `_on_theme_unhovered()` — this backstop widens WHEN that call can fire, never what
+it does.
 
 **Dismiss-time correctness needed no new code.** `_close_settings_flow` (`panels.py:1379-1383`)
-already calls `_on_theme_unhovered()` unconditionally on every Settings-panel dismiss, regardless of
-any timer or leave-event history — confirmed directly in both repro logs, where the dismiss click
-correctly forced the theme back even after the preview had been stuck for 7s and ~34s respectively.
-A fast edge-out-then-immediate-dismiss-click was a stated concern before this fix; it was already
-closed by this existing call, which is why the fix below only adds machinery for the DWELL window
-(a stuck preview visible for a noticeable duration before dismissal), not for dismiss itself.
+already calls `_on_theme_unhovered()` unconditionally on every Settings dismiss, regardless of timer
+or leave-event history — confirmed in both repro logs, where the dismiss click forced the theme back
+even after the preview had been stuck 7s and ~34s. A fast edge-out-then-immediate-dismiss-click was
+a stated concern before this fix and was already closed by that call, which is why the backstop only
+covers the DWELL window (a stuck preview visible for a noticeable duration), not dismiss itself.
 
 **Cost is logged permanently, unconditionally, from the first commit — not added later if found
 expensive.** `[SWATCH-BACKSTOP-COST] tick=X.XXXms` fires on every tick regardless of outcome. This
@@ -918,31 +934,20 @@ cost investigation (2026-08-01/02, see the section above) started from exactly t
 unverified assumption. Do NOT downgrade this log to DEBUG or remove it as "clearly fine" without
 first checking a real session's worth of `[SWATCH-BACKSTOP-COST]` lines.
 
-Full design rationale, the explicit side-by-side comparison against both 2026-07-28 failed
-redesigns, and the cost analysis showing dismiss itself pays no new cost (an already-corrected
-`_is_hover_active` hits `_on_theme_changed`'s existing cheap no-op guard) are in
+Full design rationale, the side-by-side comparison against both 2026-07-28 failed redesigns, and the
+cost analysis showing dismiss itself pays no new cost (an already-corrected `_is_hover_active` hits
+`_on_theme_changed`'s existing cheap no-op guard) are in
 `review/Design_260803_swatch_leave_jitter_backstop.md`.
 
-### The theme-hover-active region is `swatch_box` only — not the whole Themes tab, not `pool_container`
-As of 2026-07-22, hovering a theme swatch only keeps previewing while the cursor stays inside
-`swatch_box` (`main_window_builders.py`, `build_themes_tab`) — a narrow container holding ONLY the
-"Cover art based theme" entry and the theme swatch rows. The "Theme pool" header, the Add
-all/Remove all/Change now row, and the Interval Selection row all sit outside it (still inside the
-wider `pool_container`, which now exists ONLY as the Exclusive-mode show/hide unit — see
-`update_cover_art_mode_visuals`, `theme_manager.py`). Moving onto any of those, or off the tab
-entirely, reverts the preview to the active theme — previously the whole tab (then the whole
-`pool_container`) counted as "still hovering," so moving onto the header/buttons/interval row while
-a preview was showing silently left it stuck. `swatch_box.leaveEvent` is the SOLE trigger for
-`_on_themes_tab_left` (see the rule above) — do not re-add `themes_tab.leaveEvent` or
-`pool_container.leaveEvent` wiring; both were removed when `swatch_box` was introduced specifically
-to avoid a duplicate/racing revert trigger.
+---
 
 ### `QPushButton#theme_item`'s vertical padding must stay small enough that its `sizeHint()` doesn't exceed what `swatch_box` can actually give it
+A layout consequence of introducing `swatch_box` (consequence 3 above), not a hover-machinery rule.
 `settings_panel` is a fixed 500px-height widget with no scroll area (see the "DO NOT try to expand a
 widget's height inside the Library settings tab's `QVBoxLayout`" rule below) — `pool_container`'s
 total budget inside it is a genuine, non-negotiable remainder after every sibling above/around it
-claims its own space, not a solvable margin puzzle. When `swatch_box` was introduced (narrowing the
-hover-active region, above), the theme swatch rows started rendering 5px shorter than their own
+claims its own space, not a solvable margin puzzle. When `swatch_box` was introduced, the theme
+swatch rows started rendering 5px shorter than their own
 `sizeHint()` (20px actual vs. 25px wanted, confirmed via live geometry logging, NOT guessed) —
 silently clipping the active-theme underline (`QPushButton#theme_item[active_display="true"]`,
 `text-decoration: underline`) and glyph descenders (e.g. the 'g' in "Slow Regard"). **Do not try to

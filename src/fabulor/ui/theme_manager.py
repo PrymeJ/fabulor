@@ -2552,13 +2552,17 @@ class ThemeManager(QObject):
             # the cursor is in motion the grab's ~65ms cadence makes every synthetic
             # leave look like movement, which killed the hover debounce (failure 2).
             #
-            # FALSIFICATION PROBE: this branch's whole premise is "a real mouse-out never
-            # arrives while hidden". If that is wrong, the symptom is a suppressed leave
-            # whose cursor has left swatch_box's bounds entirely — a real exit we ate.
-            # Flag exactly that case at WARNING so it is greppable without DEBUG:
-            #     grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log     -> must be 0
-            # A non-zero count falsifies the premise; do NOT patch around it, bring the
-            # lines back (they carry the cursor pos and the widget rect to diagnose with).
+            # FALSIFICATION PROBE (premise since FALSIFIED — see CORRECTED below): this
+            # branch's premise was "a real mouse-out never arrives while hidden". The
+            # symptom of that being wrong is a suppressed leave whose cursor has left
+            # swatch_box's bounds entirely — a real exit we ate. Flagged at WARNING so it
+            # is greppable without DEBUG:
+            #     grep -c "SWATCH-LEAVE-SUSPECT" fabulor.log
+            # The original contract here was "must be 0". That premise WAS falsified live
+            # on 2026-08-03, and this branch now corrects rather than only logging, so a
+            # non-zero count is the EXPECTED, HANDLED case — it is no longer a signal to
+            # revert anything. The lines still carry the cursor pos and widget rect to
+            # diagnose with.
             try:
                 local = tab_widget.mapFromGlobal(pos)
                 outside = not tab_widget.rect().contains(local)
