@@ -687,9 +687,7 @@ class BookDetailPanel(QWidget):
             text_qcolor = QColor(self._theme.get("text", "#ffffff"))
             rgb = f"{text_qcolor.red()}, {text_qcolor.green()}, {text_qcolor.blue()}"
             self._tag_more_label.setText(f"+{more} more")
-            self._tag_more_label.setStyleSheet(
-                f"color: rgba({rgb}, 0.75); text-decoration: underline;"
-            )
+            self._tag_more_label.setStyleSheet(f"color: rgba({rgb}, 0.75);")
             strip_rect = self._tag_display_label.geometry()
             fm = QFontMetrics(self._tag_more_label.font())
             label_w = fm.horizontalAdvance(self._tag_more_label.text()) + 4
