@@ -1,3 +1,30 @@
+## 2026-08-13 — Tag Management from Book Detail was hit-and-miss opening the Tags panel (P6-D fixed)
+
+Reported: clicking "Tag management" in Book Detail closed the two open panels (Book Detail + its
+underlay, Library or Stats) correctly, but unreliably reopened the Tags panel — sometimes silently
+did nothing.
+
+Root cause was the exact debt already flagged in this file under "`hide_all_panels` then open: timer
+vs signal" (2026-05-26, tagged P6-D): `_on_open_tag_manager_from_detail` (`app.py`) called
+`panel_manager.hide_all_panels()` then `QTimer.singleShot(320, panel_manager._open_tags_flow)` — a
+fixed 320ms guess meant to clear the 300ms position-slide close animations running in parallel on
+Book Detail and its underlay. `_open_tags_flow` gates on `is_overlay_open_or_committed()`, which
+reads True as long as any panel animation is still `Running`. With only ~20ms of nominal margin
+between the animation's `finished` and the timer's own firing, any hitch (a restyle, a blur redraw,
+scheduler jitter under load) landing in that window made the singleShot fire *before* the close
+animations had actually settled — `_open_tags_flow` saw the gate still True and silently dropped the
+open. No error, no retry: the classic "does nothing" report.
+
+Fix: replaced the fixed delay with `panel_manager.call_when_panels_settled(panel_manager._open_tags_flow)`
+— the same predicate-recheck waiter (`_any_panel_animating()` polled every `_SETTLE_POLL_MS` = 16ms,
+not a `finished`-signal subscription) already used elsewhere to avoid exactly this class of race (see
+the CLAUDE.md rule "DO NOT resume a panel-animation wait via a `finished` signal"). This is option
+(a) from the original debt writeup's blur caveat — `_any_panel_animating()` includes `blur_animation`,
+so the callback also waits out the 500ms blur fade rather than excluding it; simpler than teasing
+blur out of the shared predicate, and the extra wait is not perceptible against a panel-open action.
+`_open_tags_flow`'s stale comment describing the old 320ms coupling was updated to describe the new
+mechanism. `app.py`, `panels.py`.
+
 ## 2026-08-13 — Book Detail tags: "+N more" overflow link and an add-tag-field stale-`FlowLayout` position bug
 
 Two independent bugs in `book_detail_panel.py`'s tag UI, reported together via screenshots across
@@ -12455,7 +12482,13 @@ This was already a degenerate case: before the migration, `book_path` was the ke
 
 Setting `WA_TranslucentBackground` on a `QWidget` subclass that also uses `WA_StyledBackground` causes the QSS `background:` rule to be ignored — the widget renders fully transparent even with a valid stylesheet. The two attributes conflict: `WA_TranslucentBackground` forces alpha compositing at the window level, which punches through the QSS paint. Remove `WA_TranslucentBackground` and rely solely on `WA_StyledBackground` + the QSS `background:` rule for solid background rendering.
 
-## `hide_all_panels` then open: timer vs signal (2026-05-26)
+## `hide_all_panels` then open: timer vs signal (2026-05-26) — FIXED 2026-08-13, see the entry near the top of this file
+
+This was live debt (P6-D) that eventually caused a real, reported bug (Tag Management from Book
+Detail silently failing to open intermittently) — see "Tag Management from Book Detail was
+hit-and-miss opening the Tags panel (P6-D fixed)" near the top of this file for the fix actually
+shipped: `call_when_panels_settled` (option (a) below — blur included, not excluded). Original
+writeup kept below for the reasoning trail.
 
 `_on_open_tag_manager_from_detail` in `app.py` calls `panel_manager.hide_all_panels()` then uses `QTimer.singleShot(320, panel_manager._open_tags_flow)` to delay the open until all close animations have finished. 320ms is chosen to clear the longest panel close animation (300ms).
 
