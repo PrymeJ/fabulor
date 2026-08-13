@@ -1842,7 +1842,7 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
 
     def _on_open_tag_manager_from_detail(self) -> None:
         self.panel_manager.hide_all_panels()
-        QTimer.singleShot(320, self.panel_manager._open_tags_flow)
+        self.panel_manager.call_when_panels_settled(self.panel_manager._open_tags_flow)
 
     def _on_book_tags_changed(self) -> None:
         self.stats_panel._on_tag_changed()

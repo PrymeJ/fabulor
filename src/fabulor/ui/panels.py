@@ -1455,11 +1455,13 @@ class PanelManager:
     def _open_tags_flow(self):
         # One overlay at a time — see is_overlay_open_or_committed / _open_library_flow.
         # NOTE: the tag-manager-from-book-detail transition (app.py
-        # _on_open_tag_manager_from_detail) calls hide_all_panels() then singleShot(320,
-        # _open_tags_flow); the book-detail close animation is 300ms, so by the time this
-        # fires the detail panel is hidden and the gate is False — the transition still
-        # works. If book-detail's close duration ever grows past ~320ms, revisit that
-        # coupling (drive the open off the close `finished` signal instead of a fixed delay).
+        # _on_open_tag_manager_from_detail) calls hide_all_panels() then
+        # call_when_panels_settled(_open_tags_flow) — a predicate re-check (see that
+        # method's docstring), not a fixed delay, so it can't race the close animations
+        # regardless of their duration. Previously a QTimer.singleShot(320, ...) magic
+        # number tuned to "just clears the 300ms position slide" — that raced live
+        # (NOTES.md 2026-05-26 "hide_all_panels then open: timer vs signal"; fixed
+        # 2026-08-13) whenever a hitch or the 500ms blur fade ate the ~20ms margin.
         if self.is_overlay_open_or_committed():
             return
         self._complete_main_fade()
