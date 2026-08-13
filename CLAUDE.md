@@ -381,6 +381,13 @@ matching `_seek_target`'s convention.
 ### DO NOT infer "was this a seek?" from `is_seeking`'s timing — set a plain flag at the seek SOURCE instead
 Any consumer outside `player.py` that needs to know whether a navigation action (not just whether one is *currently in flight*) caused some later observable change must NOT try to sample or poll `player.is_seeking` for that purpose — `_on_time_pos_change` clears `_is_seeking` *before* running its own chapter walk/emit in the same call, so a queued, cross-thread signal delivered after that point can already read `is_seeking == False` for a transition that genuinely was seek-driven. A polling latch (setting a flag whenever a 200ms UI-timer tick happens to observe `is_seeking == True`) does not fix this — a seek on a local file can fully settle (`True`→`False`) within a single 200ms polling gap, so the poll can miss it entirely. The correct pattern is a plain public flag set unconditionally as the FIRST statement of `seek_async` itself (e.g. `Player.user_seek_pending`) — the one confirmed choke point every navigation action routes through (Next/Prev, chapter-list click, slider drag/wheel, skip buttons, every keyboard shortcut; verified via direct trace, no bypass anywhere) — read and cleared by the consumer. This must be consumed on *every* relevant event the consumer sees, not only the specific transition it cares about (e.g. a seek landing ON a boundary, or staying entirely within the same segment and never producing the event the consumer is watching for) — an uncleared flag survives to falsely tag the next, unrelated event. See `SleepTimerPanel`'s end-of-chapter mode (`ui/sleep_timer.py`) for the reference implementation: `Player.user_seek_pending`, consumed in `_on_chapter_changed` on every call past its mode guard (not just a forward crossing) plus a settle-detection fallback in `update_timer_state` for the same-chapter-seek case. Three earlier attempts at this exact problem (a chapter-index distance heuristic, a bare `is_seeking` poll, and a re-derived-index gate layered on that poll) were each shipped without being checked against a trace and each failed live — full failure trail in NOTES.md, 2026-08-10.
 
+**This is the reference case for a family of rules sharing one fact: intent must be recorded by a
+flag set at the source, never inferred from timing or statement ordering.** The others are
+`Player.sleep_fired` (`_advance_or_finish`'s unpause must not clear a pause it didn't set), the
+per-tick shared-widget emit rule, and the `emit()`/`.show()` same-call-stack rule — all below. Qt
+gives no paint or event-loop return between two synchronous statements, and no cross-thread signal
+guarantees the flag it would have inferred from is still set by the time it is read.
+
 ### Automated tests exist (`tests/`, pytest, dev-only)
 `_on_time_pos_change`/seek-state is a near-pure state machine (no mpv, no QApplication). Run `source fabulorenv/bin/activate && pytest tests/ -q`. Keep green on any seek-path change — these encode the `is_seeking`/`_seek_target` invariants whose violations caused repeated freezes/regressions. pytest is in `requirements-dev.txt` (NOT runtime `requirements.txt`).
 
@@ -389,8 +396,8 @@ Any change to how `time_pos`, `_seek_target`, `_cached_time_pos`, or a seek-sett
 
 - **2026-06-06:** `seek_settled` signal attempt — reverted. Broke slider/fill desync, undo, notch reanimation, VT slider corruption, chapterless-book snaps. Root cause on record: "the 200ms timer is the silent antagonist — it fires regardless of load state and requires guards that have a one-tick gap."
 - **2026-06-06:** `file_switched`-deferral attempt — reverted. Broke undo (VT slider stuck after undo).
-- **2026-06-15 (`b6a4023`):** backward-jump rejection heuristic (`_STALE_BACKWARD_TOLERANCE`) — verified clean via instrumentation (32/32 known artifacts correctly classified, zero false positives) — shipped, then reverted. Broke VT backward-seek, the play/pause icon, and chapter[1]→[0] click. No mechanism-level cause for any of the three was ever diagnosed — the record stops at "regressed X/Y/Z."
-- **2026-07-13 (this session's drift-fix branch, untracked):** narrowing `_on_vt_file_switched`'s unconditional `is_seeking` clear on `_seek_target is None` — tried twice, reverted both times. Traded a data-loss clobber for a permanent UI freeze. **Root cause of the freeze, later diagnosed precisely (see the 2026-07-13 FIXED entry below): both attempts were tested exclusively against a seek that was structurally incapable of ever landing at all** (the VT-restore-on-load `book_ready`-before-`play()` race, a separate bug, fixed later the same session) — the freeze was the inevitable consequence of that unrelated bug, not evidence against the guard's own logic. This distinction is why the same guard was safely re-attempted and shipped later in the same session, once the seek it was being tested against was one proven capable of landing. **Do not treat "reverted twice" alone as a permanent verdict on a guard — check what the seek under test was actually capable of doing before concluding the guard itself is unsound.**
+- **2026-06-15 (`b6a4023`):** backward-jump rejection heuristic (`_STALE_BACKWARD_TOLERANCE`) — verified clean via instrumentation (32/32 known artifacts correctly classified, zero false positives) — shipped, then reverted. Broke VT backward-seek, the play/pause icon, and chapter[1]→[0] click. No mechanism-level cause was ever diagnosed — the record stops at "regressed X/Y/Z."
+- **2026-07-13 (drift-fix branch, untracked):** narrowing `_on_vt_file_switched`'s unconditional `is_seeking` clear on `_seek_target is None` — tried twice, reverted both times, trading a data-loss clobber for a permanent UI freeze. **Both attempts were tested exclusively against a seek structurally incapable of ever landing** (the VT-restore-on-load `book_ready`-before-`play()` race, a separate bug fixed later the same session), so the freeze was that bug's inevitable consequence, not evidence against the guard. The same guard was safely re-attempted and shipped once the seek under test could actually land — see the 2026-07-13 FIXED entry below. **Do not treat "reverted twice" alone as a permanent verdict on a guard — check what the seek under test was actually capable of doing first.**
 
 The load-bearing lesson is not any one of these bugs — it's that clean instrumentation data has already been proven insufficient evidence of safety on this exact bug class. A heuristic or new tracking field can score perfectly against captured samples and still break something live, for reasons that may never be diagnosed. Do not treat a green instrumentation run as a stopping point before live testing; do not treat a clean live pass on the presenting symptom (e.g. drift, slider bounce) as sufficient without separately checking VT playback, VT cross-file seeking, and Undo. The 2026-07-13 fix below is the one case in this zone where a reverted approach was later shown, with real evidence rather than a hopeful reinterpretation, to have failed for a reason that no longer applied — this is the exception that proves the rule: it took a fully independent, checkable finding (a git-history + TODO.md audit of what the guard had actually been tested against) to justify re-trying it, not just "it feels different this time."
 
@@ -449,15 +456,13 @@ turned the old "harmless redundant `""`" into a live bug: `_sync_playback_state`
 empty-write ran first and clobbered whatever sprint had just written, on every tick sleep wasn't
 armed — i.e. constantly, for anyone using sprint alone. This corrupted sprint's own
 `_on_sprint_display_text_updated`'s `old_text`/`was_armed` tracking (spuriously reading `newly_armed
-= True` far more often than intended), which surfaced as two seemingly unrelated symptoms — the
-mute-icon transient misfiring, and (via a compounding but distinct ordering bug, see the
-`_cancel_message_active` note below) the cancel/complete message appearing to dismiss early. Two
-live-tried fixes that addressed the WRONG layer before this was traced: reordering
-`_cancel_message_active = True` vs. `disable_sprint()` (a real, separately-confirmed bug — see
-`_trigger_cancel`/`_trigger_complete` — but insufficient on its own), and a same-call-stack
-`emit()`/`.show()` reorder for a different, unrelated symptom (see the button-flash rule below).
-Neither was found wrong by re-guessing — both were confirmed insufficient only after adding real
-`logger.warning` trace logging and reading the actual log timestamps. Fixed by gating sleep's
+= True` far more often than intended), surfacing as two seemingly unrelated symptoms: the mute-icon
+transient misfiring, and the cancel/complete message appearing to dismiss early. Two live-tried
+fixes addressed the WRONG layer first (a `_cancel_message_active`/`disable_sprint()` reorder — a
+real, separately-confirmed bug, but insufficient alone; and the same-call-stack `emit()`/`.show()`
+reorder covered by the rule below). Neither was found wrong by re-guessing — both were confirmed
+insufficient only by adding `logger.warning` tracing and reading the actual timestamps. Full trail:
+NOTES.md, 2026-08-11. Fixed by gating sleep's
 trailing emit on `self._sleep_mode is not None`: sleep still emits everything it legitimately needs
 to (the running countdown, `[chapter]` text, and `disable_sleep_timer()`'s own explicit `""` on the
 real disarm transition) — it just stops repeating a redundant `""` every tick when it was never
@@ -475,16 +480,16 @@ the same call). Reordering `.show()` to run after the `emit()` was tried first, 
 the close-slide would start before the button painted visible — **this has no mechanism to work**:
 Qt does not paint between two synchronous Python statements in the same call stack, so both the
 button's visibility change and the animation start land in the same paint cycle regardless of
-statement order. Confirmed live that the reorder did not fix the symptom. The correct shape (pointed
-out directly, already shipped elsewhere in this codebase): `_sync_persist_filter_on_open`
-(`app.py`, called from `PanelManager._start_settings_entry`) defers reconciling Settings' "Persist
-search filter" master switch to the NEXT panel-open, rather than applying it live during the
-sub-toggle interaction that would otherwise visibly disturb an already-open/closing panel. Applied
-the same shape: `.show()` was removed from the arm path entirely; a new
-`sync_disable_button_visibility()` on each panel is called from `PanelManager._start_sleep_entry`/
-`_start_sprint_entry` instead, i.e. exactly when the panel is about to become visible again, never
-during the arm-then-auto-close sequence. `disable_sleep_timer()`/`disable_sprint()`'s own `.hide()`
-calls (the disarm-while-open path, which never triggers an auto-close) were left untouched. If a
+statement order. Confirmed live that the reorder did not fix the symptom. The correct shape, already
+shipped elsewhere here: defer the reconciliation to the NEXT panel-open rather than applying it live
+during an interaction that would visibly disturb an open/closing panel (`_sync_persist_filter_on_open`,
+`app.py`, called from `PanelManager._start_settings_entry`, does this for Settings' "Persist search
+filter" master switch). Applied the same shape: `.show()` was removed from the arm path entirely; a
+new `sync_disable_button_visibility()` on each panel is called from
+`PanelManager._start_sleep_entry`/`_start_sprint_entry` instead, i.e. exactly when the panel is about
+to become visible again, never during the arm-then-auto-close sequence.
+`disable_sleep_timer()`/`disable_sprint()`'s own `.hide()` calls (the disarm-while-open path, which
+never triggers an auto-close) were left untouched. If a
 future visible-flash bug looks like an ordering problem, check whether the two statements are
 genuinely separated by a return to the Qt event loop (a different call stack) before assuming a
 same-call-stack reorder can fix it — most of the time it cannot.
@@ -602,23 +607,22 @@ As of 2026-06-12 a "listened day" is `session (start OR end adjusted-date) OR 'f
 ### Hover-preview theme application must never reach `_schedule_deferred_restyle` or any panel-level stylesheet
 Previews are confined to main window, settings panel, and title bar via `get_base_stylesheet` — this
 confinement is deliberate, not an oversight: a preview must not also restyle the library/stats/tags/
-book_detail surfaces, which is real work avoided. **The performance rationale previously written here
-was wrong and is corrected (measured 2026-08-01):** it claimed the confinement avoids "walking the
-whole widget tree." It does not. `mw.setStyleSheet(get_base_stylesheet(...))` targets the ROOT widget,
-so Qt re-polishes all ~642 descendants on every hover tick anyway — measured at **~460ms**, with the
-settings/speed/sleep panel sheet adding ~215ms, i.e. ~95% of a ~700-900ms restyle. The fast-pass split
-is narrower work, not cheap work. See NOTES.md 2026-08-01. The confinement itself is still
-load-bearing for the reasons below — only its cost claim was false.
+book_detail surfaces, which is real work avoided. **The confinement is narrower work, not cheap
+work** — `mw.setStyleSheet(get_base_stylesheet(...))` targets the ROOT widget, so Qt re-polishes all
+~642 descendants on every hover tick regardless. (Historical note: a rationale claiming the
+confinement avoids "walking the whole widget tree" stood here until measurement killed it,
+2026-08-01. The confinement stayed load-bearing for the reasons below; only its cost claim was
+false.)
 
-**Sharpened 2026-08-02, and this kills every content-based fix:** the cost is not the sheet's SCOPE
-and not its CONTENT. `mw.setStyleSheet()` costs the same regardless of argument — the full 27-rule
+**The cost is not the sheet's SCOPE and not its CONTENT — this kills every content-based fix**
+(measured 2026-08-02). `mw.setStyleSheet()` costs the same regardless of argument: the full 27-rule
 sheet, a **single** `QWidget#mainwindow` rule, an **identical** re-set of the current sheet, and an
 **empty** string all measure the same. Qt does not no-op an identical sheet, and clearing is as
 expensive as setting. So: splitting the base sheet across the nine widgets its rules actually
-target (all depth 1-2 under `mw`) saves **nothing**, and neither does emptying the root sheet by moving the main-window
-background out of QSS — both were measured and are dead. Only *not calling it*, or a shallower tree,
-helps. **Cost is panel-open-state dependent, not cadence dependent (re-measured 2026-08-02, see
-NOTES.md "hover-preview cadence vs. panel-state" for the full breakdown):**
+target (all depth 1-2 under `mw`) saves **nothing**, and neither does emptying the root sheet by
+moving the main-window background out of QSS — both were measured and are dead. Only *not calling
+it*, or a shallower tree, helps. **Cost is panel-open-state dependent, not cadence dependent** (see
+NOTES.md "hover-preview cadence vs. panel-state" for the full breakdown):
 - **~430-440ms live** — theme apply with no panel/Themes-tab open (startup `apply_full_pass`,
   `_rotate_theme`, snapback-with-panel-closed). Matches the original n=120 organic-session figure.
 - **~590-620ms live** — theme apply while the settings panel/Themes tab is open (hover preview,
@@ -1088,8 +1092,8 @@ Every direct write to the library search field must go through `self._programmat
 ### DO NOT use `active_cover_changed` on `BookDetailPanel` as a single-arg signal
 It emits `(book_path, cover_path)` — both args required at all call sites. `CoverPanel.active_cover_changed` remains `Signal(str)`; the intermediate slot `_on_cover_panel_changed` in `BookDetailPanel` injects `self._book_path` and re-emits. Do not connect `CoverPanel.active_cover_changed` directly to `BookDetailPanel.active_cover_changed`.
 
-### DO NOT pass raw DB rows directly to `BookDayRow` or `FinishedBookThumb`
-Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows carry only `cover_path` (scanner thumbnail); `_inject_active_covers` adds `active_cover_path` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover.
+### DO NOT pass raw DB rows directly to `StatsRowModel` or `FinishedBookThumb`
+Always call `StatsPanel._inject_active_covers()` on the row list first. Raw rows carry only `cover_path` (scanner thumbnail); `_inject_active_covers` adds `active_cover_path` from `book_covers`. Skipping it causes stats panel thumbnails to show scanner art instead of the user-selected cover. (Heading formerly named `BookDayRow`, the widget-per-row class `StatsRowModel`/`StatsRowDelegate` replaced in the 2026-08-05/09 Stats delegate migration; the rule is unchanged and applies at every row site.)
 
 ### DO NOT remove the `has_progress` gate on speed application in `BookDelegate._resolve_playback`
 Speed is only applied to `dur_disp` when `has_progress` is `True`. Books with no progress always show total duration at 1x regardless of per-book speed. Removing this gate causes incorrect duration display in the library view.
