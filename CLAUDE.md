@@ -289,11 +289,15 @@ erodes trust. Take the visual correction at face value, apply it, move on. (Adde
 exactly this failure: clinging to a wrong SCROLLBAR_EXTENT/window-width calculation and repeatedly
 questioning the user instead of applying a simple 4px nudge they'd already measured and mocked up.)
 
-Two later rules are direct consequences of this same lesson, applied to a specific widget class
-(settings-panel/tab layout bugs) where even careful headless verification kept giving false
-confidence relative to what the live app actually showed — see "DO NOT verify a settings-panel/tab
-visual layout bug with headless test scripts alone" and "DO NOT trust `QComboBox` popup
-pseudo-state QSS ... on this app's target desktop" further below.
+Four later rules are direct consequences of this same lesson, each applied to a widget class or Qt
+API where a plausible-looking computed/headless result kept diverging from what the live app
+actually showed — see, further below: "DO NOT verify a settings-panel/tab visual layout bug with
+headless test scripts alone"; "DO NOT trust `QComboBox` popup pseudo-state QSS ... on this app's
+target desktop"; "DO NOT rely on `WA_PaintUnclipped` ... and DO NOT pin a widget's width with
+`setFixedWidth` inside a `QGridLayout`/stretch column" (a live geometry probe reports the intended
+geometry for a child that is in fact being clipped — only a screenshot catches it); and "DO NOT
+assume a text label's horizontal position is 'the box's position' without checking its alignment"
+(a single test string can hide the bug entirely).
 
 ---
 
@@ -1182,7 +1186,8 @@ A left-aligned `QLabel` in an auto-sized box and a right-aligned `QLabel` in a f
 
 ---
 
-### Keyboard focus ownership: exactly one widget owns focus, and the global dispatcher only acts when that owner is MainWindow itself or nothing panel-local (added 2026-07-11)
+#### Keyboard focus ownership (added 2026-07-11) — one shared fact, five consequences
+
 Load-bearing architecture, not a one-off fix. The invariant: **exactly one widget owns real Qt
 keyboard focus at a time, and `MainWindow.keyPressEvent` only hands a key to the shortcut
 dispatcher (`MainWindow._focus_allows_global_shortcuts()`) when `QApplication.focusWidget()` is
@@ -1213,11 +1218,39 @@ Two enforcement points, both required (fixing only one leaves the other's failur
   individual handler — that would only close the hole for that one key and leave every other bound
   key free to leak the same way. It must live at the dispatch decision point, once, for every key.
 
-**DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`** (or
+Consequences of this shared fact, each independently load-bearing:
+
+**1. DO NOT let a new panel/overlay skip `_claim_panel_focus`/`_release_panel_focus`** (or
 self-manage focus like Library/ChapterList) in its open/close flow — nothing else in the codebase
 enforces this per-panel; skipping it silently reintroduces the bleed-through bug.
 
-**Qt gotcha:** clearing focus must happen AFTER `.hide()`, never before. `hide()` on a widget that
+**2. The NoFocus sweep must stay complete — this entire mechanism depends on it.**
+`_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
+true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **Any new always-on
+widget added outside a panel (a new transport button, a new status indicator, anything parented
+directly to `MainWindow`'s always-visible chrome) MUST be `setFocusPolicy(Qt.NoFocus)`, full
+stop** — otherwise it becomes a focus candidate indistinguishable from a real panel-local widget,
+and the whole dispatch guard silently breaks. The current sweep covers: the five transport buttons,
+the two title-bar buttons, `speed_button`, `sleep_timer_label`, the six sidebar trigger buttons +
+`sleep_cancel_btn`, `undo_overlay`, `eof_revert_btn`/`eof_close_btn`/`cancel_scan_btn`,
+`scan_now_btn`, `go_to_library_btn`. A single missed chrome widget with a default (`StrongFocus`)
+policy reintroduces the exact bug this sweep fixed: focus can land on it (Qt auto-focuses the first
+focusable widget at startup, and Tab/arrow navigation can land on any focusable widget), `Space`
+fires its `clicked` instead of play/pause, and the dispatcher is starved for as long as it holds
+focus. `ClickSlider` (progress/chapter/volume sliders) is a `QWidget` subclass and `NoFocus` by
+default with no `keyPressEvent` override — it needs no explicit call, but do not change its base
+class or add key handling to it without re-adding one.
+
+**Two Qt defaults that violate this silently, both found the hard way:**
+`QScrollArea`'s default `focusPolicy()` is **`StrongFocus`, not `NoFocus`** — only its `viewport()`
+defaults to `NoFocus`. `QToolButton` defaults to `TabFocus`. `_history_scroll` (Book Detail's
+History tab) was missing an explicit policy, so a click on a `NoFocus`-correct child (`_trash_btn`)
+fell through the ancestor chain and silently stole real Qt focus from `BookDetailPanel`, breaking
+all of History's keyboard handling until the panel was reopened (2026-08-12, `3f04e03`). Any
+`QScrollArea` or `QToolButton` added to a panel that owns its own `keyPressEvent` needs an explicit
+`setFocusPolicy(Qt.FocusPolicy.NoFocus)`.
+
+**3. Qt gotcha — clear focus AFTER `.hide()`, never before.** `hide()` on a widget that
 still holds real Qt focus makes Qt fall back and silently RE-GRANT focus to that same now-hidden
 widget if it's the only (or best) `StrongFocus` candidate around — so a `clearFocus()` call placed
 before `hide()` gets invisibly undone by `hide()` itself. `_release_panel_focus` is deliberately
@@ -1226,15 +1259,7 @@ on `self` — call it on the actual focused descendant (`QApplication.focusWidge
 `panel.isAncestorOf(...)`), never on the panel container, which typically never holds focus
 directly itself.
 
-**This entire mechanism depends on the NoFocus sweep (below) being complete.**
-`_focus_allows_global_shortcuts()`'s "not None, not MainWindow ⇒ panel-local" equivalence is only
-true because every always-on chrome widget outside a panel is `Qt.NoFocus`. **Any new always-on
-widget added outside a panel (a new transport button, a new status indicator, anything parented
-directly to `MainWindow`'s always-visible chrome) MUST be `setFocusPolicy(Qt.NoFocus)`, full
-stop** — otherwise it becomes a focus candidate indistinguishable from a real panel-local widget,
-and the whole dispatch guard silently breaks.
-
-**Generalization: ANY mouse-clickable `QPushButton`/`QToolButton`/`QLineEdit` inside a panel is a
+**4. ANY mouse-clickable `QPushButton`/`QToolButton`/`QLineEdit` inside a panel is a
 focus-strand risk, not just the panel's own open/close transition.** A user's click grants that
 widget real Qt focus; if a later code path then hides, disables (`setEnabled(False)`), or deletes
 (`deleteLater()`) that same widget — a confirm banner appearing over it, a list/grid rebuild after
@@ -1247,34 +1272,36 @@ for the panel whenever `QApplication.focusWidget()` is `None` or not a descendan
 any future site with this shape self-heals on the very next keypress instead of reintroducing the
 bug.
 
-**Modal-dialog exception:** a `QApplication`-installed `eventFilter` (the mechanism every panel's
-Tab/Escape handling and the focus-reclaim safety net above are built on) intercepts EVERY key event
-app-wide, including ones meant for an unrelated modal dialog (e.g. `QFileDialog.getOpenFileName`)
-that a panel opened — unless guarded, it steals Escape/keys from the dialog before the dialog's own
-handling ever runs. **Any `QApplication`-wide `eventFilter` that owns Escape/Tab/focus-reclaim
-logic MUST check `QApplication.activeModalWidget() is not None` first and decline to handle the
-event (`return False`) whenever true** — this is not scoped to dialogs the panel itself opened; any
-modal dialog anywhere in the app must win. `BookDetailPanel.eventFilter` does this at its very top,
-before any other branch.
+**5. A widget the panel itself opened still reads as FOREIGN to the panel's own containment
+checks — this bites two different mechanisms.** Both are cases of "the panel spawned it, so surely
+it's ours" being false:
+
+- **Modal dialogs vs. a `QApplication`-wide `eventFilter`.** That filter (the mechanism every
+  panel's Tab/Escape handling and consequence 4's safety net are built on) intercepts EVERY key
+  event app-wide, including ones meant for an unrelated modal dialog (e.g.
+  `QFileDialog.getOpenFileName`) that a panel opened — unless guarded, it steals Escape/keys from
+  the dialog before the dialog's own handling ever runs. **Any `QApplication`-wide `eventFilter`
+  that owns Escape/Tab/focus-reclaim logic MUST check `QApplication.activeModalWidget() is not
+  None` first and decline to handle the event (`return False`) whenever true** — not scoped to
+  dialogs the panel itself opened; any modal dialog anywhere in the app must win.
+  `BookDetailPanel.eventFilter` does this at its very top, before any other branch.
+- **Popups vs. a click-outside handler's `safe` allowlist.** A `Qt.WindowType.Popup` (e.g.
+  `ContextIconMenu`) is a separate top-level window. Showing it moves focus off the field, and it
+  reads as "outside" by every containment test a click-outside handler cheaply runs — including
+  `isAncestorOf`. `BookDetailPanel` and `TagManagerWidget` both revert the in-progress edit when
+  focus lands outside a hardcoded `safe` tuple, and the context menu was in neither:
+  right-clicking a selection to cut it silently **reverted the edit first**, so the Cut ran against
+  a field whose text had already been restored. The selection stays visually highlighted through
+  the revert, so the field looks untouched — the reported symptom was just "cut does nothing," and
+  Ctrl+X was unaffected, which is what made it look field-specific rather than menu-specific (FIXED
+  2026-07-30, `40715cf`; both panels needed it). **Any click-outside/focus-loss handler with a
+  `safe` allowlist must list every popup that panel can spawn.**
 
 See SESSION.md, 2026-07-11 Session 3 and Session 4, for the full trace-by-trace investigation that
 produced this invariant (three live-reported focus bugs in Session 3; three more focus-strand sites
 plus the modal-dialog bug in Session 4).
 
-### DO NOT give always-on MainWindow chrome any focus policy other than `Qt.NoFocus`
-Every widget that is part of the permanent transport/chrome (not inside a slide-out panel) must
-be `Qt.NoFocus`: the five transport buttons, the two title-bar buttons, `speed_button`,
-`sleep_timer_label`, the six sidebar trigger buttons + `sleep_cancel_btn`, `undo_overlay`,
-`eof_revert_btn`/`eof_close_btn`/`cancel_scan_btn`, `scan_now_btn`, `go_to_library_btn`. This is
-not cosmetic — `MainWindow._focus_allows_global_shortcuts()` (see the focus-ownership rule above)
-relies on "focus is not `None` and not `MainWindow`" being equivalent to "focus is panel-local."
-A single missed chrome widget with a default (`StrongFocus`) policy reintroduces the exact bug
-this sweep fixed: keyboard focus can land on it (Qt auto-focuses the first focusable widget at
-startup, and Tab/arrow navigation can land on any focusable widget), `Space` fires its `clicked`
-instead of play/pause, and the global shortcut dispatcher is silently starved for as long as that
-widget holds focus. `ClickSlider` (progress/chapter/volume sliders) is a `QWidget` subclass and
-`NoFocus` by default with no `keyPressEvent` override — it does not need an explicit call, but do
-not change its base class or add key handling to it without re-adding one.
+---
 
 ### DO NOT use a bare `QLineEdit` for a new text input — subclass `DragSafeLineEdit`
 On this app's target desktop (KDE Plasma / Wayland), a `mouseMoveEvent` with **zero displacement**
@@ -1296,21 +1323,6 @@ and `_ElidingLineEdit`); no bare `QLineEdit()` remains. The defect is Qt-level a
 field in the app, so a new input that skips this base class reintroduces it for that field alone —
 which is exactly how it surfaced twice, reported first in Book Detail and then independently in the
 Tags panel.
-
-### DO NOT omit a panel's own popups from a click-outside handler's `safe`-widget allowlist
-A `Qt.WindowType.Popup` (e.g. `ContextIconMenu`) is a separate top-level window. Showing it moves
-focus off the field, and it reads as "outside" by every containment test a click-outside handler
-cheaply runs — including `isAncestorOf`. `BookDetailPanel` and `TagManagerWidget` both revert the
-in-progress edit when focus lands outside a hardcoded `safe` tuple, and the context menu was in
-neither: right-clicking a selection to cut it silently **reverted the edit first**, so the Cut ran
-against a field whose text had already been restored. The selection stays visually highlighted
-through the revert, so the field looks untouched — the reported symptom was just "cut does
-nothing," and Ctrl+X was unaffected, which is what made it look field-specific rather than
-menu-specific (FIXED 2026-07-30, `40715cf`; both panels needed it).
-
-Any click-outside/focus-loss handler with a `safe` allowlist must list every popup that panel can
-spawn. Same shape as the modal-dialog exception in the keyboard-focus-ownership rule above: a
-widget the panel itself opened still reads as foreign to the panel's own containment checks.
 
 ### DO NOT leave a `beginResetModel()` without a `finally`-guaranteed `endResetModel()`
 `BookModel.set_books`/`sort_books`/`filter_books` wrap their reset pairs in `try/finally`. An
@@ -1728,15 +1740,9 @@ both caused partial-row clipping (mirroring the scrollbar-jump/carousel-wheel fi
 NOTES.md 2026-08-12 for detail, not repeated here); then two hover/keyboard-selection state
 conflicts and a focus-strand bug surfaced from live interaction testing. Two facts worth keeping
 here as standing gotchas:
-- **`QScrollArea`'s default `focusPolicy()` is `StrongFocus`, not `NoFocus`** — only its
-  `viewport()` defaults to `NoFocus`. `_history_scroll` was missing this, so a click on a
-  `NoFocus`-correct child (`_trash_btn`, a `QToolButton` — also fixed here, `TabFocus` by default)
-  fell through the ancestor chain and silently stole real Qt focus from `BookDetailPanel`, breaking
-  all of History's keyboard handling (Up/Down/Left/Right) until the panel was reopened. Any future
-  `QScrollArea` added to a panel that owns its own `keyPressEvent` needs an explicit
-  `setFocusPolicy(Qt.FocusPolicy.NoFocus)` — this is not the default and is easy to miss. Same
-  underlying class of bug as the "Keyboard focus ownership" rule elsewhere in this file, applied to
-  a widget type (`QScrollArea`) not covered by that rule's original sweep.
+- **`QScrollArea`/`QToolButton` default focus policies** — promoted 2026-08-13 into the "Keyboard
+  focus ownership" section's consequence 2, where the rest of the NoFocus sweep lives; see there,
+  not here.
 - **`_HistoryRow.set_keyboard_selected(False)` and `force_idle_from_hover()` are NOT
   interchangeable** — `set_keyboard_selected(False)`'s `underMouse()` guard deliberately preserves a
   row's hover state if the mouse is still physically on it (correct for keyboard stepping away from
