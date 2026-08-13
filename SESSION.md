@@ -1,3 +1,99 @@
+## Session Summary — 2026-08-13 Session 4 — CLAUDE.md consolidation audit: two shared-fact merges, five rules tightened, and four stale contracts corrected. `main`
+
+Five commits (`3ffa8f3` → `660f8b8`). CLAUDE.md had grown from 1563 lines (2026-08-04/05) to 1888
+(2026-08-13) — +325 over ten days, twelve new rule headings, no duplicated content found in a quick
+pass. Task was an audit-and-propose pass for DENSITY (say the same true things in less space), not
+to decide any rule was unneeded, following the same non-destructive method as the 2026-07-13 and
+2026-08-02 reorganizations.
+
+**Structural finding up front:** the growth is not duplication. It is a shift in register. Older
+rules state the invariant and point to NOTES.md for the trail (the CUE `_virtual_timeline` rule is
+2 lines); newer rules embed the whole investigation inline — failed attempts, live traces, counted
+evidence, cost measurements. Six of the twelve new headings run 60-80 lines each. The lessons are
+load-bearing; the retellings mostly aren't.
+
+**Proposal reviewed before any edit**, then applied in the order Pryme set: A alone (the biggest,
+densest merge) for review before proceeding, then B+D, then C, then E.
+
+**A (`3ffa8f3`) — Themes-tab hover cluster.** Four consecutive headings all descending from one
+causal root: the blur grab hides/re-shows the active panel every ~65-200ms, firing synthetic
+enter/leave events the hover machinery must distinguish from real ones. Merged into one shared-fact
+section with four consequences, matching the shape already used by the soft-delete-flags and
+`_sized_cover_cache` sections. `theme_item` padding stayed its own heading (a layout consequence of
+introducing `swatch_box`, not hover machinery) with a pointer back to consequence 3.
+
+**The correction this surfaced, and the reason the pass earned its keep.** Pryme flagged the probe
+contracts as the thing to scrutinize most carefully in a restructure — correctly. Checking
+`[SWATCH-LEAVE-SUSPECT]` against the code found CLAUDE.md documenting a `grep -c` → **must be 0**
+contract that had been dead since 2026-08-05: the premise ("a real mouse-out never arrives while
+hidden") was falsified live on 2026-08-03, and `17d46e2` upgraded the branch from detect-only to
+detect-and-correct. A non-zero count is now expected and handled. Acting on the documented contract
+today would mean treating normal corrected operation as a premise violation and reverting a shipped
+fix. The source comment at `theme_manager.py:2554` had the same stale "must be 0" sitting three
+lines above the comment explaining why it was no longer true — both corrected in the same commit,
+docs-only, no logic touched. (`[SWATCH-BACKSTOP-COST]`'s contract was checked separately and IS
+still current — carried through verbatim.)
+
+**B+D (`1957430`).** Keyboard focus ownership: three headings → one shared-fact section, five
+consequences. The NoFocus-chrome rule and the popup-allowlist rule were both already
+cross-referencing the parent invariant in prose and re-deriving their relationship to it; the popup
+rule's closing line literally read "Same shape as the modal-dialog exception... above." Consequence
+5 now states once, for both cases, what they share: a widget the panel itself opened still reads as
+foreign to that panel's own containment checks. Folded the `QScrollArea`/`QToolButton`
+default-focus-policy gotcha out of the changelog tail into consequence 2 where the rest of the sweep
+lives (the tail entry itself said it belonged there), leaving a pointer so the fact has one home.
+D: the "user sees the rendered pixels" rule promised "two later rules are consequences of this" and
+named two; there are now four, the 2026-08-13 `WA_PaintUnclipped` and label-alignment rules being
+the same lesson applied to two more Qt APIs.
+
+**C+E (`9d54592`).** Named the flag-at-source family once in the `user_seek_pending` rule that is
+its reference case (four rules share it, three already cross-referenced each other without stating
+it) rather than merging — the seek rule belongs in the seek/VT block. Trimmed investigation
+narrative from the per-tick shared-widget rule and the `emit()`/`.show()` rule to mechanism + fix +
+generalization, citing NOTES.md 2026-08-11 rather than retelling. Dropped superseded measurements
+from the hover-preview rule, which carried two generations of the same cost figure (2026-08-01's
+~460ms set, and the 2026-08-02 re-measurement that replaced it with the ~430-440 / ~590-620
+panel-state split) with only reading order to say which was current. Also the opportunistic
+`BookDayRow` → `StatsRowModel` heading fix, per Pryme's instruction to fold it in rather than make
+it its own pass.
+
+**Open items fixed (`660f8b8`).** `_FakeHistoryScroll` modelled `ensureWidgetVisible`, the API
+History keyboard nav moved OFF on 2026-08-12 (`b20a1ff`, for the ROW_H-aligned `scroll_to_row`), so
+two History arrow-key tests had been raising `AttributeError` at `book_detail_panel.py:1444` instead
+of asserting anything — reported as pre-existing across three commits before being fixed here.
+Updated the fake to the real API rather than stubbing the missing method, and added a pin for the
+`scroll_to_row` call itself, which the two repaired tests reach but never checked. Suite now fully
+green. Separately, a repo-wide grep found the stale "must be 0" contract surviving in three more
+places (NOTES.md ×2, TODO_ARCHIVE.md, and `Design_260803_swatch_leave_jitter_backstop.md`) — all
+dated records that correctly describe their own moment, but all containing live verification steps
+someone could follow today. Each got a supersession note; the historical narrative around them is
+untouched, per `review/README.md`'s rule. That design doc also cited two now-merged CLAUDE.md
+headings by name and line number, and got a dated pointer to the merged section.
+
+**The estimate was wrong, and that is recorded in the file.** Projected −137 lines; actual **+38**
+(1888 → 1926). The model was wrong: these clusters overlap in **cross-references** — each rule
+re-deriving its relationship to its siblings — far more than in restated mechanism, and stating a
+relationship once, explicitly, costs about what removing the scattered restatements saves. Of the
++38, ~23 is the reorganization note itself and ~11 the probe correction; the merges were near
+break-even. `bcad6c8` records this in the "Critical Architecture Rules" reorganization note so a
+future density pass expects it and judges itself on duplication removed rather than lines saved.
+
+**Lesson worth keeping:** an audit framed as a size problem delivered its value as a correctness
+one. Four of the five commits fixed something that had drifted into two places or would have
+prompted a wrong action — the stale probe contract in four documents plus the source, two
+generations of one measurement, a fact duplicated between a rule and the changelog tail, a heading
+naming a deleted class, and a test double a full API behind the code it doubles. The single-sourcing
+was the deliverable; the line count was the pretext. Verification throughout was mechanical rather
+than by eye: every merge was followed by a grep for the load-bearing tokens (measurements,
+constants, commit hashes, pinned tests, probe names, design-doc pointers) it was supposed to
+preserve — ~73 across the pass, plus a check for dangling references to every removed heading.
+
+Full trail: this session's conversation and the five commit messages, which carry the per-group
+detail. No separate NOTES.md writeup — the corrections all landed in the documents that were wrong,
+and the reorganization note in CLAUDE.md carries the method and the estimating lesson.
+
+---
+
 ## Session Summary — 2026-08-13 Session 3 — Book Detail Stats/History tab alignment: furthest-position bar width, pct-label alignment, and History-row bar vertical position. `main`
 
 Two commits, following a long live-tested back-and-forth on the Stats tab's "Furthest position"
