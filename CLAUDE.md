@@ -274,6 +274,29 @@ paragraph. No rule, constant, date, commit hash, or piece of reasoning was remov
 only repeated explanations were consolidated. A rule with multiple consequences lists them as
 bullets beneath the shared fact.
 
+A second consolidation pass ran 2026-08-13 (`3ffa8f3`, `1957430`, `9d54592`), same method and same
+non-destructive constraint: seven headings became two shared-fact sections — the Themes tab's hover
+machinery vs. the blur grab's synthetic events (four consequences) and keyboard focus ownership
+(five consequences) — and five rules had investigation narrative trimmed to the mechanism, the fix,
+and the generalization, with the trail cited to NOTES.md rather than retold. Every measurement,
+constant, commit hash, pinned test, probe contract and design-doc pointer was verified still
+present by grep afterward.
+
+**Two corrections that pass made, both of which would have caused a wrong action if left:**
+(1) the `[SWATCH-LEAVE-SUSPECT]` probe was documented — here and in `theme_manager.py` — as
+`grep -c` **must be 0**, on a premise that was falsified live on 2026-08-03 and answered by
+`17d46e2` upgrading the branch from detect-only to detect-and-correct; a non-zero count is now
+expected and handled, so the old contract would have read normal operation as a premise violation.
+(2) The hover-preview rule carried two generations of measurement for the same cost, 2026-08-01 and
+2026-08-02, with only reading order to say which was current; the superseded figures are gone.
+
+Net line change across the pass was roughly zero. That is the honest result and worth recording:
+these clusters overlapped in **cross-references** (each rule re-deriving its relationship to its
+siblings) far more than in restated mechanism, and stating a relationship once, explicitly, costs
+about what removing the scattered restatements saves. The gain is single-sourcing — one home per
+fact, one heading per causal root — not size. A future density pass should expect the same and
+judge itself on duplication removed, not lines saved.
+
 ---
 
 ### The user sees the rendered pixels. You do not. When they say something is visually off, that is ground truth — your calculation is what's wrong.
