@@ -353,6 +353,31 @@ class BookDetailPanel(QWidget):
         self._tag_display_label.linkActivated.connect(self._on_tag_display_link_activated)
         layout.addWidget(self._tag_display_label)
 
+        # "+N more" when tags overflow the two-line strip. A SEPARATE widget, not part of
+        # _tag_display_label's own rich text — rendering it inline (as a trailing <a> in the
+        # same wrapped block) put it directly adjacent to the last tag with no visual break,
+        # and it inherited the tags' own accent color, so it read as just another tag rather
+        # than as a distinct "there's more" affordance. Pinned to the strip's own bottom-right
+        # corner via absolute geometry (same pattern as _delete_history_confirm_label /
+        # _position_delete_history_confirm — floats above sibling content, position recomputed
+        # on demand rather than carried in a layout) so it's always at the true right edge
+        # regardless of how the tag text wraps.
+        self._tag_more_label = _ClickableLabel()
+        self._tag_more_label.setObjectName("tag_display_more")
+        self._tag_more_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        self._tag_more_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        # No QSS rule targets #tag_display_more (only #tag_display_chip has one), so without
+        # an explicit font this fell back to the default system font — much larger than the
+        # tag strip's 12px, confirmed live (2026-08-13). Match tag_display_chip's size
+        # directly rather than adding a QSS rule, since color is already set per-rebuild via
+        # inline stylesheet below (it depends on the live theme, not a static QSS color).
+        _more_font = self._tag_more_label.font()
+        _more_font.setPixelSize(12)
+        self._tag_more_label.setFont(_more_font)
+        self._tag_more_label.clicked.connect(self._on_tag_more_clicked)
+        self._tag_more_label.setParent(self)
+        self._tag_more_label.hide()
+
         from .cover_panel import CoverPanel
         self._cover_panel = CoverPanel(db=self.db, parent=self)
         self._cover_panel.active_cover_changed.connect(self._on_cover_panel_changed)
@@ -630,57 +655,129 @@ class BookDetailPanel(QWidget):
 
         self._rebuild_tag_display(tags)
 
-    # Sentinel href for the "+N more" link — distinct from any real tag name so
-    # _on_tag_display_link_activated can tell it apart from a genuine tag click.
-    _MORE_LINK_HREF = "__tags_more__"
-
     def _rebuild_tag_display(self, tags: list[str]):
         self._tag_display_tags = list(tags)
         if not tags:
             self._tag_display_label.setText("")
+            self._tag_more_label.hide()
             return
         tag_colors = {t: self.db.get_tag_color(t) for t in tags} if self._book_path else {}
 
-        # The strip is a fixed two-line QLabel. When not every tag fits, the last visible
-        # tag(s) are replaced by a "+N more" link (opens the Tags panel) instead of letting
-        # Qt silently overflow/clip the wrapped text. heightForWidth is the same layout
-        # engine that will actually paint the label, so it's used directly as the fitting
-        # oracle rather than re-deriving line-wrap math independently (see CLAUDE.md's "a
-        # test that shares the code's assumption cannot falsify it" — here the label testing
-        # itself is correct precisely because it IS the real renderer, not a parallel
-        # approximation of it).
-        #
-        # The budget is 2x a measured ONE-LINE heightForWidth, not the label's literal
-        # setFixedHeight(38) — measured live (2026-08-13) that a genuine 2-line wrap
-        # (e.g. 5 real tags including "historical fantasy"/"science fiction") reports 42,
-        # 4px over the fixed height, while a 3rd line jumps to 59 (a much larger, real
-        # step). A strict <=38 comparison over-truncates content that visibly renders fine
-        # in the app's 38px box (confirmed against the live screenshot). Re-measuring
-        # one-line height here (rather than hardcoding it) keeps this correct if the theme
-        # font/size ever changes.
+        # The strip is a fixed two-line QLabel, center-aligned. Rather than trust Qt's own
+        # rich-text word-wrap to tell us how many tags fit (heightForWidth was found live,
+        # 2026-08-13, to disagree with the actual paint in ways a pixel-grab comparison also
+        # couldn't reliably catch — the label has no background of its own, so grabbing it
+        # samples an undefined transparent render), each tag chip's width is measured
+        # directly via QFontMetrics and packed into two lines by hand. This is fully
+        # deterministic: the same numbers this method computes are the numbers that
+        # actually get rendered, because THIS method decides how many chips go on each
+        # line — Qt's word-wrap is only ever asked to lay out content already known to fit.
         usable_w = self._tag_display_label.width() - (
             self._tag_display_label.contentsMargins().left()
             + self._tag_display_label.contentsMargins().right()
         )
-        self._tag_display_label.setText('<span>&#9679;</span>')
-        one_line_h = self._tag_display_label.heightForWidth(usable_w)
-        budget_h = one_line_h * 2
-
-        shown_count = len(tags)
-        html = self._build_tag_display_html(tags, tag_colors, more=0)
-        if usable_w > 0:
-            while shown_count > 0:
-                self._tag_display_label.setText(html)
-                if self._tag_display_label.heightForWidth(usable_w) <= budget_h:
-                    break
-                shown_count -= 1
-                more = len(tags) - shown_count
-                html = self._build_tag_display_html(tags[:shown_count], tag_colors, more=more)
+        shown_count, truncated = self._pack_tag_lines(tags, usable_w)
+        html = self._build_tag_display_html(tags[:shown_count], tag_colors)
 
         self._tag_display_label.setTextFormat(Qt.TextFormat.RichText)
         self._tag_display_label.setText(html)
 
-    def _build_tag_display_html(self, shown_tags: list[str], tag_colors: dict, more: int) -> str:
+        more = len(tags) - shown_count
+        if truncated and more > 0:
+            text_qcolor = QColor(self._theme.get("text", "#ffffff"))
+            rgb = f"{text_qcolor.red()}, {text_qcolor.green()}, {text_qcolor.blue()}"
+            self._tag_more_label.setText(f"+{more} more")
+            self._tag_more_label.setStyleSheet(
+                f"color: rgba({rgb}, 0.75); text-decoration: underline;"
+            )
+            strip_rect = self._tag_display_label.geometry()
+            fm = QFontMetrics(self._tag_more_label.font())
+            label_w = fm.horizontalAdvance(self._tag_more_label.text()) + 4
+            label_h = fm.height() + 2
+            # tag_display_label spans the full panel width, but the rest of the header's
+            # content (title/author/cover) is inset 10px from the panel edge
+            # (header_layout.setContentsMargins(10, ...)) — right-aligning the more-label
+            # against the label's own (unindented) right edge ignored that 10px margin,
+            # confirmed live (2026-08-13). Match it here so "+N more" lines up with the rest
+            # of the header's right edge instead of sitting flush against the panel border.
+            #
+            # QRect.right()/.bottom() are Qt's documented INCLUSIVE last-pixel edge, not the
+            # true edge (x()+width()/y()+height()) — using .right()/.bottom() directly here
+            # was off by one, confirmed live as an 8px gap instead of the intended 10px.
+            _HEADER_RIGHT_MARGIN = 10
+            strip_right_edge = strip_rect.x() + strip_rect.width()
+            strip_bottom_edge = strip_rect.y() + strip_rect.height()
+            self._tag_more_label.setGeometry(
+                strip_right_edge - label_w - _HEADER_RIGHT_MARGIN,
+                strip_bottom_edge - label_h,
+                label_w,
+                label_h,
+            )
+            self._tag_more_label.show()
+            self._tag_more_label.raise_()
+        else:
+            self._tag_more_label.hide()
+
+    def _pack_tag_lines(self, tags: list[str], usable_w: int) -> tuple[int, bool]:
+        """Deterministically decide how many of `tags` fit in the strip's two lines, packing
+        by measured pixel width rather than trusting Qt's rich-text word-wrap to agree with
+        a separate height measurement. Returns (shown_count, truncated).
+
+        Mirrors the SAME chip shape _build_tag_display_html renders: a bullet + non-breaking
+        space + tag text, sep-joined by two regular spaces between chips on the same line —
+        if that HTML shape ever changes, this must change with it, or the two will disagree
+        about what a "chip" costs in pixels."""
+        if usable_w <= 0 or not tags:
+            return len(tags), False
+        fm = QFontMetrics(self._tag_display_label.font())
+        sep_w = fm.horizontalAdvance("  ")
+        chip_widths = [fm.horizontalAdvance(f"● {t}") for t in tags]
+
+        # Line 1: greedily pack chips until the next one would overflow.
+        line1_w = 0
+        i = 0
+        while i < len(tags):
+            add_w = chip_widths[i] + (sep_w if i > 0 else 0)
+            if line1_w + add_w > usable_w:
+                break
+            line1_w += add_w
+            i += 1
+        if i == len(tags):
+            return len(tags), False  # everything fit on one line
+
+        # Line 2: pack remaining chips, but only counting it a full fit if EVERYTHING
+        # remaining fits — otherwise we need to reserve corner space for "+N more" and
+        # re-pack knowing some chips must be dropped.
+        remaining = tags[i:]
+        remaining_widths = chip_widths[i:]
+        line2_w = 0
+        j = 0
+        while j < len(remaining):
+            add_w = remaining_widths[j] + (sep_w if j > 0 else 0)
+            if line2_w + add_w > usable_w:
+                break
+            line2_w += add_w
+            j += 1
+        if j == len(remaining):
+            return len(tags), False  # both lines cover everything, no truncation needed
+
+        # Truncated: re-pack line 2 leaving room for "+N more" on its right, where N is
+        # computed against whatever ends up shown (recomputed each shrink, since a smaller
+        # shown_count can mean a smaller more-label, freeing a little more room — but the
+        # loop is bounded and monotonic, so it always terminates).
+        shown_count = i + j
+        while shown_count > i:
+            more_count = len(tags) - shown_count
+            more_w = fm.horizontalAdvance(f"+{more_count} more") + 6 + 10  # gap + right margin
+            trial_w = 0
+            for k in range(shown_count - i):
+                trial_w += remaining_widths[k] + (sep_w if k > 0 else 0)
+            if trial_w + (sep_w if shown_count > i else 0) + more_w <= usable_w:
+                break
+            shown_count -= 1
+        return max(shown_count, i), True
+
+    def _build_tag_display_html(self, shown_tags: list[str], tag_colors: dict) -> str:
         sep = "  "
         dot_color  = self._theme.get("accent_light", "#ffffff")
         text_color = self._theme.get("accent_light", "#ffffff")
@@ -695,20 +792,15 @@ class BookDetailPanel(QWidget):
             else:
                 # Non-library context, or already the active library filter — inert.
                 parts.append(f'{dot_html}<span style="color:{text_color};"> {t.replace(chr(32), " ")}</span>')
-        if more > 0:
-            parts.append(
-                f'<a href="{self._MORE_LINK_HREF}" style="color:{text_color};text-decoration:underline;">'
-                f'+{more} more</a>'
-            )
         return sep.join(parts)
 
     def _on_tag_display_link_activated(self, href: str) -> None:
-        if href == self._MORE_LINK_HREF:
-            # This book's own Tags tab (add/remove tags here) — NOT open_tag_manager_requested,
-            # which opens the separate, library-wide Tag Manager panel and closes this one.
-            self._select_tab_by_name("Tags")
-        else:
-            self.tag_filter_requested.emit(href)
+        self.tag_filter_requested.emit(href)
+
+    def _on_tag_more_clicked(self) -> None:
+        # This book's own Tags tab (add/remove tags here) — NOT open_tag_manager_requested,
+        # which opens the separate, library-wide Tag Manager panel and closes this one.
+        self._select_tab_by_name("Tags")
 
     def refresh_tag_display(self) -> None:
         """Re-run the "+N more" fit calculation against the panel's current width. Called by

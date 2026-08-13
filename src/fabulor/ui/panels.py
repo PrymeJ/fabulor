@@ -1563,11 +1563,15 @@ class PanelManager:
         self.book_detail_panel.setFixedWidth(panel_w)
         self.book_detail_panel.setFixedHeight(self.main_window.height() - book_detail_panel_y)
         self.book_detail_panel.move(panel_w, book_detail_panel_y)
-        # load_book() (called just before this, in open_book_detail) ran the tag-display
-        # "+N more" fit calculation against whatever width the panel had BEFORE this
-        # setFixedWidth — on the very first book-detail open in a session that's the
-        # widget's un-laid-out default (640px), not the real ~284px usable width, so the
-        # fit calc would under-truncate. Redo it now that the real width is in effect.
+        # setFixedWidth/setFixedHeight only update the PANEL's own geometry — Qt does not
+        # synchronously re-layout child widgets in response (confirmed live, 2026-08-13: a
+        # child QLabel still reported width()==640, its un-laid-out default, immediately
+        # after this setFixedWidth call, even with no show()/processEvents() in between).
+        # layout().activate() forces the pending layout pass through immediately, so
+        # refresh_tag_display() below sees the real ~284px usable width instead of the
+        # stale default — without it, the "+N more" fit calculation silently measured
+        # against the wrong width and could under-truncate.
+        self.book_detail_panel.layout().activate()
         self.book_detail_panel.refresh_tag_display()
         self.book_detail_panel.show()
         self.book_detail_panel.raise_()
