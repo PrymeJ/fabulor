@@ -1,3 +1,51 @@
+## Session Summary — 2026-08-13 — Book Detail tags: "+N more" overflow link (deterministic width-packed fit, not trusted heightForWidth) and an add-tag-field stale-layout position bug. `main`
+
+Two independent Book Detail tag bugs, reported together via screenshots. (1) The tag-display header
+strip (the small pill row above the Stats/History/Tags/Cover tabs) silently overflowed past its
+fixed two-line height when a book had several long tags, with no indication more existed. (2) The
+"Add tag…" field sat one row lower than its correct position after adding then removing tags — a
+`FlowLayout` stale-geometry bug, not touched again after its first fix.
+
+Bug 2 was quick: `FlowLayout.sizeHint()` returns a single item's size, not the true wrapped total,
+so the ancestor `QVBoxLayout`'s cached height goes stale specifically on SHRINK (confirmed via a
+live geometry probe — `heightForWidth` recomputed correctly on its own, the ancestor just never
+re-queried it). Fixed with `self._tag_chip_layout.invalidate()` + the parent layout's `activate()`
+after every chip rebuild (`_rebuild_tag_chips`).
+
+Bug 1 took several live-tested attempts before landing correctly, each ruled out by a real
+screenshot rather than by continuing to trust a headless measurement — worth recording because two
+different measurement techniques both turned out to disagree with the real render on this specific
+label: `QLabel.heightForWidth()` reported "fits" for cases that then rendered into the reserved
+corner anyway, and a follow-up pixel-grab cross-check was ALSO unreliable, because the label paints
+with no background of its own (transparent, inherits the panel behind it), so sampling a "background
+pixel" to detect content produced false positives. The fix that finally held: `_pack_tag_lines`
+measures each tag chip's real width via `QFontMetrics` and packs two lines by hand — fully
+deterministic, since the same widths that decide how many tags are shown are the widths Qt is then
+asked to lay out; there is nothing left for a separate measurement to disagree with.
+
+"+N more" (when tags overflow) is a separate `_ClickableLabel`, not trailing text inside the tag
+label's own rich text — inline text inherited the tags' own accent color and sat with no visual
+break from the last tag, reading as just another tag rather than a distinct affordance. It opens
+this book's own Tags tab (`_select_tab_by_name`, the same tab-switch `load_book` already used, now
+shared) — NOT `open_tag_manager_requested`, the separate library-wide Tag Manager panel, which was
+wired first by mistake and corrected once flagged. Two supporting geometry bugs found along the way:
+`setFixedWidth` on the panel doesn't synchronously relayout child widgets, so `PanelManager.
+_start_book_detail_entry` needs an explicit `layout().activate()` before re-running the fit
+calculation, or it runs against the child label's stale ~640px un-laid-out default; and the
+more-label's corner position used Qt's inclusive `QRect.right()`/`.bottom()` instead of
+`x()+width()`/`y()+height()`, landing its right margin at 8px instead of the intended 10px.
+
+Centered alignment was deliberately kept for BOTH lines even while truncated, including the natural
+gap line 1 gets when its last-fitting tag is short — an earlier attempt switched only the truncated
+case to left-alignment, which reserves the corner reliably but produces an ugly matching gap on line
+1 with nothing to fill it (line 2 at least has "+N more" there); rejected on sight, live, before it
+was ever committed.
+
+Full investigation trail — the three superseded approaches, why each one failed, and the pixel-grab
+false-positive detail — in NOTES.md, 2026-08-13. Commits: `a255151`, `4f2767a`, `ac58651`.
+
+---
+
 ## Session Summary — 2026-08-12 Session 4 — Book Detail History tab: viewport/wheel/keyboard-nav clipping fixed, then two hover/keyboard-selection conflicts and a focus-strand bug found and fixed via live interaction testing. `main`
 
 Continuation of Session 3's row-snap work, but a different, architecturally unrelated widget: the

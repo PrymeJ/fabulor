@@ -1,3 +1,124 @@
+## 2026-08-13 — Book Detail tags: "+N more" overflow link and an add-tag-field stale-`FlowLayout` position bug
+
+Two independent bugs in `book_detail_panel.py`'s tag UI, reported together via screenshots across
+several books (The Magic Mountain, Annihilation, Swann's Way, The Dutch House, The Women). Commits:
+`a255151`, `4f2767a`, `ac58651`.
+
+### Bug 1 — Add-tag field sat one row lower after adding then removing tags
+
+`_tag_chip_layout` is a `FlowLayout` (`ui/flow_layout.py`) wrapping the tag chips; `_tag_input_widget`
+(the "Add tag…" field + button) sits below it in the same outer `QVBoxLayout`. Comparing screenshots
+of the same book (The Women) with 0 tags vs. after adding-then-removing 3 tags showed the field one
+row lower in the second case, even though both should look identical (no tags = no tags).
+
+Root cause, confirmed with a live geometry probe (constructing the widget tree standalone and
+reading real `.geometry()`/`.sizeHint()` values before and after each step, not computed offscreen):
+`FlowLayout.sizeHint()` returns `minimumSize()` — the max of each item's own `minimumSize()`, NOT the
+true wrapped-height total `heightForWidth()` correctly computes. The parent `QVBoxLayout` only gets
+the correct wrapped height via `heightForWidth`, and Qt's cache for that goes stale specifically on
+SHRINK: probe output showed `container.heightForWidth(270)` correctly dropping from 195 to 18 after
+chips were removed, while the sibling `input_widget`'s `y()` stayed at its expanded position (212)
+until an explicit `flow.invalidate(); outer.activate()` was called, at which point it snapped to the
+correct 35. Growing (adding chips) never showed this staleness — only shrinking did, which is why the
+bug was invisible on the very first add and only surfaced after a remove.
+
+Fix: `_rebuild_tag_chips` (called by both add and remove) now calls
+`self._tag_chip_layout.invalidate()` then `self._tag_chip_container.parentWidget().layout().activate()`
+right after rebuilding the chip widgets, before `_rebuild_tag_display` runs.
+
+### Bug 2 — Tag-display header strip silently overflowed with no "+N more" indication
+
+The small tag-dot strip above the Stats/History/Tags/Cover tabs (`_tag_display_label`, a single
+`QLabel` with rich-text tag chips, `setFixedHeight(38)` — two lines) had no truncation: a book with
+several long tags (worst case, Annihilation: 5 tags near `MAX_TAG_LENGTH`=20 chars) simply overflowed
+or clipped past the fixed height with no way to see the rest short of opening the Tags tab blind.
+Wanted: truncate to what fits in two lines, with a "+N more" affordance at the strip's bottom-right
+that opens this book's own Tags tab.
+
+This went through three superseded implementations before landing correctly — recorded in full
+because two DIFFERENT measurement techniques both independently disagreed with the real render on
+this exact label, which is the transferable lesson, not any one specific number.
+
+**Attempt 1 — inline `<a href>` trailing the tag HTML, fit via `heightForWidth`.** The "+N more" text
+was appended directly into the same rich-text block as the tags, using `QLabel.heightForWidth()`
+against a shrinking `shown_count` to decide the cutoff. Two real bugs surfaced live: it read in the
+theme's accent color (same as the tags themselves) with no visual break, so it looked like just
+another tag rather than a distinct affordance; and clicking it was wired to
+`open_tag_manager_requested` — the SEPARATE, library-wide Tag Manager panel, which closes Book Detail
+entirely — when the actual ask was this book's own Tags tab. Corrected to a dedicated
+`_select_tab_by_name` helper (factored out of `load_book`'s existing tab-switch loop, so both share
+one implementation) once flagged.
+
+**Attempt 2 — separate `_ClickableLabel` pinned to the corner, gutter reserved via a narrower
+`heightForWidth` measure.** Splitting "+N more" into its own widget (own color, own click target)
+fixed the visual-break problem. To reserve space for it, the fit loop measured
+`heightForWidth(narrow_w)` — a HYPOTHETICAL narrower width — while the label was still rendered
+CENTERED at its real, full width. This does not work: `heightForWidth` at a narrower width predicts
+how tall text WOULD be if wrapped narrower, but does not change how the label actually wraps when
+painted at its real width, and centering means any slack a line has splits to BOTH sides, not
+reliably the right. Confirmed live (screenshot): tag text rendered well past the "+N more" label's
+left edge, overlapping it, despite the fit loop reporting success. A left-alignment variant (wrapping
+the HTML in a fixed-width `<div>`, switching only the truncated case to left-align) was tried next
+and DID make the measurement and the real paint agree — verified directly by grabbing the live label
+as a pixmap and pixel-scanning for the rightmost non-background pixel, confirming it stayed inside
+the intended width. But it was rejected on sight, live, before being kept: with only 1-2 short tags
+fitting on line 1 (because the tag that would have filled it got bumped down or dropped), line 1 got
+a large, obviously-empty-looking gap on the right that nothing filled — line 2 at least has "+N more"
+occupying the equivalent space, so only line 1 looked broken. The user's own framing: centering's
+natural per-line gap looks intentional (it's how every untruncated multi-tag line already looks);
+uniformly narrowing BOTH lines to force a gutter does not.
+
+**Attempt 3 — same corner label, fit decided by `heightForWidth` PLUS a pixel-grab corner-content
+check, still centered.** Reverting to centered alignment (no `<div>` narrowing) for both lines,
+keeping only line 1's natural gap. To verify the last line's centered content actually cleared the
+bottom-right corner (since centering doesn't guarantee that), a new `_corner_has_content` check
+`grab()`bed the live label and scanned its bottom-right region for pixels differing from a sampled
+"background" pixel at `(2,2)`. This ALSO proved unreliable, for a different and independent reason:
+`tag_display_chip` (the label's QSS object name) sets no `background-color` of its own — it is
+transparent and inherits whatever is behind it — so `grab()`ing it and sampling a "background" pixel
+measures an undefined/inconsistent transparently-composited render, not a stable "empty" baseline. A
+first sub-bug (sizing the scanned corner region against the fixed worst-case `_MAX_MORE_TEXT =
+"+4 more"` instead of the actual candidate count's real text) was found and fixed by inspection, but
+the live count still came out wrong afterward (reported: "no difference") — confirming the pixel-grab
+premise itself, not just that one input to it, was the problem.
+
+**Fix that held — `_pack_tag_lines`: deterministic width-packing via `QFontMetrics`, no rendered-then-
+measured round-trip at all.** Rather than build HTML, hand it to Qt, and then ask Qt (via
+`heightForWidth` or a pixel grab) whether the result fits, `_pack_tag_lines` measures each tag chip's
+real pixel width directly (`QFontMetrics.horizontalAdvance("● " + tag)`, mirroring the exact chip
+shape `_build_tag_display_html` renders — bullet + non-breaking space + tag text, chips joined by a
+two-space separator) and packs them into line 1 then line 2 by hand, reserving room for "+N more" on
+line 2 only when a remainder actually needs it. This is fully deterministic because the same numbers
+that decide `shown_count` are the numbers Qt is then asked to lay out — there is no second
+measurement of the same content to possibly disagree with the first. Verified live across both
+target cases: Annihilation's 5 max-length tags correctly show 3 with "+2 more" (both the shown-count
+AND the right-margin gap matched, confirmed via direct pixel/geometry checks before the corner-grab
+approach was abandoned); The Magic Mountain's 5 short tags still show all 5, fully centered, exactly
+as before — the untruncated path was never touched by any of this.
+
+Two supporting geometry bugs found and fixed along the way, independent of the packing algorithm
+itself:
+
+- **`setFixedWidth` on a panel does not synchronously relayout its children.** Confirmed live: a
+  child `QLabel`'s `width()` still read 640 (its un-laid-out default) immediately after
+  `self.book_detail_panel.setFixedWidth(panel_w)` in `PanelManager._start_book_detail_entry`, with no
+  `show()`/`processEvents()` in between — this made the very first book-detail open of a session (or
+  any open, before this was found) compute the tag fit against the wrong width. `self.book_detail_
+  panel.layout().activate()` immediately after the resize forces the pending layout pass through
+  synchronously; `refresh_tag_display()` (a small public method added to `BookDetailPanel` for this)
+  is called right after, so the fit calculation always sees the real ~284px usable width.
+- **`QRect.right()`/`.bottom()` are Qt's documented INCLUSIVE last-pixel edge, not the true edge** —
+  see the existing CLAUDE.md Debugging-discipline bullet on this exact gotcha. Positioning the
+  more-label against `strip_rect.right() - label_w - margin` produced an 8px gap instead of the
+  intended 10px (matching `header_layout`'s own `setContentsMargins(10, ...)`); fixed by computing
+  `strip_rect.x() + strip_rect.width()` (and the equivalent for the bottom edge) instead.
+
+"+N more" was also given a distinct color (`text` theme key at 0.75 alpha, not `accent_light` — the
+tags' own color) so it reads as UI chrome rather than another tag, and later had its underline
+removed on request (kept the color-only distinction). Both changes are in `_rebuild_tag_display`.
+
+---
+
 ## 2026-08-12 Session 4 — Book Detail History tab: viewport/wheel/keyboard-nav clipping, then two hover/keyboard conflicts, then a focus-strand bug — four fixes across three commits, three found only after the previous one was verified live
 
 Continuation of the Session 3 scrollbar-jump work, but in a different widget: the History tab
