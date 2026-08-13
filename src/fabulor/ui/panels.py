@@ -386,18 +386,30 @@ class PanelManager:
         the overlay is a child of content_container while Book Detail is a child
         of main_window raised above it.
 
-        The visual_area half is NOT parked and still goes to 0 — it is a
-        paint-time effect on a live widget, not a cached pixmap, so there is no
-        frame to freeze. Leaving its 1500ms tween running would let
-        _grab_and_blur bake a PARTIALLY blurred visual_area into Book Detail's
-        own grab, then blur that again — a double blur whose strength depends on
-        where the tween happened to be. The asymmetry is forced, not chosen.
+        THE VISUAL_AREA BLUR IS LEFT UP ENTIRELY — no setBlurRadius(0), no
+        _clear_visual_area_clip, here or anywhere on the Book Detail path. Only
+        the ANIMATION is stopped, so no tween is left running under the panel.
 
-        Unconditional on get_blur_enabled(): every call below is a no-op when blur
-        is off (park_for_panel early-exits on _active=False, setBlurRadius(0) on an
-        already-0 effect is free, _clear_visual_area_clip nulls an already-null
-        clip), and being unconditional means a mid-session backdrop-mode change
-        cannot strand a live blur.
+        Zeroing it at open-START is what actually produced the reported crisp
+        flash (2026-08-14): the parked overlay only covers the transport strip
+        (measured QRect(10, 300, 260, 198)), while visual_area owns everything
+        from y=56 up to it — so dropping that radius snapped ~2/3 of the window
+        sharp while Book Detail was still sliding over it.
+
+        The "double blur" this teardown was believed to prevent — _grab_and_blur
+        baking a blurred visual_area into Book Detail's frost, then blurring it
+        again — does not occur on this path. frost_panel_backdrop's grab hides
+        only _active_panel (Book Detail itself), so what it photographs is the
+        UNDERLAY, and Stats/Library are opaque over the whole visual_area region.
+        A live visual_area blur is simply not in that grab. Verified live: moving
+        the teardown to slide-FINISHED (immediately before the grab) fixed the
+        open but made the CLOSE read crisp-then-blur; removing it altogether is
+        correct on both transitions.
+
+        Unconditional on get_blur_enabled(): both calls below are a no-op when
+        blur is off (park_for_panel early-exits on _active=False, and stopping an
+        idle animation is free), so a mid-session backdrop-mode change cannot
+        strand a live blur.
 
         blur_animation.stop() here emits no `finished` — nothing subscribes to
         learn about it (see the _settled_watch_timer note in __init__), and it is
@@ -407,8 +419,6 @@ class PanelManager:
         """
         self._transport_bar_blur.park_for_panel()
         self.blur_animation.stop()
-        self.blur_effect.setBlurRadius(0)
-        self._clear_visual_area_clip()
 
     def _resume_blur_after_book_detail(self):
         """Re-arm the underlying panel's blur once Book Detail is fully hidden.
@@ -467,8 +477,12 @@ class PanelManager:
             # Nothing reusable was parked (blur was off, the underlay was opaque,
             # or the park was already dropped) — fall back to the original path.
             self._apply_transport_bar_blur(panel)
-        # animate=False: the backdrop the user is returning to was already blurred
-        # before Book Detail opened, so replaying the 1500ms build reads as a
+        # Re-assert the visual_area clip and radius. Normally a no-op now — the
+        # Book Detail path never drops them (see _park_blur_for_book_detail) and
+        # _apply_visual_area_clip recomputes from live geometry — but it is what
+        # recovers the blur if anything else zeroed it while Book Detail was
+        # open. animate=False either way: the backdrop the user is returning to
+        # was already blurred, so replaying the 1500ms build would read as a
         # re-render rather than a softening.
         self._start_visual_area_blur(panel, animate=False)
 
@@ -1631,6 +1645,15 @@ class PanelManager:
                     _on_book_detail_slide_finished)
             except (TypeError, RuntimeError):
                 pass
+            # NO visual_area teardown here, and none at open-start either — see
+            # _park_blur_for_book_detail. The frost grab below hides only
+            # _active_panel (Book Detail itself), so what it photographs is the
+            # UNDERLAY — Stats/Library — which is opaque and covers the
+            # visual_area region entirely. A live visual_area blur is therefore
+            # not in the grab at all, and the "double blur" it was zeroed to
+            # prevent cannot occur on this path. Confirmed live 2026-08-14:
+            # dropping the radius here made the close transition read
+            # crisp-then-blur; leaving it up is correct on both transitions.
             # Book Detail spans BOTH blur regions, so it frosts via the grab overlay
             # over its whole area rather than visual_area's paint-time effect:
             # ClippedBlurEffect lives on visual_area, which is inset 10px inside
