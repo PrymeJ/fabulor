@@ -1,3 +1,74 @@
+## Session Summary — 2026-08-13 Session 3 — Book Detail Stats/History tab alignment: furthest-position bar width, pct-label alignment, and History-row bar vertical position. `main`
+
+Two commits, following a long live-tested back-and-forth on the Stats tab's "Furthest position"
+row, requested so that switching between the Stats and History tabs feels smoother — shared elements
+(the range bar, the percentage label) should land in the same screen position across both tabs
+instead of visibly jumping. Three sub-fixes, one of which took several wrong turns before landing:
+
+**History-row bars, 1px vertical (landed cleanly).** History's row is a fixed 27px height with
+symmetric (2,2) top/bottom hbox margins, vs. Stats' Recent-history row's unconstrained height with a
+(2,0) split — the different margin ratio centered the bar 1px higher relative to its own row's text
+in History than in Stats, confirmed by pixel-scanning real grabs of both tabs (font-metrics-based
+baseline math reported identical offsets in both tabs and was wrong — only real rendered pixels
+settled it). Fixed via `_HistoryRowBarContainer`, a plain `QWidget` hosting the bar without a layout
+so it can be nudged down 1px independent of Qt's own vertical centering, without moving the row's
+text.
+
+**Furthest-position bar width and pct-label position (several false starts, then fixed).** The
+original ask was "3px longer, pct label 1px right" against the-then-current state. What actually
+shipped is materially different, because two of my own mechanisms were wrong in ways that only real
+rendering exposed:
+
+- A child-widget-overflows-its-container approach (`WA_PaintUnclipped` on the bar, to let it paint
+  past its own parent's bounds) does nothing on ordinary widgets — it's a documented no-op outside
+  `WA_PaintOnScreen` contexts. I inferred it would work from the property's name and shipped it
+  without checking; the user's live report ("no difference" after changing the overrun constant from
+  6 to 16) is what exposed that it was never taking effect. Reverted.
+- Pinning the pct label's width via `setFixedWidth` while it fed into a `QGridLayout` column's
+  stretch computation moved the label the WRONG direction (left, not right) — the width pin itself
+  stole space back from the stretched bar column before any deliberate nudge was applied, and the
+  net effect was more compression than nudge.
+- The eventual working structure: bar and pct label share one `QHBoxLayout` (bar, then the pct
+  label directly after) spanning the grid's columns 1–2 as a single cell, instead of occupying
+  separate grid columns fought over via the grid's own fixed 16px `horizontalSpacing` — the same
+  shape `_RecentHistoryWidget._make_row` already uses successfully. Within that hbox: the bar is
+  `setFixedWidth(158)` (a value the user measured directly against the real running app, matching
+  the History tab's row bar's right edge), followed by 13px of spacing, then the pct label.
+- Even with that structure right, spacing could not push the pct label past a hard ~13px wall no
+  matter how large a value was requested (13/14/16/20 all landed identically). Root cause:
+  `grid_widget` was added to its parent `outer` layout with stretch=0
+  (`outer.addWidget(grid_widget, 0, AlignTop)`), so the grid sized to its own `sizeHint` — dictated
+  by whichever row's content was widest (e.g. "Remaining"'s "6h 54m at 1.75x" text) — capping
+  column 1's real width regardless of what row 0 tried to claim. Fixed by giving `grid_widget`
+  stretch=1 so it fills the tab's actual width.
+- **The actual root cause, found last, by the user:** the pct label was `AlignLeft` in an
+  auto-sized box, while every other pct label in both tabs (Recent-history rows, History-tab rows)
+  is `AlignRight` in a `setFixedWidth(32)` box. A right-aligned label always ends flush at the same
+  x regardless of digit count; a left-aligned one starts at the same x but a narrower string ("0%",
+  "5%") simply doesn't reach as far right as a wider one ("28%", "100%"). This is why earlier
+  measurements of "the gap" gave inconsistent-seeming numbers (10px on one book, 13px on another) —
+  different books have different-width percentage text, and the box position was actually fine the
+  whole time; only the text's alignment inside it was wrong. No amount of spacing before the box
+  could have fixed a misalignment inside it. Fixed by matching the working pattern exactly:
+  `setFixedWidth(32)` + `AlignRight | AlignVCenter`.
+
+Also reverted, at the start of this session: a stray `outer.setContentsMargins(10, 10, 9, 20)` with
+a `# TEMP` comment, an experiment from a prior pass at this same problem that the user had already
+identified as the wrong lever (it pushed every row's content down, not just row 0's pct label) and
+left in place uncommitted. Restored to `(10, 10, 10, 20)`.
+
+**Lesson worth keeping:** the two mechanisms that cost the most time here (`WA_PaintUnclipped`, and
+treating a `setFixedWidth`-pinned label as decoupled from its grid column's stretch computation)
+were both plausible-sounding APIs/assumptions that were never checked against real rendering before
+being shipped — exactly the failure class CLAUDE.md's "never substitute a plausible explanation for
+a checked one" section already names. Geometry probes (position/size read via `mapTo`) did not catch
+either failure; only real pixel grabs and the user's own live report did.
+
+Full trail: this session's conversation; no separate NOTES.md writeup, since the CLAUDE.md rule
+above already covers the general lesson and the specific fix is fully captured in the commit itself.
+
+---
+
 ## Session Summary — 2026-08-13 Session 2 — Tag Management reopen race fixed, Tags scrollbar right-click snap added, and deferred wheel/arrow-key pitch correction for Library, Stats, and Tags. `main`
 
 Four commits. `0156fb9` fixed an intermittent failure to reopen the Tags panel from Book Detail's
