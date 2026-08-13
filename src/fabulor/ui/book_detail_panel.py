@@ -469,6 +469,17 @@ class BookDetailPanel(QWidget):
         fp_key.setObjectName("stats_key_label")
         self._furthest_pct_label = QLabel("")
         self._furthest_pct_label.setObjectName("stats_value_label")
+        # Matches the "below" pct labels exactly: AlignRight within a fixed-width
+        # box, so the text always sits flush against the box's right edge regardless
+        # of digit count ("0%" vs "100%"). Without this the label was AlignLeft in
+        # an auto-sized box, so narrower text (e.g. "0%", "5%") landed further left
+        # than wider text ("28%") even though the box itself was positioned
+        # correctly — no amount of spacing before the box could fix a text-alignment
+        # problem inside it. Confirmed live across three different books with
+        # different pct widths, 2026-08-13.
+        self._furthest_pct_label.setFixedWidth(32)
+        self._furthest_pct_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         fp_row = QHBoxLayout()
         fp_row.setContentsMargins(0, 0, 0, 0)
@@ -505,7 +516,15 @@ class BookDetailPanel(QWidget):
             self._stat_labels.append(v)
 
         grid.setColumnStretch(1, 1)
-        outer.addWidget(grid_widget, 0, Qt.AlignmentFlag.AlignTop)
+        # stretch=1 (was 0): grid_widget previously sized to its own sizeHint, which
+        # is dictated by whichever row's content is widest (e.g. "Remaining"'s
+        # "6h 54m at 1.75x" text) — capping column 1's real width at that content's
+        # width regardless of what row 0's bar+spacing tried to claim. Confirmed
+        # live: adding more spacing before the furthest-position pct label hit a
+        # hard wall at 13px no matter how much was requested, because there was no
+        # extra width left for column 1 to grow into. Stretching grid_widget to the
+        # tab's actual width removes that cap. Reported/fixed 2026-08-13.
+        outer.addWidget(grid_widget, 1, Qt.AlignmentFlag.AlignTop)
         outer.addStretch(1)
 
         self._history_header = QLabel("Recent history")
