@@ -1241,6 +1241,33 @@ class LibraryPanel(QFrame):
                 self._list_view.viewport().setCursor(Qt.ArrowCursor)
                 self._delegate._hover_book = None
                 self._on_view_left()
+            elif event.type() == QEvent.Type.Wheel:
+                # A manually DRAGGED scrollbar handle can rest off the row pitch (unlike a
+                # right-click jump, which the scrollbar_jump.py registry already snaps — see
+                # _library_snap in _setup_model_view). Native QListView wheel scrolling only
+                # ever applies a relative delta, so an off-pitch starting position persists
+                # through every subsequent flick instead of self-correcting, unlike the Tags
+                # panel's own wheel handler (tag_manager.py's _tag_rows_wheel), which already
+                # rounds its result to the nearest pitch every time. Reported live, 2026-08-12.
+                # Let native scrolling run first (this does NOT change the existing per-notch
+                # amount), then round the RESULT to the nearest row boundary on the next
+                # event-loop tick — the corrected value isn't available yet inside this filter,
+                # since eventFilter runs BEFORE QAbstractItemView applies its own scroll.
+                mode = self._delegate._view_mode
+                dim = ITEM_DIMENSIONS.get(mode, ITEM_DIMENSIONS["3 per row"])
+                h = dim["h"]
+                bar = self._list_view.verticalScrollBar()
+
+                def _snap_after_native_scroll(bar=bar, h=h):
+                    if h <= 0:
+                        return
+                    v = bar.value()
+                    snapped = round(v / h) * h
+                    snapped = max(bar.minimum(), min(bar.maximum(), snapped))
+                    if snapped != v:
+                        bar.setValue(snapped)
+
+                QTimer.singleShot(0, _snap_after_native_scroll)
         return super().eventFilter(obj, event)
 
 

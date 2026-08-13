@@ -1296,6 +1296,34 @@ class StatsRowListView(QListView):
                     return
         super().mousePressEvent(event)
 
+    def wheelEvent(self, event):
+        # Every row is a fixed, uniform _STATS_ROW_HEIGHT (StatsRowDelegate.sizeHint), so the
+        # scrollbar should always rest on a multiple of it — but a manually DRAGGED scrollbar
+        # handle can land off that boundary, and native wheel scrolling (this method does not
+        # otherwise override it — super() runs Qt's default per-notch amount, ~3 rows) only
+        # ever applies a relative delta, so an off-pitch starting position persists through
+        # every subsequent flick instead of self-correcting. Tags' own scrollbar
+        # (tag_manager.py's _tag_rows_wheel) already had this snap-on-scroll behavior; Library
+        # and Stats did not (reported live, 2026-08-12). Fix: let Qt's native wheel handling
+        # run first (unchanged amount/direction — this does NOT replace the existing ~3-row
+        # step with a different one), then round the RESULT to the nearest row boundary on the
+        # next event-loop tick (QTimer.singleShot(0, ...) — same idiom used throughout
+        # library.py for "after this paint/event cycle settles"; the corrected value isn't
+        # available yet inside this call, since eventFilter/override callbacks run BEFORE
+        # QAbstractItemView applies its own scroll).
+        super().wheelEvent(event)
+        bar = self.verticalScrollBar()
+        h = _STATS_ROW_HEIGHT
+
+        def _snap_after_native_scroll():
+            v = bar.value()
+            snapped = round(v / h) * h
+            snapped = max(bar.minimum(), min(bar.maximum(), snapped))
+            if snapped != v:
+                bar.setValue(snapped)
+
+        QTimer.singleShot(0, _snap_after_native_scroll)
+
 
 class HourlyHeatmap(QWidget):
     """Heatmap: columns = days (newest left), rows = hours 0–23 top to bottom.
