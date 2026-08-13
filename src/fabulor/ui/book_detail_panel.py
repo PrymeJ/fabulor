@@ -91,6 +91,32 @@ class _ClickableLabel(QLabel):
         super().mousePressEvent(event)
 
 
+class _HistoryRowBarContainer(QWidget):
+    """Hosts the History-tab row's range bar without a layout, so the bar can be
+    nudged 1px down relative to Qt's own AlignVCenter centering — matching where the
+    Stats-tab Recent-history row's bar sits relative to its own row's text, measured
+    by pixel-scanning real grabs of both tabs (see NOTES.md / this session's
+    investigation). History's row is a fixed 27px height with symmetric (2,2)
+    top/bottom hbox margins, vs. Stats' unconstrained-height row with a (2,0)
+    top/bottom split — the different margin ratio centers the bar 1px higher
+    relative to the row's own text than Stats' row does, even though both rows'
+    text sits at a consistent position relative to their own row. Nudging only the
+    bar (not the shared hbox margins) keeps the text position untouched."""
+
+    _Y_NUDGE = 1
+
+    def __init__(self, bar: '_RangeBar', parent=None):
+        super().__init__(parent)
+        self._bar = bar
+        bar.setParent(self)
+
+    def resizeEvent(self, event):
+        h = self._bar.height()
+        y = (self.height() - h) // 2 + self._Y_NUDGE
+        self._bar.setGeometry(0, y, self.width(), h)
+        super().resizeEvent(event)
+
+
 class BookDetailPanel(QWidget):
     close_requested = Signal()
     history_deleted = Signal()
@@ -410,8 +436,7 @@ class BookDetailPanel(QWidget):
     def _build_stats_tab(self) -> QWidget:
         widget = QWidget()
         outer = QVBoxLayout(widget)
-        # TEMP 9px right margin is wrong here just to match the History tab's percentage
-        outer.setContentsMargins(10, 10, 9, 20)
+        outer.setContentsMargins(10, 10, 10, 20)
         outer.setSpacing(12)
 
         from PySide6.QtGui import QColor
@@ -421,24 +446,44 @@ class BookDetailPanel(QWidget):
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
-        # Row 0: Furthest position | [bar stretches col 1] | pct
+        # Row 0: Furthest position | [bar+pct in one hbox, spanning cols 1-2]
+        #
+        # Bar and pct label share a single QHBoxLayout instead of occupying separate
+        # grid columns — the same mechanism _RecentHistoryWidget._make_row already
+        # uses for the Recent-history rows below. A grid-column approach (bar in
+        # col 1, pct in col 2, separated by the grid's own 16px horizontalSpacing)
+        # was tried and reverted: extending the bar into that fixed inter-column gap
+        # required either a child widget painting past its own parent's bounds
+        # (silently clipped — WA_PaintUnclipped turned out to be a documented no-op
+        # for ordinary widgets, not a fix) or resizing the container itself (which
+        # fed back into the grid's column-width computation and moved the pct label
+        # the wrong way). An hbox has no such fixed inter-item gap to fight.
+        #
+        # The bar's width (158) and the bar-to-pct spacing (14) were both set to
+        # exact pixel values measured live against the running app — the bar's
+        # right edge matching the History-tab row's bar right edge, the pct label's
+        # position matching the History-tab row's pct label position. Do not
+        # "simplify" either back to a stretch/auto-derived value without
+        # re-measuring live; see CLAUDE.md "user sees the rendered pixels" rule.
         fp_key = QLabel("Furthest position")
         fp_key.setObjectName("stats_key_label")
         self._furthest_pct_label = QLabel("")
         self._furthest_pct_label.setObjectName("stats_value_label")
 
-        fp_bar_row = QHBoxLayout()
-        fp_bar_row.setContentsMargins(0, 0, 0, 0)
-        fp_bar_row.setSpacing(0)
+        fp_row = QHBoxLayout()
+        fp_row.setContentsMargins(0, 0, 0, 0)
+        fp_row.setSpacing(0)
         self._furthest_bar = _RangeBar(0, 0, 1, QColor("#888"), QColor("#333"))
         self._furthest_bar.setFixedHeight(6)
-        fp_bar_row.addWidget(self._furthest_bar)
-        fp_bar_container = QWidget()
-        fp_bar_container.setLayout(fp_bar_row)
+        self._furthest_bar.setFixedWidth(158)
+        fp_row.addWidget(self._furthest_bar, stretch=1)
+        fp_row.addSpacing(13)
+        fp_row.addWidget(self._furthest_pct_label)
+        fp_row_container = QWidget()
+        fp_row_container.setLayout(fp_row)
 
-        grid.addWidget(fp_key,               0, 0, Qt.AlignmentFlag.AlignLeft)
-        grid.addWidget(fp_bar_container,     0, 1)
-        grid.addWidget(self._furthest_pct_label, 0, 2, Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(fp_key,           0, 0, Qt.AlignmentFlag.AlignLeft)
+        grid.addWidget(fp_row_container, 0, 1, 1, 2)
 
         stat_rows = [
             ("Remaining",      "—"),
@@ -2354,7 +2399,8 @@ class _HistoryRow(QWidget):
         self._bar = _RangeBar(pos_start, pos_end, duration, accent, bg,
                               negative_color=self._negative_color)
         self._bar.setFixedHeight(6)
-        hbox.addWidget(self._bar, stretch=1)
+        bar_container = _HistoryRowBarContainer(self._bar)
+        hbox.addWidget(bar_container, stretch=1)
 
         self._pct_label = QLabel(pct_text)
         self._pct_label.setObjectName("stats_value_label")
