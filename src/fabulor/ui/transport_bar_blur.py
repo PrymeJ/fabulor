@@ -329,6 +329,16 @@ class TransportBarBlurOverlay:
         # real repaint happened first.
         self._refresh_pending = False
 
+        # PARKED state (2026-08-14): the overlay is showing a FROZEN pixmap and
+        # is not live-grabbing. Set while Book Detail covers the underlying
+        # panel — see park_for_panel. Deliberately a SEPARATE flag rather than a
+        # third value of _active: four existing guards read `if not self._active`
+        # (refresh_dirty, _fire_rearm, _check_drag_ended, force_refresh_now), and
+        # each must keep answering "no, I am not live-grabbing" while parked, so
+        # nothing can re-grab over the frozen frame.
+        self._parked: bool = False
+        self._parked_panel: object = None  # QWidget ref or None
+
         # Retry flag for _rearm_after_decline() — kept separate from
         # _refresh_pending so a declined tick's retry never reads as observed
         # paint activity (see that method's docstring).
@@ -429,6 +439,18 @@ class TransportBarBlurOverlay:
         correct blur that peeks past the panel." Confirmed live, 2026-07-19),
         grabs+blurs the whole (clipped) region, shows the overlay, then arms
         dirty-tracking for subsequent updates while the panel stays open."""
+        # A new panel claiming the overlay always beats an old parked frame.
+        # Must run BEFORE every other branch here, including the
+        # _panel_hides_everything early-return below and the _active guard:
+        # _on_tag_filter_requested (app.py) calls _close_book_detail_flow() then
+        # _open_library_flow() synchronously, before _on_book_detail_hidden
+        # fires, so Library reaches this method while a frame is still parked.
+        # _active is False while parked, so without this the parked pixmap and
+        # geometry would be silently overwritten without ever going through
+        # unpark_for_panel — and the later _on_book_detail_hidden would then
+        # tear down Library's brand-new live overlay.
+        if self._parked:
+            self.hide_for_panel()
         if self._panel_hides_everything(panel):
             # Nothing behind this panel is visible — skip the grab entirely
             # rather than blurring an image nobody can see.
@@ -885,6 +907,114 @@ class TransportBarBlurOverlay:
         self._active_panel = None
         self._parked = False
         self._parked_panel = None
+
+    # --- park / unpark -------------------------------------------------------
+
+    def park_for_panel(self):
+        """Freeze the live overlay into a static backdrop and stop grabbing.
+
+        Used when Book Detail opens over an underlying panel. The underlay's
+        blurred transport bar stays on screen as a frozen image instead of being
+        discarded and re-grabbed at close — which is what produced a visible
+        crisp frame on both the open and the close (reported live 2026-08-14).
+
+        The parked frame needs no masking or reveal logic: _overlay is a child
+        of content_container, while Book Detail is a child of main_window raised
+        above it, so Book Detail occludes the parked frame by construction,
+        everywhere it covers it, on every frame. (Same Z-order fact that made an
+        early Book Detail frost attempt ship invisible — see CLAUDE.md, "A blur
+        overlay can only cover what shares its parent".)
+
+        HARD INVARIANT: never grab while parked. Re-grabbing calls
+        _grab_and_blur, which hides _active_panel while Book Detail is on top —
+        photographing Book Detail into the cache. That is the exact feedback
+        loop _suspend_blur_for_book_detail exists to prevent (measured
+        self-sustaining at ~64ms / ~15 grabs per second, NOTES.md 2026-07-27).
+        Every guard that keeps this true reads `if not self._active`, which
+        _disarm_grabbing sets False — hence _parked being a separate flag.
+        """
+        if not self._active or self._bounding_rect is None:
+            # Nothing live to park: blur off, or the underlay is opaque and
+            # show_for_panel already early-returned (_panel_hides_everything).
+            self._parked = False
+            return
+        # Freeze any in-flight fade at full opacity BEFORE disarming — a frame
+        # caught mid-fade and frozen at 0.4 would be a visible half-blur.
+        if self._fade_in_anim.state() == QPropertyAnimation.State.Running:
+            self._fade_in_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
+        self._disarm_grabbing()
+        self._parked = True
+        self._parked_panel = self._active_panel
+        # _overlay (shown), its pixmap, _bounding_rect and _active_panel are all
+        # deliberately left intact — that is what "parked" means.
+        logger.warning(
+            f"[TIMER-TRACE] park_for_panel: froze overlay for "
+            f"{self._parked_panel.objectName() if self._parked_panel else None!r} "
+            f"rect={self._bounding_rect}"
+        )
+
+    def unpark_for_panel(self, panel) -> bool:
+        """Re-arm live grabbing under an already-parked frame.
+
+        Returns True if the parked frame was reused, False if the caller must
+        fall back to show_for_panel (today's path).
+
+        STEP ORDERING IS LOAD-BEARING: `_active = True` must precede clearing
+        _parked/_parked_panel, which must precede force_refresh_now(), because
+        force_refresh_now guards on `not self._active` — and a future
+        `if self._parked:` branch in that method (the deferred stale-frame
+        invalidation pass) would short-circuit the refresh if _parked were still
+        set. Reordering these silently turns the refresh into a no-op.
+
+        The refresh at the end is NOT optional. show_for_panel grabs FIRST
+        (:463) and arms the tracker afterwards (:475-483); that tracker block
+        contains no grab and no force_refresh_now — its take_dirty_union() is a
+        reset, not a trigger. The parked path deliberately skips that initial
+        grab because the image is already on screen, so this is the one grab
+        that reconciles whatever changed while parked.
+        """
+        if not self._parked:
+            return False
+        if panel is not self._parked_panel or not panel.isVisible():
+            # A different panel, or the underlay went away while Book Detail was
+            # open (hide_all_panels paths) — the frozen frame is not reusable.
+            self.hide_for_panel()
+            return False
+        # Re-arm the tracker exactly as show_for_panel does at :475-483.
+        # Do NOT add a _grab_and_blur call here: the image is already on screen.
+        self._tracker = _DirtyRectTracker(
+            self._common_ancestor,
+            on_dirty=self._schedule_refresh,
+            is_suppressed=lambda: time.perf_counter() < self._grab_suppress_until,
+        )
+        self._tracker_widgets = self._all_tracked_widgets()
+        for widget in self._tracker_widgets:
+            widget.installEventFilter(self._tracker)
+        self._tracker.take_dirty_union()  # discard pre-arm dirt; triggers nothing
+        self._active = True
+        self._parked = False
+        self._parked_panel = None
+        logger.warning(
+            f"[TIMER-TRACE] unpark_for_panel: reused parked frame for "
+            f"{panel.objectName()!r}, re-armed and refreshing"
+        )
+        self.force_refresh_now()
+        return True
+
+    def discard_parked_frame(self):
+        """Drop a parked frame, if there is one. No-op otherwise.
+
+        Safe to call on any path: if the overlay has since been claimed by
+        another panel (show_for_panel drops a stale park at its entry), _parked
+        is already False and nothing happens. Called from
+        _resume_blur_after_book_detail's early-return branch, where the underlay
+        is gone — without it, the hide_all_panels paths
+        (_on_open_tag_manager_from_detail, _on_tag_filter_requested) would
+        strand a frozen blurred band over the transport bar.
+        """
+        if self._parked:
+            self.hide_for_panel()
 
     # -- geometry -------------------------------------------------------------
 
