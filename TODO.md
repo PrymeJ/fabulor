@@ -64,14 +64,54 @@ QSS background (`QWidget#book_detail_panel`, themes.py ~4019 — the panel sets
 `WA_StyledBackground`), the `visual_area` clip rect during that specific transition, or a cached
 pixmap elsewhere.
 
+**CORRECTION (same session, after comparing against `main`): this is NOT reachable on main.** An
+earlier version of this entry claimed it was; that was an assumption, never tested, and it is
+wrong. Checked live on `main`: panel closes, carousel scrolls sharp, blur fades in cleanly — late,
+but coherent, and Pryme calls it acceptable-if-not-ideal. The artifact is branch-specific.
+
+**What that comparison points at, and it is the most promising lead — but UNVERIFIED.** `main`'s
+`_suspend_blur_for_book_detail` does four things at open; the branch keeps only the first two
+(`b94a315` deliberately removed the other two):
+
+    self._clear_transport_bar_blur()      # branch: park_for_panel() instead
+    self.blur_animation.stop()            # branch: kept
+    self.blur_effect.setBlurRadius(0)     # branch: REMOVED
+    self._clear_visual_area_clip()        # branch: REMOVED
+
+So on the branch, when the book is excluded, the `visual_area` blur is still LIVE at radius 10 with
+its clip still describing the Stats panel — which is gone, with the carousel now in that region.
+"Top part scrolling without blur, bottom stale" reads like a clip boundary in the wrong place
+rather than a frozen snapshot, which would also explain why all three snapshot fixes above changed
+nothing. **Probe the clip rect and radius at removal time before writing any fix.**
+
+Note the tension if that lead is right: removing those two lines is exactly what fixed the original
+crisp-flash complaint (`b94a315`), so the fix is NOT to restore them. It would be to clear or
+recompute the clip when the underlay goes away.
+
+**The deeper question Pryme raised, worth settling first: why is anything grabbed here at all?**
+`ClippedBlurEffect` is a live paint-time effect that follows moving content — it is what keeps the
+carousel scrolling frosted on `main`. The grab-and-blur overlay exists only because `visual_area` is
+inset 10px and does not contain the transport bar, and because a panel parented to `main_window`
+sits in a different subtree — i.e. it is a workaround for widget-tree geometry, not a statement
+about how blur should work. For Book Detail over Stats, most of the frosted region
+(`QRect(0, 56, 270, 498)`) is territory the live effect already covers correctly. Pryme's summary:
+*"there is nothing to grab cleanly here, it is scrolling all the time, and the grab rect is
+colliding."* Measure which parts of that rect are genuinely outside `visual_area`'s reach (x=0..10,
+x=260..270, and the transport bar) before assuming a grab is needed for the middle at all.
+
+**Agreed fallback if a proper fix does not land:** accept `main`'s behaviour for this one
+transition — crisp, then blur fading in — for the no-book carousel state after a book is removed
+from Stats. Not ideal, but coherent, and strictly better than the patchwork.
+
 **Next step should be to colour the widgets, not to read more code** — this is precisely the case
 CLAUDE.md's "colour widgets first when a bug is about which widget owns which pixel" bullet covers,
 and four inference-led attempts in one session each produced a correct-but-irrelevant fix. The two
 probes that were actually run (a stack trace on `hide_for_panel`, a state dump at
 `force_refresh_now`) each settled their question immediately.
 
-**Not caused by the blur-park work** — it is reachable on `main`. That work made it more visible by
-leaving a live blur where there used to be none.
+**Branch-specific** — see the CORRECTION above. Introduced by this branch's blur-park work, most
+likely by `b94a315` leaving a live `visual_area` blur and clip where `main` had already zeroed
+both. Do not treat it as pre-existing.
 
 ### Book Detail frost — stale content on the frosted side (found live 2026-08-14)
 Both reported with the panel alpha dropped to make the two sides comparable. The frosted region
