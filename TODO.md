@@ -37,6 +37,30 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ### Blur grab hide/show side effects
 - [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
 
+### Book Detail frost — stale content on the frosted side (found live 2026-08-14)
+Both reported with the panel alpha dropped to make the two sides comparable. The frosted region
+shows a stale snapshot while the un-frosted right gutter (x=270..300, live since `0a0ed3c`) updates
+correctly — the contrast is what made these visible, so they are not regressions from that fix.
+- [2026-08-14] **Transport button hover/press state sticks.** Hover the speed button and leave: the
+  frosted side stays highlighted while the gutter side reverts. Also the reverse (pressed on the
+  live side, unhighlighted on the frosted side). Dropping the hover style while a panel is open in
+  blur mode would mask it, but is explicitly NOT the direction wanted.
+- [2026-08-14] **Next-chapter tooltip is stale.** Hovering Next shows the next chapter's title; the
+  frosted side keeps or omits it depending on what was on screen at grab time. Rare enough to be
+  low priority, and does not need to be 100% live.
+- **Mechanism, partly established.** `frost_panel_backdrop` installs no `_DirtyRectTracker` and its
+  docstring claims the frost is therefore fully STATIC. **That claim is wrong** — Pryme observes the
+  remaining-time text ticking under the frost (skipping a second here and there, but visibly
+  moving), so some refresh path reaches it. Not yet identified: the repeated
+  `QRect(48, 453, 204, 64)` grabs in the log occur with NO panel open, so they are the ordinary
+  transport-bar dirty refresh, not the frost. Find what actually refreshes the frost before
+  designing a fix — the buttons and tooltip would likely just need to ride the same path.
+- **Why the obvious fix is blocked.** Adding a tracker to the frost re-arms `_grab_and_blur`, whose
+  hide/show cycle re-exposes the tracked widgets and triggers the next grab — the ~64ms
+  self-sustaining loop at ~15 grabs/sec measured 2026-07-27. Needs either a refresh path that skips
+  hide/show, or targeted invalidation on the specific events that matter. Not a small change.
+- Acceptable target per Pryme: does not have to be fully live, just not visibly stuck.
+
 ### Book Detail panel blur timing
 - [2026-08-14] Both 2026-08-01 entries below are ADDRESSED by the park/unpark change (branch
   `fix/book-detail-blur-park`) — `hide_for_panel` split into `_disarm_grabbing` + display teardown,
