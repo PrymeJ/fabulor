@@ -37,6 +37,42 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 ### Blur grab hide/show side effects
 - [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
 
+### Garbled backdrop after excluding the playing book from Book Detail (UNDIAGNOSED, 2026-08-14)
+**Repro:** play a book, open Stats, wait for the blur to settle, open Book Detail on that book,
+exclude it via the trash button (Book Detail stays open — `_on_book_detail_removed` only closes it
+for `context=='library'`), then close the panel.
+
+**Symptom (Pryme's words):** the top part scrolls without blur while the bottom is stale from the
+open, showing the half speed button and the transport buttons blurred. Then it catches up and shows
+the full blurred scrolling carousel. Only the garbling is wrong — the frosted scrolling afterwards
+is correct.
+
+**Three candidate mechanisms were each ruled out BY PROBE, not by reasoning.** Do not re-propose
+any of them without new evidence:
+1. *The carousel's own blur clip* — `blurred_panel()` returned the underlay (Stats) instead of Book
+   Detail, giving an empty clip. Fixed, artifact unchanged. Reverted (`7251782`).
+2. *The parked transport frame* — `force_refresh_now` no-ops while parked, so the frozen frame
+   survived. Fixed via a `_parked_frame_invalid` flag; probe confirmed the branch fires
+   (`parked=True`, no follow-up grab) and the artifact was unchanged. Reverted (`b15b76a`).
+3. *The Book Detail panel frost* — `frost_panel_backdrop` grabs once at slide-finish and never
+   refreshes. Dropping it on invalidation was implemented and probe-confirmed to run
+   (`frosted_panel='book_detail_panel'`, cleared, never re-grabbed). Artifact unchanged. Not
+   committed.
+
+**So the image is held by something not yet identified.** Unchecked candidates: Book Detail's own
+QSS background (`QWidget#book_detail_panel`, themes.py ~4019 — the panel sets
+`WA_StyledBackground`), the `visual_area` clip rect during that specific transition, or a cached
+pixmap elsewhere.
+
+**Next step should be to colour the widgets, not to read more code** — this is precisely the case
+CLAUDE.md's "colour widgets first when a bug is about which widget owns which pixel" bullet covers,
+and four inference-led attempts in one session each produced a correct-but-irrelevant fix. The two
+probes that were actually run (a stack trace on `hide_for_panel`, a state dump at
+`force_refresh_now`) each settled their question immediately.
+
+**Not caused by the blur-park work** — it is reachable on `main`. That work made it more visible by
+leaving a live blur where there used to be none.
+
 ### Book Detail frost — stale content on the frosted side (found live 2026-08-14)
 Both reported with the panel alpha dropped to make the two sides comparable. The frosted region
 shows a stale snapshot while the un-frosted right gutter (x=270..300, live since `0a0ed3c`) updates
