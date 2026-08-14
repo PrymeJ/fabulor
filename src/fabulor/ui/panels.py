@@ -562,7 +562,23 @@ class PanelManager:
         Used by MainWindow._carousel_clip_rect: the carousel is a SIBLING of
         visual_area with its own effect, so it needs to know which panel edge to
         clip against. Returns None for the library panel — it is full-width and
-        opaque, so nothing behind it blurs (see _apply_visual_area_clip)."""
+        opaque, so nothing behind it blurs (see _apply_visual_area_clip).
+
+        BOOK DETAIL WINS over whatever it is covering (2026-08-14). It is
+        full-width from y=32 down, so when it is open it — not the underlay — is
+        the panel whose edge the carousel must clip against. Checking it first
+        matters because Book Detail opens OVER another panel and both are
+        visible at once: returning the underlay (Stats) made
+        _carousel_clip_rect intersect the carousel's rect with STATS' rect,
+        which do not overlap, yielding an EMPTY clip. An empty clip means "blur
+        nothing" (ClippedBlurEffect.draw draws the source straight through), so
+        a carousel built while Book Detail was open came up sharp inside an
+        otherwise-blurred region — the stale band reported live 2026-08-14 after
+        removing the playing book from Book Detail over Stats, which builds the
+        carousel underneath the still-open panel.
+        """
+        if self.book_detail_panel.isVisible():
+            return self.book_detail_panel
         for panel in (self.settings_panel, self.speed_panel, self.sleep_panel, self.sprint_panel,
                       self.stats_panel, self.tags_panel):
             if panel.isVisible():
