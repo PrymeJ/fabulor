@@ -338,6 +338,10 @@ class TransportBarBlurOverlay:
         # nothing can re-grab over the frozen frame.
         self._parked: bool = False
         self._parked_panel: object = None  # QWidget ref or None
+        # Set when a content change lands while parked that the frozen frame
+        # cannot reflect (see force_refresh_now). unpark_for_panel discards
+        # rather than reuses such a frame.
+        self._parked_frame_invalid: bool = False
 
         # Retry flag for _rearm_after_decline() — kept separate from
         # _refresh_pending so a declined tick's retry never reads as observed
@@ -830,7 +834,39 @@ class TransportBarBlurOverlay:
         _DirtyRectTracker would never see it). Not a hot loop, not called on
         hover — wired only to QTabWidget.currentChanged (panels.py) and
         show_for_panel's own existing mandatory first pass. No-op if the overlay
-        isn't currently active, same as every other entry point here."""
+        isn't currently active, same as every other entry point here.
+
+        PARKED case (2026-08-14): a parked frame cannot be refreshed in place —
+        re-grabbing would run _grab_and_blur, which hides _active_panel while
+        Book Detail is on top of it and would photograph Book Detail into the
+        cache (the ~15 grabs/sec feedback loop park_for_panel exists to stop).
+        So the frame is marked invalid instead, and unpark_for_panel discards it
+        rather than reusing it. Handling this HERE rather than at each call site
+        means every present and future caller of force_refresh_now gets parked
+        invalidation for free — including _on_book_removed (app.py), which is
+        what surfaced this: excluding the playing book hides the transport
+        chrome, and the frozen frame then sat over the region the ambient
+        CoverCarousel had just been given, showing a stale blurred band across
+        it (reported live 2026-08-14). That is the same seam the isVisible()
+        filter in _compute_bounding_rect was added to prevent on 2026-07-27 —
+        that guard covers a rect being COMPUTED wrong, this covers a correct
+        rect going STALE."""
+        if self._parked:
+            self._parked_frame_invalid = True
+            # Drop it NOW rather than only flagging it for unpark to discard at
+            # close. The frame depicts chrome that has ALREADY gone — measured
+            # 2026-08-14: the parked rect is QRect(10, 300, 260, 198), the full
+            # transport bar, while a genuine post-removal grab is
+            # QRect(98, 474, 104, 24), because _set_interface_visible(False)
+            # hid almost all of it. Leaving it up until close meant the stale
+            # image stayed composited over the region the ambient carousel had
+            # just been given, and even after unpark discarded it there was a
+            # one-frame flash of it before the fallback grab landed (reported
+            # live). Hiding it here means the region simply shows live content
+            # from this moment on; _parked_frame_invalid still tells unpark to
+            # take the fresh-grab path rather than trying to reuse anything.
+            self._overlay.hide()
+            return
         if not self._active or self._bounding_rect is None:
             return
         if self._active_panel is not None and self._panel_hides_everything(self._active_panel):
@@ -907,6 +943,7 @@ class TransportBarBlurOverlay:
         self._active_panel = None
         self._parked = False
         self._parked_panel = None
+        self._parked_frame_invalid = False
 
     # --- park / unpark -------------------------------------------------------
 
@@ -946,6 +983,8 @@ class TransportBarBlurOverlay:
         self._disarm_grabbing()
         self._parked = True
         self._parked_panel = self._active_panel
+        # Fresh park, fresh frame — never inherit a previous session's verdict.
+        self._parked_frame_invalid = False
         # _overlay (shown), its pixmap, _bounding_rect and _active_panel are all
         # deliberately left intact — that is what "parked" means.
         logger.warning(
@@ -976,9 +1015,13 @@ class TransportBarBlurOverlay:
         """
         if not self._parked:
             return False
-        if panel is not self._parked_panel or not panel.isVisible():
-            # A different panel, or the underlay went away while Book Detail was
-            # open (hide_all_panels paths) — the frozen frame is not reusable.
+        if (panel is not self._parked_panel or not panel.isVisible()
+                or self._parked_frame_invalid):
+            # A different panel, the underlay went away while Book Detail was
+            # open (hide_all_panels paths), or a content change landed that the
+            # frozen frame cannot reflect (force_refresh_now while parked) —
+            # the frame is not reusable. Falling back to show_for_panel gives
+            # today's behaviour: a correct, freshly grabbed blur.
             self.hide_for_panel()
             return False
         # Re-arm the tracker exactly as show_for_panel does at :475-483.
@@ -995,6 +1038,7 @@ class TransportBarBlurOverlay:
         self._active = True
         self._parked = False
         self._parked_panel = None
+        self._parked_frame_invalid = False
         logger.warning(
             f"[TIMER-TRACE] unpark_for_panel: reused parked frame for "
             f"{panel.objectName()!r}, re-armed and refreshing"

@@ -1376,6 +1376,13 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         pm = getattr(self, 'panel_manager', None)
         if pm is not None:
             pm._transport_bar_blur.force_refresh_now()
+            # This reconcile reflowed the layout underneath any open panel:
+            # visual_area grows from COVER_AREA_HEIGHT to the no-book height and
+            # the ambient carousel appears. Both blur clips were computed at
+            # panel-open against the old geometry and nothing else revisits them
+            # until the panel closes, so recompute them now — see
+            # reclip_visual_area_for_layout_change for the measured before/after.
+            pm.reclip_visual_area_for_layout_change()
 
     def get_current_file(self):
         """Return the currently loaded file path."""
