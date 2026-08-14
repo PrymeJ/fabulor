@@ -1,3 +1,132 @@
+## 2026-08-14 — The grab feedback loop MEASURED: `_grab_suppress_until` misses by 8-15ms, consistently, in one direction
+
+Completes the 2026-08-01 entry below ("Transport buttons paint themselves hovered/pressed under an
+open panel"), which left the mechanism *partly* explained. This adds the number that entry lacked.
+No fix attempted — measurement only.
+
+### Symptom (Pryme's words, 2026-08-14)
+
+With a panel open — **any** panel: Settings, Sleep, Playback/Speed, Stats — hovering the transport
+buttons underneath is **"a hit and miss. Sometimes it highlights and sometimes not."** Separately,
+the next-chapter tooltip **"stays stuck"** once shown.
+
+Two corrections to how this was previously characterised:
+
+- The 2026-08-01 entry offers "hover a transport button *while the panel is opening*" as a reliable
+  repro. Pryme: **"It is not really when the panel is opening, it is when the panel is open."** The
+  opening-window framing understates it — the loop runs continuously for as long as a panel is open
+  and a book is playing.
+- This is **not** a Book Detail issue and has nothing to do with the frost. It is the shared
+  `_grab_and_blur` hide/show cycle and hits every panel that uses the shared overlay. (Recorded
+  because a session spent hours conflating the two — see "How this was mis-framed" below.)
+
+### The measurement
+
+Env-gated probes, now permanent (`FABULOR_GRAB_TRACE=1`, see below). Real hovering over transport
+buttons with various panels open, 19:41:00-19:41:30, book playing, Frosty glass.
+
+**225 grabs over 21.1s — a sustained ~10.6/s.** Entry-to-entry gaps, chronological:
+
+```
+70 64 64 64 66 66 63 62 66 65 65 78 63 64 64 66 64 69 75 64 62 66 63 65 61 64 59 57 63 60 64 60
+60 60 55 69 61 59 60 59 65 60 59 60 60 64 60 60 64 60 60 61 59 64 61 60 59 60 64 61 60 59 56 68 …
+```
+
+**The decisive figure — where accepted paints land relative to the 50ms guard:**
+
+| ms since previous grab | accepted paints |
+|---|---|
+| < 50 (inside the guard) | **0** |
+| 50-70 (just past it) | **565** |
+| 70-150 | 121 |
+| > 150 | 16 |
+
+Per-widget, ms after each grab (first 30, chronological):
+
+```
+play_pause_btn   65 60 60 59 60 60 58 57 60 59 58 73 58 59 59 59 59 60 70 59 58 60 58 58 56 64 55 …
+next_btn         65 60 60 59 60 60 58 58 61 59 59 73 58 59 60 60 59 60 70 59 58 61 58 54 185 142 …
+speed_btn        64 59 59 58 59 59 57 57 59 58 57 72 57 58 58 58 58 58 69 58 57 60 57 57 60 76 …
+```
+
+This confirms, on current code and under real use, exactly what the 2026-07-27 entry predicted from
+its own trace: *"every burst lands ~14ms after the guard expires, so the guard never catches it."*
+**The margin is 8-15ms, consistently, and always in the same direction.** Nothing lands inside the
+guard — the loop is not marginally escaping it, it is escaping it every single cycle.
+
+### Why the symptom is intermittent rather than stuck
+
+The panel hides for ~3ms and returns, every ~60ms, continuously. Qt re-resolves what is under the
+cursor on each hide and each show. Whether a stationary hover reads as highlighted depends on which
+side of that cycle the paint lands — hence "sometimes it highlights and sometimes not" from a
+cursor that never moved. It is a race against a 60ms flicker, **not** stale state, and any fix
+premised on staleness will miss.
+
+The stuck tooltip is the same cycle: the tooltip is shown against a widget that keeps being hidden
+out from under it, so the leave that would dismiss it is never delivered.
+
+### What this does NOT resolve
+
+The 2026-08-01 entry's open question stands **unchanged**: Pryme reproduces the button paint with
+the cursor nowhere near a transport button, and the synthetic-Enter path requires the cursor to be
+over the button. This measurement explains the proximity case's *timing*; it does not supply the
+second path. Do not treat the loop's confirmation as closing that gap.
+
+### Bearing on the mitigation the 2026-07-27 entry rules out
+
+That entry rejects widening `_GRAB_FEEDBACK_SUPPRESS_S` past 64ms: *"it treats the symptom and its
+correct value is a function of the loop's round-trip, which will drift with grab cost."* The
+objection is sound in principle and is **not** retracted — but it was written without knowing the
+margin. At 8-15ms it is a knife-edge, which is what makes the symptom intermittent rather than
+constant, and grab cost varying by a few ms is enough to move it. Anyone weighing "widen the
+constant" against "suppress by state rather than by clock" should now weigh it knowing the margin is
+that thin, not merely that it exists.
+
+### How this was mis-framed (recorded so it is not repeated)
+
+This session began on Book Detail's static frost and stayed there far too long. Three specific
+errors, all mine, all caught by Pryme or by a reviewing agent rather than by me:
+
+1. **Claimed the loop was fixed.** I asserted `_grab_suppress_until` (2026-07-20) had fixed the
+   loop and that `frost_panel_backdrop`'s `no_tracker=True` rationale was therefore stale. The
+   2026-07-27 entry — dated *seven days after* that guard shipped, with the guard in the tree —
+   says the opposite and is titled "Open Investigation". I never checked the guard's 50ms window
+   against the loop's ~64ms period, which is the whole mechanism. Retracted; the measurement above
+   settles it against my claim.
+2. **Read a confirming number without questioning it.** I cited "18 composites in 900ms" as proof
+   of no spin. That is 20/s — *consistent with* the ~15/s loop, not evidence against it. And
+   `COMPOSITED` counts only grabs passing the gates, so the true rate is higher.
+3. **Kept the wrong frame after the evidence arrived.** A control run over Stats reproduced the
+   loop; the Book Detail run was quiet (its overlay is parked, nothing tracking). I had measured
+   the actual bug and still filed it as background for a Book Detail question. Pryme: *"Setting,
+   Sleep, Playback, all the same for this hover issue. I don't see how Book Details is related."*
+
+The relevant TODO entry — "4th instance of the grab's hide/show cycle", 2026-08-01 — had said it
+was panel-agnostic all along.
+
+### Instrumentation (permanent, env-gated, OFF by default)
+
+`ui/transport_bar_blur.py`, enabled with `FABULOR_GRAB_TRACE=1`, same shape as panels.py's
+`FABULOR_STUTTER_PROFILE`:
+
+- `[DIRTY-TRACE]` in `_DirtyRectTracker.eventFilter` — the painting widget, `event.rect()`,
+  `obj.size()`, timestamp. Sits **after** the `_is_suppressed()` early-return deliberately: the
+  question is what survives the guard.
+- `[GRAB-ENTRY]` in `_grab_and_blur` — entry timestamp. The existing `[PERF]` line logs on exit, so
+  gaps derived from it fold in the grab's own cost; the round-trip needs entry-to-entry.
+
+Kept rather than deleted because this is the verification instrument for any fix to the loop, and
+the 2026-07-27 session's equivalent was discarded and had to be rewritten from scratch tonight.
+(NOTES.md:5369 claimed that version was "still in the tree — do NOT remove until both bugs are
+fixed"; `git log -S'DIRTY-TRACE'` shows it was never committed. That line is corrected below.)
+
+**Analysis must read gaps CHRONOLOGICALLY.** A median over this data reports ~150ms and hides both
+regimes — an idle panel settles to the 200ms UI heartbeat, while active use holds ~60ms. Sorting
+destroys exactly the structure being looked for (CLAUDE.md, "Report timings in CHRONOLOGICAL
+order").
+
+---
+
 ## 2026-08-13 — Tags right-click-jump snap, a deferred wheel-scroll pitch correction for Library/Stats, and the same for Tags' arrow-key scrolling
 
 Three commits, all extending the scrollbar row-alignment work from 2026-08-12 Session 4 into
@@ -5362,12 +5491,22 @@ the hide must confront that first; do not simply retry the reverted approach. Wi
 `_GRAB_FEEDBACK_SUPPRESS_S` past 64ms is the obvious cheap mitigation but it treats the symptom
 and its correct value is a function of the loop's round-trip, which will drift with grab cost.
 
-### Instrumentation still in the tree (deliberate — do NOT remove until both bugs are fixed)
+### Instrumentation — CORRECTED 2026-08-14: neither probe below was ever committed
+
+**This section originally read "Instrumentation still in the tree (deliberate — do NOT remove until
+both bugs are fixed)" and listed the two probes as present. That was untrue when written.**
+`git log -S'DIRTY-TRACE'` and `-S'TASSEL-TRACE'` both return nothing for the files named — they were
+scratch probes, used to produce this section's numbers, then discarded with the working tree. The
+"do NOT remove" instruction was protecting code that did not exist, and the cost landed on
+2026-08-14, when `[DIRTY-TRACE]` had to be rewritten from scratch to re-measure Bug 2.
 
 - `ui/stats_panel.py`: `[TASSEL-TRACE]` on `showEvent`/`hideEvent`, `_on_sway_tick` (fired vs.
-  dropped counters, every 10th tick), and `paintEvent` (every 10th paint).
+  dropped counters, every 10th tick), and `paintEvent` (every 10th paint). **Not in the tree.**
 - `ui/transport_bar_blur.py`: `[DIRTY-TRACE]` in `_DirtyRectTracker.eventFilter`, logging the
-  painting widget's object name, `event.rect()`, and `obj.size()`.
+  painting widget's object name, `event.rect()`, and `obj.size()`. **Rewritten 2026-08-14 and now
+  genuinely committed**, env-gated behind `FABULOR_GRAB_TRACE=1` alongside a new `[GRAB-ENTRY]`
+  probe — see the 2026-08-14 entry at the top of this file. Verify with `grep`, not with this
+  section, before relying on any probe being present.
 
 `[DIRTY-TRACE]` is the verification instrument for a Bug 2 fix: **if the fix works, the
 synchronized 13-widget burst collapses to just `chapter_progress`/`chapter_selector`** at their

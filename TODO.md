@@ -35,7 +35,22 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
 - [2026-07-21] Spurious enterEvent heartbeat fixed; the underlying punch-through flash collision is still open
 
 ### Blur grab hide/show side effects
-- [2026-08-01] Transport buttons paint hovered/pressed under an open panel — 4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain the cursor-far-from-buttons case (NOTES.md)
+- [2026-08-01, MEASURED 2026-08-14] Transport buttons paint hovered/pressed under an open panel —
+  4th instance of the grab's hide/show cycle; synthetic-Enter path measured, but it does NOT explain
+  the cursor-far-from-buttons case (NOTES.md). **Affects EVERY panel** (Settings/Sleep/Speed/Stats),
+  not Book Detail — its frost is a separate surface that does not use the shared overlay at all.
+  Symptom per Pryme: hover is *"a hit and miss, sometimes it highlights and sometimes not"*, and the
+  next-chapter tooltip *"stays stuck"*. It runs the whole time a panel is **open**, not only while
+  it is opening (the 2026-08-01 framing understated this).
+  **2026-08-14 measurement (NOTES.md, top entry):** 225 grabs / 21.1s sustained; of 702 accepted
+  paints, **0 land inside the 50ms `_grab_suppress_until` guard and 565 land in the 50-70ms band** —
+  the loop clears the guard by 8-15ms every single cycle, always in the same direction. The
+  intermittency is a race against that ~60ms flicker, NOT stale state; a fix premised on staleness
+  will miss. Probes are permanent and env-gated: `FABULOR_GRAB_TRACE=1`.
+  Two directions, neither started: widen `_GRAB_FEEDBACK_SUPPRESS_S` (cheap, symptom-level, and the
+  2026-07-27 objection to it stands — though it was written without knowing the margin is this
+  thin), or suppress by STATE across the hide/show rather than by a clock deadline (immune to
+  round-trip drift, more invasive).
 
 ### Garbled backdrop after excluding the playing book from Book Detail (UNDIAGNOSED, 2026-08-14)
 **Repro:** play a book, open Stats, wait for the blur to settle, open Book Detail on that book,
@@ -139,13 +154,22 @@ correctly — the contrast is what made these visible, so they are not regressio
   | `total_time_label` | 210..290 | 210..270 | 270..290 |
   | `chapter_progress_slider` | 10..290 | 10..270 | 270..290 |
 
-  The ticking text is `total_time_label`'s last 20px showing through the un-frosted gutter. The two
-  buttons Pryme hovers (`speed_button`, `next_button`) are split down the middle by the same edge —
-  which is why the symptom reads as "half the button is stuck" rather than "the frost is stale".
+  The ticking text is `total_time_label`'s last 20px showing through the un-frosted gutter.
+
+  **CORRECTION (2026-08-14, same day):** an earlier version of this entry went on to claim the seam
+  "is why the symptom reads as half the button is stuck", i.e. that it explained the reported
+  hover bug. **It does not.** The hover/press symptom is the shared `_grab_and_blur` hide/show
+  loop, it affects every panel, and it has its own entry above (2026-08-01, measured 2026-08-14).
+  Book Detail's frost does not use the shared overlay at all. The geometry above is real and
+  worth keeping — the seam genuinely splits five widgets — but it is a *separate, cosmetic*
+  issue from the hover bug, and the two were conflated for most of a session.
 - **Why the obvious fix is blocked.** Adding a tracker to the frost re-arms `_grab_and_blur`, whose
   hide/show cycle re-exposes the tracked widgets and triggers the next grab — the ~64ms
-  self-sustaining loop at ~15 grabs/sec measured 2026-07-27. Needs either a refresh path that skips
-  hide/show, or targeted invalidation on the specific events that matter. Not a small change.
+  self-sustaining loop measured 2026-07-27 and **re-confirmed live 2026-08-14** (225 grabs/21s
+  sustained; the 50ms guard is cleared by 8-15ms every cycle — see NOTES.md's top entry). An
+  earlier draft of this entry claimed that loop had been fixed on 2026-07-20 and the blocker was
+  stale; **that was wrong and is retracted.** The blocker is live. Needs either a refresh path that
+  skips hide/show, or targeted invalidation on the specific events that matter. Not a small change.
 - **And refreshing on hover would not look right even if it were cheap.** With the seam mid-button,
   the live 20px follows Qt's own paint schedule while the frosted 40px follows the refresh path —
   two writers on one widget, load-dependent. Same shape as `stash@{0}`'s undiagnosed intermittency.
