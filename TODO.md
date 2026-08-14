@@ -124,17 +124,38 @@ correctly — the contrast is what made these visible, so they are not regressio
 - [2026-08-14] **Next-chapter tooltip is stale.** Hovering Next shows the next chapter's title; the
   frosted side keeps or omits it depending on what was on screen at grab time. Rare enough to be
   low priority, and does not need to be 100% live.
-- **Mechanism, partly established.** `frost_panel_backdrop` installs no `_DirtyRectTracker` and its
-  docstring claims the frost is therefore fully STATIC. **That claim is wrong** — Pryme observes the
-  remaining-time text ticking under the frost (skipping a second here and there, but visibly
-  moving), so some refresh path reaches it. Not yet identified: the repeated
-  `QRect(48, 453, 204, 64)` grabs in the log occur with NO panel open, so they are the ordinary
-  transport-bar dirty refresh, not the frost. Find what actually refreshes the frost before
-  designing a fix — the buttons and tooltip would likely just need to ride the same path.
+- **Mechanism, established 2026-08-14 (an earlier draft of this entry got it wrong).**
+  `frost_panel_backdrop` installs no `_DirtyRectTracker`, calls `frost.setPixmap(blurred)` exactly
+  once, and nothing else in the file touches that pixmap — the frost really is fully STATIC, as its
+  docstring says. The ticking remaining-time text is NOT the frost refreshing. A live geometry probe
+  against the real `MainWindow` shows **five tracked widgets straddle the frost's x=270 right edge**,
+  so each is split between a frozen left part and a live right part:
+
+  | widget | x..right | frosted | live gutter |
+  |---|---|---|---|
+  | `speed_button` | 230..290 | 230..270 | 270..290 |
+  | `next_button` | 244..290 | 244..270 | 270..290 |
+  | `chap_duration_label` | 242..290 | 242..270 | 270..290 |
+  | `total_time_label` | 210..290 | 210..270 | 270..290 |
+  | `chapter_progress_slider` | 10..290 | 10..270 | 270..290 |
+
+  The ticking text is `total_time_label`'s last 20px showing through the un-frosted gutter. The two
+  buttons Pryme hovers (`speed_button`, `next_button`) are split down the middle by the same edge —
+  which is why the symptom reads as "half the button is stuck" rather than "the frost is stale".
 - **Why the obvious fix is blocked.** Adding a tracker to the frost re-arms `_grab_and_blur`, whose
   hide/show cycle re-exposes the tracked widgets and triggers the next grab — the ~64ms
   self-sustaining loop at ~15 grabs/sec measured 2026-07-27. Needs either a refresh path that skips
   hide/show, or targeted invalidation on the specific events that matter. Not a small change.
+- **And refreshing on hover would not look right even if it were cheap.** With the seam mid-button,
+  the live 20px follows Qt's own paint schedule while the frosted 40px follows the refresh path —
+  two writers on one widget, load-dependent. Same shape as `stash@{0}`'s undiagnosed intermittency.
+- **Option not previously considered: move the seam instead of chasing it.** The 270px width exists
+  to keep the carousel's right edge live and scrolling, but the carousel occupies y≈56..300 while
+  every straddling widget sits at y≥356. A 300px-wide frost below y=356, keeping 270px above it,
+  puts all five widgets wholly on the frosted side. That does not make hover live — it makes the
+  staleness uniform, which is the tradeoff the design already accepts, instead of a visible seam
+  across a single button. Needs Pryme's read on whether the seam or the staleness is the real
+  complaint; they point at different fixes.
 - Acceptable target per Pryme: does not have to be fully live, just not visibly stuck.
 
 ### Book Detail panel blur timing
