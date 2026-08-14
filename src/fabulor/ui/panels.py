@@ -312,9 +312,11 @@ class PanelManager:
             self._transport_bar_blur.show_for_panel(panel)
 
     # Book Detail sits at y=32; the progress slider occupies y=32..56 and the
-    # window is 300x564. See _book_detail_frost_rect.
+    # window is 300x564. See _book_detail_frost_rect. Both underlay cases now
+    # start below the progress bar — the former _BOOK_DETAIL_FROST_TOP_UNDER_
+    # TITLEBAR (32) was removed 2026-08-14 when the library case stopped
+    # frosting the animating bar.
     _BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS = 56
-    _BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR = 32
     _BOOK_DETAIL_FROST_BOTTOM_INSET = 10
 
     def _book_detail_frost_rect(self) -> QRect:
@@ -331,7 +333,14 @@ class PanelManager:
           progress bar is excluded because it animates; the bottom 10px is the
           panel's own padding.
         - Over LIBRARY: the library is full-width and opaque, so everything from
-          under the TITLE BAR (y=32) down is real content that must be frosted.
+          under the PROGRESS BAR down is real content that must be frosted. The
+          library starts at y=32 like the progress bar itself, but the bar is
+          drawn OVER it and keeps animating while Book Detail is open — a static
+          grab of a moving widget is a frozen frame of it, which showed up as a
+          blurred smear across the bar in a screen recording (2026-08-14; the
+          real bar animates too subtly to catch by eye, which is why this went
+          unnoticed since the frost shipped). Same reason the Stats case
+          excludes it — the exclusion just was not applied here.
 
         WIDTH also differs, and this rect is deliberately NARROWER than the panel
         it frosts in the non-library case (fixed 2026-08-14). Book Detail is
@@ -358,7 +367,7 @@ class PanelManager:
         """
         mw = self.main_window
         if self._book_detail_underlay == 'library':
-            top = self._BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR
+            top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
             bottom_inset = 0
             width = mw.width()
         else:
