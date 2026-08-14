@@ -42,6 +42,7 @@ computation and every show_for_panel() call (never cached), since the active
 page can change while a panel stays open.
 """
 import logging
+import os
 import time
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPoint, QPropertyAnimation, QRect, Qt, QTimer
@@ -49,6 +50,25 @@ from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QGraphicsBlurEffect, QGraphicsOpacityEffect, QGraphicsScene, QLabel
 
 logger = logging.getLogger(__name__)
+
+# GRAB-LOOP PROBE (2026-08-14). Instruments the self-sustaining hide/show
+# feedback loop documented in NOTES.md ("Bug 2", 2026-07-27, still open) and
+# re-measured 2026-08-14: [DIRTY-TRACE] logs every Paint the tracker actually
+# accepts (i.e. what SURVIVES _grab_suppress_until), [GRAB-ENTRY] logs each
+# grab's entry time so entry-to-entry gaps can be derived without folding in
+# the grab's own cost.
+#
+# Env-gated rather than deleted: this is the verification instrument for any
+# future fix to that loop, and the 2026-07-27 session's version was thrown away
+# and had to be rewritten from scratch tonight. Off by default, so it costs one
+# module-level bool comparison per paint when disabled. Same shape as
+# panels.py's FABULOR_STUTTER_PROFILE.
+#
+#     FABULOR_GRAB_TRACE=1 python main.py
+#
+# Analysis: read gaps CHRONOLOGICALLY, never sorted — the loop shows up as a
+# run of ~60-64ms gaps, and a median hides it completely (CLAUDE.md).
+_GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 
 _BLUR_RADIUS = 5.0
 # Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
@@ -230,6 +250,16 @@ class _DirtyRectTracker(QObject):
         if event.type() == QEvent.Type.Paint:
             if self._is_suppressed is not None and self._is_suppressed():
                 return False
+            # Placed AFTER the _is_suppressed() early-return on purpose: the
+            # question this probe answers is what SURVIVES the 50ms guard, which
+            # is exactly what it fails to catch against the loop's ~64ms
+            # round-trip. Measured 2026-08-14: 565 of 702 accepted paints landed
+            # in the 50-70ms band, none inside the guard.
+            if _GRAB_TRACE_ENABLED:
+                logger.warning(
+                    f"[DIRTY-TRACE] w={obj.objectName() or type(obj).__name__} "
+                    f"ev_rect={event.rect()} size={obj.size()} t={time.perf_counter():.6f}"
+                )
             top_left = obj.mapTo(self._common_ancestor, QPoint(0, 0))
             rect = QRect(top_left, obj.size())
             self._dirty_union = rect if self._dirty_union is None else self._dirty_union.united(rect)
@@ -1177,6 +1207,12 @@ class TransportBarBlurOverlay:
         # TEMP PERF INSTRUMENTATION (2026-07-19, user-requested): break down
         # grab/blur/crop individually. Remove once the bottleneck is identified.
         t0 = time.perf_counter()
+
+        # Entry timestamp. The [PERF] line at the end of this method logs on
+        # EXIT, so a gap derived from it folds in the grab's own cost; the
+        # loop's ~64ms round-trip needs entry-to-entry.
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(f"[GRAB-ENTRY] t={t0:.6f} rect={rect}")
 
         # FEEDBACK-LOOP GUARD (2026-07-20) — see the declaration comment on
         # self._grab_suppress_until in __init__ for the full mechanism and why
