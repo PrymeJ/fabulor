@@ -333,19 +333,39 @@ class PanelManager:
         - Over LIBRARY: the library is full-width and opaque, so everything from
           under the TITLE BAR (y=32) down is real content that must be frosted.
 
-        Bare geometry rather than reading widget rects: these are fixed-size
-        chrome (window 300x564 via setFixedSize, title bar 32, progress slider
-        24), and the panel-rect helpers map SETTLED positions, which is not what
-        is wanted for a region defined against the window itself.
+        WIDTH also differs, and this rect is deliberately NARROWER than the panel
+        it frosts in the non-library case (fixed 2026-08-14). Book Detail is
+        itself full window width, so it has no dismiss sliver of its own — but it
+        is TRANSLUCENT, and over a 90%-width panel the right-hand gutter
+        (x=270..300) shows the main window through both panels. Frosting the full
+        300px blurred that gutter and froze the carousel's right edge behind a
+        static grab, while every 90%-width panel keeps it live and sharp
+        (show_for_panel intersects its rect with the panel's own geometry —
+        measured: Stats grabs QRect(10, 300, 260, 198), ending exactly at x=270).
+        Over LIBRARY there is no gutter to preserve — the library is full-width
+        and opaque — so that case keeps the full 300.
+
+        The 0.9 factor is the same one _start_settings_entry and friends use for
+        `panel_w = int(main_window.width() * 0.9)`; deriving it here rather than
+        hardcoding 270 keeps the frost edge tracking the panels that define the
+        sliver in the first place.
+
+        Bare geometry otherwise, rather than reading widget rects: these are
+        fixed-size chrome (window 300x564 via setFixedSize, title bar 32,
+        progress slider 24), and the panel-rect helpers map SETTLED positions,
+        which is not what is wanted for a region defined against the window
+        itself.
         """
         mw = self.main_window
         if self._book_detail_underlay == 'library':
             top = self._BOOK_DETAIL_FROST_TOP_UNDER_TITLEBAR
             bottom_inset = 0
+            width = mw.width()
         else:
             top = self._BOOK_DETAIL_FROST_TOP_UNDER_PROGRESS
             bottom_inset = self._BOOK_DETAIL_FROST_BOTTOM_INSET
-        return QRect(0, top, mw.width(), mw.height() - top - bottom_inset)
+            width = int(mw.width() * 0.9)
+        return QRect(0, top, width, mw.height() - top - bottom_inset)
 
     def _apply_transport_bar_blur_full(self, panel):
         """Frost Book Detail's own backdrop. See
