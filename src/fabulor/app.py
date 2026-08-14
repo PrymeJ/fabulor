@@ -1278,7 +1278,23 @@ class MainWindow(QWidget):  # QWidget, not QMainWindow
         """Per-frame radius follower for the carousel's own effect, driven by
         blur_animation.valueChanged. Only touches the radius — the clip is owned
         by sync_carousel_blur so an in-flight animation can't resurrect a clip
-        that was just cleared on panel close."""
+        that was just cleared on panel close.
+
+        `radius is None` guard: valueChanged can deliver an invalid QVariant,
+        which arrives here as None and made float() raise
+        `TypeError: float() argument must be a string or a real number, not
+        'NoneType'` (reported live 2026-08-14; the line dates to dcef0e7,
+        2026-07-27, and is unguarded on main too — pre-existing, not a
+        regression, though the Book Detail blur-park work made the path more
+        reachable by leaving a blur live while the carousel is built). Qt's
+        default handling for an exception in a Python slot keeps the app
+        running, but the raise aborts this slot, so the carousel silently stops
+        following the animation for the rest of that tween. Skipping the tick is
+        correct: there is no meaningful radius to apply, and the next real
+        valueChanged — or sync_carousel_blur, which owns the authoritative
+        value — sets it."""
+        if radius is None:
+            return
         eff = getattr(self, '_carousel_blur', None)
         if eff is not None and getattr(self, '_carousel', None) is not None:
             eff.setBlurRadius(float(radius))
