@@ -209,6 +209,12 @@ class PanelManager:
         # no-underlay cases stay explicit rather than silently falling through
         # generic panel handling.
         self._book_detail_underlay: str | None = None
+        # Set by reclip_visual_area_for_layout_change when the layout reflows
+        # underneath an open panel; consumed once by
+        # _resume_blur_after_book_detail to decide whether the visual_area blur
+        # should animate back in (new, never-blurred content underneath) or snap
+        # (the same backdrop that was already blurred).
+        self._layout_reflowed_under_panel: bool = False
         self.sidebar_animation.finished.connect(self._on_sidebar_hidden)
 
         # Settle watch for call_when_panels_settled (see that method). Deliberately
@@ -506,16 +512,28 @@ class PanelManager:
             # Nothing reusable was parked (blur was off, the underlay was opaque,
             # or the park was already dropped) — fall back to the original path.
             self._apply_transport_bar_blur(panel)
-        # Re-assert the visual_area clip and radius. Normally a no-op now — the
-        # Book Detail path never drops them (see _park_blur_for_book_detail) and
+        # Re-assert the visual_area clip and radius. Normally a no-op — the Book
+        # Detail path never drops them (see _park_blur_for_book_detail) and
         # _apply_visual_area_clip recomputes from live geometry — but it is what
-        # recovers the blur if anything else zeroed it while Book Detail was
-        # open. animate=False either way: the backdrop the user is returning to
-        # was already blurred, so replaying the 1500ms build would read as a
+        # recovers the blur if anything else zeroed it while Book Detail was open.
+        #
+        # animate=False for an ORDINARY close: the backdrop being returned to was
+        # already blurred the whole time, so replaying the 1500ms build reads as a
         # re-render rather than a softening.
-        self._start_visual_area_blur(panel, animate=False)
+        #
+        # animate=True when the layout REFLOWED while the panel was open (the
+        # playing book was removed, so the ambient carousel now occupies a region
+        # that never had blur on it). That content is genuinely new and unblurred,
+        # and snapping it to full radius in one frame is the abrupt transition
+        # reported live 2026-08-14 — main animates here and reads better for
+        # exactly this case. The flag is consumed so the next close goes back to
+        # the snap.
+        reflowed, self._layout_reflowed_under_panel = (
+            self._layout_reflowed_under_panel, False)
+        self._start_visual_area_blur(panel, animate=reflowed, from_zero=reflowed)
 
-    def _start_visual_area_blur(self, panel, animate: bool = True):
+    def _start_visual_area_blur(self, panel, animate: bool = True,
+                                from_zero: bool = False):
         """Set the clip and run the visual_area blur-in — called ONLY from a
         panel's slide-FINISHED callback, never at panel-open.
 
@@ -551,12 +569,23 @@ class PanelManager:
             # which is the very thing the sync call below exists to prevent.
             self.main_window.sync_carousel_blur(target, True)
             return
+        # from_zero: force the ramp to start at 0 instead of the effect's current
+        # radius. Needed when the blur was never dropped but the CONTENT beneath
+        # it is new — the playing book removed, the ambient carousel now under a
+        # region that was blurred for the old layout. The radius is already at
+        # target in that case, so the default setStartValue(blurRadius()) makes
+        # this a 10->10 no-op that renders as a snap (reported live 2026-08-14;
+        # main gets a real fade here only because it zeroes the radius at
+        # panel-open, which this branch deliberately does not).
+        start = 0.0 if from_zero else self.blur_effect.blurRadius()
+        if from_zero:
+            self.blur_effect.setBlurRadius(0.0)
         # The carousel is a sibling of visual_area with its own effect — set its
         # clip now so it blurs in step rather than staying sharp.
-        self.main_window.sync_carousel_blur(self.blur_effect.blurRadius(), True)
+        self.main_window.sync_carousel_blur(start, True)
         self.blur_animation.stop()
         self.blur_animation.setDuration(self._blur_in_duration_for(panel))
-        self.blur_animation.setStartValue(self.blur_effect.blurRadius())
+        self.blur_animation.setStartValue(start)
         self.blur_animation.setEndValue(target)
         self.blur_animation.start()
 
@@ -694,6 +723,10 @@ class PanelManager:
         self._apply_visual_area_clip(panel)
         # Radius is already correct and unchanged — only the clips are stale.
         self.main_window.sync_carousel_blur(self.blur_effect.blurRadius(), True)
+        # Tell the close path that what is underneath is no longer the backdrop
+        # the user last saw blurred — see _resume_blur_after_book_detail, which
+        # animates rather than snaps when this is set.
+        self._layout_reflowed_under_panel = True
 
     def apply_blur_live(self, enabled: bool):
         """Apply or clear blur on the ALREADY-OPEN Settings panel the instant the
