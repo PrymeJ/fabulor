@@ -52,7 +52,30 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   thin), or suppress by STATE across the hide/show rather than by a clock deadline (immune to
   round-trip drift, more invasive).
 
-### Garbled backdrop after excluding the playing book from Book Detail (UNDIAGNOSED, 2026-08-14)
+### Garbled backdrop after excluding the playing book from Book Detail (SYMPTOM FIXED, ROOT CAUSE UNCONFIRMED, 2026-08-14)
+
+**STATUS (updated 2026-08-14, end of session):** the artifact no longer reproduces on branch
+`fix/book-detail-blur-park` — Pryme confirmed it gone. It is kept open because the fix was arrived
+at by *acting on* the lead below, never by probing the clip rect to confirm that lead was the
+mechanism. So the symptom is gone and the diagnosis is still an inference.
+
+What landed, both on this branch:
+- `63838bc` — recomputes the blur clips and drops the parked frame when the layout reflows under an
+  open panel. This is the "clip boundary in the wrong place" lead described at the bottom of this
+  entry, acted on directly.
+- `d52be3a` — fades the `visual_area` blur back in when the layout reflowed under the panel, fixing
+  the crisp-then-snap that surfaced once the clip was corrected.
+
+**Before closing this, do the probe the entry already asks for**: log the `visual_area` clip rect
+and blur radius at removal time, and confirm they were in fact wrong pre-`63838bc` in the way
+predicted. Without that, a future regression here will re-open a bug whose cause was never actually
+verified — and this session already recorded three separate mechanisms that were probe-confirmed to
+execute correctly while the artifact persisted, so "the fix worked" is weaker evidence here than
+usual.
+
+---
+
+**Original entry (2026-08-14), kept verbatim for the ruled-out list:**
 **Repro:** play a book, open Stats, wait for the blur to settle, open Book Detail on that book,
 exclude it via the trash button (Book Detail stays open — `_on_book_detail_removed` only closes it
 for `context=='library'`), then close the panel.
