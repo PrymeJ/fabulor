@@ -70,6 +70,18 @@ logger = logging.getLogger(__name__)
 # run of ~60-64ms gaps, and a median hides it completely (CLAUDE.md).
 _GRAB_TRACE_ENABLED = os.environ.get("FABULOR_GRAB_TRACE") == "1"
 
+# [OVERLAY-DUMP] probe (2026-08-15, compositing-coherence investigation) — a
+# one-shot dump of the overlay's live pixmap plus a fresh full-region grab of
+# the same area at the same instant, saved as PNGs, so the two can be diffed
+# by eye/pixel to answer "is the frozen surrounding region stale content, or
+# correct content at wrong geometry". Fires on the NEXT refresh_dirty COMPOSITE
+# after the env var is set (a real dirty tick already has both the current
+# overlay pixmap and the machinery to grab a fresh one in scope — no separate
+# grab/composite path needed, so this cannot touch grab or compositing logic).
+# Read once at import; toggling the env var after launch has no effect,
+# matching FABULOR_GRAB_TRACE's own contract.
+_DUMP_OVERLAY_ENABLED = os.environ.get("FABULOR_DUMP_OVERLAY") == "1"
+
 _BLUR_RADIUS = 5.0
 # Fade-IN only, on appear — dismiss stays instant (see hide_for_panel) so the
 # transport bar snaps back to live view the moment the panel starts closing.
@@ -108,7 +120,35 @@ _POST_RESTYLE_COOLDOWN_S = 0.4
 # live: every deferred paint _grab_and_blur()'s own hide->grab->show sequence
 # triggers on the tracked widgets lands within ~20ms. 50ms gives real margin
 # above that.
+#
+# THIS GUARD IS UNCHANGED BY THE PER-SOURCE RATE LIMITS BELOW (2026-08-15) —
+# it stays read in _grab_and_blur (via self._grab_suppress_until) for its
+# original purpose, self-inflicted repaint suppression after a grab. The
+# per-category windows are a SEPARATE, independent gate checked earlier, in
+# _DirtyRectTracker.eventFilter — a dirty event must pass BOTH to schedule a
+# grab. Confirmed live (2026-08-14/15, [PLAYBTN-PAINT] investigation) that
+# this guard does NOT catch play_pause_button's grab-driven feedback loop
+# (42% of its repaints arrive just after the 50ms window expires, in the
+# 50-70ms band) — the per-category windows do not fix that either; they
+# only reduce how often small per-widget grabs are scheduled in the first
+# place. Different mechanism, different fix, not attempted in this pass.
 _GRAB_FEEDBACK_SUPPRESS_S = 0.05
+
+# Per-source rate limits (2026-08-15) — gate whether a dirty event from a
+# given widget CATEGORY schedules a grab at all, independent of
+# _GRAB_FEEDBACK_SUPPRESS_S above (which gates whether a scheduled grab
+# actually executes). See _DirtyRectTracker.eventFilter for where both are
+# checked, and TransportBarBlurOverlay.__init__ for the category map.
+#
+# _SUPPRESS_MARQUEE_S is a TEST VALUE, not calibrated — see TODO.md.
+# _SUPPRESS_SLIDER_S is a FLOOR, fixed for this pass — proportional scaling
+# by chapter duration is deferred (needs a chapter-duration injection point
+# from app.py; PanelManager has no chapter-change signal today — see
+# TODO.md and _DirtyRectTracker.set_chapter_duration).
+_SUPPRESS_IMMEDIATE_S = 0.0
+_SUPPRESS_MARQUEE_S = 0.100
+_SUPPRESS_TIME_S = 0.500
+_SUPPRESS_SLIDER_S = 0.200
 
 # Retry delay for a tick turned away by one of refresh_dirty()'s two DECLINING
 # gates (hover-active, post-restyle cooldown) — see _rearm_after_decline() for
@@ -118,23 +158,38 @@ _GRAB_FEEDBACK_SUPPRESS_S = 0.05
 # clears on its own timescale (cursor movement) and simply retries until then.
 _DECLINE_REARM_MS = 450
 
-# SLIDER-DRAG GATE (2026-07-31). _grab_and_blur() hides the active panel for the
-# duration of its grab, and hiding a widget mid-drag destroys QAbstractSlider's
-# in-progress drag state: the slider keeps receiving MouseMove events but its
-# value stays pinned at the press-time value, so the handle doesn't move at all.
-# Confirmed live on the Stats Day/Week/Month scrollbars (every failing drag
-# showed a dense MouseMove stream interleaved with Hide/Show pairs
-# timestamp-matched to _grab_and_blur, value never advancing; working drags
-# contained no Hide/Show at all) and reproduced in isolation (an identical
-# synthetic drag yields 324 with no hide/show, 0 when the panel is hidden on
-# even every third move).
+# SLIDER-DRAG GATE (2026-07-31). CURRENT AGAIN as of 2026-08-15 — briefly
+# HISTORICAL between 2026-08-14 and 2026-08-15 while the grab source was
+# content_container (see below), but that source was reverted and the panel
+# hide this gate defends against is back in _grab_and_blur.
 #
-# Skipping only the panel-hide while still grabbing was tried first and REVERTED
-# the same day: the grab then photographs the panel itself, so the overlay
-# composites panel-over-panel and the transport region reads as transparent —
-# the panel visibly blanks and its rows restore one by one on every drag. The
-# hide is not incidental to the grab, it IS the grab. So the whole refresh is
-# what has to yield.
+# As written: _grab_and_blur() hides the active panel for the duration of its
+# grab, and hiding a widget mid-drag destroys QAbstractSlider's in-progress drag
+# state — the slider keeps receiving MouseMove events but its value stays pinned
+# at the press-time value, so the handle doesn't move at all. Confirmed live on
+# the Stats Day/Week/Month scrollbars (every failing drag showed a dense
+# MouseMove stream interleaved with Hide/Show pairs timestamp-matched to
+# _grab_and_blur, value never advancing; working drags contained no Hide/Show at
+# all) and reproduced in isolation (an identical synthetic drag yields 324 with
+# no hide/show, 0 when the panel is hidden on even every third move).
+#
+# THE FAILED ATTEMPT, preserved verbatim — a DIFFERENT change from the one that
+# superseded it, and would still fail if repeated: skipping only the panel-hide
+# *while still grabbing main_window* was tried first and REVERTED the same day
+# (2026-07-31/2026-07-19 era) — the grab then photographs the panel itself, so
+# the overlay composites panel-over-panel and the transport region reads as
+# transparent. Against a main_window grab the hide is not incidental, it IS the
+# grab.
+#
+# HISTORY, for anyone reading this gate's git blame: 2026-08-14 changed the
+# grab source to content_container instead (the panel is not inside it, so
+# there was nothing to hide, and this gate's own root cause was gone for that
+# one day). That change was reverted 2026-08-15 — content_container.grab()
+# returns opaque, wrongly-colored pixels for anything it doesn't paint itself,
+# which produced a different, real visual defect (see _grab_and_blur's
+# docstring). main_window + panel-hide is the grab source again, so this gate
+# is defending a live hazard, not a historical one — do not remove it or treat
+# it as dead code again without re-confirming the grab source first.
 #
 # _DRAG_WATCH_MS polls for the drag ending (a slider emits no signal this class
 # observes, and the grab that would otherwise notice is the thing suspended).
@@ -206,10 +261,20 @@ def _blur_pixmap(pixmap: QPixmap, radius: float = _BLUR_RADIUS) -> QPixmap:
     item.setGraphicsEffect(effect)
 
     out = QPixmap(pixmap.size())
+    # DPR must be carried across explicitly: QPixmap(size) always comes back at
+    # 1.0 regardless of the source (measured 2026-08-14), so without this the
+    # blur silently strips DPR off the frame mid-pipeline. Stamped BEFORE
+    # painting, so the render target rect below is interpreted in logical
+    # coordinates — matching QGraphicsScene.render()'s own expectations.
+    out.setDevicePixelRatio(pixmap.devicePixelRatio())
     out.fill(Qt.transparent)
     painter = QPainter(out)
     painter.setRenderHint(QPainter.Antialiasing)
-    scene.render(painter, QRect(QPoint(0, 0), pixmap.size()), scene.itemsBoundingRect())
+    scene.render(
+        painter,
+        QRect(QPoint(0, 0), pixmap.deviceIndependentSize().toSize()),  # LOGICAL
+        scene.itemsBoundingRect(),
+    )
     painter.end()
     return out
 
@@ -235,7 +300,8 @@ class _DirtyRectTracker(QObject):
     never as a side effect of a poll landing at an unlucky instant with nothing
     to actually refresh."""
 
-    def __init__(self, common_ancestor, on_dirty=None, is_suppressed=None):
+    def __init__(self, common_ancestor, on_dirty=None, is_suppressed=None,
+                 category_of=None, suppress_window_for=None):
         super().__init__()
         self._common_ancestor = common_ancestor
         self._dirty_union: QRect | None = None
@@ -243,8 +309,28 @@ class _DirtyRectTracker(QObject):
         # is_suppressed: optional zero-arg callable returning True while paint
         # events should be dropped entirely (not accumulated, not triggering
         # on_dirty) — see TransportBarBlurOverlay._grab_suppress_until, the
-        # feedback-loop guard added 2026-07-20.
+        # feedback-loop guard added 2026-07-20. Independent of the per-category
+        # gate below — both must pass for a dirty event to schedule a grab.
         self._is_suppressed = is_suppressed
+        # category_of(obj) -> category string; suppress_window_for(category) ->
+        # seconds. Both optional callables (not a dict) so the OVERLAY owns the
+        # widget-identity map — see its __init__ — and this tracker stays free
+        # of any main_window/widget-list coupling, matching its existing shape.
+        self._category_of = category_of
+        self._suppress_window_for = suppress_window_for
+        self._last_grab_by_category: dict[str, float] = {}
+        # Reserved for the proportional slider rate (deferred — see TODO.md).
+        # Not read anywhere yet: the slider category currently always uses the
+        # fixed _SUPPRESS_SLIDER_S floor via suppress_window_for("slider").
+        self._chapter_duration_s: float = 0.0
+
+    def set_chapter_duration(self, seconds: float) -> None:
+        """Stub for the proportional slider rate — not implemented this pass.
+        No caller exists yet: PanelManager has no chapter-change signal to
+        wire it from (confirmed at Checkpoint A), and app.py is out of scope
+        for this pass. Safe to leave unwired; the slider stays at its fixed
+        floor until this is connected."""
+        self._chapter_duration_s = seconds
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.Paint:
@@ -260,6 +346,23 @@ class _DirtyRectTracker(QObject):
                     f"[DIRTY-TRACE] w={obj.objectName() or type(obj).__name__} "
                     f"ev_rect={event.rect()} size={obj.size()} t={time.perf_counter():.6f}"
                 )
+            # PER-SOURCE RATE LIMIT (2026-08-15) — a second, independent gate
+            # from _is_suppressed above. That guard is global (one deadline for
+            # every source); this one is per-CATEGORY, so a fast-repainting
+            # marquee can't starve a slow-repainting time label of its own
+            # budget, or vice versa. A category with no window configured
+            # (category_of/suppress_window_for absent, or an unmapped obj)
+            # falls through unsuppressed — never silently defaulted to a
+            # window that wasn't explicitly chosen for it.
+            if self._category_of is not None and self._suppress_window_for is not None:
+                category = self._category_of(obj)
+                if category is not None:
+                    window = self._suppress_window_for(category)
+                    now = time.perf_counter()
+                    last = self._last_grab_by_category.get(category, 0.0)
+                    if now - last < window:
+                        return False
+                    self._last_grab_by_category[category] = now
             top_left = obj.mapTo(self._common_ancestor, QPoint(0, 0))
             rect = QRect(top_left, obj.size())
             self._dirty_union = rect if self._dirty_union is None else self._dirty_union.united(rect)
@@ -314,6 +417,46 @@ class TransportBarBlurOverlay:
         # sleep timer started/stopped, volume-slider interaction).
         self._vol_stack = main_window.vol_stack
 
+        # Per-source rate-limit category map (2026-08-15) — keyed by OBJECT
+        # IDENTITY, never by objectName()/string, per the accepted plan. Built
+        # here (not in _DirtyRectTracker) so the tracker never needs a
+        # main_window/widget-list reference — matching its existing shape,
+        # which takes only common_ancestor + callables. Passed to the tracker
+        # as two lookup callables (_category_of/_suppress_window_for) at both
+        # construction sites below.
+        #
+        # Exhaustive: every widget _all_tracked_widgets() can ever return is
+        # listed once, including all three possible vol_stack pages (only one
+        # is live at a time, resolved dynamically by _vol_stack_active_widget,
+        # but the map itself is static and covers all three so a mute/sleep/
+        # volume-interaction transition never lands on an unmapped widget).
+        self._category_by_widget: dict[int, str] = {
+            id(w): "immediate" for w in (
+                main_window.prev_button,
+                main_window.rewind_button,
+                main_window.forward_button,
+                main_window.next_button,
+                main_window.speed_button,
+                main_window.sleep_timer_label,   # vol_stack page 0
+                main_window.volume_slider,       # vol_stack page 1's real content
+                main_window.muted_icon_label,    # vol_stack page 2
+            )
+        }
+        self._category_by_widget[id(main_window.play_pause_button)] = "play"
+        self._category_by_widget[id(main_window.current_chapter_label)] = "marquee"
+        for w in (main_window.chap_elapsed_label, main_window.chap_duration_label,
+                  main_window.current_time_label, main_window.total_time_label):
+            self._category_by_widget[id(w)] = "time"
+        self._category_by_widget[id(main_window.chapter_progress_slider)] = "slider"
+
+        self._suppress_window_by_category = {
+            "immediate": _SUPPRESS_IMMEDIATE_S,
+            "play": _SUPPRESS_IMMEDIATE_S,
+            "marquee": _SUPPRESS_MARQUEE_S,
+            "time": _SUPPRESS_TIME_S,
+            "slider": _SUPPRESS_SLIDER_S,
+        }
+
         # Parented to content_container (the SAME coordinate space _bounding_rect
         # and every widget.mapTo(...) call below is computed in) — NOT main_window.
         # content_container sits below the title bar + progress bar in main_window's
@@ -346,10 +489,13 @@ class TransportBarBlurOverlay:
                                            # change mid-open (see hide_for_panel).
         self._bounding_rect: QRect | None = None
         self._active = False
-        self._active_panel = None  # set in show_for_panel, cleared in hide_for_panel —
-                                    # needed so _grab_and_blur can hide/restore the
-                                    # currently-open panel around each grab from
-                                    # main_window (see the "ROOT CAUSE" note there).
+        self._active_panel = None  # set in show_for_panel, cleared in hide_for_panel.
+                                    # Default `panel` for _grab_and_blur's hide/show
+                                    # (main_window grab source, restored 2026-08-15 —
+                                    # see that function's docstring). Also read by
+                                    # _panel_hides_everything, the drag gate and
+                                    # frost_panel_backdrop (which passes its own
+                                    # `panel` explicitly instead of this default).
 
         # CACHED-FRAME REWORK (2026-07-20): no fixed-interval polling timer
         # anymore — see _DirtyRectTracker's class docstring for why. A real
@@ -397,6 +543,17 @@ class TransportBarBlurOverlay:
         # infinitum. Confirmed live: continuous ~10-20ms COMPOSITED ticks that
         # never settled.
         #
+        # STATUS 2026-08-15: this guard is defending its ORIGINAL, full hazard
+        # again. Between 2026-08-14 and 2026-08-15 the grab source was
+        # content_container (the panel is not inside it, so the panel hide/show
+        # cycle this guard was sized against did not exist for that one day —
+        # a prior version of this comment said so). That source was reverted
+        # 2026-08-15 (content_container.grab() is opaque everywhere, which
+        # produced a real, different visual defect — see _grab_and_blur's
+        # docstring), so main_window + panel-hide is back, and with it the
+        # exact repaint cycle this guard exists for. Do not treat this as a
+        # narrow case again without re-confirming the grab source first.
+        #
         # FIRST ATTEMPT (reverted the same session): a plain try/finally boolean
         # set True for exactly the hide->grab->show call sequence's own duration,
         # cleared immediately after. Did NOT fix the loop — confirmed live it
@@ -442,6 +599,15 @@ class TransportBarBlurOverlay:
 
     def _all_tracked_widgets(self):
         return self._widgets + [self._vol_stack_active_widget()]
+
+    def _category_of(self, widget) -> str | None:
+        """obj-identity lookup into self._category_by_widget. Returns None for
+        anything not in the map — the tracker treats that as unsuppressed
+        (see _DirtyRectTracker.eventFilter), never a silent default category."""
+        return self._category_by_widget.get(id(widget))
+
+    def _suppress_window_for(self, category: str) -> float:
+        return self._suppress_window_by_category[category]
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -532,6 +698,8 @@ class TransportBarBlurOverlay:
             self._common_ancestor,
             on_dirty=self._schedule_refresh,
             is_suppressed=lambda: time.perf_counter() < self._grab_suppress_until,
+            category_of=self._category_of,
+            suppress_window_for=self._suppress_window_for,
         )
         self._tracker_widgets = self._all_tracked_widgets()
         for widget in self._tracker_widgets:
@@ -577,17 +745,27 @@ class TransportBarBlurOverlay:
         — the caller owns it, because the answer differs per source panel (see
         PanelManager._book_detail_frost_rect).
 
-        _grab_and_blur is reused UNCHANGED, including its hide of
-        self._active_panel (== this panel): the panel BEHIND — Stats/Library —
-        stays visible in the grab and is what shows through the frost. That hide
-        exists only to avoid double-applying THIS panel's own translucent wash
-        (see _grab_and_blur's ROOT CAUSE note); it is a self-exclusion, not a
-        hide-everything.
+        Uses the shared _grab_and_blur(rect, panel) — both paths grab
+        main_window with an explicit panel to hide, collapsed back into one
+        function 2026-08-15 after a brief content_container/main_window split
+        (2026-08-14–15) proved unnecessary: that split existed only to spare
+        the transport path its panel-hide, and the split itself introduced a
+        worse defect (content_container.grab() is opaque everywhere, so no
+        compositing fix underneath it can ever show through — see
+        _grab_and_blur's docstring). With both paths back on main_window, they
+        differ only in WHICH panel gets hidden, which is exactly what the
+        `panel` parameter is for.
+
+        THIS call passes Book Detail explicitly (not the default
+        self._active_panel) — a self-exclusion, not a hide-everything, so the
+        panel BEHIND Book Detail (Stats/Library) stays visible in the grab and
+        is what shows through the frost. The hide is cheap here because this
+        runs once per open, not on every dirty tick like the transport path.
 
         No _DirtyRectTracker: a panel covering the content area occludes all 12
         tracked widgets, so any refresh they could drive is invisible, while
-        _grab_and_blur's own hide/show re-exposes them and re-arms the next grab
-        — the ~64ms self-sustaining loop measured at ~15 grabs/sec (NOTES.md,
+        the grab's own hide/show re-exposes them and re-arms the next grab —
+        the ~64ms self-sustaining loop measured at ~15 grabs/sec (NOTES.md,
         2026-07-27). The frost is therefore STATIC while the panel is open, an
         accepted tradeoff (a playing book's remaining-time text can tick
         underneath and the frost will not follow it).
@@ -598,20 +776,18 @@ class TransportBarBlurOverlay:
 
         t_entry = time.perf_counter()
         # _grab_and_blur takes a rect in _common_ancestor (content_container)
-        # space and maps it back to main_window internally. Convert once here so
-        # the caller can think purely in main_window coordinates.
+        # space and maps it back to main_window internally. Convert once here
+        # so the caller can think purely in main_window coordinates.
         top_left_common = self._common_ancestor.mapFromGlobal(
             self.main_window.mapToGlobal(rect_in_main_window.topLeft()))
         rect_common = QRect(top_left_common, rect_in_main_window.size())
 
-        # The panel must be hidden for the grab (its own wash must not be
-        # double-applied) — _grab_and_blur does that via _active_panel.
-        prev_active_panel = self._active_panel
-        self._active_panel = panel
-        try:
-            blurred = self._grab_and_blur(rect_common)
-        finally:
-            self._active_panel = prev_active_panel
+        # `panel` (Book Detail) is hidden for the grab so its own translucent
+        # wash is not captured and then double-applied by the wash composite
+        # below. Passed explicitly (not the default self._active_panel) — the
+        # panel THIS call must hide is not the panel driving the transport-bar
+        # overlay.
+        blurred = self._grab_and_blur(rect_common, panel)
 
         # Paint the panel's OWN translucent wash on top of the blurred snapshot,
         # into the pixmap itself.
@@ -835,6 +1011,32 @@ class TransportBarBlurOverlay:
         self._overlay.setPixmap(combined)
         logger.warning(f"[TIMER-TRACE] refresh_dirty tick={_tick} COMPOSITED dirty={dirty}")
 
+        # [OVERLAY-DUMP] one-shot (2026-08-15) — fires on the first real
+        # composite after FABULOR_DUMP_OVERLAY=1 is set, right after the line
+        # above so `combined` IS the pixmap the user is looking at right now.
+        # Saves it alongside a fresh full-region grab of the same
+        # _bounding_rect taken at this same instant, for a direct diff.
+        # Read-only: does not touch grab/composite logic, does not run unless
+        # explicitly armed, and never fires more than once per arm.
+        if _DUMP_OVERLAY_ENABLED and not getattr(self, '_overlay_dump_done', False):
+            self._overlay_dump_done = True
+            t_dump = time.perf_counter()
+            combined.save("/tmp/fabulor_overlay_dump.png", "PNG")
+            fresh = self._grab_and_blur(self._bounding_rect)
+            fresh.save("/tmp/fabulor_fullgrab_dump.png", "PNG")
+            overlay_topleft_common = self._overlay.geometry().topLeft()
+            logger.warning(
+                f"[OVERLAY-DUMP] t={t_dump:.6f} "
+                f"overlay_geometry={self._overlay.geometry()} "
+                f"overlay_topleft_common={overlay_topleft_common} "
+                f"bounding_rect={self._bounding_rect} "
+                f"last_dirty={dirty} last_dirty_local={local} "
+                f"overlay_pixmap_size={combined.size()} "
+                f"fullgrab_size={fresh.size()} "
+                f"saved overlay -> /tmp/fabulor_overlay_dump.png "
+                f"saved fullgrab -> /tmp/fabulor_fullgrab_dump.png"
+            )
+
     def _check_drag_ended(self):
         """Poll while grabs are suspended for a slider drag; resume on release.
 
@@ -867,9 +1069,14 @@ class TransportBarBlurOverlay:
         isn't currently active, same as every other entry point here.
 
         PARKED case (2026-08-14): a parked frame cannot be refreshed in place —
-        re-grabbing would run _grab_and_blur, which hides _active_panel while
-        Book Detail is on top of it and would photograph Book Detail into the
-        cache (the ~15 grabs/sec feedback loop park_for_panel exists to stop).
+        re-grabbing would restart the ~15 grabs/sec refresh cycle that
+        park_for_panel exists to stop while Book Detail is open, AND (grab
+        source is main_window again as of 2026-08-15 — see _grab_and_blur's
+        docstring) would photograph Book Detail into the cache, via the panel
+        hide _grab_and_blur performs. (A comment here briefly said that second
+        hazard was gone, 2026-08-14–15, while the grab source was
+        content_container. It is back.) The parking invariant is unchanged
+        either way — the point is not to be grabbing at all here.
         So the frame is marked invalid instead, and unpark_for_panel discards it
         rather than reusing it. Handling this HERE rather than at each call site
         means every present and future caller of force_refresh_now gets parked
@@ -992,11 +1199,14 @@ class TransportBarBlurOverlay:
         early Book Detail frost attempt ship invisible — see CLAUDE.md, "A blur
         overlay can only cover what shares its parent".)
 
-        HARD INVARIANT: never grab while parked. Re-grabbing calls
-        _grab_and_blur, which hides _active_panel while Book Detail is on top —
-        photographing Book Detail into the cache. That is the exact feedback
-        loop _park_blur_for_book_detail exists to prevent (measured
-        self-sustaining at ~64ms / ~15 grabs per second, NOTES.md 2026-07-27).
+        HARD INVARIANT: never grab while parked. Re-grabbing restarts the
+        feedback loop _park_blur_for_book_detail exists to prevent (measured
+        self-sustaining at ~64ms / ~15 grabs per second, NOTES.md 2026-07-27)
+        AND (grab source is main_window again as of 2026-08-15) would hide
+        _active_panel while Book Detail is on top, photographing Book Detail
+        into the cache. (This second hazard was briefly absent 2026-08-14–15,
+        while the grab source was content_container. It is back — see
+        _grab_and_blur's docstring for why that source was reverted.)
         Every guard that keeps this true reads `if not self._active`, which
         _disarm_grabbing sets False — hence _parked being a separate flag.
         """
@@ -1060,6 +1270,8 @@ class TransportBarBlurOverlay:
             self._common_ancestor,
             on_dirty=self._schedule_refresh,
             is_suppressed=lambda: time.perf_counter() < self._grab_suppress_until,
+            category_of=self._category_of,
+            suppress_window_for=self._suppress_window_for,
         )
         self._tracker_widgets = self._all_tracked_widgets()
         for widget in self._tracker_widgets:
@@ -1131,162 +1343,147 @@ class TransportBarBlurOverlay:
             rect = widget_rect if rect is None else rect.united(widget_rect)
         return rect
 
-    def _grab_and_blur(self, rect: QRect) -> QPixmap:
-        # ROOT CAUSE (found live, 2026-07-19, after the user directly identified
-        # the background color itself as wrong — not a coordinate or blur bug):
-        # content_container (_common_ancestor) has NO styled background of its
-        # own. main_window's real stylesheet paints bg_main (the theme's actual
-        # background color, e.g. Chatsubo's #1A002E purple) and it shows through
-        # underneath content_container in normal on-screen compositing — but
-        # grab() only rasterizes a widget's OWN paint, never an ancestor's
-        # background showing through it. So content_container.grab() was always
-        # returning Qt's plain default QPalette window color (#202326 on this
-        # system — confirmed to match exactly what every prior corrupted grab
-        # showed), regardless of theme. This is why every isolated test using a
-        # widget with an explicit background-color came back clean: the test
-        # widget always had its OWN background set, unlike the real
-        # content_container.
-        #
-        # Fix: grab from main_window instead (it has the real themed
-        # background), translating `rect` (in _common_ancestor/content_container
-        # space) into main_window-local coordinates via the same
-        # mapToGlobal/mapFromGlobal round-trip already used in
-        # _panel_rect_in_common_space (mapTo() is invalid between these two —
-        # content_container is a CHILD of main_window here, so mapTo actually
-        # would work, but the round-trip keeps the pattern consistent and
-        # correct either way).
-        #
-        # Also: main_window's children include the panel itself, raised above
-        # content_container — grabbing main_window while the panel is visible
-        # would capture the panel's own translucent wash on top of the real
-        # content, double-applying it before blur even runs. The panel must be
-        # hidden for the grab too, same as the overlay already is.
-        #
-        # ATTEMPTED FIX, REVERTED SAME DAY (2026-07-19): grabbing
-        # content_container directly (no panel in its subtree, so no
-        # hide()/show() needed) with a bg_main solid-fill composited underneath,
-        # to avoid the hide()/show() cost measured below. This introduced TWO
-        # new bugs, live-confirmed: (1) the blurred region came out visibly
-        # larger and shifted right vs. the real transport bar underneath — a
-        # devicePixelRatio handling gap in the new canvas-compositing code, only
-        # partially fixed before the second bug below was found; (2) far more
-        # seriously, theme hover-preview/snapback broke — hovering a swatch
-        # started leaving the app's actual colors on the hovered theme instead
-        # of the active one, and un-hovering no longer correctly reverted.
-        # Mechanism for (2) was NOT diagnosed before reverting — the change
-        # only added a read-only theme_manager.get_current_theme() call and
-        # removed the panel hide()/show() pair, neither of which should
-        # logically touch hover/snapback state, but the regression was
-        # reproducible. Do not re-attempt the content_container approach
-        # without first understanding why removing the hide()/show() pair (or
-        # adding the get_current_theme() read) disturbs hover/snapback — this
-        # is a real, serious, unexplained coupling, not a cosmetic issue.
+    def _grab_and_blur(self, rect: QRect, panel=None) -> QPixmap:
+        """Grabs main_window with `panel` hidden. `panel` defaults to
+        self._active_panel (the transport-bar path's every call site); the
+        frost path (frost_panel_backdrop) passes Book Detail explicitly, since
+        the panel it must hide is not the one driving this overlay.
+
+        COLLAPSED BACK 2026-08-15 from a content_container/main_window split
+        that lived here 2026-08-14–15. That split's premise — grab
+        content_container so the panel (a sibling, not a descendant) is never
+        in the grab and never needs hiding — traded the hover-flicker bug
+        below for a WORSE one: content_container.grab() returns Qt's default
+        QPalette color (32,35,38), fully OPAQUE, at every pixel it doesn't
+        paint itself (the QVBoxLayout inter-row gaps in the transport
+        controls). Confirmed live via a pixel probe: because that grab is
+        opaque everywhere, ANY compositing fill painted underneath it — flat
+        bg_main, or a two-pass bg_main+panel-wash — is completely overwritten
+        by the final drawPixmap and never reaches the output; the artifact
+        Pryme reported (a visible rectangular darkening, ~4-7% below bg_main,
+        consistent across two themes) survived both fix attempts because
+        neither could possibly have changed the composited pixel. The defect
+        is the grab source itself having no transparency for a fill to show
+        through — not a wrong fill color. See NOTES.md for the full trail.
+
+        ROOT CAUSE main_window as the source solves (found live, 2026-07-19,
+        Pryme directly identified the background color itself as wrong — not a
+        coordinate or blur bug): content_container (_common_ancestor) has NO
+        styled background of its own. main_window's real stylesheet paints
+        bg_main (the theme's actual background color) and it shows through
+        underneath content_container in normal on-screen compositing — but
+        grab() only rasterizes a widget's OWN paint, never an ancestor's
+        background showing through it.
+
+        Grabbing main_window means the panel (raised above content_container,
+        a child of main_window) IS in the grab unless hidden — its own
+        translucent wash would double-apply on top of the real content. Hence
+        the hide/show below.
+
+        THE HOVER-FLICKER BUG this hide causes, and why it is accepted:
+        hiding `panel` for the grab un-covers whatever transport widget sits
+        underneath, so Qt re-hit-tests and re-resolves the cursor — a parked
+        cursor keeps receiving real Enter/Leave events with no mouse movement,
+        confirmed live at ~10.6 grabs/sec, none caught by the 50ms suppress
+        guard (NOTES.md, 2026-08-14). Content_container's exclusion of the
+        panel by construction was the fix attempt for exactly this — reverted
+        2026-08-15 because it broke compositing correctness while, per
+        Pryme's live testing, not even fixing the flicker it was built for
+        ("more responsive... but still stale"). The flicker itself remains
+        open; see TODO.md.
+
+        The cursor-pin and mouse-transparency compensation below are NOT the
+        flicker fix — they are two independently-shipped, still-necessary
+        fixes for two OTHER bugs the hide creates (cursor flicker, 2026-07-21;
+        real clicks landing on invisibly-uncovered widgets, 2026-08-01). Both
+        are restored verbatim from main, unchanged by this collapse.
+        """
+        if panel is None:
+            panel = self._active_panel
+
+        # main_window-local coordinates, via the same mapToGlobal/mapFromGlobal
+        # round-trip _panel_rect_in_common_space uses. `rect` arrives in
+        # _common_ancestor (content_container) space from every caller.
         main_window_rect = QRect(
             self.main_window.mapFromGlobal(self._common_ancestor.mapToGlobal(rect.topLeft())),
             rect.size(),
         )
-
-        # Grab with a padding margin, blur the padded pixmap, then crop back to
-        # `rect`'s original size. QGraphicsBlurEffect treats "outside the source
-        # pixmap" as transparent and blends that transparency into the blurred
-        # result near every edge — confirmed live (2026-07-19, the color-shift/
-        # hard-edge-tint bug): even a fully opaque solid-color source pixmap came
-        # back with alpha as low as 194/255 near its edges after blurring, which
-        # then visibly tinted whatever was composited underneath. Since every
-        # dirty sub-rect has edges (it's a small region, not the whole window),
-        # blurring it directly always hits this artifact on all four sides.
-        # Padding pushes the artifact into a margin that gets cropped away before
-        # the result is ever composited, so only genuinely blurred, full-alpha
-        # pixels survive into the overlay.
-        # 4x radius: measured (2026-07-19) to fully converge corner alpha to 255
-        # for a solid-color test image — 2x still left visible residual alpha
-        # loss (~251/255) at the crop boundary.
         pad = int(_BLUR_RADIUS * 4)
         padded_rect = main_window_rect.adjusted(-pad, -pad, pad, pad)
 
-        # TEMP PERF INSTRUMENTATION (2026-07-19, user-requested): break down
-        # grab/blur/crop individually. Remove once the bottleneck is identified.
         t0 = time.perf_counter()
-
-        # Entry timestamp. The [PERF] line at the end of this method logs on
-        # EXIT, so a gap derived from it folds in the grab's own cost; the
-        # loop's ~64ms round-trip needs entry-to-entry.
         if _GRAB_TRACE_ENABLED:
             logger.warning(f"[GRAB-ENTRY] t={t0:.6f} rect={rect}")
 
         # FEEDBACK-LOOP GUARD (2026-07-20) — see the declaration comment on
-        # self._grab_suppress_until in __init__ for the full mechanism and why
-        # this is a wall-clock deadline, not a boolean cleared the instant this
-        # Python call sequence returns (that was tried first and confirmed live
-        # NOT to work — Qt delivers some of this sequence's self-inflicted
-        # repaints on later event-loop turns, after a bare try/finally boolean
-        # had already cleared). try/finally still guarantees the deadline is set
-        # (never left un-set) even if something in this block raises.
-        # CURSOR-FLICKER FIX (2026-07-21): hiding the active panel for the grab
-        # exposes whatever transport-bar widget is behind it at the cursor
-        # position — an arrow-cursor QLabel/QWidget — so Qt re-resolves the LIVE
-        # cursor to arrow on hide() and back to the panel widget's cursor on
-        # show(). Because this grab runs on every dirty-refresh tick (~5×/sec
-        # while a book plays), a widget the pointer is resting on with a
+        # self._grab_suppress_until in __init__ for why this is a wall-clock
+        # deadline, not a boolean cleared when this call returns (that was tried
+        # and confirmed live NOT to work — Qt delivers some self-inflicted
+        # repaints on later event-loop turns). try/finally guarantees the
+        # deadline is set even if the grab raises.
+        # CURSOR-FLICKER FIX (2026-07-21): hiding `panel` for the grab exposes
+        # whatever transport-bar widget is behind it at the cursor position —
+        # an arrow-cursor QLabel/QWidget — so Qt re-resolves the LIVE cursor to
+        # arrow on hide() and back to the panel widget's cursor on show().
+        # Because this grab runs on every dirty-refresh tick (~5-15x/sec while
+        # a panel is open), a widget the pointer is resting on with a
         # PointingHand cursor (Stats book rows, cover-pool swatches) flickers
-        # hand↔arrow continuously with no mouse movement. Confirmed live via a
-        # [CURSOR-TRACE] probe (2026-07-21): BEFORE-HIDE=13(hand) ->
-        # AFTER-HIDE=0(arrow, a transport QLabel) -> AFTER-SHOW=13(hand), every
-        # tick. Fix: pin the visible cursor across the hide→grab→show window with
-        # an application override set to the shape actually under the pointer
-        # right now, then remove it after show(). The whole cycle is synchronous
-        # (~2-15ms, no event-loop turn), so the override brackets it cleanly and
-        # is gone before any real user input is processed. Only pushed when a
-        # panel is actually being hidden and a widget is under the cursor; always
-        # popped in the finally, so it can never strand a stuck override.
+        # hand<->arrow continuously with no mouse movement. Confirmed live via
+        # a [CURSOR-TRACE] probe (2026-07-21): BEFORE-HIDE=13(hand) ->
+        # AFTER-HIDE=0(arrow) -> AFTER-SHOW=13(hand), every tick. Fix: pin the
+        # visible cursor across the hide->grab->show window with an
+        # application override set to the shape actually under the pointer
+        # right now, then remove it after show(). The whole cycle is
+        # synchronous (~2-15ms, no event-loop turn), so the override brackets
+        # it cleanly and is gone before any real user input is processed. Only
+        # pushed when a panel is actually being hidden and a widget is under
+        # the cursor; always popped in the finally, so it can never strand a
+        # stuck override.
         from PySide6.QtGui import QCursor
         from PySide6.QtWidgets import QApplication
 
         _cursor_override_pushed = False
-        # Initialized OUTSIDE the try: the finally below always iterates it, and it
-        # is only populated on the panel-visible branch — leaving it unbound would
-        # raise NameError out of the finally on every panel-less grab.
+        # Initialized OUTSIDE the try: the finally below always iterates it, and
+        # it is only populated on the panel-visible branch — leaving it unbound
+        # would raise NameError out of the finally on every panel-less grab.
         _mouse_blocked = []
         try:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
             overlay_was_visible = self._overlay.isVisible()
             if overlay_was_visible:
                 self._overlay.hide()
-            panel_was_visible = self._active_panel is not None and self._active_panel.isVisible()
+            panel_was_visible = panel is not None and panel.isVisible()
             if panel_was_visible:
                 w_under = QApplication.widgetAt(QCursor.pos())
                 if w_under is not None:
                     QApplication.setOverrideCursor(w_under.cursor())
                     _cursor_override_pushed = True
                 # INPUT-LEAK FIX (2026-08-01). Hiding the panel un-covers the
-                # transport widgets for the duration of the grab (~48ms, ~5x/sec
-                # while a panel is open), and Qt hit-tests against what is actually
-                # visible — so a cursor resting over Play/Prev/Next gets a REAL
-                # Enter and the button paints itself hovered, and a click lands on a
-                # widget the user cannot see. Measured live: every such Enter
-                # carried grab_win 0.004-0.049 (a grab in flight) with
-                # panel_vis=False.
-                #
-                # Made mouse-TRANSPARENT rather than hidden: the whole point of the
-                # grab is to photograph these widgets, so hiding them would empty
-                # the very region being blurred. WA_TransparentForMouseEvents leaves
-                # rendering untouched and only stops them being hit-test targets
-                # while the panel that should be covering them is temporarily away.
+                # transport widgets for the duration of the grab, and Qt
+                # hit-tests against what is actually visible — so a cursor
+                # resting over Play/Prev/Next gets a REAL Enter and the button
+                # paints itself hovered, and a click lands on a widget the user
+                # cannot see. Made mouse-TRANSPARENT rather than hidden: the
+                # whole point of the grab is to photograph these widgets, so
+                # hiding them would empty the very region being blurred.
+                # WA_TransparentForMouseEvents leaves rendering untouched and
+                # only stops them being hit-test targets while the panel that
+                # should be covering them is temporarily away.
                 _mouse_blocked = []
                 for _w in self._all_tracked_widgets():
                     if not _w.testAttribute(Qt.WA_TransparentForMouseEvents):
                         _w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
                         _mouse_blocked.append(_w)
-                self._active_panel.hide()
-            grabbed = self.main_window.grab(padded_rect)
+                panel.hide()
+            src = self.main_window.grab(padded_rect)
             if panel_was_visible:
-                self._active_panel.show()
+                panel.show()
             if overlay_was_visible:
                 self._overlay.show()
         finally:
-            # Restore before the cursor override is popped, and unconditionally —
-            # leaving a transport button permanently mouse-transparent would make it
-            # unclickable for the rest of the session.
+            # Restore before the cursor override is popped, and unconditionally
+            # — leaving a transport button permanently mouse-transparent would
+            # make it unclickable for the rest of the session.
             for _w in _mouse_blocked:
                 _w.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             if _cursor_override_pushed:
@@ -1294,19 +1491,78 @@ class TransportBarBlurOverlay:
             self._grab_suppress_until = time.perf_counter() + _GRAB_FEEDBACK_SUPPRESS_S
         t1 = time.perf_counter()
 
-        blurred_padded = _blur_pixmap(grabbed)
+        return self._blur_pad_crop(src, rect, pad, t0=t0, t1=t1,
+                                   padded_rect=padded_rect, tag="transport")
+
+    def _blur_pad_crop(self, src: QPixmap, rect: QRect, pad: int, *,
+                       t0: float, t1: float, padded_rect: QRect,
+                       tag: str) -> QPixmap:
+        """Shared tail of both grab paths: blur, crop. Both callers now grab
+        main_window (see _grab_and_blur's 2026-08-15 collapse), which is
+        already fully painted — no compositing fill is needed here. This
+        function previously also built a bg_main/panel_wash canvas underneath
+        the grab, for the brief period the transport path grabbed
+        content_container instead (2026-08-14–15); that whole path was
+        removed with the collapse, not merely disabled, because it never
+        worked in the first place: content_container.grab() is opaque
+        everywhere, so a fill painted underneath it was provably unreachable
+        by the final drawPixmap — see _grab_and_blur's docstring.
+
+        The padding margin exists because QGraphicsBlurEffect treats "outside
+        the source pixmap" as transparent and blends that transparency into the
+        blurred result near every edge — confirmed live (2026-07-19, the
+        color-shift/hard-edge-tint bug): even a fully opaque solid-color source
+        came back with alpha as low as 194/255 near its edges after blurring,
+        which then visibly tinted whatever was composited underneath. Since
+        every dirty sub-rect has edges, blurring it directly always hits this on
+        all four sides. Padding pushes the artifact into a margin cropped away
+        before the result is composited, so only genuinely blurred, full-alpha
+        pixels survive. 4x radius: measured 2026-07-19 (see TODO.md 2026-08-14 —
+        the "converges to 255" figure is actually 253, pre-existing).
+        """
+        blurred_padded = _blur_pixmap(src)
         t2 = time.perf_counter()
 
         # Crop the padding back off — the margin's edge-transparency artifact
-        # never reaches the caller. grab()'s automatic clamping at
-        # _common_ancestor's real edges (e.g. window bounds) means the crop
-        # rect always matches blurred_padded's actual size.
-        crop = QRect(pad, pad, rect.width(), rect.height())
+        # never reaches the caller.
+        #
+        # DEVICE px, not logical: QPixmap.copy() operates on device pixels
+        # (measured 2026-08-14), so every term is scaled by dpr. At DPR=1 this
+        # is identical to the old `QRect(pad, pad, rect.width(),
+        # rect.height())`, which is why that line survived — it was only ever
+        # correct on a DPR=1 display. The result keeps `dpr` (copy propagates
+        # it), so the returned pixmap is the same logical size as `rect` and
+        # the caller's contract is unchanged.
+        #
+        # (The previous comment here claimed grab() clamps at the widget's real
+        # edges and that this is what keeps the crop in range. It does not
+        # clamp at all — an out-of-bounds rect returns the full requested size
+        # with the outside area simply unpainted, measured 2026-08-14. The crop
+        # is in range because the grab is always exactly padded_rect-sized,
+        # which is true for any grab source.)
+        dpr = src.devicePixelRatio()
+        idpr = int(round(dpr))
+        crop = QRect(pad * idpr, pad * idpr, rect.width() * idpr, rect.height() * idpr)
         result = blurred_padded.copy(crop)
         t3 = time.perf_counter()
 
+        # Permanent, env-gated DPR verification (2026-08-14). The dev display is
+        # DPR=1.0, so a regression in the ledger above is invisible to the eye
+        # here — this line is the instrument that catches it, on this machine or
+        # a HiDPI one. Enable with FABULOR_GRAB_TRACE=1. Do not delete: it is
+        # the standing check for the exact bug that reverted the 2026-07-19
+        # attempt.
+        if _GRAB_TRACE_ENABLED:
+            logger.warning(
+                f"[GRAB-DPR] tag={tag} dpr={dpr} src={src.size()} "
+                f"blurred={blurred_padded.size()} crop={crop} "
+                f"result={result.size()} result_dpr={result.devicePixelRatio()} "
+                f"want_logical={rect.size()} "
+                f"ok={result.deviceIndependentSize().toSize() == rect.size()}"
+            )
+
         logger.warning(
-            f"[PERF] _grab_and_blur rect={rect} padded_rect={padded_rect} "
+            f"[PERF] _grab_and_blur tag={tag} rect={rect} padded_rect={padded_rect} "
             f"grab_ms={(t1 - t0) * 1000:.2f} blur_ms={(t2 - t1) * 1000:.2f} "
             f"crop_ms={(t3 - t2) * 1000:.2f} total_ms={(t3 - t0) * 1000:.2f}"
         )
