@@ -1,3 +1,48 @@
+## Session Summary — 2026-08-15 — Grab-source switch shipped and holding; per-source rate limits built, verified, and correctly ruled out as the fix for the rectangular blur artifact. `fix/book-detail-blur-park`, uncommitted
+
+Full trace in NOTES.md (top entry, same date). This is the pointer.
+
+**Shipped and confirmed live:** `_grab_and_blur` (transport-bar blur) no longer hides the active
+panel to take its grab — it grabs `content_container` directly (with the theme's `bg_main`
+composited underneath) instead of `main_window`, removing the ~15x/sec hide/show cycle the
+2026-08-14 entry measured missing its own suppress guard by 8-15ms every cycle. Fixing this broke
+Book Detail's frost (it started showing blurred player content instead of the panel underneath —
+flagged first as "a visual judgement," which was wrong, Pryme corrected it as a plain regression
+against `main`); restored by splitting the shared grab into two paths that now share only the
+blur/pad/crop tail. Pryme confirmed both Book Detail underlay cases (Library, Stats) and the no-book
+carousel state visually correct on a fresh app start. DPR handling in the new compositing path was
+verified correct at both DPR=1 (this machine) and DPR=2 (synthetic) before shipping, since this is
+the exact class of bug that sank the same approach when it was tried once before, 2026-07-19.
+
+**Did not fix the actual complaint.** The rectangular blur artifact Pryme reported — a sharp patch
+against an otherwise-frozen frost, near the play button and the mute icon — survived the grab-source
+switch. It took three misreads to even describe correctly (mis-called vertical when it was
+horizontal, then mis-located "over the carousel" when no carousel was in the screenshot) before
+landing on Pryme's own plain description: "like a patch stamped onto the frost instead of blending
+into it." Chased through three widgets via env-gated paintEvent-stack probes
+(`current_chapter_label`'s marquee, `play_pause_btn`, `muted_icon_label` — all real, all left in the
+tree behind `FABULOR_GRAB_TRACE=1`) to a working theory: small regions repainting far more often than
+their frozen surroundings. Built and thoroughly verified per-source rate limits on that theory
+(category map checked widget-by-widget against a live instantiation, zero unmapped; trace confirmed
+marquee throttling and stop-when-fits both correct; 502 tests passing throughout) — then Pryme's live
+check falsified the theory outright: *"Rectangular artifact is there as I have guessed. It has
+nothing to do with the frequency of the grabs."* Also surfaced in the same check: the Next-button
+tooltip does not appear at all under an open panel (not merely delayed/stuck, as an earlier entry
+described a related-looking symptom) — a separate mechanism, since tooltips are a different
+top-level window than what the blur overlay composites.
+
+**Net effect:** the panel-hide removal is a real, confirmed improvement and stays. The rectangular
+artifact, the still-stale button highlight, and the missing tooltip are now correctly understood as
+NOT a frequency problem — which rules out a whole class of future fix attempts rather than pointing
+at the right one. TODO.md has the full open-items entry; NOTES.md has the complete investigation
+trail including the repeated pattern behind this session's wrong turns (reasoning off code just read
+instead of off the actual screenshot/report in front of me, three separate times).
+
+**Nothing in this session is committed.** Working tree has the grab-source split, four probes, and
+the per-source rate-limit implementation, all uncommitted on `fix/book-detail-blur-park`.
+
+---
+
 ## Session Summary — 2026-08-13 Session 4 — CLAUDE.md consolidation audit: two shared-fact merges, five rules tightened, and four stale contracts corrected. `main`
 
 Five commits (`3ffa8f3` → `660f8b8`). CLAUDE.md had grown from 1563 lines (2026-08-04/05) to 1888

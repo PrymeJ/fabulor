@@ -51,6 +51,93 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   2026-07-27 objection to it stands — though it was written without knowing the margin is this
   thin), or suppress by STATE across the hide/show rather than by a clock deadline (immune to
   round-trip drift, more invasive).
+  **2026-08-14, third direction taken instead — grab source changed:** `_grab_and_blur` now grabs
+  `content_container` (with `bg_main` composited underneath) rather than `main_window`, and the
+  panel hide/show is gone entirely — panels are siblings of `content_container`, so the panel is
+  never in the grab and never needs hiding. That removes the mechanism this whole entry describes
+  rather than racing it, so neither direction above is needed if it holds. Pending live
+  confirmation by Pryme (the cursor-far-from-buttons case especially, since the synthetic-Enter
+  path never explained it). The `WA_TransparentForMouseEvents` loop and the `setOverrideCursor`
+  bracket were removed with the hide — both existed only to compensate for it.
+
+- [2026-08-14] **Re-measure `_GRAB_FEEDBACK_SUPPRESS_S` after the panel-hide removal.** Not
+  re-tuned in that pass, deliberately. The point is not that the constant's cost changed — it is
+  that the loop's ORIGIN is gone: the guard was sized against a hide/show cycle that forced Qt to
+  repaint the tracked transport widgets as they were exposed and re-occluded, and that cycle no
+  longer exists. What remains is the `_overlay` hide/show (the overlay is a child of the new grab
+  source, so it must still be hidden), which has never been separately measured as loop-safe. The
+  50ms deadline may now be far wider than anything real, or defending a case that no longer
+  occurs. Re-run the `FABULOR_GRAB_TRACE=1` accepted-paint histogram against the new code before
+  changing the value.
+
+- [2026-08-14] **Book Detail frost now shows different content.** `frost_panel_backdrop` reuses
+  `_grab_and_blur`, so the grab-source change reaches it too: it previously grabbed `main_window`
+  with only Book Detail itself hidden, leaving the panel BEHIND (Stats/Library) visible in the
+  frost; it now grabs `content_container`, so the frost shows blurred player content instead. Not a
+  bug and not inferable from the code — a visual judgement for Pryme. Check it looks right; if the
+  behind-panel content is wanted back, that needs its own grab path rather than a revert of this.
+
+- [2026-08-14, pre-existing, not a regression] The padding comment in `_grab_and_blur` claims 4x
+  blur radius "fully converges corner alpha to 255"; measured corner alpha is actually **253** at
+  DPR=1 — verified identical on the pre-change code path, so this is an inaccuracy in the original
+  2026-07-19 measurement, not something this change introduced. Center alpha is a correct 255. Left
+  alone as out of scope; worth a look only if edge tinting is ever reported.
+
+- [2026-08-15] **Re-measure per-source suppress windows after the panel-hide removal.**
+  `_SUPPRESS_MARQUEE_S=100ms` (and the other three windows) are test values chosen to match the
+  category table handed down for this pass, not calibrated against a live histogram the way
+  `_GRAB_FEEDBACK_SUPPRESS_S` originally was. Re-run `FABULOR_GRAB_TRACE=1` against real usage
+  (marquee running, time labels during playback, slider during a real chapter) before treating any
+  of the four as settled. Related to, but distinct from, the existing `_GRAB_FEEDBACK_SUPPRESS_S`
+  re-measurement entry above — that guard gates whether a SCHEDULED grab executes; the per-source
+  windows gate whether a dirty event schedules one at all. Both may need separate tuning passes.
+
+- [2026-08-15] **Implement proportional slider rate.** `_DirtyRectTracker.set_chapter_duration()`
+  exists as a stub (`self._chapter_duration_s`, written but never read) — the slider category is
+  fixed at the `_SUPPRESS_SLIDER_S` (200ms) floor regardless of chapter length. The real formula
+  (`_slider_suppress_s()`, linear scale between a 120s-or-shorter floor and a 1800s-or-longer
+  ceiling of 15s) was specified but deliberately not wired in this pass. Blocked on an injection
+  point: confirmed at Checkpoint A that `PanelManager` has no chapter-change signal and holds no
+  player reference, so chapter duration cannot reach `set_chapter_duration()` without either (a) a
+  new signal path added to `PanelManager` (explicitly out of scope — "do not add a new signal
+  path"), or (b) a forwarding call from `app.py`'s real chapter-change path
+  (`player.chapter_changed` → `_update_chapter_label_from_index`, app.py:483), which was out of
+  scope for this pass ("app.py is not touched"). Whoever picks this up needs to either extend scope
+  to app.py for one forwarding call, or get a different injection point approved first.
+
+- [2026-08-15] **Per-source rate limits did NOT fix the rectangular artifact, the stale button
+  highlight, or the missing tooltip — Pryme confirmed live, and had predicted this before testing.**
+  Checkpoint C (grab frequency/breakdown by category) passed fully: marquee throttled to ~120-184ms
+  gaps while scrolling and zero grabs when the title fits (`timer_active=False`, stop-when-fits
+  confirmed working); time/slider categories produced zero grabs while paused in every window
+  checked. Checkpoint D (live visual) is where it failed — three results, read together:
+  - **Rectangular artifact: still present, unchanged.** Pryme's own words: *"has nothing to do with
+    the frequency of the grabs."* This retracts the working theory this whole rate-limiting pass was
+    built on (a live patch refreshing too often against a frozen backdrop) — reducing refresh
+    frequency does not touch it, which means the mechanism is a compositing/coverage defect (wrong
+    content, wrong position, or a region not redrawn as part of a coherent whole), not a rate
+    problem. Do not re-attempt a frequency-based fix for this artifact without new evidence pointing
+    at frequency specifically.
+  - **Button highlight: more responsive than before (the immediate category's 0.0s window is doing
+    something) but still "not acceptable," "stays stale."** The word "stale" here is the same word
+    that describes the artifact's frozen backdrop — plausibly the same underlying cause surfacing as
+    two symptoms, not two separate bugs. Not confirmed, just noted as the likelier reading before
+    anyone spends time on it as if it were independent.
+  - **Next-button tooltip: does not appear AT ALL under an open panel** — not delayed, not
+    flickering, absent. This is new information this pass surfaced, not previously isolated. A
+    tooltip is a separate top-level window Qt manages outside the widget tree the blur overlay
+    composites, so this is unlikely to share a mechanism with the grab/composite pipeline at all —
+    worth investigating as its own question (something intercepting the hover before Qt schedules
+    the tooltip, or a z-order/focus interaction with the overlay) rather than folding into the
+    artifact investigation.
+  - **Marquee scroll through frost: "acceptable."** The one thing this pass targeted (unconditional
+    high-frequency repaints from a widget with no state change) was the right diagnosis for the
+    marquee specifically — confirms rate-limiting was correctly scoped there, and wrong for the
+    button/tooltip/artifact cluster.
+  Per this pass's own scope limit ("if still present, log to TODO.md, do not fix here"), no further
+  fix attempted in this session. The per-source rate limiting code itself stays (Checkpoint C's
+  results are real and the marquee behavior is confirmed correct) — it just isn't the fix for the
+  artifact/highlight/tooltip cluster, which needs a different investigation.
 
 ### Garbled backdrop after excluding the playing book from Book Detail (SYMPTOM FIXED, ROOT CAUSE UNCONFIRMED, 2026-08-14)
 

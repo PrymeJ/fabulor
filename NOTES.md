@@ -1,3 +1,152 @@
+## 2026-08-15 — Grab-source switch shipped, restored the frost it broke, then falsified the working theory behind per-source rate limits
+
+Continuation of the 2026-08-14 entry below ("The grab feedback loop MEASURED"). That entry left the
+mechanism measured but unfixed. This session attempted the fix the CLAUDE.md changelog had flagged
+as "the next piece of work" — removing the panel hide/show from `_grab_and_blur` — landed it, found
+and fixed a real regression it caused, then spent the rest of the session chasing what turned out to
+be the wrong kind of fix for the actual bug. Recorded in full because the wrong turn was expensive
+and the reasoning that led into and out of it is worth keeping.
+
+### Part 1 — the grab-source switch (shipped, holding)
+
+`_grab_and_blur` (transport-bar path) changed its grab source from `main_window` (with the active
+panel hidden for every grab, ~15x/sec while a panel is open) to `content_container` directly, with
+the theme's `bg_main` composited underneath (content_container paints no background of its own — see
+CLAUDE.md's ROOT CAUSE note in `_grab_and_blur`). Panels are siblings of `content_container`, not
+descendants, so this removes the panel from the grab entirely — no hide/show, no re-exposing the
+transport widgets underneath, no Qt re-hit-test.
+
+This is the SAME approach tried and reverted on 2026-07-19 for two bugs. Both are now understood to
+be resolved, which is why it went back in:
+- **DPR size/offset drift** — root cause now measured rather than guessed: `QPixmap(size)` does not
+  inherit the source's `devicePixelRatio()` (comes back at 1.0), and `QPixmap.copy()` operates on
+  DEVICE pixels, not logical ones. The old single-pixmap path never had to care because
+  `main_window.grab()` carried one DPR end to end. Fixed via an explicit DPR ledger in the new
+  `_blur_pad_crop` (see code comments; verified correct at both DPR=1 and DPR=2 via a synthetic
+  harness before shipping — this machine is DPR=1, so a regression here would have been invisible
+  without that check).
+- **Theme hover-preview/snapback breaking** — traced in 2026-07-19 to
+  `get_current_theme()` returning a hover-preview theme to an outside caller when
+  `_is_hover_active` got stuck; closed on 2026-08-03 by making it resolve through
+  `get_active_theme()`. `frost_panel_backdrop` already called `get_current_theme()` on this exact
+  path before this session touched anything, so the call itself was not a new coupling.
+
+**Split required, not optional.** `frost_panel_backdrop` (Book Detail's frost) shared
+`_grab_and_blur` with the transport path. Changing the grab source broke it: the frost stopped
+showing the panel BEHIND Book Detail (Stats/Library) and started showing blurred player content
+instead, because `content_container` structurally cannot contain any panel. This was flagged at
+first review and wrongly waved off as "a visual judgement for Pryme" — Pryme corrected that
+immediately: it's a regression against `main`, not a preference. Restored by splitting the two
+paths (`_grab_and_blur` for transport, `_grab_and_blur_for_frost` for the frost, sharing only the
+`_blur_pad_crop` tail), so the frost went back to grabbing `main_window` with Book Detail hidden and
+the underlying panel visible — verified against the real widget topology with a harness before
+shipping (not just read), and Pryme confirmed both underlay cases (Library, Stats) plus the no-book
+carousel state visually correct on a fresh app start.
+
+### Part 2 — the false lead: attribution to `current_chapter_label`, corrected three times
+
+Before the fix, tracing "what's driving the 173 grabs/20s with the book paused and cursor parked"
+found `current_chapter_label` (the chapter-title marquee) repainting every ~60-200ms with static
+text. First attribution was wrong — `_sync_chapter_ui` was blamed, but it writes
+`chap_elapsed_label`/`chap_duration_label`/the slider, never the chapter label; those two labels
+showed **zero** dirty rects in the same window because `QLabel.setText()` with an identical string
+is already a Qt no-op. A `[CHAPTER-LABEL-PAINT]` probe (env-gated behind `FABULOR_GRAB_TRACE=1`,
+left in the tree) found the real driver: `ScrollingLabel`'s own marquee `QTimer`, running because
+the specific test title (355px) genuinely overflowed the 164px label by more than double.
+Stop-when-fits was already implemented and working correctly — verified live in both directions
+before any code was proposed — so there was nothing to fix there; the marquee running was correct
+behavior for that title.
+
+### Part 3 — the seam that turned out to be horizontal, not vertical
+
+Separately, Pryme reported a rectangular blur artifact and it took three corrections to locate:
+first mis-read as a vertical clip-boundary edge (from having just re-read
+`_apply_visual_area_clip`'s clip-rect code, not from the screenshots — a pattern-matched-to-the-code
+error, not a pixel-read error), then corrected to horizontal, then a follow-up guess ("over the
+carousel") was also wrong — no carousel was present in that screenshot at all. The eventual
+plain-terms description Pryme confirmed: a rectangle where the mute icon sits, sharper-edged and
+different-looking than the blur around it, "like a patch stamped onto the frost instead of blending
+into it" — and the same shape below the panel in a second screenshot. This is the visual signature
+that motivated Part 4 below, and the three-strikes path to naming it correctly is recorded so a
+future investigation doesn't skip straight to a code-derived guess over a fresh look at what was
+actually sent.
+
+### Part 4 — per-source rate limits: built correctly, verified correctly, wrong fix
+
+Working theory: the artifact is a partial-compositing symptom — one small region (wherever a
+tracked widget keeps repainting) gets refreshed far more often than everything around it, so it
+reads as a live patch against an otherwise-frozen backdrop. `play_pause_btn` and
+`muted_icon_label` were traced the same way as the chapter label (env-gated `[PLAYBTN-PAINT]` /
+`[MUTEDICON-PAINT]` paintEvent-stack probes — both left in the tree, gated behind
+`FABULOR_GRAB_TRACE=1`) and both showed the same shape: unconditional short-interval repaints with
+no state change, plus — for `play_pause_btn` specifically — 42% of repaints traced directly to
+`_grab_and_blur`'s own `.grab()` call, a feedback loop distinct from the marquee's unconditional-timer
+shape (stack: `refresh_dirty` → `_grab_and_blur` → `.grab()` → synthetic Paint → `eventFilter`).
+
+Per-source rate limits were implemented on the theory that throttling grab frequency per widget
+CATEGORY (immediate/play/marquee/time/slider, each with its own suppress window, keyed independently
+of the existing global `_grab_suppress_until` feedback-loop guard) would reduce or eliminate the
+artifact. Implementation was verified thoroughly before any live test: the category map was
+instantiated against a real fake main-window and checked widget-by-widget (every tracked widget,
+including all three `vol_stack` pages, resolved to exactly one category, zero unmapped); live trace
+confirmed the marquee category correctly throttled to ≥100ms gaps while scrolling and to ZERO grabs
+when a short chapter title made the marquee correctly stop (`timer_active=False`); time and slider
+categories produced zero grabs while paused in every window sampled. 502 tests passed throughout.
+
+**It did not work, and Pryme predicted this before the live test ran.** Checkpoint D result, verbatim:
+*"Rectangular artifact is there as I have guessed. It has nothing to do with the frequency of the
+grabs."* Highlight responsiveness improved slightly (the immediate category's 0.0s window landed
+some paints that were previously throttled) but was still reported "not acceptable... stays stale."
+Marquee-through-frost was "acceptable" — the one part of this session's diagnosis that was correctly
+scoped, since the marquee's actual problem (an unconditional timer with no change guard) genuinely
+is a frequency problem and rate-limiting is the right shape of fix for it specifically.
+
+**A new, previously unisolated finding surfaced in the same test:** the Next-button tooltip does not
+appear AT ALL under an open panel — not delayed, not flickering as the 2026-08-14 entry's "stuck"
+tooltip described, but absent. Tooltips are a separate top-level window Qt manages outside the widget
+tree the blur overlay composites, so this is not obviously the same mechanism as the grab/composite
+pipeline at all, and needs its own investigation rather than being folded into the artifact chase.
+
+### What this settles and what it leaves open
+
+**Settled:** the rectangular artifact is a compositing/coverage defect (wrong content, wrong
+position, or a region not redrawn as part of a coherent whole) — not a refresh-rate problem. Any
+future fix attempt for it should start from that constraint, not re-propose a frequency-based
+mitigation without new evidence pointing at frequency specifically. The 2026-08-14 entry's
+"intermittent because it's a race against a ~60ms flicker" explanation for the HOVER/HIGHLIGHT
+symptom is unaffected by this — that mechanism (Qt re-hit-testing on hide/show) is gone now that the
+panel hide/show itself is gone; what "stale" describes now, post-fix, needed for the highlight to
+still fail, is undiagnosed.
+
+**Open:** why the button highlight is still stale with the panel hide/show entirely removed; why the
+tooltip doesn't appear at all rather than merely sticking; what specifically produces the rectangular
+artifact's boundary if not refresh frequency. TODO.md has the full status entry with all three
+threads; do not re-attempt a frequency-based fix for any of them without reading it first.
+
+### Probes left in the tree, all gated behind `FABULOR_GRAB_TRACE=1`, none removed
+
+`[CHAPTER-LABEL-PAINT]` (`ui/controls.py`, `ScrollingLabel.paintEvent`, scoped to
+`objectName()=="chapter_selector"`), `[PLAYBTN-PAINT]` / `[MUTEDICON-PAINT]` (`app.py`,
+`MainWindow.eventFilter`, scoped by `obj is` identity), `[SEAM-TRACE]` (`ui/panels.py`
+`_apply_visual_area_clip` and `app.py` `_carousel_clip_rect`, logs the clip actually applied against
+live widget geometry), `[GRAB-DPR]` (`ui/transport_bar_blur.py` `_blur_pad_crop`, verifies the DPR
+ledger holds — this machine is DPR=1, so this is the only instrument that would catch a DPR
+regression here). All log at DEBUG or WARNING behind the shared `FABULOR_GRAB_TRACE=1`/
+`FABULOR_LOG_LEVEL=DEBUG` pair; costs one bool comparison per paint when disabled.
+
+### A process note worth keeping, not just a code one
+
+Every wrong turn this session was caught by Pryme, not self-caught: the frost regression dismissed as
+a preference, the vertical/horizontal seam misread, the "over the carousel" guess with no carousel in
+frame, and the standing theory behind the whole rate-limiting pass. In three of those four cases the
+error came from reasoning off code just read rather than off the actual screenshot or the actual
+report in front of me — the same failure mode CLAUDE.md's "never substitute a plausible explanation
+for a checked one" section already names, recurring here in a fresh form: a *correct* read of
+adjacent code substituting for a look at the actual artifact. Re-reading a screenshot before
+theorizing from code, every time, would have caught at least two of the four rounds earlier.
+
+---
+
 ## 2026-08-14 — The grab feedback loop MEASURED: `_grab_suppress_until` misses by 8-15ms, consistently, in one direction
 
 Completes the 2026-08-01 entry below ("Transport buttons paint themselves hovered/pressed under an
