@@ -1,3 +1,127 @@
+## 2026-08-15 (continued) — Pixel-probe found the real mechanism; grab source reverted to main_window; artifact fixed, hover/tooltip confirmed still open
+
+Direct continuation of the entry immediately below ("Grab-source switch shipped..."), same date,
+later in the session. That entry ends with the `content_container` switch believed shipped and
+holding, and two implemented "fixes" (a flat `bg_main` fill, then a two-pass `bg_main`+wash
+composite) that both failed live with no diagnosed reason. This entry is the diagnosis, the revert,
+and the correct final state. **Everything below supersedes that entry's "shipped and holding"
+framing — the switch did not survive the session.**
+
+### The wash-composite fix was mathematically inert, not merely wrong
+
+Before finding the real cause, a second compositing fix was attempted: paint opaque `bg_main`, then
+`rgba(bg_main, panel_opacity_hover)` over it with `SourceOver`, matching `get_panel_base_stylesheet`'s
+real panel-wash rule exactly. Pryme confirmed live it changed nothing. The reason is arithmetic, not
+a bug: `SourceOver`-blending a color with itself at any alpha reproduces that exact color unchanged
+(`a*C + (1-a)*C == C`for any `a`). The two fills were mathematically identical to the single opaque
+fill they replaced. This was verified after the fact, not before — the fix was proposed and
+implemented on a plausible-sounding theory that turned out to be a no-op by construction, and the
+live test that disproved it was the only thing that caught it.
+
+### The ground-truth measurement Pryme's own numbers pointed to
+
+Pryme measured the artifact's actual on-screen color against `bg_main` on two themes (Rivendell,
+Syl Anagist) using a color picker — real numbers, not a derived estimate:
+
+```
+Rivendell:    bg_main=#F0FFF0  artifact=#E6F4E6  ratio ≈ 0.96 per channel
+Syl Anagist:  bg_main=#5A4A7F  artifact=#544676  ratio ≈ 0.93-0.95 per channel
+```
+
+Both ratios landed within measurement tolerance of each theme's own `panel_opacity_hover`
+(Rivendell 0.95, Syl Anagist 0.9) — but blended against BLACK, not against `bg_main` itself (blend-
+against-white was tested and rejected — it produced impossible ratios above 1.0). That pointed at
+`content_container.grab()` producing genuinely dark pixels somewhere in the mix, not a wrong-alpha
+compositing bug.
+
+### The confirming measurement — a live pixel probe, not another theory
+
+A one-shot `[PIXEL-PROBE]` (env-gated behind `FABULOR_GRAB_TRACE=1`) logged the raw `src` pixmap —
+what `content_container.grab()` actually returned, before any fill — at five points inside the padded
+grab rect, alongside what the final composited canvas pixel became at the same points. Result,
+verbatim:
+
+```
+pt=(10,10)  src_rgba=(32, 35, 38, 255)  canvas_rgba=(32, 35, 38, 255)  bg=(90,74,127,255) panel_wash=(90,74,127,230)
+pt=(30,30)  src_rgba=(32, 35, 38, 255)  canvas_rgba=(32, 35, 38, 255)  ...
+pt=(5,60)   src_rgba=(32, 35, 38, 255)  canvas_rgba=(32, 35, 38, 255)  ...
+```
+
+Two facts, both decisive:
+
+1. **`src` is fully opaque (alpha=255) at every unpainted point** — `(32,35,38)`, Qt's default
+   `QPalette` window color, exactly matching the number the ORIGINAL 2026-07-19 root-cause comment
+   already cited (`#202326`) before this session's `content_container` switch overwrote that
+   comment's framing. `content_container.grab()` was never producing transparency for a fill to show
+   through — it was producing a real, wrong, opaque color.
+2. **`canvas_rgba` equals `src_rgba` exactly, at every point.** The `bg`/`panel_wash` fills painted
+   onto the canvas were completely overwritten by the final `drawPixmap(src)` call, because `src` is
+   opaque everywhere it lands. Neither fix could ever have worked — not because the color was wrong,
+   but because the fill layer was structurally unreachable in the final composite. This closes the
+   question the previous entry in this file left open ("why did a mathematically-plausible fix do
+   nothing") with a mechanism instead of a theory.
+
+Confirmed independently via a synthetic test (`QWidget().grab()` on a bare unstyled widget under the
+Fusion style returns `(32, 35, 38, 255)`), and confirmed that `content_container.setStyleSheet(...)`
+being non-empty does NOT change this — a stylesheet with no rule matching the widget's own selector
+(which is `get_player_stylesheet`'s actual shape; it targets descendants, not `#content_container`
+itself) renders identically to no stylesheet at all.
+
+### The fix: revert to main_window, collapse the two grab functions back into one
+
+`_grab_and_blur` and `_grab_and_blur_for_frost` are recombined into a single `_grab_and_blur(rect,
+panel=None)`, defaulting `panel` to `self._active_panel` (every transport-path call site, unchanged)
+with `frost_panel_backdrop` passing Book Detail explicitly (one added keyword at its one call site).
+Both paths now grab `main_window` — fully, correctly painted, no fill needed — with `panel` hidden
+around the grab exactly as the original pre-session code did. The `mapToGlobal`/`mapFromGlobal`
+coordinate round-trip, the `_mouse_blocked`/`WA_TransparentForMouseEvents` loop (2026-08-01
+INPUT-LEAK FIX), and the `QApplication.setOverrideCursor` bracket (2026-07-21 CURSOR-FLICKER FIX)
+were all restored VERBATIM from `main` (read via `git show main:...`, not reconstructed from memory)
+— both pieces of compensation code are independently load-bearing for two different, already-shipped
+bugs the panel hide creates, unrelated to the hover-flicker bug this whole session chased. `bg`/
+`panel_wash`/the DPR-fill canvas machinery were removed from `_blur_pad_crop` entirely (not merely
+disabled) since both callers now always pass no fill. The DPR ledger itself (device-vs-logical crop
+math) was kept — it is a real, independent fix from this session, orthogonal to the grab-source
+mistake, and unaffected by which widget gets grabbed.
+
+Every comment in `transport_bar_blur.py` that stated "the grab source is content_container" as
+current fact was corrected to state main_window + panel-hide as current, while preserving the
+historical account of the 2026-07-19 failed attempt and the one-day (2026-08-14–15) content_container
+interval verbatim — nothing describing what was actually tried and found was deleted, only the
+"as of now" framing was corrected where it had gone stale.
+
+**Confirmed by Pryme, live, on the theme that showed it: artifact gone.** 502 tests pass.
+
+### What is NOT fixed, and is now confirmed unrelated to any of this
+
+The hover flicker and tooltip-stuck/absent bug this entire session's `content_container` attempt was
+built to solve is **still open**, confirmed by Pryme immediately after the revert: *"tooltip and
+hover broken just like before."* This is important, not just disappointing: it proves the flicker was
+never caused by the panel hide/show cycle being ABSENT (obviously, since the hide/show is back and
+the bug is unchanged), and it retroactively confirms the earlier live test — "more responsive... but
+still stale" — was already telling us this before the artifact investigation even started. Both
+per-source rate limiting AND the grab-source choice are now ruled out as causes of the hover/tooltip
+bug. What remains unexplored: the ~8-15ms suppress-guard miss measured in the entry below (still
+live, unchanged by tonight — the guard was never retuned), and whatever produces the tooltip's
+outright absence (not merely stuck) under an open panel, which surfaced only once, during the
+per-source rate-limiting Checkpoint D, and has not been independently investigated since.
+
+### What stays in the tree, uncommitted at end of session
+
+Per-source rate limiting in `_DirtyRectTracker` (category map, `_category_of`/`_suppress_window_for`,
+the `eventFilter` gate) — independent of the grab-source mistake, verified correct at its own
+Checkpoint C (marquee throttling, stop-when-fits producing zero grabs), kept. `set_chapter_duration`
+stub — kept, still unwired (no chapter-change signal reaches `PanelManager`; see TODO.md). All probes
+from tonight — `[CHAPTER-LABEL-PAINT]`, `[PLAYBTN-PAINT]`/`[MUTEDICON-PAINT]`, `[SEAM-TRACE]`
+(carousel + visual_area clip) — stay in `app.py`/`controls.py`/`panels.py`, gated, unchanged by this
+fix, not committed this session (pure diagnostic scaffolding, no functional content — see the
+session-end commit split). `[PIXEL-PROBE]` and `[OVERLAY-DUMP]`/`[GRAB-DPR]`'s two-pass-fill
+commentary were removed from `transport_bar_blur.py` as part of the fix itself, since their purpose
+(proving the content_container mechanism) is now moot — `_blur_pad_crop` no longer has a fill path
+for them to probe.
+
+---
+
 ## 2026-08-15 — Grab-source switch shipped, restored the frost it broke, then falsified the working theory behind per-source rate limits
 
 Continuation of the 2026-08-14 entry below ("The grab feedback loop MEASURED"). That entry left the

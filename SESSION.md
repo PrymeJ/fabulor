@@ -1,3 +1,38 @@
+## Session Summary — 2026-08-15 (end of session) — Artifact root-caused and FIXED: content_container.grab() is opaque everywhere, so no compositing fill could ever reach it; reverted to main_window + panel-hide. Hover/tooltip confirmed still open, unrelated. `fix/book-detail-blur-park`
+
+Full trace in NOTES.md (top entry, "Pixel-probe found the real mechanism..."). This is the pointer.
+Supersedes the summary immediately below — that one's "shipped and holding" framing on the
+`content_container` grab source did not survive the rest of the session.
+
+**Fixed and confirmed live by Pryme:** the rectangular blur artifact. Root cause: `content_container
+.grab()` returns Qt's default opaque palette color (32,35,38) everywhere it doesn't paint its own
+content, not transparency — confirmed via a one-shot pixel probe on the live grab, which also showed
+the composited canvas pixel was byte-identical to that raw, unfilled pixel at every sampled point.
+Both compositing fixes tried earlier in the session (flat `bg_main`, then a two-pass `bg_main`+wash)
+were therefore structurally incapable of working: an opaque `drawPixmap` on top overwrites anything
+painted underneath it regardless of color. (The wash fix specifically was also independently a
+no-op for a second, purely mathematical reason: blending a color with itself via SourceOver at any
+alpha reproduces that color exactly — verified after Pryme reported it changed nothing.) Fixed by
+reverting the transport-bar grab source to `main_window` and restoring the panel-hide this session
+had removed — `_grab_and_blur`/`_grab_and_blur_for_frost` collapsed back into one function taking an
+explicit `panel` parameter, with the cursor-pin and mouse-transparency compensation code restored
+verbatim from `main` (both are independently load-bearing for two other, already-shipped bugs, not
+the flicker bug this whole session chased). 502 tests pass.
+
+**Confirmed NOT fixed, and now confirmed unrelated to any of tonight's work:** the hover
+flicker/tooltip bug this session's `content_container` switch was originally built to solve. Pryme,
+immediately after the revert: *"tooltip and hover broken just like before."* Both per-source rate
+limiting and the grab-source choice are ruled out as its cause. Still open.
+
+**What stays, uncommitted:** per-source rate limiting in `_DirtyRectTracker` (verified correct,
+independent of the grab-source mistake) and its `set_chapter_duration` stub. All of tonight's
+diagnostic probes remain in `app.py`/`controls.py`/`panels.py`, gated, not committed — pure
+scaffolding with no functional content. `transport_bar_blur.py` (the fix + rate limiting) is
+committed separately from docs this session, per Pryme's explicit request to keep a clean anchor
+only where there is real substance.
+
+---
+
 ## Session Summary — 2026-08-15 — Grab-source switch shipped and holding; per-source rate limits built, verified, and correctly ruled out as the fix for the rectangular blur artifact. `fix/book-detail-blur-park`, uncommitted
 
 Full trace in NOTES.md (top entry, same date). This is the pointer.

@@ -51,31 +51,31 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   2026-07-27 objection to it stands — though it was written without knowing the margin is this
   thin), or suppress by STATE across the hide/show rather than by a clock deadline (immune to
   round-trip drift, more invasive).
-  **2026-08-14, third direction taken instead — grab source changed:** `_grab_and_blur` now grabs
-  `content_container` (with `bg_main` composited underneath) rather than `main_window`, and the
-  panel hide/show is gone entirely — panels are siblings of `content_container`, so the panel is
-  never in the grab and never needs hiding. That removes the mechanism this whole entry describes
-  rather than racing it, so neither direction above is needed if it holds. Pending live
-  confirmation by Pryme (the cursor-far-from-buttons case especially, since the synthetic-Enter
-  path never explained it). The `WA_TransparentForMouseEvents` loop and the `setOverrideCursor`
-  bracket were removed with the hide — both existed only to compensate for it.
+  **2026-08-14, third direction TRIED and REVERTED 2026-08-15:** `_grab_and_blur` was changed to
+  grab `content_container` (with `bg_main` composited underneath) instead of `main_window`, removing
+  the panel hide/show entirely on the theory that removing the hide/show cycle removes this whole
+  entry's mechanism. **It did not fix the symptom.** Pryme confirmed live: highlight was "more
+  responsive than before but still not acceptable... stays stale," and the next-button tooltip
+  stopped appearing under an open panel AT ALL (not merely stuck — absent). The change was also
+  reverted for an unrelated, more urgent reason: `content_container.grab()` returns Qt's default
+  palette color (32,35,38), fully opaque, at every pixel it doesn't paint itself (the transport
+  controls' inter-row layout gaps), which produced a visible rectangular darkening artifact — see
+  the NOTES.md entry "Grab-source switch shipped, restored the frost it broke, then falsified the
+  working theory behind per-source rate limits" (2026-08-15) for the full investigation, including
+  two failed compositing fixes that could never have worked (same-color-over-itself is a no-op, and
+  the opaque grab overwrites any fill painted underneath it regardless of color). Reverted back to
+  `main_window` + panel-hide 2026-08-15 (`_grab_and_blur`/`_grab_and_blur_for_frost` also collapsed
+  back into one function, `panel` now an explicit parameter). **This entry's underlying bug — hover
+  hit-or-miss, tooltip stuck/absent — is CONFIRMED STILL OPEN as of 2026-08-15**, unchanged by any
+  of this. Neither direction below was ever tried; both are still live options.
 
-- [2026-08-14] **Re-measure `_GRAB_FEEDBACK_SUPPRESS_S` after the panel-hide removal.** Not
-  re-tuned in that pass, deliberately. The point is not that the constant's cost changed — it is
-  that the loop's ORIGIN is gone: the guard was sized against a hide/show cycle that forced Qt to
-  repaint the tracked transport widgets as they were exposed and re-occluded, and that cycle no
-  longer exists. What remains is the `_overlay` hide/show (the overlay is a child of the new grab
-  source, so it must still be hidden), which has never been separately measured as loop-safe. The
-  50ms deadline may now be far wider than anything real, or defending a case that no longer
-  occurs. Re-run the `FABULOR_GRAB_TRACE=1` accepted-paint histogram against the new code before
-  changing the value.
-
-- [2026-08-14] **Book Detail frost now shows different content.** `frost_panel_backdrop` reuses
-  `_grab_and_blur`, so the grab-source change reaches it too: it previously grabbed `main_window`
-  with only Book Detail itself hidden, leaving the panel BEHIND (Stats/Library) visible in the
-  frost; it now grabs `content_container`, so the frost shows blurred player content instead. Not a
-  bug and not inferable from the code — a visual judgement for Pryme. Check it looks right; if the
-  behind-panel content is wanted back, that needs its own grab path rather than a revert of this.
+- [2026-08-14] **Re-measure `_GRAB_FEEDBACK_SUPPRESS_S`.** Live again as of the 2026-08-15 revert
+  above — the panel hide/show cycle this guard was sized against is back (it was briefly absent
+  2026-08-14–15 while the grab source was content_container). Not re-tuned in the 2026-08-15 revert,
+  deliberately, so this measurement is still needed: re-run the `FABULOR_GRAB_TRACE=1` accepted-paint
+  histogram against the current code (`main_window` grab, panel hide restored) and confirm the 50ms
+  deadline still misses by the same 8-15ms margin the 2026-08-14 measurement found, before deciding
+  whether to widen it or replace it with state-based suppression.
 
 - [2026-08-14, pre-existing, not a regression] The padding comment in `_grab_and_blur` claims 4x
   blur radius "fully converges corner alpha to 255"; measured corner alpha is actually **253** at
@@ -138,6 +138,19 @@ open/pending work only, grouped by topic (not by date) with a summary index belo
   fix attempted in this session. The per-source rate limiting code itself stays (Checkpoint C's
   results are real and the marquee behavior is confirmed correct) — it just isn't the fix for the
   artifact/highlight/tooltip cluster, which needs a different investigation.
+
+  **RESOLVED 2026-08-15 (artifact only) — root cause found, unrelated to rate limiting.** A pixel
+  probe on the live grab confirmed `content_container.grab()` (the transport path's grab source at
+  the time) returns fully opaque, wrongly-colored pixels wherever `content_container` doesn't paint
+  its own content — Qt's default palette color, not transparent. That made every compositing fix
+  attempted (a flat `bg_main` fill, then a two-pass `bg_main`+wash fill) provably unreachable: an
+  opaque `drawPixmap` on top overwrites any fill painted underneath it regardless of color. Fixed by
+  reverting the grab source to `main_window` (which is fully, correctly painted) — see the "Blur grab
+  hide/show side effects" entry above. Confirmed gone by Pryme on the theme that showed it. The
+  **highlight-stale and tooltip-absent halves are NOT resolved** — both persist unchanged with the
+  grab source reverted (Pryme: "tooltip and hover broken just like before"), confirming they were
+  never caused by the grab-source/rate-limiting work at all. Both remain open; see the "Blur grab
+  hide/show side effects" entry above for their status.
 
 ### Garbled backdrop after excluding the playing book from Book Detail (SYMPTOM FIXED, ROOT CAUSE UNCONFIRMED, 2026-08-14)
 
